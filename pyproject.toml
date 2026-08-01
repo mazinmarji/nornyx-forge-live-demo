@@ -13,7 +13,7 @@ authors = [{name = "Mazin Marji and Nornyx Forge contributors"}]
 dependencies = [
   "PyYAML>=6.0",
   "pydantic>=2.8,<3",
-  "rich>=13.9,<15",
+  "rich>=13.9,<16",
   "typer>=0.12,<1",
 ]
 
