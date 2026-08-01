@@ -53,17 +53,34 @@ def test_offset_timestamps_are_normalised_to_utc(monkeypatch: pytest.MonkeyPatch
     assert runtime_as_of("2026-08-02T13:30:00+04:00") == "2026-08-02T09:30:00Z"
 
 
-@pytest.mark.parametrize("bad", ["2026-08-02T09:30:00", "not-a-time", "2026-13-45"])
+@pytest.mark.parametrize(
+    "bad", ["2026-08-02T09:30:00", "not-a-time", "2026-13-45", "", "   "]
+)
 def test_ambiguous_or_invalid_instants_fail_closed(
     bad: str, monkeypatch: pytest.MonkeyPatch
 ):
-    """A bad pin must raise, never silently fall back to the live clock."""
+    """A bad pin must raise, never silently fall back to the live clock.
+
+    Includes the set-but-blank case: an operator who exported the variable and
+    got the value wrong should see an error, not the live clock.
+    """
     monkeypatch.delenv(RUNTIME_AS_OF_ENV, raising=False)
     with pytest.raises(ValueError):
         runtime_as_of(bad)
     monkeypatch.setenv(RUNTIME_AS_OF_ENV, bad)
     with pytest.raises(ValueError):
         runtime_as_of()
+
+
+def test_unreadable_contract_yields_unbound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A non-UTF-8 contract must not raise out of the evidence-labelling path."""
+    monkeypatch.delenv(RUNTIME_REVISION_ENV, raising=False)
+    contract = tmp_path / nornyx_runtime.RUNTIME_CONTRACT
+    contract.parent.mkdir(parents=True)
+    contract.write_bytes(b"\xff\xfe\x00 not utf-8 \xc3\x28")
+    assert runtime_revision(tmp_path) == "git:unbound"
 
 
 def test_revision_is_read_from_the_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

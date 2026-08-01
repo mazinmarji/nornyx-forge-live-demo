@@ -39,7 +39,11 @@ def runtime_as_of(explicit: str | None = None) -> str:
     """
 
     raw = explicit if explicit is not None else os.getenv(RUNTIME_AS_OF_ENV)
-    if raw is None or not raw.strip():
+    if raw is not None and not raw.strip():
+        # Set-but-blank is a configuration mistake, not a request for the live
+        # clock. Falling back silently would hide a broken pin.
+        raise ValueError(f"{RUNTIME_AS_OF_ENV} is set but empty")
+    if raw is None:
         moment = datetime.now(timezone.utc)
     else:
         try:
@@ -71,7 +75,9 @@ def runtime_revision(root: Path | None = None) -> str:
     contract = (root or Path.cwd()) / RUNTIME_CONTRACT
     try:
         text = contract.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # An unreadable or non-UTF-8 contract yields an honest "unbound" rather
+        # than raising out of an evidence-labelling path.
         return _UNBOUND_REVISION
     for match in _SUBJECT_REVISION_RE.finditer(text):
         candidate = match.group(1).strip().strip("\"'")

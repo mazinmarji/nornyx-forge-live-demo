@@ -262,7 +262,12 @@ CONTRACTS = (
     ROOT / ".nornyx/contracts/architecture_governance.nyx",
     ROOT / ".nornyx/contracts/runtime_network.nyx",
 )
-_GIT_REVISION_RE = re.compile(r"git:[0-9a-f]{40}")
+# Scoped to the keys that declare the governed revision. A file-wide replace
+# would also rewrite a field that intentionally holds a superseded revision.
+_GIT_REVISION_RE = re.compile(
+    r"^(?P<lead>\s*(?:revision|subject_revision):\s*)git:[0-9a-f]{40}\s*$",
+    re.MULTILINE,
+)
 _ARTIFACT_RE = re.compile(r"^\s*artifact:\s*(evidence/\S+)\s*$")
 _HASH_RE = re.compile(r"^(?P<lead>\s*(?:content_hash|artifact_sha256):\s*)sha256:[0-9a-f]{64}\s*$")
 _TOP_LEVEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
@@ -290,9 +295,18 @@ def sync_contracts() -> list[str]:
     changes: list[str] = []
     for contract in CONTRACTS:
         original = contract.read_text(encoding="utf-8")
-        updated, revisions_changed = _GIT_REVISION_RE.subn(revision, original)
-        if revisions_changed:
-            changes.append(f"{contract.name}: rebound {revisions_changed} revision(s) to {revision}")
+        updated = _GIT_REVISION_RE.sub(
+            lambda match: f"{match.group('lead')}{revision}", original
+        )
+        if updated != original:
+            # Report only real edits; counting regex matches would claim a
+            # rebinding even when the declared revision was already correct.
+            rebound = sum(
+                1
+                for before, after in zip(original.splitlines(), updated.splitlines())
+                if before != after
+            )
+            changes.append(f"{contract.name}: rebound {rebound} revision(s) to {revision}")
         lines = updated.splitlines(keepends=True)
         current: str | None = None
         block: str | None = None
