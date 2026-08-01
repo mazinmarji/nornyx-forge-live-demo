@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -257,6 +258,79 @@ def build(generated_at: datetime, window_days: int) -> dict:
     return index
 
 
+CONTRACTS = (
+    ROOT / ".nornyx/contracts/architecture_governance.nyx",
+    ROOT / ".nornyx/contracts/runtime_network.nyx",
+)
+_GIT_REVISION_RE = re.compile(r"git:[0-9a-f]{40}")
+_ARTIFACT_RE = re.compile(r"^\s*artifact:\s*(evidence/\S+)\s*$")
+_HASH_RE = re.compile(r"^(?P<lead>\s*(?:content_hash|artifact_sha256):\s*)sha256:[0-9a-f]{64}\s*$")
+_TOP_LEVEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+_RECORD_START_RE = re.compile(r"^\s*-\s+(?:id|schema):")
+_TIMESTAMP_RE = re.compile(
+    r"^(?P<lead>\s*(?P<field>generated_at|expires_at):\s*)[\"']?[0-9T:+\-Z.]+[\"']?\s*$"
+)
+
+
+def sync_contracts() -> list[str]:
+    """Rebind contract revisions and evidence digests to the generated index.
+
+    Copying eight hashes by hand is exactly how a contract ends up claiming a
+    digest that no artifact has, so the binding is applied mechanically from
+    INDEX.json instead.
+    """
+
+    if not INDEX_PATH.exists():
+        raise SystemExit("evidence index is missing; run without --sync-contracts first")
+    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    revision = index["subject_revision"]
+    by_artifact = {
+        entry["artifact"]: entry["content_hash"] for entry in index["entries"].values()
+    }
+    changes: list[str] = []
+    for contract in CONTRACTS:
+        original = contract.read_text(encoding="utf-8")
+        updated, revisions_changed = _GIT_REVISION_RE.subn(revision, original)
+        if revisions_changed:
+            changes.append(f"{contract.name}: rebound {revisions_changed} revision(s) to {revision}")
+        lines = updated.splitlines(keepends=True)
+        current: str | None = None
+        block: str | None = None
+        for position, line in enumerate(lines):
+            top_level = _TOP_LEVEL_RE.match(line)
+            if top_level:
+                block = top_level.group(1)
+                current = None
+            if _RECORD_START_RE.match(line):
+                current = None
+            artifact = _ARTIFACT_RE.match(line)
+            if artifact:
+                current = artifact.group(1)
+                continue
+            digest = _HASH_RE.match(line)
+            if digest and current is not None:
+                expected = by_artifact.get(current)
+                if expected and expected not in line:
+                    lines[position] = f"{digest.group('lead')}{expected}\n"
+                    changes.append(f"{contract.name}: {current} -> {expected}")
+                continue
+            # Evidence freshness lives only in the evidence blocks. The approval
+            # declaration's own expires_at is governed by the P7D rule and is
+            # never rewritten here.
+            if block in {"governance_evidence", "architecture_evidence"}:
+                moment = _TIMESTAMP_RE.match(line)
+                if moment:
+                    field = moment.group("field")
+                    value = index["generated_at"] if field == "generated_at" else index["expires_at"]
+                    if value not in line:
+                        lines[position] = f'{moment.group("lead")}"{value}"\n'
+                        changes.append(f"{contract.name}: {field} -> {value}")
+        rewritten = "".join(lines)
+        if rewritten != original:
+            contract.write_text(rewritten, encoding="utf-8", newline="")
+    return changes
+
+
 def verify() -> list[str]:
     """Confirm every indexed artifact still hashes to its recorded value."""
     if not INDEX_PATH.exists():
@@ -284,7 +358,17 @@ def main() -> int:
     parser.add_argument("--as-of", help="UTC timestamp used as generated_at")
     parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
     parser.add_argument("--verify", action="store_true", help="Check artifacts only")
+    parser.add_argument(
+        "--sync-contracts",
+        action="store_true",
+        help="Rebind contract revisions and digests to the generated index",
+    )
     args = parser.parse_args()
+
+    if args.sync_contracts:
+        changes = sync_contracts()
+        print(json.dumps({"status": "synced", "changes": changes}, indent=2))
+        return 0
 
     if args.verify:
         problems = verify()
