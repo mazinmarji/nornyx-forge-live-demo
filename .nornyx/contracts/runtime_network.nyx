@@ -101,25 +101,25 @@ approvals:
     accountable_authority: network_governance_owner
     revision_binding:
       kind: git
-      revision: git:6323bd11b3696da00d75a334463512da5f7b4d58
+      revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
     expires_at: "2026-08-08T00:00:00Z"
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:6323bd11b3696da00d75a334463512da5f7b4d58
+  subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
   records:
     - id: agentic_network_contract_review
       type: network_contract_review
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_network_contract_review.json
-      content_hash: sha256:e2fd741d566f9c856cdb8453ca2107be633b151fd0aa5fb469de00af0fc583a4
-      subject_revision: git:6323bd11b3696da00d75a334463512da5f7b4d58
+      content_hash: sha256:82dd537ce248143d32b6aacaf958eaca3ba65279acd7d509e0a53d4b0ae2e115
+      subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-01T22:06:31Z"
-      expires_at: "2027-08-01T22:06:31Z"
+      generated_at: "2026-08-01T22:50:37Z"
+      expires_at: "2027-08-01T22:50:37Z"
       status: pass
       dependencies: []
     - id: evidence_manifest
@@ -127,11 +127,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_evidence_manifest.json
-      content_hash: sha256:18248471a3edf27c9bfb745ff6e00817e6a63c7635672c133ecde9ca10d167be
-      subject_revision: git:6323bd11b3696da00d75a334463512da5f7b4d58
+      content_hash: sha256:caff79c6d03d14d153ee50079c1b2134248bc849beaa2d9c42728045e309c453
+      subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-01T22:06:31Z"
-      expires_at: "2027-08-01T22:06:31Z"
+      generated_at: "2026-08-01T22:50:37Z"
+      expires_at: "2027-08-01T22:50:37Z"
       status: pass
       dependencies: [agentic_network_contract_review]
 
@@ -271,7 +271,7 @@ agent_identities:
 agentic_network:
   schema: nornyx.agentic_network.v1
   id: network.forge_customer_operations
-  subject_revision: git:6323bd11b3696da00d75a334463512da5f7b4d58
+  subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
   trust_zones:
     - id: zone.local_demo
       classification: governed_local
