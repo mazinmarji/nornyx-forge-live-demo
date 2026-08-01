@@ -1,6 +1,6 @@
 {
   "builder_self_approval": false,
-  "generated_at": "2026-08-01T21:49:04Z",
+  "generated_at": "2026-08-01T22:06:31Z",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [
@@ -20,5 +20,5 @@
   "schema": "nornyx.forge.independent_review_record.v1",
   "source": ".nornyx/in-session/reviews.json",
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:5ca601bfb8c7b9a238e41fc247784aca5197dd3b"
+  "subject_revision": "git:6323bd11b3696da00d75a334463512da5f7b4d58"
 }

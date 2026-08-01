@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-08-01T21:49:04Z",
+  "generated_at": "2026-08-01T22:06:31Z",
   "open_exceptions": [],
   "schema": "nornyx.forge.exception_review_record.v1",
   "statement": "No architecture exceptions were requested or granted.",
-  "subject_revision": "git:5ca601bfb8c7b9a238e41fc247784aca5197dd3b"
+  "subject_revision": "git:6323bd11b3696da00d75a334463512da5f7b4d58"
 }
