@@ -125,7 +125,10 @@ forbidden = {
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative
-    for name in sorted(_imports(path, relative) & banned):
+    # Pass the module's own dotted name so a relative spelling such as
+    # `from .store import JsonStore` resolves to demo_app.store and is matched.
+    dotted = relative.removeprefix("src/").removesuffix(".py").replace("/", ".")
+    for name in sorted(_imports(path, relative, dotted) & banned):
         violations.append(f"{relative} imports forbidden dependency {name}")
 
 # --- constraint.bounded_external_adapter ---

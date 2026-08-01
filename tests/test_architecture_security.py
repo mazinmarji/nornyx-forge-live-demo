@@ -60,6 +60,37 @@ def test_architecture_gate_detects_undeclared_dependency(tmp_path: Path):
     ), report["violations"]
 
 
+def test_architecture_gate_detects_relative_import_of_persistence(tmp_path: Path):
+    """The application layer must not reach persistence, even relatively.
+
+    `from .store import JsonStore` is the spelling a checker that only resolves
+    absolute imports would miss, so this asserts the relative form is caught.
+    """
+    workspace = _forge_tree(tmp_path)
+    runtime = workspace / "src/demo_app/agentic.py"
+    runtime.write_text(
+        runtime.read_text(encoding="utf-8") + "\nfrom .store import JsonStore\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/check_architecture.py"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 2
+    report = json.loads(completed.stdout)
+    assert any(
+        "undeclared dependency demo_app.store" in violation
+        for violation in report["violations"]
+    ), report["violations"]
+    assert any(
+        "forbidden dependency demo_app.store" in violation
+        for violation in report["violations"]
+    ), report["violations"]
+
+
 def test_architecture_gate_detects_unmodelled_first_party_import(tmp_path: Path):
     """An import of a real but unmodelled first-party module is a violation.
 
