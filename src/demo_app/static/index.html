@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nornyx Forge Live</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">NORNYX FORGE</p>
+      <h1>Governed Customer Operations</h1>
+      <p class="sub">Live CrewAI Flow · Nornyx policy decisions · zero-human-review demonstration</p>
+    </div>
+    <div class="badge">Autonomous demo</div>
+  </header>
+  <main>
+    <section class="metrics">
+      <article><span>Framework</span><strong>CrewAI Flow</strong></article>
+      <article><span>Governance</span><strong>Nornyx</strong></article>
+      <article><span>Human review</span><strong>Not performed</strong></article>
+      <article><span>Production approval</span><strong>Not granted</strong></article>
+    </section>
+
+    <section class="panel controls">
+      <div>
+        <h2>Run the governed network</h2>
+        <p>Launch two real local cases: one allowed and one prevented.</p>
+      </div>
+      <button id="runDemo">Run demonstration</button>
+    </section>
+
+    <section class="panel">
+      <h2>Submit a case</h2>
+      <form id="caseForm">
+        <label>Customer<input name="customer" value="Mazin" required></label>
+        <label>Summary<input name="summary" value="Request account guidance" required></label>
+        <label>Risk<select name="risk"><option>low</option><option>medium</option><option>high</option><option>critical</option></select></label>
+        <label>Requested action<input name="requested_action" value="send guidance" required></label>
+        <button type="submit">Process case</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="section-title"><h2>Live missions</h2><button id="refresh" class="secondary">Refresh</button></div>
+      <div id="cases" class="cases" aria-live="polite"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

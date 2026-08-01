@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/hook_validate_changed.py",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "application-builder",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python scripts/validate_repository.py --quick",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

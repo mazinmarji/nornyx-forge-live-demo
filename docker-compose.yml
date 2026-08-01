@@ -1,0 +1,14 @@
+services:
+  app:
+    build: .
+    environment:
+      FORGE_WORKER_MODE: ${FORGE_WORKER_MODE:-deterministic}
+      FORGE_AUTONOMOUS_DEMO: "true"
+      FORGE_ALLOW_POLICY_FALLBACK: "false"
+      FORGE_STRICT_CREWAI: "true"
+      CREWAI_DISABLE_TELEMETRY: "true"
+      OTEL_SDK_DISABLED: "true"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./evidence/runtime:/app/evidence/runtime

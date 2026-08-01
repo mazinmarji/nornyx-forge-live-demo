@@ -1,0 +1,343 @@
+nornyx: "0.2"
+project:
+  name: GovernedCustomerOperationsRuntime
+  profile: agentic_network
+  profile_pack:
+    name: agentic_network
+    version: 0.1.0
+    status: candidate
+  purpose: Declare the bounded CrewAI Flow used by the Nornyx Forge public demonstration.
+  non_goals:
+    - real_customer_traffic
+    - production_refunds
+    - credential_loading
+    - automatic_human_approval
+    - production_deployment
+    - mandatory_runtime_attestation
+
+intents:
+  - name: GovernCustomerOperations
+    goal: Process demonstration cases while preventing high-risk external execution without human authority.
+
+contexts:
+  - name: DemoCaseContext
+    include: [BRD.md, src/demo_app/**/*.py, src/demo_app/static/**/*]
+    exclude: [.env, secrets/**, evidence/runtime/**, .nornyx/**]
+    authority: [BRD.md, .nornyx/contracts/runtime_network.nyx]
+    budget:
+      max_tokens: 16000
+      reserve_output_tokens: 2000
+
+agents:
+  - name: IntakeAgent
+    role: Normalize the case.
+    policy: RuntimeGovernance
+  - name: KnowledgeAgent
+    role: Retrieve declared demonstration guidance.
+    policy: RuntimeGovernance
+  - name: ResolutionAgent
+    role: Propose a bounded action.
+    policy: RuntimeGovernance
+  - name: RiskAgent
+    role: Classify action risk.
+    policy: RuntimeGovernance
+  - name: ExecutionAgent
+    role: Execute only authorized local demonstration actions.
+    policy: RuntimeGovernance
+  - name: AuditAgent
+    role: Validate and summarize evidence.
+    policy: RuntimeGovernance
+
+policies:
+  - name: RuntimeGovernance
+    deny:
+      - secrets_to_agents
+      - agent_grants_human_approval
+      - undeclared_capability_use
+      - undeclared_cross_zone_transition
+    require:
+      - exact_revision_binding
+      - policy_decision_before_execution
+      - evidence_after_stage
+      - human_approval_for_external_high_risk_action
+
+evidence:
+  required: []
+
+goals:
+  - id: GOAL-RUNTIME-001
+    title: Run the governed customer-operations network
+    phase: demo-0.2
+    goal: Complete a low-risk case and prevent a high-risk external case with observable evidence.
+    scope: [src/demo_app/, evidence/runtime/, .nornyx/contracts/runtime_network.nyx]
+    non_goals: [real_refund, production_customer_contact]
+    validation:
+      - nornyx check .nornyx/contracts/runtime_network.nyx
+      - nornyx-forge demo --offline --strict-nornyx
+    evidence: evidence/runtime/
+    approval: no human approval is granted in autonomous demonstration mode
+    stop_rules:
+      - stop_on_unexpected_side_effect
+      - stop_on_invalid_evidence
+      - stop_on_contract_or_lock_mismatch
+
+approvals:
+  - name: runtime_human_authority
+    required_roles: [human_operations_owner]
+    eligible_roles: [human_operations_owner]
+    denied_actor_types:
+      - ai_tool
+      - execution_surface
+      - autonomous_agent
+      - model
+      - connector
+      - generated_output
+    required_evidence: []
+    required_for: [execute_high_risk_action, external_share]
+    timing: before_action
+    accountable_authority: human_operations_owner
+    revision_binding:
+      kind: git
+      revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+      exact: true
+    invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, scope_change]
+    expires_at: "2099-01-01T00:00:00Z"
+
+governance_evidence:
+  schema: nornyx.governance_evidence.v1
+  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  records: []
+
+capabilities:
+  - name: read_demo_case
+    actions: [read_case]
+    risk: low
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: []
+    required_approval_refs: []
+    required_evidence_refs: []
+  - name: analyze_demo_case
+    actions: [analyze_case, propose_action]
+    risk: low
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: []
+    required_approval_refs: []
+    required_evidence_refs: []
+  - name: execute_low_risk_action
+    actions: [execute_low_risk_action]
+    risk: low
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: []
+    required_approval_refs: []
+    required_evidence_refs: []
+  - name: execute_high_risk_action
+    actions: [execute_high_risk_action, external_share]
+    risk: high
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: [gate.external_execution]
+    required_approval_refs: [runtime_human_authority]
+    required_evidence_refs: []
+  - name: validate_runtime_evidence
+    actions: [validate_evidence]
+    risk: low
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: []
+    required_approval_refs: []
+    required_evidence_refs: []
+
+agent_identities:
+  - id: identity.intake
+    role_ref: IntakeAgent
+    identity_class: local_agent
+    namespace: forge.runtime.intake
+    subject: intake_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: intake_agent}
+    capability_refs: [read_demo_case]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+  - id: identity.knowledge
+    role_ref: KnowledgeAgent
+    identity_class: local_agent
+    namespace: forge.runtime.knowledge
+    subject: knowledge_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: knowledge_agent}
+    capability_refs: [read_demo_case, analyze_demo_case]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+  - id: identity.resolution
+    role_ref: ResolutionAgent
+    identity_class: local_agent
+    namespace: forge.runtime.resolution
+    subject: resolution_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: resolution_agent}
+    capability_refs: [read_demo_case, analyze_demo_case]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+  - id: identity.risk
+    role_ref: RiskAgent
+    identity_class: local_agent
+    namespace: forge.runtime.risk
+    subject: risk_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: risk_agent}
+    capability_refs: [read_demo_case, analyze_demo_case]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+  - id: identity.execution
+    role_ref: ExecutionAgent
+    identity_class: local_agent
+    namespace: forge.runtime.execution
+    subject: execution_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: execution_agent}
+    capability_refs: [execute_low_risk_action, execute_high_risk_action]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+  - id: identity.audit
+    role_ref: AuditAgent
+    identity_class: local_agent
+    namespace: forge.runtime.audit
+    subject: audit_agent
+    framework_bindings:
+      - {framework: crewai, agent_key: audit_agent}
+    capability_refs: [read_demo_case, validate_runtime_evidence]
+    status: active
+    valid_from: "2026-01-01T00:00:00Z"
+    expires_at: "2099-01-01T00:00:00Z"
+    revocation_refs: []
+    authority: non_human
+    can_approve: false
+
+agentic_network:
+  schema: nornyx.agentic_network.v1
+  id: network.forge_customer_operations
+  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  trust_zones:
+    - id: zone.local_demo
+      classification: governed_local
+      allowed_transition_targets: [zone.external_customer]
+      share_allowlist: [case_summary, proposal, decision, evidence_digest]
+      never_share: [secrets, credentials, tokens, private_memory]
+      ingress_gate_refs: []
+      egress_gate_refs: [gate.external_execution]
+    - id: zone.external_customer
+      classification: external_contract_only
+      allowed_transition_targets: []
+      share_allowlist: [decision, evidence_digest]
+      never_share: [secrets, credentials, tokens, private_memory]
+      ingress_gate_refs: [gate.external_execution]
+      egress_gate_refs: []
+  memberships:
+    - id: membership.intake
+      identity_ref: identity.intake
+      trust_zone_ref: zone.local_demo
+      capability_refs: [read_demo_case]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+    - id: membership.knowledge
+      identity_ref: identity.knowledge
+      trust_zone_ref: zone.local_demo
+      capability_refs: [read_demo_case, analyze_demo_case]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+    - id: membership.resolution
+      identity_ref: identity.resolution
+      trust_zone_ref: zone.local_demo
+      capability_refs: [read_demo_case, analyze_demo_case]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+    - id: membership.risk
+      identity_ref: identity.risk
+      trust_zone_ref: zone.local_demo
+      capability_refs: [read_demo_case, analyze_demo_case]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+    - id: membership.execution
+      identity_ref: identity.execution
+      trust_zone_ref: zone.local_demo
+      capability_refs: [execute_low_risk_action, execute_high_risk_action]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+    - id: membership.audit
+      identity_ref: identity.audit
+      trust_zone_ref: zone.local_demo
+      capability_refs: [read_demo_case, validate_runtime_evidence]
+      status: authorized
+      valid_from: "2026-01-01T00:00:00Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      revocation_refs: []
+  protocol_targets:
+    - id: protocol.external_customer_action
+      protocol: a2a
+      version: declared-by-project
+      execution_mode: contract_only
+      live_connector_execution: false
+      identity_refs: [identity.execution]
+      source_membership_refs: [membership.execution]
+      source_zone_ref: zone.local_demo
+      capability_refs: [execute_high_risk_action]
+      trust_zone_ref: zone.external_customer
+      share: [decision, evidence_digest]
+      never_share: [secrets, credentials, tokens, private_memory]
+      required_gate_refs: [gate.external_execution]
+      required_approval_refs: [runtime_human_authority]
+      required_evidence_refs: []
+  network_gates:
+    - id: gate.external_execution
+      action_classes: [execute_high_risk_action, external_share]
+      source_zone_refs: [zone.local_demo]
+      target_zone_refs: [zone.external_customer]
+      required_policy_refs: [RuntimeGovernance]
+      required_approval_refs: [runtime_human_authority]
+      required_evidence_refs: []
+  revocations: []
+  delegations: []
+  handoffs: []
+  relations:
+    - id: relation.execution_approval
+      type: requires_approval_from
+      source: {kind: capability, ref: execute_high_risk_action}
+      target: {kind: human_role, ref: human_operations_owner}

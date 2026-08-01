@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mazinmarji/nornyx-forge-live-demo/schemas/in-session-reviews.schema.json",
+  "title": "Nornyx Forge in-session independent review evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "human_review", "builder_self_approval", "reviews"],
+  "properties": {
+    "schema": {"const": "nornyx.forge.in_session_reviews.v1"},
+    "human_review": {"const": "not_performed"},
+    "builder_self_approval": {"const": false},
+    "reviews": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["role", "status", "findings"],
+        "properties": {
+          "role": {
+            "enum": ["test-inspector", "architecture-inspector", "security-inspector"]
+          },
+          "status": {"enum": ["pass", "fail"]},
+          "findings": {"type": "array"},
+          "evidence": {"type": "array"},
+          "summary": {"type": "string"}
+        }
+      }
+    }
+  }
+}

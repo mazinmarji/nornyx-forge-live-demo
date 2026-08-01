@@ -1,0 +1,221 @@
+nornyx: "0.2"
+project:
+  name: NornyxForgeArchitecture
+  profile: architecture_governance
+  profile_pack:
+    name: architecture_governance
+    version: 1.0.0
+    status: candidate
+  purpose: Govern the target architecture and conformance evidence of the Nornyx Forge live demonstration.
+
+intents:
+  - name: PreserveGovernedArchitecture
+    goal: Keep API, orchestration, governance, evidence, and persistence boundaries explicit and testable.
+
+contexts:
+  - name: ArchitectureContext
+    include: [docs/ARCHITECTURE.md, src/**/*.py, scripts/check_architecture.py]
+    exclude: [.env, .venv/**, .nornyx/**, evidence/**]
+    authority: [docs/ARCHITECTURE.md, .nornyx/contracts/architecture_governance.nyx]
+    budget:
+      max_tokens: 24000
+      reserve_output_tokens: 3000
+
+agents:
+  - name: SolutionArchitect
+    role: Maintain declared components, modules, layers, and dependency direction.
+    policy: ArchitecturePolicy
+  - name: ArchitectureInspector
+    role: Produce independent architecture conformance evidence without editing implementation.
+    policy: ArchitectureReviewPolicy
+
+policies:
+  - name: ArchitecturePolicy
+    deny: [undeclared_component_dependency, ui_direct_persistence_access, api_direct_command_execution]
+    require: [architecture_evidence_per_change, revision_binding, bounded_external_adapter]
+  - name: ArchitectureReviewPolicy
+    deny: [reviewer_modifies_implementation, ai_architecture_approval]
+    require: [independent_conformance_check, explicit_exception_for_violation]
+
+evidence:
+  required: []
+
+goals:
+  - id: GOAL-ARCH-001
+    title: Preserve the Forge architecture boundary
+    phase: demo-0.2
+    goal: Verify declared dependency direction and prevent direct execution from the API layer.
+    scope: [src/, scripts/check_architecture.py, docs/ARCHITECTURE.md]
+    non_goals: [production_deployment_approval, mandatory_runtime_attestation]
+    validation:
+      - python scripts/check_architecture.py
+      - nornyx check .nornyx/contracts/architecture_governance.nyx
+    evidence: .nornyx/architecture/
+    approval: autonomous demonstration conformance only; human architecture approval is not granted
+    stop_rules: [stop_on_unresolved_boundary_violation, stop_on_policy_weakening]
+
+approvals:
+  - name: ArchitectureAuthority
+    required_roles: [architect]
+    eligible_roles: [architect, architecture_reviewer]
+    denied_actor_types: [ai_tool, execution_surface, autonomous_agent, model, connector, generated_output]
+    required_evidence: []
+    required_for: [approve_architecture, merge_architecture_change]
+    timing: before_merge
+    accountable_authority: architecture_owner
+    revision_binding:
+      kind: git
+      revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+      exact: true
+    invalidation_conditions: [revision_change, scope_change]
+    expires_at: "2099-01-01T00:00:00Z"
+
+governance_evidence:
+  schema: nornyx.governance_evidence.v1
+  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  records: []
+
+changes: []
+
+separation_of_duties:
+  schema: nornyx.separation_of_duties.v1
+  assignments: []
+
+exceptions:
+  schema: nornyx.governance_exceptions.v1
+  source: project_contract
+  entries: []
+
+architecture:
+  schema: nornyx.architecture.v1
+  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  descriptions:
+    - id: architecture.overview
+      title: Nornyx Forge logical and security architecture
+      viewpoints: [viewpoint.logical, viewpoint.security]
+      artifact: docs/ARCHITECTURE.md
+  viewpoints:
+    - id: viewpoint.logical
+      name: Logical architecture
+      concerns: [components, dependency_direction]
+    - id: viewpoint.security
+      name: Security architecture
+      concerns: [trust_boundaries, command_execution]
+  systems:
+    - id: system.forge
+      name: Nornyx Forge
+      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence]
+  components:
+    - id: component.api
+      name: FastAPI and dashboard boundary
+      system: system.forge
+      layer: layer.interface
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.api]
+      depends_on: [component.runtime, component.persistence]
+    - id: component.runtime
+      name: CrewAI Flow orchestration
+      system: system.forge
+      layer: layer.application
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.runtime]
+      depends_on: [component.governance, component.evidence]
+    - id: component.governance
+      name: Nornyx authorization and contracts
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.governance]
+      depends_on: []
+    - id: component.evidence
+      name: Evidence recording and validation
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.evidence]
+      depends_on: []
+    - id: component.persistence
+      name: Local demonstration case store
+      system: system.forge
+      layer: layer.infrastructure
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.persistence]
+      depends_on: []
+  modules:
+    - id: module.api
+      name: demo_app.main
+      component: component.api
+      layer: layer.interface
+      depends_on: [module.runtime, module.persistence]
+    - id: module.runtime
+      name: demo_app.agentic
+      component: component.runtime
+      layer: layer.application
+      depends_on: [module.governance, module.evidence]
+    - id: module.governance
+      name: nornyx_forge.nornyx_runtime
+      component: component.governance
+      layer: layer.domain
+      depends_on: []
+    - id: module.evidence
+      name: nornyx_forge.evidence
+      component: component.evidence
+      layer: layer.domain
+      depends_on: []
+    - id: module.persistence
+      name: demo_app.store
+      component: component.persistence
+      layer: layer.infrastructure
+      depends_on: []
+  layers:
+    - id: layer.interface
+      name: Interface
+      may_depend_on: [layer.application, layer.infrastructure]
+    - id: layer.application
+      name: Application
+      may_depend_on: [layer.domain]
+    - id: layer.domain
+      name: Domain and governance
+      may_depend_on: []
+    - id: layer.infrastructure
+      name: Infrastructure
+      may_depend_on: []
+  bounded_contexts:
+    - id: context.operations
+      name: Customer operations
+      description: Case intake, orchestration, and local persistence.
+    - id: context.governance
+      name: Governance and assurance
+      description: Nornyx authorization, architecture, and evidence.
+  interfaces: []
+  boundaries:
+    trust: []
+    data: []
+    deployment: []
+  decisions: []
+  principles:
+    - id: principle.explicit_side_effects
+      statement: Consequential actions cross one explicit Nornyx authorization boundary.
+    - id: principle.independent_checks
+      statement: Deterministic architecture checks are separate from builder reasoning.
+  constraints:
+    - id: constraint.api_no_commands
+      statement: The API layer cannot invoke shell commands directly.
+      verified_by: architecture-check
+    - id: constraint.persistence_isolation
+      statement: Persistence does not depend on FastAPI, CrewAI, or subprocess execution.
+      verified_by: architecture-check
+  required_checks:
+    - id: architecture-check
+      tool: scripts/check_architecture.py
+      evidence_schema: nornyx.forge.architecture_report.v1
+      frequency: per_change
+      required: true
+  architecture_exceptions: []
+
+architecture_evidence: []

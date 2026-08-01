@@ -1,0 +1,100 @@
+nornyx: "0.2"
+project:
+  name: NornyxForgeLiveDemo
+  profile: agentic_repo_harness
+  purpose: Build and validate the public autonomous demonstration through bounded, evidence-backed software-delivery goals.
+
+intents:
+  - name: DeliverGovernedDemo
+    goal: Convert BRD.md into a running application while preserving repository, architecture, test, security, and evidence gates.
+
+contexts:
+  - name: RepoContext
+    include: [BRD.md, README.md, docs/**/*.md, src/**/*.py, src/demo_app/**/*, tests/**/*.py, .nornyx/contracts/*.nyx]
+    exclude: [.env, secrets/**, .venv/**, .nornyx/runs/**]
+    authority: [BRD.md, .nornyx/contracts/*.nyx, tests/**/*.py]
+    budget:
+      max_tokens: 100000
+      reserve_output_tokens: 8000
+
+agents:
+  - name: RequirementsAnalyst
+    role: Normalize requirements and acceptance criteria.
+    policy: SafeForgeDelivery
+  - name: RepoScout
+    role: Qualify reusable public repository foundations.
+    policy: SafeForgeDelivery
+  - name: SolutionArchitect
+    role: Design bounded components and architecture constraints.
+    policy: SafeForgeDelivery
+  - name: ApplicationBuilder
+    role: Implement one bounded goal with tests.
+    policy: SafeForgeDelivery
+  - name: IndependentReviewer
+    role: Review tests, architecture, security, and evidence without modifying implementation.
+    policy: IndependentReview
+
+skills:
+  - name: RequirementsDesign
+    purpose: Convert BRD requirements into traceable acceptance criteria.
+    input: [BRD]
+    output: [RequirementsModel]
+  - name: PatchBuild
+    purpose: Implement one bounded goal with tests.
+    input: [Goal, Architecture]
+    output: [Patch]
+  - name: IndependentInspection
+    purpose: Inspect implementation and evidence independently.
+    input: [Patch, TestReport, ArchitectureReport]
+    output: [ReviewReport]
+
+policies:
+  - name: SafeForgeDelivery
+    deny: [secrets_to_llm, production_write_without_approval, policy_weakening_for_green_build, destructive_command]
+    require: [tests_if_code_changed, architecture_evidence_if_boundary_changed, evidence_if_goal_completed]
+  - name: IndependentReview
+    deny: [reviewer_modifies_patch, autonomous_production_approval]
+    require: [risk_check, evidence_check, architecture_check, test_check]
+
+harnesses:
+  - name: ForgeDevelopmentHarness
+    context: RepoContext
+    flow:
+      - agent: RequirementsAnalyst
+        action: normalize
+      - agent: RepoScout
+        action: qualify_foundation
+      - agent: SolutionArchitect
+        action: design
+      - agent: ApplicationBuilder
+        action: implement
+      - tool: tests
+        action: run
+      - tool: architecture
+        action: check
+      - agent: IndependentReviewer
+        action: review
+      - tool: evidence
+        action: pack
+    gates: [tests.pass, architecture.pass, security.pass, evidence.exists]
+
+evidence:
+  required: [foundation-decision.json, build-summary.json, build-evidence-report.json]
+
+goals:
+  - id: GOAL-FORGE-001
+    title: Deliver the autonomous live demonstration
+    phase: demo-0.1
+    goal: Produce and run the complete customer-operations application and its governed CrewAI Flow.
+    scope: [src/, src/demo_app/, tests/, docs/, .nornyx/contracts/]
+    non_goals: [production_deployment, external_payment_execution, human_approval_claim]
+    validation: [pytest, python scripts/validate_repository.py, nornyx check .nornyx/contracts/forge_control.nyx]
+    evidence: .nornyx/runs/
+    approval: autonomous demonstration acceptance only; no production approval
+    stop_rules: [stop_on_secret_exposure, stop_after_three_failed_repairs, stop_on_unresolved_license_risk]
+
+budgets:
+  - name: ForgeBudget
+    max_tokens: 100000
+    max_tool_calls: 80
+    max_runtime_minutes: 90
