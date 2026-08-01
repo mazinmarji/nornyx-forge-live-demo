@@ -1,37 +1,197 @@
+"""Deterministic architecture conformance check.
+
+Dependency direction is derived from the declared architecture contract rather
+than from a hardcoded list, so a module that grows an undeclared first-party
+import fails this gate instead of passing silently.
+"""
+
 from __future__ import annotations
 
 import ast
 import json
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
+CONTRACT = ROOT / ".nornyx/contracts/architecture_governance.nyx"
 REPORT = ROOT / ".nornyx/architecture/conformance.json"
+SOURCE_ROOT = ROOT / "src"
+
 violations: list[str] = []
 
-rules = {
+
+def _module_path(dotted: str) -> Path:
+    return SOURCE_ROOT / (dotted.replace(".", "/") + ".py")
+
+
+def _imports(path: Path, relative: str, dotted: str | None = None) -> set[str]:
+    """Return the module names imported by one file.
+
+    Relative imports are resolved against ``dotted`` (the importing module's own
+    dotted name) so that `from .store import JsonStore` is recognised as a
+    dependency on `demo_app.store` and not silently ignored.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    package = dotted.rsplit(".", 1)[0] if dotted and "." in dotted else ""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.name)
+                names.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                parent = package
+                for _ in range(node.level - 1):
+                    parent = parent.rsplit(".", 1)[0] if "." in parent else ""
+                base = f"{parent}.{node.module}" if node.module else parent
+            else:
+                base = node.module or ""
+            if not base:
+                continue
+            names.add(base)
+            names.add(base.split(".")[0])
+            # `from package import module` also creates a module dependency.
+            for alias in node.names:
+                names.add(f"{base}.{alias.name}")
+    return names
+
+
+FIRST_PARTY_PACKAGES = {
+    entry.name for entry in SOURCE_ROOT.iterdir() if (entry / "__init__.py").exists()
+}
+
+architecture = yaml.safe_load(CONTRACT.read_text(encoding="utf-8")).get("architecture", {})
+declared_modules = {item["id"]: item for item in architecture.get("modules", [])}
+declared_layers = {item["id"]: item for item in architecture.get("layers", [])}
+module_by_name = {item["name"]: item for item in declared_modules.values()}
+
+# --- constraint.declared_dependencies_only and constraint.layer_direction ---
+for module_id, module in sorted(declared_modules.items()):
+    dotted = module["name"]
+    path = _module_path(dotted)
+    if not path.exists():
+        violations.append(f"declared module {module_id} has no source file at {path.relative_to(ROOT)}")
+        continue
+    relative = str(path.relative_to(ROOT)).replace("\\", "/")
+    allowed_ids = set(module.get("depends_on") or [])
+    allowed_names = {
+        declared_modules[dependency]["name"]
+        for dependency in allowed_ids
+        if dependency in declared_modules
+    }
+    own_layer = module.get("layer")
+    permitted_layers = set(declared_layers.get(own_layer, {}).get("may_depend_on") or [])
+    permitted_layers.add(own_layer)
+
+    for imported in sorted(_imports(path, relative, dotted)):
+        target = module_by_name.get(imported)
+        if target is None:
+            # A first-party source module that the architecture does not model at
+            # all is still an undeclared dependency, not an exempt import.
+            if (
+                imported.split(".")[0] in FIRST_PARTY_PACKAGES
+                and imported != dotted
+                and _module_path(imported).exists()
+            ):
+                violations.append(
+                    f"{relative} imports first-party module {imported}, "
+                    "which is not declared in the architecture contract"
+                )
+            continue
+        if target["id"] == module_id:
+            continue
+        if imported not in allowed_names:
+            violations.append(
+                f"{relative} imports undeclared dependency {imported} "
+                f"(not in {module_id}.depends_on)"
+            )
+            continue
+        target_layer = target.get("layer")
+        if target_layer not in permitted_layers:
+            violations.append(
+                f"{relative} depends on {imported} in {target_layer}, "
+                f"which {own_layer} may not depend on"
+            )
+
+# --- explicit forbidden-dependency rules retained from the declared constraints ---
+forbidden = {
     "src/demo_app/store.py": {"fastapi", "crewai", "subprocess"},
     "src/nornyx_forge/evidence.py": {"fastapi", "crewai", "demo_app"},
     "src/nornyx_forge/policy.py": {"fastapi", "demo_app"},
     "src/nornyx_forge/nornyx_runtime.py": {"fastapi", "demo_app"},
+    "src/demo_app/agentic.py": {"fastapi", "demo_app.store"},
 }
-for relative, forbidden in rules.items():
+for relative, banned in forbidden.items():
     path = ROOT / relative
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
-    imports: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imports.add(node.module.split(".")[0])
-    for name in sorted(imports & forbidden):
+    for name in sorted(_imports(path, relative) & banned):
         violations.append(f"{relative} imports forbidden dependency {name}")
 
+# --- constraint.bounded_external_adapter ---
+# Interface and application modules must delegate process execution. The
+# governance module (nornyx CLI) and infrastructure adapters (claude CLI) are the
+# declared places where an external process may be started.
+DELEGATING_LAYERS = {"layer.interface", "layer.application"}
+PROCESS_MODULES = {"subprocess", "pty"}
+PROCESS_CALLS = {
+    "os.system",
+    "os.popen",
+    "os.execl",
+    "os.execlp",
+    "os.execv",
+    "os.execvp",
+    "os.execve",
+    "os.spawnv",
+    "os.spawnvp",
+    "os.posix_spawn",
+}
+
+
+def _process_execution_markers(path: Path, relative: str) -> set[str]:
+    """Return concrete process-execution markers, by import and by call site."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    markers: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            markers.update(
+                alias.name
+                for alias in node.names
+                if alias.name.split(".")[0] in PROCESS_MODULES
+            )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in PROCESS_MODULES:
+                markers.add(node.module)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            owner = node.func.value
+            if isinstance(owner, ast.Name):
+                dotted = f"{owner.id}.{node.func.attr}"
+                if dotted in PROCESS_CALLS or owner.id in PROCESS_MODULES:
+                    markers.add(dotted)
+    return markers
+
+
+for module in declared_modules.values():
+    if module.get("layer") not in DELEGATING_LAYERS:
+        continue
+    path = _module_path(module["name"])
+    if not path.exists():
+        continue
+    relative = str(path.relative_to(ROOT)).replace("\\", "/")
+    for marker in sorted(_process_execution_markers(path, relative)):
+        violations.append(
+            f"{relative} performs process execution ({marker}) outside a declared adapter"
+        )
+
+# --- constraint.api_no_commands and governed action boundary ---
 main_text = (ROOT / "src/demo_app/main.py").read_text(encoding="utf-8")
 if "subprocess" in main_text or "os.system" in main_text:
     violations.append("API layer contains direct command execution")
 agentic_text = (ROOT / "src/demo_app/agentic.py").read_text(encoding="utf-8")
 if "NornyxActionBoundary" not in agentic_text:
     violations.append("runtime orchestration does not use the declared Nornyx action boundary")
+if "evaluate_and_execute" not in agentic_text:
+    violations.append("runtime orchestration does not route execution through the action boundary")
 if "action()" in main_text:
     violations.append("API layer appears to invoke a consequential action directly")
 
@@ -41,10 +201,14 @@ result = {
     "subject": "nornyx-forge-live-demo",
     "checks": [
         "dependency_direction",
+        "declared_dependencies_only",
+        "layer_direction",
+        "bounded_external_adapter",
         "api_command_isolation",
         "governed_action_boundary",
         "persistence_isolation",
     ],
+    "declared_modules": sorted(declared_modules),
     "violations": violations,
 }
 REPORT.parent.mkdir(parents=True, exist_ok=True)

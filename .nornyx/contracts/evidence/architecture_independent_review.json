@@ -1,0 +1,24 @@
+{
+  "builder_self_approval": false,
+  "generated_at": "2026-08-01T00:00:00Z",
+  "human_review": "not_performed",
+  "reviewer_type": "read_only_ai_inspector",
+  "reviewers": [
+    {
+      "role": "test-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "architecture-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "security-inspector",
+      "status": "pass"
+    }
+  ],
+  "schema": "nornyx.forge.independent_review_record.v1",
+  "source": ".nornyx/in-session/reviews.json",
+  "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
+  "subject_revision": "git:8a8fea6ac5068a6a359dfc407489264576329054"
+}

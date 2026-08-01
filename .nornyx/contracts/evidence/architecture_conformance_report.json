@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-08-01T00:00:00Z",
+  "producer": "scripts/check_architecture.py",
+  "report": {
+    "checks": [
+      "dependency_direction",
+      "declared_dependencies_only",
+      "layer_direction",
+      "bounded_external_adapter",
+      "api_command_isolation",
+      "governed_action_boundary",
+      "persistence_isolation"
+    ],
+    "declared_modules": [
+      "module.api",
+      "module.evidence",
+      "module.governance",
+      "module.persistence",
+      "module.runtime",
+      "module.shared_models",
+      "module.shared_util",
+      "module.worker_adapter"
+    ],
+    "schema": "nornyx.forge.architecture_report.v1",
+    "status": "pass",
+    "subject": "nornyx-forge-live-demo",
+    "violations": []
+  },
+  "schema": "nornyx.forge.architecture_report.v1",
+  "subject_revision": "git:8a8fea6ac5068a6a359dfc407489264576329054"
+}

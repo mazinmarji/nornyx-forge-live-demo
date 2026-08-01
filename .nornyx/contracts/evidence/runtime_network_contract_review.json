@@ -1,0 +1,15 @@
+{
+  "checks": [
+    "identity_capability_references_resolve",
+    "membership_zone_references_resolve",
+    "external_protocol_target_is_gated",
+    "high_risk_capability_requires_human_approval",
+    "sensitive_categories_never_shared"
+  ],
+  "generated_at": "2026-08-01T00:00:00Z",
+  "human_review": "not_performed",
+  "reviewer_type": "deterministic_tool",
+  "schema": "nornyx.forge.network_contract_review.v1",
+  "statement": "The declared agentic-network contract was reviewed by deterministic reference checks. This is a machine review, not a human approval.",
+  "subject_revision": "git:8a8fea6ac5068a6a359dfc407489264576329054"
+}

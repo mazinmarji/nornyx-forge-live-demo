@@ -7,7 +7,15 @@ from typing import Any
 
 from nornyx_forge.claude_worker import ClaudeCodeWorker
 from nornyx_forge.evidence import EvidenceLedger
-from nornyx_forge.nornyx_runtime import NornyxActionBoundary
+from nornyx_forge.nornyx_runtime import (
+    NornyxActionBoundary,
+    NornyxRuntimeUnavailable,
+    runtime_revision,
+)
+
+# Re-exported so the interface layer can handle a governed refusal without
+# importing the governance module directly.
+__all__ = ["CustomerCaseFlow", "NornyxRuntimeUnavailable", "run_case", "run_demo_scenarios"]
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -59,7 +67,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         self.case["mission_id"] = self.mission_id
         self.ledger = EvidenceLedger(
             root / "evidence/runtime/events.jsonl",
-            subject_revision="git:e9f554892ba8d070bfa14acf75896e032d3c75ec",
+            subject_revision=runtime_revision(root),
         )
         self.boundary = NornyxActionBoundary(root, allow_fallback=allow_policy_fallback)
         self.worker = ClaudeCodeWorker()
@@ -219,9 +227,20 @@ def run_case(
 def run_demo_scenarios(
     root: Path,
     *,
-    worker_mode: str = "deterministic",
-    allow_policy_fallback: bool = True,
+    worker_mode: str | None = None,
+    allow_policy_fallback: bool | None = None,
 ) -> dict[str, Any]:
+    """Run both demonstration cases.
+
+    ``worker_mode`` and ``allow_policy_fallback`` default to the same environment
+    resolution as :func:`run_case`, so a deployment that disables the fallback
+    fails closed here too instead of silently degrading.
+    """
+    worker_mode = worker_mode or os.getenv("FORGE_WORKER_MODE", "deterministic")
+    if allow_policy_fallback is None:
+        allow_policy_fallback = (
+            os.getenv("FORGE_ALLOW_POLICY_FALLBACK", "true").lower() == "true"
+        )
     runtime_dir = root / "evidence/runtime"
     for file in (runtime_dir / "events.jsonl", runtime_dir / "report.json"):
         if file.exists():
@@ -252,7 +271,7 @@ def run_demo_scenarios(
     )
     final_report = EvidenceLedger(
         runtime_dir / "events.jsonl",
-        subject_revision="git:e9f554892ba8d070bfa14acf75896e032d3c75ec",
+        subject_revision=runtime_revision(root),
     ).validate(report_path=runtime_dir / "report.json")
     status = (
         "pass"

@@ -117,11 +117,34 @@ def demo(
     if offline:
         from demo_app.agentic import run_demo_scenarios
 
-        result = run_demo_scenarios(
-            Path.cwd(),
-            worker_mode=worker_mode,
-            allow_policy_fallback=not strict_nornyx,
-        )
+        from .nornyx_runtime import NornyxRuntimeUnavailable
+
+        try:
+            result = run_demo_scenarios(
+                Path.cwd(),
+                worker_mode=worker_mode,
+                allow_policy_fallback=not strict_nornyx,
+            )
+        except NornyxRuntimeUnavailable as exc:
+            # Fail closed and legibly: no capability was authorized, so nothing ran.
+            console.print_json(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "reason": "nornyx_runtime_unavailable",
+                        "message": (
+                            "Strict mode refused the deterministic fallback and the "
+                            "Nornyx authorization path could not be established. "
+                            "No case was processed and no action executed."
+                        ),
+                        "detail": exc.detail,
+                        "assurance_mode": "autonomous_demonstration",
+                        "human_review": "not_performed",
+                        "production_approval": "not_granted",
+                    }
+                )
+            )
+            raise typer.Exit(2) from exc
         console.print_json(json.dumps(result))
         raise typer.Exit(0 if result["status"] == "pass" else 2)
     os.environ["FORGE_WORKER_MODE"] = worker_mode

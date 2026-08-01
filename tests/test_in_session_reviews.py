@@ -3,7 +3,6 @@ from pathlib import Path
 
 from nornyx_forge.development_flow import DevelopmentFlow
 
-
 REQUIRED_REVIEWS = [
     {"role": "test-inspector", "status": "pass", "findings": []},
     {"role": "architecture-inspector", "status": "pass", "findings": []},

@@ -10,8 +10,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agentic import run_case, run_demo_scenarios
+from .agentic import NornyxRuntimeUnavailable, run_case, run_demo_scenarios
 from .store import JsonStore
+
+GOVERNANCE_UNAVAILABLE = (
+    "The Nornyx authorization path is unavailable and the deterministic fallback "
+    "is disabled, so no capability can be authorized and no case may be processed. "
+    "This is a governed refusal, not an application error."
+)
 
 ROOT = Path(os.getenv("FORGE_ROOT", Path.cwd())).resolve()
 STATIC = Path(__file__).resolve().parent / "static"
@@ -80,7 +86,19 @@ def create_case(payload: CaseInput):
         "status": "queued",
         "timeline": [],
     }
-    case = run_case(case, root=ROOT)
+    try:
+        case = run_case(case, root=ROOT)
+    except NornyxRuntimeUnavailable as exc:
+        raise HTTPException(
+            503,
+            {
+                "error": "governance_unavailable",
+                "message": GOVERNANCE_UNAVAILABLE,
+                "detail": exc.detail,
+                "human_review": "not_performed",
+                "production_approval": "not_granted",
+            },
+        ) from exc
     STORE.put_case(case)
     return case
 
@@ -95,7 +113,19 @@ def get_case(case_id: str):
 
 @app.post("/api/demo/run")
 def run_demo():
-    result = run_demo_scenarios(ROOT)
+    try:
+        result = run_demo_scenarios(ROOT)
+    except NornyxRuntimeUnavailable as exc:
+        raise HTTPException(
+            503,
+            {
+                "error": "governance_unavailable",
+                "message": GOVERNANCE_UNAVAILABLE,
+                "detail": exc.detail,
+                "human_review": "not_performed",
+                "production_approval": "not_granted",
+            },
+        ) from exc
     STORE.put_case(result["low_risk"])
     STORE.put_case(result["high_risk"])
     return result

@@ -1,0 +1,9 @@
+# Nornyx verifies governance evidence by sha256 over the file's exact bytes, and
+# it verifies contracts that embed those hashes. Any end-of-line translation on
+# checkout would change the bytes and break verification on a fresh clone, so
+# these paths are never converted.
+.nornyx/contracts/evidence/** -text
+*.nyx -text
+
+# Everything else keeps normalised LF in the repository.
+* text=auto eol=lf
