@@ -23,7 +23,7 @@ ROOT = Path(os.getenv("FORGE_ROOT", Path.cwd())).resolve()
 STATIC = Path(__file__).resolve().parent / "static"
 STORE = JsonStore(ROOT / ".nornyx/demo-data.json")
 
-app = FastAPI(title="Nornyx Forge — Governed Customer Operations", version="0.2.0")
+app = FastAPI(title="Nornyx Forge — Governed Customer Operations", version="0.3.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 

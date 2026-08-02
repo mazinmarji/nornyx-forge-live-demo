@@ -104,10 +104,15 @@ approvals:
     accountable_authority: network_governance_owner
     revision_binding:
       kind: git
-      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
-    expires_at: "2026-08-08T00:00:00Z"
+    # Baseline placeholder, not a reviewer window. An authority declaration
+    # says who may approve and over what scope; it is not itself an approval.
+    # A dated value here would expire the public baseline. The real window is
+    # materialized from the signing instant by --materialize-approval-window
+    # when an approval instance is inserted, and Nornyx still caps it at P7D.
+    expires_at: "2099-01-01T00:00:00Z"
 
   # Action-bound authority. Distinct from agentic_network_authority: approving
   # the contract must never release an individual consequential effect.
@@ -131,25 +136,30 @@ approvals:
     accountable_authority: operations_owner
     revision_binding:
       kind: git
-      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
-    expires_at: "2026-08-08T00:00:00Z"
+    # Baseline placeholder, not a reviewer window. An authority declaration
+    # says who may approve and over what scope; it is not itself an approval.
+    # A dated value here would expire the public baseline. The real window is
+    # materialized from the signing instant by --materialize-approval-window
+    # when an approval instance is inserted, and Nornyx still caps it at P7D.
+    expires_at: "2099-01-01T00:00:00Z"
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
   records:
     - id: agentic_network_contract_review
       type: network_contract_review
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_network_contract_review.json
-      content_hash: sha256:0b49cb0a566cfad7eb0bb7c8c405b8b31051da650d12ac6c2691977152043fd6
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:d757e46976a7962c9528480b9d8949a44d9edfa979949d455ba2908557939308
+      subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
+      tool: {name: refresh_governance_evidence, version: "0.3.0"}
+      generated_at: "2026-08-02T12:40:41Z"
+      expires_at: "2099-01-01T00:00:00Z"
       status: pass
       dependencies: []
     - id: evidence_manifest
@@ -157,11 +167,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_evidence_manifest.json
-      content_hash: sha256:c8b86ebf2c35a2eb64aac7c128b4e91a4ed20278c055b582b5caea506adb7f7a
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:23ae14f5122530732278cac3d0414fc6d8d044c9dc392151d1250d91d3d38845
+      subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
+      tool: {name: refresh_governance_evidence, version: "0.3.0"}
+      generated_at: "2026-08-02T12:40:41Z"
+      expires_at: "2099-01-01T00:00:00Z"
       status: pass
       dependencies: [agentic_network_contract_review]
 
@@ -316,7 +326,7 @@ agent_identities:
 agentic_network:
   schema: nornyx.agentic_network.v1
   id: network.forge_customer_operations
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
   trust_zones:
     - id: zone.local_demo
       classification: governed_local

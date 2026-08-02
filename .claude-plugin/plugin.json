@@ -1,6 +1,6 @@
 {
   "name": "nornyx-forge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Build and run a Nornyx-governed application from a BRD using Claude Code and CrewAI Flows.",
   "author": {"name": "Mazin Marji and Nornyx Forge contributors"},
   "homepage": "https://github.com/mazinmarji/nornyx-forge-live-demo",

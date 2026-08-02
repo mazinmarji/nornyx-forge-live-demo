@@ -7,6 +7,7 @@ a governed decision rather than an unhandled traceback.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -126,16 +127,45 @@ def test_high_risk_is_withheld_even_when_nornyx_allows(tmp_path: Path) -> None:
 
 
 def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) -> None:
-    """The separate action approval is what releases it, nothing else."""
+    """The separate action approval is what releases it, nothing else.
+
+    The grant has to be bound to this exact request, so it is built from the
+    same ActionRequest the boundary constructs. A loose "granted: true" is no
+    longer sufficient, which is the point of the binding.
+    """
+    from nornyx_forge.nornyx_runtime import ActionRequest, runtime_as_of, runtime_revision
+
     boundary = _permissive_boundary(tmp_path)
+    request = ActionRequest(
+        request_id="REQ-TEST-RELEASED",
+        mission_id="TEST-RELEASED",
+        subject_revision=runtime_revision(tmp_path),
+        capability="execute_high_risk_effect",
+        destination="zone.external_customer",
+        effect="execute_high_risk_action",
+    )
+    now = datetime.fromisoformat(runtime_as_of().replace("Z", "+00:00"))
     executed: list[str] = []
     decision, result = boundary.evaluate_and_execute(
         mission_id="TEST-RELEASED",
         risk="high",
         action=lambda: executed.append("ran") or "ran",
-        action_approval={"granted": True, "approver": "human:operations_owner"},
+        action_approval={
+            "granted": True,
+            "approval_id": "ACT-TEST-0001",
+            "approver": "human:operations_owner",
+            "approver_type": "human",
+            "approver_role": "operations_owner",
+            "request_id": request.request_id,
+            "subject_revision": request.subject_revision,
+            "capability": request.capability,
+            "destination": request.destination,
+            "request_digest": request.digest,
+            "generated_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
     )
-    assert decision.effect == "ALLOW"
+    assert decision.effect == "ALLOW", decision.reason
     assert result == "ran"
     assert executed == ["ran"]
 

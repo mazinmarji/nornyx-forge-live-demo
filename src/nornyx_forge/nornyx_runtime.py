@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -92,12 +94,124 @@ def runtime_revision(root: Path | None = None) -> str:
 HIGH_RISK_LEVELS = frozenset({"high", "critical"})
 
 
+#: A human action approval may not outlive this window, matching the P7D cap
+#: Nornyx applies to agentic-network approval evidence.
+ACTION_APPROVAL_MAX_AGE = timedelta(days=7)
+
+#: Roles permitted to release a consequential effect, per high_risk_action_authority.
+ACTION_APPROVER_ROLES = frozenset({"operations_owner", "network_governance_owner"})
+
+
+@dataclass(frozen=True)
+class ActionRequest:
+    """One exact consequential request an approval may be bound to."""
+
+    request_id: str
+    mission_id: str
+    subject_revision: str
+    capability: str
+    destination: str
+    effect: str
+
+    @property
+    def digest(self) -> str:
+        """Content digest of the request, so an approval cannot be re-aimed."""
+        canonical = json.dumps(
+            {
+                "request_id": self.request_id,
+                "mission_id": self.mission_id,
+                "subject_revision": self.subject_revision,
+                "capability": self.capability,
+                "destination": self.destination,
+                "effect": self.effect,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def validate_action_approval(
+    approval: Mapping[str, Any] | None,
+    request: ActionRequest,
+    *,
+    as_of: str,
+    spent: set[str] | None = None,
+) -> tuple[bool, str]:
+    """Decide whether this approval releases *this* request, and only this one.
+
+    Every check is a reason to refuse. A grant is bound to one request id, one
+    subject revision, one capability, one destination, and one request digest,
+    so an approval obtained for a harmless action cannot be replayed against a
+    different or larger one. It is single-use and time-bounded.
+
+    Returns (released, reason). The reason is recorded either way, so a refusal
+    is always explainable.
+    """
+
+    if not isinstance(approval, Mapping):
+        return False, "no action-specific approval was supplied"
+    if approval.get("granted") is not True:
+        return False, "approval does not carry an explicit granted decision"
+
+    approval_id = approval.get("approval_id")
+    if not isinstance(approval_id, str) or not approval_id.strip():
+        return False, "approval has no identifier"
+    if spent is not None and approval_id in spent:
+        return False, f"approval {approval_id} was already used (replay refused)"
+
+    approver = approval.get("approver")
+    if not isinstance(approver, str) or not approver.strip():
+        return False, "approval names no human approver"
+    if str(approval.get("approver_type", "")).lower() != "human":
+        return False, "approver is not declared human"
+    role = str(approval.get("approver_role", ""))
+    if role not in ACTION_APPROVER_ROLES:
+        return False, f"approver role {role!r} may not release a high-risk effect"
+
+    for field, expected in (
+        ("request_id", request.request_id),
+        ("subject_revision", request.subject_revision),
+        ("capability", request.capability),
+        ("destination", request.destination),
+        ("request_digest", request.digest),
+    ):
+        actual = approval.get(field)
+        if actual != expected:
+            return False, (
+                f"approval {field} does not match this request "
+                f"({actual!r} != {expected!r})"
+            )
+
+    try:
+        generated = datetime.fromisoformat(
+            str(approval["generated_at"]).replace("Z", "+00:00")
+        )
+        expires = datetime.fromisoformat(
+            str(approval["expires_at"]).replace("Z", "+00:00")
+        )
+        moment = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        return False, "approval has no valid generated/expiry interval"
+    if generated.tzinfo is None or expires.tzinfo is None:
+        return False, "approval timestamps must be timezone-aware"
+    if expires <= generated:
+        return False, "approval expiry precedes its issue"
+    if expires - generated > ACTION_APPROVAL_MAX_AGE:
+        return False, "approval window exceeds the seven-day limit"
+    if moment < generated:
+        return False, "approval is not yet valid"
+    if moment >= expires:
+        return False, "approval has expired"
+
+    return True, f"released by action approval {approval_id}"
+
+
 def _action_approval_present(approval: Mapping[str, Any] | None) -> bool:
     """Return whether a usable action-specific human approval was supplied.
 
-    Deliberately strict: the approval must name a human approver and carry an
-    explicit granted decision. Anything else counts as absent, so a malformed or
-    partial value can never release a high-risk action.
+    Kept for the shape checks that do not depend on a specific request. Binding
+    to an exact request is done by :func:`validate_action_approval`.
     """
 
     if not isinstance(approval, Mapping):
@@ -239,6 +353,8 @@ class NornyxActionBoundary:
         self.root = root
         self.allow_fallback = allow_fallback
         self.as_of = runtime_as_of(as_of)
+        #: Approval ids already spent. An approval releases one action, once.
+        self.spent_approvals: set[str] = set()
         self.authorizer: Any | None = None
         self.context: Any | None = None
         self._imports: dict[str, Any] = {}
@@ -304,7 +420,7 @@ class NornyxActionBoundary:
             self.authorizer,
             self.context,
             producer_id="nornyx-forge-live-demo",
-            producer_version="0.2.0",
+            producer_version="0.3.0",
             producer_type="external_runtime",
         )
         if high_risk:
@@ -337,10 +453,31 @@ class NornyxActionBoundary:
         nornyx_reason = decision.reason or nornyx_code
 
         # Approving the agentic-network contract is not approving an individual
-        # consequential action. A high-risk action additionally requires an
-        # action-specific human approval, so a contract approval can never on its
-        # own release an external effect. This only ever narrows the decision.
-        withheld = high_risk and decision.allowed and not _action_approval_present(action_approval)
+        # consequential action. A high-risk effect additionally requires an
+        # approval bound to this exact request, so a contract approval can never
+        # on its own release an external effect, and an approval obtained for one
+        # action can never release another. This only ever narrows the decision.
+        release_reason = "not evaluated"
+        if high_risk and decision.allowed:
+            request = ActionRequest(
+                request_id=f"REQ-{mission_id}",
+                mission_id=mission_id,
+                subject_revision=runtime_revision(self.root),
+                capability=capability_name,
+                destination="zone.external_customer",
+                effect="execute_high_risk_action",
+            )
+            released, release_reason = validate_action_approval(
+                action_approval,
+                request,
+                as_of=self.as_of,
+                spent=self.spent_approvals,
+            )
+            if released:
+                self.spent_approvals.add(str(action_approval["approval_id"]))
+            withheld = not released
+        else:
+            withheld = False
         if withheld:
             recorder.record_observation(
                 "action_withheld",
@@ -369,6 +506,7 @@ class NornyxActionBoundary:
                     "reason": nornyx_reason,
                 },
                 "action_approval_present": _action_approval_present(action_approval),
+                "action_binding": release_reason,
             }
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -379,8 +517,8 @@ class NornyxActionBoundary:
                 effect="DENY",
                 code="HUMAN_APPROVAL_REQUIRED",
                 reason=(
-                    "Nornyx authorized the declared capability, but no action-specific "
-                    "human approval was supplied for this high-risk action. Contract "
+                    "Nornyx authorized the declared capability, but this high-risk "
+                    "effect was not released: " + release_reason + ". Contract "
                     "approval does not authorize an individual consequential action."
                 ),
                 source="nornyx.agentic",

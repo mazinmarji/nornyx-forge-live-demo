@@ -28,6 +28,20 @@ INDEX_PATH = EVIDENCE_DIR / "INDEX.json"
 # evidence is capped at P7D by nornyx.builtin.module.agentic_network_governance.
 DEFAULT_WINDOW_DAYS = 365
 
+#: Machine-generated evidence is bound by content hash and subject revision, so
+#: any change to what it describes invalidates it immediately. A wall-clock
+#: window adds nothing and only rots the public baseline. Human approval is the
+#: opposite: authority genuinely decays, and Nornyx caps it at P7D. Keeping the
+#: two separate is what lets the baseline stay reviewer-ready indefinitely while
+#: real approvals stay short-lived.
+MACHINE_EVIDENCE_EXPIRES = "2099-01-01T00:00:00Z"
+
+#: Read from the package so tool metadata cannot drift from the release.
+try:
+    from nornyx_forge import __version__ as TOOL_VERSION
+except Exception:  # pragma: no cover - packaging boundary
+    TOOL_VERSION = "0.0.0"
+
 
 def _revision() -> str:
     result = subprocess.run(
@@ -100,13 +114,17 @@ def _architecture_report() -> dict:
         raise SystemExit(f"architecture checker did not emit JSON: {exc}") from exc
 
 
-def build(generated_at: datetime, window_days: int) -> dict:
+def build(generated_at: datetime, window_days: int | None) -> dict:
     # Once a human has approved an exact revision, every regenerated record stays
     # bound to it. Stamping fresh records with HEAD would leave the evidence
     # describing a revision nobody approved.
     revision = _approved_revision() or _revision()
     generated = _iso(generated_at)
-    expires = _iso(generated_at + timedelta(days=window_days))
+    expires = (
+        MACHINE_EVIDENCE_EXPIRES
+        if window_days is None
+        else _iso(generated_at + timedelta(days=window_days))
+    )
     report = _architecture_report()
     arch_status = "pass" if report.get("status") == "pass" else "fail"
 
@@ -470,6 +488,52 @@ def _approval_state() -> dict:
     return state
 
 
+def materialize_approval_window() -> dict:
+    """Set the authority declarations' expiry from the real signing instant.
+
+    An authority declaration says who may approve and over what scope. It is not
+    itself an approval, so the committed baseline carries a far-future
+    placeholder rather than a date that would expire the public tree.
+
+    When a real approval instance is inserted, its window becomes the
+    declaration's window. Nothing is invented here: the value comes from the
+    record the human signed, and Nornyx still enforces the P7D cap on top.
+    """
+
+    windows = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in EVIDENCE_DIR.glob("*human_approval.json")
+    }
+    if not windows:
+        return {"status": "no_approval_present", "changes": []}
+    expiries = {payload["expires_at"] for payload in windows.values()}
+    if len(expiries) > 1:
+        raise SystemExit(
+            "human approvals declare different expiries: " + ", ".join(sorted(expiries))
+        )
+    expires = expiries.pop()
+
+    changes: list[str] = []
+    for contract in CONTRACTS:
+        original = contract.read_text(encoding="utf-8")
+        lines = original.splitlines(keepends=True)
+        block: str | None = None
+        for position, line in enumerate(lines):
+            top_level = _TOP_LEVEL_RE.match(line)
+            if top_level:
+                block = top_level.group(1)
+            if block != "approvals":
+                continue
+            moment = _TIMESTAMP_RE.match(line)
+            if moment and moment.group("field") == "expires_at" and expires not in line:
+                lines[position] = f'{moment.group("lead")}"{expires}"\n'
+                changes.append(f"{contract.name}: authority expiry -> {expires}")
+        rewritten = "".join(lines)
+        if rewritten != original:
+            contract.write_text(rewritten, encoding="utf-8", newline="")
+    return {"status": "materialized", "expires_at": expires, "changes": changes}
+
+
 def _head_commit() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=False
@@ -589,12 +653,23 @@ def verify() -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--as-of", help="UTC timestamp used as generated_at")
-    parser.add_argument("--window-days", type=int, default=DEFAULT_WINDOW_DAYS)
+    parser.add_argument(
+        "--window-days",
+        type=int,
+        default=None,
+        help="Optional finite freshness window for machine evidence; the "
+        "default keeps it bound by revision and hash instead of the clock",
+    )
     parser.add_argument("--verify", action="store_true", help="Check artifacts only")
     parser.add_argument(
         "--sync-contracts",
         action="store_true",
         help="Rebind contract revisions and digests to the generated index",
+    )
+    parser.add_argument(
+        "--materialize-approval-window",
+        action="store_true",
+        help="Set authority declaration expiry from an inserted approval",
     )
     parser.add_argument(
         "--review-binding",
@@ -606,6 +681,10 @@ def main() -> int:
     if args.sync_contracts:
         changes = sync_contracts()
         print(json.dumps({"status": "synced", "changes": changes}, indent=2))
+        return 0
+
+    if args.materialize_approval_window:
+        print(json.dumps(materialize_approval_window(), indent=2))
         return 0
 
     if args.review_binding:

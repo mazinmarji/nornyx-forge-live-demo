@@ -58,9 +58,12 @@ def _diagnostics(output: str) -> list[dict]:
     return found
 
 
-def _check(contract: str, executable: str) -> dict:
+def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
+    command = [executable, "check", contract]
+    if as_of:
+        command += ["--as-of", as_of]
     completed = subprocess.run(
-        [executable, "check", contract],
+        command,
         cwd=ROOT,
         text=True,
         capture_output=True,
@@ -94,6 +97,11 @@ def main() -> int:
         action="store_true",
         help="Exit 0 only if every governance contract already validates",
     )
+    parser.add_argument(
+        "--as-of",
+        help="Evaluate at an explicit instant; proves the baseline does not "
+        "rot as the clock advances",
+    )
     args = parser.parse_args()
 
     executable = shutil.which("nornyx")
@@ -101,7 +109,9 @@ def main() -> int:
         print(json.dumps({"status": "fail", "error": "nornyx CLI not installed"}, indent=2))
         return 2
 
-    results = [_check(contract, executable) for contract in GOVERNANCE_CONTRACTS]
+    results = [
+        _check(contract, executable, args.as_of) for contract in GOVERNANCE_CONTRACTS
+    ]
 
     if args.has_approval:
         # Used by CI to decide whether the strict-authorization path can run.
@@ -115,6 +125,7 @@ def main() -> int:
             "Governance contracts must fail only because a human approval record "
             "is absent. Any other diagnostic is a defect."
         ),
+        "evaluated_at": args.as_of or "now",
         "human_approval_present": all(item["validates"] for item in results),
         "contracts": results,
     }
