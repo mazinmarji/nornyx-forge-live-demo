@@ -38,7 +38,13 @@ policies:
     require: [independent_conformance_check, explicit_exception_for_violation]
 
 evidence:
-  required: []
+  required:
+    - architecture_conformance_report
+    - independent_review_record
+    - exception_review_record
+    - change_record
+    - approval_record
+    - evidence_manifest
 
 goals:
   - id: GOAL-ARCH-001
@@ -59,27 +65,147 @@ approvals:
     required_roles: [architect]
     eligible_roles: [architect, architecture_reviewer]
     denied_actor_types: [ai_tool, execution_surface, autonomous_agent, model, connector, generated_output]
-    required_evidence: []
+    required_evidence: [architecture_conformance_report, independent_review_record, approval_record]
     required_for: [approve_architecture, merge_architecture_change]
     timing: before_merge
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
       exact: true
     invalidation_conditions: [revision_change, scope_change]
     expires_at: "2099-01-01T00:00:00Z"
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
-  records: []
+  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  records:
+    - id: architecture_conformance_report
+      type: architecture_evidence
+      schema_id: nornyx.architecture_evidence.v1
+      producer: {id: tool:check_architecture, type: tool}
+      artifact: evidence/architecture_conformance_report.json
+      content_hash: sha256:c5508c8c78ee4af2164491f803d45ad31986c70386726c935360fa0c0a35368d
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: check_architecture, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: []
+    - id: independent_review_record
+      type: independent_review_record
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:in_session_inspectors, type: tool}
+      artifact: evidence/architecture_independent_review.json
+      content_hash: sha256:6ebd4325056d9cfd92008e495c3de038abe46899cec8720a710eeda3a752a7d9
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: in_session_inspectors, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: []
+    - id: exception_review_record
+      type: exception_review_record
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:forge_gates, type: tool}
+      artifact: evidence/architecture_exception_review.json
+      content_hash: sha256:1eecedfbddcb11ad20d5977782c487e86ff2125bcaced595324506e2e32f8581
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: forge_gates, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: []
+    - id: change_record
+      type: change_record
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:forge_gates, type: tool}
+      artifact: evidence/architecture_change_record.json
+      content_hash: sha256:645232821d8701ca24ad166c3ba648c9fc6a985f517b20cddb863c5520b715a4
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: forge_gates, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: [architecture_conformance_report]
+    - id: approval_record
+      type: approval_record
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: system:autonomous_demonstration, type: system}
+      artifact: evidence/architecture_approval_record.json
+      content_hash: sha256:6d95d3f7e87389b21c58a2de548023b6f561d508e558d7c19a72025b48d1206e
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: refresh_governance_evidence, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: observed
+      dependencies: []
+    - id: evidence_manifest
+      type: evidence_manifest
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:refresh_governance_evidence, type: tool}
+      artifact: evidence/architecture_evidence_manifest.json
+      content_hash: sha256:a4bd4daca209ce778502eae1901a2575a7fbfc9469928e7b1301cd4a287eaf59
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: refresh_governance_evidence, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: [architecture_conformance_report, exception_review_record, change_record]
 
-changes: []
+changes:
+  - schema: nornyx.change.v1
+    id: architecture.nornyx_forge_demo
+    type: governance_contract_completion
+    purpose: Bind the architecture contract to the actual repository revision and supply the required conformance evidence.
+    status: proposed
+    transition:
+      from: draft
+      to: proposed
+      evidence: [architecture_conformance_report, change_record]
+    scope: [architecture.governance_contract, architecture.conformance_evidence]
+    excluded_scope: []
+    risk_tier: medium
+    blast_radius: component
+    reversibility: reversible
+    rollback_required: false
+    rollback_plan_artifact: null
+    irreversible_authority: null
+    impacts:
+      security: none
+      architecture: none
+      data: none
+      dependency: none
+      operational: minor
+    required_controls: [architecture_conformance_policy, separation_of_duties_policy]
+    required_evidence: [architecture_conformance_report, change_record, independent_review_record]
+    approver_roles: [architect]
+    approval_ids: [ArchitectureAuthority]
+    separation_of_duties:
+      author_role: repository_maintainer
+      approver_role: architect
+      disjoint: true
+    revision_binding:
+      kind: git
+      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      exact: true
+      scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
+    approval_invalidated_on: [revision_change, scope_change]
+    exceptions: []
 
 separation_of_duties:
   schema: nornyx.separation_of_duties.v1
-  assignments: []
+  assignments:
+    - subject: architecture.nornyx_forge_demo
+      risk_tier: medium
+      author: human:repository_maintainer
+      approvers: [human:architect]
+      evidence_producers: [tool:check_architecture, tool:in_session_inspectors]
+      require_evidence_independence: true
+      release_requester: null
+      final_release_approver: null
+      exception_requester: null
+      exception_approver: null
 
 exceptions:
   schema: nornyx.governance_exceptions.v1
@@ -88,7 +214,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -104,7 +230,7 @@ architecture:
   systems:
     - id: system.forge
       name: Nornyx Forge
-      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence]
+      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel]
   components:
     - id: component.api
       name: FastAPI and dashboard boundary
@@ -121,7 +247,7 @@ architecture:
       bounded_context: context.operations
       canonical: true
       modules: [module.runtime]
-      depends_on: [component.governance, component.evidence]
+      depends_on: [component.governance, component.evidence, component.worker_adapter]
     - id: component.governance
       name: Nornyx authorization and contracts
       system: system.forge
@@ -146,6 +272,22 @@ architecture:
       canonical: true
       modules: [module.persistence]
       depends_on: []
+    - id: component.worker_adapter
+      name: Bounded external Claude Code worker adapter
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.worker_adapter]
+      depends_on: [component.shared_kernel]
+    - id: component.shared_kernel
+      name: Dependency-free shared models and helpers
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.shared_models, module.shared_util]
+      depends_on: []
   modules:
     - id: module.api
       name: demo_app.main
@@ -156,21 +298,36 @@ architecture:
       name: demo_app.agentic
       component: component.runtime
       layer: layer.application
-      depends_on: [module.governance, module.evidence]
+      depends_on: [module.governance, module.evidence, module.worker_adapter]
     - id: module.governance
       name: nornyx_forge.nornyx_runtime
       component: component.governance
       layer: layer.domain
-      depends_on: []
+      depends_on: [module.shared_models, module.shared_util]
     - id: module.evidence
       name: nornyx_forge.evidence
       component: component.evidence
       layer: layer.domain
-      depends_on: []
+      depends_on: [module.shared_util]
     - id: module.persistence
       name: demo_app.store
       component: component.persistence
       layer: layer.infrastructure
+      depends_on: []
+    - id: module.worker_adapter
+      name: nornyx_forge.claude_worker
+      component: component.worker_adapter
+      layer: layer.adapter
+      depends_on: [module.shared_models]
+    - id: module.shared_models
+      name: nornyx_forge.models
+      component: component.shared_kernel
+      layer: layer.domain
+      depends_on: []
+    - id: module.shared_util
+      name: nornyx_forge.util
+      component: component.shared_kernel
+      layer: layer.domain
       depends_on: []
   layers:
     - id: layer.interface
@@ -178,10 +335,13 @@ architecture:
       may_depend_on: [layer.application, layer.infrastructure]
     - id: layer.application
       name: Application
-      may_depend_on: [layer.domain]
+      may_depend_on: [layer.domain, layer.adapter]
     - id: layer.domain
       name: Domain and governance
       may_depend_on: []
+    - id: layer.adapter
+      name: Bounded external adapters
+      may_depend_on: [layer.domain]
     - id: layer.infrastructure
       name: Infrastructure
       may_depend_on: []
@@ -210,12 +370,32 @@ architecture:
     - id: constraint.persistence_isolation
       statement: Persistence does not depend on FastAPI, CrewAI, or subprocess execution.
       verified_by: architecture-check
+    - id: constraint.declared_dependencies_only
+      statement: Every first-party import of a declared module must appear in that module's declared depends_on.
+      verified_by: architecture-check
+    - id: constraint.layer_direction
+      statement: A module may only depend on modules whose layer is permitted by its own layer's may_depend_on.
+      verified_by: architecture-check
+    - id: constraint.bounded_external_adapter
+      statement: Interface and application modules never execute processes directly; they delegate to the governance module or a declared infrastructure adapter.
+      verified_by: architecture-check
   required_checks:
     - id: architecture-check
       tool: scripts/check_architecture.py
-      evidence_schema: nornyx.forge.architecture_report.v1
+      evidence_schema: nornyx.architecture_evidence.v1
       frequency: per_change
       required: true
   architecture_exceptions: []
 
-architecture_evidence: []
+architecture_evidence:
+  - schema: nornyx.architecture_evidence.v1
+    check_id: architecture-check
+    tool: scripts/check_architecture.py
+    tool_version: "0.2.0"
+    status: pass
+    subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+    generated_at: "2026-08-02T06:23:12Z"
+    expires_at: "2027-08-02T06:23:12Z"
+    violations: []
+    artifact: evidence/architecture_conformance_report.json
+    artifact_sha256: sha256:c5508c8c78ee4af2164491f803d45ad31986c70386726c935360fa0c0a35368d

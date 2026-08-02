@@ -62,7 +62,10 @@ policies:
       - human_approval_for_external_high_risk_action
 
 evidence:
-  required: []
+  required:
+    - agentic_network_contract_review
+    - approval_record
+    - evidence_manifest
 
 goals:
   - id: GOAL-RUNTIME-001
@@ -82,9 +85,9 @@ goals:
       - stop_on_contract_or_lock_mismatch
 
 approvals:
-  - name: runtime_human_authority
-    required_roles: [human_operations_owner]
-    eligible_roles: [human_operations_owner]
+  - name: agentic_network_authority
+    required_roles: [network_governance_owner]
+    eligible_roles: [network_governance_owner, security_reviewer, architecture_reviewer]
     denied_actor_types:
       - ai_tool
       - execution_surface
@@ -92,21 +95,48 @@ approvals:
       - model
       - connector
       - generated_output
-    required_evidence: []
-    required_for: [execute_high_risk_action, external_share]
+    required_evidence: [agentic_network_contract_review, approval_record]
+    # Scoped to approving the network contract and the declared external-share
+    # boundary. It deliberately does NOT cover execute_high_risk_action: a
+    # contract approval must not authorize an individual consequential action.
+    required_for: [approve_agentic_network_contract, external_share]
     timing: before_action
-    accountable_authority: human_operations_owner
+    accountable_authority: network_governance_owner
     revision_binding:
       kind: git
-      revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
       exact: true
-    invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, scope_change]
-    expires_at: "2099-01-01T00:00:00Z"
+    invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
+    expires_at: "2026-08-08T00:00:00Z"
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
-  records: []
+  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  records:
+    - id: agentic_network_contract_review
+      type: network_contract_review
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:refresh_governance_evidence, type: tool}
+      artifact: evidence/runtime_network_contract_review.json
+      content_hash: sha256:0b49cb0a566cfad7eb0bb7c8c405b8b31051da650d12ac6c2691977152043fd6
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: refresh_governance_evidence, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: []
+    - id: evidence_manifest
+      type: evidence_manifest
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: tool:refresh_governance_evidence, type: tool}
+      artifact: evidence/runtime_evidence_manifest.json
+      content_hash: sha256:c8b86ebf2c35a2eb64aac7c128b4e91a4ed20278c055b582b5caea506adb7f7a
+      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      tool: {name: refresh_governance_evidence, version: "0.2.0"}
+      generated_at: "2026-08-02T06:23:12Z"
+      expires_at: "2027-08-02T06:23:12Z"
+      status: pass
+      dependencies: [agentic_network_contract_review]
 
 capabilities:
   - name: read_demo_case
@@ -143,8 +173,8 @@ capabilities:
     scope_refs: [DemoCaseContext]
     delegable: false
     required_gate_refs: [gate.external_execution]
-    required_approval_refs: [runtime_human_authority]
-    required_evidence_refs: []
+    required_approval_refs: [agentic_network_authority]
+    required_evidence_refs: [agentic_network_contract_review]
   - name: validate_runtime_evidence
     actions: [validate_evidence]
     risk: low
@@ -244,7 +274,7 @@ agent_identities:
 agentic_network:
   schema: nornyx.agentic_network.v1
   id: network.forge_customer_operations
-  subject_revision: git:e9f554892ba8d070bfa14acf75896e032d3c75ec
+  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
   trust_zones:
     - id: zone.local_demo
       classification: governed_local
@@ -323,16 +353,16 @@ agentic_network:
       share: [decision, evidence_digest]
       never_share: [secrets, credentials, tokens, private_memory]
       required_gate_refs: [gate.external_execution]
-      required_approval_refs: [runtime_human_authority]
-      required_evidence_refs: []
+      required_approval_refs: [agentic_network_authority]
+      required_evidence_refs: [agentic_network_contract_review]
   network_gates:
     - id: gate.external_execution
       action_classes: [execute_high_risk_action, external_share]
       source_zone_refs: [zone.local_demo]
       target_zone_refs: [zone.external_customer]
       required_policy_refs: [RuntimeGovernance]
-      required_approval_refs: [runtime_human_authority]
-      required_evidence_refs: []
+      required_approval_refs: [agentic_network_authority]
+      required_evidence_refs: [agentic_network_contract_review]
   revocations: []
   delegations: []
   handoffs: []
@@ -340,4 +370,4 @@ agentic_network:
     - id: relation.execution_approval
       type: requires_approval_from
       source: {kind: capability, ref: execute_high_risk_action}
-      target: {kind: human_role, ref: human_operations_owner}
+      target: {kind: human_role, ref: network_governance_owner}

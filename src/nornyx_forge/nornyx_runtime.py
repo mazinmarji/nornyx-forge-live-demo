@@ -1,17 +1,128 @@
 from __future__ import annotations
 
-import json
+import os
+import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from .models import GateResult
 from .util import write_json
 
-RUNTIME_AS_OF = "2026-08-01T12:00:00Z"
-RUNTIME_REVISION = "git:e9f554892ba8d070bfa14acf75896e032d3c75ec"
+#: Pin the evaluation instant for a reproducible run (CI, fixtures, demos).
+RUNTIME_AS_OF_ENV = "FORGE_RUNTIME_AS_OF"
+#: Override the governed subject revision when the contract cannot be read.
+RUNTIME_REVISION_ENV = "FORGE_RUNTIME_REVISION"
+
+RUNTIME_CONTRACT = ".nornyx/contracts/runtime_network.nyx"
+_UNBOUND_REVISION = "git:unbound"
+_REVISION_RE = re.compile(r"^(?:git:[0-9a-f]{40}|git:[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
+_SUBJECT_REVISION_RE = re.compile(
+    r"^\s{2}subject_revision:\s*(\S+)\s*$", re.MULTILINE
+)
+
+
+def runtime_as_of(explicit: str | None = None) -> str:
+    """Return the instant Nornyx must evaluate temporal validity against.
+
+    Defaults to the real current time, so an approval issued now is judged
+    against now and the seven-day expiry rule measures real elapsed time. A run
+    that needs determinism pins the instant explicitly, either by argument or via
+    ``FORGE_RUNTIME_AS_OF``.
+
+    A supplied value must be an explicit timezone-aware timestamp. Anything else
+    raises instead of silently falling back to the live clock, so a malformed pin
+    can never widen a validity window by accident.
+    """
+
+    raw = explicit if explicit is not None else os.getenv(RUNTIME_AS_OF_ENV)
+    if raw is not None and not raw.strip():
+        # Set-but-blank is a configuration mistake, not a request for the live
+        # clock. Falling back silently would hide a broken pin.
+        raise ValueError(f"{RUNTIME_AS_OF_ENV} is set but empty")
+    if raw is None:
+        moment = datetime.now(timezone.utc)
+    else:
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                f"{RUNTIME_AS_OF_ENV} must be an ISO-8601 timestamp, got {raw!r}"
+            ) from exc
+        if parsed.tzinfo is None:
+            raise ValueError(
+                f"{RUNTIME_AS_OF_ENV} must be timezone-aware, got {raw!r}"
+            )
+        moment = parsed
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def runtime_revision(root: Path | None = None) -> str:
+    """Return the governed subject revision the runtime contract declares.
+
+    The contract is the single source of truth, so the code can never disagree
+    with the declaration Nornyx validates. Returns ``git:unbound`` when no
+    contract is present, which keeps evidence honestly labelled rather than
+    claiming a binding that does not exist.
+    """
+
+    override = os.getenv(RUNTIME_REVISION_ENV)
+    if override and _REVISION_RE.fullmatch(override.strip()):
+        return override.strip()
+    contract = (root or Path.cwd()) / RUNTIME_CONTRACT
+    try:
+        text = contract.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # An unreadable or non-UTF-8 contract yields an honest "unbound" rather
+        # than raising out of an evidence-labelling path.
+        return _UNBOUND_REVISION
+    for match in _SUBJECT_REVISION_RE.finditer(text):
+        candidate = match.group(1).strip().strip("\"'")
+        if _REVISION_RE.fullmatch(candidate):
+            return candidate
+    return _UNBOUND_REVISION
+
+
+#: Risk levels that require an action-specific human approval, never merely a
+#: contract approval, before a consequential effect may be released.
+HIGH_RISK_LEVELS = frozenset({"high", "critical"})
+
+
+def _action_approval_present(approval: Mapping[str, Any] | None) -> bool:
+    """Return whether a usable action-specific human approval was supplied.
+
+    Deliberately strict: the approval must name a human approver and carry an
+    explicit granted decision. Anything else counts as absent, so a malformed or
+    partial value can never release a high-risk action.
+    """
+
+    if not isinstance(approval, Mapping):
+        return False
+    approver = approval.get("approver")
+    granted = approval.get("granted")
+    return (
+        granted is True
+        and isinstance(approver, str)
+        and approver.strip() != ""
+        and str(approval.get("approver_type", "human")).lower() == "human"
+    )
+
+
+class NornyxRuntimeUnavailable(RuntimeError):
+    """The official Nornyx authorization path could not be established.
+
+    Raised only when the deterministic fallback is refused. Callers should treat
+    this as a governed refusal to act, not as an unexpected crash: no capability
+    was authorized, so no action may run.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -27,8 +138,13 @@ class RuntimeDecision:
         return self.effect == "ALLOW"
 
 
-def prepare_runtime_contract(root: Path) -> list[GateResult]:
+def prepare_runtime_contract(root: Path, *, as_of: str | None = None) -> list[GateResult]:
     """Validate, generate, lock, and verify the runtime contract with Nornyx.
+
+    Every step receives the same explicit evaluation instant, including the
+    initial ``check``. Leaving ``check`` on the live clock while the lock steps
+    used a pinned instant meant the two could disagree about whether an approval
+    was still valid.
 
     The generated artifacts are intentionally outside tracked source. When the
     CLI is unavailable the caller receives a failed gate rather than a fabricated
@@ -38,13 +154,14 @@ def prepare_runtime_contract(root: Path) -> list[GateResult]:
     executable = shutil.which("nornyx")
     if not executable:
         return [GateResult("nornyx runtime preparation", False, "nornyx CLI not installed", (), 127)]
-    contract = root / ".nornyx/contracts/runtime_network.nyx"
+    moment = runtime_as_of(as_of)
+    contract = root / RUNTIME_CONTRACT
     out = root / ".nornyx/runtime"
     artifacts = out / "control_artifacts"
     lock = out / "nornyx.agentic_network.lock"
     out.mkdir(parents=True, exist_ok=True)
     commands = [
-        (executable, "check", str(contract)),
+        (executable, "check", str(contract), "--as-of", moment),
         (
             executable,
             "agentic-network",
@@ -53,7 +170,7 @@ def prepare_runtime_contract(root: Path) -> list[GateResult]:
             "--out",
             str(artifacts),
             "--as-of",
-            RUNTIME_AS_OF,
+            moment,
         ),
         (
             executable,
@@ -65,7 +182,7 @@ def prepare_runtime_contract(root: Path) -> list[GateResult]:
             "--out",
             str(lock),
             "--as-of",
-            RUNTIME_AS_OF,
+            moment,
         ),
         (
             executable,
@@ -77,7 +194,7 @@ def prepare_runtime_contract(root: Path) -> list[GateResult]:
             "--artifacts",
             str(artifacts),
             "--as-of",
-            RUNTIME_AS_OF,
+            moment,
         ),
     ]
     results: list[GateResult] = []
@@ -112,9 +229,16 @@ class NornyxActionBoundary:
     offline CI and is always labelled as fallback evidence.
     """
 
-    def __init__(self, root: Path, *, allow_fallback: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        allow_fallback: bool = True,
+        as_of: str | None = None,
+    ) -> None:
         self.root = root
         self.allow_fallback = allow_fallback
+        self.as_of = runtime_as_of(as_of)
         self.authorizer: Any | None = None
         self.context: Any | None = None
         self._imports: dict[str, Any] = {}
@@ -128,16 +252,16 @@ class NornyxActionBoundary:
                 load_authorizer,
             )
 
-            contract = root / ".nornyx/contracts/runtime_network.nyx"
+            contract = root / RUNTIME_CONTRACT
             lock = root / ".nornyx/runtime/nornyx.agentic_network.lock"
             if not lock.exists():
-                prepared = prepare_runtime_contract(root)
+                prepared = prepare_runtime_contract(root, as_of=self.as_of)
                 if not prepared or not all(item.passed for item in prepared):
                     detail = prepared[-1].detail if prepared else "no preparation result"
                     raise RuntimeError(detail)
-            authorizer = load_authorizer(contract, lock, validation_as_of=RUNTIME_AS_OF)
+            authorizer = load_authorizer(contract, lock, validation_as_of=self.as_of)
             context = EvaluationContext(
-                decision_at=RUNTIME_AS_OF,
+                decision_at=self.as_of,
                 observed_subject_revision=authorizer.subject_revision,
             )
             self.authorizer = authorizer
@@ -150,7 +274,7 @@ class NornyxActionBoundary:
         except Exception as exc:  # optional dependency / contract preparation boundary
             self.load_error = f"{type(exc).__name__}: {exc}"
             if not allow_fallback:
-                raise
+                raise NornyxRuntimeUnavailable(self.load_error) from exc
 
     @property
     def mode(self) -> str:
@@ -162,12 +286,12 @@ class NornyxActionBoundary:
         mission_id: str,
         risk: str,
         action: Callable[[], str],
+        action_approval: Mapping[str, Any] | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
+        high_risk = risk.lower() in HIGH_RISK_LEVELS
         capability_name = (
-            "execute_high_risk_action"
-            if risk.lower() in {"high", "critical"}
-            else "execute_low_risk_action"
+            "execute_high_risk_action" if high_risk else "execute_low_risk_action"
         )
         CapabilityRequest = self._imports["CapabilityRequest"]
         ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
@@ -185,7 +309,7 @@ class NornyxActionBoundary:
         )
         recorder.record_decision(capability, mission_id=mission_id)
         decision = capability
-        if capability.allowed and risk.lower() in {"high", "critical"}:
+        if capability.allowed and high_risk:
             decision = self.authorizer.evaluate(
                 ZoneCrossingRequest(
                     "identity.execution",
@@ -196,7 +320,26 @@ class NornyxActionBoundary:
                 context=self.context,
             )
             recorder.record_decision(decision, mission_id=mission_id)
-        if decision.allowed:
+
+        nornyx_effect = getattr(decision.effect, "name", str(decision.effect))
+        nornyx_code = decision.code.value
+        nornyx_reason = decision.reason or nornyx_code
+
+        # Approving the agentic-network contract is not approving an individual
+        # consequential action. A high-risk action additionally requires an
+        # action-specific human approval, so a contract approval can never on its
+        # own release an external effect. This only ever narrows the decision.
+        withheld = high_risk and decision.allowed and not _action_approval_present(action_approval)
+        if withheld:
+            recorder.record_observation(
+                "action_withheld",
+                mission_id=mission_id,
+                actor_ref="identity.execution",
+                capability_ref=capability_name,
+            )
+
+        allowed = decision.allowed and not withheld
+        if allowed:
             action()
             recorder.record_observation(
                 "tool_invoked",
@@ -206,14 +349,36 @@ class NornyxActionBoundary:
             )
         stream = recorder.stream()
         report = recorder.validate()
+        if isinstance(report, dict):
+            report = {
+                **report,
+                "nornyx_decision": {
+                    "effect": nornyx_effect,
+                    "code": nornyx_code,
+                    "reason": nornyx_reason,
+                },
+                "action_approval_present": _action_approval_present(action_approval),
+            }
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         write_json(evidence_dir / f"{mission_id}.events.json", stream)
         write_json(evidence_dir / f"{mission_id}.report.json", report)
+        if withheld:
+            return RuntimeDecision(
+                effect="DENY",
+                code="HUMAN_APPROVAL_REQUIRED",
+                reason=(
+                    "Nornyx authorized the declared capability, but no action-specific "
+                    "human approval was supplied for this high-risk action. Contract "
+                    "approval does not authorize an individual consequential action."
+                ),
+                source="nornyx.agentic",
+                evidence=report,
+            )
         return RuntimeDecision(
-            effect=getattr(decision.effect, "name", str(decision.effect)),
-            code=decision.code.value,
-            reason=decision.reason or decision.code.value,
+            effect=nornyx_effect,
+            code=nornyx_code,
+            reason=nornyx_reason,
             source="nornyx.agentic",
             evidence=report,
         )
@@ -224,7 +389,15 @@ class NornyxActionBoundary:
         mission_id: str,
         risk: str,
         action: Callable[[], str],
+        action_approval: Mapping[str, Any] | None = None,
     ) -> tuple[RuntimeDecision, str | None]:
+        """Authorize and, only if authorized, run one consequential action.
+
+        ``action_approval`` carries an approval for *this specific action*. It is
+        deliberately separate from the agentic-network contract approval: the
+        contract says the network may hold the capability, not that a particular
+        high-risk effect may be released.
+        """
         if self.authorizer is not None:
             result: str | None = None
 
@@ -233,10 +406,20 @@ class NornyxActionBoundary:
                 result = action()
                 return result
 
-            return self._official(mission_id=mission_id, risk=risk, action=capture), result
+            decision = self._official(
+                mission_id=mission_id,
+                risk=risk,
+                action=capture,
+                action_approval=action_approval,
+            )
+            return decision, result
         if not self.allow_fallback:
-            raise RuntimeError(self.load_error or "Nornyx runtime unavailable")
-        if risk.lower() in {"high", "critical"}:
+            raise NornyxRuntimeUnavailable(self.load_error or "Nornyx runtime unavailable")
+        # The fallback denies every high-risk action unconditionally. An
+        # action-specific approval is an additional requirement on top of Nornyx
+        # authorization, never a substitute for it, so it cannot release an
+        # action here where no authorization path was established at all.
+        if risk.lower() in HIGH_RISK_LEVELS:
             decision = RuntimeDecision(
                 "DENY",
                 "HUMAN_APPROVAL_REQUIRED",

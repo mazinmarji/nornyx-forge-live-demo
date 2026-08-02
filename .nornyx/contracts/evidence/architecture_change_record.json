@@ -1,0 +1,7 @@
+{
+  "architecture_impact": "none",
+  "generated_at": "2026-08-02T06:23:12Z",
+  "schema": "nornyx.forge.change_record.v1",
+  "statement": "Governance contracts were bound to the actual repository revision and completed with required evidence. Declared components, layers, modules, and dependency directions are unchanged.",
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+}

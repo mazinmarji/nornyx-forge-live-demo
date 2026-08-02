@@ -1,0 +1,14 @@
+{
+  "absence_reason": "Agentic-network approval evidence requires a human producer. No human approval was performed in autonomous demonstration mode.",
+  "absent_records": [
+    "approval_record"
+  ],
+  "contract": ".nornyx/contracts/runtime_network.nyx",
+  "generated_at": "2026-08-02T06:23:12Z",
+  "records": [
+    "agentic_network_contract_review",
+    "evidence_manifest"
+  ],
+  "schema": "nornyx.forge.evidence_manifest.v1",
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+}

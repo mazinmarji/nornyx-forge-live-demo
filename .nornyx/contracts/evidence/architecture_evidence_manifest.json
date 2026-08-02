@@ -1,0 +1,13 @@
+{
+  "contract": ".nornyx/contracts/architecture_governance.nyx",
+  "generated_at": "2026-08-02T06:23:12Z",
+  "records": [
+    "architecture_conformance_report",
+    "independent_review_record",
+    "exception_review_record",
+    "change_record",
+    "approval_record"
+  ],
+  "schema": "nornyx.forge.evidence_manifest.v1",
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+}

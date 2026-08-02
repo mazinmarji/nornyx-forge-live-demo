@@ -1,0 +1,30 @@
+# Keep the build context small. The Dockerfile copies only pyproject.toml,
+# README.md, src/, .nornyx/, and BRD.md, but the whole context is transferred
+# to the daemon first, and .venv alone is ~1 GB.
+.venv/
+.git/
+.github/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+coverage.xml
+build/
+dist/
+*.egg-info/
+.env
+.env.*
+!.env.example
+worktrees/
+evidence/
+.nornyx/runs/
+.nornyx/cache/
+.nornyx/runtime/
+.nornyx/architecture/
+.nornyx/security/
+.nornyx/requirements/
+.nornyx/in-session/
+.nornyx/demo-data.json

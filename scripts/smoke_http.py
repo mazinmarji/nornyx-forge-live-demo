@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -35,6 +36,12 @@ def main() -> int:
         "FORGE_ALLOW_POLICY_FALLBACK": "false" if strict else "true",
         "FORGE_STRICT_CREWAI": "true" if strict else "false",
     }
+    # The server's output must go to a file, not an unread PIPE. CrewAI prints a
+    # large flow trace per case; with subprocess.PIPE and no reader the OS pipe
+    # buffer fills, the server blocks on write, and every request then times out.
+    log = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed in the finally block
+        mode="w+", prefix="forge-smoke-", suffix=".log", delete=False
+    )
     process = subprocess.Popen(
         [
             sys.executable,
@@ -48,27 +55,42 @@ def main() -> int:
         ],
         cwd=ROOT,
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log,
         stderr=subprocess.STDOUT,
         text=True,
     )
+
+    def _server_output() -> str:
+        log.flush()
+        return Path(log.name).read_text(encoding="utf-8", errors="replace")[-4000:]
+
     try:
-        deadline = time.monotonic() + 30
+        # The CrewAI dependency tree can take well over 30s to import on a cold
+        # start, so the readiness budget is generous and overridable.
+        startup_timeout = float(os.getenv("FORGE_SMOKE_STARTUP_TIMEOUT", "180"))
+        deadline = time.monotonic() + startup_timeout
         health: dict[str, object] | None = None
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                output = process.stdout.read() if process.stdout else ""
-                raise RuntimeError(f"application exited before startup:\n{output}")
+                raise RuntimeError(
+                    f"application exited before startup:\n{_server_output()}"
+                )
             try:
                 health = json.loads(_request(base + "/api/health", timeout=1))
                 break
             except Exception:
                 time.sleep(0.2)
         if not health or health.get("status") != "ok":
-            raise RuntimeError("health endpoint did not become ready")
+            raise RuntimeError(
+                f"health endpoint did not become ready within {startup_timeout:g}s"
+            )
 
-        demo = json.loads(_request(base + "/api/demo/run", method="POST", timeout=20))
-        dashboard = _request(base + "/dashboard", timeout=5).decode("utf-8")
+        # Two full CrewAI Flow kickoffs run behind this call on a cold process.
+        demo_timeout = float(os.getenv("FORGE_SMOKE_DEMO_TIMEOUT", "600"))
+        demo = json.loads(
+            _request(base + "/api/demo/run", method="POST", timeout=demo_timeout)
+        )
+        dashboard = _request(base + "/dashboard", timeout=60).decode("utf-8")
         checks = {
             "health": health.get("status") == "ok",
             "demo": demo.get("status") == "pass",
@@ -85,6 +107,12 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+        log.close()
+        try:
+            Path(log.name).unlink(missing_ok=True)
+        except OSError:
+            # Windows can still hold the handle briefly after terminate().
+            pass
 
 
 if __name__ == "__main__":

@@ -1,0 +1,10 @@
+{
+  "approval": "not_granted",
+  "assurance_mode": "autonomous_demonstration",
+  "generated_at": "2026-08-02T06:23:12Z",
+  "human_review": "not_performed",
+  "production_approval": "not_granted",
+  "schema": "nornyx.forge.approval_record.v1",
+  "statement": "No human architecture approval was granted. This record documents the absence of approval; it does not grant one.",
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+}

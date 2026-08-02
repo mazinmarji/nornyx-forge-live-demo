@@ -22,7 +22,61 @@ jobs:
       - run: python -m pytest -q
       - run: python -m compileall -q src scripts
 
+  # Asserts the state this repository is actually in before a human approval
+  # exists. It deliberately does NOT assert that the governance contracts
+  # validate: they cannot, until an accountable human supplies an approval
+  # record, and no automated job may manufacture one.
   demo-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the evidence binding names the governed subject
+          # revision, which is an ancestor of HEAD, and a shallow clone cannot
+          # confirm that it is a real commit in this history.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e '.[demo,dev]'
+
+      - name: Control contract validates
+        run: nornyx check .nornyx/contracts/forge_control.nyx
+
+      - name: Generated BRD contract validates
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from nornyx_forge.contract_generator import generate_brd_contract
+          from nornyx_forge.requirements import parse_brd
+          generate_brd_contract(Path.cwd(), parse_brd(Path("BRD.md")))
+          PY
+          nornyx check .nornyx/generated/brd_contract.nyx
+
+      - name: Governance contracts are blocked only by the missing human approval
+        run: python scripts/check_pre_approval_baseline.py
+
+      - name: Governance evidence artifacts match their declared digests
+        run: python scripts/refresh_governance_evidence.py --verify
+
+      - name: Architecture and security gates
+        run: |
+          python scripts/check_architecture.py
+          python scripts/check_security.py
+
+      - name: Demonstration scenarios run and prevent the high-risk action
+        run: nornyx-forge demo --offline
+
+      - name: Application serves and reports governed decisions
+        run: python scripts/smoke_http.py
+
+      - run: python -m build
+
+  # The official nornyx.agentic authorization path, the runtime lock, and strict
+  # mode only become reachable once a real human approval record exists. Until
+  # then this job reports "not applicable" rather than failing, because the
+  # absence of approval is the intended state, not a defect.
+  strict-authorization:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +84,38 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -e '.[demo,dev]'
-      - run: nornyx check .nornyx/contracts/forge_control.nyx
-      - run: nornyx check .nornyx/contracts/runtime_network.nyx
-      - run: nornyx-forge demo --offline --strict-nornyx
-      - run: FORGE_SMOKE_STRICT=true python scripts/smoke_http.py
-      - run: python -m build
+
+      - name: Detect whether a human approval exists
+        id: approval
+        run: |
+          if python scripts/check_pre_approval_baseline.py --has-approval; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No human approval, so strict authorization is not applicable
+        if: steps.approval.outputs.present != 'true'
+        run: |
+          echo "Governance contracts are not approved."
+          echo "Strict Nornyx authorization and the runtime lock stay inactive."
+
+      - name: Governance contracts validate
+        if: steps.approval.outputs.present == 'true'
+        run: |
+          nornyx check .nornyx/contracts/runtime_network.nyx
+          nornyx check .nornyx/contracts/architecture_governance.nyx
+
+      - name: Runtime network lock generates and verifies
+        if: steps.approval.outputs.present == 'true'
+        run: python scripts/prepare_runtime.py
+
+      - name: Strict demonstration uses the official authorization path
+        if: steps.approval.outputs.present == 'true'
+        run: nornyx-forge demo --offline --strict-nornyx
+
+      - name: Strict application smoke
+        if: steps.approval.outputs.present == 'true'
+        env:
+          FORGE_SMOKE_STRICT: "true"
+        run: python scripts/smoke_http.py
