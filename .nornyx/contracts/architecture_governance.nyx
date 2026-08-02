@@ -132,18 +132,6 @@ governance_evidence:
       expires_at: "2099-01-01T00:00:00Z"
       status: pass
       dependencies: [architecture_conformance_report]
-    - id: approval_record
-      type: approval_record
-      schema_id: nornyx.governance_evidence.v1
-      producer: {id: system:autonomous_demonstration, type: system}
-      artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:655e195e987d487326e337e787d5f66aeca6986b50e031a4e0b6bec9b58f3f2c
-      subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
-      tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-08-02T12:40:41Z"
-      expires_at: "2099-01-01T00:00:00Z"
-      status: observed
-      dependencies: []
     - id: evidence_manifest
       type: evidence_manifest
       schema_id: nornyx.governance_evidence.v1
@@ -156,6 +144,21 @@ governance_evidence:
       expires_at: "2099-01-01T00:00:00Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
+
+    # >>> managed:approval_record
+    - id: approval_record
+      type: approval_record
+      schema_id: nornyx.governance_evidence.v1
+      producer: {id: system:autonomous_demonstration, type: system}
+      artifact: evidence/architecture_approval_record.json
+      content_hash: sha256:655e195e987d487326e337e787d5f66aeca6986b50e031a4e0b6bec9b58f3f2c
+      subject_revision: git:a1c4572574999df47e1f95af722fe05833e87bd9
+      tool: {name: refresh_governance_evidence, version: "0.3.0"}
+      generated_at: "2026-08-02T12:40:41Z"
+      expires_at: "2099-01-01T00:00:00Z"
+      status: observed
+      dependencies: []
+    # <<< managed:approval_record
 
 changes:
   - schema: nornyx.change.v1

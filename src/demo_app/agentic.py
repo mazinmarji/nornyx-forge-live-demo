@@ -8,6 +8,8 @@ from typing import Any
 from nornyx_forge.claude_worker import ClaudeCodeWorker
 from nornyx_forge.evidence import EvidenceLedger
 from nornyx_forge.nornyx_runtime import (
+    ActionDescriptor,
+    ActionRequest,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     runtime_revision,
@@ -132,10 +134,35 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         def execute_local_demo_action() -> str:
             return "Low-risk demonstration action executed in the local sandbox."
 
+        # Describe the operation, not the callable. Two refunds share a closure
+        # but are different consequential acts, so the approval must bind to the
+        # requested operation, target and parameters rather than to the function.
+        request = ActionRequest(
+            request_id=f"REQ-{self.mission_id}",
+            mission_id=self.mission_id,
+            subject_revision=runtime_revision(self.root),
+            capability="execute_high_risk_effect",
+            action=ActionDescriptor(
+                operation=str(self.case.get("requested_action", "unspecified")),
+                resource=str(self.case.get("customer", "unknown")),
+                destination="zone.external_customer",
+                parameters={
+                    "case_id": self.case.get("id"),
+                    "risk": self.case.get("risk"),
+                    "summary": self.case.get("summary"),
+                },
+            ),
+        )
+        self.case["action_request"] = {
+            "request_id": request.request_id,
+            "payload_digest": request.payload_digest,
+            "request_digest": request.digest,
+        }
         decision, result = self.boundary.evaluate_and_execute(
             mission_id=self.mission_id,
             risk=str(self.case.get("risk", "low")),
             action=execute_local_demo_action,
+            action_request=request,
         )
         self.case["decision"] = {
             "effect": decision.effect,

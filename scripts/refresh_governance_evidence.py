@@ -115,10 +115,9 @@ def _architecture_report() -> dict:
 
 
 def build(generated_at: datetime, window_days: int | None) -> dict:
-    # Once a human has approved an exact revision, every regenerated record stays
-    # bound to it. Stamping fresh records with HEAD would leave the evidence
-    # describing a revision nobody approved.
-    revision = _approved_revision() or _revision()
+    # Fails closed when an approval pins a revision other than HEAD, before any
+    # artifact is written.
+    revision = require_approval_matches_head() or _revision()
     generated = _iso(generated_at)
     expires = (
         MACHINE_EVIDENCE_EXPIRES
@@ -361,6 +360,7 @@ def sync_contracts() -> list[str]:
 
     if not INDEX_PATH.exists():
         raise SystemExit("evidence index is missing; run without --sync-contracts first")
+    require_approval_matches_head()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     revision = _approved_revision() or index["subject_revision"]
     by_artifact = {
@@ -500,6 +500,7 @@ def materialize_approval_window() -> dict:
     record the human signed, and Nornyx still enforces the P7D cap on top.
     """
 
+    require_approval_matches_head()
     windows = {
         path.stem: json.loads(path.read_text(encoding="utf-8"))
         for path in EVIDENCE_DIR.glob("*human_approval.json")
@@ -532,6 +533,173 @@ def materialize_approval_window() -> dict:
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
     return {"status": "materialized", "expires_at": expires, "changes": changes}
+
+
+#: Delimits the record this tool owns, so it can be replaced or removed exactly.
+#: A YAML round-trip would reformat the contract and lose its comments.
+_MANAGED_BEGIN = "    # >>> managed:approval_record"
+_MANAGED_END = "    # <<< managed:approval_record"
+
+#: Which human artifact and pre-approval fallback each contract uses.
+APPROVAL_WIRING = {
+    "runtime_network.nyx": {
+        "artifact": "runtime_human_approval.json",
+        "fallback": None,
+    },
+    "architecture_governance.nyx": {
+        "artifact": "architecture_human_approval.json",
+        "fallback": "architecture_approval_record.json",
+    },
+}
+
+
+def _record_block(entry: dict, *, dependencies: list[str]) -> str:
+    """Render the approval_record YAML block from an indexed artifact."""
+    producer = entry["producer"]
+    depends = "[" + ", ".join(dependencies) + "]" if dependencies else "[]"
+    return (
+        f"{_MANAGED_BEGIN}\n"
+        "    - id: approval_record\n"
+        "      type: approval_record\n"
+        "      schema_id: nornyx.governance_evidence.v1\n"
+        f"      producer: {{id: {producer['id']}, type: {producer['type']}}}\n"
+        f"      artifact: {entry['artifact']}\n"
+        f"      content_hash: {entry['content_hash']}\n"
+        f"      subject_revision: {entry['subject_revision']}\n"
+        f"      tool: {{name: {entry.get('tool_name', 'human_review')}, "
+        f"version: \"{entry.get('tool_version', '1')}\"}}\n"
+        f"      generated_at: \"{entry['generated_at']}\"\n"
+        f"      expires_at: \"{entry['expires_at']}\"\n"
+        f"      status: {entry['status']}\n"
+        f"      dependencies: {depends}\n"
+        f"{_MANAGED_END}\n"
+    )
+
+
+def _strip_managed(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    inside = False
+    for line in lines:
+        if line.rstrip("\n") == _MANAGED_BEGIN:
+            inside = True
+            continue
+        if line.rstrip("\n") == _MANAGED_END:
+            inside = False
+            continue
+        if not inside:
+            out.append(line)
+    return "".join(out)
+
+
+def _existing_record_block(text: str, artifact: str) -> str | None:
+    """Return an unmanaged approval_record block for the given artifact."""
+    pattern = re.compile(
+        r"^    - id: approval_record\n(?:      .*\n)+", re.MULTILINE
+    )
+    for match in pattern.finditer(text):
+        if artifact in match.group(0):
+            return match.group(0)
+    return None
+
+
+def wire_approvals() -> dict:
+    """Put the approval_record into each contract, or take it back out.
+
+    Driven entirely by which human artifacts exist on disk. Present, and the
+    record points at the human file; absent, and the contract returns to its
+    pre-approval state. Idempotent, because the block this tool owns is
+    delimited and rewritten wholesale rather than patched in place.
+
+    The human files are only read and hashed here. Nothing edits, paraphrases or
+    generates one.
+    """
+
+    require_approval_matches_head()
+    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    entries = index["entries"]
+    changes: list[str] = []
+
+    for name, wiring in APPROVAL_WIRING.items():
+        contract = ROOT / ".nornyx/contracts" / name
+        original = contract.read_text(encoding="utf-8")
+        text = _strip_managed(original)
+        human = EVIDENCE_DIR / str(wiring["artifact"])
+
+        # Remove any pre-existing approval_record so the state is rebuilt, not merged.
+        for candidate in (wiring["artifact"], wiring["fallback"]):
+            if not candidate:
+                continue
+            block = _existing_record_block(text, str(candidate))
+            if block:
+                text = text.replace(block, "")
+
+        if human.exists():
+            key = (
+                "runtime_approval_record"
+                if name.startswith("runtime")
+                else "architecture_approval_record"
+            )
+            entry = dict(entries[key])
+            depends = (
+                ["agentic_network_contract_review"]
+                if name.startswith("runtime")
+                else ["architecture_conformance_report", "independent_review_record"]
+            )
+            block = _record_block(entry, dependencies=depends)
+            anchor = "\ncapabilities:" if name.startswith("runtime") else "\nchanges:"
+            if anchor not in text:
+                raise SystemExit(f"{name}: cannot locate the anchor {anchor.strip()}")
+            text = text.replace(anchor, "\n" + block.rstrip("\n") + "\n" + anchor, 1)
+            changes.append(f"{name}: approval_record -> {entry['artifact']}")
+        elif wiring["fallback"]:
+            entry = dict(entries["architecture_approval_record"])
+            entry.setdefault("producer", {"id": "system:autonomous_demonstration", "type": "system"})
+            entry["tool_name"] = "refresh_governance_evidence"
+            entry["tool_version"] = TOOL_VERSION
+            block = _record_block(entry, dependencies=[])
+            anchor = "\nchanges:"
+            text = text.replace(anchor, "\n" + block.rstrip("\n") + "\n" + anchor, 1)
+            changes.append(f"{name}: approval_record -> absence record")
+        else:
+            changes.append(f"{name}: approval_record removed (no human approval)")
+
+        # Collapse the blank line that insertion would otherwise accumulate on
+        # every run, so wiring twice leaves the file byte-identical.
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        if text != original:
+            contract.write_text(text, encoding="utf-8", newline="")
+    return {"status": "wired", "changes": changes}
+
+
+def require_approval_matches_head() -> str | None:
+    """Refuse to touch anything when an approval pins a different revision.
+
+    Generating evidence from the working tree at HEAD and stamping it with an
+    older approved revision produces evidence that describes code nobody
+    approved. Rebinding the approval to HEAD is worse — it silently moves the
+    subject out from under the human. So the only safe response is to stop
+    before writing anything and let a human re-approve the new revision.
+
+    Returns the approved revision when it matches HEAD, or None when no approval
+    exists. Raises otherwise, having modified nothing.
+    """
+
+    approved = _approved_revision()
+    if approved is None:
+        return None
+    head = _revision()
+    if approved != head:
+        raise SystemExit(
+            "governed revision mismatch: a human approval pins "
+            f"{approved} but HEAD is {head}.\n"
+            "Nothing was modified. Evidence generated from HEAD must not be "
+            "labelled with a revision nobody approved, and the approval must "
+            "not be silently rebound.\n"
+            "Either check out the approved revision, or obtain a new human "
+            "approval for the current one."
+        )
+    return approved
 
 
 def _head_commit() -> str:
@@ -667,6 +835,11 @@ def main() -> int:
         help="Rebind contract revisions and digests to the generated index",
     )
     parser.add_argument(
+        "--wire-approvals",
+        action="store_true",
+        help="Put adopted human approvals into the contracts, or take them out",
+    )
+    parser.add_argument(
         "--materialize-approval-window",
         action="store_true",
         help="Set authority declaration expiry from an inserted approval",
@@ -681,6 +854,10 @@ def main() -> int:
     if args.sync_contracts:
         changes = sync_contracts()
         print(json.dumps({"status": "synced", "changes": changes}, indent=2))
+        return 0
+
+    if args.wire_approvals:
+        print(json.dumps(wire_approvals(), indent=2))
         return 0
 
     if args.materialize_approval_window:

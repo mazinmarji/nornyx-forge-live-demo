@@ -5,9 +5,10 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -102,6 +103,52 @@ ACTION_APPROVAL_MAX_AGE = timedelta(days=7)
 ACTION_APPROVER_ROLES = frozenset({"operations_owner", "network_governance_owner"})
 
 
+def _canonical(value: Any) -> Any:
+    """Normalize a value so equal operations always digest identically."""
+    if isinstance(value, Mapping):
+        return {str(key): _canonical(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(item) for item in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        # 100 and 100.0 are the same amount and must not digest differently.
+        return int(value) if value.is_integer() else float(value)
+    return str(value)
+
+
+@dataclass(frozen=True)
+class ActionDescriptor:
+    """What the effect actually does, described independently of any callable.
+
+    The approved thing must be the operation, not the Python object that happens
+    to perform it. Two different refunds share a callable; they are not the same
+    consequential act, and an approval for one must not release the other.
+    """
+
+    operation: str
+    resource: str
+    destination: str
+    parameters: Mapping[str, Any] = field(default_factory=dict)
+
+    def canonical(self) -> dict[str, Any]:
+        return {
+            "operation": self.operation,
+            "resource": self.resource,
+            "destination": self.destination,
+            "parameters": _canonical(dict(self.parameters)),
+        }
+
+    @property
+    def payload_digest(self) -> str:
+        canonical = json.dumps(
+            self.canonical(), sort_keys=True, separators=(",", ":")
+        )
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class ActionRequest:
     """One exact consequential request an approval may be bound to."""
@@ -110,25 +157,111 @@ class ActionRequest:
     mission_id: str
     subject_revision: str
     capability: str
-    destination: str
-    effect: str
+    action: ActionDescriptor
+
+    @property
+    def destination(self) -> str:
+        return self.action.destination
+
+    @property
+    def payload_digest(self) -> str:
+        return self.action.payload_digest
+
+    def canonical(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "mission_id": self.mission_id,
+            "subject_revision": self.subject_revision,
+            "capability": self.capability,
+            "action": self.action.canonical(),
+            "payload_digest": self.action.payload_digest,
+        }
 
     @property
     def digest(self) -> str:
-        """Content digest of the request, so an approval cannot be re-aimed."""
+        """Digest over the whole request, so an approval cannot be re-aimed.
+
+        Covers the complete action descriptor, so changing the operation, the
+        target, the destination, or any parameter — an amount, an account —
+        produces a different digest and voids the grant.
+        """
         canonical = json.dumps(
-            {
-                "request_id": self.request_id,
-                "mission_id": self.mission_id,
-                "subject_revision": self.subject_revision,
-                "capability": self.capability,
-                "destination": self.destination,
-                "effect": self.effect,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
+            self.canonical(), sort_keys=True, separators=(",", ":")
         )
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+#: Where consumed action approvals are recorded. Generated runtime state, so it
+#: lives under evidence/runtime/ and is never committed.
+APPROVAL_LEDGER_ENV = "FORGE_APPROVAL_LEDGER"
+DEFAULT_APPROVAL_LEDGER = "evidence/runtime/action_approvals.sqlite3"
+
+
+class ApprovalLedger:
+    """Durable, atomic, single-use consumption of action approvals.
+
+    A process-local set forgets everything when the boundary is rebuilt or the
+    process restarts, so the same grant could be replayed simply by starting
+    again. Consumption is recorded in SQLite under a primary key, so a duplicate
+    or concurrent claim loses to the unique constraint rather than to a
+    check-then-act race.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS consumed_approvals ("
+                " approval_id TEXT PRIMARY KEY,"
+                " request_digest TEXT NOT NULL,"
+                " consumed_at TEXT NOT NULL)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
+        return connection
+
+    def consume(self, approval_id: str, request_digest: str, *, at: str) -> tuple[bool, str]:
+        """Claim the approval, or refuse. The insert is the claim.
+
+        Called before the effect runs, so a grant is spent even if the effect
+        then fails. That is deliberate: at-most-once is the safe direction for a
+        consequential act, and retrying requires a fresh human approval.
+        """
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT INTO consumed_approvals"
+                    " (approval_id, request_digest, consumed_at) VALUES (?, ?, ?)",
+                    (approval_id, request_digest, at),
+                )
+        except sqlite3.IntegrityError:
+            previous = self.lookup(approval_id)
+            when = previous[1] if previous else "an earlier run"
+            if previous and previous[0] != request_digest:
+                return False, (
+                    f"approval {approval_id} was already consumed at {when} for a "
+                    "different request"
+                )
+            return False, f"approval {approval_id} was already consumed at {when}"
+        return True, f"approval {approval_id} consumed"
+
+    def lookup(self, approval_id: str) -> tuple[str, str] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT request_digest, consumed_at FROM consumed_approvals"
+                " WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
+
+
+def approval_ledger_path(root: Path) -> Path:
+    override = os.getenv(APPROVAL_LEDGER_ENV)
+    return Path(override) if override else root / DEFAULT_APPROVAL_LEDGER
 
 
 def validate_action_approval(
@@ -136,7 +269,6 @@ def validate_action_approval(
     request: ActionRequest,
     *,
     as_of: str,
-    spent: set[str] | None = None,
 ) -> tuple[bool, str]:
     """Decide whether this approval releases *this* request, and only this one.
 
@@ -157,8 +289,6 @@ def validate_action_approval(
     approval_id = approval.get("approval_id")
     if not isinstance(approval_id, str) or not approval_id.strip():
         return False, "approval has no identifier"
-    if spent is not None and approval_id in spent:
-        return False, f"approval {approval_id} was already used (replay refused)"
 
     approver = approval.get("approver")
     if not isinstance(approver, str) or not approver.strip():
@@ -169,17 +299,18 @@ def validate_action_approval(
     if role not in ACTION_APPROVER_ROLES:
         return False, f"approver role {role!r} may not release a high-risk effect"
 
-    for field, expected in (
+    for name, expected in (
         ("request_id", request.request_id),
         ("subject_revision", request.subject_revision),
         ("capability", request.capability),
         ("destination", request.destination),
+        ("payload_digest", request.payload_digest),
         ("request_digest", request.digest),
     ):
-        actual = approval.get(field)
+        actual = approval.get(name)
         if actual != expected:
             return False, (
-                f"approval {field} does not match this request "
+                f"approval {name} does not match this request "
                 f"({actual!r} != {expected!r})"
             )
 
@@ -353,8 +484,8 @@ class NornyxActionBoundary:
         self.root = root
         self.allow_fallback = allow_fallback
         self.as_of = runtime_as_of(as_of)
-        #: Approval ids already spent. An approval releases one action, once.
-        self.spent_approvals: set[str] = set()
+        #: Durable single-use ledger. Survives boundary and process restarts.
+        self.approval_ledger = ApprovalLedger(approval_ledger_path(root))
         self.authorizer: Any | None = None
         self.context: Any | None = None
         self._imports: dict[str, Any] = {}
@@ -403,6 +534,7 @@ class NornyxActionBoundary:
         risk: str,
         action: Callable[[], str],
         action_approval: Mapping[str, Any] | None = None,
+        action_request: ActionRequest | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = risk.lower() in HIGH_RISK_LEVELS
@@ -459,22 +591,28 @@ class NornyxActionBoundary:
         # action can never release another. This only ever narrows the decision.
         release_reason = "not evaluated"
         if high_risk and decision.allowed:
-            request = ActionRequest(
+            request = action_request or ActionRequest(
                 request_id=f"REQ-{mission_id}",
                 mission_id=mission_id,
                 subject_revision=runtime_revision(self.root),
                 capability=capability_name,
-                destination="zone.external_customer",
-                effect="execute_high_risk_action",
+                action=ActionDescriptor(
+                    operation="execute_high_risk_action",
+                    resource=mission_id,
+                    destination="zone.external_customer",
+                ),
             )
             released, release_reason = validate_action_approval(
-                action_approval,
-                request,
-                as_of=self.as_of,
-                spent=self.spent_approvals,
+                action_approval, request, as_of=self.as_of
             )
             if released:
-                self.spent_approvals.add(str(action_approval["approval_id"]))
+                # Consume before the effect runs. A claim that loses the race, or
+                # that was already spent in an earlier process, withholds here.
+                released, release_reason = self.approval_ledger.consume(
+                    str(action_approval["approval_id"]),
+                    request.digest,
+                    at=self.as_of,
+                )
             withheld = not released
         else:
             withheld = False
@@ -539,6 +677,7 @@ class NornyxActionBoundary:
         risk: str,
         action: Callable[[], str],
         action_approval: Mapping[str, Any] | None = None,
+        action_request: ActionRequest | None = None,
     ) -> tuple[RuntimeDecision, str | None]:
         """Authorize and, only if authorized, run one consequential action.
 
@@ -560,6 +699,7 @@ class NornyxActionBoundary:
                 risk=risk,
                 action=capture,
                 action_approval=action_approval,
+                action_request=action_request,
             )
             return decision, result
         if not self.allow_fallback:

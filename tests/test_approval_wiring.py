@@ -1,0 +1,236 @@
+"""Inserting a human approval must be mechanical, reversible and fail closed.
+
+Drives the documented commands against a throwaway git repository, so nothing
+here depends on hand-edited YAML. The approvals used are labelled synthetic
+fixtures; the tooling only ever reads and hashes them.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+REFRESH = "scripts/refresh_governance_evidence.py"
+BASELINE = "scripts/check_pre_approval_baseline.py"
+CONTRACTS = Path(".nornyx/contracts")
+
+FIXTURE_STATEMENT = (
+    "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL. It grants nothing and "
+    "represents no human decision."
+)
+
+needs_nornyx = pytest.mark.skipif(
+    shutil.which("nornyx") is None, reason="nornyx CLI is not installed"
+)
+
+
+def _git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=workspace, capture_output=True, text=True, check=True
+    )
+
+
+def _repo(tmp_path: Path) -> Path:
+    """A throwaway repository carrying the contracts and the tooling."""
+    workspace = tmp_path / "repo"
+    (workspace / "scripts").mkdir(parents=True)
+    for script in (REFRESH, BASELINE, "scripts/check_architecture.py"):
+        shutil.copy2(ROOT / script, workspace / script)
+    shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
+    shutil.copytree(ROOT / "src", workspace / "src")
+    _git(workspace, "init", "-q")
+    _git(workspace, "config", "user.email", "fixture@example.invalid")
+    _git(workspace, "config", "user.name", "fixture")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "fixture baseline")
+    return workspace
+
+
+def _run(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PYTHONPATH": str(workspace / "src")}
+    return subprocess.run(
+        [sys.executable, *args], cwd=workspace, capture_output=True, text=True, env=env
+    )
+
+
+def _head(workspace: Path) -> str:
+    return "git:" + _git(workspace, "rev-parse", "HEAD").stdout.strip()
+
+
+def _write_approvals(workspace: Path, revision: str, *, expires: str) -> None:
+    """Author both synthetic approvals, exactly as a human would drop them in."""
+    evidence = workspace / CONTRACTS / "evidence"
+    for filename, role in (
+        ("runtime_human_approval.json", "network_governance_owner"),
+        ("architecture_human_approval.json", "architecture_reviewer"),
+    ):
+        payload = {
+            "schema": "nornyx.forge.human_approval_record.v1",
+            "approval": "granted",
+            "producer": {"id": f"human.test_fixture:{role}", "type": "human"},
+            "status": "pass",
+            "subject_revision": revision,
+            "generated_at": "2026-08-02T00:00:00Z",
+            "expires_at": expires,
+            "statement": FIXTURE_STATEMENT,
+        }
+        (evidence / filename).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+
+def _prepare(workspace: Path, *, as_of: str) -> None:
+    """The documented sequence: refresh, wire, materialize, sync."""
+    for args in (
+        (REFRESH, "--as-of", as_of),
+        (REFRESH, "--wire-approvals"),
+        (REFRESH, "--materialize-approval-window"),
+        (REFRESH, "--sync-contracts"),
+    ):
+        completed = _run(workspace, *args)
+        assert completed.returncode == 0, f"{args}\n{completed.stdout}{completed.stderr}"
+
+
+def _check(workspace: Path, contract: str, as_of: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [shutil.which("nornyx") or "nornyx", "check", str(CONTRACTS / contract),
+         "--as-of", as_of],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+    )
+
+
+@needs_nornyx
+def test_approvals_wire_in_without_hand_editing_yaml(tmp_path: Path):
+    """Both contracts must validate after the documented commands alone."""
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+
+    for contract in ("runtime_network.nyx", "architecture_governance.nyx"):
+        completed = _check(workspace, contract, "2026-08-03T00:00:00Z")
+        assert completed.returncode == 0, (
+            f"{contract} did not validate:\n{completed.stdout}{completed.stderr}"
+        )
+
+
+@needs_nornyx
+def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
+    """Deleting the human artifacts must put the contracts back, mechanically."""
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+    assert _check(workspace, "runtime_network.nyx", "2026-08-03T00:00:00Z").returncode == 0
+
+    evidence = workspace / CONTRACTS / "evidence"
+    for name in ("runtime_human_approval.json", "architecture_human_approval.json"):
+        (evidence / name).unlink()
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+
+    report = json.loads(_run(workspace, BASELINE).stdout)
+    assert report["status"] == "pass", report
+    assert report["human_approval_present"] is False
+    for contract in report["contracts"]:
+        assert contract["approval_blocked"] is True, contract
+        assert contract["unexpected_diagnostics"] == [], contract
+
+
+@needs_nornyx
+def test_wiring_is_idempotent(tmp_path: Path):
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+    first = {
+        name: (workspace / CONTRACTS / name).read_bytes()
+        for name in ("runtime_network.nyx", "architecture_governance.nyx")
+    }
+    _run(workspace, REFRESH, "--wire-approvals")
+    _run(workspace, REFRESH, "--wire-approvals")
+    for name, before in first.items():
+        assert (workspace / CONTRACTS / name).read_bytes() == before, name
+
+
+@needs_nornyx
+def test_advancing_head_after_approval_fails_closed(tmp_path: Path):
+    """A moved HEAD must stop the workflow and change nothing.
+
+    Otherwise evidence built from the new tree would be stamped with the old
+    approved revision, describing code nobody approved.
+    """
+    workspace = _repo(tmp_path)
+    approved = _head(workspace)
+    _write_approvals(workspace, approved, expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+
+    (workspace / "NOTES.md").write_text("moved on\n", encoding="utf-8")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "advance head")
+    assert _head(workspace) != approved
+
+    before = {
+        path: path.read_bytes()
+        for path in sorted((workspace / CONTRACTS).rglob("*"))
+        if path.is_file()
+    }
+
+    for args in (
+        (REFRESH,),
+        (REFRESH, "--wire-approvals"),
+        (REFRESH, "--materialize-approval-window"),
+        (REFRESH, "--sync-contracts"),
+    ):
+        completed = _run(workspace, *args)
+        assert completed.returncode != 0, f"{args} did not fail closed"
+        assert "mismatch" in (completed.stdout + completed.stderr).lower()
+
+    after = {
+        path: path.read_bytes()
+        for path in sorted((workspace / CONTRACTS).rglob("*"))
+        if path.is_file()
+    }
+    assert after == before, "a failed run modified contracts or evidence"
+
+
+@needs_nornyx
+def test_tooling_never_authors_or_edits_an_approval(tmp_path: Path):
+    """The human files must come back byte-identical after a full run."""
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    evidence = workspace / CONTRACTS / "evidence"
+    originals = {
+        name: (evidence / name).read_bytes()
+        for name in ("runtime_human_approval.json", "architecture_human_approval.json")
+    }
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+    for name, raw in originals.items():
+        assert (evidence / name).read_bytes() == raw, f"{name} was modified"
+
+
+@needs_nornyx
+def test_a_non_human_producer_is_refused(tmp_path: Path):
+    """A machine cannot be laundered into an approval by renaming the file."""
+    workspace = _repo(tmp_path)
+    payload = {
+        "schema": "nornyx.forge.human_approval_record.v1",
+        "approval": "granted",
+        "producer": {"id": "tool:forge", "type": "tool"},
+        "status": "pass",
+        "subject_revision": _head(workspace),
+        "generated_at": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-05T00:00:00Z",
+        "statement": FIXTURE_STATEMENT,
+    }
+    (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    completed = _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    assert completed.returncode != 0
+    assert "not a human approval record" in (completed.stdout + completed.stderr)

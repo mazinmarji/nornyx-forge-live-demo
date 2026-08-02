@@ -90,9 +90,9 @@ class _Recorder:
         return {"status": "pass", "observations": list(self.observations)}
 
 
-def _permissive_boundary(root: Path) -> NornyxActionBoundary:
+def _permissive_boundary(root: Path, as_of: str | None = None) -> NornyxActionBoundary:
     """A boundary whose authorizer allows everything, to isolate our control."""
-    boundary = NornyxActionBoundary(root, allow_fallback=True)
+    boundary = NornyxActionBoundary(root, allow_fallback=True, as_of=as_of)
     boundary.authorizer = _PermissiveAuthorizer()
     boundary.context = object()
     boundary._imports = {
@@ -133,7 +133,12 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
     same ActionRequest the boundary constructs. A loose "granted: true" is no
     longer sufficient, which is the point of the binding.
     """
-    from nornyx_forge.nornyx_runtime import ActionRequest, runtime_as_of, runtime_revision
+    from nornyx_forge.nornyx_runtime import (
+        ActionDescriptor,
+        ActionRequest,
+        runtime_as_of,
+        runtime_revision,
+    )
 
     boundary = _permissive_boundary(tmp_path)
     request = ActionRequest(
@@ -141,8 +146,12 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
         mission_id="TEST-RELEASED",
         subject_revision=runtime_revision(tmp_path),
         capability="execute_high_risk_effect",
-        destination="zone.external_customer",
-        effect="execute_high_risk_action",
+        action=ActionDescriptor(
+            operation="issue refund",
+            resource="customer:test",
+            destination="zone.external_customer",
+            parameters={"amount": 100},
+        ),
     )
     now = datetime.fromisoformat(runtime_as_of().replace("Z", "+00:00"))
     executed: list[str] = []
@@ -150,6 +159,7 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
         mission_id="TEST-RELEASED",
         risk="high",
         action=lambda: executed.append("ran") or "ran",
+        action_request=request,
         action_approval={
             "granted": True,
             "approval_id": "ACT-TEST-0001",
@@ -160,6 +170,7 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
             "subject_revision": request.subject_revision,
             "capability": request.capability,
             "destination": request.destination,
+            "payload_digest": request.payload_digest,
             "request_digest": request.digest,
             "generated_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "expires_at": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
