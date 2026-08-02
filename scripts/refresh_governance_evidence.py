@@ -53,6 +53,38 @@ def _write(path: Path, payload: dict) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
+def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
+    """Index a human-authored approval record without altering it.
+
+    Everything indexed — status, producer, statement, validity window — comes
+    from the file the human wrote. This function has no path that authors an
+    approval, upgrades a status, or edits a statement.
+    """
+
+    path = EVIDENCE_DIR / filename
+    if not path.exists():
+        return False
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
+    producer = payload.get("producer", {})
+    if producer.get("type") != "human":
+        raise SystemExit(
+            f"{filename} is not a human approval record: producer.type is "
+            f"{producer.get('type')!r}. Refusing to index it as one."
+        )
+    entries[key] = {
+        "artifact": f"evidence/{filename}",
+        "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "generated_at": payload["generated_at"],
+        "expires_at": payload["expires_at"],
+        "status": payload["status"],
+        "subject_revision": payload["subject_revision"],
+        "producer": producer,
+        "authored_by": "human",
+    }
+    return True
+
+
 def _architecture_report() -> dict:
     """Run the deterministic architecture checker and return its report."""
     result = subprocess.run(
@@ -69,7 +101,10 @@ def _architecture_report() -> dict:
 
 
 def build(generated_at: datetime, window_days: int) -> dict:
-    revision = _revision()
+    # Once a human has approved an exact revision, every regenerated record stays
+    # bound to it. Stamping fresh records with HEAD would leave the evidence
+    # describing a revision nobody approved.
+    revision = _approved_revision() or _revision()
     generated = _iso(generated_at)
     expires = _iso(generated_at + timedelta(days=window_days))
     report = _architecture_report()
@@ -178,23 +213,34 @@ def build(generated_at: datetime, window_days: int) -> dict:
         },
         status="pass",
     )
-    emit(
-        "architecture_approval_record",
-        "architecture_approval_record.json",
-        {
-            "schema": "nornyx.forge.approval_record.v1",
-            "subject_revision": revision,
-            "generated_at": generated,
-            "approval": "not_granted",
-            "human_review": "not_performed",
-            "production_approval": "not_granted",
-            "assurance_mode": "autonomous_demonstration",
-            "statement": (
-                "No human architecture approval was granted. This record documents the "
-                "absence of approval; it does not grant one."
-            ),
-        },
-        status="observed",
+    # Human approval records are authored by an accountable human, never here.
+    # When one is present this script only hashes and indexes it, taking its
+    # status, producer and timestamps from the file itself. When one is absent it
+    # records the absence instead. It can neither create nor overwrite an
+    # approval.
+    if not _adopt_human_approval(
+        "architecture_approval_record", "architecture_human_approval.json", entries
+    ):
+        emit(
+            "architecture_approval_record",
+            "architecture_approval_record.json",
+            {
+                "schema": "nornyx.forge.approval_record.v1",
+                "subject_revision": revision,
+                "generated_at": generated,
+                "approval": "not_granted",
+                "human_review": "not_performed",
+                "production_approval": "not_granted",
+                "assurance_mode": "autonomous_demonstration",
+                "statement": (
+                    "No human architecture approval was granted. This record documents the "
+                    "absence of approval; it does not grant one."
+                ),
+            },
+            status="observed",
+        )
+    _adopt_human_approval(
+        "runtime_approval_record", "runtime_human_approval.json", entries
     )
     emit(
         "architecture_evidence_manifest",
@@ -298,9 +344,19 @@ def sync_contracts() -> list[str]:
     if not INDEX_PATH.exists():
         raise SystemExit("evidence index is missing; run without --sync-contracts first")
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    revision = index["subject_revision"]
+    revision = _approved_revision() or index["subject_revision"]
     by_artifact = {
         entry["artifact"]: entry["content_hash"] for entry in index["entries"].values()
+    }
+    # Per-record validity, not one index-wide window. A human approval carries
+    # its own generated_at and expires_at, and rewriting those from the index
+    # would silently move the approval's validity window.
+    times_by_artifact = {
+        entry["artifact"]: (
+            entry.get("generated_at", index["generated_at"]),
+            entry.get("expires_at", index["expires_at"]),
+        )
+        for entry in index["entries"].values()
     }
     changes: list[str] = []
     for contract in CONTRACTS:
@@ -345,7 +401,10 @@ def sync_contracts() -> list[str]:
                 moment = _TIMESTAMP_RE.match(line)
                 if moment:
                     field = moment.group("field")
-                    value = index["generated_at"] if field == "generated_at" else index["expires_at"]
+                    generated, expires = times_by_artifact.get(
+                        current or "", (index["generated_at"], index["expires_at"])
+                    )
+                    value = generated if field == "generated_at" else expires
                     if value not in line:
                         lines[position] = f'{moment.group("lead")}"{value}"\n'
                         changes.append(f"{contract.name}: {field} -> {value}")
@@ -353,6 +412,62 @@ def sync_contracts() -> list[str]:
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
     return changes
+
+
+def _approved_revision() -> str | None:
+    """Return the revision a human approval pins, if one exists.
+
+    A human approves one exact revision. Once that approval exists the contracts
+    must keep declaring it: silently rebinding to the current HEAD would move the
+    governed subject out from under the approval and, by the approvers' own
+    invalidation terms, void it while leaving it looking valid.
+    """
+
+    pinned: set[str] = set()
+    for name in ("runtime_human_approval.json", "architecture_human_approval.json"):
+        path = EVIDENCE_DIR / name
+        if not path.exists():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        revision = payload.get("subject_revision")
+        if isinstance(revision, str) and revision:
+            pinned.add(revision)
+    if not pinned:
+        return None
+    if len(pinned) > 1:
+        raise SystemExit(
+            "human approvals pin different subject revisions: " + ", ".join(sorted(pinned))
+        )
+    return pinned.pop()
+
+
+def _approval_state() -> dict:
+    """Report the human approvals that exist, exactly as they were written."""
+
+    state: dict = {"human_review": "not_performed", "records": []}
+    for scope, name in (
+        ("agentic_network", "runtime_human_approval.json"),
+        ("architecture", "architecture_human_approval.json"),
+    ):
+        path = EVIDENCE_DIR / name
+        if not path.exists():
+            continue
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        state["human_review"] = "performed"
+        state["records"].append(
+            {
+                "scope": scope,
+                "artifact": f"evidence/{name}",
+                "producer": payload.get("producer", {}),
+                "status": payload.get("status"),
+                "approval": payload.get("approval"),
+                "generated_at": payload.get("generated_at"),
+                "expires_at": payload.get("expires_at"),
+                "subject_revision": payload.get("subject_revision"),
+                "reviewed_control_pack_commit": payload.get("control_pack_commit"),
+            }
+        )
+    return state
 
 
 def _head_commit() -> str:
@@ -411,8 +526,11 @@ def emit_review_binding() -> dict:
             "artifact": "evidence/architecture_independent_review.json",
             "embedded": True,
         },
-        "approval_state": "not_granted",
-        "human_review": "not_performed",
+        # Derived from the approval records actually present, never hardcoded:
+        # a stale "not_granted" would understate, and a hardcoded "granted"
+        # would be a claim this script has no standing to make.
+        "approvals": _approval_state(),
+        "production_approval": "not_granted",
     }
     path = EVIDENCE_DIR / "review_binding.json"
     raw = json.dumps(binding, indent=2, sort_keys=True).encode("utf-8") + b"\n"

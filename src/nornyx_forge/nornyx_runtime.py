@@ -290,8 +290,12 @@ class NornyxActionBoundary:
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = risk.lower() in HIGH_RISK_LEVELS
+        # Proposal and effect are separate capabilities. The agent may always
+        # request; only the effect capability carries execution authority, so the
+        # evidence never shows an `execute_*` capability allowed before the
+        # authority for it exists.
         capability_name = (
-            "execute_high_risk_action" if high_risk else "execute_low_risk_action"
+            "execute_high_risk_effect" if high_risk else "execute_low_risk_action"
         )
         CapabilityRequest = self._imports["CapabilityRequest"]
         ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
@@ -303,6 +307,13 @@ class NornyxActionBoundary:
             producer_version="0.2.0",
             producer_type="external_runtime",
         )
+        if high_risk:
+            # Recorded so the stream distinguishes "may propose" from "may act".
+            request = self.authorizer.evaluate(
+                CapabilityRequest("identity.execution", "request_high_risk_action"),
+                context=self.context,
+            )
+            recorder.record_decision(request, mission_id=mission_id)
         capability = self.authorizer.evaluate(
             CapabilityRequest("identity.execution", capability_name),
             context=self.context,

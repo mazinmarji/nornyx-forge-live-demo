@@ -33,15 +33,30 @@ def _run(workspace: Path) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
-def test_baseline_passes_when_only_approval_is_missing(tmp_path: Path):
+def test_contracts_fail_only_for_want_of_human_approval(tmp_path: Path):
+    """State-agnostic: each contract either validates or is approval-blocked.
+
+    This holds before a human approval exists and after one is supplied, so the
+    gate does not have to be rewritten when an approval lands or expires. What it
+    never tolerates is a diagnostic that is not about the approval.
+    """
     completed = _run(_tree(tmp_path))
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout)
     assert report["status"] == "pass"
-    assert report["human_approval_present"] is False
     for contract in report["contracts"]:
-        assert contract["approval_blocked"] is True
-        assert contract["unexpected_diagnostics"] == []
+        assert contract["validates"] or contract["approval_blocked"], contract
+        assert contract["unexpected_diagnostics"] == [], contract
+
+
+def _nornyx_check(contract: Path, *, as_of: str, cwd: Path) -> tuple[int, str]:
+    completed = subprocess.run(
+        [shutil.which("nornyx") or "nornyx", "check", str(contract), "--as-of", as_of],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode, completed.stdout + completed.stderr
 
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")

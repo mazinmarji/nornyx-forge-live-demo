@@ -62,7 +62,11 @@ goals:
 
 approvals:
   - name: ArchitectureAuthority
-    required_roles: [architect]
+    # A signer states the role they acted in, and the contract must accept that
+    # role without ambiguity. Requiring `architect` while listing
+    # `architecture_reviewer` as eligible left a reviewer-signed approval
+    # readable two ways. The required role is now the one a reviewer signs as.
+    required_roles: [architecture_reviewer]
     eligible_roles: [architect, architecture_reviewer]
     denied_actor_types: [ai_tool, execution_surface, autonomous_agent, model, connector, generated_output]
     required_evidence: [architecture_conformance_report, independent_review_record, approval_record]
@@ -179,11 +183,11 @@ changes:
       operational: minor
     required_controls: [architecture_conformance_policy, separation_of_duties_policy]
     required_evidence: [architecture_conformance_report, change_record, independent_review_record]
-    approver_roles: [architect]
+    approver_roles: [architecture_reviewer]
     approval_ids: [ArchitectureAuthority]
     separation_of_duties:
       author_role: repository_maintainer
-      approver_role: architect
+      approver_role: architecture_reviewer
       disjoint: true
     revision_binding:
       kind: git
@@ -199,7 +203,7 @@ separation_of_duties:
     - subject: architecture.nornyx_forge_demo
       risk_tier: medium
       author: human:repository_maintainer
-      approvers: [human:architect]
+      approvers: [human:architecture_reviewer]
       evidence_producers: [tool:check_architecture, tool:in_session_inspectors]
       require_evidence_independence: true
       release_requester: null

@@ -109,6 +109,33 @@ approvals:
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
     expires_at: "2026-08-08T00:00:00Z"
 
+  # Action-bound authority. Distinct from agentic_network_authority: approving
+  # the contract must never release an individual consequential effect.
+  - name: high_risk_action_authority
+    required_roles: [operations_owner]
+    eligible_roles: [operations_owner, network_governance_owner]
+    denied_actor_types:
+      - ai_tool
+      - execution_surface
+      - autonomous_agent
+      - model
+      - connector
+      - generated_output
+    # Declares WHO must approve a high-risk effect, not that one has been
+    # approved. The per-action grant is a runtime decision, so requiring a
+    # static action_approval_record here would mean the contract only validated
+    # once some action had already been approved.
+    required_evidence: [agentic_network_contract_review]
+    required_for: [execute_high_risk_action, external_share]
+    timing: before_action
+    accountable_authority: operations_owner
+    revision_binding:
+      kind: git
+      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      exact: true
+    invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
+    expires_at: "2026-08-08T00:00:00Z"
+
 governance_evidence:
   schema: nornyx.governance_evidence.v1
   subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
@@ -166,14 +193,29 @@ capabilities:
     required_gate_refs: []
     required_approval_refs: []
     required_evidence_refs: []
-  - name: execute_high_risk_action
+  # Proposing an action and releasing its effect are separate capabilities.
+  # An execution agent may always prepare a proposal; it obtains the effect
+  # capability only through a separate, action-bound human approval. Naming a
+  # single capability `execute_*` and allowing it before execution authority
+  # exists made the evidence read as though execution had been authorized when
+  # only the request had.
+  - name: request_high_risk_action
+    actions: [propose_high_risk_action]
+    risk: medium
+    scope_type: context
+    scope_refs: [DemoCaseContext]
+    delegable: false
+    required_gate_refs: []
+    required_approval_refs: []
+    required_evidence_refs: []
+  - name: execute_high_risk_effect
     actions: [execute_high_risk_action, external_share]
     risk: high
     scope_type: context
     scope_refs: [DemoCaseContext]
     delegable: false
     required_gate_refs: [gate.external_execution]
-    required_approval_refs: [agentic_network_authority]
+    required_approval_refs: [high_risk_action_authority]
     required_evidence_refs: [agentic_network_contract_review]
   - name: validate_runtime_evidence
     actions: [validate_evidence]
@@ -249,7 +291,7 @@ agent_identities:
     subject: execution_agent
     framework_bindings:
       - {framework: crewai, agent_key: execution_agent}
-    capability_refs: [execute_low_risk_action, execute_high_risk_action]
+    capability_refs: [execute_low_risk_action, request_high_risk_action, execute_high_risk_effect]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
     expires_at: "2099-01-01T00:00:00Z"
@@ -326,7 +368,7 @@ agentic_network:
     - id: membership.execution
       identity_ref: identity.execution
       trust_zone_ref: zone.local_demo
-      capability_refs: [execute_low_risk_action, execute_high_risk_action]
+      capability_refs: [execute_low_risk_action, request_high_risk_action, execute_high_risk_effect]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
       expires_at: "2099-01-01T00:00:00Z"
@@ -348,7 +390,7 @@ agentic_network:
       identity_refs: [identity.execution]
       source_membership_refs: [membership.execution]
       source_zone_ref: zone.local_demo
-      capability_refs: [execute_high_risk_action]
+      capability_refs: [execute_high_risk_effect]
       trust_zone_ref: zone.external_customer
       share: [decision, evidence_digest]
       never_share: [secrets, credentials, tokens, private_memory]
@@ -369,5 +411,5 @@ agentic_network:
   relations:
     - id: relation.execution_approval
       type: requires_approval_from
-      source: {kind: capability, ref: execute_high_risk_action}
+      source: {kind: capability, ref: execute_high_risk_effect}
       target: {kind: human_role, ref: network_governance_owner}

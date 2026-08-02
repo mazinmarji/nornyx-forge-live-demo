@@ -34,7 +34,10 @@ APPROVAL_CODES = frozenset(
         "APPROVAL_EVIDENCE_MISSING",
     }
 )
-APPROVAL_SUBJECT = "approval_record"
+# Evidence ids that mean "a human has not approved this yet". Matched exactly
+# rather than by substring, so an unrelated diagnostic cannot slip through by
+# happening to mention one of these words.
+APPROVAL_SUBJECTS = ("approval_record",)
 
 
 def _diagnostics(output: str) -> list[dict]:
@@ -70,7 +73,9 @@ def _check(contract: str, executable: str) -> dict:
         if item.get("level") == "error"
         and not (
             item.get("code") in APPROVAL_CODES
-            and APPROVAL_SUBJECT in str(item.get("message", ""))
+            and any(
+                subject in str(item.get("message", "")) for subject in APPROVAL_SUBJECTS
+            )
         )
     ]
     return {
