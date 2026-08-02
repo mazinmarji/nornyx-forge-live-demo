@@ -216,3 +216,35 @@ def test_an_unusable_ledger_withholds_rather_than_releasing(tmp_path: Path):
     claimed, reason = ledger.consume("ACT-IO", _request().digest, at=NOW)
     assert claimed is False
     assert "unusable" in reason
+
+
+def test_the_api_does_not_disclose_server_paths(monkeypatch: pytest.MonkeyPatch):
+    """A 503 tells the caller what happened, not where the server keeps files."""
+    pytest.importorskip("fastapi", reason="requires the demo extra")
+    from fastapi.testclient import TestClient
+
+    import demo_app.main as api
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    leaky = r"action approval ledger at C:\srv\forge\evidence\runtime\a.sqlite3 is unusable"
+
+    def _unavailable(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise NornyxRuntimeUnavailable(leaky)
+
+    monkeypatch.setattr(api, "run_case", _unavailable)
+    client = TestClient(api.app, raise_server_exceptions=False)
+    response = client.post(
+        "/api/cases",
+        json={
+            "customer": "Amina",
+            "summary": "Update delivery instructions",
+            "risk": "low",
+            "requested_action": "send guidance",
+        },
+    )
+    assert response.status_code == 503
+    body = response.text
+    assert r"C:\srv" not in body and "/srv/" not in body, body
+    assert "<path>" in response.json()["detail"]["detail"]
+    # The operator-facing detail keeps the real path.
+    assert r"C:\srv\forge" in NornyxRuntimeUnavailable(leaky).detail

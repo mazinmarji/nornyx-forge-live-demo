@@ -94,7 +94,7 @@ def create_case(payload: CaseInput):
             {
                 "error": "governance_unavailable",
                 "message": GOVERNANCE_UNAVAILABLE,
-                "detail": exc.detail,
+                "detail": exc.public_detail,
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
             },
@@ -121,7 +121,7 @@ def run_demo():
             {
                 "error": "governance_unavailable",
                 "message": GOVERNANCE_UNAVAILABLE,
-                "detail": exc.detail,
+                "detail": exc.public_detail,
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
             },

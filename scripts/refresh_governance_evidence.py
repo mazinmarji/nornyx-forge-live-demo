@@ -81,12 +81,27 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
     if not path.exists():
         return False
     raw = path.read_bytes()
-    payload = json.loads(raw.decode("utf-8"))
-    producer = payload.get("producer", {})
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{filename} is not readable JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{filename} must be a JSON object, got {type(payload).__name__}")
+    producer = payload.get("producer")
+    if not isinstance(producer, dict):
+        raise SystemExit(
+            f"{filename} is not a human approval record: producer must be an object "
+            f"with id and type, got {producer!r}."
+        )
     if producer.get("type") != "human":
         raise SystemExit(
             f"{filename} is not a human approval record: producer.type is "
             f"{producer.get('type')!r}. Refusing to index it as one."
+        )
+    missing = {"generated_at", "expires_at", "status", "subject_revision"} - set(payload)
+    if missing:
+        raise SystemExit(
+            f"{filename} is missing required approval fields: {sorted(missing)}"
         )
     entries[key] = {
         "artifact": f"evidence/{filename}",
@@ -589,7 +604,12 @@ def _record_block(entry: dict, *, dependencies: list[str]) -> str:
     it could also fake the managed end-marker.
     """
 
-    producer = entry["producer"]
+    producer = entry.get("producer")
+    if not isinstance(producer, dict) or not {"id", "type"} <= set(producer):
+        raise SystemExit(
+            f"approval producer must be an object with id and type, got {producer!r}. "
+            "Refusing to write it into a contract."
+        )
     record = {
         "id": "approval_record",
         "type": "approval_record",
@@ -721,12 +741,23 @@ def wire_approvals() -> dict:
 def _assert_single_managed_approval(name: str, text: str) -> None:
     """Refuse to leave an approval_record this tool does not own.
 
-    Cleanup removes the records it recognises. Anything else claiming to be an
-    approval — hand-added, or left behind by an earlier corrupted write — would
-    otherwise sit in the contract indistinguishable from real content.
+    Counted by parsing, not by matching contract text. A regex over raw lines is
+    defeated by a trailing space or a quoted id (`- id: "approval_record"`),
+    both of which parse to exactly the same record — so the textual count would
+    read one while the document actually holds two.
     """
 
-    total = len(re.findall(r"^    - id: approval_record$", text, re.MULTILINE))
+    try:
+        document = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"{name}: contract is not parseable after wiring: {exc}") from exc
+
+    records = ((document.get("governance_evidence") or {}).get("records")) or []
+    total = sum(
+        1
+        for record in records
+        if isinstance(record, dict) and record.get("id") == "approval_record"
+    )
     managed = len(
         re.findall(
             re.escape(_MANAGED_BEGIN) + r"\n(?:.*\n)*?" + re.escape(_MANAGED_END),

@@ -180,3 +180,72 @@ def test_a_legitimate_approval_still_wires(tmp_path: Path):
     text = (workspace / CONTRACTS / "runtime_network.nyx").read_text(encoding="utf-8")
     assert len(re.findall(r"^    - id: approval_record$", text, re.MULTILINE)) == 1
     assert "evidence/runtime_human_approval.json" in text
+
+
+@needs_nornyx
+@pytest.mark.parametrize(
+    ("label", "forged_id"),
+    [
+        ("trailing space", "    - id: approval_record \n"),
+        ("double quoted", '    - id: "approval_record"\n'),
+        ("single quoted", "    - id: 'approval_record'\n"),
+    ],
+)
+def test_a_textually_disguised_duplicate_is_still_caught(
+    label: str, forged_id: str, tmp_path: Path
+):
+    """The duplicate check must count parsed records, not matching lines.
+
+    A trailing space or a quoted id parses to exactly the same record, so a
+    line-matching count reads one while the document actually holds two.
+    """
+    workspace = _repo(tmp_path)
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+    forged = (
+        forged_id
+        + "      type: approval_record\n"
+        "      schema_id: nornyx.governance_evidence.v1\n"
+        "      producer: {id: human.backdoor:network_governance_owner, type: human}\n"
+        "      artifact: evidence/runtime_network_contract_review.json\n"
+        "      content_hash: sha256:" + "0" * 64 + "\n"
+        "      subject_revision: " + _head(workspace) + "\n"
+        '      tool: {name: forged, version: "1"}\n'
+        '      generated_at: "2026-08-02T00:00:00Z"\n'
+        '      expires_at: "2026-08-05T00:00:00Z"\n'
+        "      status: pass\n"
+        "      dependencies: []\n"
+    )
+    text = contract.read_text(encoding="utf-8")
+    contract.write_text(
+        text.replace("\ncapabilities:", "\n" + forged + "\ncapabilities:", 1),
+        encoding="utf-8",
+    )
+
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    completed = _run(workspace, REFRESH, "--wire-approvals")
+    assert completed.returncode != 0, f"{label} slipped past the check"
+    assert "not trusted" in (completed.stdout + completed.stderr)
+
+
+@needs_nornyx
+def test_a_malformed_producer_fails_legibly(tmp_path: Path):
+    """A non-object producer must refuse cleanly, not raise a raw TypeError."""
+    workspace = _repo(tmp_path)
+    payload = {
+        "schema": "nornyx.forge.human_approval_record.v1",
+        "approval": "granted",
+        "producer": "human.someone:network_governance_owner",
+        "status": "pass",
+        "subject_revision": _head(workspace),
+        "generated_at": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-05T00:00:00Z",
+        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
+    }
+    (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    completed = _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    output = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert "Traceback" not in output, output
+    assert "not a human approval record" in output or "must be an object" in output

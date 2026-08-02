@@ -387,6 +387,17 @@ class NornyxRuntimeUnavailable(RuntimeError):
         super().__init__(detail)
         self.detail = detail
 
+    @property
+    def public_detail(self) -> str:
+        """The detail with local filesystem paths removed.
+
+        The full text belongs in operator output; an unauthenticated caller of
+        the demo API should not be told the server's directory layout.
+        """
+        redacted = re.sub(r"[A-Za-z]:\\[^\s'\"]+", "<path>", self.detail)
+        redacted = re.sub(r"(?<![\w<])/[^\s'\":]+/[^\s'\":]*", "<path>", redacted)
+        return redacted
+
 
 @dataclass(frozen=True)
 class RuntimeDecision:
