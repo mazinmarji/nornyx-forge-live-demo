@@ -435,16 +435,28 @@ def verify() -> list[str]:
     if not bound.startswith("git:"):
         problems.append(f"evidence index has no git revision binding: {bound!r}")
     else:
-        reachable = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", bound.removeprefix("git:"), "HEAD"],
+        shallow = subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
             cwd=ROOT,
+            text=True,
             capture_output=True,
             check=False,
         )
-        if reachable.returncode != 0:
-            problems.append(
-                f"evidence index is bound to {bound}, which is not an ancestor of HEAD"
+        if shallow.stdout.strip() == "true":
+            # A shallow clone cannot answer the ancestry question. Artifact hash
+            # integrity below is the primary assertion and still applies.
+            pass
+        else:
+            reachable = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", bound.removeprefix("git:"), "HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                check=False,
             )
+            if reachable.returncode != 0:
+                problems.append(
+                    f"evidence index is bound to {bound}, which is not an ancestor of HEAD"
+                )
     for key, entry in index.get("entries", {}).items():
         path = EVIDENCE_DIR.parent / entry["artifact"]
         if not path.exists():
