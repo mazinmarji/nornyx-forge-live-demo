@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = "scripts/check_pre_approval_baseline.py"
@@ -56,6 +57,75 @@ def test_human_approval_is_present_on_this_branch(tmp_path: Path):
     assert report["human_approval_present"] is True
     for contract in report["contracts"]:
         assert contract["validates"] is True, contract
+
+
+def _nornyx_check(contract: Path, *, as_of: str, cwd: Path) -> tuple[int, str]:
+    completed = subprocess.run(
+        [shutil.which("nornyx") or "nornyx", "check", str(contract), "--as-of", as_of],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode, completed.stdout + completed.stderr
+
+
+@pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
+@pytest.mark.parametrize(
+    "contract", ["runtime_network.nyx", "architecture_governance.nyx"]
+)
+def test_approval_expiry_closes_the_contract(contract: str):
+    """Once the approval window elapses the contract must stop validating.
+
+    The approval is time-bounded on purpose. Evaluated past its expiry the
+    contract has to fail again, otherwise a stale approval would keep a system
+    open indefinitely.
+    """
+    path = ROOT / CONTRACTS / contract
+    code, output = _nornyx_check(path, as_of="2026-09-01T00:00:00Z", cwd=ROOT)
+    assert code != 0, f"expired approval still validated: {output}"
+    assert "EXPIRED" in output or "STALE" in output, output
+
+
+@pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
+def test_approval_is_not_valid_before_it_was_issued():
+    """An approval cannot authorize anything that happened before it existed."""
+    path = ROOT / CONTRACTS / "runtime_network.nyx"
+    code, output = _nornyx_check(path, as_of="2026-08-01T00:00:00Z", cwd=ROOT)
+    assert code != 0, f"approval validated before it was issued: {output}"
+    assert "NOT_YET_VALID" in output or "FUTURE" in output, output
+
+
+@pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
+def test_removing_the_human_approval_closes_the_contract(tmp_path: Path):
+    """Strip the human approval and the contract must fail once more.
+
+    Guards the fail-closed guarantee itself. Every other test here runs against a
+    tree that already carries an approval, so without this the "no approval"
+    branch would never be exercised again.
+    """
+    workspace = _tree(tmp_path)
+    contracts = workspace / CONTRACTS
+    for artifact in ("runtime_human_approval.json", "architecture_human_approval.json"):
+        (contracts / "evidence" / artifact).unlink()
+
+    for name in ("runtime_network.nyx", "architecture_governance.nyx"):
+        path = contracts / name
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        document["governance_evidence"]["records"] = [
+            record
+            for record in document["governance_evidence"]["records"]
+            if record["id"] != "approval_record"
+        ]
+        path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    completed = _run(workspace)
+    report = json.loads(completed.stdout)
+    assert report["human_approval_present"] is False, report
+    for contract in report["contracts"]:
+        assert contract["validates"] is False, contract
+        assert contract["approval_blocked"] is True, contract
+        assert contract["unexpected_diagnostics"] == [], contract
+    assert completed.returncode == 0, "blocked-only is the expected healthy state"
 
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
