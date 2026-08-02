@@ -1,6 +1,6 @@
 {
   "contract": ".nornyx/contracts/architecture_governance.nyx",
-  "generated_at": "2026-08-02T06:23:12Z",
+  "generated_at": "2026-08-02T08:15:58Z",
   "records": [
     "architecture_conformance_report",
     "independent_review_record",

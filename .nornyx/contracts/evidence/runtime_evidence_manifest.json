@@ -4,7 +4,7 @@
     "approval_record"
   ],
   "contract": ".nornyx/contracts/runtime_network.nyx",
-  "generated_at": "2026-08-02T06:23:12Z",
+  "generated_at": "2026-08-02T08:15:58Z",
   "records": [
     "agentic_network_contract_review",
     "evidence_manifest"

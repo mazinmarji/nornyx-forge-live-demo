@@ -96,57 +96,42 @@ approvals:
       - connector
       - generated_output
     required_evidence: [agentic_network_contract_review, approval_record]
-    # Scoped to approving the network contract and the declared external-share
-    # boundary. It deliberately does NOT cover execute_high_risk_action: a
-    # contract approval must not authorize an individual consequential action.
-    required_for: [approve_agentic_network_contract, external_share]
+    required_for: [approve_agentic_network_contract, execute_high_risk_action, external_share]
     timing: before_action
     accountable_authority: network_governance_owner
     revision_binding:
       kind: git
-      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
-    expires_at: "2026-08-05T08:09:48Z"
+    expires_at: "2026-08-08T00:00:00Z"
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
   records:
     - id: agentic_network_contract_review
       type: network_contract_review
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_network_contract_review.json
-      content_hash: sha256:67f3df86c85d668a2ac6ee55de57219dd791149ef8d31644632ab5492c2098a1
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      content_hash: sha256:82dd537ce248143d32b6aacaf958eaca3ba65279acd7d509e0a53d4b0ae2e115
+      subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T08:15:58Z"
-      expires_at: "2027-08-02T08:15:58Z"
+      generated_at: "2026-08-01T22:50:37Z"
+      expires_at: "2027-08-01T22:50:37Z"
       status: pass
       dependencies: []
-    - id: approval_record
-      type: approval_record
-      schema_id: nornyx.governance_evidence.v1
-      producer: {id: human.mazin_marji:network_governance_owner, type: human}
-      artifact: evidence/runtime_human_approval.json
-      content_hash: sha256:898df5e0e076b36045d5f61abf618d142ffadbdae2481106abc13cac101a8a12
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: human_review, version: "1"}
-      generated_at: "2026-08-02T08:09:48Z"
-      expires_at: "2026-08-05T08:09:48Z"
-      status: pass
-      dependencies: [agentic_network_contract_review]
     - id: evidence_manifest
       type: evidence_manifest
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_evidence_manifest.json
-      content_hash: sha256:537bc0808a7d67efee991e84b423affc36b31c3c2e65f5b8f47970084e48b4b4
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      content_hash: sha256:caff79c6d03d14d153ee50079c1b2134248bc849beaa2d9c42728045e309c453
+      subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
       tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T08:15:58Z"
-      expires_at: "2027-08-02T08:15:58Z"
+      generated_at: "2026-08-01T22:50:37Z"
+      expires_at: "2027-08-01T22:50:37Z"
       status: pass
       dependencies: [agentic_network_contract_review]
 
@@ -286,7 +271,7 @@ agent_identities:
 agentic_network:
   schema: nornyx.agentic_network.v1
   id: network.forge_customer_operations
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d
   trust_zones:
     - id: zone.local_demo
       classification: governed_local

@@ -1,0 +1,83 @@
+{
+  "approvals": [
+    {
+      "artifact": "evidence/runtime_human_approval.json",
+      "artifact_sha256": "sha256:898df5e0e076b36045d5f61abf618d142ffadbdae2481106abc13cac101a8a12",
+      "expires_at": "2026-08-05T08:09:48Z",
+      "generated_at": "2026-08-02T08:09:48Z",
+      "producer": {
+        "id": "human.mazin_marji:network_governance_owner",
+        "type": "human"
+      },
+      "scope": "agentic_network",
+      "statement": "I, Mazin Marji, acting as the network governance owner, have reviewed the Nornyx Forge agentic-network contract for governed subject revision `git:24b40e998ed738edeffbfe0dafb78833ced82d0a`, the reviewed control-pack commit `git:b02478df11610b10b2f9703cfc9ced4c2c420103`, and the content-addressed contract and evidence digests recorded in `.nornyx/contracts/evidence/review_binding.json`.\nI approve this exact agentic-network contract and its declared external-share boundary for local autonomous demonstration and strict Nornyx authorization testing only.\nThis approval does not authorize any individual high-risk action, external side effect, production deployment, processing of real customer data, use of production credentials, security certification, regulatory compliance claim, or action-specific human approval.\nEvery high-risk action must remain withheld unless it separately receives an action-specific human approval in addition to a valid Nornyx authorization decision.\nAny change to the governed revision, identities, capabilities, memberships, trust zones, protocol targets, approval scopes, evidence requirements, runtime enforcement, external-share boundary, or consequential-action controls invalidates this approval.",
+      "status": "pass"
+    },
+    {
+      "artifact": "evidence/architecture_human_approval.json",
+      "artifact_sha256": "sha256:56864c633cf316cbea9f9190b142b324f5297c9aa9b111f5891f35d44a7eb354",
+      "expires_at": "2026-08-05T08:09:48Z",
+      "generated_at": "2026-08-02T08:09:48Z",
+      "producer": {
+        "id": "human.mazin_marji:architecture_reviewer",
+        "type": "human"
+      },
+      "scope": "architecture",
+      "statement": "I, Mazin Marji, acting as the architecture reviewer, have reviewed the Nornyx Forge architecture contract for governed subject revision `git:24b40e998ed738edeffbfe0dafb78833ced82d0a`, the reviewed control-pack commit `git:b02478df11610b10b2f9703cfc9ced4c2c420103`, the architecture conformance evidence, the independent machine-review evidence, the declared component and layer boundaries, and the known assurance and security limitations.\nI approve this exact architecture contract for local autonomous demonstration and strict Nornyx authorization testing on branch `review/mazin-2026-08-02` only.\nThis approval does not constitute production architecture approval, deployment approval, security certification, approval to merge reviewer-specific authority into `main`, or authorization for real external effects or real customer data.\nAny change to the governed revision, component model, dependency direction, trust boundary, execution adapter, governance boundary, evidence mechanism, security control, or architecture exception invalidates this approval.",
+      "status": "pass"
+    }
+  ],
+  "branch": "review/mazin-2026-08-02",
+  "carrying_commit_at_report_time": "git:056e63903f6f71b506a7f9d15862d906fb72f7d0",
+  "digests": {
+    "architecture_contract": "sha256:2d11fb469fe6c47fc3a6b317a6fe708db87af1bee03e85fbbeb4576af57f0185",
+    "evidence_index": "sha256:b75c6b90fd28ce586c86144cb9a58a404f0d265d16a67d79c3b8d5b3d37d2152",
+    "evidence_manifest": "sha256:f55ace9032d2b1ee88792fd1f2cb8d98e000b902710056267aee647dff81d130",
+    "forge_control_contract": "sha256:0f819f8b1de68d079eff21e40e35e4ed1df5c713f1c99314072096f41dd34f15",
+    "independent_review_record": "sha256:9d6082ffe4ae2b116929cefac2cc5ccadde9496940f3b9ecc9d07f814a8629d0",
+    "runtime_contract": "sha256:6e4c9ab34f60e04ca9ca7e17e528a9b6fd62e880d3e6fb44b4762f47aef92451"
+  },
+  "generated_at": "2026-08-02T09:01:29Z",
+  "governed_subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a",
+  "not_claimed": [
+    "production approval",
+    "deployment approval",
+    "security certification",
+    "regulatory compliance",
+    "authorization for real external effects",
+    "authorization for real customer data",
+    "action-specific approval for any individual high-risk action",
+    "approval to merge this branch into main"
+  ],
+  "reviewed_control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
+  "runtime_lock": {
+    "artifact": ".nornyx/runtime/nornyx.agentic_network.lock",
+    "lock_check": "passed",
+    "note": "Generated runtime artifact; .nornyx/runtime/ is gitignored.",
+    "sha256": "sha256:0ca99c83a617f29351ba0b608ef06cb8559cccbdc9c0896169417745cc442576",
+    "tracked_in_git": false
+  },
+  "schema": "nornyx.forge.human_review_report.v1",
+  "strict_runtime_verdict": {
+    "container_strict_mode": "FORGE_ALLOW_POLICY_FALLBACK=false, nornyx.agentic",
+    "deterministic_fallback_used": false,
+    "evidence": {
+      "event_count": 14,
+      "status": "pass"
+    },
+    "governance_source": "nornyx.agentic",
+    "high_risk": {
+      "code": "CROSSING_APPROVAL_REQUIRED",
+      "effect": "APPROVAL_REQUIRED",
+      "note": "Nornyx allowed the capability and denied the trust-zone crossing. The separate action-specific approval control did not need to engage; it is proven independently by test.",
+      "reason": "External trust-zone crossings require a human approval.",
+      "status": "prevented",
+      "tool_invoked": false
+    },
+    "low_risk": {
+      "code": "ALLOWED",
+      "effect": "ALLOW",
+      "status": "completed"
+    }
+  }
+}

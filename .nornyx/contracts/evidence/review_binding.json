@@ -1,22 +1,54 @@
 {
-  "approval_state": "not_granted",
-  "control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
-  "digests": {
-    "architecture_contract": "sha256:aa8d0a680bd0c651c4bded4ed55301d85f67caac18e973bb972df7982c782d15",
-    "evidence_index": "sha256:a579304dc783be3b02fa9f1e5dfafe25b3d9949c644f76ed086d72a09e2348c9",
-    "evidence_manifest": "sha256:a4bd4daca209ce778502eae1901a2575a7fbfc9469928e7b1301cd4a287eaf59",
-    "forge_control_contract": "sha256:0f819f8b1de68d079eff21e40e35e4ed1df5c713f1c99314072096f41dd34f15",
-    "independent_review_record": "sha256:6ebd4325056d9cfd92008e495c3de038abe46899cec8720a710eeda3a752a7d9",
-    "runtime_contract": "sha256:fb1704201e1e05f03c09114979e9a278ffce9cd0764ab16eea324fb714262939"
+  "approvals": {
+    "human_review": "performed",
+    "records": [
+      {
+        "approval": "granted",
+        "artifact": "evidence/runtime_human_approval.json",
+        "expires_at": "2026-08-05T08:09:48Z",
+        "generated_at": "2026-08-02T08:09:48Z",
+        "producer": {
+          "id": "human.mazin_marji:network_governance_owner",
+          "type": "human"
+        },
+        "reviewed_control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
+        "scope": "agentic_network",
+        "status": "pass",
+        "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+      },
+      {
+        "approval": "granted",
+        "artifact": "evidence/architecture_human_approval.json",
+        "expires_at": "2026-08-05T08:09:48Z",
+        "generated_at": "2026-08-02T08:09:48Z",
+        "producer": {
+          "id": "human.mazin_marji:architecture_reviewer",
+          "type": "human"
+        },
+        "reviewed_control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
+        "scope": "architecture",
+        "status": "pass",
+        "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+      }
+    ]
   },
-  "generated_at": "2026-08-02T06:25:01Z",
-  "human_review": "not_performed",
+  "control_pack_commit": "git:056e63903f6f71b506a7f9d15862d906fb72f7d0",
+  "digests": {
+    "architecture_contract": "sha256:2d11fb469fe6c47fc3a6b317a6fe708db87af1bee03e85fbbeb4576af57f0185",
+    "evidence_index": "sha256:b75c6b90fd28ce586c86144cb9a58a404f0d265d16a67d79c3b8d5b3d37d2152",
+    "evidence_manifest": "sha256:f55ace9032d2b1ee88792fd1f2cb8d98e000b902710056267aee647dff81d130",
+    "forge_control_contract": "sha256:0f819f8b1de68d079eff21e40e35e4ed1df5c713f1c99314072096f41dd34f15",
+    "independent_review_record": "sha256:9d6082ffe4ae2b116929cefac2cc5ccadde9496940f3b9ecc9d07f814a8629d0",
+    "runtime_contract": "sha256:6e4c9ab34f60e04ca9ca7e17e528a9b6fd62e880d3e6fb44b4762f47aef92451"
+  },
+  "generated_at": "2026-08-02T09:01:29Z",
   "independent_review": {
     "artifact": "evidence/architecture_independent_review.json",
     "embedded": true,
     "status": "pass"
   },
   "note": "subject_revision is the revision the contracts govern. control_pack_commit is the commit that carries those contracts and their evidence. An approval should name both.",
+  "production_approval": "not_granted",
   "schema": "nornyx.forge.review_binding.v1",
   "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
 }

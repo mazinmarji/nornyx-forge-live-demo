@@ -1,0 +1,18 @@
+{
+  "action_specific_approval": "not_granted",
+  "approval": "granted",
+  "authored_by": "human",
+  "control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
+  "expires_at": "2026-08-05T08:09:48Z",
+  "generated_at": "2026-08-02T08:09:48Z",
+  "producer": {
+    "id": "human.mazin_marji:architecture_reviewer",
+    "type": "human"
+  },
+  "production_approval": "not_granted",
+  "schema": "nornyx.forge.human_approval_record.v1",
+  "scope": "approve_architecture",
+  "statement": "I, Mazin Marji, acting as the architecture reviewer, have reviewed the Nornyx Forge architecture contract for governed subject revision `git:24b40e998ed738edeffbfe0dafb78833ced82d0a`, the reviewed control-pack commit `git:b02478df11610b10b2f9703cfc9ced4c2c420103`, the architecture conformance evidence, the independent machine-review evidence, the declared component and layer boundaries, and the known assurance and security limitations.\nI approve this exact architecture contract for local autonomous demonstration and strict Nornyx authorization testing on branch `review/mazin-2026-08-02` only.\nThis approval does not constitute production architecture approval, deployment approval, security certification, approval to merge reviewer-specific authority into `main`, or authorization for real external effects or real customer data.\nAny change to the governed revision, component model, dependency direction, trust boundary, execution adapter, governance boundary, evidence mechanism, security control, or architecture exception invalidates this approval.",
+  "status": "pass",
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+}

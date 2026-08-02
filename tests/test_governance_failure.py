@@ -48,6 +48,107 @@ def test_fallback_boundary_allows_low_risk(tmp_path: Path) -> None:
     assert result == "done"
 
 
+class _Effect:
+    name = "ALLOW"
+
+
+class _Code:
+    value = "ALLOWED"
+
+
+class _AllowDecision:
+    """Stands in for a Nornyx decision that permits the action."""
+
+    allowed = True
+    effect = _Effect()
+    code = _Code()
+    reason = "ALLOWED"
+
+
+class _PermissiveAuthorizer:
+    subject_revision = "git:test"
+
+    def evaluate(self, *_args: object, **_kwargs: object) -> _AllowDecision:
+        return _AllowDecision()
+
+
+class _Recorder:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        self.observations: list[str] = []
+
+    def record_decision(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    def record_observation(self, name: str, **_kwargs: object) -> None:
+        self.observations.append(name)
+
+    def stream(self) -> list[dict[str, object]]:
+        return [{"event_type": name} for name in self.observations]
+
+    def validate(self) -> dict[str, object]:
+        return {"status": "pass", "observations": list(self.observations)}
+
+
+def _permissive_boundary(root: Path) -> NornyxActionBoundary:
+    """A boundary whose authorizer allows everything, to isolate our control."""
+    boundary = NornyxActionBoundary(root, allow_fallback=True)
+    boundary.authorizer = _PermissiveAuthorizer()
+    boundary.context = object()
+    boundary._imports = {
+        "CapabilityRequest": lambda *a, **k: None,
+        "ZoneCrossingRequest": lambda *a, **k: None,
+        "EvidenceRecorder": _Recorder,
+    }
+    return boundary
+
+
+def test_high_risk_is_withheld_even_when_nornyx_allows(tmp_path: Path) -> None:
+    """Contract approval must not release a high-risk action on its own.
+
+    In the live run Nornyx blocked the trust-zone crossing first, so this control
+    never engaged. That leaves it unproven exactly where it matters, so this
+    drives the case where Nornyx permits and only our control stands between the
+    approval and the effect.
+    """
+    boundary = _permissive_boundary(tmp_path)
+    executed: list[str] = []
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="TEST-WITHHELD",
+        risk="high",
+        action=lambda: executed.append("ran") or "ran",
+    )
+    assert decision.effect == "DENY"
+    assert decision.code == "HUMAN_APPROVAL_REQUIRED"
+    assert result is None
+    assert executed == [], "a withheld action must never reach its callable"
+    assert "action_withheld" in decision.evidence["observations"]
+    assert "tool_invoked" not in decision.evidence["observations"]
+
+
+def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) -> None:
+    """The separate action approval is what releases it, nothing else."""
+    boundary = _permissive_boundary(tmp_path)
+    executed: list[str] = []
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="TEST-RELEASED",
+        risk="high",
+        action=lambda: executed.append("ran") or "ran",
+        action_approval={"granted": True, "approver": "human:operations_owner"},
+    )
+    assert decision.effect == "ALLOW"
+    assert result == "ran"
+    assert executed == ["ran"]
+
+
+def test_low_risk_needs_no_action_approval(tmp_path: Path) -> None:
+    boundary = _permissive_boundary(tmp_path)
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="TEST-LOW-OFFICIAL", risk="low", action=lambda: "done"
+    )
+    assert decision.effect == "ALLOW"
+    assert result == "done"
+
+
 def test_action_approval_is_not_satisfied_by_a_contract_approval() -> None:
     """Approving the network contract must not authorize an individual action.
 

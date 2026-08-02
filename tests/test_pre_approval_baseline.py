@@ -33,15 +33,29 @@ def _run(workspace: Path) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
-def test_baseline_passes_when_only_approval_is_missing(tmp_path: Path):
+def test_contracts_fail_only_for_want_of_human_approval(tmp_path: Path):
+    """State-agnostic: each contract either validates or is approval-blocked.
+
+    This holds before a human approval exists and after one is supplied, so the
+    gate does not have to be rewritten when an approval lands or expires. What it
+    never tolerates is a diagnostic that is not about the approval.
+    """
     completed = _run(_tree(tmp_path))
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(completed.stdout)
     assert report["status"] == "pass"
-    assert report["human_approval_present"] is False
     for contract in report["contracts"]:
-        assert contract["approval_blocked"] is True
-        assert contract["unexpected_diagnostics"] == []
+        assert contract["validates"] or contract["approval_blocked"], contract
+        assert contract["unexpected_diagnostics"] == [], contract
+
+
+@pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
+def test_human_approval_is_present_on_this_branch(tmp_path: Path):
+    """This reviewer branch carries a human approval, so both contracts validate."""
+    report = json.loads(_run(_tree(tmp_path)).stdout)
+    assert report["human_approval_present"] is True
+    for contract in report["contracts"]:
+        assert contract["validates"] is True, contract
 
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")

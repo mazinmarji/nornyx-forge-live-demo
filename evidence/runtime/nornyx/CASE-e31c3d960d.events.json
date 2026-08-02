@@ -1,0 +1,68 @@
+{
+  "events": [
+    {
+      "actor_ref": "identity.execution",
+      "capability_ref": "execute_low_risk_action",
+      "contract_digest": "sha256:d7bd1ee45e7d30eb0c66d1b472e567290860ac3bf52dfad7ec8f5a954a6c4380",
+      "event_id": "CASE-e31c3d960d-0001",
+      "event_type": "capability_requested",
+      "mission_id": "CASE-e31c3d960d",
+      "network_id": "network.forge_customer_operations",
+      "network_lock_digest": "sha256:d7aa4b26392ef57c7002ef76ee7999973cb9f9f4faa0b8d01c699b2822cc67d0",
+      "producer": {
+        "id": "nornyx-forge-live-demo",
+        "type": "external_runtime",
+        "version": "0.2.0"
+      },
+      "sequence": 1,
+      "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a",
+      "timestamp": "2026-08-02T08:55:55Z"
+    },
+    {
+      "actor_ref": "identity.execution",
+      "capability_ref": "execute_low_risk_action",
+      "contract_digest": "sha256:d7bd1ee45e7d30eb0c66d1b472e567290860ac3bf52dfad7ec8f5a954a6c4380",
+      "event_id": "CASE-e31c3d960d-0002",
+      "event_type": "capability_allowed",
+      "mission_id": "CASE-e31c3d960d",
+      "network_id": "network.forge_customer_operations",
+      "network_lock_digest": "sha256:d7aa4b26392ef57c7002ef76ee7999973cb9f9f4faa0b8d01c699b2822cc67d0",
+      "policy_decision": "allow",
+      "producer": {
+        "id": "nornyx-forge-live-demo",
+        "type": "external_runtime",
+        "version": "0.2.0"
+      },
+      "sequence": 2,
+      "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a",
+      "timestamp": "2026-08-02T08:55:55Z"
+    },
+    {
+      "actor_ref": "identity.execution",
+      "capability_ref": "execute_low_risk_action",
+      "contract_digest": "sha256:d7bd1ee45e7d30eb0c66d1b472e567290860ac3bf52dfad7ec8f5a954a6c4380",
+      "event_id": "CASE-e31c3d960d-0003",
+      "event_type": "tool_invoked",
+      "mission_id": "CASE-e31c3d960d",
+      "network_id": "network.forge_customer_operations",
+      "network_lock_digest": "sha256:d7aa4b26392ef57c7002ef76ee7999973cb9f9f4faa0b8d01c699b2822cc67d0",
+      "producer": {
+        "id": "nornyx-forge-live-demo",
+        "type": "external_runtime",
+        "version": "0.2.0"
+      },
+      "sequence": 3,
+      "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a",
+      "timestamp": "2026-08-02T08:55:55Z"
+    }
+  ],
+  "network_id": "network.forge_customer_operations",
+  "occurrence_mode": "legacy",
+  "producer": {
+    "id": "nornyx-forge-live-demo",
+    "type": "external_runtime",
+    "version": "0.2.0"
+  },
+  "schema": "nornyx.agentic_runtime_events.v1",
+  "schema_version": "1.1"
+}
