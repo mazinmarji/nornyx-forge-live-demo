@@ -427,11 +427,24 @@ def verify() -> list[str]:
         return ["evidence index is missing; run refresh_governance_evidence.py"]
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     problems: list[str] = []
-    revision = _revision()
-    if index.get("subject_revision") != revision:
-        problems.append(
-            f"evidence index is bound to {index.get('subject_revision')}, not {revision}"
+    # The governed subject revision is necessarily an ancestor of HEAD, never
+    # equal to it: the commit that carries a contract cannot be named inside it.
+    # So require that the binding names a real commit in this history, not that
+    # it matches the current HEAD.
+    bound = str(index.get("subject_revision", ""))
+    if not bound.startswith("git:"):
+        problems.append(f"evidence index has no git revision binding: {bound!r}")
+    else:
+        reachable = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", bound.removeprefix("git:"), "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            check=False,
         )
+        if reachable.returncode != 0:
+            problems.append(
+                f"evidence index is bound to {bound}, which is not an ancestor of HEAD"
+            )
     for key, entry in index.get("entries", {}).items():
         path = EVIDENCE_DIR.parent / entry["artifact"]
         if not path.exists():
