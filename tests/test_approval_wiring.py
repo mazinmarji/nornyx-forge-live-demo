@@ -135,7 +135,11 @@ def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
         (evidence / name).unlink()
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
-    report = json.loads(_run(workspace, BASELINE).stdout)
+    # Pinned well past the withdrawn approval's window: withdrawing must
+    # restore the placeholder, not leave a short expiry to rot later.
+    report = json.loads(
+        _run(workspace, BASELINE, "--as-of", "2030-01-01T00:00:00Z").stdout
+    )
     assert report["status"] == "pass", report
     assert report["human_approval_present"] is False
     for contract in report["contracts"]:
@@ -234,3 +238,52 @@ def test_a_non_human_producer_is_refused(tmp_path: Path):
     completed = _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
     assert completed.returncode != 0
     assert "not a human approval record" in (completed.stdout + completed.stderr)
+
+
+@needs_nornyx
+def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Path):
+    """Materialization must have an inverse.
+
+    Leaving the short reviewer window behind after an approval is withdrawn
+    re-rots the baseline the moment that date passes.
+    """
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+    assert "2026-08-05T00:00:00Z" in contract.read_text(encoding="utf-8")
+
+    evidence = workspace / CONTRACTS / "evidence"
+    for name in ("runtime_human_approval.json", "architecture_human_approval.json"):
+        (evidence / name).unlink()
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+
+    text = contract.read_text(encoding="utf-8")
+    assert "2026-08-05T00:00:00Z" not in text, "a stale reviewer window was left behind"
+    assert "2099-01-01T00:00:00Z" in text
+
+    # And the baseline is healthy long after the withdrawn window would have ended.
+    for as_of in ("2026-08-06T00:00:00Z", "2030-01-01T00:00:00Z"):
+        report = json.loads(_run(workspace, BASELINE, "--as-of", as_of).stdout)
+        assert report["status"] == "pass", (as_of, report)
+
+
+@needs_nornyx
+def test_review_binding_refuses_on_a_revision_mismatch(tmp_path: Path):
+    """It is the document a human reads before approving, so it must not lie."""
+    workspace = _repo(tmp_path)
+    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _prepare(workspace, as_of="2026-08-02T00:00:00Z")
+    _run(workspace, REFRESH, "--review-binding")
+    binding = workspace / CONTRACTS / "evidence" / "review_binding.json"
+    before = binding.read_bytes() if binding.exists() else None
+
+    (workspace / "NOTES.md").write_text("moved on\n", encoding="utf-8")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "advance head")
+
+    completed = _run(workspace, REFRESH, "--review-binding")
+    assert completed.returncode != 0, "review binding was written during a mismatch"
+    assert "mismatch" in (completed.stdout + completed.stderr).lower()
+    if before is not None:
+        assert binding.read_bytes() == before, "review binding changed on a refused run"

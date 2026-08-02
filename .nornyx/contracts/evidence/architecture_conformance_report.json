@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-02T12:40:41Z",
+  "generated_at": "2026-08-02T16:45:05Z",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -27,5 +27,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:a1c4572574999df47e1f95af722fe05833e87bd9"
+  "subject_revision": "git:7a3ebd19ea5f9154b4ed1ff517a02187f21a2c31"
 }

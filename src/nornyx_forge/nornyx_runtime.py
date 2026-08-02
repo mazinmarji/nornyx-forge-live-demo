@@ -209,14 +209,23 @@ class ApprovalLedger:
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS consumed_approvals ("
-                " approval_id TEXT PRIMARY KEY,"
-                " request_digest TEXT NOT NULL,"
-                " consumed_at TEXT NOT NULL)"
-            )
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self._connect() as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS consumed_approvals ("
+                    " approval_id TEXT PRIMARY KEY,"
+                    " request_digest TEXT NOT NULL,"
+                    " consumed_at TEXT NOT NULL)"
+                )
+        except (sqlite3.Error, OSError) as exc:
+            # A ledger we cannot read is a ledger we cannot trust to say whether
+            # a grant was already spent, so refuse in the governed way the rest
+            # of this boundary uses rather than crashing out as a raw 500.
+            raise NornyxRuntimeUnavailable(
+                f"action approval ledger at {self.path} is unusable: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
@@ -247,15 +256,24 @@ class ApprovalLedger:
                     "different request"
                 )
             return False, f"approval {approval_id} was already consumed at {when}"
+        except (sqlite3.Error, OSError) as exc:
+            # Cannot record the claim, so cannot promise single use. Withhold.
+            return False, (
+                f"action approval ledger is unusable, so single use cannot be "
+                f"guaranteed: {type(exc).__name__}: {exc}"
+            )
         return True, f"approval {approval_id} consumed"
 
     def lookup(self, approval_id: str) -> tuple[str, str] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT request_digest, consumed_at FROM consumed_approvals"
-                " WHERE approval_id = ?",
-                (approval_id,),
-            ).fetchone()
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT request_digest, consumed_at FROM consumed_approvals"
+                    " WHERE approval_id = ?",
+                    (approval_id,),
+                ).fetchone()
+        except (sqlite3.Error, OSError):
+            return None
         return (row[0], row[1]) if row else None
 
 

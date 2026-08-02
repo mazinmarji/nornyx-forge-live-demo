@@ -20,6 +20,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / ".nornyx/contracts/evidence"
 INDEX_PATH = EVIDENCE_DIR / "INDEX.json"
@@ -506,14 +508,23 @@ def materialize_approval_window() -> dict:
         for path in EVIDENCE_DIR.glob("*human_approval.json")
     }
     if not windows:
-        return {"status": "no_approval_present", "changes": []}
+        # Restore the placeholder. Leaving the short reviewer window behind after
+        # an approval is withdrawn re-rots the baseline the moment that date
+        # passes, which is the exact regression 0.3.0 exists to prevent.
+        return _set_authority_expiry(
+            MACHINE_EVIDENCE_EXPIRES, status="restored_placeholder"
+        )
     expiries = {payload["expires_at"] for payload in windows.values()}
     if len(expiries) > 1:
         raise SystemExit(
             "human approvals declare different expiries: " + ", ".join(sorted(expiries))
         )
     expires = expiries.pop()
+    return _set_authority_expiry(expires, status="materialized")
 
+
+def _set_authority_expiry(expires: str, *, status: str) -> dict:
+    """Write one expiry into every authority declaration, and only there."""
     changes: list[str] = []
     for contract in CONTRACTS:
         original = contract.read_text(encoding="utf-8")
@@ -532,7 +543,7 @@ def materialize_approval_window() -> dict:
         rewritten = "".join(lines)
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
-    return {"status": "materialized", "expires_at": expires, "changes": changes}
+    return {"status": status, "expires_at": expires, "changes": changes}
 
 
 #: Delimits the record this tool owns, so it can be replaced or removed exactly.
@@ -553,27 +564,61 @@ APPROVAL_WIRING = {
 }
 
 
+#: Fields copied out of a human artifact must be plain single-line scalars. A
+#: legitimate approval never has a newline in its status or producer id, and
+#: rejecting outright beats quietly escaping something that should not be there.
+_SAFE_SCALAR_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
+
+
+def _require_safe_scalar(field: str, value: object) -> str:
+    text = str(value)
+    if not _SAFE_SCALAR_RE.fullmatch(text):
+        raise SystemExit(
+            f"approval field {field!r} is not a plain single-line value: {text!r}. "
+            "Refusing to write it into a contract."
+        )
+    return text
+
+
 def _record_block(entry: dict, *, dependencies: list[str]) -> str:
-    """Render the approval_record YAML block from an indexed artifact."""
+    """Render the approval_record block from an indexed artifact.
+
+    Emitted by the YAML serializer rather than hand-formatted. Interpolating
+    artifact-controlled values into YAML text let a crafted field close the
+    record and append a second, forged one that then survived cleanup, because
+    it could also fake the managed end-marker.
+    """
+
     producer = entry["producer"]
-    depends = "[" + ", ".join(dependencies) + "]" if dependencies else "[]"
-    return (
-        f"{_MANAGED_BEGIN}\n"
-        "    - id: approval_record\n"
-        "      type: approval_record\n"
-        "      schema_id: nornyx.governance_evidence.v1\n"
-        f"      producer: {{id: {producer['id']}, type: {producer['type']}}}\n"
-        f"      artifact: {entry['artifact']}\n"
-        f"      content_hash: {entry['content_hash']}\n"
-        f"      subject_revision: {entry['subject_revision']}\n"
-        f"      tool: {{name: {entry.get('tool_name', 'human_review')}, "
-        f"version: \"{entry.get('tool_version', '1')}\"}}\n"
-        f"      generated_at: \"{entry['generated_at']}\"\n"
-        f"      expires_at: \"{entry['expires_at']}\"\n"
-        f"      status: {entry['status']}\n"
-        f"      dependencies: {depends}\n"
-        f"{_MANAGED_END}\n"
+    record = {
+        "id": "approval_record",
+        "type": "approval_record",
+        "schema_id": "nornyx.governance_evidence.v1",
+        "producer": {
+            "id": _require_safe_scalar("producer.id", producer["id"]),
+            "type": _require_safe_scalar("producer.type", producer["type"]),
+        },
+        "artifact": _require_safe_scalar("artifact", entry["artifact"]),
+        "content_hash": _require_safe_scalar("content_hash", entry["content_hash"]),
+        "subject_revision": _require_safe_scalar(
+            "subject_revision", entry["subject_revision"]
+        ),
+        "tool": {
+            "name": _require_safe_scalar("tool.name", entry.get("tool_name", "human_review")),
+            "version": _require_safe_scalar("tool.version", entry.get("tool_version", "1")),
+        },
+        "generated_at": _require_safe_scalar("generated_at", entry["generated_at"]),
+        "expires_at": _require_safe_scalar("expires_at", entry["expires_at"]),
+        "status": _require_safe_scalar("status", entry["status"]),
+        "dependencies": list(dependencies),
+    }
+    body = yaml.safe_dump(
+        [record], default_flow_style=False, sort_keys=False, width=10**6
     )
+    indented = "".join(
+        ("    " + line if line.strip() else line) for line in body.splitlines(keepends=True)
+    )
+    return f"{_MANAGED_BEGIN}\n{indented}{_MANAGED_END}\n"
 
 
 def _strip_managed(text: str) -> str:
@@ -667,9 +712,33 @@ def wire_approvals() -> dict:
         # Collapse the blank line that insertion would otherwise accumulate on
         # every run, so wiring twice leaves the file byte-identical.
         text = re.sub(r"\n{3,}", "\n\n", text)
+        _assert_single_managed_approval(name, text)
         if text != original:
             contract.write_text(text, encoding="utf-8", newline="")
     return {"status": "wired", "changes": changes}
+
+
+def _assert_single_managed_approval(name: str, text: str) -> None:
+    """Refuse to leave an approval_record this tool does not own.
+
+    Cleanup removes the records it recognises. Anything else claiming to be an
+    approval — hand-added, or left behind by an earlier corrupted write — would
+    otherwise sit in the contract indistinguishable from real content.
+    """
+
+    total = len(re.findall(r"^    - id: approval_record$", text, re.MULTILINE))
+    managed = len(
+        re.findall(
+            re.escape(_MANAGED_BEGIN) + r"\n(?:.*\n)*?" + re.escape(_MANAGED_END),
+            text,
+        )
+    )
+    if total > 1 or (total == 1 and managed != 1):
+        raise SystemExit(
+            f"{name}: found {total} approval_record entries with {managed} managed "
+            "block(s). An approval_record outside this tool's managed markers is "
+            "not trusted. Remove it and re-run."
+        )
 
 
 def require_approval_matches_head() -> str | None:
@@ -729,6 +798,7 @@ def emit_review_binding() -> dict:
     would be circular. It is standalone, committed, and content-addressed.
     """
 
+    require_approval_matches_head()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     contracts = ROOT / ".nornyx/contracts"
     binding = {

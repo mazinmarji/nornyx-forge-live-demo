@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — hardening from adversarial review
+
+- Approval records are emitted by the YAML serializer instead of hand-formatted
+  text. Interpolating artifact-controlled fields let a crafted `status` close
+  the record, forge the managed end-marker, and append a rogue approval that
+  then survived the documented cleanup. Fields must now be plain single-line
+  scalars, and any `approval_record` outside the managed markers is refused
+  rather than tolerated.
+- `--materialize-approval-window` has an inverse. Withdrawing an approval left
+  the authority declarations pinned to the short reviewer window, which re-rotted
+  the baseline once that date passed; the placeholder is now restored.
+- `--review-binding` is guarded like every other write path. It is the document
+  a human reads before approving, and it was still reporting a stale approval as
+  granted while `HEAD` had diverged.
+- A corrupt or unwritable approval ledger is a governed refusal rather than a
+  raw `sqlite3` error surfacing as a 500. A ledger that cannot record a claim
+  cannot promise single use, so the effect is withheld.
+
 ## 0.3.0
 
 ### Breaking — capability contract

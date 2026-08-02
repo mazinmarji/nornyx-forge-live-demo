@@ -190,3 +190,29 @@ def test_boundary_withholds_a_replayed_grant(tmp_path: Path):
 
     assert run() == "ALLOW"
     assert run() == "DENY", "a spent grant released a second time"
+
+
+def test_a_corrupt_ledger_is_a_governed_refusal_not_a_crash(tmp_path: Path):
+    """An unreadable ledger cannot say whether a grant was spent, so refuse.
+
+    Previously this escaped as a bare sqlite3.DatabaseError, which the API layer
+    does not catch, turning into a raw 500 instead of the documented 503.
+    """
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    corrupt = tmp_path / "corrupt.sqlite3"
+    corrupt.write_bytes(b"this is definitely not a sqlite database")
+    with pytest.raises(NornyxRuntimeUnavailable) as raised:
+        ApprovalLedger(corrupt)
+    assert "unusable" in str(raised.value)
+
+
+def test_an_unusable_ledger_withholds_rather_than_releasing(tmp_path: Path):
+    """If the claim cannot be recorded, single use cannot be promised."""
+    path = tmp_path / "ledger.sqlite3"
+    ledger = ApprovalLedger(path)
+    # Point the ledger at a directory: every write fails from here on.
+    ledger.path = tmp_path
+    claimed, reason = ledger.consume("ACT-IO", _request().digest, at=NOW)
+    assert claimed is False
+    assert "unusable" in reason

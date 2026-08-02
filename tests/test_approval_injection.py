@@ -1,0 +1,182 @@
+"""A crafted approval artifact must never write attacker content into a contract.
+
+The record used to be hand-formatted, interpolating artifact-controlled fields
+straight into YAML. A newline in `status` could close the record, forge the
+managed end-marker, and append a second approval that then survived the
+documented cleanup because the fake marker fooled the stripper.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+REFRESH = "scripts/refresh_governance_evidence.py"
+CONTRACTS = Path(".nornyx/contracts")
+
+needs_nornyx = pytest.mark.skipif(
+    shutil.which("nornyx") is None, reason="nornyx CLI is not installed"
+)
+
+# Closes the legitimate record, fakes the end-marker, opens a rogue approval.
+INJECTION = (
+    "pass\n"
+    "      dependencies: []\n"
+    "    # <<< managed:approval_record\n"
+    "    - id: approval_record\n"
+    "      type: approval_record\n"
+    "      schema_id: nornyx.governance_evidence.v1\n"
+    "      producer: {id: human.backdoor:network_governance_owner, type: human}\n"
+    "      artifact: evidence/runtime_network_contract_review.json\n"
+    "      status: pass\n"
+    "      dependencies: []"
+)
+
+
+def _git(workspace: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=workspace, capture_output=True, check=True)
+
+
+def _repo(tmp_path: Path) -> Path:
+    workspace = tmp_path / "repo"
+    (workspace / "scripts").mkdir(parents=True)
+    for script in (REFRESH, "scripts/check_architecture.py"):
+        shutil.copy2(ROOT / script, workspace / script)
+    shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
+    shutil.copytree(ROOT / "src", workspace / "src")
+    _git(workspace, "init", "-q")
+    _git(workspace, "config", "user.email", "fixture@example.invalid")
+    _git(workspace, "config", "user.name", "fixture")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "fixture")
+    return workspace
+
+
+def _run(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "PYTHONPATH": str(workspace / "src")}
+    return subprocess.run(
+        [sys.executable, *args], cwd=workspace, capture_output=True, text=True, env=env
+    )
+
+
+def _head(workspace: Path) -> str:
+    out = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=workspace, capture_output=True, text=True, check=True
+    )
+    return "git:" + out.stdout.strip()
+
+
+def _hostile_approval(workspace: Path, field: str, value: str) -> None:
+    payload = {
+        "schema": "nornyx.forge.human_approval_record.v1",
+        "approval": "granted",
+        "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
+        "status": "pass",
+        "subject_revision": _head(workspace),
+        "generated_at": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-05T00:00:00Z",
+        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
+    }
+    if field == "producer.id":
+        payload["producer"]["id"] = value  # type: ignore[index]
+    else:
+        payload[field] = value
+    (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+@needs_nornyx
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("status", INJECTION),
+        ("producer.id", "human.x\n      status: pass\n    - id: approval_record"),
+        ("status", "pass\n    # <<< managed:approval_record"),
+    ],
+)
+def test_crafted_fields_cannot_write_into_a_contract(
+    field: str, value: str, tmp_path: Path
+):
+    """The run must refuse, and leave the contract untouched."""
+    workspace = _repo(tmp_path)
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+    before = contract.read_bytes()
+
+    _hostile_approval(workspace, field, value)
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    completed = _run(workspace, REFRESH, "--wire-approvals")
+
+    assert completed.returncode != 0, completed.stdout
+    assert "not a plain single-line value" in (completed.stdout + completed.stderr)
+    assert contract.read_bytes() == before, "a refused run still modified the contract"
+
+
+@needs_nornyx
+def test_no_forged_approval_survives_cleanup(tmp_path: Path):
+    """Even a pre-corrupted contract must not silently keep a rogue record.
+
+    Guards the specific failure that made the injection dangerous: a record
+    outside the managed markers used to be invisible to cleanup.
+    """
+    workspace = _repo(tmp_path)
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+    forged = (
+        "    - id: approval_record\n"
+        "      type: approval_record\n"
+        "      schema_id: nornyx.governance_evidence.v1\n"
+        "      producer: {id: human.backdoor:network_governance_owner, type: human}\n"
+        "      artifact: evidence/runtime_network_contract_review.json\n"
+        "      content_hash: sha256:" + "0" * 64 + "\n"
+        "      subject_revision: " + _head(workspace) + "\n"
+        '      tool: {name: forged, version: "1"}\n'
+        '      generated_at: "2026-08-02T00:00:00Z"\n'
+        '      expires_at: "2026-08-05T00:00:00Z"\n'
+        "      status: pass\n"
+        "      dependencies: []\n"
+    )
+    text = contract.read_text(encoding="utf-8")
+    contract.write_text(text.replace("\ncapabilities:", "\n" + forged + "\ncapabilities:", 1),
+                        encoding="utf-8")
+
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    completed = _run(workspace, REFRESH, "--wire-approvals")
+
+    assert completed.returncode != 0, (
+        "an unmanaged approval_record was tolerated:\n" + completed.stdout
+    )
+    assert "not trusted" in (completed.stdout + completed.stderr)
+
+
+@needs_nornyx
+def test_a_legitimate_approval_still_wires(tmp_path: Path):
+    """The hardening must not block an ordinary, well-formed approval."""
+    workspace = _repo(tmp_path)
+    payload = {
+        "schema": "nornyx.forge.human_approval_record.v1",
+        "approval": "granted",
+        "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
+        "status": "pass",
+        "subject_revision": _head(workspace),
+        "generated_at": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-05T00:00:00Z",
+        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
+    }
+    (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    completed = _run(workspace, REFRESH, "--wire-approvals")
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+    text = (workspace / CONTRACTS / "runtime_network.nyx").read_text(encoding="utf-8")
+    assert len(re.findall(r"^    - id: approval_record$", text, re.MULTILINE)) == 1
+    assert "evidence/runtime_human_approval.json" in text
