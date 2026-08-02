@@ -15,8 +15,10 @@ coverage.xml
 htmlcov/
 .nornyx/runs/
 .nornyx/cache/
-evidence/runtime/*.jsonl
-evidence/runtime/*.json
+# Everything under evidence/runtime/ is generated per run, including the
+# per-mission nornyx/ subdirectory. The earlier globs matched only the top
+# level, so subdirectory evidence could be committed by accident.
+evidence/runtime/
 evidence/build/*.json
 generated/
 worktrees/
