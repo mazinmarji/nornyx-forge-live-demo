@@ -1,6 +1,6 @@
 {
   "builder_self_approval": false,
-  "generated_at": "2026-08-01T22:50:37Z",
+  "generated_at": "2026-08-02T06:23:12Z",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [
@@ -17,8 +17,176 @@
       "status": "pass"
     }
   ],
+  "reviews": {
+    "builder_self_approval": false,
+    "human_review": "not_performed",
+    "reviews": [
+      {
+        "evidence": [
+          "pytest -q -> exit 0",
+          "nornyx-forge demo --offline --strict-nornyx -> exit 2, structured governed refusal",
+          "scripts/smoke_http.py -> exit 0, all five checks true",
+          "docker compose config -> exit 0"
+        ],
+        "findings": [
+          {
+            "id": "TEST-B1",
+            "residual": "The underlying cause (missing human approval_record) is unresolved and is a declared hard stop, honestly documented rather than papered over.",
+            "resolution": "NornyxRuntimeUnavailable added in src/nornyx_forge/nornyx_runtime.py; CLI emits a structured governed refusal and exits 2; API maps it to HTTP 503. Re-verified by execution.",
+            "round": 1,
+            "severity": "blocking",
+            "status": "resolved",
+            "summary": "Strict Nornyx path crashed with an unhandled RuntimeError instead of failing closed legibly."
+          },
+          {
+            "id": "TEST-B2",
+            "residual": "The reviewer could not witness the live test because port 8000 was held by the running demonstration container; the builder observed it pass separately. The live test is not wired into .github/workflows/ci.yml.",
+            "resolution": "tests/test_container_launch.py adds 5 static checks plus an opt-in live launch test gated by FORGE_DOCKER_TESTS=1.",
+            "round": 1,
+            "severity": "blocking",
+            "status": "partially_resolved",
+            "summary": "BRD-005 criterion 'docker compose up --build starts the application' had zero automated coverage."
+          },
+          {
+            "id": "TEST-N1",
+            "resolution": "run_demo_scenarios now resolves worker_mode and allow_policy_fallback from the environment like run_case; two regression tests added.",
+            "round": 2,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "/api/demo/run ignored FORGE_ALLOW_POLICY_FALLBACK=false because run_demo_scenarios hard-defaulted the fallback to True, contradicting the fail-closed compose default."
+          },
+          {
+            "id": "TEST-N2",
+            "severity": "non_blocking",
+            "status": "open",
+            "summary": "Residual coverage gaps: test_public_contracts_exist is existence-only; BRD-F-007 GitHub-search half untested; test_evidence.py covers only the success path; DevelopmentFlow.run() and the bounded-repair loop untested; ClaudeCodeWorker has no direct unit test; test_demo_flow.py cannot distinguish a real CrewAI kickoff from a silent sequential fallback."
+          },
+          {
+            "id": "TEST-N3",
+            "severity": "informational",
+            "status": "open",
+            "summary": "On Windows, FastAPI TestClient uses a loopback socketpair emulation; a blanket socket guard flags it as network use. With a loopback-aware guard all tests pass with external network blocked, so BRD-004 holds."
+          }
+        ],
+        "role": "test-inspector",
+        "round": 3,
+        "status": "pass",
+        "summary": "Round 1 FAIL with 2 blocking findings; both addressed and re-verified. Round 3 on the evaluation-time repair: 45 collected, 44 passed, 1 correctly skipped (opt-in Docker launch), identical with and without FORGE_RUNTIME_AS_OF pinned. Verified the fail-closed setting at the HTTP layer for both /api/cases and /api/demo/run (503 governed refusal). Reviewer is read-only and did not modify the implementation."
+      },
+      {
+        "evidence": [
+          "scripts/check_architecture.py -> exit 0",
+          "pytest tests/test_architecture_security.py -> 5 passed",
+          "nornyx check .nornyx/contracts/architecture_governance.nyx -> exit 1 (approval_record only)"
+        ],
+        "findings": [
+          {
+            "id": "ARCH-B1",
+            "resolution": "component.worker_adapter and module.worker_adapter declared; scripts/check_architecture.py rewritten to derive dependency direction from the contract and AST-scan every declared module. Verified by the inspector.",
+            "round": 1,
+            "severity": "blocking",
+            "status": "resolved",
+            "summary": "demo_app.agentic imported nornyx_forge.claude_worker, a subprocess-spawning module absent from the architecture contract, violating the contract's own undeclared_component_dependency denial. The architecture gate could not see it."
+          },
+          {
+            "id": "ARCH-B2",
+            "residual": "Irreducible without a genuine human approval_record. Evidence artifacts were confirmed byte-identical and non-fabricated across both rounds. Correct behaviour for an autonomous demonstration per BRD-005.",
+            "round": 1,
+            "severity": "blocking",
+            "status": "not_resolved",
+            "summary": "nornyx check rejects architecture_governance.nyx and runtime_network.nyx."
+          },
+          {
+            "id": "ARCH-N1",
+            "resolution": "Replaced with a narrow layer.adapter; layer.application may now depend only on layer.domain and layer.adapter, so direct persistence access remains forbidden.",
+            "round": 2,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "layer.application.may_depend_on was widened to the whole of layer.infrastructure, which also permitted application-to-persistence access nobody requested."
+          },
+          {
+            "id": "ARCH-N2",
+            "resolution": "The gate now flags first-party imports of modules not modelled in the contract; nornyx_forge.models and nornyx_forge.util are declared as a shared kernel. Regression test added.",
+            "round": 2,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "declared_dependencies_only overclaimed: a first import of a real but unmodelled first-party module produced zero violations."
+          }
+        ],
+        "role": "architecture-inspector",
+        "round": 3,
+        "status": "pass",
+        "summary": "Round 1 FAIL with 2 blocking findings; finding 1 resolved, finding 2 is the declared human-approval hard stop. Round 3 confirmed the layer.adapter split is a genuine double-enforced barrier (application cannot reach persistence), the shared kernel accurately models reality, the action callable is textually absent from the deny branch, and defaulting the evaluation instant to real time strengthens rather than weakens temporal control. Reviewer is read-only and did not modify the implementation."
+      },
+      {
+        "evidence": [
+          "scripts/check_security.py -> exit 0",
+          "scripts/validate_repository.py -> exit 0 over the full tree including .nornyx/contracts/evidence/",
+          "repo-wide secret-pattern scan -> zero matches"
+        ],
+        "findings": [
+          {
+            "id": "SEC-N5",
+            "resolution": "Set-but-blank now raises; the fail-closed test covers empty and whitespace values.",
+            "round": 3,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "FORGE_RUNTIME_AS_OF set but blank silently fell back to the live clock instead of raising, hiding a broken pin."
+          },
+          {
+            "id": "SEC-N6",
+            "resolution": "Both are handled; returns the documented git:unbound. Test added.",
+            "round": 3,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "runtime_revision() caught OSError but not UnicodeDecodeError, so a non-UTF-8 contract raised out of an evidence-labelling path."
+          },
+          {
+            "id": "SEC-N7",
+            "resolution": "Scoped to the revision and subject_revision keys. The approval declaration's own expires_at was verified untouched in both contracts.",
+            "round": 3,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "--sync-contracts replaced any git:<sha> anywhere in the contract, context-free, so a field intentionally holding a superseded revision could be rewritten."
+          },
+          {
+            "id": "SEC-N1",
+            "resolution": "Replaced with AST call-expression detection covering os.system, os.popen, os.exec*, os.spawn*, os.posix_spawn and pty. Regression test added.",
+            "round": 2,
+            "severity": "non_blocking",
+            "status": "resolved",
+            "summary": "The bounded_external_adapter check contained dead code: 'and banned == \"subprocess\"' made the os.system and pty branches unreachable, so only a bare subprocess import was ever detected."
+          },
+          {
+            "id": "SEC-N2",
+            "severity": "non_blocking",
+            "status": "acknowledged",
+            "summary": "check_security.py's own secret scan skips .nornyx/ and evidence/; mitigated because validate_repository.py scans the full tree in the same gate pipeline."
+          },
+          {
+            "id": "SEC-N3",
+            "severity": "non_blocking",
+            "status": "by_design",
+            "summary": ".nornyx/contracts/evidence/ is intentionally not gitignored: governance evidence must be committed because the contracts bind it by sha256. Contents confirmed free of secrets."
+          },
+          {
+            "id": "SEC-N4",
+            "severity": "non_blocking",
+            "status": "open",
+            "summary": "Demonstration limitations, not vulnerabilities: no authentication on the API with 0.0.0.0 binding; no rate limiting or request-size ceiling; the client-supplied risk field selects the authorization tier without server-side re-derivation, which is inert today because the gated action is a fixed inert stub."
+          }
+        ],
+        "role": "security-inspector",
+        "round": 3,
+        "status": "pass",
+        "summary": "PASS in all three rounds. No committed secrets, no shell injection, cloned repository content never executed, and no fabricated or overstated assurance claim. Round 3 probed the evaluation-time repair adversarially: naive and malformed time pins, oversized and non-UTF-8 contract content, revision injection via environment override, approval-expiry tampering, and P7D bypass. Reviewer is read-only and did not modify the implementation."
+      }
+    ],
+    "schema": "nornyx.forge.in_session_reviews.v1"
+  },
   "schema": "nornyx.forge.independent_review_record.v1",
   "source": ".nornyx/in-session/reviews.json",
+  "source_sha256": "sha256:6e68fcef1b822d95e0681c17c64cd7182e23f743afdae31db6aebbde5dc71a7a",
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:61b3f7238b45fc300ca83ce5f69eb69339d7ae9d"
+  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
 }

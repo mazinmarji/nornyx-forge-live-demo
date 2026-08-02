@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,6 +85,31 @@ def runtime_revision(root: Path | None = None) -> str:
         if _REVISION_RE.fullmatch(candidate):
             return candidate
     return _UNBOUND_REVISION
+
+
+#: Risk levels that require an action-specific human approval, never merely a
+#: contract approval, before a consequential effect may be released.
+HIGH_RISK_LEVELS = frozenset({"high", "critical"})
+
+
+def _action_approval_present(approval: Mapping[str, Any] | None) -> bool:
+    """Return whether a usable action-specific human approval was supplied.
+
+    Deliberately strict: the approval must name a human approver and carry an
+    explicit granted decision. Anything else counts as absent, so a malformed or
+    partial value can never release a high-risk action.
+    """
+
+    if not isinstance(approval, Mapping):
+        return False
+    approver = approval.get("approver")
+    granted = approval.get("granted")
+    return (
+        granted is True
+        and isinstance(approver, str)
+        and approver.strip() != ""
+        and str(approval.get("approver_type", "human")).lower() == "human"
+    )
 
 
 class NornyxRuntimeUnavailable(RuntimeError):
@@ -260,12 +286,12 @@ class NornyxActionBoundary:
         mission_id: str,
         risk: str,
         action: Callable[[], str],
+        action_approval: Mapping[str, Any] | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
+        high_risk = risk.lower() in HIGH_RISK_LEVELS
         capability_name = (
-            "execute_high_risk_action"
-            if risk.lower() in {"high", "critical"}
-            else "execute_low_risk_action"
+            "execute_high_risk_action" if high_risk else "execute_low_risk_action"
         )
         CapabilityRequest = self._imports["CapabilityRequest"]
         ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
@@ -283,7 +309,7 @@ class NornyxActionBoundary:
         )
         recorder.record_decision(capability, mission_id=mission_id)
         decision = capability
-        if capability.allowed and risk.lower() in {"high", "critical"}:
+        if capability.allowed and high_risk:
             decision = self.authorizer.evaluate(
                 ZoneCrossingRequest(
                     "identity.execution",
@@ -294,7 +320,26 @@ class NornyxActionBoundary:
                 context=self.context,
             )
             recorder.record_decision(decision, mission_id=mission_id)
-        if decision.allowed:
+
+        nornyx_effect = getattr(decision.effect, "name", str(decision.effect))
+        nornyx_code = decision.code.value
+        nornyx_reason = decision.reason or nornyx_code
+
+        # Approving the agentic-network contract is not approving an individual
+        # consequential action. A high-risk action additionally requires an
+        # action-specific human approval, so a contract approval can never on its
+        # own release an external effect. This only ever narrows the decision.
+        withheld = high_risk and decision.allowed and not _action_approval_present(action_approval)
+        if withheld:
+            recorder.record_observation(
+                "action_withheld",
+                mission_id=mission_id,
+                actor_ref="identity.execution",
+                capability_ref=capability_name,
+            )
+
+        allowed = decision.allowed and not withheld
+        if allowed:
             action()
             recorder.record_observation(
                 "tool_invoked",
@@ -304,14 +349,36 @@ class NornyxActionBoundary:
             )
         stream = recorder.stream()
         report = recorder.validate()
+        if isinstance(report, dict):
+            report = {
+                **report,
+                "nornyx_decision": {
+                    "effect": nornyx_effect,
+                    "code": nornyx_code,
+                    "reason": nornyx_reason,
+                },
+                "action_approval_present": _action_approval_present(action_approval),
+            }
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         write_json(evidence_dir / f"{mission_id}.events.json", stream)
         write_json(evidence_dir / f"{mission_id}.report.json", report)
+        if withheld:
+            return RuntimeDecision(
+                effect="DENY",
+                code="HUMAN_APPROVAL_REQUIRED",
+                reason=(
+                    "Nornyx authorized the declared capability, but no action-specific "
+                    "human approval was supplied for this high-risk action. Contract "
+                    "approval does not authorize an individual consequential action."
+                ),
+                source="nornyx.agentic",
+                evidence=report,
+            )
         return RuntimeDecision(
-            effect=getattr(decision.effect, "name", str(decision.effect)),
-            code=decision.code.value,
-            reason=decision.reason or decision.code.value,
+            effect=nornyx_effect,
+            code=nornyx_code,
+            reason=nornyx_reason,
             source="nornyx.agentic",
             evidence=report,
         )
@@ -322,7 +389,15 @@ class NornyxActionBoundary:
         mission_id: str,
         risk: str,
         action: Callable[[], str],
+        action_approval: Mapping[str, Any] | None = None,
     ) -> tuple[RuntimeDecision, str | None]:
+        """Authorize and, only if authorized, run one consequential action.
+
+        ``action_approval`` carries an approval for *this specific action*. It is
+        deliberately separate from the agentic-network contract approval: the
+        contract says the network may hold the capability, not that a particular
+        high-risk effect may be released.
+        """
         if self.authorizer is not None:
             result: str | None = None
 
@@ -331,10 +406,20 @@ class NornyxActionBoundary:
                 result = action()
                 return result
 
-            return self._official(mission_id=mission_id, risk=risk, action=capture), result
+            decision = self._official(
+                mission_id=mission_id,
+                risk=risk,
+                action=capture,
+                action_approval=action_approval,
+            )
+            return decision, result
         if not self.allow_fallback:
             raise NornyxRuntimeUnavailable(self.load_error or "Nornyx runtime unavailable")
-        if risk.lower() in {"high", "critical"}:
+        # The fallback denies every high-risk action unconditionally. An
+        # action-specific approval is an additional requirement on top of Nornyx
+        # authorization, never a substitute for it, so it cannot release an
+        # action here where no authorization path was established at all.
+        if risk.lower() in HIGH_RISK_LEVELS:
             decision = RuntimeDecision(
                 "DENY",
                 "HUMAN_APPROVAL_REQUIRED",

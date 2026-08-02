@@ -101,11 +101,19 @@ def build(generated_at: datetime, window_days: int) -> dict:
         },
         status=arch_status,
     )
+    # The in-session file is gitignored working state. The full review payload is
+    # embedded here so the committed, content-hashed artifact is self-contained
+    # and an approval never has to trust an uncommitted local file.
     reviews_path = ROOT / ".nornyx/in-session/reviews.json"
     review_status = "observed"
     reviewers: list[dict[str, str]] = []
+    embedded: dict | None = None
+    source_sha256: str | None = None
     if reviews_path.exists():
-        payload = json.loads(reviews_path.read_text(encoding="utf-8"))
+        raw_reviews = reviews_path.read_bytes()
+        source_sha256 = "sha256:" + hashlib.sha256(raw_reviews).hexdigest()
+        payload = json.loads(raw_reviews.decode("utf-8"))
+        embedded = payload
         reviewers = [
             {"role": str(item.get("role")), "status": str(item.get("status"))}
             for item in payload.get("reviews", [])
@@ -137,6 +145,8 @@ def build(generated_at: datetime, window_days: int) -> dict:
                 "not a human review and not an approval."
             ),
             "source": ".nornyx/in-session/reviews.json",
+            "source_sha256": source_sha256,
+            "reviews": embedded,
         },
         status=review_status,
     )
@@ -345,6 +355,72 @@ def sync_contracts() -> list[str]:
     return changes
 
 
+def _head_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=False
+    )
+    return "git:" + result.stdout.strip() if result.returncode == 0 else "git:unbound"
+
+
+def _sha256(path: Path) -> str | None:
+    try:
+        return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def emit_review_binding() -> dict:
+    """Record exactly which artifacts a human approval would be approving.
+
+    The governed subject revision and the commit carrying the contracts differ,
+    because a contract cannot embed the hash of the commit that contains it.
+    Naming only the subject revision would leave it ambiguous which contract pack
+    was reviewed, so this pins both plus the content digests.
+
+    Deliberately NOT referenced from governance_evidence.records: it digests the
+    contracts, and the contracts carry their records' hashes, so referencing it
+    would be circular. It is standalone, committed, and content-addressed.
+    """
+
+    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    contracts = ROOT / ".nornyx/contracts"
+    binding = {
+        "schema": "nornyx.forge.review_binding.v1",
+        "generated_at": _iso(datetime.now(timezone.utc)),
+        "subject_revision": index["subject_revision"],
+        "control_pack_commit": _head_commit(),
+        "note": (
+            "subject_revision is the revision the contracts govern. "
+            "control_pack_commit is the commit that carries those contracts and "
+            "their evidence. An approval should name both."
+        ),
+        "digests": {
+            "runtime_contract": _sha256(contracts / "runtime_network.nyx"),
+            "architecture_contract": _sha256(contracts / "architecture_governance.nyx"),
+            "forge_control_contract": _sha256(contracts / "forge_control.nyx"),
+            "evidence_manifest": index["entries"]["architecture_evidence_manifest"][
+                "content_hash"
+            ],
+            "independent_review_record": index["entries"][
+                "architecture_independent_review"
+            ]["content_hash"],
+            "evidence_index": _sha256(INDEX_PATH),
+        },
+        "independent_review": {
+            "status": index["entries"]["architecture_independent_review"]["status"],
+            "artifact": "evidence/architecture_independent_review.json",
+            "embedded": True,
+        },
+        "approval_state": "not_granted",
+        "human_review": "not_performed",
+    }
+    path = EVIDENCE_DIR / "review_binding.json"
+    raw = json.dumps(binding, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    path.write_bytes(raw)
+    binding["self_sha256"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    return binding
+
+
 def verify() -> list[str]:
     """Confirm every indexed artifact still hashes to its recorded value."""
     if not INDEX_PATH.exists():
@@ -377,11 +453,22 @@ def main() -> int:
         action="store_true",
         help="Rebind contract revisions and digests to the generated index",
     )
+    parser.add_argument(
+        "--review-binding",
+        action="store_true",
+        help="Emit the record identifying exactly what a human approval would cover",
+    )
     args = parser.parse_args()
 
     if args.sync_contracts:
         changes = sync_contracts()
         print(json.dumps({"status": "synced", "changes": changes}, indent=2))
+        return 0
+
+    if args.review_binding:
+        # Run after --sync-contracts: it digests the contracts in their final,
+        # rebound state.
+        print(json.dumps(emit_review_binding(), indent=2, sort_keys=True))
         return 0
 
     if args.verify:

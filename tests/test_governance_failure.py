@@ -48,6 +48,57 @@ def test_fallback_boundary_allows_low_risk(tmp_path: Path) -> None:
     assert result == "done"
 
 
+def test_action_approval_is_not_satisfied_by_a_contract_approval() -> None:
+    """Approving the network contract must not authorize an individual action.
+
+    _action_approval_present is the gate that keeps the two separate, so it must
+    reject anything that is not an explicit, human, granted action approval.
+    """
+    from nornyx_forge.nornyx_runtime import _action_approval_present
+
+    assert _action_approval_present(None) is False
+    assert _action_approval_present({}) is False
+    # A contract-level approval record must not count as an action approval.
+    assert _action_approval_present({"approver": "human:network_governance_owner"}) is False
+    assert _action_approval_present({"granted": True}) is False
+    assert _action_approval_present({"granted": "yes", "approver": "someone"}) is False
+    assert _action_approval_present({"granted": True, "approver": "   "}) is False
+    # A machine may not stand in for the human approver.
+    assert (
+        _action_approval_present(
+            {"granted": True, "approver": "tool:forge", "approver_type": "tool"}
+        )
+        is False
+    )
+    assert (
+        _action_approval_present(
+            {"granted": True, "approver": "human:operations_owner"}
+        )
+        is True
+    )
+
+
+def test_fallback_denies_high_risk_even_with_an_action_approval(tmp_path: Path) -> None:
+    """The fallback never releases a high-risk action, approval or not.
+
+    An action approval is an additional control on top of Nornyx authorization,
+    not a substitute for it. With no authorization path established, nothing may
+    execute.
+    """
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    executed: list[str] = []
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="TEST-HIGH-APPROVED",
+        risk="high",
+        action=lambda: executed.append("ran") or "ran",
+        action_approval={"granted": True, "approver": "human:operations_owner"},
+    )
+    assert decision.effect == "DENY"
+    assert decision.code == "HUMAN_APPROVAL_REQUIRED"
+    assert result is None
+    assert executed == []
+
+
 def test_demo_scenarios_honour_the_fail_closed_setting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
