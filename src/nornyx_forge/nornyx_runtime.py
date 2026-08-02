@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from . import __version__
 from .models import GateResult
 from .util import write_json
 
@@ -581,7 +582,7 @@ class NornyxActionBoundary:
             self.authorizer,
             self.context,
             producer_id="nornyx-forge-live-demo",
-            producer_version="0.3.0",
+            producer_version=__version__,
             producer_type="external_runtime",
         )
         if high_risk:
@@ -631,9 +632,22 @@ class NornyxActionBoundary:
                     destination="zone.external_customer",
                 ),
             )
-            released, release_reason = validate_action_approval(
-                action_approval, request, as_of=self.as_of
-            )
+            if request.capability != capability_name:
+                # Which capability is exercised follows from the risk of the act,
+                # not from a label the caller supplies. Validating the grant
+                # against the caller's label let an approval bound to
+                # `execute_low_risk_action` release the high-risk effect: every
+                # other field matched, because the digest is computed over the
+                # same mislabelled request.
+                released = False
+                release_reason = (
+                    f"action request names capability {request.capability!r} but this "
+                    f"effect exercises {capability_name!r}"
+                )
+            else:
+                released, release_reason = validate_action_approval(
+                    action_approval, request, as_of=self.as_of
+                )
             if released:
                 # Consume before the effect runs. A claim that loses the race, or
                 # that was already spent in an earlier process, withholds here.

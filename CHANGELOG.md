@@ -17,6 +17,20 @@
 - A corrupt or unwritable approval ledger is a governed refusal rather than a
   raw `sqlite3` error surfacing as a 500. A ledger that cannot record a claim
   cannot promise single use, so the effect is withheld.
+- `--sync-contracts` validates the timestamps it interpolates. It is a second
+  writer into the same records, and the values come verbatim out of the human
+  artifact, so a crafted `expires_at` reached a raw f-string and appended a
+  forged approval while the run reported `synced` and exit 0. Both writers now
+  assert the single-managed-approval invariant.
+- `--verify` re-parses the contracts instead of only re-hashing artifacts.
+  Hashing an artifact says nothing about the contract that references it, so a
+  contract carrying a second `approval_record` still reported `pass`.
+- The capability an action approval is validated against is the one the risk
+  level actually exercises, not the one the caller names in the request. A
+  high-risk act labelled `execute_low_risk_action` matched a grant bound to that
+  label on every field — the digest covers the same mislabelled request — and
+  released the effect. The mismatch now withholds without spending the grant.
+- Runtime producer version is read from the package rather than hardcoded.
 
 ## 0.3.0
 

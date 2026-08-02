@@ -386,6 +386,10 @@ def sync_contracts() -> list[str]:
     # Per-record validity, not one index-wide window. A human approval carries
     # its own generated_at and expires_at, and rewriting those from the index
     # would silently move the approval's validity window.
+    # Every value interpolated below comes from a human-authored artifact, so it
+    # is validated here too. _record_block() is not the only writer: syncing is a
+    # separate path, and leaving it unchecked let a crafted expires_at inject a
+    # second, forged approval_record while the run reported success.
     times_by_artifact = {
         entry["artifact"]: (
             entry.get("generated_at", index["generated_at"]),
@@ -439,11 +443,14 @@ def sync_contracts() -> list[str]:
                     generated, expires = times_by_artifact.get(
                         current or "", (index["generated_at"], index["expires_at"])
                     )
-                    value = generated if field == "generated_at" else expires
+                    value = _require_safe_scalar(
+                        field, generated if field == "generated_at" else expires
+                    )
                     if value not in line:
                         lines[position] = f'{moment.group("lead")}"{value}"\n'
                         changes.append(f"{contract.name}: {field} -> {value}")
         rewritten = "".join(lines)
+        _assert_single_managed_approval(contract.name, rewritten)
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
     return changes
@@ -582,7 +589,17 @@ APPROVAL_WIRING = {
 #: Fields copied out of a human artifact must be plain single-line scalars. A
 #: legitimate approval never has a newline in its status or producer id, and
 #: rejecting outright beats quietly escaping something that should not be there.
-_SAFE_SCALAR_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
+#:
+#: "Single line" and "plain" are both meant literally. Besides the C0/C1
+#: controls, this excludes the unicode line and paragraph separators and the
+#: bidi and zero-width formatting characters. yaml.safe_dump would quote those
+#: safely, so this is not what stops an injection — but a value that renders to
+#: a reviewer as one thing and parses as another does not belong in a record
+#: whose whole purpose is to be read and trusted by a human.
+_SAFE_SCALAR_RE = re.compile(
+    r"^[^\x00-\x1f\x7f-\x9f\u2028\u2029\u200b-\u200f\u202a-\u202e"
+    r"\u2066-\u2069\ufeff]{1,256}$"
+)
 
 
 def _require_safe_scalar(field: str, value: object) -> str:
@@ -908,6 +925,15 @@ def verify() -> list[str]:
                 problems.append(
                     f"evidence index is bound to {bound}, which is not an ancestor of HEAD"
                 )
+    # Re-parse each contract. Hashing artifacts says nothing about whether the
+    # contract that references them still holds exactly one approval record.
+    for name in APPROVAL_WIRING:
+        contract = ROOT / ".nornyx/contracts" / name
+        try:
+            _assert_single_managed_approval(name, contract.read_text(encoding="utf-8"))
+        except SystemExit as exc:
+            problems.append(str(exc))
+
     for key, entry in index.get("entries", {}).items():
         path = EVIDENCE_DIR.parent / entry["artifact"]
         if not path.exists():

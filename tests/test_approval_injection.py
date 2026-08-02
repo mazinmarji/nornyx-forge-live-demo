@@ -227,6 +227,106 @@ def test_a_textually_disguised_duplicate_is_still_caught(
     assert "not trusted" in (completed.stdout + completed.stderr)
 
 
+# Closes the quoted timestamp, appends a second approval, then reopens a quote
+# for the closing one the writer adds. Shaped for the --sync-contracts writer,
+# which was a separate interpolation path from _record_block().
+TIMESTAMP_INJECTION = (
+    '2026-08-05T00:00:00Z"\n'
+    "      dependencies: []\n"
+    "    - id: approval_record\n"
+    "      type: approval_record\n"
+    "      schema_id: nornyx.governance_evidence.v1\n"
+    "      producer: {id: human.backdoor:network_governance_owner, type: human}\n"
+    "      artifact: evidence/runtime_network_contract_review.json\n"
+    "      status: pass\n"
+    '      expires_at: "2026-08-05T00:00:00Z'
+)
+
+
+def _approval(workspace: Path, **overrides: str) -> None:
+    payload = {
+        "schema": "nornyx.forge.human_approval_record.v1",
+        "approval": "granted",
+        "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
+        "status": "pass",
+        "subject_revision": _head(workspace),
+        "generated_at": "2026-08-02T00:00:00Z",
+        "expires_at": "2026-08-05T00:00:00Z",
+        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
+        **overrides,
+    }
+    (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+@needs_nornyx
+@pytest.mark.parametrize("field", ["expires_at", "generated_at"])
+def test_syncing_cannot_inject_through_a_timestamp(field: str, tmp_path: Path):
+    """--sync-contracts is a second writer and must hold the same invariant.
+
+    The values it interpolates are copied verbatim out of the human artifact by
+    the indexer, so a crafted timestamp reached a raw f-string with no guard.
+    The run reported "synced", exit 0, and --verify then reported pass over a
+    contract carrying a forged second approval.
+    """
+    workspace = _repo(tmp_path)
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+
+    # A legitimate approval first, so the managed record exists to be rewritten.
+    _approval(workspace)
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    assert _run(workspace, REFRESH, "--wire-approvals").returncode == 0
+    before = contract.read_bytes()
+
+    _approval(workspace, **{field: TIMESTAMP_INJECTION})
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    completed = _run(workspace, REFRESH, "--sync-contracts")
+
+    assert completed.returncode != 0, completed.stdout
+    assert "not a plain single-line value" in (completed.stdout + completed.stderr)
+    assert contract.read_bytes() == before, "a refused sync still modified the contract"
+
+
+@needs_nornyx
+def test_verify_refuses_a_contract_holding_two_approvals(tmp_path: Path):
+    """Re-hashing artifacts says nothing about the contract referencing them.
+
+    --verify only checked content hashes, so a contract carrying a forged second
+    approval_record still reported {"status": "pass", "problems": []}.
+    """
+    workspace = _repo(tmp_path)
+    contract = workspace / CONTRACTS / "runtime_network.nyx"
+    _approval(workspace)
+    _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
+    assert _run(workspace, REFRESH, "--wire-approvals").returncode == 0
+    assert _run(workspace, REFRESH, "--verify").returncode == 0
+
+    forged = (
+        "    - id: approval_record\n"
+        "      type: approval_record\n"
+        "      schema_id: nornyx.governance_evidence.v1\n"
+        "      producer: {id: human.backdoor:network_governance_owner, type: human}\n"
+        "      artifact: evidence/runtime_network_contract_review.json\n"
+        "      content_hash: sha256:" + "0" * 64 + "\n"
+        "      subject_revision: " + _head(workspace) + "\n"
+        '      tool: {name: forged, version: "1"}\n'
+        '      generated_at: "2026-08-02T00:00:00Z"\n'
+        '      expires_at: "2026-08-05T00:00:00Z"\n'
+        "      status: pass\n"
+        "      dependencies: []\n"
+    )
+    text = contract.read_text(encoding="utf-8")
+    contract.write_text(
+        text.replace("\ncapabilities:", "\n" + forged + "\ncapabilities:", 1),
+        encoding="utf-8",
+    )
+
+    completed = _run(workspace, REFRESH, "--verify")
+    assert completed.returncode != 0, completed.stdout
+    assert "not trusted" in completed.stdout
+
+
 @needs_nornyx
 def test_a_malformed_producer_fails_legibly(tmp_path: Path):
     """A non-object producer must refuse cleanly, not raise a raw TypeError."""
