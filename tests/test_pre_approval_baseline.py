@@ -18,8 +18,21 @@ CONTRACTS = Path(".nornyx/contracts")
 def _tree(tmp_path: Path) -> Path:
     workspace = tmp_path / "repo"
     (workspace / "scripts").mkdir(parents=True)
-    shutil.copy2(ROOT / SCRIPT, workspace / "scripts")
+    for script in (SCRIPT, "scripts/refresh_governance_evidence.py",
+                   "scripts/check_architecture.py"):
+        shutil.copy2(ROOT / script, workspace / "scripts")
     shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
+    # --regenerate shells out to the refresh script, which needs the package and
+    # a real revision to bind evidence to.
+    shutil.copytree(ROOT / "src", workspace / "src")
+    for command in (
+        ["init", "-q"],
+        ["config", "user.email", "fixture@example.invalid"],
+        ["config", "user.name", "fixture"],
+        ["add", "-A"],
+        ["commit", "-qm", "fixture baseline"],
+    ):
+        subprocess.run(["git", *command], cwd=workspace, check=True, capture_output=True)
     return workspace
 
 
@@ -61,22 +74,37 @@ def _nornyx_check(contract: Path, *, as_of: str, cwd: Path) -> tuple[int, str]:
 
 @pytest.mark.skipif(shutil.which("nornyx") is None, reason="nornyx CLI is not installed")
 @pytest.mark.parametrize(
-    "as_of",
+    ("as_of", "regenerate"),
     [
-        "2026-08-09T00:00:00Z",  # past the reviewer window that used to be baked in
-        "2030-01-01T00:00:00Z",
-        "2045-12-31T23:59:59Z",
+        # Inside the committed machine-evidence window: healthy as committed.
+        ("2026-08-09T00:00:00Z", False),  # past the reviewer window once baked in
+        # Beyond it: healthy after the documented review-time regeneration.
+        ("2030-01-01T00:00:00Z", True),
+        ("2045-12-31T23:59:59Z", True),
     ],
 )
-def test_baseline_does_not_rot_as_the_clock_advances(as_of: str, tmp_path: Path):
-    """The public baseline must stay reviewer-ready at any future instant.
+def test_the_baseline_is_reviewer_ready_at_any_future_instant(
+    as_of: str, regenerate: bool, tmp_path: Path
+):
+    """The baseline must be reviewer-ready whenever someone arrives.
 
     Authority declarations previously carried a reviewer-specific expiry, so the
     tree started failing with APPROVAL_EXPIRED - a diagnostic that is not about a
-    missing approval - once that date passed.
+    missing approval - once that date passed. They now carry the non-expiring
+    representation, so that failure cannot return.
+
+    Machine evidence is a different matter and this test is deliberately split
+    to say so. Nornyx has no non-expiring representation for it, so it carries a
+    real finite window and the guarantee is regeneration, not permanence. An
+    earlier version of this test asserted permanence and passed only because a
+    2099 sentinel made "expired" look far away. See
+    docs/governance/EVIDENCE_FRESHNESS.md.
     """
+    command = [sys.executable, SCRIPT, "--as-of", as_of]
+    if regenerate:
+        command.append("--regenerate")
     completed = subprocess.run(
-        [sys.executable, SCRIPT, "--as-of", as_of],
+        command,
         cwd=_tree(tmp_path),
         capture_output=True,
         text=True,

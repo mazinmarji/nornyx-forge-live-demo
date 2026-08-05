@@ -18,6 +18,7 @@ import argparse
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,26 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
     }
 
 
+def _regenerate(as_of: str | None) -> int:
+    """Run the documented review-time refresh: rebuild evidence, then rebind.
+
+    Machine evidence has a real, finite freshness window because Nornyx 1.11.0
+    offers no way to express a non-expiring one — see
+    docs/governance/EVIDENCE_FRESHNESS.md. Regenerating is the honest way to get
+    a healthy baseline at an arbitrary instant, and it is one command.
+    """
+
+    refresh = str(ROOT / "scripts" / "refresh_governance_evidence.py")
+    for stage in ([refresh] + (["--as-of", as_of] if as_of else []), [refresh, "--sync-contracts"]):
+        completed = subprocess.run(
+            [sys.executable, *stage], cwd=ROOT, text=True, capture_output=True, check=False
+        )
+        if completed.returncode:
+            print(completed.stdout + completed.stderr)
+            return completed.returncode
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -99,14 +120,25 @@ def main() -> int:
     )
     parser.add_argument(
         "--as-of",
-        help="Evaluate at an explicit instant; proves the baseline does not "
-        "rot as the clock advances",
+        help="Evaluate at an explicit instant. The committed machine evidence "
+        "carries a finite window, so a distant instant needs --regenerate too",
+    )
+    parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Run the documented review-time refresh before checking. Nornyx "
+        "has no non-expiring representation for machine evidence, so this is "
+        "how the baseline is made healthy at an arbitrary instant",
     )
     args = parser.parse_args()
 
     executable = shutil.which("nornyx")
     if not executable:
         print(json.dumps({"status": "fail", "error": "nornyx CLI not installed"}, indent=2))
+        return 2
+
+    if args.regenerate and _regenerate(args.as_of) != 0:
+        print(json.dumps({"status": "fail", "error": "regeneration failed"}, indent=2))
         return 2
 
     results = [

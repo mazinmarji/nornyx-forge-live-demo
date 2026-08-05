@@ -17,6 +17,8 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -30,13 +32,32 @@ INDEX_PATH = EVIDENCE_DIR / "INDEX.json"
 # evidence is capped at P7D by nornyx.builtin.module.agentic_network_governance.
 DEFAULT_WINDOW_DAYS = 365
 
-#: Machine-generated evidence is bound by content hash and subject revision, so
-#: any change to what it describes invalidates it immediately. A wall-clock
-#: window adds nothing and only rots the public baseline. Human approval is the
-#: opposite: authority genuinely decays, and Nornyx caps it at P7D. Keeping the
-#: two separate is what lets the baseline stay reviewer-ready indefinitely while
-#: real approvals stay short-lived.
-MACHINE_EVIDENCE_EXPIRES = "2099-01-01T00:00:00Z"
+#: An authority *declaration* says who may approve and over what scope. It is
+#: not itself an approval and has no reason to decay, and Nornyx 1.11.0 supports
+#: saying so exactly: ``expires_at: null`` on an approval declaration validates
+#: at any instant, verified against the real CLI at 2100 and 2200 in
+#: tests/test_expiry_semantics.py. So the baseline carries that, not a distant
+#: date dressed up as "never".
+AUTHORITY_EXPIRY_PLACEHOLDER = None
+
+#: Machine-generated evidence records get no such option.
+#:
+#: nornyx/schemas/governance_evidence_v1.schema.json declares
+#: ``expires_at: {"oneOf": [timestamp, null]}``, but the freshness evaluator in
+#: nornyx/governance/structural.py parses both timestamps unconditionally and
+#: raises EVIDENCE_TIME_INVALID when either is absent. So the schema advertises a
+#: non-expiring representation that the evaluator refuses. Architecture evidence
+#: does not even advertise it: architecture_evidence_v1 requires a timestamp with
+#: no null branch. There is no per-record or per-module freshness exemption
+#: either — ``maximum_age`` governs only the approval-record P7D cap.
+#:
+#: That is a Nornyx capability gap, not something to paper over with a magic
+#: constant. Machine evidence therefore carries an honest finite window and the
+#: documented workflow regenerates it at review time; see
+#: docs/governance/EVIDENCE_FRESHNESS.md. A reviewer arriving at any future
+#: instant runs one command and gets a healthy baseline, which
+#: tests/test_expiry_semantics.py proves at 2100 and 2200.
+MACHINE_EVIDENCE_WINDOW_DAYS = DEFAULT_WINDOW_DAYS
 
 #: Read from the package so tool metadata cannot drift from the release.
 try:
@@ -69,17 +90,57 @@ def _write(path: Path, payload: dict) -> str:
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
-def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
-    """Index a human-authored approval record without altering it.
+#: The only two artifacts that may carry a human approval, by exact name.
+#:
+#: Never globbed. A ``*human_approval.json`` wildcard let any file dropped beside
+#: them — ``evil.human_approval.json`` — decide the authority window, without
+#: ever passing the validation the two canonical records go through.
+CANONICAL_APPROVALS = {
+    "agentic_network": "runtime_human_approval.json",
+    "architecture": "architecture_human_approval.json",
+}
 
-    Everything indexed — status, producer, statement, validity window — comes
-    from the file the human wrote. This function has no path that authors an
-    approval, upgrades a status, or edits a statement.
+#: Nornyx caps agentic-network approval evidence at P7D. Enforced here too, so a
+#: bad window is refused before anything is written rather than only when the
+#: contract is later validated.
+APPROVAL_MAX_WINDOW = timedelta(days=7)
+
+_REQUIRED_APPROVAL_FIELDS = ("generated_at", "expires_at", "status", "subject_revision")
+
+
+def _parse_offset_timestamp(field: str, value: object, *, filename: str) -> datetime:
+    """Parse a timezone-aware ISO-8601 timestamp, or refuse."""
+    text = _require_safe_scalar(field, value)
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit(
+            f"{filename}: {field} is not an ISO-8601 timestamp: {text!r}"
+        ) from exc
+    if moment.tzinfo is None:
+        raise SystemExit(
+            f"{filename}: {field} must be timezone-aware, got {text!r}. A naive "
+            "timestamp has no defined validity window."
+        )
+    return moment
+
+
+def load_canonical_approval(filename: str) -> dict | None:
+    """Read and fully validate one canonical human approval artifact.
+
+    The single place a human approval is parsed. Indexing, wiring, revision
+    pinning, window materialization and the review binding all come through
+    here, so none of them can apply a weaker rule than the others — which is
+    exactly how the materialization path ended up interpolating an unvalidated
+    ``expires_at`` into a contract.
+
+    Nothing here authors, upgrades, or edits an approval. Returns None when the
+    artifact does not exist; raises when it exists and is not trustworthy.
     """
 
     path = EVIDENCE_DIR / filename
     if not path.exists():
-        return False
+        return None
     raw = path.read_bytes()
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -87,6 +148,7 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
         raise SystemExit(f"{filename} is not readable JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise SystemExit(f"{filename} must be a JSON object, got {type(payload).__name__}")
+
     producer = payload.get("producer")
     if not isinstance(producer, dict):
         raise SystemExit(
@@ -98,20 +160,90 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
             f"{filename} is not a human approval record: producer.type is "
             f"{producer.get('type')!r}. Refusing to index it as one."
         )
-    missing = {"generated_at", "expires_at", "status", "subject_revision"} - set(payload)
+    missing = set(_REQUIRED_APPROVAL_FIELDS) - set(payload)
     if missing:
         raise SystemExit(
             f"{filename} is missing required approval fields: {sorted(missing)}"
         )
-    entries[key] = {
+
+    # Every scalar that can reach a contract is checked here, once.
+    producer_id = _require_safe_scalar("producer.id", producer["id"])
+    producer_type = _require_safe_scalar("producer.type", producer["type"])
+    status = _require_safe_scalar("status", payload["status"])
+    subject_revision = _require_safe_scalar("subject_revision", payload["subject_revision"])
+    generated_at = _require_safe_scalar("generated_at", payload["generated_at"])
+    expires_at = _require_safe_scalar("expires_at", payload["expires_at"])
+
+    generated = _parse_offset_timestamp("generated_at", generated_at, filename=filename)
+    expires = _parse_offset_timestamp("expires_at", expires_at, filename=filename)
+    if generated >= expires:
+        raise SystemExit(
+            f"{filename}: generated_at {generated_at} is not earlier than "
+            f"expires_at {expires_at}. An approval with no positive window "
+            "cannot authorize anything."
+        )
+    if expires - generated > APPROVAL_MAX_WINDOW:
+        raise SystemExit(
+            f"{filename}: approval window {expires - generated} exceeds the P7D "
+            "cap that nornyx.builtin.module.agentic_network_governance applies "
+            "to agentic-network approval evidence."
+        )
+
+    return {
+        "filename": filename,
         "artifact": f"evidence/{filename}",
         "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
-        "generated_at": payload["generated_at"],
-        "expires_at": payload["expires_at"],
-        "status": payload["status"],
-        "subject_revision": payload["subject_revision"],
-        "producer": producer,
+        "generated_at": generated_at,
+        "expires_at": expires_at,
+        "status": status,
+        "subject_revision": subject_revision,
+        "producer": {"id": producer_id, "type": producer_type},
         "authored_by": "human",
+        "payload": payload,
+    }
+
+
+def load_canonical_approvals() -> dict[str, dict]:
+    """Validate every canonical approval present, and cross-check them.
+
+    Two approvals covering the same subject must agree about what they cover and
+    for how long. Disagreement is a governance defect, not something to resolve
+    by picking one.
+    """
+
+    found = {
+        scope: record
+        for scope, filename in CANONICAL_APPROVALS.items()
+        if (record := load_canonical_approval(filename)) is not None
+    }
+    for field, label in (("subject_revision", "subject revisions"), ("expires_at", "expiries")):
+        values = {record[field] for record in found.values()}
+        if len(values) > 1:
+            raise SystemExit(
+                f"canonical human approvals declare different {label}: "
+                + ", ".join(sorted(values))
+                + ". Nothing was modified."
+            )
+    return found
+
+
+def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
+    """Index a validated human approval without altering it."""
+    record = load_canonical_approval(filename)
+    if record is None:
+        return False
+    entries[key] = {
+        field: record[field]
+        for field in (
+            "artifact",
+            "content_hash",
+            "generated_at",
+            "expires_at",
+            "status",
+            "subject_revision",
+            "producer",
+            "authored_by",
+        )
     }
     return True
 
@@ -136,10 +268,12 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
     # artifact is written.
     revision = require_approval_matches_head() or _revision()
     generated = _iso(generated_at)
-    expires = (
-        MACHINE_EVIDENCE_EXPIRES
-        if window_days is None
-        else _iso(generated_at + timedelta(days=window_days))
+    # An honest finite window, measured from this run. Nornyx has no
+    # non-expiring representation for machine evidence, so the baseline is kept
+    # healthy by regenerating it, not by claiming a window it does not have.
+    expires = _iso(
+        generated_at
+        + timedelta(days=MACHINE_EVIDENCE_WINDOW_DAYS if window_days is None else window_days)
     )
     report = _architecture_report()
     arch_status = "pass" if report.get("status") == "pass" else "fail"
@@ -361,9 +495,17 @@ _GIT_REVISION_RE = re.compile(
 _ARTIFACT_RE = re.compile(r"^\s*artifact:\s*(evidence/\S+)\s*$")
 _HASH_RE = re.compile(r"^(?P<lead>\s*(?:content_hash|artifact_sha256):\s*)sha256:[0-9a-f]{64}\s*$")
 _TOP_LEVEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+#: Blocks whose entries carry a bounded authorization interval rather than
+#: evidence freshness. Regenerated on the same window; see EVIDENCE_FRESHNESS.md.
+AUTHORIZATION_INTERVAL_BLOCKS = frozenset({"agent_identities", "agentic_network"})
 _RECORD_START_RE = re.compile(r"^\s*-\s+(?:id|schema):")
 _TIMESTAMP_RE = re.compile(
     r"^(?P<lead>\s*(?P<field>generated_at|expires_at):\s*)[\"']?[0-9T:+\-Z.]+[\"']?\s*$"
+)
+# The authority declaration's expiry additionally accepts the literal `null`,
+# which is how Nornyx represents a declaration that does not decay.
+_AUTHORITY_EXPIRY_RE = re.compile(
+    r"^(?P<lead>\s*expires_at:\s*)(?P<value>null|[\"']?[0-9T:+\-Z.]+[\"']?)\s*$"
 )
 
 
@@ -449,11 +591,70 @@ def sync_contracts() -> list[str]:
                     if value not in line:
                         lines[position] = f'{moment.group("lead")}"{value}"\n'
                         changes.append(f"{contract.name}: {field} -> {value}")
+            elif block in AUTHORIZATION_INTERVAL_BLOCKS:
+                # Agent identities and network authorizations need real bounded
+                # intervals — Nornyx rejects a null one, correctly, because an
+                # identity's authority is exactly the kind that should lapse.
+                # They are regenerated on the same window as machine evidence so
+                # the documented review-time refresh produces a baseline that is
+                # healthy at whatever instant the reviewer arrives.
+                # valid_from is left alone: it is already in the past, and moving
+                # it forward would invalidate runs pinned to an earlier instant.
+                moment = _TIMESTAMP_RE.match(line)
+                if moment and moment.group("field") == "expires_at":
+                    value = _require_safe_scalar("expires_at", index["expires_at"])
+                    if value not in line:
+                        lines[position] = f'{moment.group("lead")}"{value}"\n'
+                        changes.append(
+                            f"{contract.name}: {block} authorization expiry -> {value}"
+                        )
         rewritten = "".join(lines)
         _assert_single_managed_approval(contract.name, rewritten)
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
     return changes
+
+
+def adopt_approval(generated_at: datetime, window_days: int | None) -> dict:
+    """Run the whole approval-adoption sequence as one gated operation.
+
+    The steps rewrite the contracts, so running them as separate processes would
+    make each one see the previous one's output as a dirty governed tree. The
+    alternative — exempting `.nyx` files from the cleanliness check — would carve
+    the hole in exactly the file the check exists to protect.
+
+    So the gate runs once here, before anything is written, and the sequence then
+    proceeds atomically from that proven-clean state.
+    """
+
+    require_approval_matches_head()
+    with _gate_satisfied():
+        return {
+            "status": "adopted",
+            "index": build(generated_at, window_days),
+            "wiring": wire_approvals(),
+            "window": materialize_approval_window(),
+            "sync": sync_contracts(),
+            "review_binding": emit_review_binding(),
+        }
+
+
+#: Set while an already-gated composite operation is running, so the individual
+#: steps do not re-check a tree they are themselves in the middle of rewriting.
+#: Never set by a single-step invocation: those must each start from a clean,
+#: committed state.
+_GATE_SATISFIED = False
+
+
+@contextmanager
+def _gate_satisfied() -> Iterator[None]:
+    global _GATE_SATISFIED
+    previous = _GATE_SATISFIED
+    _GATE_SATISFIED = True
+    try:
+        yield
+    finally:
+        _GATE_SATISFIED = previous
 
 
 def _approved_revision() -> str | None:
@@ -465,47 +666,30 @@ def _approved_revision() -> str | None:
     invalidation terms, void it while leaving it looking valid.
     """
 
-    pinned: set[str] = set()
-    for name in ("runtime_human_approval.json", "architecture_human_approval.json"):
-        path = EVIDENCE_DIR / name
-        if not path.exists():
-            continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        revision = payload.get("subject_revision")
-        if isinstance(revision, str) and revision:
-            pinned.add(revision)
-    if not pinned:
+    approvals = load_canonical_approvals()
+    if not approvals:
         return None
-    if len(pinned) > 1:
-        raise SystemExit(
-            "human approvals pin different subject revisions: " + ", ".join(sorted(pinned))
-        )
-    return pinned.pop()
+    # load_canonical_approvals() has already refused disagreeing revisions.
+    return next(iter(approvals.values()))["subject_revision"]
 
 
 def _approval_state() -> dict:
     """Report the human approvals that exist, exactly as they were written."""
 
     state: dict = {"human_review": "not_performed", "records": []}
-    for scope, name in (
-        ("agentic_network", "runtime_human_approval.json"),
-        ("architecture", "architecture_human_approval.json"),
-    ):
-        path = EVIDENCE_DIR / name
-        if not path.exists():
-            continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
+    for scope, record in sorted(load_canonical_approvals().items()):
+        payload = record["payload"]
         state["human_review"] = "performed"
         state["records"].append(
             {
                 "scope": scope,
-                "artifact": f"evidence/{name}",
-                "producer": payload.get("producer", {}),
-                "status": payload.get("status"),
+                "artifact": record["artifact"],
+                "producer": record["producer"],
+                "status": record["status"],
                 "approval": payload.get("approval"),
-                "generated_at": payload.get("generated_at"),
-                "expires_at": payload.get("expires_at"),
-                "subject_revision": payload.get("subject_revision"),
+                "generated_at": record["generated_at"],
+                "expires_at": record["expires_at"],
+                "subject_revision": record["subject_revision"],
                 "reviewed_control_pack_commit": payload.get("control_pack_commit"),
             }
         )
@@ -525,28 +709,41 @@ def materialize_approval_window() -> dict:
     """
 
     require_approval_matches_head()
-    windows = {
-        path.stem: json.loads(path.read_text(encoding="utf-8"))
-        for path in EVIDENCE_DIR.glob("*human_approval.json")
-    }
-    if not windows:
+    approvals = load_canonical_approvals()
+    if not approvals:
         # Restore the placeholder. Leaving the short reviewer window behind after
         # an approval is withdrawn re-rots the baseline the moment that date
         # passes, which is the exact regression 0.3.0 exists to prevent.
         return _set_authority_expiry(
-            MACHINE_EVIDENCE_EXPIRES, status="restored_placeholder"
+            AUTHORITY_EXPIRY_PLACEHOLDER, status="restored_placeholder"
         )
-    expiries = {payload["expires_at"] for payload in windows.values()}
-    if len(expiries) > 1:
-        raise SystemExit(
-            "human approvals declare different expiries: " + ", ".join(sorted(expiries))
-        )
-    expires = expiries.pop()
+    # load_canonical_approvals() has already refused disagreeing expiries, and
+    # every value it returns is a validated, in-window, safe scalar.
+    expires = next(iter(approvals.values()))["expires_at"]
     return _set_authority_expiry(expires, status="materialized")
 
 
-def _set_authority_expiry(expires: str, *, status: str) -> dict:
+def _render_authority_expiry(expires: str | None) -> str:
+    """Serialize the declaration expiry safely.
+
+    ``expires_at`` used to be interpolated raw. yaml.safe_dump decides the
+    quoting, so a crafted value becomes a quoted string rather than new lines of
+    YAML. ``None`` renders as the literal ``null`` Nornyx accepts as
+    non-expiring.
+    """
+
+    if expires is None:
+        return "null"
+    text = _require_safe_scalar("expires_at", expires)
+    # Dump as a mapping and take the value back out, so the serializer — not
+    # this function — decides whether and how the scalar needs quoting.
+    dumped = yaml.safe_dump({"expires_at": text}, default_flow_style=False, width=10**6)
+    return dumped.split(":", 1)[1].strip()
+
+
+def _set_authority_expiry(expires: str | None, *, status: str) -> dict:
     """Write one expiry into every authority declaration, and only there."""
+    rendered = _render_authority_expiry(expires)
     changes: list[str] = []
     for contract in CONTRACTS:
         original = contract.read_text(encoding="utf-8")
@@ -558,11 +755,16 @@ def _set_authority_expiry(expires: str, *, status: str) -> dict:
                 block = top_level.group(1)
             if block != "approvals":
                 continue
-            moment = _TIMESTAMP_RE.match(line)
-            if moment and moment.group("field") == "expires_at" and expires not in line:
-                lines[position] = f'{moment.group("lead")}"{expires}"\n'
-                changes.append(f"{contract.name}: authority expiry -> {expires}")
+            moment = _AUTHORITY_EXPIRY_RE.match(line)
+            if moment and moment.group("value").strip() != rendered:
+                lines[position] = f"{moment.group('lead')}{rendered}\n"
+                changes.append(f"{contract.name}: authority expiry -> {rendered}")
         rewritten = "".join(lines)
+        # Reparse before committing the edit. A declaration expiry is the one
+        # value a reviewer reads to decide whether authority is still live, so a
+        # write that damaged the document — or smuggled in a second approval
+        # record — must not survive to disk.
+        _assert_single_managed_approval(contract.name, rewritten)
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
     return {"status": status, "expires_at": expires, "changes": changes}
@@ -789,8 +991,122 @@ def _assert_single_managed_approval(name: str, text: str) -> None:
         )
 
 
+#: Paths whose content a human approval actually covers. If any of these differs
+#: from the approved commit, the run is inspecting something other than what was
+#: approved, whatever the revision label says.
+GOVERNED_INPUT_PATHS = (
+    "src",
+    "scripts",
+    "tests",
+    "docs",
+    ".github",
+    ".nornyx/contracts",
+    "pyproject.toml",
+    "Dockerfile",
+    "docker-compose.yml",
+    ".gitignore",
+    "BRD.md",
+    "CLAUDE.md",
+)
+
+#: The only tracked files allowed to differ, and the reason each one may.
+#:
+#: Every entry is rewritten from the governed inputs by this tool before
+#: anything is inspected, so its prior content cannot change the result. That is
+#: the whole test for belonging here. Human approval artifacts are NOT in this
+#: set: they are never regenerated, and they are exactly what the gate protects.
+REGENERATED_OUTPUTS = frozenset(
+    {
+        ".nornyx/contracts/evidence/INDEX.json",
+        ".nornyx/contracts/evidence/architecture_approval_record.json",
+        ".nornyx/contracts/evidence/architecture_change_record.json",
+        ".nornyx/contracts/evidence/architecture_conformance_report.json",
+        ".nornyx/contracts/evidence/architecture_evidence_manifest.json",
+        ".nornyx/contracts/evidence/architecture_exception_review.json",
+        ".nornyx/contracts/evidence/architecture_independent_review.json",
+        ".nornyx/contracts/evidence/review_binding.json",
+        ".nornyx/contracts/evidence/runtime_evidence_manifest.json",
+        ".nornyx/contracts/evidence/runtime_network_contract_review.json",
+    }
+)
+
+
+def _git_lines(*args: str) -> list[str]:
+    result = subprocess.run(
+        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False
+    )
+    if result.returncode:
+        raise SystemExit(
+            f"git {' '.join(args)} failed: {result.stderr.strip()}. "
+            "A clean governed tree cannot be proven, so nothing was modified."
+        )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _dirty_governed_inputs() -> tuple[list[str], list[str]]:
+    """Return governed paths modified against HEAD, and untracked ones."""
+    paths = list(GOVERNED_INPUT_PATHS)
+    # --cached and the worktree diff are separate questions: staging a change
+    # hides it from one and not the other, and either means the tree no longer
+    # holds the approved content.
+    modified = {
+        name
+        for args in (("diff", "--name-only", "HEAD", "--"), ("diff", "--name-only", "--cached", "HEAD", "--"))
+        for name in _git_lines(*args, *paths)
+    }
+    untracked = set(
+        _git_lines("ls-files", "--others", "--exclude-standard", "--", *paths)
+    )
+    # The canonical approval artifacts are untracked by design — an approval is
+    # supplied by a human, not committed by this tool — and they are the input
+    # this gate exists to serve. They get their own, much stricter validation in
+    # load_canonical_approval(); anything else untracked here is drift.
+    allowed = REGENERATED_OUTPUTS | {
+        f".nornyx/contracts/evidence/{name}" for name in CANONICAL_APPROVALS.values()
+    }
+    return (
+        sorted(name for name in modified if name not in allowed),
+        sorted(name for name in untracked if name not in allowed),
+    )
+
+
+def require_clean_governed_tree(approved: str) -> None:
+    """Refuse to honor an approval when the tree is not what was approved.
+
+    Matching ``git rev-parse HEAD`` proves only which commit is checked out. It
+    says nothing about the files on disk, and every governed operation reads the
+    files, not the commit. An uncommitted edit to a contract or to governed
+    source would therefore be inspected, bound, and reported as approved
+    content.
+
+    Raises before anything is written.
+    """
+
+    if _GATE_SATISFIED:
+        # Already proven clean by the composite operation now in progress; the
+        # only differences since are the ones it has just written itself.
+        return
+    modified, untracked = _dirty_governed_inputs()
+    if not modified and not untracked:
+        return
+    detail = []
+    if modified:
+        detail.append("  modified (index or working tree):\n    " + "\n    ".join(modified))
+    if untracked:
+        detail.append("  untracked inside governed paths:\n    " + "\n    ".join(untracked))
+    raise SystemExit(
+        f"governed tree is dirty while a human approval pins {approved}.\n"
+        + "\n".join(detail)
+        + "\n\nNothing was modified. The approval covers the content of that "
+        "commit, and these paths no longer hold it, so honoring the approval "
+        "would bind and report content nobody approved.\n"
+        "Either commit the changes and obtain a new approval, or restore the "
+        "approved content with `git restore`."
+    )
+
+
 def require_approval_matches_head() -> str | None:
-    """Refuse to touch anything when an approval pins a different revision.
+    """Refuse to touch anything unless the tree *is* the approved subject.
 
     Generating evidence from the working tree at HEAD and stamping it with an
     older approved revision produces evidence that describes code nobody
@@ -798,7 +1114,11 @@ def require_approval_matches_head() -> str | None:
     subject out from under the human. So the only safe response is to stop
     before writing anything and let a human re-approve the new revision.
 
-    Returns the approved revision when it matches HEAD, or None when no approval
+    Two separate conditions, because passing the first proves very little on its
+    own: the approved revision must be HEAD, *and* the governed files on disk
+    must still be that commit's content.
+
+    Returns the approved revision when both hold, or None when no approval
     exists. Raises otherwise, having modified nothing.
     """
 
@@ -816,6 +1136,7 @@ def require_approval_matches_head() -> str | None:
             "Either check out the approved revision, or obtain a new human "
             "approval for the current one."
         )
+    require_clean_governed_tree(approved)
     return approved
 
 
@@ -972,6 +1293,13 @@ def main() -> int:
         help="Set authority declaration expiry from an inserted approval",
     )
     parser.add_argument(
+        "--adopt-approval",
+        action="store_true",
+        help="Run the whole adoption sequence atomically: build, wire, "
+        "materialize, sync, review-binding. The supported way to adopt an "
+        "approval, because the governed-tree gate then runs once, up front",
+    )
+    parser.add_argument(
         "--review-binding",
         action="store_true",
         help="Emit the record identifying exactly what a human approval would cover",
@@ -981,6 +1309,24 @@ def main() -> int:
     if args.sync_contracts:
         changes = sync_contracts()
         print(json.dumps({"status": "synced", "changes": changes}, indent=2))
+        return 0
+
+    if args.adopt_approval:
+        raw = args.as_of or os.getenv("FORGE_RUNTIME_AS_OF")
+        moment = (
+            datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if raw
+            else datetime.now(timezone.utc)
+        )
+        if moment.tzinfo is None:
+            raise SystemExit("--as-of must be timezone-aware")
+        print(
+            json.dumps(
+                adopt_approval(moment.replace(microsecond=0), args.window_days),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
 
     if args.wire_approvals:

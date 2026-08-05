@@ -31,6 +31,54 @@
   label on every field — the digest covers the same mislabelled request — and
   released the effect. The mismatch now withholds without spending the grant.
 - Runtime producer version is read from the package rather than hardcoded.
+- An approval is honored only when the governed tree still holds the approved
+  content. `require_approval_matches_head()` proved the approved revision equals
+  `git rev-parse HEAD`, which says which commit is checked out and nothing about
+  the files on disk — and every governed operation reads the files. An
+  uncommitted edit to a contract or to governed source was therefore inspected,
+  bound into evidence, and reported as approved content. Tracked governed inputs
+  must now be unmodified in both index and working tree, and untracked files
+  inside governed paths are refused; only the tool's own regenerated outputs may
+  differ, because it rewrites them before anything is inspected.
+- Adopting an approval is one atomic operation, `--adopt-approval`. The steps
+  rewrite the contracts, so run separately each would see the previous one's
+  output as drift; the alternative — exempting `.nyx` files from the check —
+  would have cut the hole in the file the check exists to protect.
+- `--materialize-approval-window` no longer globs `*human_approval.json`, so a
+  file merely named like an approval can no longer set the authority window, and
+  no longer interpolates `expires_at` through a raw f-string. Both canonical
+  artifacts now go through one validator shared with indexing, wiring and
+  revision pinning: JSON object, human producer, required fields, safe scalars,
+  timezone-aware ISO-8601 timestamps, `generated_at` before `expires_at`, the
+  P7D cap, and agreement between records where both exist.
+
+### Corrected claim — the baseline does expire, and here is what does not
+
+0.3.0 said "the public baseline no longer expires". That was false. It rested on
+`MACHINE_EVIDENCE_EXPIRES = "2099-01-01T00:00:00Z"` — a finite date far enough
+away to look like forever. At 2100 the baseline produced `EVIDENCE_STALE`,
+`ARCH_EVIDENCE_STALE` and `APPROVAL_EXPIRED`.
+
+What Nornyx 1.11.0 actually supports, verified against the real CLI:
+
+- **Authority declarations genuinely do not expire.** `expires_at: null` is
+  accepted and stays accepted at 2100 and 2200. The baseline now carries that.
+- **Machine evidence has no non-expiring representation.** The schema declares
+  `expires_at: {"oneOf": [timestamp, null]}` but the freshness evaluator raises
+  `EVIDENCE_TIME_INVALID` when it is absent, so the schema advertises something
+  the evaluator refuses. Architecture evidence does not offer it at all. This is
+  recorded as a Nornyx capability gap rather than papered over.
+- **Agent authorization intervals must be bounded**, which is correct — an
+  agent's authority is exactly the kind that should lapse.
+
+So machine evidence and authorization intervals carry an honest finite window,
+and the guarantee is regeneration rather than permanence:
+`check_pre_approval_baseline.py --regenerate`. Tests prove it restores a healthy
+pre-approval baseline at 2100 and 2200, and a separate test proves an
+un-regenerated far-future check still fails — otherwise the window would be
+decorative. See `docs/governance/EVIDENCE_FRESHNESS.md`.
+
+Human approval expiry is unchanged: never generated, never extended, P7D cap.
 
 ## 0.3.0
 

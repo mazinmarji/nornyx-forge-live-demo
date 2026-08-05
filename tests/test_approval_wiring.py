@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REFRESH = "scripts/refresh_governance_evidence.py"
@@ -87,15 +88,16 @@ def _write_approvals(workspace: Path, revision: str, *, expires: str) -> None:
 
 
 def _prepare(workspace: Path, *, as_of: str) -> None:
-    """The documented sequence: refresh, wire, materialize, sync."""
-    for args in (
-        (REFRESH, "--as-of", as_of),
-        (REFRESH, "--wire-approvals"),
-        (REFRESH, "--materialize-approval-window"),
-        (REFRESH, "--sync-contracts"),
-    ):
-        completed = _run(workspace, *args)
-        assert completed.returncode == 0, f"{args}\n{completed.stdout}{completed.stderr}"
+    """The documented sequence, as one atomic operation.
+
+    It used to be four separate invocations. Each step rewrites the contracts,
+    so once the governed-tree gate existed the second invocation correctly saw
+    the first one's output as drift. Adoption is therefore gated once, up front,
+    and then runs to completion — rather than exempting `.nyx` files from the
+    check that exists to protect them.
+    """
+    completed = _run(workspace, REFRESH, "--adopt-approval", "--as-of", as_of)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def _check(workspace: Path, contract: str, as_of: str) -> subprocess.CompletedProcess[str]:
@@ -136,9 +138,12 @@ def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
     # Pinned well past the withdrawn approval's window: withdrawing must
-    # restore the placeholder, not leave a short expiry to rot later.
+    # restore the non-expiring placeholder, not leave a short expiry to rot
+    # later. Regenerating refreshes machine evidence, which genuinely expires;
+    # if the withdrawn window had been left behind, no amount of regeneration
+    # would make this pass.
     report = json.loads(
-        _run(workspace, BASELINE, "--as-of", "2030-01-01T00:00:00Z").stdout
+        _run(workspace, BASELINE, "--regenerate", "--as-of", "2030-01-01T00:00:00Z").stdout
     )
     assert report["status"] == "pass", report
     assert report["human_approval_present"] is False
@@ -260,12 +265,20 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
 
     text = contract.read_text(encoding="utf-8")
     assert "2026-08-05T00:00:00Z" not in text, "a stale reviewer window was left behind"
-    assert "2099-01-01T00:00:00Z" in text
+    # Back to the non-expiring representation, not a distant date pretending to
+    # be one. A declaration of who may approve has no reason to decay.
+    for declaration in yaml.safe_load(text)["approvals"]:
+        assert declaration["expires_at"] is None, declaration
 
-    # And the baseline is healthy long after the withdrawn window would have ended.
-    for as_of in ("2026-08-06T00:00:00Z", "2030-01-01T00:00:00Z"):
-        report = json.loads(_run(workspace, BASELINE, "--as-of", as_of).stdout)
-        assert report["status"] == "pass", (as_of, report)
+    # And the baseline is healthy long after the withdrawn window would have
+    # ended. The far-future case needs the documented regeneration, because
+    # machine evidence has a real finite window; see EVIDENCE_FRESHNESS.md.
+    report = json.loads(_run(workspace, BASELINE, "--as-of", "2026-08-06T00:00:00Z").stdout)
+    assert report["status"] == "pass", report
+    report = json.loads(
+        _run(workspace, BASELINE, "--regenerate", "--as-of", "2030-01-01T00:00:00Z").stdout
+    )
+    assert report["status"] == "pass", report
 
 
 @needs_nornyx
