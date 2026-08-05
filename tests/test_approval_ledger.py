@@ -21,6 +21,7 @@ from nornyx_forge.nornyx_runtime import (
     ApprovalLedger,
     NornyxActionBoundary,
     approval_ledger_path,
+    canonical_request_id,
 )
 
 NOW = "2026-08-03T00:00:00Z"
@@ -33,9 +34,12 @@ def _request(**overrides: object) -> ActionRequest:
         destination=str(overrides.pop("destination", "zone.external_customer")),
         parameters=overrides.pop("parameters", {"amount": 100, "currency": "USD"}),  # type: ignore[arg-type]
     )
+    mission_id = str(overrides.pop("mission_id", "CASE-001"))
     return ActionRequest(
-        request_id=str(overrides.pop("request_id", "REQ-001")),
-        mission_id=str(overrides.pop("mission_id", "CASE-001")),
+        # Canonical for the mission: the runtime derives it, so a fixture that
+        # invented its own id would be refused before the ledger is reached.
+        request_id=str(overrides.pop("request_id", canonical_request_id(mission_id))),
+        mission_id=mission_id,
         subject_revision=str(overrides.pop("subject_revision", "git:" + "a" * 40)),
         capability="execute_high_risk_effect",
         action=action,

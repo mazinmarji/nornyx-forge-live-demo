@@ -192,6 +192,128 @@ class ActionRequest:
         return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+#: The trust zone a released high-risk effect actually crosses into. Declared
+#: once so the zone the runtime asks Nornyx about and the destination an approval
+#: is bound to cannot drift apart.
+EXTERNAL_TRUST_ZONE = "zone.external_customer"
+
+
+def exercised_capability(risk: str) -> str:
+    """The capability a given risk level actually exercises.
+
+    The single derivation. Proposing an action and releasing its effect are
+    different capabilities, and which one is in play follows from the risk of the
+    act — never from a label a caller supplies.
+    """
+    return (
+        "execute_high_risk_effect"
+        if risk.lower() in HIGH_RISK_LEVELS
+        else "execute_low_risk_action"
+    )
+
+
+def canonical_action_request(
+    *,
+    mission_id: str,
+    risk: str,
+    subject_revision: str,
+    descriptor: ActionDescriptor | None = None,
+) -> ActionRequest:
+    """The request the runtime will authorize for this execution context.
+
+    Public so a caller can report or pre-compute exactly what the runtime will
+    bind an approval to, without that computation being what the runtime trusts.
+    """
+    return _canonical_action_request(
+        mission_id=mission_id,
+        capability=exercised_capability(risk),
+        subject_revision=subject_revision,
+        descriptor=descriptor,
+    )
+
+
+def canonical_request_id(mission_id: str) -> str:
+    """The only request id valid for a given mission.
+
+    Deriving it from the mission is what makes a request id meaningless outside
+    its own execution: the same id under a different mission is a different
+    request, and cannot match an approval issued for either one.
+    """
+    return f"REQ-{mission_id}"
+
+
+def _canonical_action_request(
+    *,
+    mission_id: str,
+    capability: str,
+    subject_revision: str,
+    descriptor: ActionDescriptor | None,
+) -> ActionRequest:
+    """Describe the act being executed, from the execution context itself.
+
+    Everything that identifies *which* execution this is — mission, request id,
+    capability, governed revision, destination — comes from the runtime. Only the
+    descriptor's operation, resource and parameters come from the caller, because
+    nothing else can know what the opaque callable is meant to do; that is why
+    the approval binds to the descriptor rather than to the callable.
+    """
+
+    supplied = descriptor or ActionDescriptor(
+        operation="execute_high_risk_action",
+        resource=mission_id,
+        destination=EXTERNAL_TRUST_ZONE,
+    )
+    return ActionRequest(
+        request_id=canonical_request_id(mission_id),
+        mission_id=mission_id,
+        subject_revision=subject_revision,
+        capability=capability,
+        action=ActionDescriptor(
+            operation=supplied.operation,
+            resource=supplied.resource,
+            # Pinned to the zone actually crossed, never to a caller's label.
+            destination=EXTERNAL_TRUST_ZONE,
+            parameters=supplied.parameters,
+        ),
+    )
+
+
+def _request_context_mismatch(
+    supplied: ActionRequest, canonical: ActionRequest
+) -> str | None:
+    """Return why a supplied request does not describe this execution, or None.
+
+    Compared field by field rather than by digest so the refusal can name what
+    disagreed. A single digest comparison would be equally safe and completely
+    unactionable in evidence.
+    """
+
+    for field_name, claimed, actual in (
+        ("mission_id", supplied.mission_id, canonical.mission_id),
+        ("request_id", supplied.request_id, canonical.request_id),
+        ("capability", supplied.capability, canonical.capability),
+        ("subject_revision", supplied.subject_revision, canonical.subject_revision),
+        ("destination", supplied.destination, canonical.destination),
+    ):
+        if claimed != actual:
+            return (
+                f"action request {field_name} is {claimed!r} but this execution's "
+                f"{field_name} is {actual!r}"
+            )
+    if supplied.action.canonical() != canonical.action.canonical():
+        return (
+            "action request describes a different operation than the one being "
+            f"executed: {supplied.action.canonical()!r} against "
+            f"{canonical.action.canonical()!r}"
+        )
+    if supplied.digest != canonical.digest:  # pragma: no cover - belt and braces
+        return (
+            f"action request digest {supplied.digest} does not match this "
+            f"execution's {canonical.digest}"
+        )
+    return None
+
+
 #: Where consumed action approvals are recorded. Generated runtime state, so it
 #: lives under evidence/runtime/ and is never committed.
 APPROVAL_LEDGER_ENV = "FORGE_APPROVAL_LEDGER"
@@ -565,6 +687,7 @@ class NornyxActionBoundary:
         action: Callable[[], str],
         action_approval: Mapping[str, Any] | None = None,
         action_request: ActionRequest | None = None,
+        action_descriptor: ActionDescriptor | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = risk.lower() in HIGH_RISK_LEVELS
@@ -572,9 +695,7 @@ class NornyxActionBoundary:
         # request; only the effect capability carries execution authority, so the
         # evidence never shows an `execute_*` capability allowed before the
         # authority for it exists.
-        capability_name = (
-            "execute_high_risk_effect" if high_risk else "execute_low_risk_action"
-        )
+        capability_name = exercised_capability(risk)
         CapabilityRequest = self._imports["CapabilityRequest"]
         ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
         EvidenceRecorder = self._imports["EvidenceRecorder"]
@@ -603,7 +724,7 @@ class NornyxActionBoundary:
                 ZoneCrossingRequest(
                     "identity.execution",
                     "zone.local_demo",
-                    "zone.external_customer",
+                    EXTERNAL_TRUST_ZONE,
                     None,
                 ),
                 context=self.context,
@@ -621,29 +742,30 @@ class NornyxActionBoundary:
         # action can never release another. This only ever narrows the decision.
         release_reason = "not evaluated"
         if high_risk and decision.allowed:
-            request = action_request or ActionRequest(
-                request_id=f"REQ-{mission_id}",
+            # Build the request from the execution context, and validate the
+            # approval against *that*. A caller-supplied request is a claim about
+            # what is being executed, not evidence of it: trusting it let an
+            # approval issued for one mission release another mission's callback,
+            # because every field the approval was checked against came from the
+            # same untrusted object.
+            request = _canonical_action_request(
                 mission_id=mission_id,
-                subject_revision=runtime_revision(self.root),
                 capability=capability_name,
-                action=ActionDescriptor(
-                    operation="execute_high_risk_action",
-                    resource=mission_id,
-                    destination="zone.external_customer",
-                ),
+                subject_revision=runtime_revision(self.root),
+                descriptor=action_descriptor
+                or (action_request.action if action_request is not None else None),
             )
-            if request.capability != capability_name:
-                # Which capability is exercised follows from the risk of the act,
-                # not from a label the caller supplies. Validating the grant
-                # against the caller's label let an approval bound to
-                # `execute_low_risk_action` release the high-risk effect: every
-                # other field matched, because the digest is computed over the
-                # same mislabelled request.
+            mismatch = (
+                _request_context_mismatch(action_request, request)
+                if action_request is not None
+                else None
+            )
+            if mismatch is not None:
+                # Refused before approval validation and before the ledger claim,
+                # so a mismatched request can neither be judged releasable nor
+                # spend a grant that belongs to the request it is imitating.
                 released = False
-                release_reason = (
-                    f"action request names capability {request.capability!r} but this "
-                    f"effect exercises {capability_name!r}"
-                )
+                release_reason = mismatch
             else:
                 released, release_reason = validate_action_approval(
                     action_approval, request, as_of=self.as_of
@@ -721,6 +843,7 @@ class NornyxActionBoundary:
         action: Callable[[], str],
         action_approval: Mapping[str, Any] | None = None,
         action_request: ActionRequest | None = None,
+        action_descriptor: ActionDescriptor | None = None,
     ) -> tuple[RuntimeDecision, str | None]:
         """Authorize and, only if authorized, run one consequential action.
 
@@ -743,6 +866,7 @@ class NornyxActionBoundary:
                 action=capture,
                 action_approval=action_approval,
                 action_request=action_request,
+                action_descriptor=action_descriptor,
             )
             return decision, result
         if not self.allow_fallback:

@@ -13,7 +13,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from nornyx_forge.nornyx_runtime import ActionDescriptor, ActionRequest
+from nornyx_forge.nornyx_runtime import (
+    ActionDescriptor,
+    ActionRequest,
+    canonical_request_id,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_governance_failure import _permissive_boundary  # noqa: E402
@@ -23,7 +27,7 @@ NOW = "2026-08-03T00:00:00Z"
 
 def _request(capability: str) -> ActionRequest:
     return ActionRequest(
-        request_id="REQ-MISLABELLED",
+        request_id=canonical_request_id("CASE-MISLABELLED"),
         mission_id="CASE-MISLABELLED",
         subject_revision="git:unbound",
         capability=capability,

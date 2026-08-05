@@ -22,6 +22,24 @@ jobs:
       - run: python -m pytest -q
       - run: python -m compileall -q src scripts
 
+  # A real build and a real launch on a host with a real Docker daemon. The
+  # default suite skips this because building downloads packages, which BRD-004
+  # forbids for the offline run — but `docker compose config` only parses YAML,
+  # so skipping everywhere would leave BRD-005 asserted by nothing.
+  container-launch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e '.[dev]'
+
+      - name: Build the image and start the application
+        env:
+          FORGE_DOCKER_TESTS: "1"
+        run: python -m pytest tests/test_container_launch.py -q
+
   # Asserts the state this repository is actually in before a human approval
   # exists. It deliberately does NOT assert that the governance contracts
   # validate: they cannot, until an accountable human supplies an approval

@@ -188,5 +188,5 @@
   "source": ".nornyx/in-session/reviews.json",
   "source_sha256": "sha256:6e68fcef1b822d95e0681c17c64cd7182e23f743afdae31db6aebbde5dc71a7a",
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:962539fc3bb4488052aa49cdff5b35f3007957be"
+  "subject_revision": "git:75c32e33764bc2ff5e64913c69b1a7bd6575982d"
 }

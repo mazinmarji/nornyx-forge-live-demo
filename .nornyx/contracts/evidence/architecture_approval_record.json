@@ -6,5 +6,5 @@
   "production_approval": "not_granted",
   "schema": "nornyx.forge.approval_record.v1",
   "statement": "No human architecture approval was granted. This record documents the absence of approval; it does not grant one.",
-  "subject_revision": "git:962539fc3bb4488052aa49cdff5b35f3007957be"
+  "subject_revision": "git:75c32e33764bc2ff5e64913c69b1a7bd6575982d"
 }

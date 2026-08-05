@@ -31,6 +31,26 @@
   label on every field — the digest covers the same mislabelled request — and
   released the effect. The mismatch now withholds without spending the grant.
 - Runtime producer version is read from the package rather than hardcoded.
+- An action approval is validated against the execution context, not against the
+  caller's description of it. Checking that `request.capability` matched the
+  exercised capability fixed one field and left the rest: every other field the
+  approval was compared against still came from the caller-supplied request, so a
+  valid unspent approval for mission A released mission B's callback. The runtime
+  now builds the canonical `ActionRequest` itself — mission, request id,
+  capability, governed revision and destination all derived from the execution
+  context — and validates the approval against that. A supplied request is a
+  claim that gets checked field by field; on mismatch the action is denied, the
+  approval is neither validated as releasable nor consumed, the callback is never
+  invoked, and the exact mismatch is recorded in runtime evidence.
+  `evaluate_and_execute` takes an `action_descriptor`, which is the only part a
+  caller can still determine, because nothing else can know what an opaque
+  callable is meant to do.
+- A request id is derived from its mission (`REQ-<mission_id>`), so the same id
+  presented under a different mission is a different request and matches no
+  approval issued for either.
+- CI builds the image and launches the application for real. The live launch was
+  opt-in and therefore usually unrun, leaving BRD-005 asserted by
+  `docker compose config`, which only parses YAML.
 - An approval is honored only when the governed tree still holds the approved
   content. `require_approval_matches_head()` proved the approved revision equals
   `git rev-parse HEAD`, which says which commit is checked out and nothing about
