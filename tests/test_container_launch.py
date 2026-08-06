@@ -27,6 +27,25 @@ def _docker_cli() -> str | None:
     return shutil.which("docker")
 
 
+def _run(*command: str, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a Docker command, decoding its output as what it actually emits.
+
+    `text=True` on its own decodes with the locale encoding. Docker's BuildKit
+    progress output is UTF-8, so on a Windows console (cp1252) the reader thread
+    dies on the first box-drawing glyph and the whole launch looks like a
+    failure of the application rather than of how the test read its output.
+    """
+    return subprocess.run(
+        list(command),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
+
+
 def test_compose_declares_the_documented_application_port():
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["app"]
@@ -56,12 +75,7 @@ def test_dockerignore_excludes_the_virtualenv():
 
 @pytest.mark.skipif(_docker_cli() is None, reason="docker CLI is not installed")
 def test_compose_file_is_valid_for_docker():
-    completed = subprocess.run(
-        [_docker_cli(), "compose", "-f", str(COMPOSE), "config"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
+    completed = _run(str(_docker_cli()), "compose", "-f", str(COMPOSE), "config")
     assert completed.returncode == 0, completed.stderr
 
 
@@ -72,12 +86,8 @@ def test_compose_file_is_valid_for_docker():
 def test_compose_up_build_starts_the_application():
     docker = _docker_cli()
     project = "nornyx-forge-test"
-    up = subprocess.run(
-        [docker, "compose", "-p", project, "up", "--build", "-d"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=1800,
+    up = _run(
+        str(docker), "compose", "-p", project, "up", "--build", "-d", timeout=1800
     )
     try:
         assert up.returncode == 0, up.stderr
@@ -97,9 +107,4 @@ def test_compose_up_build_starts_the_application():
         assert payload["human_review"] == "not_performed"
         assert payload["production_approval"] == "not_granted"
     finally:
-        subprocess.run(
-            [docker, "compose", "-p", project, "down", "-v"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
+        _run(str(docker), "compose", "-p", project, "down", "-v")
