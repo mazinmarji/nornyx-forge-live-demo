@@ -1,7 +1,21 @@
 name: ci
 on:
+  # Branch work is covered by the pull_request event. Listening to bare `push`
+  # as well ran the entire workflow twice per commit on the same SHA, which was
+  # merely wasteful until container-launch added a real image build to each —
+  # then the duplicate runs contended for runners and one of the pair sat
+  # unstarted for an hour before being cancelled. Every job still runs on every
+  # commit; it runs once.
   push:
+    branches: [main]
   pull_request:
+
+# A superseded run is finished with. Without this, pushing twice in quick
+# succession leaves the older run competing with the newer one for the same
+# runners, and the answer it eventually gives is about code nobody is waiting on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
