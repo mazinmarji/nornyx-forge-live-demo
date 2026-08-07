@@ -20,11 +20,32 @@ from nornyx_forge.nornyx_runtime import (
     ActionRequest,
     ApprovalLedger,
     NornyxActionBoundary,
+    approval_fingerprint,
     approval_ledger_path,
+    canonical_attempt_id,
     canonical_request_id,
 )
 
 NOW = "2026-08-03T00:00:00Z"
+
+
+def _fingerprint(approval_id: str, request, *, approver: str = "human:operations_owner") -> str:
+    """The key the boundary would compute for a grant carrying this id.
+
+    ``approval_id`` is accepted and deliberately unused: two calls differing only
+    in the id must produce the same fingerprint. That is the invariant the whole
+    replay fix rests on, so the helper embodies it rather than describing it.
+    """
+    return approval_fingerprint(
+        {
+            "approver": approver,
+            "approver_type": "human",
+            "approver_role": "operations_owner",
+            "generated_at": "2026-08-02T00:00:00Z",
+            "expires_at": "2026-08-05T00:00:00Z",
+        },
+        request,
+    )
 
 
 def _request(**overrides: object) -> ActionRequest:
@@ -39,6 +60,9 @@ def _request(**overrides: object) -> ActionRequest:
         # Canonical for the mission: the runtime derives it, so a fixture that
         # invented its own id would be refused before the ledger is reached.
         request_id=str(overrides.pop("request_id", canonical_request_id(mission_id))),
+        attempt_id=str(
+            overrides.pop("attempt_id", canonical_attempt_id(mission_id, 1))
+        ),
         mission_id=mission_id,
         subject_revision=str(overrides.pop("subject_revision", "git:" + "a" * 40)),
         capability="execute_high_risk_effect",
@@ -49,8 +73,8 @@ def _request(**overrides: object) -> ActionRequest:
 def test_a_second_consumption_is_refused(tmp_path: Path):
     ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
     request = _request()
-    assert ledger.consume("ACT-1", request.digest, at=NOW)[0] is True
-    claimed, reason = ledger.consume("ACT-1", request.digest, at=NOW)
+    assert ledger.consume(_fingerprint("ACT-1", request), request.digest, at=NOW)[0] is True
+    claimed, reason = ledger.consume(_fingerprint("ACT-1", request), request.digest, at=NOW)
     assert claimed is False
     assert "already consumed" in reason
 
@@ -58,9 +82,9 @@ def test_a_second_consumption_is_refused(tmp_path: Path):
 def test_consumption_survives_closing_and_reopening_the_store(tmp_path: Path):
     path = tmp_path / "ledger.sqlite3"
     request = _request()
-    assert ApprovalLedger(path).consume("ACT-2", request.digest, at=NOW)[0] is True
+    assert ApprovalLedger(path).consume(_fingerprint("ACT-2", request), request.digest, at=NOW)[0] is True
     # A brand new object over the same file, as a restarted process would build.
-    claimed, reason = ApprovalLedger(path).consume("ACT-2", request.digest, at=NOW)
+    claimed, reason = ApprovalLedger(path).consume(_fingerprint("ACT-2", request), request.digest, at=NOW)
     assert claimed is False, reason
 
 
@@ -68,9 +92,9 @@ def test_consumption_survives_a_new_boundary(tmp_path: Path):
     """Rebuilding the boundary must not forget what was already spent."""
     request = _request()
     first = NornyxActionBoundary(tmp_path, allow_fallback=True)
-    assert first.approval_ledger.consume("ACT-3", request.digest, at=NOW)[0] is True
+    assert first.approval_ledger.consume(_fingerprint("ACT-3", request), request.digest, at=NOW)[0] is True
     second = NornyxActionBoundary(tmp_path, allow_fallback=True)
-    claimed, reason = second.approval_ledger.consume("ACT-3", request.digest, at=NOW)
+    claimed, reason = second.approval_ledger.consume(_fingerprint("ACT-3", request), request.digest, at=NOW)
     assert claimed is False, reason
 
 
@@ -81,21 +105,40 @@ def test_only_one_of_two_concurrent_consumers_wins(tmp_path: Path):
     request = _request()
 
     def claim(_: int) -> bool:
-        return ApprovalLedger(path).consume("ACT-RACE", request.digest, at=NOW)[0]
+        return ApprovalLedger(path).consume(_fingerprint("ACT-RACE", request), request.digest, at=NOW)[0]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(claim, range(8)))
     assert sum(results) == 1, results
 
 
-def test_a_reused_id_against_a_different_request_is_named_as_such(tmp_path: Path):
+def test_two_different_requests_do_not_collide_on_a_shared_id(tmp_path: Path):
+    """The identifier is provenance, so re-using one is not itself a conflict.
+
+    This test used to assert the opposite, because `approval_id` was the primary
+    key. It was the mirror of the real defect: the ledger noticed one id over two
+    requests while missing one request under two ids.
+    """
     ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
     first = _request()
-    other = _request(request_id="REQ-002", parameters={"amount": 5000, "currency": "USD"})
-    assert ledger.consume("ACT-4", first.digest, at=NOW)[0] is True
-    claimed, reason = ledger.consume("ACT-4", other.digest, at=NOW)
+    other = _request(request_id="REQ-CASE-002", parameters={"amount": 5000, "currency": "USD"})
+    assert ledger.consume(_fingerprint("ACT-4", first), first.digest, at=NOW)[0] is True
+    claimed, reason = ledger.consume(_fingerprint("ACT-4", other), other.digest, at=NOW)
+    assert claimed is True, reason
+
+
+def test_one_act_cannot_be_released_by_a_second_approval(tmp_path: Path):
+    """Distinct grants, same consequential act: the act still happens once."""
+    ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
+    request = _request()
+    # Genuinely different decisions: a second named approver, not a relabel.
+    first = _fingerprint("ACT-A", request, approver="human:operations_owner")
+    second = _fingerprint("ACT-B", request, approver="human:network_governance_owner")
+    assert first != second, "the two grants must differ for this to test anything"
+    assert ledger.consume(first, request.digest, at=NOW)[0] is True
+    claimed, reason = ledger.consume(second, request.digest, at=NOW)
     assert claimed is False
-    assert "different request" in reason
+    assert "already released" in reason
 
 
 def test_a_failing_effect_still_spends_the_approval(tmp_path: Path):
@@ -106,9 +149,9 @@ def test_a_failing_effect_still_spends_the_approval(tmp_path: Path):
     """
     ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
     request = _request()
-    assert ledger.consume("ACT-5", request.digest, at=NOW)[0] is True
+    assert ledger.consume(_fingerprint("ACT-5", request), request.digest, at=NOW)[0] is True
     # The effect fails here; the grant stays spent.
-    claimed, _ = ledger.consume("ACT-5", request.digest, at=NOW)
+    claimed, _ = ledger.consume(_fingerprint("ACT-5", request), request.digest, at=NOW)
     assert claimed is False
 
 
@@ -144,25 +187,35 @@ def test_the_ledger_is_never_committed():
 
 
 def test_the_store_schema_enforces_uniqueness(tmp_path: Path):
-    """The guarantee is the primary key, not application logic."""
+    """The guarantee is the constraints, not application logic.
+
+    Two of them: the fingerprint cannot repeat, and neither can the act.
+    """
     path = tmp_path / "ledger.sqlite3"
     ApprovalLedger(path)
     with sqlite3.connect(path) as conn:
         conn.execute(
-            "INSERT INTO consumed_approvals VALUES (?,?,?)", ("ACT-6", "d", NOW)
+            "INSERT INTO consumed_approvals VALUES (?,?,?,?)",
+            ("fp-1", "digest-1", "ACT-1", NOW),
         )
-        with pytest.raises(sqlite3.IntegrityError):
+        with pytest.raises(sqlite3.IntegrityError):  # same fingerprint
             conn.execute(
-                "INSERT INTO consumed_approvals VALUES (?,?,?)", ("ACT-6", "d", NOW)
+                "INSERT INTO consumed_approvals VALUES (?,?,?,?)",
+                ("fp-1", "digest-2", "ACT-1", NOW),
+            )
+        with pytest.raises(sqlite3.IntegrityError):  # same act, other grant
+            conn.execute(
+                "INSERT INTO consumed_approvals VALUES (?,?,?,?)",
+                ("fp-2", "digest-1", "ACT-2", NOW),
             )
 
 
 def test_boundary_withholds_a_replayed_grant(tmp_path: Path):
     """End to end: the same grant cannot release a second time."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
-    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
 
-    request = _request(subject_revision="git:unbound")
+    request = _request(subject_revision=TEST_REVISION)
     grant = {
         "granted": True,
         "approval_id": "ACT-REPLAY",
@@ -217,7 +270,7 @@ def test_an_unusable_ledger_withholds_rather_than_releasing(tmp_path: Path):
     ledger = ApprovalLedger(path)
     # Point the ledger at a directory: every write fails from here on.
     ledger.path = tmp_path
-    claimed, reason = ledger.consume("ACT-IO", _request().digest, at=NOW)
+    claimed, reason = ledger.consume("fp-io", _request().digest, at=NOW)
     assert claimed is False
     assert "unusable" in reason
 

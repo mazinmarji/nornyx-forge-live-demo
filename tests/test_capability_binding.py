@@ -16,11 +16,12 @@ from pathlib import Path
 from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     ActionRequest,
+    canonical_attempt_id,
     canonical_request_id,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_governance_failure import _permissive_boundary  # noqa: E402
+from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
 
@@ -28,8 +29,9 @@ NOW = "2026-08-03T00:00:00Z"
 def _request(capability: str) -> ActionRequest:
     return ActionRequest(
         request_id=canonical_request_id("CASE-MISLABELLED"),
+        attempt_id=canonical_attempt_id("CASE-MISLABELLED", 1),
         mission_id="CASE-MISLABELLED",
-        subject_revision="git:unbound",
+        subject_revision=TEST_REVISION,
         capability=capability,
         action=ActionDescriptor(
             operation="issue refund",

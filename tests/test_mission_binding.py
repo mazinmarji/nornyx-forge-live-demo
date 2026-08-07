@@ -28,7 +28,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_governance_failure import _permissive_boundary  # noqa: E402
+from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
 MISSION_A = "CASE-AAA"
@@ -49,7 +49,7 @@ def _request(mission_id: str, **overrides: object):
     return canonical_action_request(
         mission_id=mission_id,
         risk="high",
-        subject_revision="git:unbound",
+        subject_revision=TEST_REVISION,
         descriptor=_descriptor(**overrides),
     )
 
@@ -110,12 +110,13 @@ def test_the_same_request_id_under_a_different_mission_is_refused(tmp_path: Path
     smuggled = canonical_action_request(
         mission_id=MISSION_B,
         risk="high",
-        subject_revision="git:unbound",
+        subject_revision=TEST_REVISION,
         descriptor=_descriptor(),
     )
     # Same canonical id as mission A's request, but presented under mission B.
     forged = type(smuggled)(
         request_id=canonical_request_id(MISSION_A),
+        attempt_id=smuggled.attempt_id,
         mission_id=MISSION_B,
         subject_revision=smuggled.subject_revision,
         capability=smuggled.capability,
@@ -216,6 +217,7 @@ def test_a_request_contradicting_the_runtime_is_refused(
     )
     forged = type(honest)(
         request_id=honest.request_id,
+        attempt_id=honest.attempt_id,
         mission_id=honest.mission_id,
         subject_revision=value if field == "subject_revision" else honest.subject_revision,
         capability=value if field == "capability" else honest.capability,

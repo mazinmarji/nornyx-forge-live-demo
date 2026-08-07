@@ -1,8 +1,15 @@
-"""The Nornyx evaluation instant must be real by default and pinnable for tests.
+"""The Nornyx evaluation instant must be real, and pinnable only by a test.
 
 A hardcoded instant silently judged every approval against a fixed moment, so a
 seven-day expiry could never actually elapse and an approval issued later than
 the pin would be evaluated against a time before it was made.
+
+The first fix replaced it with ``FORGE_RUNTIME_AS_OF``, which was worse in a
+quieter way: an environment variable is ambient authority, so anything in the
+process could revive an expired approval and the resulting evidence looked
+identical to an honest run. Determinism now arrives through
+``RuntimeContext.for_test``, and these tests assert that the retired variables
+do nothing — they are set, not cleared.
 """
 
 from __future__ import annotations
@@ -15,9 +22,8 @@ import pytest
 
 from nornyx_forge import nornyx_runtime
 from nornyx_forge.nornyx_runtime import (
-    RUNTIME_AS_OF_ENV,
-    RUNTIME_REVISION_ENV,
     NornyxActionBoundary,
+    RuntimeContext,
     prepare_runtime_contract,
     runtime_as_of,
     runtime_revision,
@@ -26,9 +32,14 @@ from nornyx_forge.nornyx_runtime import (
 ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 REVISION = "git:" + "a" * 40
 
+#: Retired. Named here only so the tests can prove setting them changes nothing.
+RETIRED_TIME_ENV = "FORGE_RUNTIME_AS_OF"
+RETIRED_REVISION_ENV = "FORGE_RUNTIME_REVISION"
+
 
 def test_default_evaluation_instant_is_the_real_now(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv(RUNTIME_AS_OF_ENV, raising=False)
+    # Set, not cleared: the live clock must win over a hostile pin.
+    monkeypatch.setenv(RETIRED_TIME_ENV, "2030-01-01T00:00:00Z")
     before = datetime.now(timezone.utc) - timedelta(seconds=5)
     value = runtime_as_of()
     after = datetime.now(timezone.utc) + timedelta(seconds=5)
@@ -37,19 +48,18 @@ def test_default_evaluation_instant_is_the_real_now(monkeypatch: pytest.MonkeyPa
     assert before <= parsed <= after
 
 
-def test_explicit_argument_pins_the_instant(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv(RUNTIME_AS_OF_ENV, "2030-01-01T00:00:00Z")
-    # An explicit argument wins over the environment.
+def test_only_an_explicit_argument_pins_the_instant(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(RETIRED_TIME_ENV, "2030-01-01T00:00:00Z")
     assert runtime_as_of("2026-08-02T09:30:00+00:00") == "2026-08-02T09:30:00Z"
 
 
-def test_environment_pins_the_instant(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv(RUNTIME_AS_OF_ENV, "2026-08-02T09:30:00Z")
-    assert runtime_as_of() == "2026-08-02T09:30:00Z"
+def test_the_environment_no_longer_pins_the_instant(monkeypatch: pytest.MonkeyPatch):
+    """The retired variable is inert, not merely deprioritised."""
+    monkeypatch.setenv(RETIRED_TIME_ENV, "2026-08-02T09:30:00Z")
+    assert runtime_as_of() != "2026-08-02T09:30:00Z"
 
 
-def test_offset_timestamps_are_normalised_to_utc(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv(RUNTIME_AS_OF_ENV, raising=False)
+def test_offset_timestamps_are_normalised_to_utc():
     assert runtime_as_of("2026-08-02T13:30:00+04:00") == "2026-08-02T09:30:00Z"
 
 
@@ -64,19 +74,18 @@ def test_ambiguous_or_invalid_instants_fail_closed(
     Includes the set-but-blank case: an operator who exported the variable and
     got the value wrong should see an error, not the live clock.
     """
-    monkeypatch.delenv(RUNTIME_AS_OF_ENV, raising=False)
     with pytest.raises(ValueError):
         runtime_as_of(bad)
-    monkeypatch.setenv(RUNTIME_AS_OF_ENV, bad)
-    with pytest.raises(ValueError):
-        runtime_as_of()
+    # And the same bad value in the retired variable is simply ignored.
+    monkeypatch.setenv(RETIRED_TIME_ENV, bad)
+    assert ISO_Z.match(runtime_as_of())
 
 
 def test_unreadable_contract_yields_unbound(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """A non-UTF-8 contract must not raise out of the evidence-labelling path."""
-    monkeypatch.delenv(RUNTIME_REVISION_ENV, raising=False)
+    monkeypatch.setenv(RETIRED_REVISION_ENV, REVISION)
     contract = tmp_path / nornyx_runtime.RUNTIME_CONTRACT
     contract.parent.mkdir(parents=True)
     contract.write_bytes(b"\xff\xfe\x00 not utf-8 \xc3\x28")
@@ -84,7 +93,7 @@ def test_unreadable_contract_yields_unbound(
 
 
 def test_revision_is_read_from_the_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv(RUNTIME_REVISION_ENV, raising=False)
+    monkeypatch.setenv(RETIRED_REVISION_ENV, "git:" + "b" * 40)
     contract = tmp_path / nornyx_runtime.RUNTIME_CONTRACT
     contract.parent.mkdir(parents=True)
     contract.write_text(
@@ -100,15 +109,18 @@ def test_revision_is_unbound_without_a_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Absent a contract, evidence says unbound rather than claiming a binding."""
-    monkeypatch.delenv(RUNTIME_REVISION_ENV, raising=False)
+    monkeypatch.setenv(RETIRED_REVISION_ENV, REVISION)
     assert runtime_revision(tmp_path) == "git:unbound"
 
 
-def test_malformed_revision_override_is_ignored(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("value", [REVISION, "not-a-revision", ""])
+def test_no_environment_value_can_supply_a_revision(
+    value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setenv(RUNTIME_REVISION_ENV, "not-a-revision")
+    """Well-formed or not, the retired variable cannot name the governed subject."""
+    monkeypatch.setenv(RETIRED_REVISION_ENV, value)
     assert runtime_revision(tmp_path) == "git:unbound"
+    assert RuntimeContext.trusted(tmp_path).declared_revision == "git:unbound"
 
 
 def test_every_nornyx_step_receives_the_same_instant(
@@ -138,10 +150,14 @@ def test_every_nornyx_step_receives_the_same_instant(
 
 
 def test_boundary_records_the_instant_it_evaluated_at(tmp_path: Path):
+    """Through the one seam, which a caller has to name at the call site."""
     boundary = NornyxActionBoundary(
-        tmp_path, allow_fallback=True, as_of="2026-08-02T09:30:00Z"
+        tmp_path,
+        allow_fallback=True,
+        runtime_context=RuntimeContext.for_test(tmp_path, at="2026-08-02T09:30:00Z"),
     )
     assert boundary.as_of == "2026-08-02T09:30:00Z"
+    assert boundary.runtime_context.for_test_only is True
 
 
 def test_seven_day_expiry_rule_is_not_weakened():

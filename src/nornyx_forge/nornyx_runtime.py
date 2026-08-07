@@ -17,11 +17,6 @@ from . import __version__
 from .models import GateResult
 from .util import write_json
 
-#: Pin the evaluation instant for a reproducible run (CI, fixtures, demos).
-RUNTIME_AS_OF_ENV = "FORGE_RUNTIME_AS_OF"
-#: Override the governed subject revision when the contract cannot be read.
-RUNTIME_REVISION_ENV = "FORGE_RUNTIME_REVISION"
-
 RUNTIME_CONTRACT = ".nornyx/contracts/runtime_network.nyx"
 _UNBOUND_REVISION = "git:unbound"
 _REVISION_RE = re.compile(r"^(?:git:[0-9a-f]{40}|git:[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
@@ -31,52 +26,46 @@ _SUBJECT_REVISION_RE = re.compile(
 
 
 def runtime_as_of(explicit: str | None = None) -> str:
-    """Return the instant Nornyx must evaluate temporal validity against.
+    """Return the instant temporal validity is judged against.
 
-    Defaults to the real current time, so an approval issued now is judged
-    against now and the seven-day expiry rule measures real elapsed time. A run
-    that needs determinism pins the instant explicitly, either by argument or via
-    ``FORGE_RUNTIME_AS_OF``.
+    The trusted source is the real clock. There is deliberately no environment
+    override: one existed, and it revived an expired approval and backdated the
+    ledger record of its consumption. An environment variable is ambient
+    authority — anything in the process can set it, nothing declares that it
+    did, and the resulting evidence looks identical to an honest run.
 
-    A supplied value must be an explicit timezone-aware timestamp. Anything else
-    raises instead of silently falling back to the live clock, so a malformed pin
-    can never widen a validity window by accident.
+    ``explicit`` is the injection point for deterministic tests. It is a real
+    argument a caller must pass on purpose, so a governed path that does not
+    pass one cannot be steered from outside.
     """
 
-    raw = explicit if explicit is not None else os.getenv(RUNTIME_AS_OF_ENV)
-    if raw is not None and not raw.strip():
-        # Set-but-blank is a configuration mistake, not a request for the live
-        # clock. Falling back silently would hide a broken pin.
-        raise ValueError(f"{RUNTIME_AS_OF_ENV} is set but empty")
-    if raw is None:
-        moment = datetime.now(timezone.utc)
-    else:
-        try:
-            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError(
-                f"{RUNTIME_AS_OF_ENV} must be an ISO-8601 timestamp, got {raw!r}"
-            ) from exc
-        if parsed.tzinfo is None:
-            raise ValueError(
-                f"{RUNTIME_AS_OF_ENV} must be timezone-aware, got {raw!r}"
-            )
-        moment = parsed
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if explicit is None:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not explicit.strip():
+        raise ValueError("an explicit evaluation instant must not be blank")
+    try:
+        parsed = datetime.fromisoformat(explicit.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"evaluation instant must be an ISO-8601 timestamp, got {explicit!r}"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"evaluation instant must be timezone-aware, got {explicit!r}")
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def runtime_revision(root: Path | None = None) -> str:
     """Return the governed subject revision the runtime contract declares.
 
-    The contract is the single source of truth, so the code can never disagree
-    with the declaration Nornyx validates. Returns ``git:unbound`` when no
-    contract is present, which keeps evidence honestly labelled rather than
-    claiming a binding that does not exist.
+    The contract is the only source. There is deliberately no environment
+    override: one existed, and setting it re-aimed a human approval issued for
+    one revision onto a different one — the contract said B, the approval said
+    A, and the variable made the runtime agree with the approval.
+
+    Returns ``git:unbound`` when no contract is present, which keeps evidence
+    honestly labelled rather than claiming a binding that does not exist.
     """
 
-    override = os.getenv(RUNTIME_REVISION_ENV)
-    if override and _REVISION_RE.fullmatch(override.strip()):
-        return override.strip()
     contract = (root or Path.cwd()) / RUNTIME_CONTRACT
     try:
         text = contract.read_text(encoding="utf-8")
@@ -89,6 +78,137 @@ def runtime_revision(root: Path | None = None) -> str:
         if _REVISION_RE.fullmatch(candidate):
             return candidate
     return _UNBOUND_REVISION
+
+
+def actual_revision(root: Path) -> str | None:
+    """The revision actually checked out, read from git and nothing else.
+
+    Returns None when git cannot answer — a deployed artifact has no ``.git``,
+    and claiming a verified revision there would be worse than admitting the
+    check could not run.
+    """
+
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        return None
+    candidate = "git:" + result.stdout.strip()
+    return candidate if _REVISION_RE.fullmatch(candidate) else None
+
+
+#: Why a revision-bound consequential release was refused. Distinct codes,
+#: because "I checked and it is wrong" and "I could not check" are different
+#: facts and a reviewer must not have to guess which one happened.
+GOVERNED_REVISION_MISMATCH = "GOVERNED_REVISION_MISMATCH"
+GOVERNED_REVISION_UNVERIFIED = "GOVERNED_REVISION_UNVERIFIED"
+
+
+@dataclass(frozen=True)
+class RuntimeContext:
+    """The facts governed authority depends on, and where each one comes from.
+
+    Three revision facts are kept deliberately apart, and never collapsed into
+    one value:
+
+    ``actual_revision``    what git says is checked out, or None if it cannot say
+    ``declared_revision``  what the contract claims to govern
+    ``revision_verified``  whether those were compared and agreed
+
+    Collapsing them is how the earlier version failed open. It returned the
+    contract's claim whenever git was unavailable, so a container with no
+    ``.git`` reported a revision it had no way to confirm, and a stale contract
+    could tell the runtime which revision to believe it was running.
+
+    Time and revision were also readable from the process environment. They are
+    not any more: production builds this from trusted sources, a test builds one
+    with :meth:`for_test`, and the difference is visible where it is constructed.
+    """
+
+    root: Path
+    pinned_at: str | None = None
+    pinned_revision: str | None = None
+    for_test_only: bool = False
+
+    @classmethod
+    def trusted(cls, root: Path) -> RuntimeContext:
+        """The only context a governed run uses: real clock, verified revision."""
+        return cls(root=root)
+
+    @classmethod
+    def for_test(
+        cls, root: Path, *, at: str | None = None, revision: str | None = None
+    ) -> RuntimeContext:
+        """A deterministic context for tests. Never constructed by governed code.
+
+        Named for what it is. ``fixed`` read like a supported runtime mode, which
+        is exactly the rationalisation that lets a test seam drift into
+        production.
+        """
+        if at is not None:
+            runtime_as_of(at)  # validate now, so a bad pin fails at the seam
+        if revision is not None and not _REVISION_RE.fullmatch(revision):
+            raise ValueError(f"pinned revision is not a revision: {revision!r}")
+        return cls(root=root, pinned_at=at, pinned_revision=revision, for_test_only=True)
+
+    def now(self) -> str:
+        return runtime_as_of(self.pinned_at)
+
+    @property
+    def actual_revision(self) -> str | None:
+        """What is really checked out. None when git cannot answer."""
+        if self.pinned_revision is not None:
+            return self.pinned_revision
+        return actual_revision(self.root)
+
+    @property
+    def declared_revision(self) -> str:
+        """What the contract claims to govern. A claim, never a verification."""
+        return runtime_revision(self.root)
+
+    @property
+    def revision_verified(self) -> bool:
+        """True only when the checkout was derived AND agrees with the contract.
+
+        A pinned test revision counts as verified: the test is the authority for
+        its own fixture, and it had to say so explicitly at the seam.
+        """
+        if self.pinned_revision is not None:
+            return True
+        actual = self.actual_revision
+        if actual is None:
+            return False
+        declared = self.declared_revision
+        return declared == _UNBOUND_REVISION or declared == actual
+
+    def revision_refusal(self) -> tuple[str, str] | None:
+        """Why revision-bound authority cannot be exercised here, if it cannot.
+
+        Returns ``(code, reason)`` or None. Called only on the approval-bound
+        path: an unverifiable revision must not stop the application starting or
+        a low-risk demo running, because neither borrows authority from it.
+        """
+        if self.revision_verified:
+            return None
+        actual = self.actual_revision
+        if actual is None:
+            return (
+                GOVERNED_REVISION_UNVERIFIED,
+                "the checked-out revision could not be derived independently "
+                "(no git metadata, as in a built container), so the contract's "
+                "claim about what it governs cannot be confirmed. The "
+                "application runs; revision-bound consequential authority does "
+                "not.",
+            )
+        return (
+            GOVERNED_REVISION_MISMATCH,
+            f"the contract declares it governs {self.declared_revision} but the "
+            f"checkout is {actual}. Refusing to act on a revision the governed "
+            "subject does not describe.",
+        )
 
 
 #: Risk levels that require an action-specific human approval, never merely a
@@ -152,13 +272,27 @@ class ActionDescriptor:
 
 @dataclass(frozen=True)
 class ActionRequest:
-    """One exact consequential request an approval may be bound to."""
+    """One exact consequential attempt an approval may be bound to.
+
+    Three levels, because collapsing them costs something either way:
+
+    ``mission_id``  the case being worked
+    ``request_id``  the consequential request within that mission
+    ``attempt_id``  this specific attempt at it
+
+    Consumption is at-most-once per *attempt*. A failed effect leaves its
+    attempt spent — that is what makes at-most-once meaningful — but a retry is
+    a new attempt within the same mission, needing its own approval bound to it.
+    Without the third level, single use would force an operator to invent a new
+    mission to retry a refund that failed in transit.
+    """
 
     request_id: str
     mission_id: str
     subject_revision: str
     capability: str
     action: ActionDescriptor
+    attempt_id: str = ""
 
     @property
     def destination(self) -> str:
@@ -171,6 +305,7 @@ class ActionRequest:
     def canonical(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
+            "attempt_id": self.attempt_id,
             "mission_id": self.mission_id,
             "subject_revision": self.subject_revision,
             "capability": self.capability,
@@ -218,6 +353,7 @@ def canonical_action_request(
     risk: str,
     subject_revision: str,
     descriptor: ActionDescriptor | None = None,
+    attempt: int = 1,
 ) -> ActionRequest:
     """The request the runtime will authorize for this execution context.
 
@@ -229,6 +365,7 @@ def canonical_action_request(
         capability=exercised_capability(risk),
         subject_revision=subject_revision,
         descriptor=descriptor,
+        attempt=attempt,
     )
 
 
@@ -242,12 +379,25 @@ def canonical_request_id(mission_id: str) -> str:
     return f"REQ-{mission_id}"
 
 
+def canonical_attempt_id(mission_id: str, attempt: int) -> str:
+    """The only attempt id valid for a given mission and attempt number.
+
+    Derived, not caller-chosen, for the same reason the request id is: an
+    attempt label a presenter picks freely would reintroduce exactly the
+    replay hole that keying single use on ``approval_id`` created.
+    """
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+        raise ValueError(f"attempt must be a positive integer, got {attempt!r}")
+    return f"{canonical_request_id(mission_id)}#attempt-{attempt}"
+
+
 def _canonical_action_request(
     *,
     mission_id: str,
     capability: str,
     subject_revision: str,
     descriptor: ActionDescriptor | None,
+    attempt: int = 1,
 ) -> ActionRequest:
     """Describe the act being executed, from the execution context itself.
 
@@ -265,6 +415,7 @@ def _canonical_action_request(
     )
     return ActionRequest(
         request_id=canonical_request_id(mission_id),
+        attempt_id=canonical_attempt_id(mission_id, attempt),
         mission_id=mission_id,
         subject_revision=subject_revision,
         capability=capability,
@@ -291,6 +442,7 @@ def _request_context_mismatch(
     for field_name, claimed, actual in (
         ("mission_id", supplied.mission_id, canonical.mission_id),
         ("request_id", supplied.request_id, canonical.request_id),
+        ("attempt_id", supplied.attempt_id, canonical.attempt_id),
         ("capability", supplied.capability, canonical.capability),
         ("subject_revision", supplied.subject_revision, canonical.subject_revision),
         ("destination", supplied.destination, canonical.destination),
@@ -320,6 +472,34 @@ APPROVAL_LEDGER_ENV = "FORGE_APPROVAL_LEDGER"
 DEFAULT_APPROVAL_LEDGER = "evidence/runtime/action_approvals.sqlite3"
 
 
+def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) -> str:
+    """Digest the authority a validated grant actually carries.
+
+    Deliberately excludes ``approval_id``. Keying single use on the id made the
+    control caller-selectable: the same grant re-presented as ``ACT-0002``, or
+    with a trailing space, was a new row and released the effect again. An id is
+    a label a presenter chooses; it is not part of what a human decided.
+
+    What a human decided is: this exact request, released by this approver in
+    this role, within this window. Change any of those and it is a different
+    decision; change only the label and it is the same one.
+
+    Only ever computed from an approval that has already passed
+    ``validate_action_approval``, so every field here has been checked.
+    """
+
+    material = {
+        "request_digest": request.digest,
+        "approver": str(approval.get("approver", "")),
+        "approver_type": str(approval.get("approver_type", "")).lower(),
+        "approver_role": str(approval.get("approver_role", "")),
+        "generated_at": str(approval.get("generated_at", "")),
+        "expires_at": str(approval.get("expires_at", "")),
+    }
+    canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class ApprovalLedger:
     """Durable, atomic, single-use consumption of action approvals.
 
@@ -328,6 +508,15 @@ class ApprovalLedger:
     again. Consumption is recorded in SQLite under a primary key, so a duplicate
     or concurrent claim loses to the unique constraint rather than to a
     check-then-act race.
+
+    Two constraints, because they answer different questions:
+
+    ``fingerprint`` as primary key stops the same human decision being spent
+    twice under different labels. ``request_digest`` as UNIQUE stops the same
+    consequential act running twice under *any* decision — which is the promise
+    the boundary actually makes to the outside world. A retry after a failed
+    effect is a new act and needs a new request, not a second release of the old
+    one.
     """
 
     def __init__(self, path: Path) -> None:
@@ -337,8 +526,9 @@ class ApprovalLedger:
             with self._connect() as conn:
                 conn.execute(
                     "CREATE TABLE IF NOT EXISTS consumed_approvals ("
-                    " approval_id TEXT PRIMARY KEY,"
-                    " request_digest TEXT NOT NULL,"
+                    " fingerprint TEXT PRIMARY KEY,"
+                    " request_digest TEXT NOT NULL UNIQUE,"
+                    " approval_id TEXT NOT NULL,"
                     " consumed_at TEXT NOT NULL)"
                 )
         except (sqlite3.Error, OSError) as exc:
@@ -356,48 +546,80 @@ class ApprovalLedger:
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
-    def consume(self, approval_id: str, request_digest: str, *, at: str) -> tuple[bool, str]:
+    def consume(
+        self,
+        fingerprint: str,
+        request_digest: str,
+        *,
+        at: str,
+        approval_id: str = "",
+    ) -> tuple[bool, str]:
         """Claim the approval, or refuse. The insert is the claim.
 
         Called before the effect runs, so a grant is spent even if the effect
         then fails. That is deliberate: at-most-once is the safe direction for a
-        consequential act, and retrying requires a fresh human approval.
+        consequential act, and retrying requires a fresh request.
+
+        ``fingerprint`` must come from :func:`approval_fingerprint` over an
+        already-validated grant. ``approval_id`` is recorded for provenance only
+        and is never part of what makes the claim unique.
         """
         try:
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO consumed_approvals"
-                    " (approval_id, request_digest, consumed_at) VALUES (?, ?, ?)",
-                    (approval_id, request_digest, at),
+                    " (fingerprint, request_digest, approval_id, consumed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (fingerprint, request_digest, approval_id, at),
                 )
         except sqlite3.IntegrityError:
-            previous = self.lookup(approval_id)
-            when = previous[1] if previous else "an earlier run"
-            if previous and previous[0] != request_digest:
+            spent = self.lookup(fingerprint=fingerprint) or self.lookup(
+                request_digest=request_digest
+            )
+            when = spent["consumed_at"] if spent else "an earlier run"
+            if spent and spent["fingerprint"] != fingerprint:
+                # Same act, different decision: a second grant cannot release an
+                # effect that has already happened.
                 return False, (
-                    f"approval {approval_id} was already consumed at {when} for a "
-                    "different request"
+                    f"this action was already released at {when} under approval "
+                    f"{spent['approval_id']!r}; a further approval cannot release "
+                    "it again"
                 )
-            return False, f"approval {approval_id} was already consumed at {when}"
+            return False, f"this approval was already consumed at {when}"
         except (sqlite3.Error, OSError) as exc:
             # Cannot record the claim, so cannot promise single use. Withhold.
             return False, (
                 f"action approval ledger is unusable, so single use cannot be "
                 f"guaranteed: {type(exc).__name__}: {exc}"
             )
-        return True, f"approval {approval_id} consumed"
+        return True, f"approval {approval_id or fingerprint} consumed"
 
-    def lookup(self, approval_id: str) -> tuple[str, str] | None:
+    def lookup(
+        self, *, fingerprint: str | None = None, request_digest: str | None = None
+    ) -> dict[str, str] | None:
+        if fingerprint is not None:
+            column, value = "fingerprint", fingerprint
+        elif request_digest is not None:
+            column, value = "request_digest", request_digest
+        else:  # pragma: no cover - programming error
+            raise TypeError("lookup needs fingerprint or request_digest")
         try:
             with self._connect() as conn:
                 row = conn.execute(
-                    "SELECT request_digest, consumed_at FROM consumed_approvals"
-                    " WHERE approval_id = ?",
-                    (approval_id,),
+                    "SELECT fingerprint, request_digest, approval_id, consumed_at"
+                    f" FROM consumed_approvals WHERE {column} = ?",
+                    (value,),
                 ).fetchone()
         except (sqlite3.Error, OSError):
             return None
-        return (row[0], row[1]) if row else None
+        if not row:
+            return None
+        return {
+            "fingerprint": row[0],
+            "request_digest": row[1],
+            "approval_id": row[2],
+            "consumed_at": row[3],
+        }
 
 
 def approval_ledger_path(root: Path) -> Path:
@@ -631,11 +853,15 @@ class NornyxActionBoundary:
         root: Path,
         *,
         allow_fallback: bool = True,
-        as_of: str | None = None,
+        runtime_context: RuntimeContext | None = None,
     ) -> None:
         self.root = root
         self.allow_fallback = allow_fallback
-        self.as_of = runtime_as_of(as_of)
+        # Trusted by default, and the only alternative is RuntimeContext.for_test,
+        # which a caller must name at the construction site. There is no ambient
+        # route to either value.
+        self.runtime_context = runtime_context or RuntimeContext.trusted(root)
+        self.as_of = self.runtime_context.now()
         #: Durable single-use ledger. Survives boundary and process restarts.
         self.approval_ledger = ApprovalLedger(approval_ledger_path(root))
         self.authorizer: Any | None = None
@@ -688,6 +914,7 @@ class NornyxActionBoundary:
         action_approval: Mapping[str, Any] | None = None,
         action_request: ActionRequest | None = None,
         action_descriptor: ActionDescriptor | None = None,
+        attempt: int = 1,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = risk.lower() in HIGH_RISK_LEVELS
@@ -741,26 +968,44 @@ class NornyxActionBoundary:
         # on its own release an external effect, and an approval obtained for one
         # action can never release another. This only ever narrows the decision.
         release_reason = "not evaluated"
+        withheld_code = "HUMAN_APPROVAL_REQUIRED"
         if high_risk and decision.allowed:
-            # Build the request from the execution context, and validate the
+            # First: is the tree what it claims to be? Asked here and nowhere
+            # else, because an unverifiable revision must not stop the
+            # application starting or a low-risk demo running — neither borrows
+            # authority from it. A consequential release does. Asked before
+            # validation and before any ledger claim, so no grant is spent
+            # discovering the tree cannot be confirmed.
+            refusal = self.runtime_context.revision_refusal()
+            if refusal is not None:
+                withheld_code, detail = refusal
+                release_reason = f"{withheld_code}: {detail}"
+            governed_revision = (
+                self.runtime_context.actual_revision if refusal is None else None
+            )
+
+            # Then: build the request from the execution context and validate the
             # approval against *that*. A caller-supplied request is a claim about
-            # what is being executed, not evidence of it: trusting it let an
+            # what is being executed, not evidence of it — trusting it let an
             # approval issued for one mission release another mission's callback,
             # because every field the approval was checked against came from the
             # same untrusted object.
-            request = _canonical_action_request(
+            request = None if governed_revision is None else _canonical_action_request(
                 mission_id=mission_id,
                 capability=capability_name,
-                subject_revision=runtime_revision(self.root),
+                subject_revision=governed_revision,
                 descriptor=action_descriptor
                 or (action_request.action if action_request is not None else None),
+                attempt=attempt,
             )
             mismatch = (
                 _request_context_mismatch(action_request, request)
-                if action_request is not None
+                if action_request is not None and request is not None
                 else None
             )
-            if mismatch is not None:
+            if request is None:
+                released = False
+            elif mismatch is not None:
                 # Refused before approval validation and before the ledger claim,
                 # so a mismatched request can neither be judged releasable nor
                 # spend a grant that belongs to the request it is imitating.
@@ -773,10 +1018,14 @@ class NornyxActionBoundary:
             if released:
                 # Consume before the effect runs. A claim that loses the race, or
                 # that was already spent in an earlier process, withholds here.
+                # Keyed on the validated grant's own authority, never on the
+                # approval_id the presenter chose.
+                assert action_approval is not None
                 released, release_reason = self.approval_ledger.consume(
-                    str(action_approval["approval_id"]),
+                    approval_fingerprint(action_approval, request),
                     request.digest,
                     at=self.as_of,
+                    approval_id=str(action_approval.get("approval_id", "")),
                 )
             withheld = not released
         else:
@@ -810,6 +1059,9 @@ class NornyxActionBoundary:
                 },
                 "action_approval_present": _action_approval_present(action_approval),
                 "action_binding": release_reason,
+                "revision_verified": self.runtime_context.revision_verified,
+                "actual_revision": self.runtime_context.actual_revision,
+                "declared_revision": self.runtime_context.declared_revision,
             }
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
@@ -818,7 +1070,7 @@ class NornyxActionBoundary:
         if withheld:
             return RuntimeDecision(
                 effect="DENY",
-                code="HUMAN_APPROVAL_REQUIRED",
+                code=withheld_code,
                 reason=(
                     "Nornyx authorized the declared capability, but this high-risk "
                     "effect was not released: " + release_reason + ". Contract "
@@ -844,6 +1096,7 @@ class NornyxActionBoundary:
         action_approval: Mapping[str, Any] | None = None,
         action_request: ActionRequest | None = None,
         action_descriptor: ActionDescriptor | None = None,
+        attempt: int = 1,
     ) -> tuple[RuntimeDecision, str | None]:
         """Authorize and, only if authorized, run one consequential action.
 
@@ -867,6 +1120,7 @@ class NornyxActionBoundary:
                 action_approval=action_approval,
                 action_request=action_request,
                 action_descriptor=action_descriptor,
+                attempt=attempt,
             )
             return decision, result
         if not self.allow_fallback:

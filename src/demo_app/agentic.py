@@ -68,6 +68,11 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         self.worker_mode = worker_mode
         self.mission_id = case.get("mission_id") or f"CASE-{uuid.uuid4().hex[:10]}"
         self.case["mission_id"] = self.mission_id
+        # Which attempt at this mission's consequential action this run is. A
+        # retry is a new attempt needing its own approval; it is not a second
+        # release of the previous one.
+        self.attempt = int(case.get("attempt", 1))
+        self.case["attempt"] = self.attempt
         self.ledger = EvidenceLedger(
             root / "evidence/runtime/events.jsonl",
             subject_revision=runtime_revision(root),
@@ -158,17 +163,23 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             risk=str(self.case.get("risk", "low")),
             action=execute_local_demo_action,
             action_descriptor=descriptor,
+            attempt=self.attempt,
         )
         # Reported from the runtime's own canonical request, so the evidence
         # describes what was actually authorized rather than what was asked for.
         request = canonical_action_request(
             mission_id=self.mission_id,
             risk=str(self.case.get("risk", "low")),
-            subject_revision=runtime_revision(self.root),
+            # The boundary's own context, not a second lookup that could
+            # disagree with the one authority is actually judged against.
+            subject_revision=self.boundary.runtime_context.actual_revision
+            or self.boundary.runtime_context.declared_revision,
             descriptor=descriptor,
+            attempt=self.attempt,
         )
         self.case["action_request"] = {
             "request_id": request.request_id,
+            "attempt_id": request.attempt_id,
             "payload_digest": request.payload_digest,
             "request_digest": request.digest,
         }

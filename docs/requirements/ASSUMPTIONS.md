@@ -111,8 +111,13 @@ the seven-day approval expiry could never actually elapse.
 
 - it defaults to the **real current time**, so approvals and decisions are judged
   against when they actually happen;
-- a run that needs determinism pins the instant with the `FORGE_RUNTIME_AS_OF`
-  environment variable or an explicit argument;
+- a run that needs determinism pins the instant through
+  `RuntimeContext.for_test(root, at=...)`, an explicit argument. The
+  `FORGE_RUNTIME_AS_OF` environment variable this assumption originally
+  described has been **removed**: a review proved it could revive an expired
+  approval and backdate its ledger record. The same applies to
+  `FORGE_RUNTIME_REVISION`, which could re-aim an approval onto a revision it
+  was never issued for;
 - a pinned value must be an explicit timezone-aware ISO-8601 timestamp. A naive
   or malformed value **raises** rather than falling back to the live clock, so a
   bad pin can never widen a validity window;

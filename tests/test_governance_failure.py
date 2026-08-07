@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from nornyx_forge.nornyx_runtime import NornyxActionBoundary, NornyxRuntimeUnavailable
+from nornyx_forge.nornyx_runtime import (
+    NornyxActionBoundary,
+    NornyxRuntimeUnavailable,
+    RuntimeContext,
+)
 
 
 def test_strict_boundary_refuses_instead_of_crashing(tmp_path: Path) -> None:
@@ -90,9 +94,30 @@ class _Recorder:
         return {"status": "pass", "observations": list(self.observations)}
 
 
-def _permissive_boundary(root: Path, as_of: str | None = None) -> NornyxActionBoundary:
-    """A boundary whose authorizer allows everything, to isolate our control."""
-    boundary = NornyxActionBoundary(root, allow_fallback=True, as_of=as_of)
+#: A pinned revision for tests whose subject is the action binding, not the
+#: revision gate. Without it every such test would deny UNVERIFIED first, since
+#: a tmp_path has no git metadata to derive an actual revision from.
+TEST_REVISION = "git:" + "0" * 40
+
+
+def _permissive_boundary(
+    root: Path,
+    as_of: str | None = None,
+    *,
+    runtime_context: RuntimeContext | None = None,
+) -> NornyxActionBoundary:
+    """A boundary whose authorizer allows everything, to isolate our control.
+
+    Determinism arrives through an explicit ``RuntimeContext.for_test``. The
+    ``as_of`` shorthand here is a *test helper* convenience that builds one; the
+    production constructor has no such parameter and no environment route.
+    """
+    boundary = NornyxActionBoundary(
+        root,
+        allow_fallback=True,
+        runtime_context=runtime_context
+        or RuntimeContext.for_test(root, at=as_of, revision=TEST_REVISION),
+    )
     boundary.authorizer = _PermissiveAuthorizer()
     boundary.context = object()
     boundary._imports = {
@@ -137,14 +162,14 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
         ActionDescriptor,
         ActionRequest,
         runtime_as_of,
-        runtime_revision,
     )
 
     boundary = _permissive_boundary(tmp_path)
     request = ActionRequest(
         request_id="REQ-TEST-RELEASED",
+        attempt_id="REQ-TEST-RELEASED#attempt-1",
         mission_id="TEST-RELEASED",
-        subject_revision=runtime_revision(tmp_path),
+        subject_revision=TEST_REVISION,
         capability="execute_high_risk_effect",
         action=ActionDescriptor(
             operation="issue refund",
