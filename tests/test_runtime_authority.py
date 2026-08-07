@@ -409,3 +409,55 @@ def test_the_retired_environment_names_are_gone_from_the_runtime():
 def test_a_test_context_is_marked_as_one(tmp_path: Path):
     assert RuntimeContext.for_test(tmp_path).for_test_only is True
     assert RuntimeContext.trusted(tmp_path).for_test_only is False
+
+
+def test_a_backdated_lock_regeneration_cannot_revive_an_action_approval(tmp_path: Path):
+    """Evidence-generation time and action-authority time are different clocks.
+
+    ``prepare_runtime_contract(as_of=...)`` still takes an explicit instant: it
+    regenerates the lock, and a reproducible regeneration is a legitimate thing
+    to ask for. The invariant that matters is directional — that argument must
+    never become the clock an action approval is judged against.
+
+    Driven with a deliberately absurd backdate, far enough before the grant's
+    window that reviving it would be unmistakable.
+    """
+    from nornyx_forge import nornyx_runtime
+
+    work = _git_repo(tmp_path)
+    revision = actual_revision(work)
+    assert revision is not None
+    _declare(work, revision)
+
+    # A grant that expired long ago by the real clock.
+    request = _request(revision)
+    grant = _grant(request, generated="2020-01-01T00:00:00Z", expires="2020-01-05T00:00:00Z")
+
+    # Regenerate the lock as of a moment inside that dead window.
+    seen: list[tuple[str, ...]] = []
+
+    class _Completed:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    original_run = nornyx_runtime.subprocess.run
+    original_which = nornyx_runtime.shutil.which
+    nornyx_runtime.shutil.which = lambda _name: "nornyx"
+    nornyx_runtime.subprocess.run = lambda command, **_k: (
+        seen.append(tuple(command)) or _Completed()
+    )
+    try:
+        nornyx_runtime.prepare_runtime_contract(work, as_of="2020-01-02T00:00:00Z")
+    finally:
+        nornyx_runtime.subprocess.run = original_run
+        nornyx_runtime.shutil.which = original_which
+
+    assert seen, "the regeneration did not run"
+    assert any("2020-01-02T00:00:00Z" in command for command in seen)
+
+    # The action boundary is unmoved: it judges against the trusted clock.
+    decision, ran, rows = _release(work, RuntimeContext.trusted(work), grant, request)
+    assert decision.effect == "DENY", "a backdated regeneration revived an approval"
+    assert ran == 0
+    assert rows == 0
