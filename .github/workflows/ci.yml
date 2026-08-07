@@ -37,9 +37,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e '.[dev]'
+      # The demo extra carries nornyx. Installing only [dev] left every
+      # @needs_nornyx test skipping, so a green CI run proved 139 of 202 tests
+      # and none of the governance tooling. The job reported success over the
+      # controls it was supposed to be guarding.
+      - run: python -m pip install -e '.[demo,dev]'
       - run: python scripts/validate_repository.py
-      - run: python -m pytest -q
+      - name: Tests, with no unexpected skips
+        run: python scripts/check_test_coverage.py
       - run: python -m compileall -q src scripts
 
   # A real build and a real launch on a host with a real Docker daemon. The
