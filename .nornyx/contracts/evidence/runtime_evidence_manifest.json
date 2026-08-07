@@ -10,5 +10,5 @@
     "evidence_manifest"
   ],
   "schema": "nornyx.forge.evidence_manifest.v1",
-  "subject_revision": "git:75c32e33764bc2ff5e64913c69b1a7bd6575982d"
+  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4"
 }

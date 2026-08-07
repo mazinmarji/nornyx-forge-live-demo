@@ -248,6 +248,171 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
     return True
 
 
+#: The content an inspection actually inspects: source, tooling and tests.
+#:
+#: Deliberately excludes `.nornyx/contracts/` and `evidence/`. Contracts are
+#: rewritten by this tool, and evidence contains the digest itself — either would
+#: make the digest self-referential, which is the same trap as a commit hash that
+#: cannot name the commit containing it.
+GOVERNED_CONTENT_PATHS = (
+    "src",
+    "scripts",
+    "tests",
+    "pyproject.toml",
+    "Dockerfile",
+    "docker-compose.yml",
+)
+
+
+def governed_content_digest() -> str:
+    """A canonical digest over the governed content, independent of history.
+
+    Content is the integrity primitive; the git SHA is provenance. A commit id
+    says which history a tree came from, not what the tree contains, and it
+    cannot be embedded in the content it names. A manifest digest can be
+    recomputed by anyone holding the files, including inside a container with
+    no `.git`, which is what makes it the right anchor.
+    """
+
+    entries: list[str] = []
+    for name in sorted(_git_lines("ls-files", "--", *GOVERNED_CONTENT_PATHS)):
+        path = ROOT / name
+        blob = path.read_bytes() if path.is_file() else b""
+        entries.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
+    manifest = "\n".join(entries) + "\n"
+    return "sha256:" + hashlib.sha256(manifest.encode("utf-8")).hexdigest()
+
+
+#: The one artifact that can carry an independent-review verdict. Committed and
+#: content-bound, like the human approval artifacts and for the same reason.
+INSPECTION_ATTESTATION = "architecture_inspection_attestation.json"
+
+#: Inspector roles that must all have reported before a verdict can be `pass`.
+REQUIRED_INSPECTORS = frozenset(
+    {"test-inspector", "architecture-inspector", "security-inspector"}
+)
+
+_REQUIRED_ATTESTATION_FIELDS = (
+    "producer",
+    "subject_revision",
+    "governed_content_digest",
+    "inspectors",
+    "result",
+    "generated_at",
+)
+
+
+def load_inspection_attestation(revision: str) -> dict | None:
+    """Read and validate the independent-review attestation, or return None.
+
+    `.nornyx/in-session/reviews.json` used to decide this directly. That file is
+    untracked, gitignored, outside GOVERNED_INPUT_PATHS, and validated by
+    nothing — a review demonstrated a `reviews.json` whose summaries read
+    "FORGED - no review happened" producing `status: pass` on a tree `git status`
+    called clean. A working-session report is not assurance evidence.
+
+    A verdict now requires a committed artifact that binds itself to the content
+    it reviewed, names its producer and each inspector, and carries findings. A
+    string saying "pass" is never sufficient.
+    """
+
+    path = EVIDENCE_DIR / INSPECTION_ATTESTATION
+    if not path.exists():
+        return None
+    raw = path.read_bytes()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{INSPECTION_ATTESTATION} is not readable JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{INSPECTION_ATTESTATION} must be a JSON object")
+
+    missing = set(_REQUIRED_ATTESTATION_FIELDS) - set(payload)
+    if missing:
+        raise SystemExit(
+            f"{INSPECTION_ATTESTATION} is missing required fields: {sorted(missing)}"
+        )
+
+    producer = payload.get("producer")
+    if not isinstance(producer, dict) or not {"id", "type"} <= set(producer):
+        raise SystemExit(
+            f"{INSPECTION_ATTESTATION}: producer must be an object with id and type"
+        )
+    # An inspection is a machine review. A human producer here would be a human
+    # approval wearing the wrong hat, and the two are governed differently.
+    if producer.get("type") == "human":
+        raise SystemExit(
+            f"{INSPECTION_ATTESTATION}: producer.type is 'human'. An inspection "
+            "attestation records a machine review; a human decision belongs in a "
+            "human approval artifact, which is governed separately."
+        )
+    _require_safe_scalar("producer.id", producer["id"])
+    _require_safe_scalar("producer.type", producer["type"])
+
+    # Bound to the content it reviewed, not merely to a revision label.
+    declared_revision = _require_safe_scalar("subject_revision", payload["subject_revision"])
+    if declared_revision != revision:
+        raise SystemExit(
+            f"{INSPECTION_ATTESTATION} attests to {declared_revision} but the "
+            f"governed subject is {revision}. An inspection of other content is "
+            "not an inspection of this one."
+        )
+    digest = _require_safe_scalar(
+        "governed_content_digest", payload["governed_content_digest"]
+    )
+    observed = governed_content_digest()
+    if digest != observed:
+        raise SystemExit(
+            f"{INSPECTION_ATTESTATION} attests to content {digest} but the governed "
+            f"content digests to {observed}. The content changed after inspection."
+        )
+
+    inspectors = payload.get("inspectors")
+    if not isinstance(inspectors, list) or not inspectors:
+        raise SystemExit(f"{INSPECTION_ATTESTATION}: inspectors must be a non-empty list")
+    reported: dict[str, str] = {}
+    for entry in inspectors:
+        if not isinstance(entry, dict) or not {"role", "result"} <= set(entry):
+            raise SystemExit(
+                f"{INSPECTION_ATTESTATION}: each inspector needs a role and a result"
+            )
+        role = _require_safe_scalar("inspector.role", entry["role"])
+        result = _require_safe_scalar("inspector.result", entry["result"])
+        if "findings" not in entry or not isinstance(entry["findings"], list):
+            raise SystemExit(
+                f"{INSPECTION_ATTESTATION}: inspector {role!r} reports no findings "
+                "list. An inspection that recorded nothing it looked for is not "
+                "evidence that it looked."
+            )
+        reported[role] = result
+
+    _parse_offset_timestamp(
+        "generated_at", payload["generated_at"], filename=INSPECTION_ATTESTATION
+    )
+
+    missing_roles = REQUIRED_INSPECTORS - set(reported)
+    verdict = _require_safe_scalar("result", payload["result"])
+    passed = (
+        verdict == "pass"
+        and not missing_roles
+        and all(result == "pass" for result in reported.values())
+        and payload.get("builder_self_approval") is False
+    )
+    return {
+        "artifact": f"evidence/{INSPECTION_ATTESTATION}",
+        "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        "producer": {"id": producer["id"], "type": producer["type"]},
+        "subject_revision": declared_revision,
+        "governed_content_digest": digest,
+        "inspectors": [
+            {"role": role, "result": result} for role, result in sorted(reported.items())
+        ],
+        "status": "pass" if passed else "observed",
+        "missing_inspectors": sorted(missing_roles),
+        "payload": payload,
+    }
+
+
 def _architecture_report() -> dict:
     """Run the deterministic architecture checker and return its report."""
     result = subprocess.run(
@@ -307,29 +472,44 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
     # The in-session file is gitignored working state. The full review payload is
     # embedded here so the committed, content-hashed artifact is self-contained
     # and an approval never has to trust an uncommitted local file.
+    # The in-session file is a working-session report: untracked, gitignored,
+    # and written by whatever ran last. It may illustrate what the inspectors
+    # said; it cannot decide whether they passed. A verdict comes only from a
+    # committed attestation bound to the content it reviewed.
     reviews_path = ROOT / ".nornyx/in-session/reviews.json"
-    review_status = "observed"
     reviewers: list[dict[str, str]] = []
     embedded: dict | None = None
     source_sha256: str | None = None
     if reviews_path.exists():
         raw_reviews = reviews_path.read_bytes()
         source_sha256 = "sha256:" + hashlib.sha256(raw_reviews).hexdigest()
-        payload = json.loads(raw_reviews.decode("utf-8"))
-        embedded = payload
-        reviewers = [
-            {"role": str(item.get("role")), "status": str(item.get("status"))}
-            for item in payload.get("reviews", [])
-        ]
-        required = {"test-inspector", "architecture-inspector", "security-inspector"}
-        if (
-            payload.get("builder_self_approval") is False
-            and required <= {item["role"] for item in reviewers}
-            and all(item["status"] == "pass" for item in reviewers)
-        ):
-            # Every required independent reviewer completed and passed. This
-            # records that a real review happened; it is not a human approval.
-            review_status = "pass"
+        try:
+            payload = json.loads(raw_reviews.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        if isinstance(payload, dict):
+            embedded = payload
+            reviewers = [
+                {"role": str(item.get("role")), "status": str(item.get("status"))}
+                for item in payload.get("reviews", [])
+                if isinstance(item, dict)
+            ]
+
+    attestation = load_inspection_attestation(revision)
+    review_status = attestation["status"] if attestation else "observed"
+    if attestation is None:
+        verdict_basis = (
+            "no committed inspection attestation; the in-session report is "
+            "displayed but decides nothing"
+        )
+    elif review_status == "pass":
+        verdict_basis = f"attested by {attestation['producer']['id']}"
+    else:
+        verdict_basis = (
+            "attestation present but incomplete; missing or failing inspectors: "
+            + ", ".join(attestation["missing_inspectors"] or ["<failing result>"])
+        )
+
     emit(
         "architecture_independent_review",
         "architecture_independent_review.json",
@@ -347,9 +527,26 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
                 "verdict on their own behalf. This is an independent machine review, "
                 "not a human review and not an approval."
             ),
-            "source": ".nornyx/in-session/reviews.json",
-            "source_sha256": source_sha256,
-            "reviews": embedded,
+            "verdict_basis": verdict_basis,
+            "attestation": (
+                {
+                    "artifact": attestation["artifact"],
+                    "content_hash": attestation["content_hash"],
+                    "producer": attestation["producer"],
+                    "governed_content_digest": attestation["governed_content_digest"],
+                    "inspectors": attestation["inspectors"],
+                }
+                if attestation
+                else None
+            ),
+            # Displayed, never authoritative. Kept so a reader can see what the
+            # session reported alongside what was actually attested.
+            "session_report": {
+                "source": ".nornyx/in-session/reviews.json",
+                "source_sha256": source_sha256,
+                "authoritative": False,
+                "reviews": embedded,
+            },
         },
         status=review_status,
     )
@@ -900,8 +1097,12 @@ def wire_approvals() -> dict:
     """
 
     require_approval_matches_head()
-    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    entries = index["entries"]
+    # INDEX.json is deliberately not read here. It is derived output, and this
+    # function writes authority into a governed contract; the index having been
+    # an input is exactly how a forged one minted a human approval. Every value
+    # below comes from a canonical artifact or is computed.
+    if not INDEX_PATH.exists():
+        raise SystemExit("evidence index is missing; run without --wire-approvals first")
     changes: list[str] = []
 
     for name, wiring in APPROVAL_WIRING.items():
@@ -919,12 +1120,24 @@ def wire_approvals() -> dict:
                 text = text.replace(block, "")
 
         if human.exists():
-            key = (
-                "runtime_approval_record"
-                if name.startswith("runtime")
-                else "architecture_approval_record"
-            )
-            entry = dict(entries[key])
+            # Straight from the canonical artifact through the single common
+            # validator. It used to come from INDEX.json, which is derived
+            # output: tampering the index alone produced a human-producer,
+            # status:pass record with an arbitrary window, bypassing this
+            # validator and its P7D cap entirely. A derived file cannot be an
+            # input to authority.
+            record = load_canonical_approval(str(wiring["artifact"]))
+            if record is None:  # pragma: no cover - guarded by human.exists()
+                raise SystemExit(f"{name}: {wiring['artifact']} disappeared mid-run")
+            entry = {
+                "artifact": record["artifact"],
+                "content_hash": record["content_hash"],
+                "generated_at": record["generated_at"],
+                "expires_at": record["expires_at"],
+                "status": record["status"],
+                "subject_revision": record["subject_revision"],
+                "producer": record["producer"],
+            }
             depends = (
                 ["agentic_network_contract_review"]
                 if name.startswith("runtime")
@@ -937,10 +1150,38 @@ def wire_approvals() -> dict:
             text = text.replace(anchor, "\n" + block.rstrip("\n") + "\n" + anchor, 1)
             changes.append(f"{name}: approval_record -> {entry['artifact']}")
         elif wiring["fallback"]:
-            entry = dict(entries["architecture_approval_record"])
-            entry.setdefault("producer", {"id": "system:autonomous_demonstration", "type": "system"})
-            entry["tool_name"] = "refresh_governance_evidence"
-            entry["tool_version"] = TOOL_VERSION
+            # An *absence* record. Its producer and status are facts about this
+            # tool, not values to be read from anywhere — least of all from the
+            # index, where `setdefault` previously let a forged human producer
+            # survive into a governed contract.
+            # Every field is derived from the artifact on disk or computed here.
+            # Nothing is read from the index: a forged `expires_at` there reached
+            # the record even after producer and status were pinned, which is the
+            # same defect one field further along.
+            absence_path = EVIDENCE_DIR / str(wiring["fallback"])
+            absence_raw = absence_path.read_bytes()
+            absence = json.loads(absence_raw.decode("utf-8"))
+            generated_at = _require_safe_scalar(
+                "generated_at", absence.get("generated_at", "")
+            )
+            entry = {
+                "artifact": f"evidence/{wiring['fallback']}",
+                "content_hash": "sha256:" + hashlib.sha256(absence_raw).hexdigest(),
+                "generated_at": generated_at,
+                "expires_at": _iso(
+                    _parse_offset_timestamp(
+                        "generated_at", generated_at, filename=str(wiring["fallback"])
+                    )
+                    + timedelta(days=MACHINE_EVIDENCE_WINDOW_DAYS)
+                ),
+                "subject_revision": _require_safe_scalar(
+                    "subject_revision", absence.get("subject_revision", "")
+                ),
+                "producer": {"id": "system:autonomous_demonstration", "type": "system"},
+                "status": "observed",
+                "tool_name": "refresh_governance_evidence",
+                "tool_version": TOOL_VERSION,
+            }
             block = _record_block(entry, dependencies=[])
             anchor = "\nchanges:"
             text = text.replace(anchor, "\n" + block.rstrip("\n") + "\n" + anchor, 1)
