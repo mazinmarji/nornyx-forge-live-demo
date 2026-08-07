@@ -9,6 +9,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Hosted runners occasionally drop a queued job, or strand a whole run in
+  # `queued` that the API will neither advance nor let you cancel. Without a
+  # manual trigger the only way to ask the question again is an empty commit,
+  # which puts infrastructure noise into a history that is meant to read as a
+  # record of assurance findings.
+  workflow_dispatch:
 
 # A superseded run is finished with. Without this, pushing twice in quick
 # succession leaves the older run competing with the newer one for the same
