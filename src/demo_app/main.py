@@ -55,11 +55,24 @@ def dashboard():
 
 @app.get("/api/health")
 def health():
+    """Report what this deployment can and cannot do, without leaking how.
+
+    A packaged image usually has no approver trust store, so consequential
+    approval authority is unavailable there. Saying so is the point: a reader
+    should be able to tell the difference between "no approval has been sought"
+    and "no approval could be authenticated even if one were".
+
+    Deliberately no store path and no key material — that a deployment is
+    anchored is the operator's business; where its keys live is not.
+    """
+    from demo_app.agentic import assurance_state
+
     return {
         "status": "ok",
         "assurance_mode": "autonomous_demonstration",
         "human_review": "not_performed",
         "production_approval": "not_granted",
+        **assurance_state(),
     }
 
 

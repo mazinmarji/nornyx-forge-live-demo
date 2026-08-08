@@ -112,11 +112,16 @@ def _permissive_boundary(
     ``as_of`` shorthand here is a *test helper* convenience that builds one; the
     production constructor has no such parameter and no environment route.
     """
+    from signing import trust_store  # noqa: PLC0415
+
     boundary = NornyxActionBoundary(
         root,
         allow_fallback=True,
         runtime_context=runtime_context
         or RuntimeContext.for_test(root, at=as_of, revision=TEST_REVISION),
+        # A real trust store holding a real ephemeral key. Tests about refusal
+        # supply a defective grant; they do not rely on trust being absent.
+        approver_trust_store=trust_store(),
     )
     boundary.authorizer = _PermissiveAuthorizer()
     boundary.context = object()
@@ -154,24 +159,24 @@ def test_high_risk_is_withheld_even_when_nornyx_allows(tmp_path: Path) -> None:
 def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) -> None:
     """The separate action approval is what releases it, nothing else.
 
-    The grant has to be bound to this exact request, so it is built from the
-    same ActionRequest the boundary constructs. A loose "granted: true" is no
-    longer sufficient, which is the point of the binding.
+    The grant is bound to this exact request and signed by a key the trust store
+    vouches for. A loose "granted: true" is no longer sufficient, and neither is
+    a correctly-shaped grant nobody signed.
     """
-    from nornyx_forge.nornyx_runtime import (
+    from signing import signed_grant  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
         ActionDescriptor,
-        ActionRequest,
+        canonical_action_request,
         runtime_as_of,
     )
 
     boundary = _permissive_boundary(tmp_path)
-    request = ActionRequest(
-        request_id="REQ-TEST-RELEASED",
-        attempt_id="REQ-TEST-RELEASED#attempt-1",
+    request = canonical_action_request(
         mission_id="TEST-RELEASED",
+        risk="high",
         subject_revision=TEST_REVISION,
-        capability="execute_high_risk_effect",
-        action=ActionDescriptor(
+        descriptor=ActionDescriptor(
             operation="issue refund",
             resource="customer:test",
             destination="zone.external_customer",
@@ -185,25 +190,16 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
         risk="high",
         action=lambda: executed.append("ran") or "ran",
         action_request=request,
-        action_approval={
-            "granted": True,
-            "approval_id": "ACT-TEST-0001",
-            "approver": "human:operations_owner",
-            "approver_type": "human",
-            "approver_role": "operations_owner",
-            "request_id": request.request_id,
-            "subject_revision": request.subject_revision,
-            "capability": request.capability,
-            "destination": request.destination,
-            "payload_digest": request.payload_digest,
-            "request_digest": request.digest,
-            "generated_at": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "expires_at": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        },
+        action_approval=signed_grant(
+            request,
+            generated_at=(now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            expires_at=(now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ),
     )
     assert decision.effect == "ALLOW", decision.reason
     assert result == "ran"
     assert executed == ["ran"]
+    assert decision.evidence["approval_authentication"]["signature_verified"] is True
 
 
 def test_low_risk_needs_no_action_approval(tmp_path: Path) -> None:

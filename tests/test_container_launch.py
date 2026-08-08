@@ -106,5 +106,18 @@ def test_compose_up_build_starts_the_application():
         assert payload["status"] == "ok"
         assert payload["human_review"] == "not_performed"
         assert payload["production_approval"] == "not_granted"
+
+        # The packaged image ships no approver trust store, so it must say that
+        # consequential authority is unavailable rather than merely unexercised.
+        # This is the deployment-behaviour check unit tests cannot give: the real
+        # image, started for real, reporting what it can actually do.
+        assert payload["trusted_approvers_loaded"] is False
+        assert payload["action_approval_authentication"] == "unavailable"
+        assert payload["consequential_authority"] == "unavailable"
+
+        # And it must not disclose where trust would come from.
+        body = json.dumps(payload)
+        for leak in ("trusted_approvers.json", "/root", "/app/.nornyx", "public_key"):
+            assert leak not in body, f"health disclosed {leak}"
     finally:
         _run(str(docker), "compose", "-p", project, "down", "-v")

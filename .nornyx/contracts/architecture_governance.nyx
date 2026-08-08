@@ -309,12 +309,22 @@ architecture:
       name: demo_app.agentic
       component: component.runtime
       layer: layer.application
-      depends_on: [module.governance, module.evidence, module.worker_adapter]
+      depends_on: [module.governance, module.evidence, module.worker_adapter, module.approval_trust]
     - id: module.governance
       name: nornyx_forge.nornyx_runtime
       component: component.governance
       layer: layer.domain
-      depends_on: [module.shared_models, module.shared_util]
+      depends_on: [module.shared_models, module.shared_util, module.approval_trust]
+    # Authentication for action-specific consequential approvals. Deliberately a
+    # leaf: it verifies signatures against a trust store held outside this
+    # repository, and depends on nothing in the application or effect layers. A
+    # verifier that could reach runtime effect code, or hold a signing key, would
+    # no longer be separable from the thing it authenticates.
+    - id: module.approval_trust
+      name: nornyx_forge.approval_trust
+      component: component.governance
+      layer: layer.domain
+      depends_on: []
     - id: module.evidence
       name: nornyx_forge.evidence
       component: component.evidence

@@ -28,6 +28,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from signing import signed_grant  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -55,24 +56,8 @@ def _request(mission_id: str, **overrides: object):
 
 
 def _grant(request, approval_id: str = "ACT-A") -> dict[str, object]:
-    """A complete, internally consistent grant for the given request."""
-    return {
-        "granted": True,
-        "approval_id": approval_id,
-        "approver": "human:operations_owner",
-        "approver_type": "human",
-        "approver_role": "operations_owner",
-        "request_id": request.request_id,
-        "subject_revision": request.subject_revision,
-        "capability": request.capability,
-        "destination": request.destination,
-        "payload_digest": request.payload_digest,
-        "request_digest": request.digest,
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
-    }
-
-
+    """A complete, correctly signed grant for the given request."""
+    return signed_grant(request, approval_id=approval_id)
 def _execute(boundary, mission_id: str, *, approval, request=None, descriptor=None):
     executed: list[str] = []
     decision, result = boundary.evaluate_and_execute(

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from nornyx_forge.approval_trust import APPROVAL_SCHEMA
 from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     ActionRequest,
@@ -29,20 +30,26 @@ from nornyx_forge.nornyx_runtime import (
 NOW = "2026-08-03T00:00:00Z"
 
 
-def _fingerprint(approval_id: str, request, *, approver: str = "human:operations_owner") -> str:
-    """The key the boundary would compute for a grant carrying this id.
+def _fingerprint(approval_id: str, request, *, approver: str = "human.test_fixture") -> str:
+    """The key the boundary computes for a grant over this request.
 
-    ``approval_id`` is accepted and deliberately unused: two calls differing only
-    in the id must produce the same fingerprint. That is the invariant the whole
-    replay fix rests on, so the helper embodies it rather than describing it.
+    Mirrors the canonical signed payload, because that is what the fingerprint
+    now digests. `approval_id` is part of it — it is signed, so tampering with
+    it invalidates the signature — but it is not what stops the same act running
+    twice. The UNIQUE constraint on `request_digest` does that, and these tests
+    exercise both.
     """
     return approval_fingerprint(
         {
+            "schema": APPROVAL_SCHEMA,
+            "approval_id": approval_id,
+            "request_digest": request.digest,
             "approver": approver,
-            "approver_type": "human",
             "approver_role": "operations_owner",
+            "signer_key_id": "test-approval-01",
             "generated_at": "2026-08-02T00:00:00Z",
             "expires_at": "2026-08-05T00:00:00Z",
+            "granted": True,
         },
         request,
     )
@@ -211,26 +218,13 @@ def test_the_store_schema_enforces_uniqueness(tmp_path: Path):
 
 
 def test_boundary_withholds_a_replayed_grant(tmp_path: Path):
-    """End to end: the same grant cannot release a second time."""
+    """End to end: the same signed grant cannot release a second time."""
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+    from signing import signed_grant  # noqa: PLC0415
     from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
 
     request = _request(subject_revision=TEST_REVISION)
-    grant = {
-        "granted": True,
-        "approval_id": "ACT-REPLAY",
-        "approver": "human:operations_owner",
-        "approver_type": "human",
-        "approver_role": "operations_owner",
-        "request_id": request.request_id,
-        "subject_revision": request.subject_revision,
-        "capability": request.capability,
-        "destination": request.destination,
-        "payload_digest": request.payload_digest,
-        "request_digest": request.digest,
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
-    }
+    grant = signed_grant(request, approval_id="ACT-REPLAY")
     ledger = tmp_path / "ledger.sqlite3"
 
     def run() -> str:

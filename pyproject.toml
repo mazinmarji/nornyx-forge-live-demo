@@ -12,6 +12,9 @@ license = {text = "MIT"}
 authors = [{name = "Mazin Marji and Nornyx Forge contributors"}]
 dependencies = [
   "PyYAML>=6.0",
+  # Ed25519 verification for action-approval signatures. A core dependency, not
+  # a demo extra: the action boundary cannot authenticate an approval without it.
+  "cryptography>=42,<51",
   "pydantic>=2.8,<3",
   "rich>=13.9,<15",
   "typer>=0.12,<1",

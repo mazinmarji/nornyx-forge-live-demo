@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__
+from .approval_trust import (
+    ApprovalTrustStore,
+    TrustStoreUnavailable,
+    canonical_grant_payload,
+    verify_signed_approval,
+)
 from .models import GateResult
 from .util import write_json
 
@@ -100,11 +106,30 @@ def actual_revision(root: Path) -> str | None:
     return candidate if _REVISION_RE.fullmatch(candidate) else None
 
 
+_UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_evidence_name(value: str) -> str:
+    """A filename that cannot escape the directory it is written into.
+
+    Identifiers reach evidence paths, and an identifier is caller-supplied text.
+    Everything outside a conservative set becomes an underscore, so no separator
+    or parent reference survives into a path.
+    """
+    cleaned = _UNSAFE_NAME_RE.sub("_", value).strip("._") or "unnamed"
+    return cleaned[:120]
+
+
 #: Why a revision-bound consequential release was refused. Distinct codes,
 #: because "I checked and it is wrong" and "I could not check" are different
 #: facts and a reviewer must not have to guess which one happened.
 GOVERNED_REVISION_MISMATCH = "GOVERNED_REVISION_MISMATCH"
 GOVERNED_REVISION_UNVERIFIED = "GOVERNED_REVISION_UNVERIFIED"
+
+#: The grant was not signed by a key the trust store vouches for. Distinct from
+#: HUMAN_APPROVAL_REQUIRED: one says nobody approved, the other says someone
+#: claimed to and could not be authenticated.
+APPROVAL_NOT_AUTHENTICATED = "APPROVAL_NOT_AUTHENTICATED"
 
 
 @dataclass(frozen=True)
@@ -475,29 +500,22 @@ DEFAULT_APPROVAL_LEDGER = "evidence/runtime/action_approvals.sqlite3"
 def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) -> str:
     """Digest the authority a validated grant actually carries.
 
-    Deliberately excludes ``approval_id``. Keying single use on the id made the
-    control caller-selectable: the same grant re-presented as ``ACT-0002``, or
-    with a trailing space, was a new row and released the effect again. An id is
-    a label a presenter chooses; it is not part of what a human decided.
+    The canonical signed payload, which is exactly the material a trusted key
+    committed to. Deliberately not ``approval_id``: keying single use on it made
+    the control caller-selectable, and the same grant re-presented as ACT-0002
+    released the effect again. An id is a label a presenter chooses; it is not
+    part of what a human decided.
 
-    What a human decided is: this exact request, released by this approver in
-    this role, within this window. Change any of those and it is a different
-    decision; change only the label and it is the same one.
+    Deliberately not the signature bytes either. Ed25519 is deterministic today,
+    but keying replay protection on an encoding rather than on meaning is the
+    kind of assumption that quietly stops holding.
 
-    Only ever computed from an approval that has already passed
-    ``validate_action_approval``, so every field here has been checked.
+    Only ever computed from a grant that has already passed authentication and
+    ``validate_action_approval``.
     """
 
-    material = {
-        "request_digest": request.digest,
-        "approver": str(approval.get("approver", "")),
-        "approver_type": str(approval.get("approver_type", "")).lower(),
-        "approver_role": str(approval.get("approver_role", "")),
-        "generated_at": str(approval.get("generated_at", "")),
-        "expires_at": str(approval.get("expires_at", "")),
-    }
-    canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
-    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    material = canonical_grant_payload(approval)
+    return "sha256:" + hashlib.sha256(material).hexdigest()
 
 
 class ApprovalLedger:
@@ -854,6 +872,7 @@ class NornyxActionBoundary:
         *,
         allow_fallback: bool = True,
         runtime_context: RuntimeContext | None = None,
+        approver_trust_store: ApprovalTrustStore | None = None,
     ) -> None:
         self.root = root
         self.allow_fallback = allow_fallback
@@ -862,6 +881,21 @@ class NornyxActionBoundary:
         # route to either value.
         self.runtime_context = runtime_context or RuntimeContext.trusted(root)
         self.as_of = self.runtime_context.now()
+        #: Trusted approver keys, resolved once here rather than per decision.
+        #: Looking the location up on every authorization would make the
+        #: environment an ambient selector of the root of trust: set a variable
+        #: between two calls and the second answers to a different authority.
+        #: The store is never inside the governed repository, so editing this
+        #: tree cannot add a trusted signer.
+        if approver_trust_store is not None:
+            self.approver_trust_store = approver_trust_store
+        else:
+            try:
+                self.approver_trust_store = ApprovalTrustStore.load()
+            except TrustStoreUnavailable as exc:
+                # A store we cannot parse is not an empty store. Hold the
+                # refusal rather than starting up as though none was configured.
+                self.approver_trust_store = ApprovalTrustStore(source=str(exc))
         #: Durable single-use ledger. Survives boundary and process restarts.
         self.approval_ledger = ApprovalLedger(approval_ledger_path(root))
         self.authorizer: Any | None = None
@@ -969,6 +1003,7 @@ class NornyxActionBoundary:
         # action can never release another. This only ever narrows the decision.
         release_reason = "not evaluated"
         withheld_code = "HUMAN_APPROVAL_REQUIRED"
+        authentication_evidence: dict[str, Any] = {}
         if high_risk and decision.allowed:
             # First: is the tree what it claims to be? Asked here and nowhere
             # else, because an unverifiable revision must not stop the
@@ -1012,9 +1047,28 @@ class NornyxActionBoundary:
                 released = False
                 release_reason = mismatch
             else:
-                released, release_reason = validate_action_approval(
-                    action_approval, request, as_of=self.as_of
+                # Authentication first. Everything after this asks what the grant
+                # says; this asks whether anyone trusted actually said it. A
+                # self-issued grant claiming `approver_type: human` released a
+                # $10,000,000 transfer, because that field was treated as
+                # evidence of the thing it merely asserted.
+                authentic, authentication, authentication_evidence = verify_signed_approval(
+                    action_approval, trust_store=self.approver_trust_store
                 )
+                if not authentic:
+                    released = False
+                    release_reason = authentication
+                    # Nobody claiming anything is a different fact from someone
+                    # claiming and failing to prove it. Collapsing them would
+                    # tell an operator to go find a key when the real answer is
+                    # that no approval was ever sought.
+                    if action_approval is not None:
+                        release_reason = f"{APPROVAL_NOT_AUTHENTICATED}: {authentication}"
+                        withheld_code = APPROVAL_NOT_AUTHENTICATED
+                else:
+                    released, release_reason = validate_action_approval(
+                        action_approval, request, as_of=self.as_of
+                    )
             if released:
                 # Consume before the effect runs. A claim that loses the race, or
                 # that was already spent in an earlier process, withholds here.
@@ -1059,10 +1113,34 @@ class NornyxActionBoundary:
                 },
                 "action_approval_present": _action_approval_present(action_approval),
                 "action_binding": release_reason,
+                "approval_authentication": authentication_evidence,
                 "revision_verified": self.runtime_context.revision_verified,
                 "actual_revision": self.runtime_context.actual_revision,
                 "declared_revision": self.runtime_context.declared_revision,
             }
+        if withheld and request is not None:
+            # Emit the exact request an approver would be signing. Without this
+            # an operator has to reconstruct mission, attempt, capability and
+            # digest by hand — a second implementation of canonicalization, and
+            # the likeliest way to approve the wrong attempt.
+            pending_dir = self.root / "evidence/runtime/pending"
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            write_json(
+                pending_dir / f"{_safe_evidence_name(request.attempt_id)}.request.json",
+                {
+                    "schema": "nornyx.forge.pending_action_request.v1",
+                    "request": request.canonical(),
+                    "request_digest": request.digest,
+                    "attempt_id": request.attempt_id,
+                    "withheld_reason": release_reason,
+                    "note": (
+                        "Sign this exact request_digest with "
+                        "scripts/issue_action_approval.py. Approving a different "
+                        "attempt releases nothing."
+                    ),
+                },
+            )
+
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         write_json(evidence_dir / f"{mission_id}.events.json", stream)

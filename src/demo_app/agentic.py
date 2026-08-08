@@ -18,7 +18,13 @@ from nornyx_forge.nornyx_runtime import (
 
 # Re-exported so the interface layer can handle a governed refusal without
 # importing the governance module directly.
-__all__ = ["CustomerCaseFlow", "NornyxRuntimeUnavailable", "run_case", "run_demo_scenarios"]
+__all__ = [
+    "CustomerCaseFlow",
+    "NornyxRuntimeUnavailable",
+    "assurance_state",
+    "run_case",
+    "run_demo_scenarios",
+]
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -41,6 +47,33 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 STAGES = ("intake", "knowledge", "resolution", "risk", "execution", "audit")
+
+
+def assurance_state() -> dict[str, Any]:
+    """What this deployment can actually do, for the interface to report.
+
+    Lives here rather than in the API module because the interface layer may not
+    reach into the governance domain — and the answer is a governance fact, not
+    a presentation one. A packaged image ships no approver trust store, so
+    consequential authority is genuinely unavailable there, and saying so is the
+    point: "no approval has been sought" and "no approval could be
+    authenticated" are different states.
+
+    Carries no store path and no key material.
+    """
+    from nornyx_forge.approval_trust import ApprovalTrustStore, TrustStoreUnavailable
+
+    try:
+        store = ApprovalTrustStore.load()
+        loaded = store.available and bool(store.signers)
+        state = "available" if loaded else "unavailable"
+    except TrustStoreUnavailable:
+        loaded, state = False, "unusable"
+    return {
+        "action_approval_authentication": state,
+        "trusted_approvers_loaded": loaded,
+        "consequential_authority": "available" if loaded else "unavailable",
+    }
 
 
 class CustomerCaseFlow(Flow):  # type: ignore[misc]

@@ -21,6 +21,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from signing import signed_grant  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -42,25 +43,9 @@ def _request(capability: str) -> ActionRequest:
     )
 
 
-def _grant(request: ActionRequest) -> dict[str, object]:
-    """A grant that is internally consistent with the request it names."""
-    return {
-        "granted": True,
-        "approval_id": "ACT-MISLABELLED",
-        "approver": "human:operations_owner",
-        "approver_type": "human",
-        "approver_role": "operations_owner",
-        "request_id": request.request_id,
-        "subject_revision": request.subject_revision,
-        "capability": request.capability,
-        "destination": request.destination,
-        "payload_digest": request.payload_digest,
-        "request_digest": request.digest,
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
-    }
-
-
+def _grant(request, approval_id: str = "ACT-A") -> dict[str, object]:
+    """A complete, correctly signed grant for the given request."""
+    return signed_grant(request, approval_id=approval_id)
 def test_a_low_risk_grant_cannot_release_a_high_risk_effect(tmp_path: Path) -> None:
     """The reported escalation, driven end to end.
 

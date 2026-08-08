@@ -34,6 +34,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from signing import signed_grant  # noqa: E402
 from test_governance_failure import _permissive_boundary  # noqa: E402
 
 #: The retired overrides. Set hostile in every test, expected to do nothing.
@@ -97,21 +98,15 @@ def _grant(
     generated: str = "2026-08-02T00:00:00Z",
     expires: str = "2026-08-05T00:00:00Z",
 ) -> dict[str, object]:
-    return {
-        "granted": True,
-        "approval_id": approval_id,
-        "approver": "human:operations_owner",
-        "approver_type": "human",
-        "approver_role": "operations_owner",
-        "request_id": request.request_id,
-        "subject_revision": request.subject_revision,
-        "capability": request.capability,
-        "destination": request.destination,
-        "payload_digest": request.payload_digest,
-        "request_digest": request.digest,
-        "generated_at": generated,
-        "expires_at": expires,
-    }
+    """A correctly signed grant for exactly this request.
+
+    Signed through the shared fixture rather than hand-built: these tests are
+    about replay identity and trusted clocks, so the signature must be genuinely
+    valid or they would all be measuring the authentication refusal instead.
+    """
+    return signed_grant(
+        request, approval_id=approval_id, generated_at=generated, expires_at=expires
+    )
 
 
 def _release(work: Path, context: RuntimeContext, grant, request=None, *, attempt: int = 1):
