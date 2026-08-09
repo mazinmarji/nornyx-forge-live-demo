@@ -36,11 +36,11 @@ REFRESH = "scripts/refresh_governance_evidence.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from governed_content import (  # noqa: E402
-    GOVERNED_CONTENT_PATHS,
+    GOVERNED_INPUT_PATHS,
     GovernedContentError,
     control_pack_digest,
     digest_of,
-    governed_content_manifest,
+    governed_input_manifest,
 )
 
 
@@ -209,11 +209,11 @@ def test_generated_evidence_is_not_part_of_the_content_digest(tmp_path: Path):
     index = json.loads(
         (work / CONTRACTS / "evidence/INDEX.json").read_text(encoding="utf-8")
     )
-    recorded = index["governed_content_digest"]
+    recorded = index["governed_input_digest"]
 
     assert not any(
         entry["path"].startswith(".nornyx/contracts/evidence/")
-        for entry in governed_content_manifest()["entries"]
+        for entry in governed_input_manifest()["entries"]
     )
     assert recorded.startswith("sha256:")
 
@@ -234,7 +234,7 @@ def test_changing_an_evidence_file_does_not_move_the_content_digest(tmp_path: Pa
     # ...but the artifact's own hash binding does not.
     assert completed.returncode != 0
     assert json.loads(index_path.read_text(encoding="utf-8"))[
-        "governed_content_digest"
+        "governed_input_digest"
     ] == recorded
 
 
@@ -244,8 +244,8 @@ def test_changing_an_evidence_file_does_not_move_the_content_digest(tmp_path: Pa
 
 
 def test_the_manifest_is_canonical_and_deterministic():
-    first = governed_content_manifest()
-    second = governed_content_manifest()
+    first = governed_input_manifest()
+    second = governed_input_manifest()
     assert first == second
     assert digest_of(first) == digest_of(second)
 
@@ -255,7 +255,7 @@ def test_the_manifest_is_canonical_and_deterministic():
 
 
 def test_manifest_entries_use_normalised_relative_paths():
-    for entry in governed_content_manifest()["entries"]:
+    for entry in governed_input_manifest()["entries"]:
         path = entry["path"]
         assert not path.startswith("/"), path
         assert ".." not in path.split("/"), path
@@ -308,13 +308,13 @@ def test_the_control_pack_digest_is_not_self_referential():
     )
     assert "control_pack_commit" not in binding
     assert binding["control_pack_digest"].startswith("sha256:")
-    assert binding["governed_content_digest"].startswith("sha256:")
+    assert binding["governed_input_digest"].startswith("sha256:")
     assert binding["evidence_manifest_digest"].startswith("sha256:")
     assert binding["source_commit"].startswith("git:")
 
     # Recomputable from its stated inputs, by anyone holding them.
     assert control_pack_digest(
-        content_digest=binding["governed_content_digest"],
+        input_digest=binding["governed_input_digest"],
         evidence_digest=binding["evidence_manifest_digest"],
         contract_digests={
             path.name: "sha256:" + __import__("hashlib").sha256(path.read_bytes()).hexdigest()
@@ -332,9 +332,9 @@ def test_the_review_binding_does_not_digest_itself():
 def test_governed_content_covers_authored_source_and_configuration():
     """The declared set, asserted rather than assumed."""
     for expected in ("src", "scripts", "tests", "pyproject.toml"):
-        assert expected in GOVERNED_CONTENT_PATHS
+        assert expected in GOVERNED_INPUT_PATHS
 
-    paths = [entry["path"] for entry in governed_content_manifest()["entries"]]
+    paths = [entry["path"] for entry in governed_input_manifest()["entries"]]
     assert any(p.startswith("src/") for p in paths)
     assert any(p == "pyproject.toml" for p in paths)
 
@@ -349,7 +349,7 @@ def test_contracts_are_covered_one_layer_up_not_in_the_content_digest():
     carries and verification recomputes. An edited contract still fails, through
     the layer that can actually see it.
     """
-    paths = [entry["path"] for entry in governed_content_manifest()["entries"]]
+    paths = [entry["path"] for entry in governed_input_manifest()["entries"]]
     assert not any(p.endswith(".nyx") for p in paths)
     assert not any(p.startswith(".nornyx/contracts/") for p in paths)
 

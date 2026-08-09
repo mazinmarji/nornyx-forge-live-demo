@@ -28,10 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from governed_content import (  # noqa: E402
     GovernedContentError,
+    contract_set_digest,
     control_pack_digest,
     digest_of,
     evidence_manifest,
-    governed_content_digest,
+    governed_input_digest,
+    inspection_subject_digest,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -270,7 +272,7 @@ REQUIRED_INSPECTORS = frozenset(
 _REQUIRED_ATTESTATION_FIELDS = (
     "producer",
     "subject_revision",
-    "governed_content_digest",
+    "inspection_subject_digest",
     "inspectors",
     "result",
     "generated_at",
@@ -333,14 +335,13 @@ def load_inspection_attestation(revision: str) -> dict | None:
             "not an inspection of this one."
         )
     digest = _require_safe_scalar(
-        "governed_content_digest", payload["governed_content_digest"]
+        "inspection_subject_digest", payload["inspection_subject_digest"]
     )
-    observed = governed_content_digest()
-    if digest != observed:
-        raise SystemExit(
-            f"{INSPECTION_ATTESTATION} attests to content {digest} but the governed "
-            f"content digests to {observed}. The content changed after inspection."
-        )
+    # A stale inspection is a fact to report, not a reason to stop working. It
+    # must never yield PASS, but refusing to regenerate evidence because an old
+    # inspection exists would make the ordinary "change something, re-inspect"
+    # workflow impossible — and would push people towards editing the digest.
+    stale = digest != current_inspection_subject()
 
     inspectors = payload.get("inspectors")
     if not isinstance(inspectors, list) or not inspectors:
@@ -359,6 +360,16 @@ def load_inspection_attestation(revision: str) -> dict | None:
                 "list. An inspection that recorded nothing it looked for is not "
                 "evidence that it looked."
             )
+        if role in reported:
+            # Exactly one result per role. Accumulating into a dict let a second
+            # entry overwrite the first, so `architecture-inspector: fail`
+            # followed by `architecture-inspector: pass` would report pass —
+            # assurance decided by list order.
+            raise SystemExit(
+                f"{INSPECTION_ATTESTATION}: inspector role {role!r} reports twice "
+                f"({reported[role]!r} then {result!r}). Exactly one result per "
+                "role; otherwise the verdict depends on which entry came last."
+            )
         reported[role] = result
 
     _parse_offset_timestamp(
@@ -369,6 +380,7 @@ def load_inspection_attestation(revision: str) -> dict | None:
     verdict = _require_safe_scalar("result", payload["result"])
     passed = (
         verdict == "pass"
+        and not stale
         and not missing_roles
         and all(result == "pass" for result in reported.values())
         and payload.get("builder_self_approval") is False
@@ -378,11 +390,12 @@ def load_inspection_attestation(revision: str) -> dict | None:
         "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
         "producer": {"id": producer["id"], "type": producer["type"]},
         "subject_revision": declared_revision,
-        "governed_content_digest": digest,
+        "inspection_subject_digest": digest,
         "inspectors": [
             {"role": role, "result": result} for role, result in sorted(reported.items())
         ],
         "status": "pass" if passed else "observed",
+        "stale": stale,
         "missing_inspectors": sorted(missing_roles),
         "payload": payload,
     }
@@ -420,7 +433,7 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
 
     entries: dict[str, dict] = {}
 
-    content_digest = governed_content_digest()
+    input_digest = governed_input_digest()
 
     def emit(key: str, filename: str, payload: dict, *, status: str) -> None:
         artifact = f"evidence/{filename}"
@@ -430,7 +443,7 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
         # later recompute making an old conclusion look current.
         content_hash = _write(
             EVIDENCE_DIR / filename,
-            {**payload, "governed_content_digest": content_digest},
+            {**payload, "governed_input_digest": input_digest},
         )
         entries[key] = {
             "artifact": artifact,
@@ -517,7 +530,7 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
                     "artifact": attestation["artifact"],
                     "content_hash": attestation["content_hash"],
                     "producer": attestation["producer"],
-                    "governed_content_digest": attestation["governed_content_digest"],
+                    "inspection_subject_digest": attestation["inspection_subject_digest"],
                     "inspectors": attestation["inspectors"],
                 }
                 if attestation
@@ -654,7 +667,7 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
         "schema": "nornyx.forge.evidence_index.v1",
         # Integrity primitive. `subject_revision` stays for provenance and
         # navigation; it is not what freshness is judged on.
-        "governed_content_digest": governed_content_digest(),
+        "governed_input_digest": governed_input_digest(),
         "subject_revision": revision,
         "generated_at": generated,
         "expires_at": expires,
@@ -805,20 +818,20 @@ def sync_contracts() -> list[str]:
     # This is the only place the recorded digest may move without regenerating
     # evidence, and it moves to match content this tool just wrote from
     # already-validated inputs. An edit from anywhere else still invalidates.
-    settled = governed_content_digest()
+    settled = governed_input_digest()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-    if index.get("governed_content_digest") != settled:
+    if index.get("governed_input_digest") != settled:
         # `subject_content_digest` is what the tree currently is. It is NOT a
         # rebinding of the artifacts: each of those carries, in its own bytes,
         # the digest it was produced against, and verify() compares those
         # against observed content. Recomputing the subject makes old evidence
         # visibly stale; it must never make it look current.
         index["subject_content_digest"] = settled
-        index["governed_content_digest"] = settled
+        index["governed_input_digest"] = settled
         INDEX_PATH.write_bytes(
             json.dumps(index, indent=2, sort_keys=True).encode("utf-8") + b"\n"
         )
-        changes.append(f"governed_content_digest -> {settled}")
+        changes.append(f"governed_input_digest -> {settled}")
     return changes
 
 
@@ -1421,20 +1434,18 @@ def emit_review_binding() -> dict:
     require_approval_matches_head()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     contracts = ROOT / ".nornyx/contracts"
-    content_digest = governed_content_digest()
+    input_digest = governed_input_digest()
     # This file is excluded from the evidence manifest it contains. A document
     # cannot honestly digest itself: writing the digest changes the bytes the
     # digest was taken over.
     evidence_digest = digest_of(
         evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",))
     )
-    contract_digests = {
-        path.name: _sha256(path) or "" for path in sorted(contracts.glob("*.nyx"))
-    }
+    contract_digest = contract_set_digest(contracts)
     pack_digest = control_pack_digest(
-        content_digest=content_digest,
+        input_digest=input_digest,
+        contract_digest=contract_digest,
         evidence_digest=evidence_digest,
-        contract_digests=contract_digests,
     )
     binding = {
         "schema": "nornyx.forge.review_binding.v1",
@@ -1445,7 +1456,9 @@ def emit_review_binding() -> dict:
         # wrong the instant it was recorded. A digest over inputs has no such
         # problem — it can be committed afterwards without invalidating what it
         # says it reviewed.
-        "governed_content_digest": content_digest,
+        "governed_input_digest": input_digest,
+        "contract_set_digest": contract_digest,
+        "inspection_subject_digest": current_inspection_subject(),
         "evidence_manifest_digest": evidence_digest,
         "control_pack_digest": pack_digest,
         # Deliberately no stored verification verdict. A first attempt embedded
@@ -1459,10 +1472,11 @@ def emit_review_binding() -> dict:
         "source_commit": _head_commit(),
         "subject_revision": index["subject_revision"],
         "note": (
-            "governed_content_digest is what this review covers. "
-            "control_pack_digest binds that content to the evidence and "
-            "contracts reviewed alongside it. source_commit is provenance. An "
-            "approval binds to the digests; the commit id merely locates them."
+            "governed_input_digest is what a human authored. "
+            "contract_set_digest is the settled "
+            "governance contracts. inspection_subject_digest is exactly what the "
+            "independent inspectors reviewed, and moves if either moves. "
+            "source_commit is provenance only."
         ),
         "digests": {
             "runtime_contract": _sha256(contracts / "runtime_network.nyx"),
@@ -1494,6 +1508,26 @@ def emit_review_binding() -> dict:
     return binding
 
 
+def current_inspection_subject() -> str:
+    """What an inspection of the tree as it stands would be reviewing.
+
+    Recomputed rather than read. If it differs from what an attestation names,
+    that attestation reviewed something else — which is the whole point of
+    freezing a subject.
+    """
+    pre_inspection = digest_of(
+        evidence_manifest(
+            EVIDENCE_DIR,
+            exclude=("review_binding.json", INSPECTION_ATTESTATION),
+        )
+    )
+    return inspection_subject_digest(
+        input_digest=governed_input_digest(),
+        contract_digest=contract_set_digest(ROOT / ".nornyx/contracts"),
+        evidence_digest=pre_inspection,
+    )
+
+
 def derive_assurance_state() -> dict:
     """Recompute the assurance position from artifacts, at verification time.
 
@@ -1509,7 +1543,7 @@ def derive_assurance_state() -> dict:
     """
 
     try:
-        observed = governed_content_digest()
+        observed = governed_input_digest()
     except GovernedContentError as exc:
         # Content we cannot describe is content we cannot vouch for. A governed
         # refusal, not a traceback: a removed or unreadable governed file is a
@@ -1517,8 +1551,8 @@ def derive_assurance_state() -> dict:
         # operator nothing about what to do.
         return {
             "state": "unverified",
-            "governed_content_digest": None,
-            "governed_content_match": False,
+            "governed_input_digest": None,
+            "governed_input_match": False,
             "evidence_manifest_match": False,
             "required_inspectors_complete": False,
             "independent": False,
@@ -1526,8 +1560,8 @@ def derive_assurance_state() -> dict:
             "problems": [f"governed content could not be digested: {exc}"],
         }
     state: dict = {
-        "governed_content_digest": observed,
-        "governed_content_match": True,
+        "governed_input_digest": observed,
+        "governed_input_match": True,
         "evidence_manifest_match": True,
         "required_inspectors_complete": False,
         "independent": False,
@@ -1547,9 +1581,9 @@ def derive_assurance_state() -> dict:
             continue
         if not isinstance(payload, dict):
             continue
-        recorded = payload.get("governed_content_digest")
+        recorded = payload.get("governed_input_digest")
         if recorded is not None and recorded != observed:
-            state["governed_content_match"] = False
+            state["governed_input_match"] = False
             state["stale_artifacts"].append(location.name)
             state["problems"].append(
                 f"{location.name} describes governed content {recorded} but the "
@@ -1569,34 +1603,66 @@ def derive_assurance_state() -> dict:
                 f"{binding.get('evidence_manifest_digest')} but the evidence set "
                 f"digests to {current}"
             )
-        if binding.get("governed_content_digest") != observed:
-            state["governed_content_match"] = False
+        if binding.get("governed_input_digest") != observed:
+            state["governed_input_match"] = False
             state["problems"].append(
-                "review binding describes content "
-                f"{binding.get('governed_content_digest')} but the tree digests "
+                "review binding describes authored inputs "
+                f"{binding.get('governed_input_digest')} but the tree digests "
                 f"to {observed}"
             )
 
     # Independence and completeness, recomputed rather than read.
     attestation_path = EVIDENCE_DIR / INSPECTION_ATTESTATION
+    state["inspection_subject_digest"] = current_inspection_subject()
+    state["inspection_subject_match"] = False
     if attestation_path.exists():
         try:
             attested = json.loads(attestation_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             attested = {}
-        reported = {
-            str(entry.get("role")): str(entry.get("result"))
-            for entry in attested.get("inspectors", [])
-            if isinstance(entry, dict)
-        }
+
+        # What the inspectors reviewed, versus what is here now. Source can be
+        # untouched while a contract moved, so binding only the inputs would let
+        # an inspection claim a control pack it never saw.
+        attested_subject = attested.get("inspection_subject_digest")
+        state["inspection_subject_match"] = (
+            attested_subject == state["inspection_subject_digest"]
+        )
+        if not state["inspection_subject_match"]:
+            state["problems"].append(
+                f"the inspection attests to subject {attested_subject} but the "
+                f"current subject is {state['inspection_subject_digest']}. The "
+                "inspectors reviewed something else; a new inspection is "
+                "required, not a new digest."
+            )
+
+        reported: dict[str, str] = {}
+        duplicates: list[str] = []
+        for entry in attested.get("inspectors", []):
+            if not isinstance(entry, dict):
+                continue
+            role = str(entry.get("role"))
+            if role in reported:
+                duplicates.append(role)
+                continue
+            reported[role] = str(entry.get("result"))
         missing = REQUIRED_INSPECTORS - set(reported)
-        failing = sorted(role for role, result in reported.items() if result != "pass")
-        state["required_inspectors_complete"] = not missing and not failing
+        failing = sorted(
+            role for role, result in reported.items()
+            if role in REQUIRED_INSPECTORS and result != "pass"
+        )
+        state["required_inspectors_complete"] = (
+            not missing and not failing and not duplicates
+        )
         state["independent"] = attested.get("builder_self_approval") is False
+        if duplicates:
+            state["problems"].append(
+                f"inspector roles reported more than once: {sorted(set(duplicates))}"
+            )
         if missing:
             state["problems"].append(f"inspectors missing: {sorted(missing)}")
         if failing:
-            state["problems"].append(f"inspectors reporting failure: {failing}")
+            state["problems"].append(f"required inspectors reporting failure: {failing}")
         if not state["independent"]:
             state["problems"].append(
                 "the attestation does not assert builder_self_approval is false"
@@ -1610,16 +1676,20 @@ def derive_assurance_state() -> dict:
     state["integrity_state"] = (
         "intact"
         if (
-            state["governed_content_match"]
+            state["governed_input_match"]
             and state["evidence_manifest_match"]
             and not state["problems"]
         )
         else "compromised"
     )
+    # Assurance requires integrity. Source intact with a tampered contract and an
+    # old inspection still saying pass must never read as independently
+    # inspected — the inspection covered a different subject.
     state["assurance_state"] = (
         "independently_inspected"
         if (
             state["integrity_state"] == "intact"
+            and state["inspection_subject_match"]
             and state["required_inspectors_complete"]
             and state["independent"]
         )
@@ -1640,15 +1710,15 @@ def verify() -> list[str]:
     # passed for a binding one commit stale and twenty commits stale alike.
     # Evidence at HEAD claimed to describe a revision while src/, tests/ and
     # .github/ had all changed since, and nothing could see it.
-    recorded = str(index.get("governed_content_digest", ""))
+    recorded = str(index.get("governed_input_digest", ""))
     if not recorded:
         problems.append(
-            "evidence index carries no governed_content_digest, so there is no "
+            "evidence index carries no governed_input_digest, so there is no "
             "way to tell whether it describes the current content"
         )
     else:
         try:
-            observed = governed_content_digest()
+            observed = governed_input_digest()
         except GovernedContentError as exc:
             problems.append(f"governed content could not be digested: {exc}")
             observed = None

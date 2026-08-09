@@ -10,21 +10,34 @@ commits stale alike. Evidence at HEAD claimed to describe `git:75c32e33` while
 The primitive here is content. A manifest of every governed file with its size
 and digest, canonically serialised and hashed:
 
-    governed source + tests + CI + configuration
+    authored inputs: src, scripts, tests, .github, BRD, config
                     |
                     v
-            governed content manifest
+            governed_input_digest
                     |
                     v
-            governed_content_digest
+            machine evidence (each artifact records the input digest)
                     |
-      +-------------+-------------+
-      v                           v
- evidence artifacts        contract digests
-      |                           |
-      +-------------+-------------+
                     v
-            control_pack_digest
+            contracts settle -> contract_set_digest
+                    |
+                    v
+            inspection_subject_digest   <- what inspectors reviewed
+                    |
+                    v
+            independent inspection -> attestation
+                    |
+                    v
+            final evidence_manifest_digest
+                    |
+                    v
+            control_pack_digest -> review_binding
+                    |
+                    v
+            --verify derives integrity_state and assurance_state
+
+Each layer is downstream of the one above it. No object hashes itself, and no
+upstream digest contains anything generated below it.
 
 A git SHA remains useful and is retained — as provenance, navigation, historical
 identity. It is not an integrity proof, and nothing here treats it as one.
@@ -54,7 +67,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-MANIFEST_SCHEMA = "nornyx.forge.governed_content_manifest.v1"
+MANIFEST_SCHEMA = "nornyx.forge.governed_input_manifest.v1"
 
 #: What an assurance claim is *about*: the authored content an inspector reads.
 #:
@@ -68,7 +81,7 @@ MANIFEST_SCHEMA = "nornyx.forge.governed_content_manifest.v1"
 #: Contracts are covered instead by ``control_pack_digest``, which the review
 #: binding carries and verification recomputes. An edited contract still fails —
 #: through the layer that can actually see it.
-GOVERNED_CONTENT_PATHS = (
+GOVERNED_INPUT_PATHS = (
     "src",
     "scripts",
     "tests",
@@ -126,7 +139,7 @@ def _is_governed(path: str) -> bool:
     return not any(path.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
 
 
-def governed_content_manifest() -> dict:
+def governed_input_manifest() -> dict:
     """Describe every governed file: path, size, digest. Deterministically.
 
     Tracked files only, so an untracked scratch file cannot silently change what
@@ -135,7 +148,7 @@ def governed_content_manifest() -> dict:
     """
 
     entries: list[dict[str, object]] = []
-    for raw in _git_lines("ls-files", "--", *GOVERNED_CONTENT_PATHS):
+    for raw in _git_lines("ls-files", "--", *GOVERNED_INPUT_PATHS):
         path = _normalise(raw)
         if not _is_governed(path):
             continue
@@ -176,9 +189,53 @@ def digest_of(document: dict) -> str:
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def governed_content_digest() -> str:
-    """The integrity primitive every assurance claim binds to."""
-    return digest_of(governed_content_manifest())
+def governed_input_digest() -> str:
+    """The upstream authored inputs: what a human wrote, before any tooling ran.
+
+    Named for what it is. It was `governed_content_digest`, which misled: the
+    .nyx contracts are unquestionably governed content, they are simply not
+    *upstream authored inputs* — this tool writes evidence hashes into them.
+    They are covered by :func:`contract_set_digest`, one layer down the chain.
+    """
+    return digest_of(governed_input_manifest())
+
+
+def contract_set_digest(contracts_dir: Path) -> str:
+    """The settled governance contracts, after synchronisation.
+
+    A separate layer because contracts are downstream of the machine evidence
+    that gets written into them, and upstream of the inspection that reviews the
+    settled result.
+    """
+    entries = [
+        {
+            "path": _normalise(str(path.relative_to(ROOT))),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size": path.stat().st_size,
+        }
+        for path in sorted(contracts_dir.glob("*.nyx"))
+    ]
+    return digest_of({"schema": "nornyx.forge.contract_set.v1", "entries": entries})
+
+
+def inspection_subject_digest(
+    *, input_digest: str, contract_digest: str, evidence_digest: str
+) -> str:
+    """Exactly what the independent inspectors reviewed.
+
+    Not the authored inputs alone: source can be untouched while a contract has
+    changed, and an inspection that only bound the source would still claim to
+    cover a control pack it never saw. The subject freezes at this point, and
+    anything that moves it afterwards makes the inspection stale.
+    """
+    return digest_of(
+        {
+            "schema": "nornyx.forge.inspection_subject.v1",
+            "governed_input_digest": input_digest,
+            "contract_set_digest": contract_digest,
+            "pre_inspection_evidence_manifest_digest": evidence_digest,
+        }
+    )
 
 
 def evidence_manifest(evidence_dir: Path, *, exclude: tuple[str, ...] = ()) -> dict:
@@ -205,7 +262,7 @@ def evidence_manifest(evidence_dir: Path, *, exclude: tuple[str, ...] = ()) -> d
 
 
 def control_pack_digest(
-    *, content_digest: str, evidence_digest: str, contract_digests: dict[str, str]
+    *, input_digest: str, contract_digest: str, evidence_digest: str
 ) -> str:
     """Digest the inputs a review covered, never the commit containing them.
 
@@ -219,9 +276,9 @@ def control_pack_digest(
     return digest_of(
         {
             "schema": "nornyx.forge.control_pack.v1",
-            "governed_content_digest": content_digest,
+            "governed_input_digest": input_digest,
+            "contract_set_digest": contract_digest,
             "evidence_manifest_digest": evidence_digest,
-            "contracts": dict(sorted(contract_digests.items())),
         }
     )
 
