@@ -27,35 +27,75 @@ GOVERNANCE_CONTRACTS = (
     ".nornyx/contracts/architecture_governance.nyx",
 )
 
-# Diagnostics that mean "a human has not approved this yet", and nothing else.
-APPROVAL_CODES = frozenset(
+#: Diagnostics that mean "a human has not approved this yet", and nothing else.
+#:
+#: Matched on the structured triple Nornyx documents as its stable vocabulary —
+#: code, path, source module — never on message text. The previous version
+#: searched for "approval_record" inside the human-readable message while its own
+#: comment claimed exact matching, so a reworded message would have broken the
+#: gate and an unrelated diagnostic that happened to mention the phrase would
+#: have satisfied it.
+#:
+#: EVIDENCE_REQUIRED_MISSING is qualified deliberately. On its own that code means
+#: *some* required evidence record is absent, which is not the same claim as "a
+#: human has not approved". Pairing it with its path and source module is what
+#: makes it specific.
+EXPECTED_PRE_APPROVAL_DIAGNOSTICS = frozenset(
     {
-        "AN_APPROVAL_RECORD_MISSING",
-        "EVIDENCE_REQUIRED_MISSING",
-        "APPROVAL_EVIDENCE_MISSING",
+        (
+            "AN_APPROVAL_RECORD_MISSING",
+            "governance_evidence.records",
+            "agentic_network_foundation.v1",
+        ),
+        (
+            "EVIDENCE_REQUIRED_MISSING",
+            "governance_evidence.records",
+            "evidence_integrity.v1",
+        ),
+        (
+            "APPROVAL_EVIDENCE_MISSING",
+            "approvals[0].required_evidence",
+            "human_approval.v1",
+        ),
     }
 )
-# Evidence ids that mean "a human has not approved this yet". Matched exactly
-# rather than by substring, so an unrelated diagnostic cannot slip through by
-# happening to mention one of these words.
-APPROVAL_SUBJECTS = ("approval_record",)
+
+
+class UnstructuredCheckerOutput(RuntimeError):
+    """The checker emitted something this gate cannot classify."""
 
 
 def _diagnostics(output: str) -> list[dict]:
-    """Parse the concatenated JSON objects the Nornyx CLI prints."""
+    """Parse the concatenated JSON objects the Nornyx CLI prints.
+
+    Strict. The previous parser advanced one byte at a time past anything it
+    could not decode, which meant unexpected output was silently discarded:
+
+        INTERNAL VALIDATOR CRASHED
+        {"code": "AN_APPROVAL_RECORD_MISSING", ...}
+
+    would have been classified as a clean approval-only block. For an assurance
+    gate, output it cannot account for is a reason to fail, not to skip.
+    """
+
     decoder = json.JSONDecoder()
     found: list[dict] = []
-    index = 0
     text = output.strip()
+    index = 0
     while index < len(text):
-        try:
-            value, offset = decoder.raw_decode(text, index)
-        except ValueError:
+        if text[index].isspace():
             index += 1
             continue
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except ValueError as exc:
+            remainder = text[index : index + 200]
+            raise UnstructuredCheckerOutput(
+                f"checker emitted output this gate cannot classify at offset "
+                f"{index}: {remainder!r}"
+            ) from exc
         if isinstance(value, dict):
             found.append(value)
-        index = offset
     return found
 
 
@@ -70,17 +110,27 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
         capture_output=True,
         check=False,
     )
-    diagnostics = _diagnostics(completed.stdout + completed.stderr)
+    try:
+        diagnostics = _diagnostics(completed.stdout + completed.stderr)
+    except UnstructuredCheckerOutput as exc:
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{"unstructured_output": str(exc)}],
+        }
+
     offending = [
         item
         for item in diagnostics
         if item.get("level") == "error"
-        and not (
-            item.get("code") in APPROVAL_CODES
-            and any(
-                subject in str(item.get("message", "")) for subject in APPROVAL_SUBJECTS
-            )
+        and (
+            str(item.get("code")),
+            str(item.get("path")),
+            str(item.get("source_id")),
         )
+        not in EXPECTED_PRE_APPROVAL_DIAGNOSTICS
     ]
     return {
         "contract": contract,

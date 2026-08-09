@@ -109,15 +109,68 @@ def actual_revision(root: Path) -> str | None:
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-def _safe_evidence_name(value: str) -> str:
-    """A filename that cannot escape the directory it is written into.
+def evidence_storage_key(value: str) -> str:
+    """A filesystem-safe, collision-resistant key for a caller-supplied id.
 
-    Identifiers reach evidence paths, and an identifier is caller-supplied text.
-    Everything outside a conservative set becomes an underscore, so no separator
-    or parent reference survives into a path.
+    Sanitising alone is not enough. Replacing separators maps ``a/b`` and ``a_b``
+    onto the same name, so closing a traversal would open an overwrite: one
+    mission could silently replace another mission's decision evidence,
+    including the record of a refused high-risk effect.
+
+    So the key is a readable slug plus a digest of the *original* identifier.
+    The slug is for humans reading a directory listing; the digest is what makes
+    it unique. The real identifier is kept inside the payload — a filename is
+    storage identity, never governance identity.
     """
-    cleaned = _UNSAFE_NAME_RE.sub("_", value).strip("._") or "unnamed"
-    return cleaned[:120]
+    slug = _UNSAFE_NAME_RE.sub("_", value).strip("._")[:64] or "unnamed"
+    fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"{slug}--{fingerprint}"
+
+
+def _safe_evidence_name(value: str) -> str:
+    """Deprecated alias; kept so existing call sites cannot regress silently."""
+    return evidence_storage_key(value)
+
+
+class UnknownRiskLevel(ValueError):
+    """A risk label outside the declared vocabulary."""
+
+
+#: The complete risk vocabulary. Closed, deliberately: a label this does not
+#: recognise is not "probably low", it is a label nobody has classified.
+RISK_LEVELS = frozenset({"low", "medium", "high", "critical"})
+
+#: Distinct from HUMAN_APPROVAL_REQUIRED. "I do not know what this act is" and
+#: "I know it is consequential and nobody approved it" call for different fixes.
+RISK_LEVEL_UNKNOWN = "RISK_LEVEL_UNKNOWN"
+
+
+def normalize_risk(value: object) -> str:
+    """Return a declared risk level, or refuse.
+
+    Classification used to be membership-tested after ``.lower()``, so anything
+    unrecognised fell through to the low-risk path: ``"HIGH-RISK"``, ``"severe"``,
+    ``"urgent"`` and ``"High
+"`` all skipped the trust-zone crossing and the
+    approval requirement, and ran the callable.
+
+    No aliases. If a friendlier vocabulary is wanted, it belongs upstream of this
+    boundary, where a mistranslation is a display bug rather than a released
+    effect.
+    """
+
+    if not isinstance(value, str):
+        raise UnknownRiskLevel(
+            f"risk must be a string from {sorted(RISK_LEVELS)}, got "
+            f"{type(value).__name__}"
+        )
+    normalized = value.strip().lower()
+    if normalized not in RISK_LEVELS:
+        raise UnknownRiskLevel(
+            f"risk level {value!r} is not one of {sorted(RISK_LEVELS)}. An "
+            "unclassified act is not a low-risk act."
+        )
+    return normalized
 
 
 #: Why a revision-bound consequential release was refused. Distinct codes,
@@ -361,13 +414,13 @@ EXTERNAL_TRUST_ZONE = "zone.external_customer"
 def exercised_capability(risk: str) -> str:
     """The capability a given risk level actually exercises.
 
-    The single derivation. Proposing an action and releasing its effect are
-    different capabilities, and which one is in play follows from the risk of the
-    act — never from a label a caller supplies.
+    The single derivation, over a validated level. Proposing an action and
+    releasing its effect are different capabilities, and which one is in play
+    follows from the risk of the act — never from a label a caller supplies.
     """
     return (
         "execute_high_risk_effect"
-        if risk.lower() in HIGH_RISK_LEVELS
+        if normalize_risk(risk) in HIGH_RISK_LEVELS
         else "execute_low_risk_action"
     )
 
@@ -951,7 +1004,7 @@ class NornyxActionBoundary:
         attempt: int = 1,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
-        high_risk = risk.lower() in HIGH_RISK_LEVELS
+        high_risk = normalize_risk(risk) in HIGH_RISK_LEVELS
         # Proposal and effect are separate capabilities. The agent may always
         # request; only the effect capability carries execution authority, so the
         # evidence never shows an `execute_*` capability allowed before the
@@ -1143,8 +1196,10 @@ class NornyxActionBoundary:
 
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
-        write_json(evidence_dir / f"{mission_id}.events.json", stream)
-        write_json(evidence_dir / f"{mission_id}.report.json", report)
+        # The identifier is data in the payload, never a path component.
+        storage_key = evidence_storage_key(mission_id)
+        write_json(evidence_dir / f"{storage_key}.events.json", stream)
+        write_json(evidence_dir / f"{storage_key}.report.json", report)
         if withheld:
             return RuntimeDecision(
                 effect="DENY",
@@ -1183,6 +1238,29 @@ class NornyxActionBoundary:
         contract says the network may hold the capability, not that a particular
         high-risk effect may be released.
         """
+        # Before anything: is this act classified at all? An unrecognised label
+        # used to fall through to the low-risk path, skipping the trust-zone
+        # crossing and the approval requirement entirely, and running the
+        # callable. Refused here, ahead of both the official and fallback paths,
+        # so no callback runs and no approval is consumed finding out.
+        try:
+            normalize_risk(risk)
+        except UnknownRiskLevel as exc:
+            return (
+                RuntimeDecision(
+                    effect="DENY",
+                    code=RISK_LEVEL_UNKNOWN,
+                    reason=str(exc),
+                    source="nornyx.agentic" if self.authorizer else "deterministic_fallback",
+                    evidence={
+                        "status": "refused",
+                        "risk_level_declared": risk if isinstance(risk, str) else repr(risk),
+                        "risk_vocabulary": sorted(RISK_LEVELS),
+                    },
+                ),
+                None,
+            )
+
         if self.authorizer is not None:
             result: str | None = None
 
@@ -1207,7 +1285,7 @@ class NornyxActionBoundary:
         # action-specific approval is an additional requirement on top of Nornyx
         # authorization, never a substitute for it, so it cannot release an
         # action here where no authorization path was established at all.
-        if risk.lower() in HIGH_RISK_LEVELS:
+        if normalize_risk(risk) in HIGH_RISK_LEVELS:
             decision = RuntimeDecision(
                 "DENY",
                 "HUMAN_APPROVAL_REQUIRED",
