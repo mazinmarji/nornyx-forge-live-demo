@@ -34,7 +34,7 @@ needs_docker = pytest.mark.skipif(
         ["docker", "info"], capture_output=True, text=True
     ).returncode
     != 0,
-    reason="set FORGE_DOCKER_TESTS=1 — needs a running Docker daemon",
+    reason="requires a running Docker daemon; proved in the container-launch CI job",
 )
 
 #: Run inside the image. Uses the production bootstrap, not a reimplementation:
@@ -80,7 +80,8 @@ def _build() -> None:
 
 def _probe() -> dict:
     completed = subprocess.run(
-        ["docker", "run", "--rm", IMAGE, "python", "-c", PROBE],
+        ["docker", "run", "--rm", "-i", IMAGE, "python", "-"],
+        input=PROBE,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -157,10 +158,10 @@ def test_a_missing_required_contract_in_the_image_refuses():
     _build()
     stripped = subprocess.run(
         [
-            "docker", "run", "--rm", IMAGE, "sh", "-c",
-            "rm /app/.nornyx/contracts/runtime_network.nyx && python -c "
-            + json.dumps(PROBE),
+            "docker", "run", "--rm", "-i", IMAGE, "sh", "-c",
+            "rm /app/.nornyx/contracts/runtime_network.nyx && python -",
         ],
+        input=PROBE,
         capture_output=True,
         text=True,
         encoding="utf-8",

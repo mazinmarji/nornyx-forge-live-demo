@@ -74,9 +74,16 @@ NEVER_GOVERNED_SUFFIXES = (".pyc", ".pyo")
 
 #: Content this repository declares canonical-LF. An explicit list, because
 #: sniffing for a NUL byte would let content choose which rule applies to it.
+#: Extended after CI proved the gap: `app.js`, `index.html` and `styles.css`
+#: were governed content outside this list, so they were hashed raw and carried
+#: CR bytes on a Windows checkout. The digest then differed from a Linux
+#: checkout of the identical commit — the exact defect the canonical rule
+#: exists to prevent, surviving in the files the list did not enumerate.
 CANONICAL_TEXT_SUFFIXES = (
     ".py", ".pyi", ".md", ".toml", ".yml", ".yaml", ".json", ".cfg", ".ini",
     ".txt", ".sh", ".nyx", ".gitignore", ".gitattributes", ".dockerignore",
+    ".js", ".mjs", ".cjs", ".ts", ".html", ".htm", ".css", ".svg", ".xml",
+    ".sql", ".env", ".lock", ".rst", ".csv",
 )
 CANONICAL_TEXT_NAMES = ("Dockerfile", ".gitignore", ".gitattributes", "Makefile")
 

@@ -31,6 +31,13 @@ EXPECTED_SKIPS = {
         "the default offline run. CI exercises it in the container-launch job "
         "instead, so it is covered — just not here."
     ),
+    "requires a running Docker daemon": (
+        "The in-image subject proof needs a live daemon, which a workstation may "
+        "not have. It is not optional: the container-launch job runs it with its "
+        "own skip census, so a skip there fails that job rather than passing "
+        "quietly. Setting FORGE_DOCKER_TESTS=1 does not start a daemon, which is "
+        "why this is its own marker rather than borrowing that one."
+    ),
     "requires POSIX symlink and FIFO creation": (
         "Symlink and FIFO fixtures cannot be built on a Windows workstation "
         "without elevation. The property is not weakened: every CI test job runs "

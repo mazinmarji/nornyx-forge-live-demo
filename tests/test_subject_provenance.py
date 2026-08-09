@@ -23,6 +23,7 @@ simulated here.
 
 from __future__ import annotations
 
+import itertools
 import shutil
 import subprocess
 import tempfile
@@ -45,17 +46,28 @@ IGNORE = shutil.ignore_patterns(
 CONFIG = RuntimeAuthorityConfig("nornyx", "crewai")
 
 
+_HISTORIES = itertools.count()
+
+
 def _tree(*, with_git: bool) -> Path:
-    """A copy of the governed content, optionally under its own git history."""
+    """A copy of the governed content, optionally under its own git history.
+
+    Each history gets a distinct commit message. Identical content committed in
+    the same second produces an identical hash — which it did on Linux, where
+    the fixture then compared a commit against itself and proved nothing. The
+    message is not governed content, so the digests stay equal while the
+    provenance genuinely differs, which is the whole point of the comparison.
+    """
     work = Path(tempfile.mkdtemp()) / "repo"
     shutil.copytree(ROOT, work, ignore=IGNORE)
     if with_git:
+        marker = f"fixture history {next(_HISTORIES)}"
         for command in (
             ["init", "-q"],
             ["config", "user.email", "fixture@example.invalid"],
             ["config", "user.name", "fixture"],
             ["add", "-A"],
-            ["commit", "-qm", "fixture"],
+            ["commit", "-qm", marker],
         ):
             subprocess.run(["git", *command], cwd=work, check=True, capture_output=True)
     return work

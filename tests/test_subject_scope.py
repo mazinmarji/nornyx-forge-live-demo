@@ -192,3 +192,33 @@ def test_the_manifest_cannot_define_what_is_observed():
     assert manifest["subject_scope_id"] == RUNTIME_IMAGE_SCOPE.scope_id
     # It reports the digest; it is not consulted to produce one.
     assert manifest["governed_subject_digest"] == _subject(work).governed_subject_digest
+
+
+def test_no_governed_file_escapes_the_canonical_text_rule():
+    """An extension allowlist drifts; this is what notices.
+
+    CI found three governed files — app.js, index.html, styles.css — outside
+    `CANONICAL_TEXT_SUFFIXES`. Being undeclared, they were hashed raw and
+    carried CR bytes on a Windows checkout, so the same commit digested
+    differently on Linux. The control covered everything it enumerated and
+    silently exempted the rest.
+
+    Binary content is legitimately undeclared, so this does not demand that
+    every file be text: it demands that an undeclared governed file actually be
+    binary, rather than text nobody added to the list.
+    """
+    from nornyx_forge.governed_subject import REPOSITORY_SCOPE, is_declared_text
+    from nornyx_forge.subject_observer import observe_governed_paths
+
+    undeclared_text: list[str] = []
+    for relative in observe_governed_paths(ROOT, REPOSITORY_SCOPE):
+        if is_declared_text(relative):
+            continue
+        blob = (ROOT / relative).read_bytes()
+        if bytes([0]) not in blob:  # no NUL: it is text, whatever the extension
+            undeclared_text.append(relative)
+
+    assert undeclared_text == [], (
+        "governed text outside CANONICAL_TEXT_SUFFIXES is hashed raw, so its "
+        "digest depends on the checkout's line endings: " + ", ".join(undeclared_text)
+    )
