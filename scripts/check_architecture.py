@@ -3,6 +3,14 @@
 Dependency direction is derived from the declared architecture contract rather
 than from a hardcoded list, so a module that grows an undeclared first-party
 import fails this gate instead of passing silently.
+
+The check is driven by what exists on disk, not by what the contract lists.
+Every rule below iterated over `declared_modules`, which meant an undeclared
+module was not a violation — it was invisible. Eight of nineteen first-party
+modules were never read at all, including the Forge CLI, while the gate reported
+`violations: []`. Omission was the cheapest way to pass, which is the wrong
+incentive for a conformance gate: the contract is meant to be a closed statement
+of what exists, so anything present and unmodelled is itself the defect.
 """
 
 from __future__ import annotations
@@ -11,6 +19,7 @@ import ast
 import json
 from pathlib import Path
 
+import tomllib
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +76,77 @@ declared_modules = {item["id"]: item for item in architecture.get("modules", [])
 declared_layers = {item["id"]: item for item in architecture.get("layers", [])}
 module_by_name = {item["name"]: item for item in declared_modules.values()}
 
+def _console_entrypoints() -> set[str]:
+    """Modules `pyproject.toml` installs as console scripts.
+
+    Read from the packaging metadata rather than declared in the contract: which
+    module is the entrypoint is already a fact recorded elsewhere, and a second
+    hand-maintained copy would only be somewhere for the two to disagree.
+    """
+    path = ROOT / "pyproject.toml"
+    if not path.exists():
+        # Fail closed and legibly. Proceeding with an empty set would quietly
+        # retire the leaf rule, and a raw traceback reads as a broken gate
+        # rather than as the missing input it is.
+        violations.append(
+            "pyproject.toml is missing, so the console entrypoint cannot be "
+            "determined and the entrypoint rule cannot be applied"
+        )
+        return set()
+    with path.open("rb") as handle:
+        scripts = tomllib.load(handle).get("project", {}).get("scripts", {})
+    return {target.split(":", 1)[0] for target in scripts.values()}
+
+
+#: An entrypoint is where a program is composed, so it is expected to reach
+#: across the toolchain. Nothing may depend on it in return. A module that is
+#: both composed and depended upon could carry a dependency between two modules
+#: that may not depend on each other, which is the inversion the layer rule
+#: exists to prevent, laundered through the one module nobody looks at.
+entrypoints = _console_entrypoints()
+
+
+def _discovered_modules() -> dict[str, Path]:
+    """Every first-party module that exists, which is what the gate must cover."""
+    found: dict[str, Path] = {}
+    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        dotted = path.relative_to(SOURCE_ROOT).as_posix().removesuffix(".py").replace("/", ".")
+        found[dotted.removesuffix(".__init__")] = path
+    return found
+
+
+def _is_inert_package_init(path: Path) -> bool:
+    """True for a package marker holding nothing but a docstring and dunders.
+
+    Verified rather than assumed. An `__init__.py` that re-exports names creates
+    real dependency edges, so the moment one stops being inert it has to be
+    declared like any other module.
+    """
+    if path.name != "__init__.py":
+        return False
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue
+        if isinstance(node, ast.Assign) and all(
+            isinstance(target, ast.Name) and target.id.startswith("__")
+            for target in node.targets
+        ):
+            continue
+        return False
+    return True
+
+
+# --- constraint.architecture_coverage ---
+discovered = _discovered_modules()
+for dotted, path in sorted(discovered.items()):
+    if dotted in module_by_name or _is_inert_package_init(path):
+        continue
+    violations.append(
+        f"{path.relative_to(ROOT).as_posix()} is a first-party module the "
+        "architecture contract does not declare; a module the contract does not "
+        "model is not exempt from the gate, it is unreviewed"
+    )
+
 # --- constraint.declared_dependencies_only and constraint.layer_direction ---
 for module_id, module in sorted(declared_modules.items()):
     dotted = module["name"]
@@ -102,6 +182,12 @@ for module_id, module in sorted(declared_modules.items()):
             continue
         if target["id"] == module_id:
             continue
+        if imported in entrypoints:
+            violations.append(
+                f"{relative} depends on console entrypoint {imported}; an "
+                "entrypoint composes the program and must stay a leaf"
+            )
+            continue
         if imported not in allowed_names:
             violations.append(
                 f"{relative} imports undeclared dependency {imported} "
@@ -116,8 +202,15 @@ for module_id, module in sorted(declared_modules.items()):
             )
 
 # --- explicit forbidden-dependency rules retained from the declared constraints ---
+#
+# These hold unconditionally. They are checked by path rather than through the
+# module graph, so declaring an edge cannot grant it: the HTTP surface of the
+# governed application may not reach the governance domain whatever the contract
+# later says, leaving the action boundary the only route to a consequential
+# effect.
 forbidden = {
     "src/demo_app/store.py": {"fastapi", "crewai", "subprocess"},
+    "src/demo_app/main.py": {"nornyx_forge", "subprocess", "crewai"},
     "src/nornyx_forge/evidence.py": {"fastapi", "crewai", "demo_app"},
     "src/nornyx_forge/policy.py": {"fastapi", "demo_app"},
     "src/nornyx_forge/nornyx_runtime.py": {"fastapi", "demo_app"},
@@ -125,6 +218,13 @@ forbidden = {
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative
+    if not path.exists():
+        # A renamed file would otherwise retire its own rule in silence.
+        violations.append(
+            f"forbidden-dependency rule names {relative}, which does not exist, "
+            "so the rule is no longer being applied to anything"
+        )
+        continue
     # Pass the module's own dotted name so a relative spelling such as
     # `from .store import JsonStore` resolves to demo_app.store and is matched.
     dotted = relative.removeprefix("src/").removesuffix(".py").replace("/", ".")
@@ -203,15 +303,18 @@ result = {
     "status": "pass" if not violations else "fail",
     "subject": "nornyx-forge-live-demo",
     "checks": [
+        "architecture_coverage",
         "dependency_direction",
         "declared_dependencies_only",
         "layer_direction",
+        "entrypoint_is_leaf",
         "bounded_external_adapter",
         "api_command_isolation",
         "governed_action_boundary",
         "persistence_isolation",
     ],
     "declared_modules": sorted(declared_modules),
+    "covered_modules": sorted(discovered),
     "violations": violations,
 }
 REPORT.parent.mkdir(parents=True, exist_ok=True)

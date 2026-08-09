@@ -1,23 +1,56 @@
 {
-  "generated_at": "2026-08-02T12:00:00Z",
-  "governed_input_digest": "sha256:1e7b0f5206ad0c7d6d1e364dc2e26a8ae092e7d826dcb0051a371118c8f7267b",
+  "generated_at": "2026-08-09T12:26:54Z",
+  "governed_input_digest": "sha256:e57f8b5523e93a7d26e347cdaa94c2110f18439357155391bd01a642e8aacd61",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
+      "architecture_coverage",
       "dependency_direction",
       "declared_dependencies_only",
       "layer_direction",
+      "entrypoint_is_leaf",
       "bounded_external_adapter",
       "api_command_isolation",
       "governed_action_boundary",
       "persistence_isolation"
     ],
+    "covered_modules": [
+      "demo_app",
+      "demo_app.agentic",
+      "demo_app.main",
+      "demo_app.store",
+      "nornyx_forge",
+      "nornyx_forge.app_launcher",
+      "nornyx_forge.approval_trust",
+      "nornyx_forge.claude_worker",
+      "nornyx_forge.cli",
+      "nornyx_forge.contract_generator",
+      "nornyx_forge.development_flow",
+      "nornyx_forge.evidence",
+      "nornyx_forge.gates",
+      "nornyx_forge.models",
+      "nornyx_forge.nornyx_runtime",
+      "nornyx_forge.policy",
+      "nornyx_forge.repo_qualifier",
+      "nornyx_forge.repo_scout",
+      "nornyx_forge.requirements",
+      "nornyx_forge.util"
+    ],
     "declared_modules": [
       "module.api",
+      "module.app_launcher",
       "module.approval_trust",
+      "module.contract_authoring",
       "module.evidence",
+      "module.forge_cli",
+      "module.forge_flow",
+      "module.gate_runner",
       "module.governance",
       "module.persistence",
+      "module.policy_adapter",
+      "module.repo_qualifier",
+      "module.repo_scout",
+      "module.requirements_model",
       "module.runtime",
       "module.shared_models",
       "module.shared_util",
@@ -29,5 +62,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:f5b51d16d95e4943102d7add8f1d1fa02cf5c5e9"
+  "subject_revision": "git:f03101511beae9e991cbd41e6aae46f991fed788"
 }

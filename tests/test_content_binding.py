@@ -223,7 +223,7 @@ def test_changing_an_evidence_file_does_not_move_the_content_digest(tmp_path: Pa
     work = _workspace(tmp_path)
     _generate(work)
     index_path = work / CONTRACTS / "evidence/INDEX.json"
-    recorded = json.loads(index_path.read_text(encoding="utf-8"))["governed_content_digest"]
+    recorded = json.loads(index_path.read_text(encoding="utf-8"))["governed_input_digest"]
 
     manifest = work / CONTRACTS / "evidence/architecture_evidence_manifest.json"
     manifest.write_text(manifest.read_text(encoding="utf-8") + "\n", encoding="utf-8")
@@ -313,14 +313,14 @@ def test_the_control_pack_digest_is_not_self_referential():
     assert binding["source_commit"].startswith("git:")
 
     # Recomputable from its stated inputs, by anyone holding them.
-    assert control_pack_digest(
-        input_digest=binding["governed_input_digest"],
-        evidence_digest=binding["evidence_manifest_digest"],
-        contract_digests={
-            path.name: "sha256:" + __import__("hashlib").sha256(path.read_bytes()).hexdigest()
-            for path in sorted((ROOT / CONTRACTS).glob("*.nyx"))
-        },
-    ) == binding["control_pack_digest"]
+    assert (
+        control_pack_digest(
+            input_digest=binding["governed_input_digest"],
+            contract_digest=binding["contract_set_digest"],
+            evidence_digest=binding["evidence_manifest_digest"],
+        )
+        == binding["control_pack_digest"]
+    )
 
 
 def test_the_review_binding_does_not_digest_itself():

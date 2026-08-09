@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import sys
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from .app_launcher import launch_application
 from .development_flow import DevelopmentFlow
 from .nornyx_runtime import prepare_runtime_contract
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
@@ -147,19 +146,11 @@ def demo(
             raise typer.Exit(2) from exc
         console.print_json(json.dumps(result))
         raise typer.Exit(0 if result["status"] == "pass" else 2)
-    os.environ["FORGE_WORKER_MODE"] = worker_mode
-    os.environ["FORGE_ALLOW_POLICY_FALLBACK"] = "false" if strict_nornyx else "true"
-    command = [
-        sys.executable,
-        "-m",
-        "uvicorn",
-        "demo_app.main:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        str(port),
-    ]
-    os.execvp(command[0], command)
+    launch_application(
+        port=port,
+        worker_mode=worker_mode,
+        allow_policy_fallback=not strict_nornyx,
+    )
 
 
 if __name__ == "__main__":

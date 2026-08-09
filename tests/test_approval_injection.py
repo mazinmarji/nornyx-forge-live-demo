@@ -47,9 +47,20 @@ def _git(workspace: Path, *args: str) -> None:
 
 def _repo(tmp_path: Path) -> Path:
     workspace = tmp_path / "repo"
-    (workspace / "scripts").mkdir(parents=True)
-    for script in (REFRESH, "scripts/check_architecture.py"):
-        shutil.copy2(ROOT / script, workspace / script)
+    # Copy the whole toolchain: a hand-listed subset silently goes stale the
+    # moment the tooling grows a module, and the resulting import error is
+    # indistinguishable from the refusal these tests assert.
+    shutil.copytree(
+        ROOT / "scripts",
+        workspace / "scripts",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copy2(ROOT / "pyproject.toml", workspace / "pyproject.toml")
+    # .gitignore is itself a governed path, and the real repository relies on
+    # it to keep bytecode out of the tree. Without it the tool writes
+    # scripts/__pycache__ on first run and the governed-tree gate correctly
+    # refuses the workspace as dirty.
+    shutil.copy2(ROOT / ".gitignore", workspace / ".gitignore")
     shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
     shutil.copytree(ROOT / "src", workspace / "src")
     _git(workspace, "init", "-q")
@@ -300,7 +311,19 @@ def test_verify_refuses_a_contract_holding_two_approvals(tmp_path: Path):
     _approval(workspace)
     _run(workspace, REFRESH, "--as-of", "2026-08-02T00:00:00Z")
     assert _run(workspace, REFRESH, "--wire-approvals").returncode == 0
-    assert _run(workspace, REFRESH, "--verify").returncode == 0
+
+    # The baseline is not "--verify passes". This workspace carries the real
+    # repository's review binding, which describes a different tree, and
+    # regenerating it here is refused by the governed-tree gate now that an
+    # approval pins a commit the rewritten contracts no longer match. Asserting
+    # a clean exit therefore asserted something about the fixture rather than
+    # about the control.
+    #
+    # What this test needs is that the duplicate-approval signal is *caused by*
+    # the forgery, so the baseline is its absence. That is strictly stronger
+    # than a status-code flip, which any unrelated failure would satisfy.
+    baseline = _run(workspace, REFRESH, "--verify")
+    assert "not trusted" not in baseline.stdout, baseline.stdout
 
     forged = (
         "    - id: approval_record\n"

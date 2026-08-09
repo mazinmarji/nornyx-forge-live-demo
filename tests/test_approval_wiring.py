@@ -41,9 +41,22 @@ def _git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def _repo(tmp_path: Path) -> Path:
     """A throwaway repository carrying the contracts and the tooling."""
     workspace = tmp_path / "repo"
-    (workspace / "scripts").mkdir(parents=True)
-    for script in (REFRESH, BASELINE, "scripts/check_architecture.py"):
-        shutil.copy2(ROOT / script, workspace / script)
+    # The whole toolchain, not a hand-listed subset. Enumerating scripts meant
+    # that adding one (governed_content.py, in the content-binding work) left
+    # the copy incomplete, and the tool under test died with ModuleNotFoundError
+    # inside a subprocess — which still satisfies `returncode != 0`, so tests
+    # asserting a refusal kept passing locally while CI went red.
+    shutil.copytree(
+        ROOT / "scripts",
+        workspace / "scripts",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    shutil.copy2(ROOT / "pyproject.toml", workspace / "pyproject.toml")
+    # .gitignore is itself a governed path, and the real repository relies on
+    # it to keep bytecode out of the tree. Without it the tool writes
+    # scripts/__pycache__ on first run and the governed-tree gate correctly
+    # refuses the workspace as dirty.
+    shutil.copy2(ROOT / ".gitignore", workspace / ".gitignore")
     shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
     shutil.copytree(ROOT / "src", workspace / "src")
     _git(workspace, "init", "-q")

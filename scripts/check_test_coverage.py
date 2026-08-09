@@ -85,7 +85,16 @@ def main() -> int:
             "\nA skipped test asserts nothing. Either install what it needs, or "
             "add its reason to EXPECTED_SKIPS with why it is acceptable."
         )
+        print("\nGATE: FAIL — undeclared skips")
         return 2
+
+    # The last line must state the verdict. The skip census above reads like
+    # success whatever pytest concluded, and a truncated or filtered view of
+    # this output was taken for a passing suite while tests were failing.
+    if completed.returncode != 0:
+        print(f"\nGATE: FAIL — pytest exited {completed.returncode}; see failures above")
+    else:
+        print("\nGATE: PASS")
     return completed.returncode
 
 
