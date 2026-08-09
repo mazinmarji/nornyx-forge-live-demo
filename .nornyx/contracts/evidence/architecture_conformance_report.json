@@ -13,6 +13,7 @@
     ],
     "declared_modules": [
       "module.api",
+      "module.approval_trust",
       "module.evidence",
       "module.governance",
       "module.persistence",
@@ -27,5 +28,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4"
+  "subject_revision": "git:43550089a90df4cbb569f368ebf906714c55cf8e"
 }

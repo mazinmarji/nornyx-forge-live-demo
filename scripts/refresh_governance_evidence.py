@@ -24,6 +24,16 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from governed_content import (  # noqa: E402
+    GovernedContentError,
+    control_pack_digest,
+    digest_of,
+    evidence_manifest,
+    governed_content_digest,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / ".nornyx/contracts/evidence"
 INDEX_PATH = EVIDENCE_DIR / "INDEX.json"
@@ -246,41 +256,6 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
         )
     }
     return True
-
-
-#: The content an inspection actually inspects: source, tooling and tests.
-#:
-#: Deliberately excludes `.nornyx/contracts/` and `evidence/`. Contracts are
-#: rewritten by this tool, and evidence contains the digest itself — either would
-#: make the digest self-referential, which is the same trap as a commit hash that
-#: cannot name the commit containing it.
-GOVERNED_CONTENT_PATHS = (
-    "src",
-    "scripts",
-    "tests",
-    "pyproject.toml",
-    "Dockerfile",
-    "docker-compose.yml",
-)
-
-
-def governed_content_digest() -> str:
-    """A canonical digest over the governed content, independent of history.
-
-    Content is the integrity primitive; the git SHA is provenance. A commit id
-    says which history a tree came from, not what the tree contains, and it
-    cannot be embedded in the content it names. A manifest digest can be
-    recomputed by anyone holding the files, including inside a container with
-    no `.git`, which is what makes it the right anchor.
-    """
-
-    entries: list[str] = []
-    for name in sorted(_git_lines("ls-files", "--", *GOVERNED_CONTENT_PATHS)):
-        path = ROOT / name
-        blob = path.read_bytes() if path.is_file() else b""
-        entries.append(f"{hashlib.sha256(blob).hexdigest()}  {name}")
-    manifest = "\n".join(entries) + "\n"
-    return "sha256:" + hashlib.sha256(manifest.encode("utf-8")).hexdigest()
 
 
 #: The one artifact that can carry an independent-review verdict. Committed and
@@ -668,6 +643,9 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
 
     index = {
         "schema": "nornyx.forge.evidence_index.v1",
+        # Integrity primitive. `subject_revision` stays for provenance and
+        # navigation; it is not what freshness is judged on.
+        "governed_content_digest": governed_content_digest(),
         "subject_revision": revision,
         "generated_at": generated,
         "expires_at": expires,
@@ -809,6 +787,23 @@ def sync_contracts() -> list[str]:
         _assert_single_managed_approval(contract.name, rewritten)
         if rewritten != original:
             contract.write_text(rewritten, encoding="utf-8", newline="")
+
+    # Contracts are governed content and this function rewrites them, so the
+    # digest recorded at build time describes the tree as it was *before* this
+    # ran. Re-record it here, once the content has settled, rather than leaving
+    # the index describing a state that no longer exists.
+    #
+    # This is the only place the recorded digest may move without regenerating
+    # evidence, and it moves to match content this tool just wrote from
+    # already-validated inputs. An edit from anywhere else still invalidates.
+    settled = governed_content_digest()
+    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    if index.get("governed_content_digest") != settled:
+        index["governed_content_digest"] = settled
+        INDEX_PATH.write_bytes(
+            json.dumps(index, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+        )
+        changes.append(f"governed_content_digest -> {settled}")
     return changes
 
 
@@ -1411,15 +1406,42 @@ def emit_review_binding() -> dict:
     require_approval_matches_head()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     contracts = ROOT / ".nornyx/contracts"
+    content_digest = governed_content_digest()
+    # This file is excluded from the evidence manifest it contains. A document
+    # cannot honestly digest itself: writing the digest changes the bytes the
+    # digest was taken over.
+    evidence_digest = digest_of(
+        evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",))
+    )
+    contract_digests = {
+        path.name: _sha256(path) or "" for path in sorted(contracts.glob("*.nyx"))
+    }
+    pack_digest = control_pack_digest(
+        content_digest=content_digest,
+        evidence_digest=evidence_digest,
+        contract_digests=contract_digests,
+    )
     binding = {
         "schema": "nornyx.forge.review_binding.v1",
         "generated_at": _iso(datetime.now(timezone.utc)),
+        # Integrity primitives. `control_pack_commit` used to live here and was
+        # structurally impossible: it named the commit carrying the very file it
+        # sat in, so writing the file produced a new commit and the value was
+        # wrong the instant it was recorded. A digest over inputs has no such
+        # problem — it can be committed afterwards without invalidating what it
+        # says it reviewed.
+        "governed_content_digest": content_digest,
+        "evidence_manifest_digest": evidence_digest,
+        "control_pack_digest": pack_digest,
+        # Provenance only: which history this came from, for navigation. Never
+        # an integrity proof, and never how freshness is decided.
+        "source_commit": _head_commit(),
         "subject_revision": index["subject_revision"],
-        "control_pack_commit": _head_commit(),
         "note": (
-            "subject_revision is the revision the contracts govern. "
-            "control_pack_commit is the commit that carries those contracts and "
-            "their evidence. An approval should name both."
+            "governed_content_digest is what this review covers. "
+            "control_pack_digest binds that content to the evidence and "
+            "contracts reviewed alongside it. source_commit is provenance. An "
+            "approval binds to the digests; the commit id merely locates them."
         ),
         "digests": {
             "runtime_contract": _sha256(contracts / "runtime_network.nyx"),
@@ -1457,36 +1479,31 @@ def verify() -> list[str]:
         return ["evidence index is missing; run refresh_governance_evidence.py"]
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     problems: list[str] = []
-    # The governed subject revision is necessarily an ancestor of HEAD, never
-    # equal to it: the commit that carries a contract cannot be named inside it.
-    # So require that the binding names a real commit in this history, not that
-    # it matches the current HEAD.
-    bound = str(index.get("subject_revision", ""))
-    if not bound.startswith("git:"):
-        problems.append(f"evidence index has no git revision binding: {bound!r}")
-    else:
-        shallow = subprocess.run(
-            ["git", "rev-parse", "--is-shallow-repository"],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
+    # Content, not ancestry. The previous check asked whether the bound revision
+    # was an *ancestor* of HEAD, which is a fact about history and not about
+    # content: every commit is an ancestor of infinitely many futures, so it
+    # passed for a binding one commit stale and twenty commits stale alike.
+    # Evidence at HEAD claimed to describe a revision while src/, tests/ and
+    # .github/ had all changed since, and nothing could see it.
+    recorded = str(index.get("governed_content_digest", ""))
+    if not recorded:
+        problems.append(
+            "evidence index carries no governed_content_digest, so there is no "
+            "way to tell whether it describes the current content"
         )
-        if shallow.stdout.strip() == "true":
-            # A shallow clone cannot answer the ancestry question. Artifact hash
-            # integrity below is the primary assertion and still applies.
-            pass
-        else:
-            reachable = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", bound.removeprefix("git:"), "HEAD"],
-                cwd=ROOT,
-                capture_output=True,
-                check=False,
+    else:
+        try:
+            observed = governed_content_digest()
+        except GovernedContentError as exc:
+            problems.append(f"governed content could not be digested: {exc}")
+            observed = None
+        if observed is not None and observed != recorded:
+            problems.append(
+                f"evidence describes governed content {recorded} but the tree "
+                f"digests to {observed}. The content changed after the evidence "
+                "was generated; regenerate it."
             )
-            if reachable.returncode != 0:
-                problems.append(
-                    f"evidence index is bound to {bound}, which is not an ancestor of HEAD"
-                )
+
     # Re-parse each contract. Hashing artifacts says nothing about whether the
     # contract that references them still holds exactly one approval record.
     for name in APPROVAL_WIRING:

@@ -192,6 +192,6 @@
     "source_sha256": "sha256:6e68fcef1b822d95e0681c17c64cd7182e23f743afdae31db6aebbde5dc71a7a"
   },
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4",
+  "subject_revision": "git:43550089a90df4cbb569f368ebf906714c55cf8e",
   "verdict_basis": "no committed inspection attestation; the in-session report is displayed but decides nothing"
 }

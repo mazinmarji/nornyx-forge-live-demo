@@ -11,5 +11,5 @@
   "reviewer_type": "deterministic_tool",
   "schema": "nornyx.forge.network_contract_review.v1",
   "statement": "The declared agentic-network contract was reviewed by deterministic reference checks. This is a machine review, not a human approval.",
-  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4"
+  "subject_revision": "git:43550089a90df4cbb569f368ebf906714c55cf8e"
 }

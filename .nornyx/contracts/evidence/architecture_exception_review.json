@@ -3,5 +3,5 @@
   "open_exceptions": [],
   "schema": "nornyx.forge.exception_review_record.v1",
   "statement": "No architecture exceptions were requested or granted.",
-  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4"
+  "subject_revision": "git:43550089a90df4cbb569f368ebf906714c55cf8e"
 }

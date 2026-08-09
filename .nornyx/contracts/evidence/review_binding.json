@@ -3,23 +3,26 @@
     "human_review": "not_performed",
     "records": []
   },
-  "control_pack_commit": "git:5c34a40baa83dfa4e932a386631b44e4081398c4",
+  "control_pack_digest": "sha256:92bfa520e034962b276bd33b3acc949a56b9c55b1e5b4d4d2101f4deb44d215f",
   "digests": {
-    "architecture_contract": "sha256:fea673c56c8b03152532555f3bda414a242dfb22c65896a2444543bf43f9ad93",
-    "evidence_index": "sha256:d97c3fa619bfc7224c3a10eaeb0a0ab3a95941129f8572c550e7caf71babdba5",
-    "evidence_manifest": "sha256:3deb17f966b6c15e4e4e0bd2c6073655e10d3b50f11242cf67a0c9d63841245d",
+    "architecture_contract": "sha256:551546c65ee38cc2ed70f9428aa53348d6fe41f467fa873de8490a5deca5b2f6",
+    "evidence_index": "sha256:cd3589463e8ac51e73888168e82a5fe83b016ce682f7cd09bb851c693612e1e9",
+    "evidence_manifest": "sha256:727101631c136b5dd7b5fe9ef75c49ad69094de11d47ff9dd6dcf95f35a3b136",
     "forge_control_contract": "sha256:0f819f8b1de68d079eff21e40e35e4ed1df5c713f1c99314072096f41dd34f15",
-    "independent_review_record": "sha256:b6893a05eee6ed31dd0fb9ff1dd29e621a555eb6189797dbcb502ffd30172637",
-    "runtime_contract": "sha256:7ff671c464edf5b21d363ed0cdfda0c981328b3f8cc4d5fce680a95e62bf282b"
+    "independent_review_record": "sha256:f0e39320c94b3d69d2395b49edfa0ef9e10540209500bcd468c3cf2df8840468",
+    "runtime_contract": "sha256:827c85eec9ece8d24fba2cff70750f80ae815ee58abef8e1320a31fee7e3fa45"
   },
-  "generated_at": "2026-08-07T22:06:10Z",
+  "evidence_manifest_digest": "sha256:eabef3b1522df6f749d782231fbdc6dd51dc95f74133d1a0d8763f601d2a3880",
+  "generated_at": "2026-08-09T07:14:57Z",
+  "governed_content_digest": "sha256:2c9e18733970c4370207dc4d7bc7f3e8e6ad15d54eb5b7940f64e044240dd2c1",
   "independent_review": {
     "artifact": "evidence/architecture_independent_review.json",
     "embedded": true,
     "status": "observed"
   },
-  "note": "subject_revision is the revision the contracts govern. control_pack_commit is the commit that carries those contracts and their evidence. An approval should name both.",
+  "note": "governed_content_digest is what this review covers. control_pack_digest binds that content to the evidence and contracts reviewed alongside it. source_commit is provenance. An approval binds to the digests; the commit id merely locates them.",
   "production_approval": "not_granted",
   "schema": "nornyx.forge.review_binding.v1",
-  "subject_revision": "git:5c34a40baa83dfa4e932a386631b44e4081398c4"
+  "source_commit": "git:43550089a90df4cbb569f368ebf906714c55cf8e",
+  "subject_revision": "git:43550089a90df4cbb569f368ebf906714c55cf8e"
 }
