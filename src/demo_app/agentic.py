@@ -101,6 +101,8 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         self.worker_mode = worker_mode
         self.mission_id = case.get("mission_id") or f"CASE-{uuid.uuid4().hex[:10]}"
         self.case["mission_id"] = self.mission_id
+        self.case.setdefault("orchestration_status", "not_started")
+        self.case.setdefault("action_status", "not_reached")
         # Which attempt at this mission's consequential action this run is. A
         # retry is a new attempt needing its own approval; it is not a second
         # release of the previous one.
@@ -111,6 +113,9 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             subject_revision=runtime_revision(root),
         )
         self.boundary = NornyxActionBoundary(root, allow_fallback=allow_policy_fallback)
+        #: Whether the consequential stage has been entered on this flow. One
+        #: way: never reset, so no recovery path can re-arm it.
+        self._execution_entered = False
         self.worker = ClaudeCodeWorker()
         self.execution_backend = "sequential"
 
@@ -170,6 +175,29 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
 
     @listen(risk)
     def execution(self, _previous: Any = None) -> dict[str, Any]:
+        # One-way, per flow instance. The approval ledger is not the replay
+        # mechanism here: a low-risk action consumes no approval, so nothing
+        # downstream would stop the callable running twice. This guard is the
+        # thing that does, and it refuses before the boundary is consulted, so
+        # no evaluation, no callable and no consumption occur on a second entry.
+        if self._execution_entered:
+            self.case["action_status"] = self.case.get("action_status", "unknown")
+            self.ledger.append(
+                "execution_stage_replay_refused",
+                mission_id=self.mission_id,
+                actor="agent.execution",
+                detail=(
+                    "the consequential stage was entered twice on one flow; a "
+                    "retry is an explicit new attempt"
+                ),
+            )
+            self.case.setdefault("limitations", []).append(
+                "EXECUTION_STAGE_REPLAY refused: the consequential stage may be "
+                "entered once per flow."
+            )
+            return self.case
+        self._execution_entered = True
+
         def execute_local_demo_action() -> str:
             return "Low-risk demonstration action executed in the local sandbox."
 
@@ -224,6 +252,11 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         }
         self.case["nornyx_evidence"] = decision.evidence
         self.case["governance_mode"] = self.boundary.mode
+        # What happened to the *act*, recorded separately from what happened to
+        # the workflow. An orchestration failure later must not be able to erase
+        # the fact that an effect was released, and an effect being released must
+        # not let a failed run claim it completed.
+        self.case["action_status"] = "executed" if decision.allowed else "prevented"
         self.case["status"] = "completed" if decision.allowed else "prevented"
         if decision.allowed:
             self.case["execution_result"] = result or "Action completed."
@@ -252,6 +285,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
 
     @listen(execution)
     def audit(self, _previous: Any = None) -> dict[str, Any]:
+        self.case["orchestration_status"] = "completed"
         report = self.ledger.validate(report_path=self.root / "evidence/runtime/report.json")
         self.case["evidence"] = report
         self.case["framework"] = (
@@ -289,18 +323,40 @@ def run_case(
         CREWAI_AVAILABLE
         and os.getenv("FORGE_USE_CREWAI_KICKOFF", "true").lower() == "true"
     )
-    if use_kickoff:
-        try:
-            flow.execution_backend = "crewai"
-            result = flow.kickoff()  # type: ignore[attr-defined]
-            return result if isinstance(result, dict) else flow.case
-        except Exception as exc:
-            if os.getenv("FORGE_STRICT_CREWAI", "false").lower() == "true":
-                raise
-            flow.case.setdefault("limitations", []).append(
-                f"CrewAI kickoff failed ({type(exc).__name__}); sequential fallback used."
-            )
-    return flow.run_sequential()
+    # The backend is chosen once, before any stage runs. Falling back *after*
+    # kickoff re-ran every stage including the consequential one: the reviewer
+    # drove a kickoff that failed after execution and watched the action happen
+    # twice from a single call, with the case still reporting "completed".
+    #
+    # The reason this cannot be repaired by resuming is that completion position
+    # is unknowable. An effect may have been released immediately before the
+    # process failed to record that it had been — so a timeline missing the
+    # execution stage is not evidence the execution did not happen. Inspecting
+    # the timeline and continuing from there would just be the same assumption
+    # written more carefully.
+    if not use_kickoff:
+        return flow.run_sequential()
+
+    try:
+        flow.execution_backend = "crewai"
+        result = flow.kickoff()  # type: ignore[attr-defined]
+        return result if isinstance(result, dict) else flow.case
+    except Exception as exc:
+        if os.getenv("FORGE_STRICT_CREWAI", "false").lower() == "true":
+            raise
+        # Two independent truths, deliberately not collapsed: the workflow did
+        # not complete, and an effect may already have been released.
+        flow.case["orchestration_status"] = "failed"
+        flow.case["status"] = "failed"
+        flow.case["orchestration_error"] = f"{type(exc).__name__}: {exc}"
+        flow.case.setdefault("limitations", []).append(
+            f"CrewAI orchestration failed ({type(exc).__name__}). The run was "
+            "terminated rather than replayed: after kickoff begins, how far it "
+            "got is unknown, and re-running the flow could release a "
+            "consequential effect a second time. A retry is an explicit new "
+            "attempt, not something recovery code performs."
+        )
+        return flow.case
 
 
 def run_demo_scenarios(
