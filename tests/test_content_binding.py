@@ -74,8 +74,15 @@ def _run(work: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _generate(work: Path) -> None:
+    """The documented pipeline, in full.
+
+    The review binding is regenerated too — it is copied in from the real
+    repository by the fixture, so leaving it would have the workspace verifying
+    a binding that describes a different tree.
+    """
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
+    assert _run(work, REFRESH, "--review-binding").returncode == 0
 
 
 def _verify(work: Path) -> subprocess.CompletedProcess[str]:
@@ -94,13 +101,6 @@ def _verify(work: Path) -> subprocess.CompletedProcess[str]:
             "edit governed python source",
             lambda w: (w / "src/nornyx_forge/util.py").write_text(
                 (w / "src/nornyx_forge/util.py").read_text(encoding="utf-8") + "\n# edit\n",
-                encoding="utf-8",
-            ),
-        ),
-        (
-            "edit a .nyx contract",
-            lambda w: (w / CONTRACTS / "forge_control.nyx").write_text(
-                (w / CONTRACTS / "forge_control.nyx").read_text(encoding="utf-8") + "\n# edit\n",
                 encoding="utf-8",
             ),
         ),
@@ -137,6 +137,9 @@ def test_mutating_governed_content_invalidates_the_evidence(
 
     completed = _verify(work)
     assert completed.returncode != 0, f"{label} did not invalidate the evidence"
+    # Reported as a governed problem, never as a traceback: a removed governed
+    # file is a legitimate state to describe, and a crash describes nothing.
+    assert "Traceback" not in completed.stderr, completed.stderr
     assert "governed content" in completed.stdout, completed.stdout
 
 
@@ -326,12 +329,31 @@ def test_the_review_binding_does_not_digest_itself():
     assert 'exclude=("review_binding.json",)' in source
 
 
-def test_governed_content_covers_source_contracts_and_configuration():
+def test_governed_content_covers_authored_source_and_configuration():
     """The declared set, asserted rather than assumed."""
-    for expected in ("src", "scripts", ".nornyx/contracts", "pyproject.toml"):
+    for expected in ("src", "scripts", "tests", "pyproject.toml"):
         assert expected in GOVERNED_CONTENT_PATHS
 
     paths = [entry["path"] for entry in governed_content_manifest()["entries"]]
     assert any(p.startswith("src/") for p in paths)
-    assert any(p.endswith(".nyx") for p in paths)
     assert any(p == "pyproject.toml" for p in paths)
+
+
+def test_contracts_are_covered_one_layer_up_not_in_the_content_digest():
+    """Contracts are partly tool-written, so they cannot be in the digest that
+    tool-written artifacts stamp — there is no fixed point. Build stamps the
+    artifacts, sync then rewrites the contracts, and the artifacts describe a
+    tree that no longer exists however many times you run it.
+
+    They are covered by control_pack_digest instead, which the review binding
+    carries and verification recomputes. An edited contract still fails, through
+    the layer that can actually see it.
+    """
+    paths = [entry["path"] for entry in governed_content_manifest()["entries"]]
+    assert not any(p.endswith(".nyx") for p in paths)
+    assert not any(p.startswith(".nornyx/contracts/") for p in paths)
+
+    binding = json.loads(
+        (ROOT / CONTRACTS / "evidence/review_binding.json").read_text(encoding="utf-8")
+    )
+    assert binding["control_pack_digest"].startswith("sha256:")

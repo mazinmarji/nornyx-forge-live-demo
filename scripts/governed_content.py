@@ -10,13 +10,21 @@ commits stale alike. Evidence at HEAD claimed to describe `git:75c32e33` while
 The primitive here is content. A manifest of every governed file with its size
 and digest, canonically serialised and hashed:
 
-    governed source + contracts + configuration
+    governed source + tests + CI + configuration
                     |
                     v
             governed content manifest
                     |
                     v
             governed_content_digest
+                    |
+      +-------------+-------------+
+      v                           v
+ evidence artifacts        contract digests
+      |                           |
+      +-------------+-------------+
+                    v
+            control_pack_digest
 
 A git SHA remains useful and is retained — as provenance, navigation, historical
 identity. It is not an integrity proof, and nothing here treats it as one.
@@ -27,9 +35,10 @@ identical digests, so a change that moved content across a file boundary would
 be invisible. Hashing a structure with explicit paths and sizes cannot collapse
 that way.
 
-WHAT IS DELIBERATELY EXCLUDED. Generated evidence. It is *derived from* the
-content this digest describes, so including it would make the digest depend on
-its own consequences. The layers stay acyclic:
+WHAT IS DELIBERATELY EXCLUDED. Generated evidence *and* the .nyx contracts. Both
+are partly written by this tool from the other, so including either would make
+the digest depend on its own consequences. Contracts are covered one layer up,
+by ``control_pack_digest``. The layers stay acyclic:
 
     content -> content digest -> evidence -> evidence digest -> review binding
 
@@ -47,15 +56,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 MANIFEST_SCHEMA = "nornyx.forge.governed_content_manifest.v1"
 
-#: What an assurance claim is *about*: the things a human authors and a reviewer
-#: reads. Contracts are included — an edited contract must invalidate evidence
-#: describing it.
+#: What an assurance claim is *about*: the authored content an inspector reads.
+#:
+#: Contracts are deliberately NOT here, and neither is evidence. Both are partly
+#: written by this tool from the other — sync writes evidence hashes into
+#: contracts — so including either would make the digest depend on artifacts
+#: derived from itself. Concretely there is no fixed point: build stamps the
+#: artifacts, sync then rewrites the contracts, and the artifacts describe a
+#: tree that no longer exists no matter how many times you run it.
+#:
+#: Contracts are covered instead by ``control_pack_digest``, which the review
+#: binding carries and verification recomputes. An edited contract still fails —
+#: through the layer that can actually see it.
 GOVERNED_CONTENT_PATHS = (
     "src",
     "scripts",
     "tests",
     ".github",
-    ".nornyx/contracts",
     "pyproject.toml",
     "Dockerfile",
     "docker-compose.yml",
@@ -63,9 +80,8 @@ GOVERNED_CONTENT_PATHS = (
     "BRD.md",
 )
 
-#: Excluded because it is generated *from* the governed content. Including it
-#: would make the digest depend on artifacts derived from itself.
-EXCLUDED_PREFIXES = (".nornyx/contracts/evidence/",)
+#: Generated or tool-written, and therefore downstream of the digest.
+EXCLUDED_PREFIXES = (".nornyx/contracts/",)
 
 
 class GovernedContentError(RuntimeError):

@@ -420,9 +420,18 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
 
     entries: dict[str, dict] = {}
 
+    content_digest = governed_content_digest()
+
     def emit(key: str, filename: str, payload: dict, *, status: str) -> None:
         artifact = f"evidence/{filename}"
-        content_hash = _write(EVIDENCE_DIR / filename, payload)
+        # Each artifact carries the content it was produced against, in its own
+        # bytes. The index records the *current* subject; an artifact records
+        # what it actually inspected. Keeping those separate is what stops a
+        # later recompute making an old conclusion look current.
+        content_hash = _write(
+            EVIDENCE_DIR / filename,
+            {**payload, "governed_content_digest": content_digest},
+        )
         entries[key] = {
             "artifact": artifact,
             "content_hash": content_hash,
@@ -799,6 +808,12 @@ def sync_contracts() -> list[str]:
     settled = governed_content_digest()
     index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     if index.get("governed_content_digest") != settled:
+        # `subject_content_digest` is what the tree currently is. It is NOT a
+        # rebinding of the artifacts: each of those carries, in its own bytes,
+        # the digest it was produced against, and verify() compares those
+        # against observed content. Recomputing the subject makes old evidence
+        # visibly stale; it must never make it look current.
+        index["subject_content_digest"] = settled
         index["governed_content_digest"] = settled
         INDEX_PATH.write_bytes(
             json.dumps(index, indent=2, sort_keys=True).encode("utf-8") + b"\n"
@@ -1433,6 +1448,12 @@ def emit_review_binding() -> dict:
         "governed_content_digest": content_digest,
         "evidence_manifest_digest": evidence_digest,
         "control_pack_digest": pack_digest,
+        # Deliberately no stored verification verdict. A first attempt embedded
+        # one here and it was wrong by construction: the block was computed
+        # before this file was written, so it described the *previous* binding.
+        # That is the same anti-pattern this unit exists to remove — a recorded
+        # conclusion a reader could take at face value. Verification is derived
+        # at verification time by `--verify`, over whatever is actually on disk.
         # Provenance only: which history this came from, for navigation. Never
         # an integrity proof, and never how freshness is decided.
         "source_commit": _head_commit(),
@@ -1473,6 +1494,140 @@ def emit_review_binding() -> dict:
     return binding
 
 
+def derive_assurance_state() -> dict:
+    """Recompute the assurance position from artifacts, at verification time.
+
+    PASS is a conclusion, never durable state. Reading ``status: "pass"`` out of
+    an artifact and reporting it is not verification — it is repetition. This
+    recomputes: does each artifact still describe the content that exists, do
+    the evidence bytes still match what the binding covers, are the required
+    inspectors present and independent.
+
+    Deliberately separate from the code that *writes* evidence. A generator
+    knows what it hopes to produce, and a function that writes artifacts and
+    returns "pass" has verified nothing.
+    """
+
+    try:
+        observed = governed_content_digest()
+    except GovernedContentError as exc:
+        # Content we cannot describe is content we cannot vouch for. A governed
+        # refusal, not a traceback: a removed or unreadable governed file is a
+        # legitimate state to report, and reporting it as a crash tells an
+        # operator nothing about what to do.
+        return {
+            "state": "unverified",
+            "governed_content_digest": None,
+            "governed_content_match": False,
+            "evidence_manifest_match": False,
+            "required_inspectors_complete": False,
+            "independent": False,
+            "stale_artifacts": [],
+            "problems": [f"governed content could not be digested: {exc}"],
+        }
+    state: dict = {
+        "governed_content_digest": observed,
+        "governed_content_match": True,
+        "evidence_manifest_match": True,
+        "required_inspectors_complete": False,
+        "independent": False,
+        "stale_artifacts": [],
+        "problems": [],
+    }
+
+    # Every artifact carries the content it was produced against, in its own
+    # bytes. An artifact naming a different digest inspected something else.
+    for location in sorted(EVIDENCE_DIR.glob("*.json")):
+        if location.name in {"INDEX.json", "review_binding.json"}:
+            continue
+        try:
+            payload = json.loads(location.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            state["problems"].append(f"{location.name} is not readable JSON")
+            continue
+        if not isinstance(payload, dict):
+            continue
+        recorded = payload.get("governed_content_digest")
+        if recorded is not None and recorded != observed:
+            state["governed_content_match"] = False
+            state["stale_artifacts"].append(location.name)
+            state["problems"].append(
+                f"{location.name} describes governed content {recorded} but the "
+                f"tree digests to {observed}. It inspected different content; a "
+                "new inspection is required, not a new digest."
+            )
+
+    # The evidence set the review binding claims to cover.
+    binding_path = EVIDENCE_DIR / "review_binding.json"
+    if binding_path.exists():
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        current = digest_of(evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",)))
+        if binding.get("evidence_manifest_digest") != current:
+            state["evidence_manifest_match"] = False
+            state["problems"].append(
+                "review binding covers evidence manifest "
+                f"{binding.get('evidence_manifest_digest')} but the evidence set "
+                f"digests to {current}"
+            )
+        if binding.get("governed_content_digest") != observed:
+            state["governed_content_match"] = False
+            state["problems"].append(
+                "review binding describes content "
+                f"{binding.get('governed_content_digest')} but the tree digests "
+                f"to {observed}"
+            )
+
+    # Independence and completeness, recomputed rather than read.
+    attestation_path = EVIDENCE_DIR / INSPECTION_ATTESTATION
+    if attestation_path.exists():
+        try:
+            attested = json.loads(attestation_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            attested = {}
+        reported = {
+            str(entry.get("role")): str(entry.get("result"))
+            for entry in attested.get("inspectors", [])
+            if isinstance(entry, dict)
+        }
+        missing = REQUIRED_INSPECTORS - set(reported)
+        failing = sorted(role for role, result in reported.items() if result != "pass")
+        state["required_inspectors_complete"] = not missing and not failing
+        state["independent"] = attested.get("builder_self_approval") is False
+        if missing:
+            state["problems"].append(f"inspectors missing: {sorted(missing)}")
+        if failing:
+            state["problems"].append(f"inspectors reporting failure: {failing}")
+        if not state["independent"]:
+            state["problems"].append(
+                "the attestation does not assert builder_self_approval is false"
+            )
+
+    # Named for exactly what it covers. "verified" invited reading as "assured",
+    # which it is not: an intact evidence set describing current content is a
+    # different claim from a complete independent inspection, and this repository
+    # currently has the first without the second. Two fields, so neither can
+    # stand in for the other.
+    state["integrity_state"] = (
+        "intact"
+        if (
+            state["governed_content_match"]
+            and state["evidence_manifest_match"]
+            and not state["problems"]
+        )
+        else "compromised"
+    )
+    state["assurance_state"] = (
+        "independently_inspected"
+        if (
+            state["integrity_state"] == "intact"
+            and state["required_inspectors_complete"]
+            and state["independent"]
+        )
+        else "not_independently_inspected"
+    )
+    return state
+
+
 def verify() -> list[str]:
     """Confirm every indexed artifact still hashes to its recorded value."""
     if not INDEX_PATH.exists():
@@ -1503,6 +1658,10 @@ def verify() -> list[str]:
                 f"digests to {observed}. The content changed after the evidence "
                 "was generated; regenerate it."
             )
+
+    # Recompute the assurance position rather than reading a recorded verdict.
+    assurance = derive_assurance_state()
+    problems.extend(assurance["problems"])
 
     # Re-parse each contract. Hashing artifacts says nothing about whether the
     # contract that references them still holds exactly one approval record.
@@ -1603,7 +1762,18 @@ def main() -> int:
 
     if args.verify:
         problems = verify()
-        print(json.dumps({"status": "pass" if not problems else "fail", "problems": problems}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "status": "pass" if not problems else "fail",
+                    # Recomputed now, over what is on disk. Reported rather than
+                    # stored, so nothing can read a stale verdict back.
+                    "verification": derive_assurance_state(),
+                    "problems": problems,
+                },
+                indent=2,
+            )
+        )
         return 0 if not problems else 2
 
     # Default to the real instant. Truncating to midnight silently backdated
