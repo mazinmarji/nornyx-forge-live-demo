@@ -1,0 +1,194 @@
+"""What `subject_verified=True` is allowed to mean.
+
+Not "the observer hashed whatever happened to exist". That is the same defect as
+an architecture gate that checks whatever happens to be declared: omission
+becomes the cheapest way to pass. A container whose build silently dropped a
+contract would compute a smaller subject and report itself verified, because
+nothing said what "complete" was.
+
+So the scope is a code-owned, versioned domain value, and verification means:
+the complete declared authority surface was present, canonical, observable, and
+hashed — with nothing authority-capable left outside it.
+
+Two directions, both enforced:
+
+    completeness   every required root/file present, or SUBJECT_SCOPE_INCOMPLETE
+    closure        nothing authority-capable outside it, or SUBJECT_SCOPE_ESCAPE
+
+Every case asserts an exact structured code. A boolean collapsing "digest moved"
+and "observation refused" would pass for either, which is how a refusal comes to
+wear a success's clothes.
+"""
+
+from __future__ import annotations
+
+import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from nornyx_forge.governed_subject import (
+    RUNTIME_IMAGE_SCOPE,
+    RuntimeAuthorityConfig,
+    SubjectScope,
+)
+from nornyx_forge.subject_bootstrap import establish_subject
+
+ROOT = Path(__file__).resolve().parents[1]
+IGNORE = shutil.ignore_patterns(
+    ".git", ".venv", "__pycache__", "*.pyc", "*.egg-info", "evidence"
+)
+CONFIG = RuntimeAuthorityConfig("nornyx", "crewai")
+
+
+def _tree() -> Path:
+    work = Path(tempfile.mkdtemp()) / "repo"
+    shutil.copytree(ROOT, work, ignore=IGNORE)
+    return work
+
+
+def _subject(root: Path, scope: SubjectScope = RUNTIME_IMAGE_SCOPE):
+    return establish_subject(root, scope=scope, config=CONFIG)
+
+
+def _baseline() -> str:
+    subject = _subject(_tree())
+    assert subject.subject_verified, subject.unavailable_reason
+    return subject.governed_subject_digest
+
+
+# --------------------------------------------------------------------------
+# Completeness: what is declared must be there
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "remove"),
+    [
+        ("required contract", ".nornyx/contracts/runtime_network.nyx"),
+        ("required package root", "src/demo_app"),
+    ],
+)
+def test_missing_declared_content_refuses_rather_than_shrinking(label: str, remove: str):
+    work = _tree()
+    target = work / remove
+    shutil.rmtree(target) if target.is_dir() else target.unlink()
+
+    subject = _subject(work)
+    assert subject.subject_verified is False, label
+    assert "SUBJECT_SCOPE_INCOMPLETE" in (subject.unavailable_reason or ""), label
+    # No fabricated identity for content that could not be described.
+    assert subject.governed_subject_digest == ""
+
+
+# --------------------------------------------------------------------------
+# Closure: nothing authority-capable may sit outside the subject
+# --------------------------------------------------------------------------
+
+
+def test_a_new_module_under_a_covered_root_moves_the_subject():
+    """Structural universe: a file is inside it the moment it exists.
+
+    No second hand-maintained list of "authority files" — forgetting a new
+    module from both lists would otherwise still pass.
+    """
+    baseline = _baseline()
+    work = _tree()
+    (work / "src/nornyx_forge/added_after_the_fact.py").write_bytes(b"X = 1\n")
+
+    subject = _subject(work)
+    assert subject.subject_verified, subject.unavailable_reason
+    assert subject.governed_subject_digest != baseline
+
+
+@pytest.mark.parametrize(
+    ("label", "path", "content"),
+    [
+        ("contract outside required_contracts", ".nornyx/contracts/rogue.nyx", b'nornyx: "0.2"\n'),
+        ("module outside the covered roots", "src/elsewhere/mod.py", b"X = 1\n"),
+    ],
+)
+def test_authority_capable_content_outside_the_subject_is_refused(
+    label: str, path: str, content: bytes
+):
+    work = _tree()
+    target = work / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+
+    subject = _subject(work)
+    assert subject.subject_verified is False, label
+    assert "SUBJECT_SCOPE_ESCAPE" in (subject.unavailable_reason or ""), label
+
+
+def test_gitignore_cannot_remove_a_file_from_the_subject():
+    """`.gitignore` is not an authority boundary: an ignored file still runs."""
+    baseline = _baseline()
+    work = _tree()
+    (work / "src/nornyx_forge/hidden.py").write_bytes(b"X = 1\n")
+    (work / ".gitignore").write_bytes(
+        (work / ".gitignore").read_bytes() + b"\nsrc/nornyx_forge/hidden.py\n"
+    )
+
+    subject = _subject(work)
+    assert subject.subject_verified, subject.unavailable_reason
+    assert subject.governed_subject_digest != baseline
+
+
+# --------------------------------------------------------------------------
+# The scope definition is itself bound
+# --------------------------------------------------------------------------
+
+
+def test_narrowing_a_scope_moves_the_subject_even_with_an_identical_id():
+    """Scope *meaning* is bound, not just its label.
+
+    Relying on the fact that shrinking a scope happens to move the digest —
+    because the module declaring it is itself governed content — is indirect and
+    holds only while that stays true.
+    """
+    work = _tree()
+    honest = _subject(work, RUNTIME_IMAGE_SCOPE)
+    narrowed = SubjectScope(
+        scope_id=RUNTIME_IMAGE_SCOPE.scope_id,  # identical label
+        required_roots=("src/nornyx_forge",),  # demo_app dropped
+        required_files=RUNTIME_IMAGE_SCOPE.required_files,
+        required_contracts=RUNTIME_IMAGE_SCOPE.required_contracts,
+        authority_universe=RUNTIME_IMAGE_SCOPE.authority_universe,
+        non_authoritative=RUNTIME_IMAGE_SCOPE.non_authoritative,
+    )
+    quiet = _subject(work, narrowed)
+
+    assert quiet.scope_id == honest.scope_id
+    assert quiet.scope_definition_digest != honest.scope_definition_digest
+    # Dropping demo_app leaves its modules authority-capable but uncovered.
+    assert quiet.subject_verified is False
+    assert "SUBJECT_SCOPE_ESCAPE" in (quiet.unavailable_reason or "")
+
+
+def test_the_two_scopes_describe_different_surfaces():
+    """They are meant to differ; a shared digest would mean one is mislabelled."""
+    from nornyx_forge.governed_subject import REPOSITORY_SCOPE
+
+    work = _tree()
+    repository, runtime = _subject(work, REPOSITORY_SCOPE), _subject(work, RUNTIME_IMAGE_SCOPE)
+    assert repository.subject_verified and runtime.subject_verified
+    assert repository.governed_subject_digest != runtime.governed_subject_digest
+    assert repository.scope_definition_digest != runtime.scope_definition_digest
+
+
+def test_the_manifest_cannot_define_what_is_observed():
+    """Scope flows code -> observer -> manifest, never the reverse.
+
+    A manifest able to declare its own `required_roots` would make forging it a
+    way to shrink the subject.
+    """
+    from nornyx_forge.subject_bootstrap import build_subject_manifest
+
+    work = _tree()
+    manifest = build_subject_manifest(work, scope=RUNTIME_IMAGE_SCOPE, config=CONFIG)
+    assert "required_roots" not in manifest
+    assert manifest["subject_scope_id"] == RUNTIME_IMAGE_SCOPE.scope_id
+    # It reports the digest; it is not consulted to produce one.
+    assert manifest["governed_subject_digest"] == _subject(work).governed_subject_digest

@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from nornyx_forge.nornyx_runtime import prepare_runtime_contract
+from nornyx_forge.runtime_preparation import prepare_runtime_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 

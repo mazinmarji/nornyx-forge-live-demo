@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-09T13:54:02Z",
-  "governed_input_digest": "sha256:269e135f39065411332de37c7e942200788539e4cba7a1ab6bdab479adde5fd2",
+  "generated_at": "2026-08-09T22:32:47Z",
+  "governed_input_digest": "sha256:9c24e64f25e79dc205e0e3d881a322b3fcbe9c875c07438a0f662a7a1dd53243",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -28,12 +28,17 @@
       "nornyx_forge.development_flow",
       "nornyx_forge.evidence",
       "nornyx_forge.gates",
+      "nornyx_forge.governed_subject",
       "nornyx_forge.models",
+      "nornyx_forge.nornyx_cli_adapter",
       "nornyx_forge.nornyx_runtime",
       "nornyx_forge.policy",
       "nornyx_forge.repo_qualifier",
       "nornyx_forge.repo_scout",
       "nornyx_forge.requirements",
+      "nornyx_forge.runtime_preparation",
+      "nornyx_forge.subject_bootstrap",
+      "nornyx_forge.subject_observer",
       "nornyx_forge.util"
     ],
     "declared_modules": [
@@ -46,14 +51,19 @@
       "module.forge_flow",
       "module.gate_runner",
       "module.governance",
+      "module.governed_subject",
+      "module.nornyx_cli_adapter",
       "module.persistence",
       "module.policy_adapter",
       "module.repo_qualifier",
       "module.repo_scout",
       "module.requirements_model",
       "module.runtime",
+      "module.runtime_preparation",
       "module.shared_models",
       "module.shared_util",
+      "module.subject_bootstrap",
+      "module.subject_observer",
       "module.worker_adapter"
     ],
     "schema": "nornyx.forge.architecture_report.v1",
@@ -62,5 +72,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:bdb7aaf3728bea199d0b1d83dbd25702308c2eba"
+  "subject_revision": "git:ec7cacb6141e8e94232bd61c2f34cec7f5f96414"
 }

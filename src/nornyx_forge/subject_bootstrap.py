@@ -1,0 +1,221 @@
+"""Establish the runtime subject once, at startup, from a trusted root.
+
+The boundary consumes an already-established subject. It never discovers one:
+an action request must not be able to cause subject identity to be re-resolved,
+or the request has a say in the authority that judges it.
+
+Availability and authority are separate outcomes here. An application may start
+with an unestablished subject and serve low-risk, read-only work; what it may
+not do is release a consequential effect. That distinction is deliberate — the
+container case previously fell back to an *unverified revision* and kept going,
+which conflated the two.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from .governed_subject import (
+    REPOSITORY_SCOPE,
+    GovernedSubjectError,
+    RuntimeAuthorityConfig,
+    RuntimeSubject,
+    SubjectScope,
+    digest_of,
+    revision_digest,
+    subject_digest,
+)
+from .subject_observer import (
+    observe_contract_semantics_digest,
+    observe_input_manifest,
+    observe_settled_contracts,
+    observe_source_commit,
+)
+
+SUBJECT_MANIFEST_RELATIVE = ".nornyx/subjects/current.json"
+
+
+@dataclass(frozen=True)
+class RuntimeSecurityContext:
+    """Everything a governed run's authority depends on, established once.
+
+    One construction point, injected downward. The alternative — each flow or
+    each request resolving its own subject and configuration — is how the trust
+    store came to be re-read per boundary and how mutating a file between two
+    cases could silently re-aim the second one.
+
+    Immutable, and identity matters: flows receive *this* object, not an equal
+    copy. Comparing digest strings would pass even if every flow had rebuilt its
+    own context, which is the thing being prevented.
+
+    R3 adds the approval trust store and the consumption ledger here. They are
+    absent rather than stubbed, because a placeholder that later turns out to be
+    consulted is worse than a field that does not exist.
+    """
+
+    runtime_subject: RuntimeSubject
+    authority_config: RuntimeAuthorityConfig
+
+    @property
+    def consequential_authority_available(self) -> bool:
+        """A subject that cannot be described authorizes nothing."""
+        return self.runtime_subject.subject_verified
+
+
+def bootstrap_security_context(
+    root: Path | None = None,
+    *,
+    scope: SubjectScope = REPOSITORY_SCOPE,
+    config: RuntimeAuthorityConfig | None = None,
+) -> RuntimeSecurityContext:
+    """Establish the security context. Called once, at application startup.
+
+    A failed observation yields a context whose subject is unavailable, not an
+    exception and not a fabricated digest: the application may still start and
+    serve low-risk work, while consequential authority is simply not on offer.
+    Those are different outcomes and were previously conflated — the container
+    fell back to an unverified revision and carried on.
+    """
+    authority_config = config if config is not None else RuntimeAuthorityConfig()
+    resolved = root if root is not None else resolve_packaged_root()
+    return RuntimeSecurityContext(
+        runtime_subject=establish_subject(resolved, scope=scope, config=authority_config),
+        authority_config=authority_config,
+    )
+
+
+def resolve_packaged_root() -> Path:
+    """The deployment root, derived from where the application is installed.
+
+    Structural and deterministic. The running application must not accept an
+    ambient variable, the current working directory, a caller request, or any
+    other mutable process state as the selector of its authority tree —
+    `FORGE_ROOT` did exactly that, so an environment variable chose which tree
+    the application governed.
+
+    `Path.cwd()` is not a fix; it is the same defect wearing different clothes,
+    since the launch directory is equally mutable. This walks up from the
+    installed package instead: `<root>/src/nornyx_forge/subject_bootstrap.py`
+    yields `<root>`, in a checkout and under `/app` alike.
+
+    Development and test callers pass an explicit root to `establish_subject`.
+    That is deliberate: an explicit argument establishes a different security
+    context, which is a decision someone made rather than one the environment
+    made for them.
+
+    The relationship is fixed, not searched. Scanning ancestors for "something
+    that looks like a project root" would be a heuristic authority selector —
+    a different ambient mechanism reaching the same bad outcome, and one an
+    attacker could steer by planting a marker higher up. Exactly one candidate
+    is considered, and it must carry the expected structural markers or this
+    refuses.
+
+    This pins a packaging assumption: the image installs editable, so the
+    package sits at `<root>/src/nornyx_forge/`. A switch to a wheel would move
+    `__file__` into site-packages and break the fixed relationship — which is
+    why the in-image scope proof has to run the real verifier inside the built
+    image rather than infer deployment correctness from the Dockerfile.
+    """
+    candidate = Path(__file__).resolve().parents[2]
+    missing = [
+        marker
+        for marker in ("src/nornyx_forge", "src/demo_app", ".nornyx/contracts")
+        if not (candidate / marker).is_dir()
+    ]
+    if missing:
+        raise GovernedSubjectError(
+            f"PACKAGED_ROOT_UNRESOLVED: {candidate} does not carry the expected "
+            f"deployment markers ({', '.join(missing)}). Refusing to guess which "
+            "tree this application governs."
+        )
+    return candidate
+
+
+def establish_subject(
+    root: Path,
+    *,
+    scope: SubjectScope = REPOSITORY_SCOPE,
+    config: RuntimeAuthorityConfig | None = None,
+    contracts_dir: Path | None = None,
+) -> RuntimeSubject:
+    """Observe the tree and construct the subject. Fails closed.
+
+    Any observation error yields an unavailable subject rather than a partial
+    one: a subject that cannot be described is not a subject that authorizes
+    less, it is one that authorizes nothing.
+    """
+    directory = contracts_dir if contracts_dir is not None else root / ".nornyx/contracts"
+    authority_config = config if config is not None else RuntimeAuthorityConfig()
+    try:
+        manifest = observe_input_manifest(root, scope)
+        input_digest = digest_of(manifest)
+        semantics = observe_contract_semantics_digest(directory)
+        settled = digest_of(observe_settled_contracts(root, directory, scope))
+    except GovernedSubjectError as exc:
+        return RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id)
+
+    return RuntimeSubject(
+        scope_id=scope.scope_id,
+        scope_definition_digest=scope.definition_digest(),
+        runtime_authority_config_digest=authority_config.digest(),
+        governed_revision_digest=revision_digest(
+            input_digest=input_digest, semantics_digest=semantics
+        ),
+        governed_subject_digest=subject_digest(
+            scope=scope,
+            config=authority_config,
+            input_digest=input_digest,
+            settled_digest=settled,
+        ),
+        subject_verified=True,
+        # Attached after the digests are computed, so it cannot participate in
+        # them even by accident.
+        source_commit=observe_source_commit(root),
+    )
+
+
+def build_subject_manifest(
+    root: Path,
+    *,
+    scope: SubjectScope = REPOSITORY_SCOPE,
+    config: RuntimeAuthorityConfig | None = None,
+    contracts_dir: Path | None = None,
+) -> dict:
+    """The external record of the subject. Diagnostic and packaging only.
+
+    This file can never be the source of an approved subject digest. A runtime
+    trusting it would be trusting a file inside the tree it is verifying: the
+    authorization compares a *recomputed* subject against a *signed* approval,
+    and this manifest participates in neither side.
+    """
+    directory = contracts_dir if contracts_dir is not None else root / ".nornyx/contracts"
+    subject = establish_subject(
+        root, scope=scope, config=config, contracts_dir=directory
+    )
+    if not subject.subject_verified:
+        raise GovernedSubjectError(
+            f"the subject could not be observed: {subject.unavailable_reason}"
+        )
+    manifest = observe_input_manifest(root, scope)
+    return {
+        "schema": "nornyx.forge.governed_subject.v1",
+        # Reported, never authoritative: the scope came from code.
+        "subject_scope_id": subject.scope_id,
+        "scope_definition_digest": subject.scope_definition_digest,
+        "runtime_authority_config_digest": subject.runtime_authority_config_digest,
+        "governed_subject_digest": subject.governed_subject_digest,
+        "governed_revision_digest": subject.governed_revision_digest,
+        "governed_input_digest": digest_of(manifest),
+        "settled_contracts_digest": digest_of(
+            observe_settled_contracts(root, directory, scope)
+        ),
+        "entries": manifest["entries"],
+        "provenance": {
+            "source_commit": subject.source_commit,
+            "note": (
+                "Provenance only. Authority is governed_subject_digest, which the "
+                "runtime recomputes; nothing here supplies it."
+            ),
+        },
+    }

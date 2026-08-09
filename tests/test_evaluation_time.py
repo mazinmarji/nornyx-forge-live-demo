@@ -1,4 +1,13 @@
-"""The Nornyx evaluation instant must be real, and pinnable only by a test.
+"""Evaluation time is a governed fact, and comes from trusted sources.
+
+The revision tests that lived here are gone with the model they described.
+`test_no_environment_value_can_supply_a_revision` was the clearest example of
+what this repository keeps producing: a name asserting a universal, a body
+checking two retired `FORGE_*` strings, and `GIT_DIR` walking straight through
+the property the name claimed. Its real successors are in
+`test_subject_provenance.py`, where hostile git environments are actually run
+against the digests that now carry authority.
+The Nornyx evaluation instant must be real, and pinnable only by a test.
 
 A hardcoded instant silently judged every approval against a fixed moment, so a
 seven-day expiry could never actually elapse and an approval issued later than
@@ -20,14 +29,13 @@ from pathlib import Path
 
 import pytest
 
-from nornyx_forge import nornyx_runtime
+from nornyx_forge import nornyx_cli_adapter, runtime_preparation
 from nornyx_forge.nornyx_runtime import (
     NornyxActionBoundary,
     RuntimeContext,
-    prepare_runtime_contract,
     runtime_as_of,
-    runtime_revision,
 )
+from nornyx_forge.runtime_preparation import prepare_runtime_contract
 
 ISO_Z = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 REVISION = "git:" + "a" * 40
@@ -81,53 +89,14 @@ def test_ambiguous_or_invalid_instants_fail_closed(
     assert ISO_Z.match(runtime_as_of())
 
 
-def test_unreadable_contract_yields_unbound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """A non-UTF-8 contract must not raise out of the evidence-labelling path."""
-    monkeypatch.setenv(RETIRED_REVISION_ENV, REVISION)
-    contract = tmp_path / nornyx_runtime.RUNTIME_CONTRACT
-    contract.parent.mkdir(parents=True)
-    contract.write_bytes(b"\xff\xfe\x00 not utf-8 \xc3\x28")
-    assert runtime_revision(tmp_path) == "git:unbound"
-
-
-def test_revision_is_read_from_the_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv(RETIRED_REVISION_ENV, "git:" + "b" * 40)
-    contract = tmp_path / nornyx_runtime.RUNTIME_CONTRACT
-    contract.parent.mkdir(parents=True)
-    contract.write_text(
-        "agentic_network:\n"
-        "  id: network.test\n"
-        f"  subject_revision: {REVISION}\n",
-        encoding="utf-8",
-    )
-    assert runtime_revision(tmp_path) == REVISION
-
-
-def test_revision_is_unbound_without_a_contract(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """Absent a contract, evidence says unbound rather than claiming a binding."""
-    monkeypatch.setenv(RETIRED_REVISION_ENV, REVISION)
-    assert runtime_revision(tmp_path) == "git:unbound"
-
-
-@pytest.mark.parametrize("value", [REVISION, "not-a-revision", ""])
-def test_no_environment_value_can_supply_a_revision(
-    value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """Well-formed or not, the retired variable cannot name the governed subject."""
-    monkeypatch.setenv(RETIRED_REVISION_ENV, value)
-    assert runtime_revision(tmp_path) == "git:unbound"
-    assert RuntimeContext.trusted(tmp_path).declared_revision == "git:unbound"
-
-
 def test_every_nornyx_step_receives_the_same_instant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """check, generate, lock and lock-check must agree on the evaluation time."""
-    monkeypatch.setattr(nornyx_runtime.shutil, "which", lambda _name: "nornyx")
+    # Preparation moved to `runtime_preparation`, and its process execution to
+    # `nornyx_cli_adapter`, when the domain process-execution prohibition made
+    # the old placement visible. The patch targets follow.
+    monkeypatch.setattr(runtime_preparation.shutil, "which", lambda _name: "nornyx")
     seen: list[tuple[str, ...]] = []
 
     class _Completed:
@@ -139,7 +108,7 @@ def test_every_nornyx_step_receives_the_same_instant(
         seen.append(tuple(command))
         return _Completed()
 
-    monkeypatch.setattr(nornyx_runtime.subprocess, "run", _fake_run)
+    monkeypatch.setattr(nornyx_cli_adapter.subprocess, "run", _fake_run)
     prepare_runtime_contract(tmp_path, as_of="2026-08-02T09:30:00Z")
 
     assert len(seen) == 4

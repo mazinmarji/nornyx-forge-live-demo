@@ -1,8 +1,8 @@
 {
   "attestation": null,
   "builder_self_approval": false,
-  "generated_at": "2026-08-09T13:54:02Z",
-  "governed_input_digest": "sha256:269e135f39065411332de37c7e942200788539e4cba7a1ab6bdab479adde5fd2",
+  "generated_at": "2026-08-09T22:32:47Z",
+  "governed_input_digest": "sha256:9c24e64f25e79dc205e0e3d881a322b3fcbe9c875c07438a0f662a7a1dd53243",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [
@@ -193,6 +193,6 @@
     "source_sha256": "sha256:6e68fcef1b822d95e0681c17c64cd7182e23f743afdae31db6aebbde5dc71a7a"
   },
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:bdb7aaf3728bea199d0b1d83dbd25702308c2eba",
+  "subject_revision": "git:ec7cacb6141e8e94232bd61c2f34cec7f5f96414",
   "verdict_basis": "no committed inspection attestation; the in-session report is displayed but decides nothing"
 }

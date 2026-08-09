@@ -10,6 +10,7 @@ from .claude_worker import ClaudeCodeWorker
 from .contract_generator import generate_brd_contract
 from .evidence import EvidenceLedger
 from .gates import default_gates
+from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .repo_qualifier import qualify_local, qualify_remote
 from .repo_scout import scout
@@ -44,6 +45,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         root: Path,
         *,
         worker_mode: str = "deterministic",
+        config: RuntimeAuthorityConfig | None = None,
         repo_mode: str = "certified",
         target_repo: str | None = None,
     ) -> None:
@@ -51,6 +53,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             super().__init__()
         except Exception:
             pass
+        self.config = config if config is not None else RuntimeAuthorityConfig()
         if worker_mode not in {"deterministic", "claude-code", "in-session"}:
             raise ValueError(f"unsupported worker mode: {worker_mode}")
         if repo_mode not in {"certified", "target", "scout", "greenfield"}:
@@ -378,10 +381,12 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
 
     def run(self) -> dict[str, Any]:
         """Run through CrewAI Flow when installed; otherwise use the same deterministic chain."""
-        use_kickoff = (
-            CREWAI_AVAILABLE
-            and os.getenv("FORGE_USE_CREWAI_KICKOFF", "true").lower() == "true"
-        )
+        # Mode comes from the authority configuration, never the environment.
+        # This flow generates contracts and evidence that later enter
+        # governed_subject_digest, so an ambient mode selection here would alter
+        # authority indirectly — the build path is not exempt from the rule
+        # simply because it is not the consequential runtime.
+        use_kickoff = self.config.execution_backend == "crewai"
         if use_kickoff:
             self.execution_backend = "crewai_flow"
             try:
@@ -392,7 +397,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 self.data["execution_backend"] = self.execution_backend
                 return self.data
             except Exception as exc:
-                if os.getenv("FORGE_STRICT_CREWAI", "false").lower() == "true":
+                if self.config.policy_backend == "nornyx":
                     raise
                 # A fresh flow prevents a partially-run kickoff from being accepted twice.
                 fresh = DevelopmentFlow(

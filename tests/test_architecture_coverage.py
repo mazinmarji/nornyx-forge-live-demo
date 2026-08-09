@@ -262,54 +262,40 @@ def test_the_gate_behaves_the_same_without_tomllib(tmp_path: Path):
     assert json.loads(blocked.stdout) == report
 
 
-def test_the_digest_ignores_working_tree_line_endings(tmp_path: Path):
-    """Governed content is what git stores, not what one machine's disk holds.
+def test_noncanonical_governed_text_is_refused_not_normalised():
+    """CRLF in declared text is an error, not something quietly smoothed over.
 
-    `.gitattributes` normalises this repository to LF. A Windows editor that
-    writes CRLF leaves a working copy whose bytes no checkout will ever contain,
-    and `git status` stays quiet because it compares normalised content — so the
-    digest described content that existed nowhere, verified on the machine that
-    generated it, and failed on every Linux runner.
+    This test previously asserted the opposite — that the digest *ignored*
+    working-tree line endings — because the implementation normalised CRLF to
+    LF before hashing. That made the digest describe content the file did not
+    hold: harmless for a Python module, not for a shell script, where line
+    endings can change execution. A value whose whole purpose is to say "this
+    is the content" must not hash different content than the content that runs.
+
+    The property is inverted deliberately, and the refusal is structured so a
+    caller can act on it rather than guess.
     """
-    work = tmp_path / "repo"
-    work.mkdir()
-    (work / "scripts").mkdir()
-    shutil.copy2(ROOT / "scripts/governed_content.py", work / "scripts/governed_content.py")
-    (work / ".gitattributes").write_text("* text=auto eol=lf\n", encoding="utf-8")
-    (work / "pyproject.toml").write_bytes(b'[project]\nname = "x"\n')
-    (work / "BRD.md").write_bytes(b"line one\nline two\n")
+    from nornyx_forge.governed_subject import (
+        SubjectNoncanonicalText,
+        assert_canonical,
+    )
 
-    for command in (
-        ["init", "-q"],
-        ["config", "user.email", "fixture@example.invalid"],
-        ["config", "user.name", "fixture"],
-        ["add", "-A"],
-        ["commit", "-qm", "fixture"],
-    ):
-        subprocess.run(["git", *command], cwd=work, check=True, capture_output=True)
+    crlf = b"a = 1\r\nb = 2\r\n"
+    lf = b"a = 1\nb = 2\n"
 
-    def digest() -> str:
-        completed = subprocess.run(
-            [
-                sys.executable,
-                "-c",
-                "import sys; sys.path.insert(0,'scripts');"
-                "import governed_content as g;"
-                "print(g.digest_of(g.governed_input_manifest()))",
-            ],
-            cwd=work,
-            capture_output=True,
-            text=True,
-        )
-        assert completed.returncode == 0, completed.stderr
-        return completed.stdout.strip()
+    # Declared text: refused, and the offending file is named.
+    with pytest.raises(SubjectNoncanonicalText) as refusal:
+        assert_canonical("src/demo_app/main.py", crlf)
+    assert "SUBJECT_NONCANONICAL_TEXT" in str(refusal.value)
+    assert "src/demo_app/main.py" in str(refusal.value)
 
-    before = digest()
-    # Rewrite the working copy with CRLF, exactly as a Windows editor would.
-    (work / "BRD.md").write_bytes(b"line one\r\nline two\r\n")
-    assert digest() == before, "the digest followed the working tree, not the index"
+    # Already canonical: hashed unchanged.
+    assert assert_canonical("src/demo_app/main.py", lf) == lf
 
-
+    # Not declared text: bytes pass through. Sniffing content to decide which
+    # rule applies would let content choose its own rule.
+    binary = b"\r\n" + bytes([0]) + b"raw"
+    assert assert_canonical("assets/blob.bin", binary) == binary
 def test_the_entrypoint_is_read_from_packaging_metadata():
     """One recorded fact, not a second copy in the contract to disagree with it."""
     gate = (ROOT / GATE).read_text(encoding="utf-8")

@@ -21,16 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from nornyx_forge.governed_subject import RuntimeSubject
 from nornyx_forge.nornyx_runtime import (
-    GOVERNED_REVISION_MISMATCH,
-    GOVERNED_REVISION_UNVERIFIED,
     ActionDescriptor,
     ApprovalLedger,
     RuntimeContext,
-    actual_revision,
     canonical_action_request,
     runtime_as_of,
-    runtime_revision,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +39,18 @@ RETIRED_TIME_ENV = "FORGE_RUNTIME_AS_OF"
 RETIRED_REVISION_ENV = "FORGE_RUNTIME_REVISION"
 HOSTILE_TIME = "2026-08-03T00:00:00Z"
 REVISION_A = "git:" + "a" * 40
+
+#: The subject these tests authorize against. Authority is content identity now,
+#: so a fixture states one explicitly rather than deriving it from a checkout —
+#: the old tests pinned a git revision, which no longer decides anything.
+SUBJECT = RuntimeSubject(
+    scope_id="forge.test-fixture.v1",
+    scope_definition_digest="sha256:" + "c" * 64,
+    runtime_authority_config_digest="sha256:" + "d" * 64,
+    governed_revision_digest="sha256:" + "e" * 64,
+    governed_subject_digest="sha256:" + "f" * 64,
+    subject_verified=True,
+)
 
 DESCRIPTOR = ActionDescriptor(
     operation="issue refund",
@@ -81,13 +90,16 @@ def _declare(work: Path, revision: str) -> None:
     )
 
 
-def _request(revision: str, *, attempt: int = 1, mission: str = "CASE-1"):
+def _request(revision: str = "", *, attempt: int = 1, mission: str = "CASE-1"):
+    """Build the request the boundary would build for the fixture subject."""
     return canonical_action_request(
         mission_id=mission,
         risk="high",
-        subject_revision=revision,
+        subject_revision=revision or SUBJECT.governed_subject_digest,
         descriptor=DESCRIPTOR,
         attempt=attempt,
+        subject_scope_id=SUBJECT.scope_id,
+        governed_revision_digest=SUBJECT.governed_revision_digest,
     )
 
 
@@ -113,6 +125,7 @@ def _release(work: Path, context: RuntimeContext, grant, request=None, *, attemp
     """Drive one consequential release. Returns (decision, callback count, rows)."""
     ledger_path = work / "ledger.sqlite3"
     boundary = _permissive_boundary(work, runtime_context=context)
+    boundary.runtime_subject = SUBJECT
     boundary.approval_ledger = ApprovalLedger(ledger_path)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
@@ -154,7 +167,7 @@ def test_one_attempt_releases_once_whatever_the_grant_is_called(
     """
     work = _git_repo(tmp_path)
     context = RuntimeContext.for_test(work, at="2026-08-03T00:00:00Z", revision=REVISION_A)
-    request = _request(REVISION_A)
+    request = _request()
 
     first, ran, _ = _release(work, context, _grant(request), request)
     assert first.effect == "ALLOW" and ran == 1
@@ -168,10 +181,10 @@ def test_one_attempt_releases_once_whatever_the_grant_is_called(
 def test_an_old_grant_cannot_authorize_a_new_attempt(tmp_path: Path):
     work = _git_repo(tmp_path)
     context = RuntimeContext.for_test(work, at="2026-08-03T00:00:00Z", revision=REVISION_A)
-    first = _request(REVISION_A, attempt=1)
+    first = _request(attempt=1)
     assert _release(work, context, _grant(first), first)[0].effect == "ALLOW"
 
-    second = _request(REVISION_A, attempt=2)
+    second = _request(attempt=2)
     decision, ran, _ = _release(work, context, _grant(first), second, attempt=2)
     assert decision.effect == "DENY"
     assert ran == 0
@@ -186,10 +199,10 @@ def test_a_retry_stays_inside_its_mission(tmp_path: Path):
     """
     work = _git_repo(tmp_path)
     context = RuntimeContext.for_test(work, at="2026-08-03T00:00:00Z", revision=REVISION_A)
-    first = _request(REVISION_A, attempt=1)
+    first = _request(attempt=1)
     assert _release(work, context, _grant(first), first)[0].effect == "ALLOW"
 
-    second = _request(REVISION_A, attempt=2)
+    second = _request(attempt=2)
     decision, ran, rows = _release(
         work, context, _grant(second, approval_id="ACT-2"), second, attempt=2
     )
@@ -223,7 +236,7 @@ def test_a_grant_outside_its_window_cannot_be_revived(
 ):
     """The hostile variable names an instant where the expired grant is live."""
     work = _git_repo(tmp_path)
-    revision = actual_revision(work)
+    revision = "sha256:" + "a" * 64  # any subject identity; the window is under test
     assert revision is not None
     _declare(work, revision)
 
@@ -244,7 +257,7 @@ def test_the_ledger_timestamp_comes_from_the_trusted_context(tmp_path: Path):
     work = _git_repo(tmp_path)
     pinned = "2027-03-04T05:06:07Z"
     context = RuntimeContext.for_test(work, at=pinned, revision=REVISION_A)
-    request = _request(REVISION_A)
+    request = _request()
     assert _release(work, context, _grant(request, expires="2027-03-09T00:00:00Z",
                                           generated="2027-03-03T00:00:00Z"),
                     request)[0].effect == "ALLOW"
@@ -258,106 +271,6 @@ def test_the_ledger_timestamp_comes_from_the_trusted_context(tmp_path: Path):
 
 # --------------------------------------------------------------------------
 # Trusted revision
-# --------------------------------------------------------------------------
-
-
-def test_the_retired_revision_variable_cannot_set_the_revision(tmp_path: Path):
-    work = _git_repo(tmp_path)
-    assert runtime_revision(work) == "git:unbound"
-    assert actual_revision(work) != REVISION_A
-    assert RuntimeContext.trusted(work).actual_revision != REVISION_A
-
-
-def test_a_mismatched_checkout_is_refused_and_named(tmp_path: Path):
-    """Declared A, checked out B: the contract does not get to decide."""
-    work = _git_repo(tmp_path)
-    _declare(work, REVISION_A)
-    context = RuntimeContext.trusted(work)
-
-    assert context.revision_verified is False
-    assert context.declared_revision == REVISION_A
-    assert context.actual_revision not in (None, REVISION_A)
-
-    decision, ran, rows = _release(work, context, _grant(_request(REVISION_A)), _request(REVISION_A))
-    assert decision.code == GOVERNED_REVISION_MISMATCH
-    assert ran == 0
-    assert rows == 0, "a revision refusal consumed the approval"
-
-
-def test_an_unverifiable_revision_is_refused_but_named_differently(tmp_path: Path):
-    """No git, as in a built container. Distinct from a mismatch, distinct remedy."""
-    work = tmp_path / "image"
-    (work / ".nornyx/contracts").mkdir(parents=True)
-    _declare(work, REVISION_A)
-    context = RuntimeContext.trusted(work)
-
-    assert context.actual_revision is None
-    assert context.revision_verified is False
-    assert context.declared_revision == REVISION_A
-
-    decision, ran, rows = _release(work, context, _grant(_request(REVISION_A)), _request(REVISION_A))
-    assert decision.code == GOVERNED_REVISION_UNVERIFIED
-    assert decision.code != GOVERNED_REVISION_MISMATCH
-    assert ran == 0
-    assert rows == 0
-    assert decision.evidence["revision_verified"] is False
-    assert decision.evidence["actual_revision"] is None
-
-
-def test_an_unverifiable_revision_does_not_stop_the_application(tmp_path: Path):
-    """Lack of verification blocks revision-bound authority, not the app.
-
-    Deliberately not "low risk always runs": Nornyx still evaluates the
-    capability and any zone crossing independently, and may refuse for its own
-    reasons. What is asserted here is only that the *revision* check does not
-    reach beyond consequential authority.
-    """
-    work = tmp_path / "image"
-    (work / ".nornyx/contracts").mkdir(parents=True)
-    _declare(work, REVISION_A)
-
-    boundary = _permissive_boundary(work, runtime_context=RuntimeContext.trusted(work))
-    decision, result = boundary.evaluate_and_execute(
-        mission_id="CASE-LOW", risk="low", action=lambda: "done"
-    )
-    assert decision.effect == "ALLOW"
-    assert result == "done"
-
-
-def test_a_verified_checkout_releases(tmp_path: Path):
-    """The controls must not block the case they exist to permit."""
-    work = _git_repo(tmp_path)
-    revision = actual_revision(work)
-    assert revision is not None
-    _declare(work, revision)
-    context = RuntimeContext.trusted(work)
-    assert context.revision_verified is True
-
-    now = runtime_as_of()
-    request = _request(revision)
-    decision, ran, _ = _release(
-        work,
-        context,
-        # Inside the P7D cap and around the live clock, since this context
-        # deliberately uses the real one.
-        _grant(request, generated=_shift(now, hours=-1), expires=_shift(now, days=1)),
-        request,
-    )
-    assert decision.effect == "ALLOW", decision.evidence.get("action_binding")
-    assert ran == 1
-
-
-def _shift(moment: str, *, days: int = 0, hours: int = 0) -> str:
-    from datetime import datetime, timedelta
-
-    parsed = datetime.fromisoformat(moment.replace("Z", "+00:00")) + timedelta(
-        days=days, hours=hours
-    )
-    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-# --------------------------------------------------------------------------
-# Test-seam containment
 # --------------------------------------------------------------------------
 
 
@@ -398,6 +311,10 @@ def test_the_retired_environment_names_are_gone_from_the_runtime():
     ).read_text(encoding="utf-8")
     assert RETIRED_TIME_ENV not in source
     assert RETIRED_REVISION_ENV not in source
+    # `approval_ledger_path` legitimately reads its configured location; R3
+    # makes that a bootstrap value. What must not return is an env read that
+    # supplies *authority* — revision or evaluation time.
+    source = source.replace("os.getenv(APPROVAL_LEDGER_ENV)", "<ledger-path-configuration>")
     assert "os.getenv" not in source.split("def runtime_as_of")[1].split("def runtime_revision")[0]
 
 
@@ -417,15 +334,12 @@ def test_a_backdated_lock_regeneration_cannot_revive_an_action_approval(tmp_path
     Driven with a deliberately absurd backdate, far enough before the grant's
     window that reviving it would be unmistakable.
     """
-    from nornyx_forge import nornyx_runtime
+    from nornyx_forge import nornyx_cli_adapter, runtime_preparation
 
     work = _git_repo(tmp_path)
-    revision = actual_revision(work)
-    assert revision is not None
-    _declare(work, revision)
-
-    # A grant that expired long ago by the real clock.
-    request = _request(revision)
+    # Authority is the fixture subject; the lock's regeneration instant is what
+    # this test drives, and it must not become the clock a grant is judged by.
+    request = _request()
     grant = _grant(request, generated="2020-01-01T00:00:00Z", expires="2020-01-05T00:00:00Z")
 
     # Regenerate the lock as of a moment inside that dead window.
@@ -436,17 +350,17 @@ def test_a_backdated_lock_regeneration_cannot_revive_an_action_approval(tmp_path
         stdout = ""
         stderr = ""
 
-    original_run = nornyx_runtime.subprocess.run
-    original_which = nornyx_runtime.shutil.which
-    nornyx_runtime.shutil.which = lambda _name: "nornyx"
-    nornyx_runtime.subprocess.run = lambda command, **_k: (
+    original_run = nornyx_cli_adapter.subprocess.run
+    original_which = runtime_preparation.shutil.which
+    runtime_preparation.shutil.which = lambda _name: "nornyx"
+    nornyx_cli_adapter.subprocess.run = lambda command, **_k: (
         seen.append(tuple(command)) or _Completed()
     )
     try:
-        nornyx_runtime.prepare_runtime_contract(work, as_of="2020-01-02T00:00:00Z")
+        runtime_preparation.prepare_runtime_contract(work, as_of="2020-01-02T00:00:00Z")
     finally:
-        nornyx_runtime.subprocess.run = original_run
-        nornyx_runtime.shutil.which = original_which
+        nornyx_cli_adapter.subprocess.run = original_run
+        runtime_preparation.shutil.which = original_which
 
     assert seen, "the regeneration did not run"
     assert any("2020-01-02T00:00:00Z" in command for command in seen)

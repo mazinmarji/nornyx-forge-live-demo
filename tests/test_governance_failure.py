@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from nornyx_forge.governed_subject import RuntimeSubject
 from nornyx_forge.nornyx_runtime import (
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
@@ -97,7 +98,21 @@ class _Recorder:
 #: A pinned revision for tests whose subject is the action binding, not the
 #: revision gate. Without it every such test would deny UNVERIFIED first, since
 #: a tmp_path has no git metadata to derive an actual revision from.
-TEST_REVISION = "git:" + "0" * 40
+#: The fixture subject's identity. Named TEST_REVISION for continuity with
+#: the callers that build requests from it; it is a content digest now,
+#: because a git revision no longer decides anything.
+TEST_REVISION = "sha256:" + "f" * 64
+
+
+#: The subject these fixtures authorize against.
+TEST_SUBJECT = RuntimeSubject(
+    scope_id="forge.test-fixture.v1",
+    scope_definition_digest="sha256:" + "c" * 64,
+    runtime_authority_config_digest="sha256:" + "d" * 64,
+    governed_revision_digest="sha256:" + "e" * 64,
+    governed_subject_digest="sha256:" + "f" * 64,
+    subject_verified=True,
+)
 
 
 def _permissive_boundary(
@@ -105,6 +120,7 @@ def _permissive_boundary(
     as_of: str | None = None,
     *,
     runtime_context: RuntimeContext | None = None,
+    runtime_subject: RuntimeSubject | None = None,
 ) -> NornyxActionBoundary:
     """A boundary whose authorizer allows everything, to isolate our control.
 
@@ -122,6 +138,11 @@ def _permissive_boundary(
         # A real trust store holding a real ephemeral key. Tests about refusal
         # supply a defective grant; they do not rely on trust being absent.
         approver_trust_store=trust_store(),
+        # An established subject. Authority is content identity now, so a test
+        # states one explicitly rather than letting the boundary discover it —
+        # a boundary that could discover its own subject is the ambient
+        # re-resolution the model removes.
+        runtime_subject=runtime_subject or TEST_SUBJECT,
     )
     boundary.authorizer = _PermissiveAuthorizer()
     boundary.context = object()
@@ -281,9 +302,15 @@ def test_demo_scenarios_run_when_fallback_is_permitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from demo_app.agentic import run_demo_scenarios
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 
+    # The retired variable is set hostile to prove it no longer decides. The
+    # deterministic backend is now selected by naming it, so a run cannot claim
+    # Nornyx governance while executing the fallback.
     monkeypatch.setenv("FORGE_ALLOW_POLICY_FALLBACK", "true")
-    result = run_demo_scenarios(tmp_path)
+    result = run_demo_scenarios(
+        tmp_path, config=RuntimeAuthorityConfig("deterministic_demo", "sequential")
+    )
     assert result["low_risk"]["status"] == "completed"
     assert result["high_risk"]["status"] == "prevented"
 

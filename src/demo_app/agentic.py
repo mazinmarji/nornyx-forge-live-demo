@@ -7,14 +7,15 @@ from typing import Any
 
 from nornyx_forge.claude_worker import ClaudeCodeWorker
 from nornyx_forge.evidence import EvidenceLedger
+from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 from nornyx_forge.nornyx_runtime import (
     EXTERNAL_TRUST_ZONE,
     ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     canonical_action_request,
-    runtime_revision,
 )
+from nornyx_forge.subject_bootstrap import RuntimeSecurityContext
 
 # Re-exported so the interface layer can handle a governed refusal without
 # importing the governance module directly.
@@ -44,6 +45,10 @@ except Exception:  # pragma: no cover - optional dependency
 
     def listen(*_args: Any, **_kwargs: Any):
         return lambda fn: fn
+
+
+class ExecutionBackendUnavailable(RuntimeError):
+    """The requested execution backend cannot actually run."""
 
 
 STAGES = ("intake", "knowledge", "resolution", "risk", "execution", "audit")
@@ -91,6 +96,8 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         root: Path,
         worker_mode: str = "deterministic",
         allow_policy_fallback: bool = True,
+        subject_revision: str | None = None,
+        security_context: RuntimeSecurityContext | None = None,
     ) -> None:
         try:
             super().__init__()
@@ -110,12 +117,27 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         self.case["attempt"] = self.attempt
         self.ledger = EvidenceLedger(
             root / "evidence/runtime/events.jsonl",
-            subject_revision=runtime_revision(root),
+            # Evidence provenance, not authority. It used to come from a
+            # contract read per flow; recomputing an identity here is the
+            # ambient re-resolution the subject model removes. R1-D supplies it
+            # from the injected RuntimeSubject; until then it is unset rather
+            # than guessed.
+            subject_revision=subject_revision,
         )
+        # Injected, never discovered. A flow that established its own subject
+        # would let a file changed between two cases silently re-aim the second
+        # one, which is the ambient re-resolution this model removes.
+        self.security_context = security_context
         self.boundary = NornyxActionBoundary(root, allow_fallback=allow_policy_fallback)
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.
         self._execution_entered = False
+        # Set by the sequential driver only. A stage that runs without it was
+        # driven by CrewAI's Flow machinery, so the observed backend is derived
+        # from the path that actually executed rather than restated from the
+        # configuration — a marker copied from config would make any test of it
+        # tautological.
+        self._sequential_driver = False
         self.worker = ClaudeCodeWorker()
         self.execution_backend = "sequential"
 
@@ -132,8 +154,22 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         )
         return self.case
 
+    def _record_observed_backend(self) -> None:
+        """Record which driver actually ran this flow.
+
+        Derived from the execution path, not restated from the configuration.
+        A marker copied out of `RuntimeAuthorityConfig` would make any test of
+        backend binding tautological — it would assert the config equals
+        itself. `_sequential_driver` is set only by `run_sequential`, so a
+        stage reaching here without it was driven by CrewAI's Flow machinery.
+        """
+        self.case["observed_execution_backend"] = (
+            "sequential" if self._sequential_driver else "crewai_flow"
+        )
+
     @start()
     def intake(self) -> dict[str, Any]:
+        self._record_observed_backend()
         return self._stage("intake", "Case normalized and assigned a mission identity.")
 
     @listen(intake)
@@ -231,10 +267,25 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         request = canonical_action_request(
             mission_id=self.mission_id,
             risk=str(self.case.get("risk", "low")),
-            # The boundary's own context, not a second lookup that could
-            # disagree with the one authority is actually judged against.
-            subject_revision=self.boundary.runtime_context.actual_revision
-            or self.boundary.runtime_context.declared_revision,
+            # The boundary's own subject, not a second lookup that could
+            # disagree with the one authority is actually judged against. A
+            # pending request describes the exact attempt an approver would be
+            # signing, so it must carry the identity the boundary will compare.
+            subject_revision=(
+                self.boundary.runtime_subject.governed_subject_digest
+                if self.boundary.runtime_subject is not None
+                else ""
+            ),
+            subject_scope_id=(
+                self.boundary.runtime_subject.scope_id
+                if self.boundary.runtime_subject is not None
+                else ""
+            ),
+            governed_revision_digest=(
+                self.boundary.runtime_subject.governed_revision_digest
+                if self.boundary.runtime_subject is not None
+                else ""
+            ),
             descriptor=descriptor,
             attempt=self.attempt,
         )
@@ -296,6 +347,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         return self._stage("audit", f"Evidence status: {report['status']}.")
 
     def run_sequential(self) -> dict[str, Any]:
+        self._sequential_driver = True
         self.execution_backend = "sequential"
         self.intake()
         self.knowledge()
@@ -311,18 +363,28 @@ def run_case(
     root: Path,
     worker_mode: str | None = None,
     allow_policy_fallback: bool | None = None,
+    config: RuntimeAuthorityConfig | None = None,
+    security_context: RuntimeSecurityContext | None = None,
 ) -> dict[str, Any]:
-    mode = worker_mode or os.getenv("FORGE_WORKER_MODE", "deterministic")
-    fallback = (
-        allow_policy_fallback
-        if allow_policy_fallback is not None
-        else os.getenv("FORGE_ALLOW_POLICY_FALLBACK", "true").lower() == "true"
+    # The authority configuration is the single source of truth for governance
+    # and execution mode. It used to be read from the environment here, which
+    # would now be strictly worse than before: the subject digest binds the
+    # mode, so a downstream environment read would let the subject attest to
+    # `crewai` while the process actually ran `sequential`. A signature over a
+    # configuration the runtime does not follow is a false attestation.
+    authority = config if config is not None else RuntimeAuthorityConfig()
+    mode = worker_mode or "deterministic"
+    fallback = authority.policy_backend == "deterministic_demo"
+    flow = CustomerCaseFlow(
+        case,
+        root=root,
+        worker_mode=mode,
+        allow_policy_fallback=fallback,
+        security_context=security_context,
     )
-    flow = CustomerCaseFlow(case, root=root, worker_mode=mode, allow_policy_fallback=fallback)
-    use_kickoff = (
-        CREWAI_AVAILABLE
-        and os.getenv("FORGE_USE_CREWAI_KICKOFF", "true").lower() == "true"
-    )
+    flow.case["configured_execution_backend"] = authority.execution_backend
+    flow.case["configured_policy_backend"] = authority.policy_backend
+    use_kickoff = authority.execution_backend == "crewai"
     # The backend is chosen once, before any stage runs. Falling back *after*
     # kickoff re-ran every stage including the consequential one: the reviewer
     # drove a kickoff that failed after execution and watched the action happen
@@ -335,14 +397,27 @@ def run_case(
     # the timeline and continuing from there would just be the same assumption
     # written more carefully.
     if not use_kickoff:
+        flow.execution_backend = "sequential"
         return flow.run_sequential()
+
+    if not CREWAI_AVAILABLE:
+        # `execution_backend=crewai` is a claim about what runs. If CrewAI
+        # cannot execute, the honest outcome is that this backend is
+        # unavailable — not a silent downgrade to sequential under an unchanged
+        # label, which is how the whole suite stayed green with CrewAI absent.
+        raise ExecutionBackendUnavailable(
+            "execution_backend=crewai was requested but CrewAI could not be "
+            "imported. Refusing to run a different backend under that name."
+        )
 
     try:
         flow.execution_backend = "crewai"
         result = flow.kickoff()  # type: ignore[attr-defined]
         return result if isinstance(result, dict) else flow.case
+    except ExecutionBackendUnavailable:
+        raise
     except Exception as exc:
-        if os.getenv("FORGE_STRICT_CREWAI", "false").lower() == "true":
+        if authority.policy_backend == "nornyx":
             raise
         # Two independent truths, deliberately not collapsed: the workflow did
         # not complete, and an effect may already have been released.
@@ -364,18 +439,20 @@ def run_demo_scenarios(
     *,
     worker_mode: str | None = None,
     allow_policy_fallback: bool | None = None,
+    config: RuntimeAuthorityConfig | None = None,
 ) -> dict[str, Any]:
     """Run both demonstration cases.
 
-    ``worker_mode`` and ``allow_policy_fallback`` default to the same environment
-    resolution as :func:`run_case`, so a deployment that disables the fallback
-    fails closed here too instead of silently degrading.
+    Governance mode comes from the authority configuration bound into the
+    subject, never from the environment. A second resolution path here would
+    have been the exact hazard binding the mode was meant to remove: the
+    subject would attest to one governance backend while this entry point ran
+    another.
     """
-    worker_mode = worker_mode or os.getenv("FORGE_WORKER_MODE", "deterministic")
+    authority = config if config is not None else RuntimeAuthorityConfig()
+    worker_mode = worker_mode or "deterministic"
     if allow_policy_fallback is None:
-        allow_policy_fallback = (
-            os.getenv("FORGE_ALLOW_POLICY_FALLBACK", "true").lower() == "true"
-        )
+        allow_policy_fallback = authority.policy_backend == "deterministic_demo"
     runtime_dir = root / "evidence/runtime"
     for file in (runtime_dir / "events.jsonl", runtime_dir / "report.json"):
         if file.exists():
@@ -390,6 +467,7 @@ def run_demo_scenarios(
         },
         root=root,
         worker_mode=worker_mode,
+        config=authority,
         allow_policy_fallback=allow_policy_fallback,
     )
     high = run_case(
@@ -402,11 +480,12 @@ def run_demo_scenarios(
         },
         root=root,
         worker_mode=worker_mode,
+        config=authority,
         allow_policy_fallback=allow_policy_fallback,
     )
     final_report = EvidenceLedger(
         runtime_dir / "events.jsonl",
-        subject_revision=runtime_revision(root),
+        subject_revision=None,
     ).validate(report_path=runtime_dir / "report.json")
     status = (
         "pass"

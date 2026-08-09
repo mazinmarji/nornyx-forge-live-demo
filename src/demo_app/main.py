@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from pathlib import Path
 
@@ -19,7 +18,34 @@ GOVERNANCE_UNAVAILABLE = (
     "This is a governed refusal, not an application error."
 )
 
-ROOT = Path(os.getenv("FORGE_ROOT", Path.cwd())).resolve()
+def _packaged_root() -> Path:
+    """Where this application is installed. Fixed relationship, not a search.
+
+    Derived here rather than imported from `nornyx_forge`: the HTTP surface may
+    not depend on the governance package, and the architecture gate enforces
+    that by path. `<root>/src/demo_app/main.py` yields `<root>`, in a checkout
+    and under `/app` alike.
+
+    Never the environment and never the launch directory. `FORGE_ROOT` used to
+    choose which tree the application governed, which is authority over subject
+    identity itself; `Path.cwd()` would be the same defect wearing different
+    clothes.
+    """
+    candidate = Path(__file__).resolve().parents[2]
+    missing = [
+        marker
+        for marker in ("src/demo_app", ".nornyx/contracts")
+        if not (candidate / marker).is_dir()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"PACKAGED_ROOT_UNRESOLVED: {candidate} lacks {', '.join(missing)}. "
+            "Refusing to guess which tree this application governs."
+        )
+    return candidate
+
+
+ROOT = _packaged_root()
 STATIC = Path(__file__).resolve().parent / "static"
 STORE = JsonStore(ROOT / ".nornyx/demo-data.json")
 

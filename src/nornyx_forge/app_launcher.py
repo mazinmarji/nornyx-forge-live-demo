@@ -19,18 +19,17 @@ import sys
 APPLICATION_TARGET = "demo_app.main:app"
 
 
-def launch_application(
-    *, port: int, worker_mode: str, allow_policy_fallback: bool
-) -> None:
+def launch_application(*, port: int, worker_mode: str) -> None:
     """Replace this process with the application server. Never returns.
 
     The application is named as a string rather than imported: this adapter
     starts the server, it does not depend on the application it starts.
     """
+    # Worker mode is operational and stays an environment value. Governance
+    # mode deliberately does not: it is bound into the subject, so passing it
+    # ambiently would let the child process run a governance backend the
+    # subject never attested to.
     os.environ["FORGE_WORKER_MODE"] = worker_mode
-    os.environ["FORGE_ALLOW_POLICY_FALLBACK"] = (
-        "true" if allow_policy_fallback else "false"
-    )
     command = [
         sys.executable,
         "-m",

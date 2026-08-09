@@ -42,9 +42,16 @@ def _workspace(tmp_path: Path) -> Path:
     """A throwaway clone, so regeneration never touches the real tree."""
     work = tmp_path / "repo"
     work.mkdir()
-    for item in ("scripts", "src", "docs", ".nornyx"):
-        shutil.copytree(ROOT / item, work / item)
-    shutil.copy2(ROOT / "pyproject.toml", work / "pyproject.toml")
+    for item in ("scripts", "src", "docs", ".nornyx", "tests", ".github"):
+        shutil.copytree(
+            ROOT / item,
+            work / item,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
+        )
+    # The repository scope declares these root files; a fixture missing them
+    # now gets SUBJECT_SCOPE_INCOMPLETE rather than a quietly smaller subject.
+    for item in ("pyproject.toml", ".gitignore", "BRD.md", "Dockerfile", "docker-compose.yml"):
+        shutil.copy2(ROOT / item, work / item)
     subprocess.run(["git", "init", "-q"], cwd=work, check=True, capture_output=True)
     for key, value in (("user.email", "fixture@example.invalid"), ("user.name", "fixture")):
         subprocess.run(["git", "config", key, value], cwd=work, check=True, capture_output=True)

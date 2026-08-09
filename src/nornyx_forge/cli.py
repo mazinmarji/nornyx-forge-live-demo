@@ -10,10 +10,10 @@ from rich.table import Table
 
 from .app_launcher import launch_application
 from .development_flow import DevelopmentFlow
-from .nornyx_runtime import prepare_runtime_contract
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
 from .repo_scout import scout as scout_repositories
 from .requirements import parse_brd, profile_from_brd
+from .runtime_preparation import prepare_runtime_contract
 from .util import write_json
 
 app = typer.Typer(no_args_is_help=True, help="Nornyx Forge live-demo CLI")
@@ -146,11 +146,7 @@ def demo(
             raise typer.Exit(2) from exc
         console.print_json(json.dumps(result))
         raise typer.Exit(0 if result["status"] == "pass" else 2)
-    launch_application(
-        port=port,
-        worker_mode=worker_mode,
-        allow_policy_fallback=not strict_nornyx,
-    )
+    launch_application(port=port, worker_mode=worker_mode)
 
 
 if __name__ == "__main__":

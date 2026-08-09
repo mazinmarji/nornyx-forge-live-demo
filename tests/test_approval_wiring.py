@@ -57,6 +57,17 @@ def _repo(tmp_path: Path) -> Path:
     # scripts/__pycache__ on first run and the governed-tree gate correctly
     # refuses the workspace as dirty.
     shutil.copy2(ROOT / ".gitignore", workspace / ".gitignore")
+    # The repository scope declares these; a fixture missing them now gets
+    # SUBJECT_SCOPE_INCOMPLETE rather than a quietly smaller subject, which is
+    # the control working. Copying them makes the workspace faithful.
+    for extra in ("tests", ".github"):
+        shutil.copytree(
+            ROOT / extra,
+            workspace / extra,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
+        )
+    for extra in ("Dockerfile", "docker-compose.yml", "BRD.md"):
+        shutil.copy2(ROOT / extra, workspace / extra)
     shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
     shutil.copytree(ROOT / "src", workspace / "src")
     _git(workspace, "init", "-q")

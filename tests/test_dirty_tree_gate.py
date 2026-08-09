@@ -45,9 +45,15 @@ def _git(work: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def _workspace(tmp_path: Path) -> Path:
     work = tmp_path / "repo"
     work.mkdir()
-    for item in ("scripts", "src", "tests", "docs", ".nornyx"):
-        shutil.copytree(ROOT / item, work / item)
-    for item in ("pyproject.toml", ".gitignore"):
+    for item in ("scripts", "src", "tests", "docs", ".nornyx", ".github"):
+        shutil.copytree(
+            ROOT / item,
+            work / item,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
+        )
+    # The repository scope declares these; a fixture missing them now gets
+    # SUBJECT_SCOPE_INCOMPLETE rather than a quietly smaller subject.
+    for item in ("pyproject.toml", ".gitignore", "BRD.md", "Dockerfile", "docker-compose.yml"):
         shutil.copy2(ROOT / item, work / item)
     _git(work, "init", "-q")
     _git(work, "config", "user.email", "fixture@example.invalid")
@@ -97,18 +103,16 @@ def _tree_digest(work: Path) -> dict[str, str]:
 def _dirty(work: Path, how: str) -> None:
     if how == "governed source":
         target = work / "src/nornyx_forge/nornyx_runtime.py"
-        target.write_text(target.read_text(encoding="utf-8") + "\n# uncommitted\n", encoding="utf-8")
+        target.write_bytes(target.read_bytes() + b"\n# uncommitted\n")
     elif how == "contract":
         target = work / CONTRACTS / "runtime_network.nyx"
-        target.write_text(target.read_text(encoding="utf-8") + "\n# uncommitted\n", encoding="utf-8")
+        target.write_bytes(target.read_bytes() + b"\n# uncommitted\n")
     elif how == "staged governed change":
         target = work / "scripts/check_architecture.py"
-        target.write_text(target.read_text(encoding="utf-8") + "\n# staged\n", encoding="utf-8")
+        target.write_bytes(target.read_bytes() + b"\n# staged\n")
         _git(work, "add", "scripts/check_architecture.py")
     elif how == "untracked governed input":
-        (work / "src/nornyx_forge/injected_module.py").write_text(
-            "SECRET = 'not in the approved commit'\n", encoding="utf-8"
-        )
+        (work / "src/nornyx_forge/injected_module.py").write_bytes(b"SECRET = 'not in the approved commit'\n")
     else:  # pragma: no cover - guards the parametrization
         raise AssertionError(how)
 
@@ -162,7 +166,7 @@ def test_the_untracked_check_ignores_gitignored_files(tmp_path: Path):
     work = _workspace(tmp_path)
     _install_approval(work)
     (work / ".pytest_cache").mkdir(exist_ok=True)
-    (work / ".pytest_cache/CACHEDIR.TAG").write_text("ignored\n", encoding="utf-8")
+    (work / ".pytest_cache/CACHEDIR.TAG").write_bytes(b"ignored\n")
 
     completed = _run(work, [REFRESH, "--materialize-approval-window"])
     assert "governed tree is dirty" not in (completed.stdout + completed.stderr)

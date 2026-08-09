@@ -47,9 +47,11 @@ def _git(work: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def _workspace(tmp_path: Path) -> Path:
     work = tmp_path / "repo"
     work.mkdir()
-    for item in ("scripts", "src", "docs", ".nornyx"):
-        shutil.copytree(ROOT / item, work / item)
-    for item in ("pyproject.toml", ".gitignore"):
+    for item in ("scripts", "src", "docs", ".nornyx", "tests", ".github"):
+        shutil.copytree(ROOT / item, work / item, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
+    # Declared by the repository scope; omitting them now yields
+    # SUBJECT_SCOPE_INCOMPLETE instead of a smaller subject reported as verified.
+    for item in ("pyproject.toml", ".gitignore", "BRD.md", "Dockerfile", "docker-compose.yml"):
         shutil.copy2(ROOT / item, work / item)
     _git(work, "init", "-q")
     _git(work, "config", "user.email", "fixture@example.invalid")

@@ -1,0 +1,272 @@
+"""Read the governed subject off a filesystem. The only I/O in the chain.
+
+Enumeration is an external observation, so it lives in an adapter rather than
+in the domain value it produces. The domain hashes what it is given; this
+module decides what is there.
+
+Git is not consulted for membership. Bytes coming from the working tree was not
+enough while `git ls-files --others --exclude-standard` still chose which files
+belonged: `GIT_DIR`, `core.excludesFile`, a global ignore file, or a
+`.gitignore` edit could each change the *domain* of the digest without changing
+a byte inside it. Removing environment influence over content while leaving it
+over membership would have been a claim that was only half true.
+
+Every entry point takes an explicit root. Nothing here resolves a root from
+`__file__`, so the same algorithm answers for a repository checkout and for an
+installed application tree — which is what lets a container recompute its own
+subject with no `.git` present.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import subprocess
+from pathlib import Path
+
+import yaml
+
+from .governed_subject import (
+    SETTLED_SCHEMA,
+    GovernedSubjectError,
+    SubjectEntry,
+    SubjectScope,
+    SubjectScopeEscape,
+    SubjectScopeIncomplete,
+    assert_canonical,
+    contract_semantics,
+    digest_bytes,
+    digest_of,
+    is_governed,
+    is_never_governed,
+    manifest_of,
+    normalise_path,
+)
+
+
+def assert_scope_complete(root: Path, scope: SubjectScope) -> None:
+    """Every declared part of the authority surface must be present.
+
+    Checked before anything is hashed, so a missing contract or package is a
+    refusal rather than a smaller subject that reports itself verified. This is
+    the difference between "the complete declared surface was observed" and
+    "the observer hashed whatever existed".
+    """
+    missing = [entry for entry in scope.required_roots if not (root / entry).is_dir()]
+    missing += [entry for entry in scope.required_files if not (root / entry).is_file()]
+    missing += [
+        f".nornyx/contracts/{name}"
+        for name in scope.required_contracts
+        if not (root / ".nornyx/contracts" / name).is_file()
+    ]
+    if missing:
+        raise SubjectScopeIncomplete(
+            f"SUBJECT_SCOPE_INCOMPLETE: scope {scope.scope_id} requires "
+            + ", ".join(sorted(missing))
+            + " but they are not present under this root. Refusing to compute a "
+            "smaller subject and call it verified."
+        )
+
+
+def observe_governed_paths(root: Path, scope: SubjectScope) -> list[str]:
+    """Every governed file present under the scope's roots, by walking them."""
+    found: set[str] = set()
+    for entry in scope.enumeration_entries():
+        location = root / entry
+        if location.is_file():
+            found.add(normalise_path(entry))
+            continue
+        if not location.is_dir():
+            continue
+        for item in location.rglob("*"):
+            relative = normalise_path(item.relative_to(root).as_posix())
+            if is_never_governed(relative) or not is_governed(relative):
+                continue
+            if scope.is_excluded(relative):
+                continue
+            if item.is_dir() and not item.is_symlink():
+                continue
+            found.add(relative)
+    return sorted(found)
+
+
+def assert_scope_closed(root: Path, scope: SubjectScope, covered: set[str]) -> None:
+    """No authority-capable artifact may exist outside what the subject covers.
+
+    Completeness asks "is everything declared present?". This asks the harder
+    question in the other direction: "is anything authority-capable present that
+    the subject does not describe?". Without it, a new runtime module could ship
+    and stay invisible to authority — the same shape as a module the
+    architecture contract never declared.
+
+    The universe is structural, so a file added under a declared root is inside
+    it the moment it exists; there is no second list to forget to update.
+    """
+    escapes: list[str] = []
+    for entry in scope.authority_universe:
+        location = root / entry
+        if location.is_file():
+            candidates = [normalise_path(entry)]
+        elif location.is_dir():
+            candidates = [
+                normalise_path(item.relative_to(root).as_posix())
+                for item in location.rglob("*")
+                if item.is_file() or item.is_symlink()
+            ]
+        else:
+            continue
+        for path in candidates:
+            if is_never_governed(path) or path in covered:
+                continue
+            if scope.is_non_authoritative(path) or not scope.is_authority_capable(path):
+                continue
+            escapes.append(path)
+    if escapes:
+        raise SubjectScopeEscape(
+            f"SUBJECT_SCOPE_ESCAPE: scope {scope.scope_id} leaves "
+            f"authority-capable content outside the subject: "
+            + ", ".join(sorted(set(escapes))[:12])
+            + ". Cover it, or exclude it explicitly with a stated reason."
+        )
+
+
+def observe_input_manifest(root: Path, scope: SubjectScope) -> dict:
+    """Describe every governed file the scope covers: path, size, digest."""
+    assert_scope_complete(root, scope)
+    entries: list[SubjectEntry] = []
+    for path in observe_governed_paths(root, scope):
+        location = root / path
+        if location.is_symlink():
+            # Never silently followed: a symlink under a governed root could
+            # point outside the tree entirely, and a digest quietly describing
+            # somewhere else would be worse than one that refused.
+            raise GovernedSubjectError(
+                f"{path} is a symlink. Governed content must be real files, or "
+                "the digest describes something the tree does not contain."
+            )
+        if not location.exists():
+            raise GovernedSubjectError(
+                f"{path} is listed as governed content but is not present"
+            )
+        if not location.is_file():
+            # A FIFO, device or socket. Reading one is not reproducible and may
+            # not terminate, so the subject cannot be described and this fails
+            # closed rather than hanging.
+            raise GovernedSubjectError(
+                f"{path} is not a regular file, so the subject cannot be "
+                "described honestly."
+            )
+        blob = assert_canonical(path, location.read_bytes())
+        entries.append(SubjectEntry(path=path, sha256=digest_bytes(blob), size=len(blob)))
+
+    covered = {entry.path for entry in entries}
+    covered |= {
+        normalise_path(f".nornyx/contracts/{name}") for name in scope.required_contracts
+    }
+    assert_scope_closed(root, scope, covered)
+    return manifest_of(entries)
+
+
+def observe_contract_documents(contracts_dir: Path) -> dict[str, object]:
+    """Parse each contract. Parsing is I/O-adjacent, so it happens here."""
+    documents: dict[str, object] = {}
+    for path in sorted(contracts_dir.glob("*.nyx")):
+        try:
+            documents[path.name] = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise GovernedSubjectError(
+                f"{path.name} is not parseable, so its semantics cannot be described: {exc}"
+            ) from exc
+    return documents
+
+
+def observe_contract_semantics_digest(contracts_dir: Path) -> str:
+    return digest_of(contract_semantics(observe_contract_documents(contracts_dir)))
+
+
+def observe_settled_contracts(root: Path, contracts_dir: Path, scope: SubjectScope) -> dict:
+    """Every contract exactly as Nornyx will evaluate it. No projection.
+
+    Exact canonical-LF bytes: a comment or a reformat moves this value
+    unnecessarily, but nothing Nornyx treats as authoritative can silently fall
+    outside it. Given that seven excluded fields were measured to change its
+    verdict, that is the right way round — over-sensitivity is a nuisance,
+    under-coverage is a bypass.
+    """
+    entries: list[SubjectEntry] = []
+    # Only the contracts the scope declares. A runtime image carrying an extra
+    # contract must not have it silently folded into the authority surface, and
+    # a missing one is caught by assert_scope_complete rather than shrinking it.
+    for name in sorted(scope.required_contracts):
+        path = contracts_dir / name
+        relative = normalise_path(path.relative_to(root).as_posix())
+        blob = assert_canonical(relative, path.read_bytes())
+        entries.append(SubjectEntry(path=relative, sha256=digest_bytes(blob), size=len(blob)))
+    return manifest_of(entries, schema=SETTLED_SCHEMA)
+
+
+def observe_source_commit(root: Path) -> str | None:
+    """Provenance only, and deliberately isolated from subject construction.
+
+    Nothing this returns reaches either digest. `GIT_DIR` pointing elsewhere
+    yields undesirable provenance, and hardening that is worthwhile — but the
+    decisive property is that it cannot move an authorization, because git has
+    no path into the subject at all.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode:
+        return None
+    candidate = result.stdout.strip()
+    return f"git:{candidate}" if candidate else None
+
+
+def contract_set_digest(contracts_dir: Path, root: Path) -> str:
+    """The settled governance contracts, after synchronisation.
+
+    A separate layer because contracts are downstream of the machine evidence
+    that gets written into them, and upstream of the inspection that reviews the
+    settled result.
+    """
+    entries = [
+        {
+            "path": normalise_path(str(path.relative_to(root))),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size": path.stat().st_size,
+        }
+        for path in sorted(contracts_dir.glob("*.nyx"))
+    ]
+    return digest_of({"schema": "nornyx.forge.contract_set.v1", "entries": entries})
+
+
+def evidence_manifest(
+    evidence_dir: Path, root: Path, *, exclude: tuple[str, ...] = ()
+) -> dict:
+    """Describe the generated evidence set, separately from the content.
+
+    Its own layer, because evidence is derived from governed content and must
+    not be folded back into the digest of the thing it describes.
+    """
+
+    entries: list[dict[str, object]] = []
+    for location in sorted(evidence_dir.glob("*.json")):
+        if location.name in exclude:
+            continue
+        blob = location.read_bytes()
+        entries.append(
+            {
+                "path": normalise_path(str(location.relative_to(root))),
+                "sha256": hashlib.sha256(blob).hexdigest(),
+                "size": len(blob),
+            }
+        )
+    entries.sort(key=lambda entry: entry["path"])
+    return {"schema": "nornyx.forge.evidence_manifest.v1", "entries": entries}

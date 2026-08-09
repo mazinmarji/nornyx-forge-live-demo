@@ -63,7 +63,30 @@ jobs:
       - name: Build the image and start the application
         env:
           FORGE_DOCKER_TESTS: "1"
-        run: python -m pytest tests/test_container_launch.py -q
+        # `-p no:randomly --strict-markers` is not the point here; `-rs` and the
+        # skip assertion below are. This job had no skip census, so if the
+        # runner ever lost its Docker CLI every test would skip, pytest would
+        # exit 0, and the job would stay green having launched nothing — the
+        # exact defect the test job's census exists to prevent, in the one job
+        # the census did not cover.
+        run: |
+          python -m pytest tests/test_container_launch.py tests/test_runtime_image_subject.py -q -rs             --junitxml=container.xml
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          suite = ET.parse("container.xml").getroot()
+          cases = suite.iter("testcase")
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          total = len(list(ET.parse("container.xml").getroot().iter("testcase")))
+          print(f"container job: {total} collected, {len(skipped)} skipped")
+          if skipped:
+              print("These must run in this job; a skip here proves nothing:")
+              for name in skipped:
+                  print(f"  {name}")
+              sys.exit(1)
+          if total == 0:
+              print("no container tests ran at all")
+              sys.exit(1)
+          PY
 
   # Asserts the state this repository is actually in before a human approval
   # exists. It deliberately does NOT assert that the governance contracts

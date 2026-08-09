@@ -45,7 +45,11 @@ def _workspace(tmp_path: Path) -> Path:
     work = tmp_path / "repo"
     work.mkdir()
     for item in ("scripts", "src", "docs", ".nornyx", "tests", ".github"):
-        shutil.copytree(ROOT / item, work / item)
+        shutil.copytree(
+            ROOT / item,
+            work / item,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
+        )
     for item in ("pyproject.toml", ".gitignore", "Dockerfile", "docker-compose.yml", "BRD.md"):
         shutil.copy2(ROOT / item, work / item)
     _git(work, "init", "-q")
@@ -242,9 +246,8 @@ def test_a_human_producer_is_refused_for_a_machine_inspection(tmp_path: Path):
     [
         (
             "authored input changes",
-            lambda w: (w / "src/nornyx_forge/util.py").write_text(
-                (w / "src/nornyx_forge/util.py").read_text(encoding="utf-8") + "\n# x\n",
-                encoding="utf-8",
+            lambda w: (w / "src/nornyx_forge/util.py").write_bytes(
+                (w / "src/nornyx_forge/util.py").read_bytes() + b"\n# x\n"
             ),
         ),
         (
@@ -303,7 +306,7 @@ def test_sync_contracts_after_inspection_makes_it_stale(tmp_path: Path):
 
     # Change an authored input, then let the tool settle contracts again.
     target = work / "src/nornyx_forge/util.py"
-    target.write_text(target.read_text(encoding="utf-8") + "\n# moved\n", encoding="utf-8")
+    target.write_bytes(target.read_bytes() + b"\n# moved\n")
     _git(work, "add", "-A")
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
@@ -326,7 +329,7 @@ def test_regenerating_the_digest_alone_leaves_the_inspection_stale(tmp_path: Pat
     _attest(work)
 
     target = work / "pyproject.toml"
-    target.write_text(target.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8")
+    target.write_bytes(target.read_bytes() + b"\n# drift\n")
     _git(work, "add", "-A")
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
 
@@ -341,7 +344,7 @@ def test_a_fresh_inspection_over_the_new_subject_restores_assurance(tmp_path: Pa
     _attest(work)
 
     target = work / "src/nornyx_forge/util.py"
-    target.write_text(target.read_text(encoding="utf-8") + "\n# new work\n", encoding="utf-8")
+    target.write_bytes(target.read_bytes() + b"\n# new work\n")
     _git(work, "add", "-A")
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0

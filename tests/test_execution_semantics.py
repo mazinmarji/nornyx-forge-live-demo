@@ -34,6 +34,7 @@ import pytest
 
 import demo_app.agentic as agentic
 from demo_app.agentic import CustomerCaseFlow, run_case
+from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -90,7 +91,8 @@ def test_a_kickoff_failure_does_not_replay_the_flow(
         lambda self: replays.append(1) or self.case,
     )
 
-    result = run_case(_case(risk), root=tmp_path, worker_mode="deterministic")
+    result = run_case(_case(risk), root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig("deterministic_demo", "crewai"))
 
     assert replays == [], "the flow was replayed after kickoff began"
     assert result["orchestration_status"] == "failed"
@@ -111,7 +113,8 @@ def test_a_failed_run_does_not_claim_completion(
         raising=False,
     )
 
-    result = run_case(_case(), root=tmp_path, worker_mode="deterministic")
+    result = run_case(_case(), root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig("deterministic_demo", "crewai"))
     assert result["status"] == "failed"
     assert result["orchestration_status"] == "failed"
     # The action never got as far as being attempted, and says so rather than
@@ -121,10 +124,16 @@ def test_a_failed_run_does_not_claim_completion(
     assert any("terminated rather than replayed" in note for note in result["limitations"])
 
 
-def test_strict_mode_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The container sets strict; a failure there must surface, not be absorbed."""
-    monkeypatch.setenv("FORGE_USE_CREWAI_KICKOFF", "true")
-    monkeypatch.setenv("FORGE_STRICT_CREWAI", "true")
+def test_governed_policy_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Under the governed policy a failure must surface, not be absorbed.
+
+    This was `test_strict_mode_still_raises`, keyed on `FORGE_STRICT_CREWAI`.
+    That variable is retired: a boolean in the environment could change which
+    governance path ran while every governed byte — and therefore the whole
+    authority identity — stayed identical. The behaviour is now selected by
+    naming `policy_backend`, and is bound into the subject.
+    """
+    monkeypatch.setenv("FORGE_STRICT_CREWAI", "true")  # hostile; must not decide
     monkeypatch.setattr(agentic, "CREWAI_AVAILABLE", True)
     monkeypatch.setattr(
         CustomerCaseFlow,
@@ -133,7 +142,12 @@ def test_strict_mode_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raising=False,
     )
     with pytest.raises(RuntimeError):
-        run_case(_case(), root=tmp_path, worker_mode="deterministic")
+        run_case(
+            _case(),
+            root=tmp_path,
+            worker_mode="deterministic",
+            config=RuntimeAuthorityConfig("nornyx", "crewai"),
+        )
 
 
 def test_backend_fallback_before_execution_is_still_allowed(
@@ -141,7 +155,8 @@ def test_backend_fallback_before_execution_is_still_allowed(
 ):
     """Choosing sequential *before* anything runs is not a replay."""
     monkeypatch.setenv("FORGE_USE_CREWAI_KICKOFF", "false")
-    result = run_case(_case(), root=tmp_path, worker_mode="deterministic")
+    result = run_case(_case(), root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig("deterministic_demo", "crewai"))
     assert _stages(result).count("execution") == 1
     assert result["orchestration_status"] == "completed"
 
@@ -157,7 +172,8 @@ def test_entering_the_execution_stage_twice_is_refused(tmp_path: Path, no_kickof
     Nothing consumes an approval on the low-risk path, so the ledger cannot be
     what stops a second callable invocation.
     """
-    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic")
+    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic",
+                             allow_policy_fallback=True)
     flow.intake()
     flow.knowledge()
     flow.resolution()
@@ -175,7 +191,8 @@ def test_entering_the_execution_stage_twice_is_refused(tmp_path: Path, no_kickof
 
 def test_a_refused_re_entry_does_not_reach_the_boundary(tmp_path: Path, no_kickoff):
     """No evaluation, no callable, no consumption on a second entry."""
-    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic")
+    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic",
+                             allow_policy_fallback=True)
     flow.intake()
     flow.knowledge()
     flow.resolution()
@@ -194,7 +211,8 @@ def test_a_refused_re_entry_does_not_reach_the_boundary(tmp_path: Path, no_kicko
 
 def test_the_guard_is_one_way(tmp_path: Path, no_kickoff):
     """Never reset, so no recovery path can re-arm it."""
-    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic")
+    flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic",
+                             allow_policy_fallback=True)
     flow.intake()
     flow.knowledge()
     flow.resolution()
@@ -214,7 +232,8 @@ def test_a_second_flow_for_the_same_mission_is_a_new_attempt(tmp_path: Path, no_
     something recovery code incremented.
     """
     case = _case()
-    first = CustomerCaseFlow(case, root=tmp_path, worker_mode="deterministic")
+    first = CustomerCaseFlow(case, root=tmp_path, worker_mode="deterministic",
+                             allow_policy_fallback=True)
     first.run_sequential()
     assert first.attempt == 1
 
@@ -222,7 +241,8 @@ def test_a_second_flow_for_the_same_mission_is_a_new_attempt(tmp_path: Path, no_
     # append to the first's and look like a replay of it.
     retry = deepcopy(_case())
     retry["attempt"] = 2
-    second = CustomerCaseFlow(retry, root=tmp_path, worker_mode="deterministic")
+    second = CustomerCaseFlow(retry, root=tmp_path, worker_mode="deterministic",
+                              allow_policy_fallback=True)
     assert second.attempt == 2
     assert second._execution_entered is False
     second.run_sequential()
@@ -239,7 +259,8 @@ def test_recovery_never_increments_the_attempt(tmp_path: Path, monkeypatch: pyte
         lambda self: (_ for _ in ()).throw(RuntimeError("died")),
         raising=False,
     )
-    result = run_case(_case(), root=tmp_path, worker_mode="deterministic")
+    result = run_case(_case(), root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig("deterministic_demo", "crewai"))
     assert result["attempt"] == 1
 
 

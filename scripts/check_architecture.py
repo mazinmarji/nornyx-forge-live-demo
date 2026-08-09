@@ -253,6 +253,15 @@ forbidden = {
     "src/nornyx_forge/policy.py": {"fastapi", "demo_app"},
     "src/nornyx_forge/nornyx_runtime.py": {"fastapi", "demo_app"},
     "src/demo_app/agentic.py": {"fastapi", "demo_app.store"},
+    # Module-specific purity, stronger than anything the layer rules impose.
+    # Other domain modules legitimately touch a filesystem or SQLite; this one
+    # must not, because a subject primitive able to reach ambient state could
+    # rediscover its own authority — the re-resolution the model exists to
+    # remove. Verified by injecting `subprocess` and requiring a failure.
+    "src/nornyx_forge/governed_subject.py": {
+        "subprocess", "os", "pathlib", "shutil", "socket", "urllib",
+        "requests", "httpx", "yaml", "sqlite3", "tempfile",
+    },
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative
@@ -273,7 +282,10 @@ for relative, banned in forbidden.items():
 # Interface and application modules must delegate process execution. The
 # governance module (nornyx CLI) and infrastructure adapters (claude CLI) are the
 # declared places where an external process may be started.
-DELEGATING_LAYERS = {"layer.interface", "layer.application"}
+# A domain process-execution prohibition, not a general purity rule: domain
+# modules here still legitimately open files and SQLite. What none of them may
+# do is start a process, and the previous set let one do so unremarked.
+DELEGATING_LAYERS = {"layer.interface", "layer.application", "layer.domain"}
 PROCESS_MODULES = {"subprocess", "pty"}
 PROCESS_CALLS = {
     "os.system",

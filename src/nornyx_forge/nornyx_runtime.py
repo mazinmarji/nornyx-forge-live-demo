@@ -4,9 +4,7 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sqlite3
-import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -20,15 +18,11 @@ from .approval_trust import (
     canonical_grant_payload,
     verify_signed_approval,
 )
-from .models import GateResult
+from .governed_subject import RuntimeSubject
 from .util import write_json
 
 RUNTIME_CONTRACT = ".nornyx/contracts/runtime_network.nyx"
-_UNBOUND_REVISION = "git:unbound"
 _REVISION_RE = re.compile(r"^(?:git:[0-9a-f]{40}|git:[0-9a-f]{64}|sha256:[0-9a-f]{64})$")
-_SUBJECT_REVISION_RE = re.compile(
-    r"^\s{2}subject_revision:\s*(\S+)\s*$", re.MULTILINE
-)
 
 
 def runtime_as_of(explicit: str | None = None) -> str:
@@ -60,54 +54,7 @@ def runtime_as_of(explicit: str | None = None) -> str:
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def runtime_revision(root: Path | None = None) -> str:
-    """Return the governed subject revision the runtime contract declares.
-
-    The contract is the only source. There is deliberately no environment
-    override: one existed, and setting it re-aimed a human approval issued for
-    one revision onto a different one — the contract said B, the approval said
-    A, and the variable made the runtime agree with the approval.
-
-    Returns ``git:unbound`` when no contract is present, which keeps evidence
-    honestly labelled rather than claiming a binding that does not exist.
-    """
-
-    contract = (root or Path.cwd()) / RUNTIME_CONTRACT
-    try:
-        text = contract.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        # An unreadable or non-UTF-8 contract yields an honest "unbound" rather
-        # than raising out of an evidence-labelling path.
-        return _UNBOUND_REVISION
-    for match in _SUBJECT_REVISION_RE.finditer(text):
-        candidate = match.group(1).strip().strip("\"'")
-        if _REVISION_RE.fullmatch(candidate):
-            return candidate
-    return _UNBOUND_REVISION
-
-
-def actual_revision(root: Path) -> str | None:
-    """The revision actually checked out, read from git and nothing else.
-
-    Returns None when git cannot answer — a deployed artifact has no ``.git``,
-    and claiming a verified revision there would be worse than admitting the
-    check could not run.
-    """
-
-    result = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if result.returncode:
-        return None
-    candidate = "git:" + result.stdout.strip()
-    return candidate if _REVISION_RE.fullmatch(candidate) else None
-
-
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-
 
 def evidence_storage_key(value: str) -> str:
     """A filesystem-safe, collision-resistant key for a caller-supplied id.
@@ -176,8 +123,13 @@ def normalize_risk(value: object) -> str:
 #: Why a revision-bound consequential release was refused. Distinct codes,
 #: because "I checked and it is wrong" and "I could not check" are different
 #: facts and a reviewer must not have to guess which one happened.
-GOVERNED_REVISION_MISMATCH = "GOVERNED_REVISION_MISMATCH"
-GOVERNED_REVISION_UNVERIFIED = "GOVERNED_REVISION_UNVERIFIED"
+#: The runtime cannot establish what it is, so nothing consequential may run.
+SUBJECT_UNVERIFIED = "SUBJECT_UNVERIFIED"
+#: An authenticated grant describes a different subject than the one running.
+#: Deliberately generic: distinguishing "stale assurance" from "different
+#: subject" would require both identities as authenticated claims, and a falsely
+#: precise diagnostic is worse than an honest broad one.
+APPROVAL_SUBJECT_MISMATCH = "APPROVAL_SUBJECT_MISMATCH"
 
 #: The grant was not signed by a key the trust store vouches for. Distinct from
 #: HUMAN_APPROVAL_REQUIRED: one says nobody approved, the other says someone
@@ -187,23 +139,24 @@ APPROVAL_NOT_AUTHENTICATED = "APPROVAL_NOT_AUTHENTICATED"
 
 @dataclass(frozen=True)
 class RuntimeContext:
-    """The facts governed authority depends on, and where each one comes from.
+    """Evaluation time, and where it comes from.
 
-    Three revision facts are kept deliberately apart, and never collapsed into
-    one value:
+    This carried three revision facts — what git said was checked out, what the
+    contract claimed to govern, and whether those agreed. All three are gone.
+    The comparison could not succeed: a contract cannot contain the hash of the
+    commit that contains it, so `declared == actual` was false at every commit,
+    and the only state where it passed was an uncommitted working tree — which
+    is precisely the dirty tree the same system refuses.
 
-    ``actual_revision``    what git says is checked out, or None if it cannot say
-    ``declared_revision``  what the contract claims to govern
-    ``revision_verified``  whether those were compared and agreed
+    Identity is now content, carried by ``RuntimeSubject`` and established once
+    at startup rather than rediscovered here. Git remains available as
+    provenance through ``subject_observer.observe_source_commit``, and reaches
+    no decision.
 
-    Collapsing them is how the earlier version failed open. It returned the
-    contract's claim whenever git was unavailable, so a container with no
-    ``.git`` reported a revision it had no way to confirm, and a stale contract
-    could tell the runtime which revision to believe it was running.
-
-    Time and revision were also readable from the process environment. They are
-    not any more: production builds this from trusted sources, a test builds one
-    with :meth:`for_test`, and the difference is visible where it is constructed.
+    Time is still a governed fact and still comes from trusted sources:
+    production builds this with :meth:`trusted`, a test with :meth:`for_test`,
+    and the difference is visible where it is constructed rather than readable
+    from the environment.
     """
 
     root: Path
@@ -235,58 +188,16 @@ class RuntimeContext:
     def now(self) -> str:
         return runtime_as_of(self.pinned_at)
 
-    @property
-    def actual_revision(self) -> str | None:
-        """What is really checked out. None when git cannot answer."""
-        if self.pinned_revision is not None:
-            return self.pinned_revision
-        return actual_revision(self.root)
-
-    @property
-    def declared_revision(self) -> str:
-        """What the contract claims to govern. A claim, never a verification."""
-        return runtime_revision(self.root)
-
-    @property
-    def revision_verified(self) -> bool:
-        """True only when the checkout was derived AND agrees with the contract.
-
-        A pinned test revision counts as verified: the test is the authority for
-        its own fixture, and it had to say so explicitly at the seam.
-        """
-        if self.pinned_revision is not None:
-            return True
-        actual = self.actual_revision
-        if actual is None:
-            return False
-        declared = self.declared_revision
-        return declared == _UNBOUND_REVISION or declared == actual
-
-    def revision_refusal(self) -> tuple[str, str] | None:
-        """Why revision-bound authority cannot be exercised here, if it cannot.
-
-        Returns ``(code, reason)`` or None. Called only on the approval-bound
-        path: an unverifiable revision must not stop the application starting or
-        a low-risk demo running, because neither borrows authority from it.
-        """
-        if self.revision_verified:
-            return None
-        actual = self.actual_revision
-        if actual is None:
-            return (
-                GOVERNED_REVISION_UNVERIFIED,
-                "the checked-out revision could not be derived independently "
-                "(no git metadata, as in a built container), so the contract's "
-                "claim about what it governs cannot be confirmed. The "
-                "application runs; revision-bound consequential authority does "
-                "not.",
-            )
-        return (
-            GOVERNED_REVISION_MISMATCH,
-            f"the contract declares it governs {self.declared_revision} but the "
-            f"checkout is {actual}. Refusing to act on a revision the governed "
-            "subject does not describe.",
-        )
+    # The revision model is gone, not deprecated in place. `actual_revision`
+    # shelled out to git from a domain module, and `revision_verified` compared
+    # a contract's claim against it — a comparison that was false at every
+    # commit, because a contract cannot contain the hash of the commit that
+    # contains it. The only state where it passed was an uncommitted working
+    # tree, which is precisely the dirty tree the same system refuses.
+    #
+    # Authority is now content: `RuntimeSubject.governed_subject_digest`,
+    # established once at startup and injected here. Git provenance lives in
+    # `subject_observer.observe_source_commit` and reaches no decision.
 
 
 #: Risk levels that require an action-specific human approval, never merely a
@@ -367,10 +278,19 @@ class ActionRequest:
 
     request_id: str
     mission_id: str
+    #: The authority subject this attempt is bound to. Named `subject_revision`
+    #: for continuity with the field an approval already signs; it now holds a
+    #: content digest rather than a git commit, because a commit could not
+    #: identify what would execute.
     subject_revision: str
     capability: str
     action: ActionDescriptor
     attempt_id: str = ""
+    #: Which authority surface the subject describes, and the revision anchor it
+    #: was produced from. Both covered by the request digest, so a grant cannot
+    #: be re-aimed at a different scope or a different assurance state.
+    subject_scope_id: str = ""
+    governed_revision_digest: str = ""
 
     @property
     def destination(self) -> str:
@@ -432,6 +352,8 @@ def canonical_action_request(
     subject_revision: str,
     descriptor: ActionDescriptor | None = None,
     attempt: int = 1,
+    subject_scope_id: str = "",
+    governed_revision_digest: str = "",
 ) -> ActionRequest:
     """The request the runtime will authorize for this execution context.
 
@@ -443,6 +365,8 @@ def canonical_action_request(
         capability=exercised_capability(risk),
         subject_revision=subject_revision,
         descriptor=descriptor,
+        subject_scope_id=subject_scope_id,
+        governed_revision_digest=governed_revision_digest,
         attempt=attempt,
     )
 
@@ -476,6 +400,8 @@ def _canonical_action_request(
     subject_revision: str,
     descriptor: ActionDescriptor | None,
     attempt: int = 1,
+    subject_scope_id: str = "",
+    governed_revision_digest: str = "",
 ) -> ActionRequest:
     """Describe the act being executed, from the execution context itself.
 
@@ -492,6 +418,8 @@ def _canonical_action_request(
         destination=EXTERNAL_TRUST_ZONE,
     )
     return ActionRequest(
+        subject_scope_id=subject_scope_id,
+        governed_revision_digest=governed_revision_digest,
         request_id=canonical_request_id(mission_id),
         attempt_id=canonical_attempt_id(mission_id, attempt),
         mission_id=mission_id,
@@ -828,89 +756,6 @@ class RuntimeDecision:
         return self.effect == "ALLOW"
 
 
-def prepare_runtime_contract(root: Path, *, as_of: str | None = None) -> list[GateResult]:
-    """Validate, generate, lock, and verify the runtime contract with Nornyx.
-
-    Every step receives the same explicit evaluation instant, including the
-    initial ``check``. Leaving ``check`` on the live clock while the lock steps
-    used a pinned instant meant the two could disagree about whether an approval
-    was still valid.
-
-    The generated artifacts are intentionally outside tracked source. When the
-    CLI is unavailable the caller receives a failed gate rather than a fabricated
-    success.
-    """
-
-    executable = shutil.which("nornyx")
-    if not executable:
-        return [GateResult("nornyx runtime preparation", False, "nornyx CLI not installed", (), 127)]
-    moment = runtime_as_of(as_of)
-    contract = root / RUNTIME_CONTRACT
-    out = root / ".nornyx/runtime"
-    artifacts = out / "control_artifacts"
-    lock = out / "nornyx.agentic_network.lock"
-    out.mkdir(parents=True, exist_ok=True)
-    commands = [
-        (executable, "check", str(contract), "--as-of", moment),
-        (
-            executable,
-            "agentic-network",
-            "generate",
-            str(contract),
-            "--out",
-            str(artifacts),
-            "--as-of",
-            moment,
-        ),
-        (
-            executable,
-            "agentic-network",
-            "lock",
-            str(contract),
-            "--artifacts",
-            str(artifacts),
-            "--out",
-            str(lock),
-            "--as-of",
-            moment,
-        ),
-        (
-            executable,
-            "agentic-network",
-            "lock-check",
-            str(contract),
-            "--lock",
-            str(lock),
-            "--artifacts",
-            str(artifacts),
-            "--as-of",
-            moment,
-        ),
-    ]
-    results: list[GateResult] = []
-    for command in commands:
-        completed = subprocess.run(
-            command,
-            cwd=root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        detail = (completed.stdout + completed.stderr).strip()
-        result = GateResult(
-            name=" ".join(command[1:3]),
-            passed=completed.returncode == 0,
-            detail=detail,
-            command=tuple(command),
-            returncode=completed.returncode,
-        )
-        results.append(result)
-        if not result.passed:
-            break
-    write_json(out / "preparation-report.json", [item.__dict__ for item in results])
-    return results
-
-
 class NornyxActionBoundary:
     """Official Nornyx authorization path with an explicit fallback boundary.
 
@@ -925,10 +770,14 @@ class NornyxActionBoundary:
         *,
         allow_fallback: bool = True,
         runtime_context: RuntimeContext | None = None,
+        runtime_subject: RuntimeSubject | None = None,
         approver_trust_store: ApprovalTrustStore | None = None,
     ) -> None:
         self.root = root
         self.allow_fallback = allow_fallback
+        # Injected, never discovered. A boundary that established its own
+        # subject would let the request influence the authority judging it.
+        self.runtime_subject = runtime_subject
         # Trusted by default, and the only alternative is RuntimeContext.for_test,
         # which a caller must name at the construction site. There is no ambient
         # route to either value.
@@ -967,10 +816,18 @@ class NornyxActionBoundary:
             contract = root / RUNTIME_CONTRACT
             lock = root / ".nornyx/runtime/nornyx.agentic_network.lock"
             if not lock.exists():
-                prepared = prepare_runtime_contract(root, as_of=self.as_of)
-                if not prepared or not all(item.passed for item in prepared):
-                    detail = prepared[-1].detail if prepared else "no preparation result"
-                    raise RuntimeError(detail)
+                # The boundary refuses; it does not repair. Preparing the
+                # runtime contract here meant a consequential boundary could
+                # invoke the Nornyx CLI to manufacture the very lock it was
+                # about to rely on — self-healing its own preconditions, from a
+                # domain module, at authorization time. Preparation is a
+                # startup concern and lives in `runtime_preparation`.
+                raise RuntimeError(
+                    f"RUNTIME_LOCK_MISSING: {lock} does not exist. Run "
+                    "`nornyx-forge prepare-runtime` before serving governed "
+                    "traffic; the action boundary will not create the lock it "
+                    "depends on."
+                )
             authorizer = load_authorizer(contract, lock, validation_as_of=self.as_of)
             context = EvaluationContext(
                 decision_at=self.as_of,
@@ -1058,34 +915,44 @@ class NornyxActionBoundary:
         withheld_code = "HUMAN_APPROVAL_REQUIRED"
         authentication_evidence: dict[str, Any] = {}
         if high_risk and decision.allowed:
-            # First: is the tree what it claims to be? Asked here and nowhere
-            # else, because an unverifiable revision must not stop the
-            # application starting or a low-risk demo running — neither borrows
-            # authority from it. A consequential release does. Asked before
-            # validation and before any ledger claim, so no grant is spent
-            # discovering the tree cannot be confirmed.
-            refusal = self.runtime_context.revision_refusal()
-            if refusal is not None:
-                withheld_code, detail = refusal
-                release_reason = f"{withheld_code}: {detail}"
-            governed_revision = (
-                self.runtime_context.actual_revision if refusal is None else None
-            )
-
-            # Then: build the request from the execution context and validate the
-            # approval against *that*. A caller-supplied request is a claim about
-            # what is being executed, not evidence of it — trusting it let an
-            # approval issued for one mission release another mission's callback,
-            # because every field the approval was checked against came from the
-            # same untrusted object.
-            request = None if governed_revision is None else _canonical_action_request(
-                mission_id=mission_id,
-                capability=capability_name,
-                subject_revision=governed_revision,
-                descriptor=action_descriptor
-                or (action_request.action if action_request is not None else None),
-                attempt=attempt,
-            )
+            # The tree-identity question used to be asked here by comparing a
+            # git checkout against a contract's claim. That comparison is gone:
+            # it was false at every commit, and its only passing state was an
+            # uncommitted working tree. Content identity replaces it, and the
+            # subject carrying it is established once at startup and injected —
+            # R1-D wires it in. Until then this path releases nothing on the
+            # strength of a revision, because there is no revision concept left
+            # to be wrong about.
+            # First: is the subject established? A runtime that cannot say what
+            # it is cannot release a consequential effect. Asked before anything
+            # else, so no grant is spent discovering it.
+            subject = self.runtime_subject
+            if subject is None or not subject.subject_verified:
+                release_reason = (
+                    f"{SUBJECT_UNVERIFIED}: the governed subject is not "
+                    "established, so consequential authority is unavailable. "
+                    + (subject.unavailable_reason or "" if subject else
+                       "no runtime subject was injected into this boundary.")
+                )
+                request = None
+            else:
+                # Then: build the request from the execution context. A
+                # caller-supplied request is a claim about what is executing,
+                # not evidence of it — trusting it let an approval issued for
+                # one mission release another mission's callback.
+                #
+                # Subject identity comes from the established subject, never
+                # from the caller, and is covered by the request digest.
+                request = _canonical_action_request(
+                    mission_id=mission_id,
+                    capability=capability_name,
+                    subject_revision=subject.governed_subject_digest,
+                    subject_scope_id=subject.scope_id,
+                    governed_revision_digest=subject.governed_revision_digest,
+                    descriptor=action_descriptor
+                    or (action_request.action if action_request is not None else None),
+                    attempt=attempt,
+                )
             mismatch = (
                 _request_context_mismatch(action_request, request)
                 if action_request is not None and request is not None
@@ -1167,9 +1034,9 @@ class NornyxActionBoundary:
                 "action_approval_present": _action_approval_present(action_approval),
                 "action_binding": release_reason,
                 "approval_authentication": authentication_evidence,
-                "revision_verified": self.runtime_context.revision_verified,
-                "actual_revision": self.runtime_context.actual_revision,
-                "declared_revision": self.runtime_context.declared_revision,
+                # Revision fields removed with the model that produced them.
+                # `subject_verified` and the governed subject digests replace
+                # them once the runtime subject is injected.
             }
         if withheld and request is not None:
             # Emit the exact request an approver would be signing. Without this

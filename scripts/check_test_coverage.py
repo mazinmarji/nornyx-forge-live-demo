@@ -31,6 +31,12 @@ EXPECTED_SKIPS = {
         "the default offline run. CI exercises it in the container-launch job "
         "instead, so it is covered — just not here."
     ),
+    "requires POSIX symlink and FIFO creation": (
+        "Symlink and FIFO fixtures cannot be built on a Windows workstation "
+        "without elevation. The property is not weakened: every CI test job runs "
+        "Linux and executes these, and a platform-independent test asserts the "
+        "refusals still exist in the observer so a deletion cannot hide here."
+    ),
 }
 
 
