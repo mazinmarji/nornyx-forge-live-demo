@@ -10,6 +10,7 @@ from rich.table import Table
 
 from .app_launcher import launch_application
 from .development_flow import DevelopmentFlow
+from .governed_subject import RuntimeAuthorityConfig
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
 from .repo_scout import scout as scout_repositories
 from .requirements import parse_brd, profile_from_brd
@@ -118,11 +119,22 @@ def demo(
 
         from .nornyx_runtime import NornyxRuntimeUnavailable
 
+        # Mode is parsed here, at the command boundary, into the typed config
+        # that gets bound into the subject. `--strict-nornyx` selects the
+        # governed backend, which refuses when Nornyx cannot authorize —
+        # including when no human approval exists, as on this branch. The
+        # default names the deterministic demo backend rather than relying on an
+        # ambient fallback, so the run cannot claim Nornyx governance while
+        # executing something else.
+        config = RuntimeAuthorityConfig(
+            policy_backend="nornyx" if strict_nornyx else "deterministic_demo",
+            execution_backend="sequential",
+        )
         try:
             result = run_demo_scenarios(
                 Path.cwd(),
                 worker_mode=worker_mode,
-                allow_policy_fallback=not strict_nornyx,
+                config=config,
             )
         except NornyxRuntimeUnavailable as exc:
             # Fail closed and legibly: no capability was authorized, so nothing ran.

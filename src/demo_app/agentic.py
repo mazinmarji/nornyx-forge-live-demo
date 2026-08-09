@@ -47,6 +47,24 @@ except Exception:  # pragma: no cover - optional dependency
         return lambda fn: fn
 
 
+def demonstration_authority() -> RuntimeAuthorityConfig:
+    """The mode this demonstration runs in, named rather than defaulted.
+
+    Exposed here so the HTTP surface never imports `nornyx_forge`: the
+    architecture gate forbids that edge by path, because the API reaching the
+    governance package directly is how the action boundary stops being the only
+    route to a consequential effect.
+
+    A deployment wanting governed authorization selects "nornyx" and receives a
+    refusal when Nornyx cannot authorize — which is the honest outcome while no
+    human approval exists.
+    """
+    return RuntimeAuthorityConfig(
+        policy_backend="deterministic_demo",
+        execution_backend="sequential",
+    )
+
+
 class ExecutionBackendUnavailable(RuntimeError):
     """The requested execution backend cannot actually run."""
 

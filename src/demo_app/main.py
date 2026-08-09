@@ -9,7 +9,12 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agentic import NornyxRuntimeUnavailable, run_case, run_demo_scenarios
+from .agentic import (
+    NornyxRuntimeUnavailable,
+    demonstration_authority,
+    run_case,
+    run_demo_scenarios,
+)
 from .store import JsonStore
 
 GOVERNANCE_UNAVAILABLE = (
@@ -46,6 +51,17 @@ def _packaged_root() -> Path:
 
 
 ROOT = _packaged_root()
+
+#: Established once, at startup. Every request reuses this exact object: a
+#: per-request bootstrap would let a file changed between two calls re-aim the
+#: second one, and would re-read the environment each time.
+#:
+#: The mode is named rather than inherited from an ambient default. This is the
+#: demonstration surface, so it runs the deterministic backend and says so; a
+#: deployment wanting governed authorization selects "nornyx" here and gets a
+#: refusal when Nornyx cannot authorize, which is the honest outcome when no
+#: human approval exists.
+AUTHORITY = demonstration_authority()
 STATIC = Path(__file__).resolve().parent / "static"
 STORE = JsonStore(ROOT / ".nornyx/demo-data.json")
 
@@ -126,7 +142,7 @@ def create_case(payload: CaseInput):
         "timeline": [],
     }
     try:
-        case = run_case(case, root=ROOT)
+        case = run_case(case, root=ROOT, config=AUTHORITY)
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,
@@ -153,7 +169,7 @@ def get_case(case_id: str):
 @app.post("/api/demo/run")
 def run_demo():
     try:
-        result = run_demo_scenarios(ROOT)
+        result = run_demo_scenarios(ROOT, config=AUTHORITY)
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,
