@@ -19,8 +19,12 @@ import ast
 import json
 from pathlib import Path
 
-import tomllib
 import yaml
+
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # 3.10, which `requires-python` still supports
+    tomllib = None
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / ".nornyx/contracts/architecture_governance.nyx"
@@ -76,6 +80,30 @@ declared_modules = {item["id"]: item for item in architecture.get("modules", [])
 declared_layers = {item["id"]: item for item in architecture.get("layers", [])}
 module_by_name = {item["name"]: item for item in declared_modules.values()}
 
+def _console_scripts_without_tomllib(path: Path) -> dict[str, str]:
+    """Read `[project.scripts]` on Python 3.10, which has no `tomllib`.
+
+    Deliberately narrow: it reads one table of `name = "module:attr"` entries
+    from a file this repository owns, and understands nothing else. Anything it
+    cannot parse is left out, and an empty result is reported as a violation by
+    the caller rather than passing as "no entrypoints to protect".
+    """
+    scripts: dict[str, str] = {}
+    in_section = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_section = stripped == "[project.scripts]"
+            continue
+        if not in_section or "=" not in stripped or stripped.startswith("#"):
+            continue
+        name, _, target = stripped.partition("=")
+        value = target.strip().strip('"').strip("'")
+        if value:
+            scripts[name.strip()] = value
+    return scripts
+
+
 def _console_entrypoints() -> set[str]:
     """Modules `pyproject.toml` installs as console scripts.
 
@@ -93,8 +121,18 @@ def _console_entrypoints() -> set[str]:
             "determined and the entrypoint rule cannot be applied"
         )
         return set()
-    with path.open("rb") as handle:
-        scripts = tomllib.load(handle).get("project", {}).get("scripts", {})
+
+    if tomllib is not None:
+        with path.open("rb") as handle:
+            scripts = tomllib.load(handle).get("project", {}).get("scripts", {})
+    else:
+        scripts = _console_scripts_without_tomllib(path)
+
+    if not scripts:
+        violations.append(
+            "pyproject.toml declares no console script, so the rule that nothing "
+            "may depend on an entrypoint is not being applied to anything"
+        )
     return {target.split(":", 1)[0] for target in scripts.values()}
 
 

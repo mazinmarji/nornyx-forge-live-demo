@@ -225,6 +225,91 @@ def test_nothing_may_depend_on_the_console_entrypoint(tmp_path: Path):
     assert "console entrypoint" in _violations(report)
 
 
+BLOCK_TOMLLIB = """
+import sys, runpy
+
+class _NoTomllib:
+    def find_spec(self, name, path=None, target=None):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        return None
+
+sys.meta_path.insert(0, _NoTomllib())
+try:
+    runpy.run_path("scripts/check_architecture.py", run_name="__main__")
+except SystemExit as exit_code:
+    sys.exit(exit_code.code)
+"""
+
+
+def test_the_gate_behaves_the_same_without_tomllib(tmp_path: Path):
+    """The 3.10 path must reach the same verdict as the 3.11+ one.
+
+    `requires-python` allows 3.10, where `tomllib` does not exist. The gate
+    imported it unconditionally, so on 3.10 it died before emitting anything and
+    CI reported only "architecture checker did not emit JSON" — the gate was not
+    failing the architecture, it was failing to run. Two readers are two chances
+    to disagree, so both are driven end to end and required to match.
+    """
+    work = _workspace(tmp_path)
+    code, report = _gate(work)
+
+    blocked = subprocess.run(
+        [sys.executable, "-c", BLOCK_TOMLLIB], cwd=work, capture_output=True, text=True
+    )
+    assert blocked.stdout, blocked.stderr
+    assert blocked.returncode == code
+    assert json.loads(blocked.stdout) == report
+
+
+def test_the_digest_ignores_working_tree_line_endings(tmp_path: Path):
+    """Governed content is what git stores, not what one machine's disk holds.
+
+    `.gitattributes` normalises this repository to LF. A Windows editor that
+    writes CRLF leaves a working copy whose bytes no checkout will ever contain,
+    and `git status` stays quiet because it compares normalised content — so the
+    digest described content that existed nowhere, verified on the machine that
+    generated it, and failed on every Linux runner.
+    """
+    work = tmp_path / "repo"
+    work.mkdir()
+    (work / "scripts").mkdir()
+    shutil.copy2(ROOT / "scripts/governed_content.py", work / "scripts/governed_content.py")
+    (work / ".gitattributes").write_text("* text=auto eol=lf\n", encoding="utf-8")
+    (work / "pyproject.toml").write_bytes(b'[project]\nname = "x"\n')
+    (work / "BRD.md").write_bytes(b"line one\nline two\n")
+
+    for command in (
+        ["init", "-q"],
+        ["config", "user.email", "fixture@example.invalid"],
+        ["config", "user.name", "fixture"],
+        ["add", "-A"],
+        ["commit", "-qm", "fixture"],
+    ):
+        subprocess.run(["git", *command], cwd=work, check=True, capture_output=True)
+
+    def digest() -> str:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.path.insert(0,'scripts');"
+                "import governed_content as g;"
+                "print(g.digest_of(g.governed_input_manifest()))",
+            ],
+            cwd=work,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return completed.stdout.strip()
+
+    before = digest()
+    # Rewrite the working copy with CRLF, exactly as a Windows editor would.
+    (work / "BRD.md").write_bytes(b"line one\r\nline two\r\n")
+    assert digest() == before, "the digest followed the working tree, not the index"
+
+
 def test_the_entrypoint_is_read_from_packaging_metadata():
     """One recorded fact, not a second copy in the contract to disagree with it."""
     gate = (ROOT / GATE).read_text(encoding="utf-8")

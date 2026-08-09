@@ -274,6 +274,11 @@ def test_moving_the_subject_makes_the_inspection_stale(
     assert _inspected(work), f"{label}: the fixture must start inspected"
 
     mutate(work)
+    # Staged, because "the content changed" means the content git holds changed.
+    # The digest is computed over the index so it is identical on every
+    # platform; an unstaged edit is drift from governed content, which
+    # verification reports separately and by name.
+    _git(work, "add", "-A")
 
     state = _assurance(work)
     assert state["assurance_state"] == "not_independently_inspected", label
@@ -299,6 +304,7 @@ def test_sync_contracts_after_inspection_makes_it_stale(tmp_path: Path):
     # Change an authored input, then let the tool settle contracts again.
     target = work / "src/nornyx_forge/util.py"
     target.write_text(target.read_text(encoding="utf-8") + "\n# moved\n", encoding="utf-8")
+    _git(work, "add", "-A")
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
 
@@ -321,6 +327,7 @@ def test_regenerating_the_digest_alone_leaves_the_inspection_stale(tmp_path: Pat
 
     target = work / "pyproject.toml"
     target.write_text(target.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8")
+    _git(work, "add", "-A")
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
 
     state = _assurance(work)
@@ -335,6 +342,7 @@ def test_a_fresh_inspection_over_the_new_subject_restores_assurance(tmp_path: Pa
 
     target = work / "src/nornyx_forge/util.py"
     target.write_text(target.read_text(encoding="utf-8") + "\n# new work\n", encoding="utf-8")
+    _git(work, "add", "-A")
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
     assert _run(work, REFRESH, "--sync-contracts").returncode == 0
     assert not _inspected(work)

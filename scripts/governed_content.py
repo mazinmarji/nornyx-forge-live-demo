@@ -139,6 +139,56 @@ def _is_governed(path: str) -> bool:
     return not any(path.startswith(prefix) for prefix in EXCLUDED_PREFIXES)
 
 
+def _staged_contents(paths: list[str]) -> dict[str, bytes]:
+    """Governed content as git stores it, which is what any checkout contains.
+
+    Read from the index rather than the working tree, because the two can differ
+    in bytes while git still calls the tree clean. `.gitattributes` normalises
+    this repository to LF, so a Windows editor that writes CRLF leaves a working
+    copy whose bytes no checkout will ever hold — and `git status` stays silent,
+    because it compares normalised content.
+
+    Hashing the working copy therefore produced evidence describing content that
+    did not exist anywhere, and it failed on a Linux runner every time while
+    verifying cleanly on the machine that generated it. Reading the index makes
+    the digest identical on every platform and equal to what a reviewer fetches.
+    """
+    if not paths:
+        return {}
+
+    request = b"".join(b":" + path.encode("utf-8") + b"\n" for path in paths)
+    result = subprocess.run(
+        ["git", "-C", str(ROOT), "cat-file", "--batch"],
+        input=request,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode:
+        raise GovernedContentError(
+            f"git cat-file failed: {result.stderr.decode('utf-8', 'replace').strip()}"
+        )
+
+    contents: dict[str, bytes] = {}
+    stream = result.stdout
+    offset = 0
+    for path in paths:
+        end = stream.find(b"\n", offset)
+        if end < 0:
+            raise GovernedContentError(f"git cat-file gave no record for {path}")
+        header = stream[offset:end].decode("utf-8", "replace").split()
+        offset = end + 1
+        if len(header) < 3 or header[1] != "blob":
+            raise GovernedContentError(
+                f"{path} is tracked as governed content but the index holds no "
+                f"blob for it ({' '.join(header)})"
+            )
+        size = int(header[2])
+        contents[path] = stream[offset : offset + size]
+        offset += size + 1  # the record's trailing newline
+    return contents
+
+
 def governed_input_manifest() -> dict:
     """Describe every governed file: path, size, digest. Deterministically.
 
@@ -147,11 +197,15 @@ def governed_input_manifest() -> dict:
     it says so explicitly rather than folding them into a digest.
     """
 
+    governed = [
+        path
+        for path in (_normalise(raw) for raw in _git_lines("ls-files", "--", *GOVERNED_INPUT_PATHS))
+        if _is_governed(path)
+    ]
+    staged = _staged_contents(governed)
+
     entries: list[dict[str, object]] = []
-    for raw in _git_lines("ls-files", "--", *GOVERNED_INPUT_PATHS):
-        path = _normalise(raw)
-        if not _is_governed(path):
-            continue
+    for path in governed:
         location = ROOT / path
         if location.is_symlink():
             # Never silently followed: a symlink under a governed path could
@@ -167,7 +221,7 @@ def governed_input_manifest() -> dict:
             raise GovernedContentError(
                 f"{path} is tracked as governed content but is not present"
             )
-        blob = location.read_bytes()
+        blob = staged[path]
         entries.append(
             {
                 "path": path,

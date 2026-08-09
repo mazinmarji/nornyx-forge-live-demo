@@ -26,6 +26,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import governed_content as _digest_scope  # noqa: E402
 from governed_content import (  # noqa: E402
     GovernedContentError,
     contract_set_digest,
@@ -1307,6 +1308,32 @@ def _git_lines(*args: str) -> list[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
+def _unstaged_governed_paths() -> list[str]:
+    """Paths the digest covers whose working copy differs from what git holds.
+
+    The digest is computed over the index, so it is identical on every platform
+    and equal to what a reviewer fetches. The cost is that an unstaged edit
+    cannot move it, and this is the check that closes that gap.
+
+    Scoped to `governed_content`'s path set, not the one defined below. The two
+    are deliberately different -- the dirty-tree gate also watches `docs/`,
+    `CLAUDE.md` and the contracts, none of which the digest covers -- and the
+    contracts in particular are rewritten by this tool during a normal run, so
+    borrowing the wider set would report the tool's own output as drift.
+    """
+    roots = list(_digest_scope.GOVERNED_INPUT_PATHS)
+    excluded = _digest_scope.EXCLUDED_PREFIXES
+    try:
+        changed = _git_lines("diff", "--name-only", "--", *roots)
+    except Exception:  # pragma: no cover - a git failure is reported elsewhere
+        return []
+    return sorted(
+        path
+        for path in (name.replace("\\", "/").strip() for name in changed)
+        if path and not any(path.startswith(prefix) for prefix in excluded)
+    )
+
+
 def _dirty_governed_inputs() -> tuple[list[str], list[str]]:
     """Return governed paths modified against HEAD, and untracked ones."""
     paths = list(GOVERNED_INPUT_PATHS)
@@ -1569,6 +1596,25 @@ def derive_assurance_state() -> dict:
         "problems": [],
     }
 
+    # The digest describes the content git holds, which is what a reviewer
+    # fetches and what every checkout contains. That makes it identical on
+    # every platform, and it means an unstaged edit cannot move it — so the
+    # divergence is reported here, by name.
+    #
+    # Naming the files beats a changed digest anyway: "these paths are not what
+    # the evidence describes" is actionable, where two hashes that differ is a
+    # puzzle. What must never happen is neither.
+    unstaged = _unstaged_governed_paths()
+    if unstaged:
+        state["governed_input_match"] = False
+        state["problems"].append(
+            "the working tree does not hold the governed content the evidence "
+            "describes at: "
+            + ", ".join(unstaged)
+            + ". Stage or restore these paths; the digest covers committed content, "
+            "so an unstaged edit is invisible to it."
+        )
+
     # Every artifact carries the content it was produced against, in its own
     # bytes. An artifact naming a different digest inspected something else.
     for location in sorted(EVIDENCE_DIR.glob("*.json")):
@@ -1710,6 +1756,21 @@ def verify() -> list[str]:
     # passed for a binding one commit stale and twenty commits stale alike.
     # Evidence at HEAD claimed to describe a revision while src/, tests/ and
     # .github/ had all changed since, and nothing could see it.
+    # The digest describes the content git holds, so an unstaged edit cannot
+    # move it. Reported here, by name, and gating: `derive_assurance_state`
+    # records the same fact but only the problems returned from this function
+    # decide the exit code, so a check that lived only there would be printed
+    # and ignored.
+    unstaged = _unstaged_governed_paths()
+    if unstaged:
+        problems.append(
+            "the working tree does not hold the governed content the evidence "
+            "describes at: "
+            + ", ".join(unstaged)
+            + ". Stage or restore these paths; the digest covers the content git "
+            "holds, so an unstaged edit is invisible to it."
+        )
+
     recorded = str(index.get("governed_input_digest", ""))
     if not recorded:
         problems.append(

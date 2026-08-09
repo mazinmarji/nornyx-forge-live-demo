@@ -144,7 +144,12 @@ def test_mutating_governed_content_invalidates_the_evidence(
 
 
 def test_a_staged_but_uncommitted_change_invalidates_the_binding(tmp_path: Path):
-    """The digest is over content on disk, not over what has been committed."""
+    """Staging is enough to move it; the digest does not wait for a commit.
+
+    It is computed over the index rather than the working tree, so it is the
+    same on every platform and equal to what a reviewer fetches. Staged-but-
+    uncommitted content is already in the index, so it counts.
+    """
     work = _workspace(tmp_path)
     _generate(work)
 
