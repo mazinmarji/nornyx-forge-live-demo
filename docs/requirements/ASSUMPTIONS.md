@@ -4,7 +4,7 @@ Assumptions recorded during the autonomous demonstration run, as required by
 `CLAUDE.md`. Each entry states the ambiguity, the resolution taken, and the BRD
 requirement it serves. None of these invent a regulatory or business requirement.
 
-Run subject revision: `git:8a8fea6ac5068a6a359dfc407489264576329054`
+Run subject: identified by content, not by commit. See `governed_revision_digest` and `governed_subject_digest` in the current evidence set. A commit hash stood here and went stale the moment the next commit landed, which is a small instance of exactly why A-011 was superseded: a document cannot name the revision it is part of.
 Assurance mode: `autonomous_demonstration` — `human_review: not_performed`.
 
 ## A-001 Foundation selection

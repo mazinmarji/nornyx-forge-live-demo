@@ -66,8 +66,13 @@ Prerequisites:
 - Claude Code installed and authenticated
 
 Then paste [`ONE_PROMPT.md`](ONE_PROMPT.md) into Claude Code. The current
-session uses its Agent subagents directly, writes independent review evidence,
-and runs the in-session bootstrap without a separate model API key.
+session uses its Agent subagents directly, records their review findings, and
+runs the in-session bootstrap without a separate model API key. Those findings
+are a self-reported observation, not an independent inspection: independence
+requires an attestation signed by a reviewer who is not the builder, verified
+against a trust store outside this repository. Without one the evidence set
+reports `assurance_state: not_independently_inspected`, which is its current
+state.
 
 The workflow generates `.nornyx/generated/brd_contract.nyx`, creates evidence under `.nornyx/runs/`, requires strict Nornyx/CrewAI execution in the installed path, launches the application, and prints:
 

@@ -90,6 +90,7 @@ REQUIRED_MODULES = (
     "tests/test_evaluation_time.py",
     "tests/test_execution_semantics.py",
     "tests/test_skip_gate.py",
+    "tests/test_documented_claims.py",
 )
 
 
