@@ -201,6 +201,28 @@ def load_canonical_approval(filename: str) -> dict | None:
             "to agentic-network approval evidence."
         )
 
+    # Everything above validates SHAPE. None of it establishes WHO wrote this.
+    #
+    # That was the whole of the check until now, and it is exactly the defect R2
+    # removed for inspections — `load_inspection_attestation` is entombed forty
+    # lines below with a comment explaining why a thorough-looking validator that
+    # authenticates nothing is worse than none. The same pattern survived here,
+    # in the same file, for the artifact that grants *human approval*: dropping a
+    # JSON file with `producer.type: "human"` and `status: "pass"` into the
+    # evidence directory was sufficient to be indexed as an approval.
+    #
+    # An approval is now authenticated the way an inspection is: an Ed25519
+    # signature over the canonical grant payload, verified against a trust store
+    # that lives outside the governed tree. Editing this repository cannot add a
+    # trusted approver, and writing this file cannot grant anything.
+    authenticated, reason, evidence = _authenticate_approval(payload, filename)
+    if not authenticated:
+        raise SystemExit(
+            f"{filename} is not an authenticated human approval: {reason}. "
+            "A file asserting `producer.type: human` is a claim about itself; "
+            "only a signature from a trusted approver key makes it an approval."
+        )
+
     return {
         "filename": filename,
         "artifact": f"evidence/{filename}",
@@ -211,8 +233,43 @@ def load_canonical_approval(filename: str) -> dict | None:
         "subject_revision": subject_revision,
         "producer": {"id": producer_id, "type": producer_type},
         "authored_by": "human",
+        "approval_authentication": {
+            "signer_key_id": evidence.get("signer_key_id"),
+            "trust_store_digest": evidence.get("trust_store_digest"),
+            "signature_verified": True,
+            "identity_verified": True,
+            "role_verified": True,
+        },
         "payload": payload,
     }
+
+
+def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dict]:
+    """Verify the approval's signature against the approver trust store.
+
+    Absence of a store is not permission. It means nothing can be authenticated
+    here, so nothing may be adopted as an approval — the same direction the
+    reviewer trust store takes, and the opposite of the direction a missing file
+    used to take.
+    """
+    from nornyx_forge.approval_trust import (
+        ApprovalTrustStore,
+        TrustStoreUnavailable,
+        verify_signed_governance_approval,
+    )
+
+    try:
+        store = ApprovalTrustStore.load()
+    except TrustStoreUnavailable as exc:
+        return False, f"APPROVER_TRUST_UNUSABLE: {exc}", {}
+    if not store.signers:
+        return (
+            False,
+            "APPROVER_TRUST_UNAVAILABLE: no approver trust store, so no human "
+            f"approval can be authenticated ({store.source})",
+            {},
+        )
+    return verify_signed_governance_approval(payload, trust_store=store)
 
 
 def load_canonical_approvals() -> dict[str, dict]:

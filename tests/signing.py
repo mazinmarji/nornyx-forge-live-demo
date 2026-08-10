@@ -34,7 +34,12 @@ from nornyx_forge.approval_trust import APPROVAL_SCHEMA, ApprovalTrustStore  # n
 
 KEY_ID = "test-approval-01"
 SUBJECT = "human.test_fixture"
-ROLES = ("operations_owner", "network_governance_owner")
+#: Roles the session key may approve in. "architecture_reviewer" is here because
+#: governance approvals name the capacity in producer.id (subject:role) and the
+#: verifier checks it against the key's roles -- a key must not approve in a
+#: capacity it does not hold. A fixture needing an unauthorized role should ask
+#: for one explicitly rather than widening this.
+ROLES = ("operations_owner", "network_governance_owner", "architecture_reviewer")
 
 
 @lru_cache(maxsize=1)
@@ -118,3 +123,104 @@ def signed_grant(
     )
     grant.update(overrides)
     return grant
+
+
+def signed_governance_approval(
+    *,
+    subject_revision: str,
+    status: str = "pass",
+    approval: str = "granted",
+    generated_at: str = "2026-08-02T00:00:00Z",
+    expires_at: str = "2026-08-05T00:00:00Z",
+    producer_id: str = SUBJECT,
+    key_id: str = KEY_ID,
+) -> dict:
+    """A governance approval record signed by the session key.
+
+    SYNTHETIC TEST FIXTURE. The key is ephemeral, generated per session, never
+    written to disk, and vouched for only by a trust store built in-process. It
+    cannot and does not constitute a human approval for this repository.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from nornyx_forge.approval_trust import (
+        GOVERNANCE_APPROVAL_SCHEMA,
+        canonical_governance_payload,
+    )
+
+    record = {
+        "schema": GOVERNANCE_APPROVAL_SCHEMA,
+        "approval": approval,
+        "producer": {"id": producer_id, "type": "human"},
+        "status": status,
+        "subject_revision": subject_revision,
+        "generated_at": generated_at,
+        "expires_at": expires_at,
+        "signer_key_id": key_id,
+        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
+    }
+    raw, _ = _keypair()
+    private = Ed25519PrivateKey.from_private_bytes(raw)
+    record["signature"] = b64encode(
+        private.sign(canonical_governance_payload(record))
+    ).decode("ascii")
+    return record
+
+
+def write_trust_store(path, *, roles: tuple[str, ...] = ROLES,
+                      status: str = "active") -> "Path":
+    """Write the session trust store to disk for subprocess runs.
+
+    Public keys only, and the private half never leaves memory. A subprocess
+    cannot be handed an in-process store, and building one by hand in each test
+    would let the tests and the production loader drift apart.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    _, public = _keypair()
+    location = _Path(path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    location.write_text(
+        _json.dumps(
+            {
+                "signers": [
+                    {
+                        "key_id": KEY_ID,
+                        "algorithm": "Ed25519",
+                        "subject": SUBJECT,
+                        "subject_type": "human",
+                        "roles": list(roles),
+                        "public_key": public,
+                        "status": status,
+                    }
+                ]
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return location
+
+
+def sign_governance_record(payload: dict) -> dict:
+    """Sign an already-built governance approval payload in place.
+
+    Takes the fixture's own dict rather than building one, so a test that varies
+    a field keeps varying it and the signature still covers what it varied. The
+    alternative — each fixture assembling its own signed material — is how a
+    signature comes to cover something other than the record shipped.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from nornyx_forge.approval_trust import canonical_governance_payload
+
+    signed = dict(payload)
+    signed.setdefault("signer_key_id", KEY_ID)
+    raw, _ = _keypair()
+    signed["signature"] = b64encode(
+        Ed25519PrivateKey.from_private_bytes(raw).sign(
+            canonical_governance_payload(signed)
+        )
+    ).decode("ascii")
+    return signed

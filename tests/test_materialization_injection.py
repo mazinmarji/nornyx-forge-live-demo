@@ -84,6 +84,13 @@ def _approval(work: Path, filename: str = CANONICAL, **overrides: object) -> Non
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
     payload.update(overrides)
+    # Signed through the production canonicalizer: an unsigned record is no
+    # longer indexable as an approval, so an unsigned fixture would test the
+    # authentication refusal instead of the injection controls these assert.
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (work / CONTRACTS / "evidence" / filename).write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -91,6 +98,12 @@ def _approval(work: Path, filename: str = CANONICAL, **overrides: object) -> Non
 
 def _run(work: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(work / "src")}
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import write_trust_store  # noqa: PLC0415
+
+    env["FORGE_APPROVER_TRUST_STORE"] = str(
+        write_trust_store(work.parent / "approver_trust.json")
+    )
     return subprocess.run(
         [sys.executable, *args], cwd=work, capture_output=True, text=True, env=env
     )

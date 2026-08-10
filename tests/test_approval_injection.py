@@ -84,6 +84,12 @@ def _repo(tmp_path: Path) -> Path:
 
 def _run(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(workspace / "src")}
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import write_trust_store  # noqa: PLC0415
+
+    env['FORGE_APPROVER_TRUST_STORE'] = str(
+        write_trust_store(workspace.parent / 'approver_trust.json')
+    )
     return subprocess.run(
         [sys.executable, *args], cwd=workspace, capture_output=True, text=True, env=env
     )
@@ -111,6 +117,14 @@ def _hostile_approval(workspace: Path, field: str, value: str) -> None:
         payload["producer"]["id"] = value  # type: ignore[index]
     else:
         payload[field] = value
+    # Signed over whatever this fixture crafted, so the refusal below must
+    # come from the control being tested rather than from the record being
+    # unsigned. An unsigned hostile fixture would refuse for the wrong
+    # reason and leave the crafted-field control unproven.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -192,6 +206,14 @@ def test_a_legitimate_approval_still_wires(tmp_path: Path):
         "expires_at": "2026-08-05T00:00:00Z",
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
+    # Signed over whatever this fixture crafted, so the refusal below must
+    # come from the control being tested rather than from the record being
+    # unsigned. An unsigned hostile fixture would refuse for the wrong
+    # reason and leave the crafted-field control unproven.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -277,6 +299,14 @@ def _approval(workspace: Path, **overrides: str) -> None:
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
         **overrides,
     }
+    # Signed over whatever this fixture crafted, so the refusal below must
+    # come from the control being tested rather than from the record being
+    # unsigned. An unsigned hostile fixture would refuse for the wrong
+    # reason and leave the crafted-field control unproven.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -375,6 +405,14 @@ def test_a_malformed_producer_fails_legibly(tmp_path: Path):
         "expires_at": "2026-08-05T00:00:00Z",
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
+    # Signed over whatever this fixture crafted, so the refusal below must
+    # come from the control being tested rather than from the record being
+    # unsigned. An unsigned hostile fixture would refuse for the wrong
+    # reason and leave the crafted-field control unproven.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

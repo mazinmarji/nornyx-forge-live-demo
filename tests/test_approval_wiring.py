@@ -80,6 +80,12 @@ def _repo(tmp_path: Path) -> Path:
 
 def _run(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(workspace / "src")}
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from signing import write_trust_store  # noqa: PLC0415
+
+    env['FORGE_APPROVER_TRUST_STORE'] = str(
+        write_trust_store(workspace.parent / 'approver_trust.json')
+    )
     return subprocess.run(
         [sys.executable, *args], cwd=workspace, capture_output=True, text=True, env=env
     )
@@ -106,6 +112,14 @@ def _write_approvals(workspace: Path, revision: str, *, expires: str) -> None:
             "expires_at": expires,
             "statement": FIXTURE_STATEMENT,
         }
+        # Signed through the production canonicalizer. An unsigned record is
+        # no longer indexable as an approval, so an unsigned fixture would
+        # prove the authentication refusal rather than the wiring asserted
+        # here.
+        sys.path.insert(0, str(ROOT / 'tests'))
+        from signing import sign_governance_record  # noqa: PLC0415
+
+        payload = sign_governance_record(payload)
         (evidence / filename).write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )

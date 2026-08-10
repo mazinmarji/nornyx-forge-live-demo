@@ -92,6 +92,7 @@ REQUIRED_MODULES = (
     "tests/test_skip_gate.py",
     "tests/test_documented_claims.py",
     "tests/test_process_execution_spellings.py",
+    "tests/test_approval_artifact_authentication.py",
 )
 
 

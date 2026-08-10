@@ -79,6 +79,10 @@ def _install_approval(work: Path) -> None:
         "expires_at": "2026-08-05T00:00:00Z",
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    payload = sign_governance_record(payload)
     (work / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -86,6 +90,12 @@ def _install_approval(work: Path) -> None:
 
 def _run(work: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(work / "src")}
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import write_trust_store  # noqa: PLC0415
+
+    env["FORGE_APPROVER_TRUST_STORE"] = str(
+        write_trust_store(work.parent / "approver_trust.json")
+    )
     return subprocess.run(
         [sys.executable, *args], cwd=work, capture_output=True, text=True, env=env
     )

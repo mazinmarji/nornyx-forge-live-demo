@@ -85,6 +85,161 @@ SIGNED_FIELDS = (
 
 APPROVAL_SCHEMA = "nornyx.forge.action_approval.v1"
 
+#: A governance approval is a different statement from an action approval, so it
+#: is a different signed payload. An action approval says "this specific effect
+#: may be released"; a governance approval says "this governed content is
+#: approved". Signing one set of fields and checking the other would authenticate
+#: nothing, which is how a verifier built for grants came to be pointed at
+#: approval records during remediation — caught before it shipped, and the reason
+#: these are separate rather than shared.
+GOVERNANCE_APPROVAL_SCHEMA = "nornyx.forge.human_approval_record.v1"
+
+#: Total and ordered, like SIGNED_FIELDS. `subject_revision` is here because an
+#: approval of different content is a different approval; the window bounds are
+#: here because an approval that can be re-dated is not bounded.
+GOVERNANCE_SIGNED_FIELDS = (
+    "schema",
+    "approval",
+    "status",
+    "subject_revision",
+    "generated_at",
+    "expires_at",
+    "producer_id",
+    "signer_key_id",
+)
+
+
+def canonical_governance_payload(approval: "Mapping[str, Any]") -> bytes:
+    """The exact bytes a human approver's signature covers.
+
+    `producer_id` is flattened out of the nested `producer` object so the signed
+    material is a flat, totally-ordered mapping — a nested structure invites two
+    encoders that disagree, and a signature is only as good as the agreement
+    about what was signed.
+    """
+    producer = approval.get("producer")
+    material: dict[str, Any] = {}
+    for field_name in GOVERNANCE_SIGNED_FIELDS:
+        if field_name == "producer_id":
+            material[field_name] = (
+                producer.get("id") if isinstance(producer, Mapping) else None
+            )
+        else:
+            material[field_name] = approval.get(field_name)
+    return json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_signed_governance_approval(
+    approval: "Mapping[str, Any] | None",
+    *,
+    trust_store: "ApprovalTrustStore | None" = None,
+) -> "tuple[bool, str, dict[str, Any]]":
+    """Decide whether this governance approval was signed by a trusted human.
+
+    Returns ``(authenticated, reason, evidence)``. Shape validation lives in the
+    caller; this establishes only who signed, which is the question shape can
+    never answer.
+    """
+    evidence: dict[str, Any] = {
+        "signature_verified": False,
+        "identity_verified": False,
+        "role_verified": False,
+    }
+    if approval is None:
+        return False, "no governance approval was supplied", evidence
+
+    store = trust_store if trust_store is not None else ApprovalTrustStore.load()
+    evidence["trust_store_digest"] = store.digest
+    if not store.signers:
+        return (
+            False,
+            "APPROVER_TRUST_UNAVAILABLE: no approver trust store, so no human "
+            f"approval can be authenticated ({store.source})",
+            evidence,
+        )
+
+    if approval.get("schema") != GOVERNANCE_APPROVAL_SCHEMA:
+        return (
+            False,
+            f"APPROVAL_SCHEMA_UNKNOWN: {approval.get('schema')!r}",
+            evidence,
+        )
+
+    key_id = str(approval.get("signer_key_id", ""))
+    if not key_id:
+        return False, "APPROVAL_UNSIGNED: names no signer key", evidence
+    signer = store.signers.get(key_id)
+    if signer is None:
+        return (
+            False,
+            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is not in the approver "
+            "trust store",
+            evidence,
+        )
+    if signer.status != "active":
+        return (
+            False,
+            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is {signer.status}",
+            evidence,
+        )
+    evidence["signer_key_id"] = key_id
+
+    signature = approval.get("signature")
+    if not isinstance(signature, str) or not signature:
+        return False, "APPROVAL_UNSIGNED: no signature present", evidence
+
+    try:
+        from base64 import b64decode
+
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:  # pragma: no cover - cryptography is a hard dependency
+        return False, "APPROVAL_VERIFIER_UNAVAILABLE", evidence
+
+    try:
+        # Raw base64, matching how this store already carries approver keys.
+        # PEM was the first spelling written here and would have failed every
+        # signature for a reason unrelated to the signature.
+        public_key = Ed25519PublicKey.from_public_bytes(b64decode(signer.public_key))
+        public_key.verify(b64decode(signature), canonical_governance_payload(approval))
+    except InvalidSignature:
+        return False, "APPROVAL_NOT_AUTHENTICATED: signature invalid", evidence
+    except Exception as exc:
+        return False, f"APPROVAL_NOT_AUTHENTICATED: {type(exc).__name__}", evidence
+    evidence["signature_verified"] = True
+
+    # `producer.id` carries `subject:role` — the identity and the capacity it
+    # acted in. Both are checked. Comparing the whole string against the key's
+    # subject would reject every honest record that names a role, and dropping
+    # the role would let a key approve in a capacity it does not hold, which is
+    # the separation the trust store's `roles` list exists to express.
+    producer = approval.get("producer")
+    claimed = producer.get("id") if isinstance(producer, Mapping) else None
+    if not isinstance(claimed, str) or not claimed:
+        return False, "APPROVER_IDENTITY_MISSING: producer.id is absent", evidence
+    claimed_subject, _, claimed_role = claimed.partition(":")
+    if signer.subject and claimed_subject != signer.subject:
+        return (
+            False,
+            f"APPROVER_IDENTITY_MISMATCH: signed as {claimed_subject!r}, key "
+            f"belongs to {signer.subject!r}",
+            evidence,
+        )
+    evidence["identity_verified"] = True
+    evidence["approver"] = claimed_subject
+
+    if claimed_role:
+        if claimed_role not in signer.roles:
+            return (
+                False,
+                f"APPROVER_ROLE_UNAUTHORIZED: {signer.subject!r} may not approve "
+                f"as {claimed_role!r}",
+                evidence,
+            )
+        evidence["approver_role"] = claimed_role
+    evidence["role_verified"] = True
+    return True, "authenticated", evidence
+
 
 class TrustStoreUnavailable(RuntimeError):
     """The trust store could not be read, so no signer can be trusted."""

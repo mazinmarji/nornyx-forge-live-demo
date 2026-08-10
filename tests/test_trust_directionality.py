@@ -63,6 +63,15 @@ def _workspace(tmp_path: Path) -> Path:
 
 def _run(work: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "PYTHONPATH": str(work / "src")}
+    # A human approval must now authenticate against a trust store outside the
+    # governed tree. These tests are about index directionality, not about the
+    # absence of a store, so they get a real one holding the session public key.
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import write_trust_store  # noqa: PLC0415
+
+    env["FORGE_APPROVER_TRUST_STORE"] = str(
+        write_trust_store(work.parent / "approver_trust.json")
+    )
     return subprocess.run(
         [sys.executable, *args], cwd=work, capture_output=True, text=True, env=env
     )
@@ -73,17 +82,41 @@ def _head(work: Path) -> str:
 
 
 def _approval(work: Path, filename: str = RUNTIME_APPROVAL, **overrides: object) -> None:
-    payload: dict[str, object] = {
-        "schema": "nornyx.forge.human_approval_record.v1",
-        "approval": "granted",
-        "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
-        "status": "pass",
-        "subject_revision": _head(work),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
-        "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
-    }
+    """A signed synthetic approval.
+
+    Signed through the production canonicalizer with an ephemeral session key.
+    An unsigned record is no longer indexable as an approval, so a fixture that
+    hand-wrote one would be testing the refusal rather than the directionality
+    these tests are about.
+    """
+    sys.path.insert(0, str(ROOT / "tests"))
+    from signing import signed_governance_approval  # noqa: PLC0415
+
+    payload: dict[str, object] = signed_governance_approval(
+        subject_revision=_head(work),
+        producer_id="human.test_fixture",
+    )
     payload.update(overrides)
+    if set(overrides) - {"statement"}:
+        # Any override changes signed material, so re-sign rather than ship a
+        # record whose signature no longer covers it.
+        from base64 import b64encode  # noqa: PLC0415
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: PLC0415
+            Ed25519PrivateKey,
+        )
+        from signing import _keypair  # noqa: PLC0415
+
+        from nornyx_forge.approval_trust import (  # noqa: PLC0415
+            canonical_governance_payload,
+        )
+
+        raw, _ = _keypair()
+        payload["signature"] = b64encode(
+            Ed25519PrivateKey.from_private_bytes(raw).sign(
+                canonical_governance_payload(payload)
+            )
+        ).decode("ascii")
     (work / CONTRACTS / "evidence" / filename).write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
