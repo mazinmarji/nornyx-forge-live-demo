@@ -20,7 +20,7 @@ Scanned for: `read_text` / `read_bytes` / `open(` / `json.load` / `yaml.safe_loa
 | Reviewer trust store path from env | `reviewer_trust.py` (`FORGE_REVIEWER_TRUST_STORE`) | **Closed (R3).** Resolved once into `TrustConfiguration`. The evidence tool still loads by path directly — it is a build-time utility outside the runtime trust boundary, not a request-serving surface. |
 | Reviewer trust store contents | `reviewer_trust.py:175` | Outside the tree by design, so not subject content — editing the repository cannot add a trusted reviewer. Absence is an ordinary state (nothing authenticates); malformation raises, so the two cannot be confused. |
 | Builder identity from env | `reviewer_trust.py` (`FORGE_BUILDER_IDENTITY`) | **Closed (R2/R3).** It replaced the identity independence was measured against, so naming another builder excused the real one. It is a union now — ambient input adds an excluded identity and can never remove one — and the resolved set is frozen into `TrustConfiguration`. |
-| **Application root from env** | `main.py:22` (`FORGE_ROOT`) | **R1.** Selects which tree the application governs — ambient authority over subject identity itself. Must become an explicit bootstrap parameter, not a per-process environment read. |
+| Application root from env | removed (`FORGE_ROOT`) | **Closed (R1).** The application derives its root structurally through `resolve_packaged_root()`. No reader remains under `src/`; the vestigial setters in `scripts/smoke_http.py` are removed too, since a variable nothing reads still tells a reader it matters. |
 | Policy fallback toggle | `agentic.py:319,377`, `development_flow.py` | **R1/R5.** `FORGE_ALLOW_POLICY_FALLBACK` permits a deterministic fallback for the governance path. Authority-relevant ambient state. |
 | `reviews.json` | `development_flow.py` | **Closed (R4).** Two claims came off a gitignored, builder-written file: acceptance was gated on `builder_self_approval is False` (the builder certifying their own independence), and `independent_ai_review` was `bool(reviews)` (a non-empty list of subprocesses standing in for a verdict). Neither is read now. The gate checks completeness and outcome only, and reports `independent_ai_review: not_established`. |
 | CrewAI backend toggles | `agentic.py:324,345`, `development_flow.py:383,395` | **R5.** `FORGE_USE_CREWAI_KICKOFF` / `FORGE_STRICT_CREWAI` silently select a degraded backend while the product claim stays "CrewAI". |
@@ -38,17 +38,19 @@ Scanned for: `read_text` / `read_bytes` / `open(` / `json.load` / `yaml.safe_loa
 
 ## Findings that change R1 scope
 
-1. **`FORGE_ROOT` is ambient authority over subject identity.** The subject
-   model removes environment influence over *what the digest covers*, but the
-   application still takes the root it governs from an environment variable.
-   Establishing the subject once at startup from an explicit root closes this;
-   until then the property "no environment can re-aim authority" is not fully
-   true.
+All three findings recorded here are closed. Retained rather than deleted:
+the reasoning is why the current design looks as it does, and a resolved finding
+that vanishes teaches nothing.
 
-2. **Two env vars steer governance behaviour, not just configuration.**
-   `FORGE_ALLOW_POLICY_FALLBACK` and `FORGE_STRICT_CREWAI` change which
-   governance path executes. They belong to the bootstrap security context.
+1. **`FORGE_ROOT` was ambient authority over subject identity.** Closed by
+   `resolve_packaged_root()`, which derives the root structurally. Nothing under
+   `src/` reads the variable, and the setters that remained in tooling are gone.
 
-3. The trust store and ledger paths are read per use rather than per security
-   context. That is R3, and it is the same ambient-re-resolution shape the
-   subject model is removing.
+2. **Two env vars steered governance behaviour.**
+   `FORGE_ALLOW_POLICY_FALLBACK` and `FORGE_STRICT_CREWAI` are closed by
+   `RuntimeAuthorityConfig`, which names the policy and execution backends at the
+   command boundary and is bound into the subject digest. Neither has a reader.
+
+3. **Trust store and ledger paths were read per use.** Closed by
+   `TrustConfiguration`, resolved once at `bootstrap_security_context` and
+   injected into the boundary.

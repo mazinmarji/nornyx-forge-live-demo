@@ -236,3 +236,57 @@ def test_editing_a_claims_document_moves_the_governed_input_digest():
         "editing a claims document left the governed input unchanged, so an "
         "inspection signed over it covers nothing it says"
     )
+
+
+def test_the_request_digest_covers_exactly_what_the_comment_says():
+    """A comment claiming coverage it does not have is worse than no comment.
+
+    `ActionRequest` documented `subject_scope_id` and `governed_revision_digest`
+    as "both covered by the request digest, so a grant cannot be re-aimed at a
+    different scope or a different assurance state". An independent review
+    measured it: neither field is in `canonical()`, and two requests differing
+    only in those two produce identical digests.
+
+    The property does hold, by `subject_revision` -- which IS signed, IS
+    compared, and is the `governed_subject_digest` embedding the scope id and
+    scope definition digest. Measured here rather than described, because the
+    previous description was written by someone who believed it.
+    """
+    from nornyx_forge.nornyx_runtime import ActionDescriptor, canonical_action_request
+
+    descriptor = ActionDescriptor(
+        operation="issue refund",
+        resource="customer:probe",
+        destination="zone.external_customer",
+        parameters={"amount": 100, "currency": "USD"},
+    )
+    base = canonical_action_request(
+        mission_id="CASE-PROBE",
+        risk="high",
+        subject_revision="sha256:" + "a" * 64,
+        descriptor=descriptor,
+    )
+    relabelled = canonical_action_request(
+        mission_id="CASE-PROBE",
+        risk="high",
+        subject_revision="sha256:" + "a" * 64,
+        descriptor=descriptor,
+    )
+    object.__setattr__(relabelled, "subject_scope_id", "scope.WIDE_OPEN")
+    object.__setattr__(relabelled, "governed_revision_digest", "sha256:unassured")
+
+    assert relabelled.digest == base.digest, (
+        "these fields are now covered by the digest -- update the ActionRequest "
+        "comment, which says they are not"
+    )
+
+    moved = canonical_action_request(
+        mission_id="CASE-PROBE",
+        risk="high",
+        subject_revision="sha256:" + "b" * 64,
+        descriptor=descriptor,
+    )
+    assert moved.digest != base.digest, (
+        "subject_revision is what actually binds a grant to a subject, and it "
+        "no longer moves the digest"
+    )

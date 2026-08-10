@@ -288,3 +288,39 @@ def test_the_authority_config_also_moves_the_subject_digest():
     )
     assert governed.subject_verified and demo.subject_verified
     assert demo.governed_subject_digest != governed.governed_subject_digest
+
+
+def test_an_exclusion_cannot_make_a_module_downstream_by_sitting_above_it():
+    """A stated reason covers what it describes, not whatever lands beneath it.
+
+    `.nornyx/contracts/evidence` is excluded because generated evidence is
+    downstream of the subject. That reason is about JSON. The exclusion is a path
+    prefix, so it also swallowed `.py`, and a module dropped there left the
+    subject entirely -- carrying an exclusion reason written about something
+    else. It ships in the runtime image via `COPY .nornyx`.
+    """
+    work = _tree()
+    smuggled = work / ".nornyx/contracts/evidence/smuggled.py"
+    smuggled.parent.mkdir(parents=True, exist_ok=True)
+    smuggled.write_bytes(("def reach():" + chr(10) + "    return 1" + chr(10)).encode())
+
+    subject = _subject(work, RUNTIME_IMAGE_SCOPE)
+    assert subject.subject_verified is False
+    assert "SUBJECT_SCOPE_ESCAPE" in (subject.unavailable_reason or "")
+    assert "non-authoritative exclusion" in (subject.unavailable_reason or "")
+
+
+def test_the_exclusion_still_covers_what_it_was_written_for():
+    """Generated evidence must stay excluded, or the digest self-references.
+
+    The narrowing must not turn into "exclusions do not work". Evidence JSON is
+    downstream of the subject by construction: folding it in would make the
+    input depend on something derived from it.
+    """
+    work = _tree()
+    generated = work / ".nornyx/contracts/evidence/probe_report.json"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_bytes(('{"status": "pass"}' + chr(10)).encode())
+
+    subject = _subject(work, RUNTIME_IMAGE_SCOPE)
+    assert subject.subject_verified, subject.unavailable_reason

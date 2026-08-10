@@ -226,12 +226,21 @@ def _is_inert_package_init(path: Path) -> bool:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
             continue
         if isinstance(node, ast.Assign) and all(
-            isinstance(target, ast.Name) and target.id.startswith("__")
+            isinstance(target, ast.Name) and target.id in INERT_DUNDERS
             for target in node.targets
         ):
             continue
         return False
     return True
+
+
+#: Dunders an `__init__.py` may set and still count as inert. An allowlist, not
+#: a `startswith("__")` test: `__path__` passed that test and redirects submodule
+#: resolution for the whole package, so `__path__ = ["/attacker/payload"]` was
+#: classified as a package marker holding nothing. That is at least as
+#: consequential as the re-export the original docstring cites, and it was
+#: invisible to the declaration check.
+INERT_DUNDERS = frozenset({"__all__", "__version__", "__author__", "__doc__"})
 
 
 # --- constraint.architecture_coverage ---

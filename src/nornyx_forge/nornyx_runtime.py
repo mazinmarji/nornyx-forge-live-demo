@@ -130,6 +130,16 @@ SUBJECT_UNVERIFIED = "SUBJECT_UNVERIFIED"
 #: Deliberately generic: distinguishing "stale assurance" from "different
 #: subject" would require both identities as authenticated claims, and a falsely
 #: precise diagnostic is worse than an honest broad one.
+#:
+#: NOT CURRENTLY EMITTED. A review found it defined here and referenced nowhere:
+#: no emitter, no test, no documentation. Subject binding IS enforced -- the
+#: signed `request_digest` covers `subject_revision`, so a grant for another
+#: subject fails authentication before any subject comparison happens -- so this
+#: names a refusal path that does not exist as a distinct outcome.
+#:
+#: Kept rather than deleted because the distinction it draws is the right one if
+#: the boundary ever compares subjects directly. An operator grepping for it
+#: will find this note instead of concluding the check is missing.
 APPROVAL_SUBJECT_MISMATCH = "APPROVAL_SUBJECT_MISMATCH"
 
 #: The grant was not signed by a key the trust store vouches for. Distinct from
@@ -288,8 +298,20 @@ class ActionRequest:
     action: ActionDescriptor
     attempt_id: str = ""
     #: Which authority surface the subject describes, and the revision anchor it
-    #: was produced from. Both covered by the request digest, so a grant cannot
-    #: be re-aimed at a different scope or a different assurance state.
+    #: was produced from. Carried for a reader; NEITHER is in `canonical()`, so
+    #: neither is covered by the request digest and a caller may put anything
+    #: here. An earlier version of this comment claimed both were covered, which
+    #: an independent review measured and disproved: two requests differing only
+    #: in these fields produce identical digests.
+    #:
+    #: The property the comment was reaching for does hold, by a different
+    #: route. `subject_revision` IS signed and IS compared, and it is the
+    #: `governed_subject_digest`, which embeds the scope id, the scope definition
+    #: digest and the settled contract bytes. So a grant cannot be re-aimed at a
+    #: different scope or assurance state -- because the subject digest differs,
+    #: not because these two fields are checked. Stating the real mechanism
+    #: matters: a reader who trusted the old comment might add a check here and
+    #: believe they had tightened something.
     subject_scope_id: str = ""
     governed_revision_digest: str = ""
 

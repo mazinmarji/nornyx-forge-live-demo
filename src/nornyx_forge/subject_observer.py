@@ -114,12 +114,30 @@ def assert_scope_closed(root: Path, scope: SubjectScope, covered: set[str]) -> N
             ]
         else:
             continue
+        smuggled: list[str] = []
         for path in candidates:
             if is_never_governed(path) or path in covered:
                 continue
-            if scope.is_non_authoritative(path) or not scope.is_authority_capable(path):
+            if not scope.is_authority_capable(path):
+                continue
+            if scope.is_non_authoritative(path):
+                # An exclusion is a prefix, so it swallows whatever is placed
+                # beneath it. `.nornyx/contracts/evidence` is excluded because
+                # generated evidence is downstream of the subject -- a statement
+                # about JSON, which silently covered `.py` as well. Dropping a
+                # module there removed it from the subject with a reason written
+                # about something else.
+                smuggled.append(path)
                 continue
             escapes.append(path)
+        if smuggled:
+            raise SubjectScopeEscape(
+                f"SUBJECT_SCOPE_ESCAPE: scope {scope.scope_id} has "
+                "authority-capable content beneath a non-authoritative "
+                f"exclusion: {', '.join(sorted(set(smuggled))[:12])}. An "
+                "exclusion states why particular content is downstream; it "
+                "cannot make executable content downstream by sitting above it."
+            )
     if escapes:
         raise SubjectScopeEscape(
             f"SUBJECT_SCOPE_ESCAPE: scope {scope.scope_id} leaves "

@@ -11,7 +11,13 @@ This repository is a public reference implementation for demonstrating three Nor
 ## What runs
 
 - **Claude Code** performs repository analysis, architecture, implementation, review, and repair.
-- **CrewAI Flow** coordinates the development and live application workflows without requiring a CrewAI model API key in the default mode.
+- **CrewAI Flow** coordinates the development workflow (`nornyx-forge build`)
+  without requiring a CrewAI model API key. The live application runs the
+  sequential backend by default and says so: `demonstration_authority()`
+  names `execution_backend="sequential"`, and the evidence reports
+  `framework: "CrewAI Flow-compatible sequential execution"`. Selecting
+  `crewai` refuses rather than downgrading if CrewAI cannot execute, so the
+  label always describes what ran.
 - **Nornyx** validates the generated BRD contract, architecture contract, runtime network, and control/evidence boundary.
 - **FastAPI** serves the live governed customer-operations application and dashboard.
 
@@ -51,8 +57,8 @@ python scripts/bootstrap.py --autonomous --worker-mode claude-code
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e '.[dev]'
-pytest
+pip install -e '.[demo,dev]'
+python scripts/check_test_coverage.py
 python scripts/validate_repository.py
 ```
 

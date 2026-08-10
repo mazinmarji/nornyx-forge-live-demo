@@ -24,6 +24,7 @@ from check_test_coverage import (  # noqa: E402
     MINIMUM_COLLECTED,
     REQUIRED_MODULES,
     classify,
+    evaluate,
 )
 
 _REPORT = """<?xml version="1.0" encoding="utf-8"?>
@@ -193,3 +194,93 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
     assert MINIMUM_COLLECTED <= collected * 2, (
         "the floor is above what the suite can collect, so every run fails"
     )
+
+
+# --------------------------------------------------------------------------
+# The gate's own refusals, executed
+# --------------------------------------------------------------------------
+
+
+def _report_with(tmp_path, cases: str):
+    path = tmp_path / "report.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        + chr(10)
+        + "<testsuites><testsuite name=\"pytest\">"
+        + cases
+        + "</testsuite></testsuites>"
+        + chr(10),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _module_cases(modules) -> str:
+    """One testcase per named module, so the report mentions each of them."""
+    return "".join(
+        f'<testcase classname="{name.removesuffix(".py").replace("/", ".")}"'
+        ' name="test_probe"/>'
+        for name in modules
+    )
+
+
+def _filler_cases(count: int) -> str:
+    """Testcases from an unrelated module, purely to reach the floor."""
+    return "".join(
+        f'<testcase classname="tests.test_filler" name="test_{index}"/>'
+        for index in range(max(count, 0))
+    )
+
+
+def _complete_report_cases(count: int) -> str:
+    """Every required module present, and enough total tests to clear the floor."""
+    return _module_cases(REQUIRED_MODULES) + _filler_cases(count - len(REQUIRED_MODULES))
+
+
+def test_the_missing_module_refusal_actually_runs(tmp_path, capsys):
+    """A guard whose failure path has never executed is a guess.
+
+    The module docstring says exactly that, and only `classify` had been
+    separated far enough to act on it: the three paths that make this a gate --
+    missing module, below floor, GATE: FAIL -- lived inline in `main()` and had
+    never once run under test.
+    """
+    dropped = REQUIRED_MODULES[0]
+    # Every module except the dropped one, plus enough filler to clear the floor
+    # -- so the ONLY reason to refuse is the absent module.
+    cases = _module_cases(REQUIRED_MODULES[1:]) + _filler_cases(MINIMUM_COLLECTED)
+    code = evaluate(_report_with(tmp_path, cases), 0)
+    captured = capsys.readouterr().out
+    assert code == 2
+    assert dropped in captured
+    assert "required test module is missing" in captured
+
+
+def test_the_floor_refusal_actually_runs(tmp_path, capsys):
+    """A shrunken suite must fail even when every required module reported."""
+    code = evaluate(_report_with(tmp_path, _module_cases(REQUIRED_MODULES)), 0)
+    captured = capsys.readouterr().out
+    assert code == 2
+    assert "below the floor" in captured
+    assert "collection below floor" in captured
+
+
+def test_a_failing_pytest_is_reported_as_failure_on_the_last_line(tmp_path, capsys):
+    """The census reads like success whatever pytest concluded.
+
+    A truncated view of this output was once taken for a passing suite while
+    tests were failing, which is why the verdict must be the final line.
+    """
+    code = evaluate(_report_with(tmp_path, _complete_report_cases(MINIMUM_COLLECTED)), 1)
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert code == 1
+    assert captured[-1].startswith("GATE: FAIL")
+    assert "pytest exited 1" in captured[-1]
+
+
+def test_a_clean_report_passes(tmp_path, capsys):
+    """The gate must permit the case it exists to recognise."""
+    code = evaluate(_report_with(tmp_path, _complete_report_cases(MINIMUM_COLLECTED)), 0)
+    captured = capsys.readouterr().out.strip().splitlines()
+    assert code == 0
+    assert captured[-1] == "GATE: PASS"

@@ -180,8 +180,10 @@ jobs:
         if: steps.approval.outputs.present == 'true'
         run: nornyx-forge demo --offline --strict-nornyx
 
-      - name: Strict application smoke
+      - name: Application smoke over the approved head
         if: steps.approval.outputs.present == 'true'
-        env:
-          FORGE_SMOKE_STRICT: "true"
+        # No FORGE_SMOKE_STRICT: it was read by the script and used nowhere, so
+        # this step and the ordinary smoke were the same run under two names.
+        # What proves strict behaviour is the demo and lock steps above, which
+        # request the governed backend and fail closed.
         run: python scripts/smoke_http.py

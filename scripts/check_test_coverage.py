@@ -136,23 +136,31 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str]]:
     return total, allowed, unexpected, seen_modules
 
 
-def main() -> int:
-    with tempfile.TemporaryDirectory() as scratch:
-        report = Path(scratch) / "report.xml"
-        completed = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", f"--junitxml={report}"],
-            cwd=ROOT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if not report.exists():
-            print("pytest produced no report; treating as failure")
-            return completed.returncode or 1
+def evaluate(report: Path, pytest_returncode: int) -> int:
+    """Decide the verdict from a report. Separated so the refusals are testable.
 
-        total, allowed, unexpected, seen_modules = classify(report)
+    `main()` used to hold this inline, so the three paths that make this gate a
+    gate -- missing required module, collection below floor, GATE: FAIL -- had
+    never once executed under test. The module docstring already said a guard
+    whose failure path has never run is a guess about what it would do; only
+    `classify` had been separated far enough to act on that.
+    """
+    total, allowed, unexpected, seen_modules = classify(report)
 
     print(f"collected {total}, expected skips {allowed}, unexpected skips {len(unexpected)}")
+
+    if unexpected:
+        print(NEWLINE + "These tests did not run, and were not declared as expected skips:" + NEWLINE)
+        for entry in unexpected:
+            print(f"  {entry}")
+        print(
+            NEWLINE + "A skipped test asserts nothing. Either install what it "
+            "needs, or add the test to EXPECTED_SKIPS with why it is acceptable. "
+            "Naming a reason another test already uses no longer exempts "
+            "anything."
+        )
+        print(NEWLINE + "GATE: FAIL - undeclared skips")
+        return 2
 
     missing_modules = [name for name in REQUIRED_MODULES if name not in seen_modules]
     if missing_modules:
@@ -180,11 +188,31 @@ def main() -> int:
     # The last line must state the verdict. The skip census above reads like
     # success whatever pytest concluded, and a truncated or filtered view of
     # this output was taken for a passing suite while tests were failing.
-    if completed.returncode != 0:
-        print(f"\nGATE: FAIL — pytest exited {completed.returncode}; see failures above")
+    if pytest_returncode != 0:
+        print(NEWLINE + f"GATE: FAIL - pytest exited {pytest_returncode}; see failures above")
     else:
-        print("\nGATE: PASS")
-    return completed.returncode
+        print(NEWLINE + "GATE: PASS")
+    return pytest_returncode
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory() as scratch:
+        report = Path(scratch) / "report.xml"
+        completed = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", f"--junitxml={report}"],
+            cwd=ROOT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if not report.exists():
+            print("pytest produced no report; treating as failure")
+            return completed.returncode or 1
+
+        # One implementation of the verdict, exercised by tests. Keeping a copy
+        # here would mean the tested path and the run path could disagree, which
+        # is the defect this whole gate exists to notice.
+        return evaluate(report, completed.returncode)
 
 
 if __name__ == "__main__":
