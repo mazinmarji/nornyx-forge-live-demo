@@ -182,17 +182,16 @@ def test_the_dockerfile_still_omits_the_issuer_tooling():
     *because* it is outside the image; if the build started copying it, the
     scope would be describing a surface that no longer matches what ships.
     """
+    import sys
     from pathlib import Path
 
-    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(
-        encoding="utf-8"
-    )
-    copied = [
-        line.split()[1]
-        for line in dockerfile.splitlines()
-        if line.startswith("COPY ") and len(line.split()) > 2
-    ]
-    assert "scripts" not in copied, (
-        "the image now ships scripts/; the runtime scope and the trust boundary "
-        "both need revisiting"
-    )
+    ROOT = Path(__file__).resolve().parents[1]
+    # One parser, shared. This was three verbatim copies of a guard that
+    # inspected only the first source argument of each COPY, matched by
+    # exact string, and ignored ADD and lowercase -- so seven ways of
+    # shipping the signer passed it. See tests/dockerfile_surface.py.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from dockerfile_surface import assert_image_excludes  # noqa: PLC0415
+
+    assert_image_excludes('scripts', root=ROOT)
+

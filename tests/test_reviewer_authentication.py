@@ -421,13 +421,14 @@ def test_a_duplicate_key_id_is_refused():
 
 def test_the_runtime_image_ships_no_reviewer_signing_capability():
     """Verification material only. The issuer stays outside the trust boundary."""
-    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    copied = [
-        line.split()[1]
-        for line in dockerfile.splitlines()
-        if line.startswith("COPY ") and len(line.split()) > 2
-    ]
-    assert "scripts" not in copied
+    # One parser, shared. This was three verbatim copies of a guard that
+    # inspected only the first source argument of each COPY, matched by
+    # exact string, and ignored ADD and lowercase -- so seven ways of
+    # shipping the signer passed it. See tests/dockerfile_surface.py.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from dockerfile_surface import assert_image_excludes  # noqa: PLC0415
+
+    assert_image_excludes('scripts', root=ROOT)
 
     runtime = (ROOT / "src/nornyx_forge/reviewer_trust.py").read_text(encoding="utf-8")
     assert "load_pem_private_key" not in runtime

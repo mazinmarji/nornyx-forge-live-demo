@@ -478,14 +478,15 @@ def test_the_runtime_image_does_not_ship_the_signer():
     where the private-key tooling lives.
     """
     root = Path(__file__).resolve().parents[1]
-    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
-    copied = [
-        line.split()[1]
-        for line in dockerfile.splitlines()
-        if line.startswith("COPY ") and len(line.split()) > 2
-    ]
-    assert "scripts" not in copied, "the image must not contain the issuer"
-    assert "." not in copied, "copying the whole context would ship the issuer"
+    # One parser, shared. This was three verbatim copies of a guard that
+    # inspected only the first source argument of each COPY, matched by
+    # exact string, and ignored ADD and lowercase -- so seven ways of
+    # shipping the signer passed it. See tests/dockerfile_surface.py.
+    sys.path.insert(0, str(root / 'tests'))
+    from dockerfile_surface import assert_image_excludes  # noqa: PLC0415
+
+    assert_image_excludes('scripts', root=root)
+
     assert (root / "scripts/issue_action_approval.py").exists()
 
 
