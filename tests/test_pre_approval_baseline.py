@@ -37,21 +37,22 @@ def _tree(tmp_path: Path) -> Path:
     # scripts/__pycache__ on first run and the governed-tree gate correctly
     # refuses the workspace as dirty.
     shutil.copy2(ROOT / ".gitignore", workspace / ".gitignore")
-    # The repository scope declares these; a fixture missing them now gets
-    # SUBJECT_SCOPE_INCOMPLETE rather than a quietly smaller subject, which is
-    # the control working. Copying them makes the workspace faithful.
-    for extra in ("tests", ".github"):
-        shutil.copytree(
-            ROOT / extra,
-            workspace / extra,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
-        )
-    for extra in ("Dockerfile", "docker-compose.yml", "BRD.md"):
-        shutil.copy2(ROOT / extra, workspace / extra)
-    shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
+    # Derived from the scope rather than listed. This fixture, and six others,
+    # each named the scope's contents by hand and each broke when the scope
+    # gained a required file -- twice now. SUBJECT_SCOPE_INCOMPLETE is the scope
+    # correctly refusing to compute a smaller subject and call it verified, so
+    # the fixtures were wrong both times, not the control.
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from governed_workspace import copy_governed_workspace  # noqa: PLC0415
+
+    copy_governed_workspace(workspace)
+    if not (workspace / CONTRACTS).exists():
+        shutil.copytree(ROOT / CONTRACTS, workspace / CONTRACTS)
     # --regenerate shells out to the refresh script, which needs the package and
     # a real revision to bind evidence to.
-    shutil.copytree(ROOT / "src", workspace / "src")
+    shutil.copytree(ROOT / "src", workspace / "src", dirs_exist_ok=True)
     for command in (
         ["init", "-q"],
         ["config", "user.email", "fixture@example.invalid"],

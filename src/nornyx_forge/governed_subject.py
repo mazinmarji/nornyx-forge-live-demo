@@ -53,12 +53,15 @@ GOVERNED_INPUT_PATHS = (
     "src",
     "scripts",
     "tests",
+    "docs",
     ".github",
     "pyproject.toml",
     "Dockerfile",
     "docker-compose.yml",
+    ".dockerignore",
     ".gitignore",
     "BRD.md",
+    "CLAUDE.md",
 )
 
 #: Generated or tool-written, and therefore downstream of the input digest.
@@ -225,13 +228,20 @@ class SubjectScope:
 #: The development surface: everything an inspector reads.
 REPOSITORY_SCOPE = SubjectScope(
     scope_id="forge.repository.v1",
-    required_roots=("src", "scripts", "tests", ".github"),
+    # `docs` is here because a reviewer reads it. An inspection signs a subject
+    # digest, and a digest that omits the documents making the claims under
+    # inspection covers the code but not what the code is said to do.
+    required_roots=("src", "scripts", "tests", "docs", ".github"),
     required_files=(
         "pyproject.toml",
         "Dockerfile",
         "docker-compose.yml",
+        # Decides what enters the runtime image, so it is authority-relevant in
+        # the most direct sense available.
+        ".dockerignore",
         ".gitignore",
         "BRD.md",
+        "CLAUDE.md",
     ),
     required_contracts=(
         "runtime_network.nyx",

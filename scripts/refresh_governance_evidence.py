@@ -1223,20 +1223,29 @@ def _assert_single_managed_approval(name: str, text: str) -> None:
 #: Paths whose content a human approval actually covers. If any of these differs
 #: from the approved commit, the run is inspecting something other than what was
 #: approved, whatever the revision label says.
-GOVERNED_INPUT_PATHS = (
-    "src",
-    "scripts",
-    "tests",
-    "docs",
-    ".github",
+#: What a pinned human approval covers for the purpose of the dirty-tree gate.
+#:
+#: This is deliberately WIDER than `governed_subject.GOVERNED_INPUT_PATHS`, and
+#: the difference is the point rather than a defect. The digest list excludes
+#: `.nornyx/contracts/` because settled contracts are output in the two-level
+#: model -- folding them into the input digest would make the input depend on
+#: something derived from it. But editing a contract while an approval is pinned
+#: to a revision must still refuse, so the dirty-tree gate has to see them.
+#:
+#: It was called GOVERNED_INPUT_PATHS, exactly like the digest list. A review
+#: reported the two as disagreeing copies, and unifying them silently removed
+#: contract coverage from the dirty-tree gate -- caught only because
+#: `test_the_refusal_names_what_drifted` demands the refusal name the contract.
+#: Two concepts that share a name will be merged by someone eventually, so they
+#: no longer share one.
+APPROVAL_COVERED_PATHS = (
+    *_digest_scope.GOVERNED_INPUT_PATHS,
     ".nornyx/contracts",
-    "pyproject.toml",
-    "Dockerfile",
-    "docker-compose.yml",
-    ".gitignore",
-    "BRD.md",
-    "CLAUDE.md",
 )
+
+#: Kept as an alias for readers who expect the old name, and pointed at the
+#: dirty-tree list it always drove.
+GOVERNED_INPUT_PATHS = APPROVAL_COVERED_PATHS
 
 #: The only tracked files allowed to differ, and the reason each one may.
 #:
@@ -1285,7 +1294,7 @@ def _unstaged_governed_paths() -> list[str]:
     contracts in particular are rewritten by this tool during a normal run, so
     borrowing the wider set would report the tool's own output as drift.
     """
-    roots = list(_digest_scope.GOVERNED_INPUT_PATHS)
+    roots = list(APPROVAL_COVERED_PATHS)
     excluded = _digest_scope.EXCLUDED_PREFIXES
     try:
         changed = _git_lines("diff", "--name-only", "--", *roots)

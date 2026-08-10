@@ -51,8 +51,14 @@ def _workspace(tmp_path: Path) -> Path:
         shutil.copytree(ROOT / item, work / item, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
     # Declared by the repository scope; omitting them now yields
     # SUBJECT_SCOPE_INCOMPLETE instead of a smaller subject reported as verified.
-    for item in ("pyproject.toml", ".gitignore", "BRD.md", "Dockerfile", "docker-compose.yml"):
-        shutil.copy2(ROOT / item, work / item)
+    # Derived from the scope, not listed here. Seven fixtures each kept
+    # their own copy of this list and all seven broke the moment the scope
+    # gained a required file -- SUBJECT_SCOPE_INCOMPLETE, which is the scope
+    # correctly refusing to call a smaller subject verified.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from governed_workspace import copy_governed_workspace  # noqa: PLC0415
+
+    copy_governed_workspace(work)
     _git(work, "init", "-q")
     _git(work, "config", "user.email", "fixture@example.invalid")
     _git(work, "config", "user.name", "fixture")

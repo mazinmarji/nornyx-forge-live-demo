@@ -54,10 +54,15 @@ def _workspace(tmp_path: Path) -> Path:
     work = tmp_path / "repo"
     work.mkdir()
     for item in ("scripts", "src", "docs", ".nornyx", "tests"):
-        shutil.copytree(ROOT / item, work / item)
-    for item in ("pyproject.toml", ".gitignore", "Dockerfile", "docker-compose.yml", "BRD.md"):
-        shutil.copy2(ROOT / item, work / item)
-    shutil.copytree(ROOT / ".github", work / ".github")
+        shutil.copytree(ROOT / item, work / item, dirs_exist_ok=True)
+    # Derived from the scope, not listed here. Seven fixtures each kept
+    # their own copy of this list and all seven broke the moment the scope
+    # gained a required file -- SUBJECT_SCOPE_INCOMPLETE, which is the scope
+    # correctly refusing to call a smaller subject verified.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from governed_workspace import copy_governed_workspace  # noqa: PLC0415
+
+    copy_governed_workspace(work)
     _git(work, "init", "-q")
     _git(work, "config", "user.email", "fixture@example.invalid")
     _git(work, "config", "user.name", "fixture")

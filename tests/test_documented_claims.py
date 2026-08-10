@@ -137,3 +137,102 @@ def test_the_assurance_boundary_still_states_what_is_not_established():
         "reviewer keys are not approver keys",
     ):
         assert required in text, f"the assurance boundary no longer states {required!r}"
+
+
+# --------------------------------------------------------------------------
+# The documents a reviewer reads must be inside what a reviewer signs
+# --------------------------------------------------------------------------
+
+
+def test_there_is_one_definition_of_governed_input():
+    """Two lists that must agree cannot be allowed to disagree.
+
+    `refresh_governance_evidence` carried its own GOVERNED_INPUT_PATHS naming
+    `docs`, `.nornyx/contracts` and `CLAUDE.md`, documented as "paths whose
+    content a human approval actually covers". Every digest read the *other*
+    list, in `governed_subject`, which named none of them. The list that looked
+    like the tool's own definition bound nothing, and the one that bound
+    everything did not look authoritative.
+
+    Identity, not equality: equal copies would satisfy a value comparison the
+    moment someone edited one of them back.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import refresh_governance_evidence as evidence_tool  # noqa: PLC0415
+
+    from nornyx_forge.governed_subject import GOVERNED_INPUT_PATHS
+
+    # NOT equality. These are two concepts, and merging them is a regression:
+    # the dirty-tree gate must see `.nornyx/contracts` so that editing a contract
+    # under a pinned approval refuses, while the input digest must NOT, because
+    # settled contracts are output and folding them in would make the input
+    # depend on something derived from it.
+    #
+    # I merged them once, on the strength of the shared name, and silently
+    # removed contract coverage from the dirty-tree gate. What this asserts is
+    # that the wider list is built FROM the narrower one, so they cannot drift
+    # apart, and that the one thing that distinguishes them is still there.
+    assert set(GOVERNED_INPUT_PATHS) <= set(evidence_tool.APPROVAL_COVERED_PATHS), (
+        "the dirty-tree gate no longer covers everything the input digest does"
+    )
+    assert ".nornyx/contracts" in evidence_tool.APPROVAL_COVERED_PATHS, (
+        "editing a settled contract under a pinned approval would not be refused"
+    )
+    assert ".nornyx/contracts" not in GOVERNED_INPUT_PATHS, (
+        "settled contracts are output; folding them into the input digest makes "
+        "the input depend on something derived from it"
+    )
+
+
+def test_the_claims_documents_are_inside_the_governed_input():
+    """A reviewer signs a subject digest; it must cover what they read.
+
+    `--verify` reported `intact` while documentation, `.dockerignore`, and
+    `CLAUDE.md` were edited freely, so a signed `inspection_subject_digest` did
+    not cover the documents making the claims being inspected. The pointed case
+    was commit 13844c7 -- "Stop the documentation asserting things the system
+    stopped doing" -- which changed README.md and ASSUMPTIONS.md, and was
+    structurally unbindable by the evidence chain that exists to bind what was
+    reviewed.
+
+    `.dockerignore` is here for a different reason: it decides what enters the
+    runtime image, so it is authority-relevant in the most direct sense.
+    """
+    from nornyx_forge.governed_subject import GOVERNED_INPUT_PATHS
+
+    for required in ("docs", "CLAUDE.md", ".dockerignore"):
+        assert required in GOVERNED_INPUT_PATHS, (
+            f"{required} is outside the governed input digest, so an inspection "
+            "does not cover it"
+        )
+
+
+def test_editing_a_claims_document_moves_the_governed_input_digest():
+    """Behaviour, not membership. A list entry that changes no digest is decor."""
+    import shutil
+    import tempfile
+
+    from nornyx_forge.governed_subject import REPOSITORY_SCOPE
+    from nornyx_forge.subject_observer import observe_input_manifest
+
+    work = Path(tempfile.mkdtemp()) / "repo"
+    shutil.copytree(
+        ROOT,
+        work,
+        ignore=shutil.ignore_patterns(
+            ".git", ".venv", "__pycache__", "*.pyc", "*.egg-info", "evidence"
+        ),
+    )
+    before = observe_input_manifest(work, REPOSITORY_SCOPE)
+
+    target = work / "docs/ASSURANCE_BOUNDARY.md"
+    marker = (chr(10) + '<!-- probe -->' + chr(10)).encode('utf-8')
+    target.write_bytes(target.read_bytes() + marker)
+    after = observe_input_manifest(work, REPOSITORY_SCOPE)
+
+    assert after != before, (
+        "editing a claims document left the governed input unchanged, so an "
+        "inspection signed over it covers nothing it says"
+    )

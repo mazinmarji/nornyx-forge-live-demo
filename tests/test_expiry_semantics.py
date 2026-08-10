@@ -50,8 +50,14 @@ def _workspace(tmp_path: Path) -> Path:
         )
     # The repository scope declares these root files; a fixture missing them
     # now gets SUBJECT_SCOPE_INCOMPLETE rather than a quietly smaller subject.
-    for item in ("pyproject.toml", ".gitignore", "BRD.md", "Dockerfile", "docker-compose.yml"):
-        shutil.copy2(ROOT / item, work / item)
+    # Derived from the scope, not listed here. Seven fixtures each kept
+    # their own copy of this list and all seven broke the moment the scope
+    # gained a required file -- SUBJECT_SCOPE_INCOMPLETE, which is the scope
+    # correctly refusing to call a smaller subject verified.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from governed_workspace import copy_governed_workspace  # noqa: PLC0415
+
+    copy_governed_workspace(work)
     subprocess.run(["git", "init", "-q"], cwd=work, check=True, capture_output=True)
     for key, value in (("user.email", "fixture@example.invalid"), ("user.name", "fixture")):
         subprocess.run(["git", "config", key, value], cwd=work, check=True, capture_output=True)
