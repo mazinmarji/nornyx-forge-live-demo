@@ -22,32 +22,91 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: Skips that are a deliberate part of the design, with the reason each is
-#: allowed. Matched as a substring of the skip message, so the reason a test
-#: gives has to say which of these it is.
+#: Skips that are a deliberate part of the design, keyed by the test allowed to
+#: skip and carrying the reason it is allowed.
+#:
+#: Keyed by identity, not by message. This matched a substring of the skip text,
+#: so any new test whose reason happened to contain one of these phrases was
+#: exempted without anyone deciding it should be. That is not hypothetical: two
+#: tests in this repository were written borrowing `set FORGE_DOCKER_TESTS=1` —
+#: one for a POSIX-only fixture, one for a Docker-daemon fixture — and the census
+#: counted both as expected and said nothing. Under identity keying, borrowing a
+#: reason string buys nothing, because the exemption names the test.
 EXPECTED_SKIPS = {
-    "set FORGE_DOCKER_TESTS=1": (
-        "The live container build downloads packages, which BRD-004 forbids for "
-        "the default offline run. CI exercises it in the container-launch job "
-        "instead, so it is covered — just not here."
-    ),
-    "requires a running Docker daemon": (
-        "The in-image subject proof needs a live daemon, which a workstation may "
-        "not have. It is not optional: the container-launch job runs it with its "
-        "own skip census, so a skip there fails that job rather than passing "
-        "quietly. Setting FORGE_DOCKER_TESTS=1 does not start a daemon, which is "
-        "why this is its own marker rather than borrowing that one."
-    ),
-    "requires POSIX symlink and FIFO creation": (
-        "Symlink and FIFO fixtures cannot be built on a Windows workstation "
-        "without elevation. The property is not weakened: every CI test job runs "
-        "Linux and executes these, and a platform-independent test asserts the "
-        "refusals still exist in the observer so a deletion cannot hide here."
-    ),
+    # Symlink and FIFO fixtures cannot be built on a Windows workstation without
+    # elevation. The property is not weakened: every CI test job runs Linux and
+    # executes these, and test_the_refusals_are_reachable_on_every_platform
+    # asserts the refusals still exist in the observer, so a deletion cannot hide
+    # behind this exemption.
+    "tests/test_special_files.py::test_a_symlink_under_a_governed_root_is_refused":
+        "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
+    "tests/test_special_files.py::test_a_symlink_pointing_outside_the_tree_is_refused":
+        "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
+    "tests/test_special_files.py::test_a_fifo_under_a_governed_root_is_refused":
+        "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
+    "tests/test_special_files.py::test_a_device_node_is_refused_if_one_can_be_referenced":
+        "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
+    # The in-image subject proof needs a live Docker daemon, which a workstation
+    # may not have. Not optional: the container-launch job runs these with its
+    # own skip census, so a skip there fails that job rather than passing
+    # quietly.
+    "tests/test_runtime_image_subject.py::test_the_built_image_establishes_its_own_subject":
+        "The in-image subject proof needs a live Docker daemon, which a workstation may not have. Not optional: the container-launch job runs these with its own skip census, so a skip there fails that job rather than passing quietly.",
+    "tests/test_runtime_image_subject.py::test_the_image_needs_no_git_to_know_what_it_is":
+        "The in-image subject proof needs a live Docker daemon, which a workstation may not have. Not optional: the container-launch job runs these with its own skip census, so a skip there fails that job rather than passing quietly.",
+    "tests/test_runtime_image_subject.py::test_the_packaged_subject_is_not_assumed_equal_to_the_repository_subject":
+        "The in-image subject proof needs a live Docker daemon, which a workstation may not have. Not optional: the container-launch job runs these with its own skip census, so a skip there fails that job rather than passing quietly.",
+    "tests/test_runtime_image_subject.py::test_a_missing_required_contract_in_the_image_refuses":
+        "The in-image subject proof needs a live Docker daemon, which a workstation may not have. Not optional: the container-launch job runs these with its own skip census, so a skip there fails that job rather than passing quietly.",
+    # The live container build downloads packages, which BRD-004 forbids for the
+    # default offline run. CI exercises it in the container-launch job.
+    "tests/test_container_launch.py::test_compose_up_build_starts_the_application":
+        "The live container build downloads packages, which BRD-004 forbids for the default offline run. CI exercises it in the container-launch job instead, so it is covered — just not here.",
 }
 
 
-def classify(report: Path) -> tuple[int, int, list[str]]:
+#: The suite must not quietly get smaller. A collection error, a renamed
+#: directory or a deleted file all reduce the count without failing anything —
+#: which is how 63 tests once sat behind a green run. Raise this as the suite
+#: grows; lowering it is a decision someone has to make on purpose, in a diff.
+NEWLINE = chr(10)
+
+MINIMUM_COLLECTED = 440
+
+#: Modules whose absence is a governance regression, not a smaller suite. Each
+#: holds the proof of an invariant that was reached through a reproduced exploit,
+#: so a report that does not mention one means the proof is gone. A floor alone
+#: would not catch this: deleting one file and adding tests elsewhere keeps the
+#: total up while the invariant goes unproven.
+REQUIRED_MODULES = (
+    "tests/test_approval_authentication.py",
+    "tests/test_approval_ledger.py",
+    "tests/test_reviewer_authentication.py",
+    "tests/test_independent_inspection.py",
+    "tests/test_trust_directionality.py",
+    "tests/test_content_binding.py",
+    "tests/test_subject_scope.py",
+    "tests/test_security_context.py",
+    "tests/test_evaluation_time.py",
+    "tests/test_execution_semantics.py",
+    "tests/test_skip_gate.py",
+)
+
+
+def node_id(case) -> str:
+    """The junit testcase as a pytest nodeid, parametrisation stripped.
+
+    `classname` is dotted and `name` may carry a `[param]` suffix. An exemption
+    covers a test, not one of its parameter sets: a parametrised case that skips
+    for a declared environmental reason skips for every parameter, and listing
+    each one would mean adding a new parameter silently loses its exemption.
+    """
+    classname = (case.get("classname") or "").replace(".", "/")
+    name = (case.get("name") or "").split("[", 1)[0]
+    return f"{classname}.py::{name}" if classname else name
+
+
+def classify(report: Path) -> tuple[int, int, list[str], set[str]]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
     Separated from the run so the gate itself is testable: a guard whose failure
@@ -56,21 +115,21 @@ def classify(report: Path) -> tuple[int, int, list[str]]:
 
     root = ET.parse(report).getroot()
     unexpected: list[str] = []
+    seen_modules: set[str] = set()
     allowed = 0
     total = 0
     for case in root.iter("testcase"):
         total += 1
+        seen_modules.add(node_id(case).split("::", 1)[0])
         skipped = case.find("skipped")
         if skipped is None:
             continue
         message = (skipped.get("message") or "") + (skipped.text or "")
-        if any(marker in message for marker in EXPECTED_SKIPS):
+        if node_id(case) in EXPECTED_SKIPS:
             allowed += 1
             continue
-        unexpected.append(
-            f"{case.get('classname', '?')}::{case.get('name', '?')} — {message.strip()}"
-        )
-    return total, allowed, unexpected
+        unexpected.append(f"{node_id(case)} — {message.strip()}")
+    return total, allowed, unexpected, seen_modules
 
 
 def main() -> int:
@@ -87,18 +146,31 @@ def main() -> int:
             print("pytest produced no report; treating as failure")
             return completed.returncode or 1
 
-        total, allowed, unexpected = classify(report)
+        total, allowed, unexpected, seen_modules = classify(report)
 
     print(f"collected {total}, expected skips {allowed}, unexpected skips {len(unexpected)}")
-    if unexpected:
-        print("\nThese tests did not run, and were not declared as expected skips:\n")
-        for entry in unexpected:
-            print(f"  {entry}")
+
+    missing_modules = [name for name in REQUIRED_MODULES if name not in seen_modules]
+    if missing_modules:
+        print(NEWLINE + "These modules contributed no tests to the report:" + NEWLINE)
+        for name in missing_modules:
+            print(f"  {name}")
         print(
-            "\nA skipped test asserts nothing. Either install what it needs, or "
-            "add its reason to EXPECTED_SKIPS with why it is acceptable."
+            NEWLINE + "Each proves an invariant reached through a reproduced "
+            "exploit. A report that never mentions one means that proof is "
+            "gone, however many tests ran elsewhere."
         )
-        print("\nGATE: FAIL — undeclared skips")
+        print(NEWLINE + "GATE: FAIL - a required test module is missing")
+        return 2
+
+    if total < MINIMUM_COLLECTED:
+        print(
+            NEWLINE + f"collected {total}, below the floor of "
+            f"{MINIMUM_COLLECTED}. A suite that silently shrinks looks "
+            "exactly like a suite that passes. If tests were removed on "
+            "purpose, lower the floor in the same diff and say why."
+        )
+        print(NEWLINE + "GATE: FAIL - collection below floor")
         return 2
 
     # The last line must state the verdict. The skip census above reads like
