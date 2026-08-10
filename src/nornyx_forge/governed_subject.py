@@ -353,6 +353,45 @@ class SubjectEntry:
 
 
 @dataclass(frozen=True)
+class TrustConfiguration:
+    """Where authority is anchored, fixed at the moment the process started.
+
+    A pure value: it holds already-resolved locations and never reads them.
+    Resolution is the application layer's job (`subject_bootstrap`), so this can
+    be handed *down* to the domain without the domain reaching outward for it.
+
+    The point is that these stop being questions each caller answers for itself.
+    Every one of them was previously an environment read at the point of use —
+    the approver store per boundary construction, the reviewer store per
+    verification, the ledger per boundary, the builder identity per assurance
+    derivation. Each is authority-relevant, and each was therefore re-aimable by
+    anything that could set a variable between two calls.
+
+    `builder_identities` is a set for the same reason it is a union at its
+    source: ambient input may add an identity that cannot inspect, never remove
+    one.
+    """
+
+    #: Locations as strings, not `Path`. This module is held to a purity
+    #: constraint the architecture gate enforces — no `pathlib`, no I/O — because
+    #: subject identity must be computable without touching a filesystem.
+    #: Turning a location into something openable is the caller's job.
+    approver_store: str
+    reviewer_store: str
+    approval_ledger: str
+    builder_identities: frozenset[str]
+
+    def describe(self) -> dict[str, object]:
+        """Locations for evidence. Never contents, and never key material."""
+        return {
+            "approver_store": self.approver_store,
+            "reviewer_store": self.reviewer_store,
+            "approval_ledger": self.approval_ledger,
+            "builder_identities": sorted(self.builder_identities),
+        }
+
+
+@dataclass(frozen=True)
 class RuntimeSubject:
     """The established identity of what is running. Immutable for the process.
 

@@ -127,11 +127,11 @@ def test_the_refusal_does_not_consume_the_approval(tmp_path: Path):
     approved = _request(MISSION_A)
     ledger = tmp_path / "ledger.sqlite3"
     boundary = _permissive_boundary(tmp_path, as_of=NOW)
-    boundary.approval_ledger = ApprovalLedger(ledger)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger)
 
     _execute(boundary, MISSION_B, approval=_grant(approved), request=approved)
 
-    claimed, reason = ApprovalLedger(ledger).consume("ACT-A", approved.digest, at=NOW)
+    claimed, reason = ApprovalLedger.provision(ledger).consume("ACT-A", approved.digest, at=NOW)
     assert claimed is True, f"the refused mission spent the approval: {reason}"
 
 
@@ -142,12 +142,12 @@ def test_the_original_mission_can_still_use_its_approval(tmp_path: Path):
     ledger = tmp_path / "ledger.sqlite3"
 
     stolen = _permissive_boundary(tmp_path, as_of=NOW)
-    stolen.approval_ledger = ApprovalLedger(ledger)
+    stolen.approval_ledger = ApprovalLedger.provision(ledger)
     decision, _, executed = _execute(stolen, MISSION_B, approval=grant, request=approved)
     assert decision.effect == "DENY" and executed == []
 
     rightful = _permissive_boundary(tmp_path, as_of=NOW)
-    rightful.approval_ledger = ApprovalLedger(ledger)
+    rightful.approval_ledger = ApprovalLedger.provision(ledger)
     decision, result, executed = _execute(
         rightful, MISSION_A, approval=grant, descriptor=_descriptor()
     )
@@ -263,7 +263,7 @@ def test_binding_survives_boundary_reconstruction_and_ledger_reopen(tmp_path: Pa
 
     def run(mission_id: str, *, request=None, descriptor=None):
         boundary = _permissive_boundary(tmp_path, as_of=NOW)
-        boundary.approval_ledger = ApprovalLedger(ledger)
+        boundary.approval_ledger = ApprovalLedger.provision(ledger)
         return _execute(
             boundary, mission_id, approval=grant, request=request, descriptor=descriptor
         )

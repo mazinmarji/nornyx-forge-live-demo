@@ -167,7 +167,7 @@ def _release(work: Path, grant, store, *, request=None, attempt: int = 1):
         runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION),
     )
     boundary.approver_trust_store = store
-    boundary.approval_ledger = ApprovalLedger(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id="CASE-1",
@@ -222,7 +222,7 @@ def test_the_reported_exploit_is_refused(tmp_path: Path, trust_store):
         work, runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION)
     )
     boundary.approver_trust_store = trust_store
-    boundary.approval_ledger = ApprovalLedger(ledger)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id="CASE-1",
@@ -608,10 +608,24 @@ def test_the_trust_store_is_resolved_once_not_per_decision():
         Path(__file__).resolve().parents[1] / "src/nornyx_forge/nornyx_runtime.py"
     ).read_text(encoding="utf-8")
     # The load happens in the constructor, and the decision path uses the object.
+    #
+    # Asserted on the call, not on an exact character sequence: this previously
+    # required the literal `ApprovalTrustStore.load()`, which stopped matching
+    # the moment R3 gave the call an argument — a passing control failing over
+    # its own punctuation. What must hold is that no resolution happens below
+    # the constructor.
     constructor, decision_path = runtime.split("def _official(", 1)
-    assert "ApprovalTrustStore.load()" in constructor
-    assert "ApprovalTrustStore.load()" not in decision_path
-    assert "trust_store_path()" not in decision_path
+    assert "ApprovalTrustStore.load(" in constructor
+    for resolution in (
+        "ApprovalTrustStore.load(",
+        "trust_store_path(",
+        "APPROVER_TRUST_STORE",
+        "approval_ledger_path(",
+    ):
+        assert resolution not in decision_path, (
+            f"{resolution} runs below the constructor, so the root of trust is "
+            "resolved per decision rather than per boundary"
+        )
 
 
 def test_authentication_evidence_names_the_store_without_leaking_key_material(

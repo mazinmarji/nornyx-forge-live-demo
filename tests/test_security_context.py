@@ -15,9 +15,12 @@ they were derived.
 
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from nornyx_forge.governed_subject import RUNTIME_IMAGE_SCOPE, RuntimeAuthorityConfig
 from nornyx_forge.subject_bootstrap import (
@@ -138,3 +141,102 @@ def test_the_identity_assertion_can_actually_fail():
     """
     work = _tree()
     assert _context(work) is not _context(work)
+
+
+# --------------------------------------------------------------------------
+# R3: trust anchors are resolved once, at startup
+# --------------------------------------------------------------------------
+
+
+def test_the_environment_is_read_once_and_cannot_re_aim_a_live_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A variable set after startup must not move a trust anchor.
+
+    Each of these was previously resolved at the point of use — the approver
+    store per boundary construction, the reviewer store per verification, the
+    ledger per boundary, the builder identity per assurance derivation. Anything
+    able to set a variable between two calls could therefore aim the second one
+    somewhere else.
+    """
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context
+
+    monkeypatch.setenv("FORGE_APPROVER_TRUST_STORE", str(tmp_path / "approvers.json"))
+    monkeypatch.setenv("FORGE_REVIEWER_TRUST_STORE", str(tmp_path / "reviewers.json"))
+    monkeypatch.setenv("FORGE_APPROVAL_LEDGER", str(tmp_path / "ledger.sqlite3"))
+    monkeypatch.delenv("FORGE_BUILDER_IDENTITY", raising=False)
+
+    context = bootstrap_security_context(ROOT)
+    established = context.trust
+
+    monkeypatch.setenv("FORGE_APPROVER_TRUST_STORE", str(tmp_path / "attacker.json"))
+    monkeypatch.setenv("FORGE_REVIEWER_TRUST_STORE", str(tmp_path / "attacker.json"))
+    monkeypatch.setenv("FORGE_APPROVAL_LEDGER", str(tmp_path / "attacker.sqlite3"))
+    monkeypatch.setenv("FORGE_BUILDER_IDENTITY", "not.the.builder")
+
+    assert context.trust is established
+    assert "attacker" not in context.trust.approver_store
+    assert "attacker" not in context.trust.reviewer_store
+    assert "attacker" not in context.trust.approval_ledger
+
+
+def test_the_trust_configuration_is_immutable():
+    """Established once means it cannot be edited afterwards either."""
+    import dataclasses
+
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context
+
+    trust = bootstrap_security_context(ROOT).trust
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        trust.approver_store = "somewhere/else.json"  # type: ignore[misc]
+
+
+def test_the_trust_configuration_describes_locations_and_never_contents():
+    """Evidence may name where a trust anchor is; it may never carry the keys."""
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context
+
+    described = bootstrap_security_context(ROOT).trust.describe()
+    assert set(described) == {
+        "approver_store",
+        "reviewer_store",
+        "approval_ledger",
+        "builder_identities",
+    }
+    rendered = json.dumps(described)
+    assert "BEGIN" not in rendered and "PRIVATE KEY" not in rendered
+
+
+def test_a_builder_identity_is_always_present_in_the_context():
+    """An empty exclusion set would let anyone inspect their own work."""
+    from nornyx_forge.reviewer_trust import BUILDER_IDENTITIES
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context
+
+    assert BUILDER_IDENTITIES <= bootstrap_security_context(ROOT).trust.builder_identities
+
+
+def test_the_boundary_uses_the_established_anchors_not_a_fresh_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Resolving once only matters if the thing deciding actually uses it.
+
+    A `TrustConfiguration` nobody consumes is documentation. The boundary takes
+    its ledger and approver store from the context, so moving the environment
+    afterwards cannot point a live boundary at a different root of trust.
+    """
+    from nornyx_forge.governed_subject import TrustConfiguration
+    from nornyx_forge.nornyx_runtime import NornyxActionBoundary
+
+    established = TrustConfiguration(
+        approver_store=str(tmp_path / "approvers.json"),
+        reviewer_store=str(tmp_path / "reviewers.json"),
+        approval_ledger=str(tmp_path / "established.sqlite3"),
+        builder_identities=frozenset({"builder.nornyx_forge"}),
+    )
+    monkeypatch.setenv("FORGE_APPROVAL_LEDGER", str(tmp_path / "attacker.sqlite3"))
+    monkeypatch.setenv("FORGE_APPROVER_TRUST_STORE", str(tmp_path / "attacker.json"))
+
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True, trust=established)
+
+    assert str(boundary.approval_ledger.path) == established.approval_ledger
+    assert "attacker" not in str(boundary.approval_ledger.path)
+    assert "attacker" not in boundary.approver_trust_store.source

@@ -170,7 +170,7 @@ def test_an_unknown_risk_consumes_no_approval(tmp_path: Path):
 
     ledger_path = tmp_path / "ledger.sqlite3"
     boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
-    boundary.approval_ledger = ApprovalLedger(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
     boundary.evaluate_and_execute(
         mission_id="CASE-1", risk="HIGH-RISK", action=lambda: "ran",
         action_approval={"granted": True, "approval_id": "ACT-1"},

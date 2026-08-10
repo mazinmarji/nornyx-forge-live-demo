@@ -132,15 +132,30 @@ installed package.
 
 **Serves.** BRD-F-003 (reproducible demonstrations), BRD-F-005.
 
-## A-011 Subject revision is read from the contract
+## A-011 Subject revision is read from the contract — SUPERSEDED by R1
 
 **Ambiguity.** The governed revision was duplicated as a constant in code and as
 `subject_revision` in the contract, so the two could silently drift — and did.
 
-**Resolution.** `runtime_revision()` reads `subject_revision` from
+**Resolution at the time.** `runtime_revision()` read `subject_revision` from
 `.nornyx/contracts/runtime_network.nyx`, making the contract the single source of
-truth. With no contract present it returns `git:unbound` so evidence is honestly
-labelled instead of claiming a binding that does not exist.
+truth.
+
+**Why it no longer holds.** The resolution was still commit identity, and a
+contract cannot contain the hash of the commit that contains it — so
+`declared == actual` was false at every commit and passed only in an uncommitted
+working tree, which the same system refuses as dirty. Worse, letting the contract
+declare the revision meant the artifact under governance named the identity it
+would be judged against.
+
+`runtime_revision()` is deleted. Identity is now content, not a commit:
+`governed_revision_digest` anchors the revision and `governed_subject_digest`
+covers the complete settled authority state, both computed by
+`nornyx_forge.governed_subject` over a code-owned `SubjectScope`. Git survives
+as provenance only, and reaches no decision.
+
+Retained rather than removed so the reasoning stays traceable: this entry
+records an assumption that was made, acted on, and then found wrong.
 
 **Serves.** BRD-F-005.
 
@@ -166,7 +181,7 @@ declared goal scope; no gate, rule, or policy was weakened to accommodate them.
 
 **Serves.** BRD-005.
 
-## A-011 Trust stores are operator-supplied and live outside the governed tree
+## A-012 Trust stores are operator-supplied and live outside the governed tree
 
 **Ambiguity.** The BRD requires independent review and human approval to be
 verifiable, but does not say where the verifying keys come from. Any answer
@@ -197,7 +212,7 @@ claim about that store's provenance. Recorded in `docs/ASSURANCE_BOUNDARY.md`.
 
 **Serves.** BRD-002, BRD-005.
 
-## A-012 Signing capability is excluded from the runtime image
+## A-013 Signing capability is excluded from the runtime image
 
 **Ambiguity.** The BRD requires attestations to be issuable, and also requires
 the running application to be governed. Those pull in opposite directions if the
@@ -212,3 +227,27 @@ never written into the repository. A test asserts the Dockerfile still omits
 `scripts/` and that no signing primitive appears in the runtime module.
 
 **Serves.** BRD-002, BRD-005.
+
+## A-014 The approval ledger is provisioned, never self-created
+
+**Ambiguity.** BRD-002 requires a human approval to release a consequential
+effect at most once. It does not say what should happen when the state recording
+that "at most once" is absent.
+
+**Resolution.** Absence is a refusal, not an empty answer. The ledger is created
+by an explicit operator command (`nornyx-forge provision-ledger`); the boundary
+opens it and never creates it. A missing ledger denies consequential acts, a
+corrupt or unwritable one raises as unavailable, and re-provisioning leaves an
+existing ledger untouched.
+
+Previously `CREATE TABLE IF NOT EXISTS` ran at every construction, so deleting
+the file produced an empty ledger in which nothing had been spent — every grant
+ever consumed became replayable. Deleting a file is not an authorization
+decision.
+
+**Operational consequence.** A fresh deployment must provision the ledger before
+it can release any consequential effect. That is deliberate: the alternative is a
+deployment that silently begins with no replay history and cannot tell the
+difference between "nothing has happened yet" and "the record is gone".
+
+**Serves.** BRD-002.

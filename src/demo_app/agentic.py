@@ -146,7 +146,14 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # would let a file changed between two cases silently re-aim the second
         # one, which is the ambient re-resolution this model removes.
         self.security_context = security_context
-        self.boundary = NornyxActionBoundary(root, allow_fallback=allow_policy_fallback)
+        # Trust anchors come from the established context, not from a fresh
+        # environment read per boundary. The context resolved them once at
+        # startup; handing them down is what makes that resolution binding.
+        self.boundary = NornyxActionBoundary(
+            root,
+            allow_fallback=allow_policy_fallback,
+            trust=security_context.trust if security_context is not None else None,
+        )
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.
         self._execution_entered = False

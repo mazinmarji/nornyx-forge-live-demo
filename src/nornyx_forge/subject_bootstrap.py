@@ -22,6 +22,7 @@ from .governed_subject import (
     RuntimeAuthorityConfig,
     RuntimeSubject,
     SubjectScope,
+    TrustConfiguration,
     digest_of,
     revision_digest,
     subject_digest,
@@ -56,6 +57,7 @@ class RuntimeSecurityContext:
 
     runtime_subject: RuntimeSubject
     authority_config: RuntimeAuthorityConfig
+    trust: TrustConfiguration
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -82,6 +84,32 @@ def bootstrap_security_context(
     return RuntimeSecurityContext(
         runtime_subject=establish_subject(resolved, scope=scope, config=authority_config),
         authority_config=authority_config,
+        trust=resolve_trust_configuration(resolved),
+    )
+
+
+def resolve_trust_configuration(root: Path) -> TrustConfiguration:
+    """Read the environment once, here, and never again downstream.
+
+    Every one of these was previously resolved at the point of use, which meant
+    a variable set between two calls could re-aim the control the second call
+    depended on. Reading them together at startup makes the trust anchors part
+    of the established security context rather than four independent ambient
+    lookups.
+
+    Only locations are resolved. Nothing is opened, and a missing store or
+    ledger is not an error here — refusal belongs to whatever tries to use it,
+    where the refusal can be reported in that subsystem's own vocabulary.
+    """
+    from .approval_trust import trust_store_path as approver_store_path
+    from .nornyx_runtime import approval_ledger_path
+    from .reviewer_trust import excluded_inspector_identities, reviewer_store_path
+
+    return TrustConfiguration(
+        approver_store=str(approver_store_path()),
+        reviewer_store=str(reviewer_store_path()),
+        approval_ledger=str(approval_ledger_path(root)),
+        builder_identities=excluded_inspector_identities(),
     )
 
 

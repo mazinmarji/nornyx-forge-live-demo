@@ -78,7 +78,7 @@ def _request(**overrides: object) -> ActionRequest:
 
 
 def test_a_second_consumption_is_refused(tmp_path: Path):
-    ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
+    ledger = ApprovalLedger.provision(tmp_path / "ledger.sqlite3")
     request = _request()
     assert ledger.consume(_fingerprint("ACT-1", request), request.digest, at=NOW)[0] is True
     claimed, reason = ledger.consume(_fingerprint("ACT-1", request), request.digest, at=NOW)
@@ -89,7 +89,7 @@ def test_a_second_consumption_is_refused(tmp_path: Path):
 def test_consumption_survives_closing_and_reopening_the_store(tmp_path: Path):
     path = tmp_path / "ledger.sqlite3"
     request = _request()
-    assert ApprovalLedger(path).consume(_fingerprint("ACT-2", request), request.digest, at=NOW)[0] is True
+    assert ApprovalLedger.provision(path).consume(_fingerprint("ACT-2", request), request.digest, at=NOW)[0] is True
     # A brand new object over the same file, as a restarted process would build.
     claimed, reason = ApprovalLedger(path).consume(_fingerprint("ACT-2", request), request.digest, at=NOW)
     assert claimed is False, reason
@@ -98,6 +98,9 @@ def test_consumption_survives_closing_and_reopening_the_store(tmp_path: Path):
 def test_consumption_survives_a_new_boundary(tmp_path: Path):
     """Rebuilding the boundary must not forget what was already spent."""
     request = _request()
+    # Provisioned once, deliberately, before any boundary exists. A boundary
+    # cannot create its own replay state; that is the point of this change.
+    ApprovalLedger.provision(approval_ledger_path(tmp_path))
     first = NornyxActionBoundary(tmp_path, allow_fallback=True)
     assert first.approval_ledger.consume(_fingerprint("ACT-3", request), request.digest, at=NOW)[0] is True
     second = NornyxActionBoundary(tmp_path, allow_fallback=True)
@@ -108,7 +111,7 @@ def test_consumption_survives_a_new_boundary(tmp_path: Path):
 def test_only_one_of_two_concurrent_consumers_wins(tmp_path: Path):
     """The unique constraint decides the race, not a check-then-act window."""
     path = tmp_path / "ledger.sqlite3"
-    ApprovalLedger(path)
+    ApprovalLedger.provision(path)
     request = _request()
 
     def claim(_: int) -> bool:
@@ -126,7 +129,7 @@ def test_two_different_requests_do_not_collide_on_a_shared_id(tmp_path: Path):
     key. It was the mirror of the real defect: the ledger noticed one id over two
     requests while missing one request under two ids.
     """
-    ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
+    ledger = ApprovalLedger.provision(tmp_path / "ledger.sqlite3")
     first = _request()
     other = _request(request_id="REQ-CASE-002", parameters={"amount": 5000, "currency": "USD"})
     assert ledger.consume(_fingerprint("ACT-4", first), first.digest, at=NOW)[0] is True
@@ -136,7 +139,7 @@ def test_two_different_requests_do_not_collide_on_a_shared_id(tmp_path: Path):
 
 def test_one_act_cannot_be_released_by_a_second_approval(tmp_path: Path):
     """Distinct grants, same consequential act: the act still happens once."""
-    ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
+    ledger = ApprovalLedger.provision(tmp_path / "ledger.sqlite3")
     request = _request()
     # Genuinely different decisions: a second named approver, not a relabel.
     first = _fingerprint("ACT-A", request, approver="human:operations_owner")
@@ -154,7 +157,7 @@ def test_a_failing_effect_still_spends_the_approval(tmp_path: Path):
     Consumption happens before the effect, so a failure does not hand back a
     reusable grant. Retrying requires a fresh human approval.
     """
-    ledger = ApprovalLedger(tmp_path / "ledger.sqlite3")
+    ledger = ApprovalLedger.provision(tmp_path / "ledger.sqlite3")
     request = _request()
     assert ledger.consume(_fingerprint("ACT-5", request), request.digest, at=NOW)[0] is True
     # The effect fails here; the grant stays spent.
@@ -199,7 +202,7 @@ def test_the_store_schema_enforces_uniqueness(tmp_path: Path):
     Two of them: the fingerprint cannot repeat, and neither can the act.
     """
     path = tmp_path / "ledger.sqlite3"
-    ApprovalLedger(path)
+    ApprovalLedger.provision(path)
     with sqlite3.connect(path) as conn:
         conn.execute(
             "INSERT INTO consumed_approvals VALUES (?,?,?,?)",
@@ -226,6 +229,7 @@ def test_boundary_withholds_a_replayed_grant(tmp_path: Path):
     request = _request(subject_revision=TEST_REVISION)
     grant = signed_grant(request, approval_id="ACT-REPLAY")
     ledger = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(ledger)
 
     def run() -> str:
         boundary = _permissive_boundary(tmp_path, as_of=NOW)
@@ -261,7 +265,7 @@ def test_a_corrupt_ledger_is_a_governed_refusal_not_a_crash(tmp_path: Path):
 def test_an_unusable_ledger_withholds_rather_than_releasing(tmp_path: Path):
     """If the claim cannot be recorded, single use cannot be promised."""
     path = tmp_path / "ledger.sqlite3"
-    ledger = ApprovalLedger(path)
+    ledger = ApprovalLedger.provision(path)
     # Point the ledger at a directory: every write fails from here on.
     ledger.path = tmp_path
     claimed, reason = ledger.consume("fp-io", _request().digest, at=NOW)
@@ -299,3 +303,78 @@ def test_the_api_does_not_disclose_server_paths(monkeypatch: pytest.MonkeyPatch)
     assert "<path>" in response.json()["detail"]["detail"]
     # The operator-facing detail keeps the real path.
     assert r"C:\srv\forge" in NornyxRuntimeUnavailable(leaky).detail
+
+
+# --------------------------------------------------------------------------
+# Provisioning is an operator act, not something a consequential act does
+# --------------------------------------------------------------------------
+
+
+def test_deleting_the_ledger_does_not_restore_a_spent_grant(tmp_path: Path):
+    """The defect, stated as the exploit it enabled.
+
+    `CREATE TABLE IF NOT EXISTS` ran on every construction, so removing the file
+    produced an empty ledger in which nothing had been spent — and every grant
+    ever consumed became replayable. Deleting a file is not an authorization
+    decision and must not act like one.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    request = _request()
+    fingerprint = _fingerprint("ACT-DELETE", request)
+    assert ApprovalLedger.provision(path).consume(fingerprint, request.digest, at=NOW)[0] is True
+
+    path.unlink()
+
+    reopened = ApprovalLedger(path)
+    assert reopened.available is False
+    claimed, reason = reopened.consume(fingerprint, request.digest, at=NOW)
+    assert claimed is False, "deleting the ledger released a spent grant again"
+    assert ApprovalLedger.MISSING in reason
+
+
+def test_an_unprovisioned_ledger_refuses_rather_than_creating_itself(tmp_path: Path):
+    """A first-ever consequential act must not mint its own replay state."""
+    path = tmp_path / "never-provisioned.sqlite3"
+    request = _request()
+
+    ledger = ApprovalLedger(path)
+    claimed, reason = ledger.consume(_fingerprint("ACT-FIRST", request), request.digest, at=NOW)
+
+    assert claimed is False
+    assert ApprovalLedger.MISSING in reason
+    assert not path.exists(), "the refusal created the ledger it was refusing over"
+
+
+def test_a_boundary_cannot_provision_its_own_replay_state(tmp_path: Path):
+    """Constructing the boundary must not be a way to get a ledger."""
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    assert boundary.approval_ledger.available is False
+    assert not approval_ledger_path(tmp_path).exists()
+
+
+def test_provisioning_is_idempotent_and_never_clears_what_was_spent(tmp_path: Path):
+    """Re-running setup must not be a way to launder a spent grant."""
+    path = tmp_path / "ledger.sqlite3"
+    request = _request()
+    fingerprint = _fingerprint("ACT-REPROVISION", request)
+    assert ApprovalLedger.provision(path).consume(fingerprint, request.digest, at=NOW)[0] is True
+
+    again = ApprovalLedger.provision(path)
+    claimed, reason = again.consume(fingerprint, request.digest, at=NOW)
+    assert claimed is False, "re-provisioning emptied the ledger"
+    assert "already consumed" in reason
+
+
+def test_a_ledger_missing_its_table_is_unavailable_not_silently_rebuilt(tmp_path: Path):
+    """An empty database file is not an empty ledger.
+
+    It is a file that cannot answer the question, and rebuilding the table under
+    it would answer "nothing was spent" on no evidence at all.
+    """
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    path = tmp_path / "tableless.sqlite3"
+    sqlite3.connect(path).close()
+    with pytest.raises(NornyxRuntimeUnavailable) as raised:
+        ApprovalLedger(path)
+    assert "unusable" in str(raised.value)

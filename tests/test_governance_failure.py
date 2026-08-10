@@ -130,6 +130,14 @@ def _permissive_boundary(
     """
     from signing import trust_store  # noqa: PLC0415
 
+    # Provisioned deliberately, because these tests are about other controls and
+    # need a boundary that can actually record a consumption. A boundary no
+    # longer creates its own replay state; absence of a ledger is its own test,
+    # in tests/test_approval_ledger.py.
+    from nornyx_forge.nornyx_runtime import ApprovalLedger, approval_ledger_path  # noqa: PLC0415
+
+    ApprovalLedger.provision(approval_ledger_path(root))
+
     boundary = NornyxActionBoundary(
         root,
         allow_fallback=True,

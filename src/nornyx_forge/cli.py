@@ -161,5 +161,37 @@ def demo(
     launch_application(port=port, worker_mode=worker_mode)
 
 
+@app.command("provision-ledger")
+def provision_ledger(
+    root: Path = typer.Option(Path("."), help="Repository root the ledger serves."),
+) -> None:
+    """Create the action-approval ledger. A deliberate operator step.
+
+    Creation used to happen wherever the ledger was first touched, which meant
+    deleting the file produced an empty one in which nothing had been spent —
+    every previously consumed grant replayable again. Deleting a file is not an
+    authorization decision. Provisioning is now separate and explicit, and the
+    boundary refuses rather than creating what it is missing.
+
+    Safe to re-run: an existing ledger is left exactly as it is, contents
+    included.
+    """
+    from .nornyx_runtime import ApprovalLedger, approval_ledger_path
+
+    location = approval_ledger_path(root.resolve())
+    existed = location.is_file()
+    ledger = ApprovalLedger.provision(location)
+    console.print_json(
+        json.dumps(
+            {
+                "status": "pass",
+                "ledger": str(ledger.path),
+                "action": "left_unchanged" if existed else "created",
+                "available": ledger.available,
+            }
+        )
+    )
+
+
 if __name__ == "__main__":
     app()

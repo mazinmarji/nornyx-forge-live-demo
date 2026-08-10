@@ -126,7 +126,7 @@ def _release(work: Path, context: RuntimeContext, grant, request=None, *, attemp
     ledger_path = work / "ledger.sqlite3"
     boundary = _permissive_boundary(work, runtime_context=context)
     boundary.runtime_subject = SUBJECT
-    boundary.approval_ledger = ApprovalLedger(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id=(request.mission_id if request is not None else "CASE-1"),

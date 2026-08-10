@@ -5,7 +5,8 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,7 +19,7 @@ from .approval_trust import (
     canonical_grant_payload,
     verify_signed_approval,
 )
-from .governed_subject import RuntimeSubject
+from .governed_subject import RuntimeSubject, TrustConfiguration
 from .util import write_json
 
 RUNTIME_CONTRACT = ".nornyx/contracts/runtime_network.nyx"
@@ -518,18 +519,93 @@ class ApprovalLedger:
     one.
     """
 
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
+    #: Emitted when the ledger cannot answer "was this grant already spent?".
+    #: Distinct codes, because the operator response differs: a ledger that was
+    #: never provisioned needs provisioning, and one that has gone missing needs
+    #: investigating.
+    MISSING = "APPROVAL_LEDGER_MISSING"
+    UNREADABLE = "APPROVAL_LEDGER_UNREADABLE"
+    UNWRITABLE = "APPROVAL_LEDGER_UNWRITABLE"
+
+    @classmethod
+    def provision(cls, path: Path) -> ApprovalLedger:
+        """Create the ledger. Explicit, and never reached from the boundary.
+
+        Separate from opening one because creation used to happen at the point
+        of use: `CREATE TABLE IF NOT EXISTS` on every construction meant deleting
+        the file produced an empty ledger in which nothing had been spent, and
+        every previously consumed grant became replayable. Deleting a file is not
+        an authorization decision, and it must not act like one.
+        """
+        location = Path(path)
+        location.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(location, timeout=30, isolation_level=None)
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as conn:
-                conn.execute(
+            connection.execute("PRAGMA journal_mode=WAL")
+            with connection:
+                connection.execute(
                     "CREATE TABLE IF NOT EXISTS consumed_approvals ("
                     " fingerprint TEXT PRIMARY KEY,"
                     " request_digest TEXT NOT NULL UNIQUE,"
                     " approval_id TEXT NOT NULL,"
                     " consumed_at TEXT NOT NULL)"
                 )
+        except (sqlite3.Error, OSError) as exc:
+            raise NornyxRuntimeUnavailable(
+                f"action approval ledger at {location} could not be provisioned: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+        finally:
+            connection.close()
+        # Opened through the ordinary constructor, so what comes back has passed
+        # exactly the checks any other caller's ledger passes. Building the
+        # instance directly would hand back an object that had skipped them, and
+        # a field added to `__init__` later would silently not exist here.
+        return cls(location)
+
+    def __init__(self, path: Path) -> None:
+        """Open an existing ledger. Creates nothing.
+
+        Absent and broken are different facts and get different treatment.
+
+        A ledger that was never provisioned is a deployment that has not been
+        set up yet. Recorded, not raised: constructing the boundary must not fail
+        merely because replay state is absent, or a repository with no ledger
+        could not answer read-only questions either. Consequential acts refuse
+        at `consume`, which is the only place replay state is authority.
+
+        A ledger that exists but cannot be read or written is a fault in a
+        deployment that believes it *is* set up. That still raises, so it
+        surfaces as unavailable rather than as a policy refusal — reporting a
+        broken database as DENY would describe an outage as a decision.
+        """
+        self.path = Path(path)
+        self.unavailable_reason = ""
+
+        if not self.path.is_file():
+            self.unavailable_reason = (
+                f"{self.MISSING}: no ledger at {self.path}. Replay protection "
+                "cannot be asserted over state that does not exist; provision it "
+                "explicitly rather than letting a consequential act create it."
+            )
+            return
+
+        try:
+            with self._session() as conn:
+                present = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                    " AND name='consumed_approvals'"
+                ).fetchone()
+                if not present:
+                    raise NornyxRuntimeUnavailable(
+                        f"action approval ledger at {self.path} is unusable: "
+                        f"{self.UNREADABLE}, it holds no consumed_approvals table"
+                    )
+                # An INSERT that fails *after* the boundary has decided to
+                # release an effect is the worst moment to discover the ledger is
+                # read-only, so take the write lock now and give it straight back.
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("ROLLBACK")
         except (sqlite3.Error, OSError) as exc:
             # A ledger we cannot read is a ledger we cannot trust to say whether
             # a grant was already spent, so refuse in the governed way the rest
@@ -539,11 +615,32 @@ class ApprovalLedger:
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
+    @property
+    def available(self) -> bool:
+        return not self.unavailable_reason
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
+
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        """A connection that is actually closed afterwards.
+
+        `with sqlite3.connect(...) as conn` commits the transaction and leaves
+        the connection open — a detail that reads exactly like a closing context
+        manager and is not one. Every consumption and lookup leaked one, which
+        on Windows holds a lock on the ledger file and elsewhere just exhausts
+        descriptors slowly enough to look like something else.
+        """
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def consume(
         self,
@@ -562,9 +659,16 @@ class ApprovalLedger:
         ``fingerprint`` must come from :func:`approval_fingerprint` over an
         already-validated grant. ``approval_id`` is recorded for provenance only
         and is never part of what makes the claim unique.
+
+        A ledger that cannot answer refuses. "I do not know whether this grant
+        was already spent" and "this grant has not been spent" are different
+        answers, and only one of them may release an effect.
         """
+        if not self.available:
+            return False, self.unavailable_reason
+
         try:
-            with self._connect() as conn:
+            with self._session() as conn:
                 conn.execute(
                     "INSERT INTO consumed_approvals"
                     " (fingerprint, request_digest, approval_id, consumed_at)"
@@ -603,7 +707,7 @@ class ApprovalLedger:
         else:  # pragma: no cover - programming error
             raise TypeError("lookup needs fingerprint or request_digest")
         try:
-            with self._connect() as conn:
+            with self._session() as conn:
                 row = conn.execute(
                     "SELECT fingerprint, request_digest, approval_id, consumed_at"
                     f" FROM consumed_approvals WHERE {column} = ?",
@@ -772,6 +876,7 @@ class NornyxActionBoundary:
         runtime_context: RuntimeContext | None = None,
         runtime_subject: RuntimeSubject | None = None,
         approver_trust_store: ApprovalTrustStore | None = None,
+        trust: TrustConfiguration | None = None,
     ) -> None:
         self.root = root
         self.allow_fallback = allow_fallback
@@ -789,17 +894,31 @@ class NornyxActionBoundary:
         #: between two calls and the second answers to a different authority.
         #: The store is never inside the governed repository, so editing this
         #: tree cannot add a trusted signer.
+        #: The resolved trust anchors, when the caller established them at
+        #: startup. Falling back to resolving them here is what a boundary built
+        #: outside an application does — a test, or a script — and it is exactly
+        #: the per-construction environment read that R3 removes from the
+        #: serving path.
+        self.trust = trust
         if approver_trust_store is not None:
             self.approver_trust_store = approver_trust_store
         else:
             try:
-                self.approver_trust_store = ApprovalTrustStore.load()
+                self.approver_trust_store = ApprovalTrustStore.load(
+                    Path(trust.approver_store) if trust is not None else None
+                )
             except TrustStoreUnavailable as exc:
                 # A store we cannot parse is not an empty store. Hold the
                 # refusal rather than starting up as though none was configured.
                 self.approver_trust_store = ApprovalTrustStore(source=str(exc))
         #: Durable single-use ledger. Survives boundary and process restarts.
-        self.approval_ledger = ApprovalLedger(approval_ledger_path(root))
+        #: Never provisioned here: a boundary that could create its own replay
+        #: state could also reset it.
+        self.approval_ledger = ApprovalLedger(
+            Path(trust.approval_ledger)
+            if trust is not None
+            else approval_ledger_path(root)
+        )
         self.authorizer: Any | None = None
         self.context: Any | None = None
         self._imports: dict[str, Any] = {}
