@@ -165,3 +165,50 @@ block).
 declared goal scope; no gate, rule, or policy was weakened to accommodate them.
 
 **Serves.** BRD-005.
+
+## A-011 Trust stores are operator-supplied and live outside the governed tree
+
+**Ambiguity.** The BRD requires independent review and human approval to be
+verifiable, but does not say where the verifying keys come from. Any answer
+inside the repository is circular: content that authorizes itself.
+
+**Resolution.** Two separate stores, both holding public keys only, both located
+by environment variable and read from outside the governed tree —
+`FORGE_APPROVER_TRUST_STORE` for action approvals and
+`FORGE_REVIEWER_TRUST_STORE` for inspection attestations. Editing the repository
+therefore cannot add a trusted approver or reviewer.
+
+They are deliberately not interchangeable. Each declares its own schema and is
+refused if handed the other, because an approver signs "this effect may be
+released" and a reviewer signs "I inspected this content"; one key satisfying
+both would let whoever authorizes a payment also certify that the code releasing
+it had been reviewed.
+
+Absence is an ordinary state, distinct from malformation. With no store present
+nothing authenticates, and the honest outcome is
+`assurance_state: not_independently_inspected` — which is this repository's
+current position. A malformed store raises rather than degrading into an empty
+one, since "no trusted reviewers" and "the store could not be read" must not
+produce the same silence.
+
+**Not established.** How the keys inside a store were vetted. This repository
+verifies signatures against whatever store the operator supplies; it makes no
+claim about that store's provenance. Recorded in `docs/ASSURANCE_BOUNDARY.md`.
+
+**Serves.** BRD-002, BRD-005.
+
+## A-012 Signing capability is excluded from the runtime image
+
+**Ambiguity.** The BRD requires attestations to be issuable, and also requires
+the running application to be governed. Those pull in opposite directions if the
+same artifact does both.
+
+**Resolution.** Issuers live in `scripts/` (`issue_action_approval.py`,
+`issue_inspection_attestation.py`); the Dockerfile copies `pyproject.toml`,
+`README.md`, `src`, `.nornyx` and `BRD.md`, and never `scripts`. The image
+therefore contains verification material and no signing capability at all.
+Private keys are read from an operator-supplied path at signing time and are
+never written into the repository. A test asserts the Dockerfile still omits
+`scripts/` and that no signing primitive appears in the runtime module.
+
+**Serves.** BRD-002, BRD-005.

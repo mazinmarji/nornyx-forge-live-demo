@@ -276,7 +276,10 @@ def test_a_forged_session_report_cannot_produce_an_independent_review_pass(
         )
     )
     assert record["session_report"]["authoritative"] is False
-    assert record["attestation"] is None
+    # No reviewer authenticated, so no inspection is recorded. The forged summary
+    # names three inspectors; the record names none, because naming an inspector
+    # now requires a signature this attacker cannot produce.
+    assert record["authenticated_inspections"] == {}
     assert "decides nothing" in record["verdict_basis"]
 
 

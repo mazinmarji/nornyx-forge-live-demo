@@ -5,12 +5,47 @@ This repository demonstrates cooperative governance over declared software-devel
 It does not establish:
 
 - mandatory interception of every Claude Code or CrewAI operation;
-- independent authentication of agents or approvers;
+- authentication of the *agents* themselves — an inspector's key attests that a
+  trusted reviewer signed a verdict, not that any particular model or process
+  produced it;
+- any claim about where the trust stores came from: both the approver store and
+  the reviewer store are supplied by the operator, and this repository verifies
+  signatures against them without establishing how the keys inside were vetted;
 - proof that every recorded runtime observation is true;
 - production readiness, regulatory compliance, or human approval;
 - permission to modify or deploy third-party repositories.
 
 Autonomous demonstration mode automatically continues through local acceptance gates. Its final evidence must state that human review was not performed and production approval was not granted.
+
+## What an "independent inspection" is allowed to mean
+
+`assurance_state: independently_inspected` is derived, never read. It requires
+all three inspector roles — test, architecture, security — each covered by an
+Ed25519 attestation that verifies against `FORGE_REVIEWER_TRUST_STORE`, each
+signed by a *distinct* reviewer, and each naming the current
+`inspection_subject_digest` inside the signature.
+
+Independence is computed from authenticated identity: a reviewer whose identity
+equals the builder's is refused with `REVIEWER_IS_THE_BUILDER`. An earlier
+version read a `builder_self_approval: false` field out of the attestation
+itself, which meant the builder certified their own independence in a file
+anyone could write; that field no longer decides anything.
+
+Two consequences worth stating plainly:
+
+- With no reviewer trust store present, nothing authenticates and the state is
+  `not_independently_inspected`. That is this repository's current position.
+- `integrity_state` and `assurance_state` are separate. An intact evidence set
+  describing the content that is here now is a different claim from a completed
+  independent inspection, and a missing inspection does not make the evidence
+  set compromised.
+
+Reviewer keys are not approver keys: separate stores, separate schemas, separate
+roles. A reviewer signs "I inspected this content"; an approver signs "this
+effect may be released". One key satisfying both would let whoever authorizes a
+payment also certify that the code releasing it had been independently reviewed.
+Signing lives in `scripts/`, which the runtime image never copies — the image
+carries verification material only.
 
 ## Strict Nornyx authorization requires human approval evidence
 

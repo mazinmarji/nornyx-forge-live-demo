@@ -13,6 +13,12 @@
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf
   by construction — it holds no signing key and reaches no effect code.
+- `reviewer_trust`: Ed25519 verification of inspection attestations, and the
+  derivation of independence from authenticated reviewer identity. A separate
+  component from `approval_trust`, not a corner of it: an approver key releases
+  an effect, a reviewer key certifies an inspection, and modelling them together
+  would make it structurally unremarkable for one key to do both. Also a leaf —
+  verification only, no signing, no dependencies.
 - `policy`: deterministic fallback decisions used only when official runtime dependencies are unavailable.
 - `evidence`: append-only mission records and validation.
 - `src/demo_app`: FastAPI customer-operations UI and runtime Flow.

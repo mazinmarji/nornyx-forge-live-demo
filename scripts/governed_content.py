@@ -38,9 +38,11 @@ from nornyx_forge.governed_subject import (  # noqa: F401
     inspection_subject_digest,
     is_declared_text,
     manifest_of,
-    normalise_path as _normalise,  # noqa: F401
     revision_digest,
     subject_digest,
+)
+from nornyx_forge.governed_subject import (
+    normalise_path as _normalise,  # noqa: F401
 )
 from nornyx_forge.subject_bootstrap import (  # noqa: F401
     build_subject_manifest as _build_subject_manifest,

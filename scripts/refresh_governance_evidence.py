@@ -266,8 +266,10 @@ def _adopt_human_approval(key: str, filename: str, entries: dict) -> bool:
 INSPECTION_ATTESTATION = "architecture_inspection_attestation.json"
 
 #: Inspector roles that must all have reported before a verdict can be `pass`.
-REQUIRED_INSPECTORS = frozenset(
-    {"test-inspector", "architecture-inspector", "security-inspector"}
+#: Imported rather than restated. Two copies of "which lenses are required" can
+#: drift, and the direction that drifts silently is the one that shrinks.
+from nornyx_forge.reviewer_trust import (  # noqa: E402
+    REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,
 )
 
 _REQUIRED_ATTESTATION_FIELDS = (
@@ -280,126 +282,13 @@ _REQUIRED_ATTESTATION_FIELDS = (
 )
 
 
-def load_inspection_attestation(revision: str) -> dict | None:
-    """Read and validate the independent-review attestation, or return None.
+# `load_inspection_attestation` stood here: ~120 lines validating the shape of an
+# unauthenticated attestation — required fields, one result per role, a producer
+# that is not `type: human` — none of which established who wrote it. Deleted
+# rather than left unused, because a thorough-looking validator sitting next to a
+# real one is an invitation to call the wrong one. Authentication now lives in
+# `nornyx_forge.reviewer_trust` and the artifacts it reads are signed.
 
-    `.nornyx/in-session/reviews.json` used to decide this directly. That file is
-    untracked, gitignored, outside GOVERNED_INPUT_PATHS, and validated by
-    nothing — a review demonstrated a `reviews.json` whose summaries read
-    "FORGED - no review happened" producing `status: pass` on a tree `git status`
-    called clean. A working-session report is not assurance evidence.
-
-    A verdict now requires a committed artifact that binds itself to the content
-    it reviewed, names its producer and each inspector, and carries findings. A
-    string saying "pass" is never sufficient.
-    """
-
-    path = EVIDENCE_DIR / INSPECTION_ATTESTATION
-    if not path.exists():
-        return None
-    raw = path.read_bytes()
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"{INSPECTION_ATTESTATION} is not readable JSON: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise SystemExit(f"{INSPECTION_ATTESTATION} must be a JSON object")
-
-    missing = set(_REQUIRED_ATTESTATION_FIELDS) - set(payload)
-    if missing:
-        raise SystemExit(
-            f"{INSPECTION_ATTESTATION} is missing required fields: {sorted(missing)}"
-        )
-
-    producer = payload.get("producer")
-    if not isinstance(producer, dict) or not {"id", "type"} <= set(producer):
-        raise SystemExit(
-            f"{INSPECTION_ATTESTATION}: producer must be an object with id and type"
-        )
-    # An inspection is a machine review. A human producer here would be a human
-    # approval wearing the wrong hat, and the two are governed differently.
-    if producer.get("type") == "human":
-        raise SystemExit(
-            f"{INSPECTION_ATTESTATION}: producer.type is 'human'. An inspection "
-            "attestation records a machine review; a human decision belongs in a "
-            "human approval artifact, which is governed separately."
-        )
-    _require_safe_scalar("producer.id", producer["id"])
-    _require_safe_scalar("producer.type", producer["type"])
-
-    # Bound to the content it reviewed, not merely to a revision label.
-    declared_revision = _require_safe_scalar("subject_revision", payload["subject_revision"])
-    if declared_revision != revision:
-        raise SystemExit(
-            f"{INSPECTION_ATTESTATION} attests to {declared_revision} but the "
-            f"governed subject is {revision}. An inspection of other content is "
-            "not an inspection of this one."
-        )
-    digest = _require_safe_scalar(
-        "inspection_subject_digest", payload["inspection_subject_digest"]
-    )
-    # A stale inspection is a fact to report, not a reason to stop working. It
-    # must never yield PASS, but refusing to regenerate evidence because an old
-    # inspection exists would make the ordinary "change something, re-inspect"
-    # workflow impossible — and would push people towards editing the digest.
-    stale = digest != current_inspection_subject()
-
-    inspectors = payload.get("inspectors")
-    if not isinstance(inspectors, list) or not inspectors:
-        raise SystemExit(f"{INSPECTION_ATTESTATION}: inspectors must be a non-empty list")
-    reported: dict[str, str] = {}
-    for entry in inspectors:
-        if not isinstance(entry, dict) or not {"role", "result"} <= set(entry):
-            raise SystemExit(
-                f"{INSPECTION_ATTESTATION}: each inspector needs a role and a result"
-            )
-        role = _require_safe_scalar("inspector.role", entry["role"])
-        result = _require_safe_scalar("inspector.result", entry["result"])
-        if "findings" not in entry or not isinstance(entry["findings"], list):
-            raise SystemExit(
-                f"{INSPECTION_ATTESTATION}: inspector {role!r} reports no findings "
-                "list. An inspection that recorded nothing it looked for is not "
-                "evidence that it looked."
-            )
-        if role in reported:
-            # Exactly one result per role. Accumulating into a dict let a second
-            # entry overwrite the first, so `architecture-inspector: fail`
-            # followed by `architecture-inspector: pass` would report pass —
-            # assurance decided by list order.
-            raise SystemExit(
-                f"{INSPECTION_ATTESTATION}: inspector role {role!r} reports twice "
-                f"({reported[role]!r} then {result!r}). Exactly one result per "
-                "role; otherwise the verdict depends on which entry came last."
-            )
-        reported[role] = result
-
-    _parse_offset_timestamp(
-        "generated_at", payload["generated_at"], filename=INSPECTION_ATTESTATION
-    )
-
-    missing_roles = REQUIRED_INSPECTORS - set(reported)
-    verdict = _require_safe_scalar("result", payload["result"])
-    passed = (
-        verdict == "pass"
-        and not stale
-        and not missing_roles
-        and all(result == "pass" for result in reported.values())
-        and payload.get("builder_self_approval") is False
-    )
-    return {
-        "artifact": f"evidence/{INSPECTION_ATTESTATION}",
-        "content_hash": "sha256:" + hashlib.sha256(raw).hexdigest(),
-        "producer": {"id": producer["id"], "type": producer["type"]},
-        "subject_revision": declared_revision,
-        "inspection_subject_digest": digest,
-        "inspectors": [
-            {"role": role, "result": result} for role, result in sorted(reported.items())
-        ],
-        "status": "pass" if passed else "observed",
-        "stale": stale,
-        "missing_inspectors": sorted(missing_roles),
-        "payload": payload,
-    }
 
 
 def _architecture_report() -> dict:
@@ -493,19 +382,32 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
                 if isinstance(item, dict)
             ]
 
-    attestation = load_inspection_attestation(revision)
-    review_status = attestation["status"] if attestation else "observed"
-    if attestation is None:
+    # Derived from authenticated attestations, exactly as enforcement is. Reading
+    # the legacy unauthenticated artifact here would let this record display
+    # `status: pass` while `derive_assurance_state` withheld assurance over the
+    # same content — a written claim disagreeing with the control that decides.
+    authenticated, auth_problems = _authenticated_inspections(
+        current_inspection_subject()
+    )
+    passing = {
+        role: entry for role, entry in authenticated.items() if entry["verdict"] == "pass"
+    }
+    absent = REQUIRED_INSPECTORS - set(passing)
+    review_status = "pass" if not absent else "observed"
+    if not authenticated:
         verdict_basis = (
-            "no committed inspection attestation; the in-session report is "
-            "displayed but decides nothing"
+            "no authenticated inspection of the current subject; the in-session "
+            "report is displayed but decides nothing"
+            + (f" ({auth_problems[0]})" if auth_problems else "")
         )
-    elif review_status == "pass":
-        verdict_basis = f"attested by {attestation['producer']['id']}"
-    else:
+    elif absent:
         verdict_basis = (
-            "attestation present but incomplete; missing or failing inspectors: "
-            + ", ".join(attestation["missing_inspectors"] or ["<failing result>"])
+            "authenticated inspection incomplete; missing or failing inspectors: "
+            + ", ".join(sorted(absent))
+        )
+    else:
+        verdict_basis = "attested by " + ", ".join(
+            sorted(entry["reviewer"] for entry in passing.values())
         )
 
     emit(
@@ -517,7 +419,11 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
             "generated_at": generated,
             "reviewer_type": "read_only_ai_inspector",
             "human_review": "not_performed",
-            "builder_self_approval": False,
+            # Descriptive only, and no longer read by anything: the field used
+            # to decide independence, which meant the record asserting it also
+            # granted it. Retained under a name that cannot be mistaken for
+            # authority.
+            "self_reported_builder_independence": False,
             "reviewers": reviewers,
             "statement": (
                 "Architecture conformance was inspected by read-only inspectors that "
@@ -526,17 +432,19 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
                 "not a human review and not an approval."
             ),
             "verdict_basis": verdict_basis,
-            "attestation": (
-                {
-                    "artifact": attestation["artifact"],
-                    "content_hash": attestation["content_hash"],
-                    "producer": attestation["producer"],
-                    "inspection_subject_digest": attestation["inspection_subject_digest"],
-                    "inspectors": attestation["inspectors"],
+            # Who actually signed, per role. Reviewer identities rather than a
+            # self-described producer id: the former was authenticated against a
+            # trust store outside this tree, the latter was whatever the file said.
+            "authenticated_inspections": {
+                role: {
+                    "reviewer": entry["reviewer"],
+                    "verdict": entry["verdict"],
+                    "findings_digest": entry["findings_digest"],
+                    "tool": entry["tool"],
+                    "tool_version": entry["tool_version"],
                 }
-                if attestation
-                else None
-            ),
+                for role, entry in sorted(authenticated.items())
+            },
             # Displayed, never authoritative. Kept so a reader can see what the
             # session reported alongside what was actually attested.
             "session_report": {
@@ -1555,6 +1463,83 @@ def current_inspection_subject() -> str:
     )
 
 
+
+#: Signed inspection attestations, one file per reviewer and role. A directory
+#: rather than one artifact because each is signed by a different key: merging
+#: them into a single file would mean one signature covering claims several
+#: reviewers made, which is not something any of them said.
+ATTESTATION_DIR = EVIDENCE_DIR / "attestations"
+
+
+def _authenticated_inspections(subject_digest: str) -> tuple[dict, list[str]]:
+    """Every attestation that authenticates, keyed by inspector role.
+
+    Anything that fails authentication is reported and discarded. An
+    unauthenticated attestation is not a weaker inspection; it is not an
+    inspection at all, and the previous model treated it as one.
+    """
+    from nornyx_forge.reviewer_trust import (
+        ReviewerStoreUnavailable,
+        ReviewerTrustStore,
+        excluded_inspector_identities,
+        verify_signed_attestation,
+    )
+
+    problems: list[str] = []
+    try:
+        store = ReviewerTrustStore.load()
+    except ReviewerStoreUnavailable as exc:
+        return {}, [f"reviewer trust store unusable: {exc}"]
+    if not store.available:
+        return {}, [
+            "no reviewer trust store, so no inspection can be authenticated "
+            f"({store.source})"
+        ]
+
+    # A set, not a name. `FORGE_BUILDER_IDENTITY` can add an identity that may
+    # not inspect; it cannot remove the one that already may not.
+    builder = excluded_inspector_identities()
+    accepted: dict[str, dict] = {}
+    for path in sorted(ATTESTATION_DIR.glob("*.json")) if ATTESTATION_DIR.is_dir() else []:
+        try:
+            attestation = json.loads(path.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            problems.append(f"{path.name} is unreadable: {exc}")
+            continue
+
+        ok, reason, evidence = verify_signed_attestation(
+            attestation, store=store, builder_identity=builder
+        )
+        if not ok:
+            problems.append(f"{path.name}: {reason}")
+            continue
+
+        attested_subject = attestation.get("inspection_subject_digest")
+        if attested_subject != subject_digest:
+            problems.append(
+                f"{path.name} attests to subject {attested_subject}, but the "
+                f"current subject is {subject_digest}"
+            )
+            continue
+
+        role = evidence["inspector_role"]
+        if role in accepted:
+            problems.append(
+                f"{path.name}: role {role!r} already attested by "
+                f"{accepted[role]['reviewer']!r}; which one applies would depend "
+                "on ordering"
+            )
+            continue
+        accepted[role] = {
+            "reviewer": evidence["reviewer"],
+            "verdict": str(attestation.get("verdict")),
+            "findings_digest": attestation.get("findings_digest"),
+            "tool": attestation.get("tool"),
+            "tool_version": attestation.get("tool_version"),
+        }
+    return accepted, problems
+
+
 def derive_assurance_state() -> dict:
     """Recompute the assurance position from artifacts, at verification time.
 
@@ -1593,7 +1578,12 @@ def derive_assurance_state() -> dict:
         "required_inspectors_complete": False,
         "independent": False,
         "stale_artifacts": [],
+        # Integrity problems only: is the evidence set internally consistent and
+        # does it describe the content that is here now. Whether anyone has
+        # independently inspected that content is a separate question with its
+        # own list.
         "problems": [],
+        "assurance_problems": [],
     }
 
     # The digest describes the content git holds, which is what a reviewer
@@ -1658,61 +1648,59 @@ def derive_assurance_state() -> dict:
             )
 
     # Independence and completeness, recomputed rather than read.
-    attestation_path = EVIDENCE_DIR / INSPECTION_ATTESTATION
+    #
+    # Deliberately not nested under "does some attestation file exist". Gating
+    # the authenticated check on the presence of an artifact would mean deleting
+    # that artifact skips the check — the same defect as trusting it, reached
+    # from the other direction. The subject is computed, the authenticated
+    # inspections are gathered, and absence produces a refusal like any other.
     state["inspection_subject_digest"] = current_inspection_subject()
-    state["inspection_subject_match"] = False
-    if attestation_path.exists():
-        try:
-            attested = json.loads(attestation_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            attested = {}
 
-        # What the inspectors reviewed, versus what is here now. Source can be
-        # untouched while a contract moved, so binding only the inputs would let
-        # an inspection claim a control pack it never saw.
-        attested_subject = attested.get("inspection_subject_digest")
-        state["inspection_subject_match"] = (
-            attested_subject == state["inspection_subject_digest"]
-        )
-        if not state["inspection_subject_match"]:
-            state["problems"].append(
-                f"the inspection attests to subject {attested_subject} but the "
-                f"current subject is {state['inspection_subject_digest']}. The "
-                "inspectors reviewed something else; a new inspection is "
-                "required, not a new digest."
-            )
+    # Independence is derived from authenticated identities, never read off the
+    # artifact. `builder_self_approval: false` used to decide this: a builder
+    # certifying their own independence, in a file anyone could write. It is no
+    # longer consulted, and a test asserts it cannot decide.
+    # Kept out of `problems`, deliberately. `problems` decides `integrity_state`,
+    # and a missing inspection does not damage the integrity of the evidence set
+    # — it means nobody has inspected it. Folding the two together would make an
+    # honestly-reported "not yet inspected" indistinguishable from a tampered
+    # tree, and would fail --verify on a repository whose evidence is perfectly
+    # intact. Two fields, two lists, neither standing in for the other.
+    authenticated, inspection_problems = _authenticated_inspections(
+        state["inspection_subject_digest"]
+    )
+    state["assurance_problems"] = list(inspection_problems)
 
-        reported: dict[str, str] = {}
-        duplicates: list[str] = []
-        for entry in attested.get("inspectors", []):
-            if not isinstance(entry, dict):
-                continue
-            role = str(entry.get("role"))
-            if role in reported:
-                duplicates.append(role)
-                continue
-            reported[role] = str(entry.get("result"))
-        missing = REQUIRED_INSPECTORS - set(reported)
-        failing = sorted(
-            role for role, result in reported.items()
-            if role in REQUIRED_INSPECTORS and result != "pass"
+    covered = {
+        role: entry for role, entry in authenticated.items() if entry["verdict"] == "pass"
+    }
+    missing = REQUIRED_INSPECTORS - set(covered)
+    reviewers = {entry["reviewer"] for entry in covered.values()}
+
+    # What the inspectors reviewed, versus what is here now. Source can be
+    # untouched while a contract moved, so binding only the inputs would let an
+    # inspection claim a control pack it never saw. Every attestation reaching
+    # `authenticated` was already checked against the current subject inside a
+    # signature, so a complete set *is* the match: there is no second, weaker
+    # copy of the subject to compare against.
+    state["inspection_subject_match"] = bool(covered) and not missing
+
+    state["required_inspectors_complete"] = not missing
+    # Distinct reviewers per role: one reviewer holding every inspector role is a
+    # single point of view wearing three hats, which is not what an independent
+    # inspection means.
+    state["independent"] = bool(covered) and len(reviewers) == len(covered)
+    state["authenticated_reviewers"] = sorted(reviewers)
+
+    if missing:
+        state["assurance_problems"].append(
+            f"no authenticated passing inspection for: {sorted(missing)}"
         )
-        state["required_inspectors_complete"] = (
-            not missing and not failing and not duplicates
+    if covered and len(reviewers) != len(covered):
+        state["assurance_problems"].append(
+            "one reviewer covers several inspector roles, so the inspections are "
+            "not independent of each other"
         )
-        state["independent"] = attested.get("builder_self_approval") is False
-        if duplicates:
-            state["problems"].append(
-                f"inspector roles reported more than once: {sorted(set(duplicates))}"
-            )
-        if missing:
-            state["problems"].append(f"inspectors missing: {sorted(missing)}")
-        if failing:
-            state["problems"].append(f"required inspectors reporting failure: {failing}")
-        if not state["independent"]:
-            state["problems"].append(
-                "the attestation does not assert builder_self_approval is false"
-            )
 
     # Named for exactly what it covers. "verified" invited reading as "assured",
     # which it is not: an intact evidence set describing current content is a
@@ -1735,6 +1723,7 @@ def derive_assurance_state() -> dict:
         "independently_inspected"
         if (
             state["integrity_state"] == "intact"
+            and not state["assurance_problems"]
             and state["inspection_subject_match"]
             and state["required_inspectors_complete"]
             and state["independent"]
