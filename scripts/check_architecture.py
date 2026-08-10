@@ -68,7 +68,67 @@ def _imports(path: Path, relative: str, dotted: str | None = None) -> set[str]:
             # `from package import module` also creates a module dependency.
             for alias in node.names:
                 names.add(f"{base}.{alias.name}")
+        elif isinstance(node, ast.Call):
+            names.update(_dynamic_import_targets(node))
     return names
+
+
+#: Ways to import a module without an import statement. A review reached
+#: `subprocess` from the purity-constrained domain module, and
+#: `demo_app.store` (infrastructure) from a domain leaf declared
+#: `depends_on: []`, through `importlib.import_module` -- and the gate reported
+#: `violations: []` both times, because it read only `ast.Import` and
+#: `ast.ImportFrom`. The module comment asserting the leaf guarantee was
+#: therefore checking a graph the code could step around.
+_DYNAMIC_IMPORTERS = {"import_module", "__import__", "find_spec", "spec_from_file_location"}
+
+
+def _dynamic_import_targets(node: ast.Call) -> set[str]:
+    """Module names a dynamic import call names literally.
+
+    Only literal arguments are resolved: a computed name is unknowable here, and
+    is refused separately by `_dynamic_import_is_literal` so it cannot become a
+    silent hole. Better to be exact about what static analysis can see than to
+    guess at what it cannot.
+    """
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        name = func.attr
+    elif isinstance(func, ast.Name):
+        name = func.id
+    else:
+        return set()
+    if name not in _DYNAMIC_IMPORTERS:
+        return set()
+
+    targets: set[str] = set()
+    for argument in node.args[:1]:
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            targets.add(argument.value)
+            targets.add(argument.value.split(".")[0])
+    return targets
+
+
+def _computed_dynamic_imports(path: Path, relative: str) -> list[str]:
+    """Dynamic imports whose target this checker cannot read.
+
+    A declared dependency graph means nothing if a module can import a name
+    assembled at runtime, so these are refused rather than ignored. Passing a
+    literal is the supported form; it is visible, and the gate can model it.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    unknown: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name not in _DYNAMIC_IMPORTERS:
+            continue
+        first = node.args[0] if node.args else None
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            unknown.append(f"{relative}:{node.lineno}")
+    return unknown
 
 
 FIRST_PARTY_PACKAGES = {
@@ -193,6 +253,16 @@ for module_id, module in sorted(declared_modules.items()):
         violations.append(f"declared module {module_id} has no source file at {path.relative_to(ROOT)}")
         continue
     relative = str(path.relative_to(ROOT)).replace("\\", "/")
+
+    # A declared dependency graph means nothing if a module can import a name
+    # assembled at runtime. Literal dynamic imports are modelled as ordinary
+    # dependencies by `_imports`; computed ones cannot be, so they are refused.
+    for site in _computed_dynamic_imports(path, relative):
+        violations.append(
+            f"{site} imports a module named at runtime, which no declared "
+            "dependency graph can describe. Pass a literal module name."
+        )
+
     allowed_ids = set(module.get("depends_on") or [])
     allowed_names = {
         declared_modules[dependency]["name"]

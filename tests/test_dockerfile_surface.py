@@ -91,3 +91,101 @@ def test_no_signing_primitive_reaches_the_runtime_package():
                 f"{name} contains {primitive!r}: the runtime image must carry "
                 "verification material only"
             )
+
+
+# --------------------------------------------------------------------------
+# The runtime subject must describe what the image actually carries
+# --------------------------------------------------------------------------
+
+
+def _dockerignore_patterns(root: Path) -> list[str]:
+    location = root / ".dockerignore"
+    if not location.is_file():
+        return []
+    return [
+        line.strip()
+        for line in location.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _excluded(relative: str, patterns: list[str]) -> bool:
+    """Whether .dockerignore removes this path from the build context."""
+    from fnmatch import fnmatch
+
+    for pattern in patterns:
+        if pattern.startswith("!"):
+            continue
+        cleaned = pattern.rstrip("/")
+        if relative == cleaned or relative.startswith(cleaned + "/"):
+            return True
+        if fnmatch(relative, cleaned) or fnmatch(relative, cleaned + "/*"):
+            return True
+        if cleaned.startswith("**/") and any(
+            fnmatch(part, cleaned[3:].rstrip("/"))
+            for part in relative.split("/")
+        ):
+            return True
+    return False
+
+
+def test_everything_the_image_ships_is_inside_the_runtime_subject():
+    """The scope says covering what ships is a fact. This makes it one.
+
+    An independent review found that claim false in five places. `pyproject.toml`
+    pins the dependency set and declares the entrypoint, so it decides what the
+    image can run, and it was outside the subject. So was `README.md`. Worse,
+    three gitignored artifacts shipped from whatever the builder happened to have
+    on disk -- including `.nornyx/generated/brd_contract.nyx`, a governance
+    contract, untracked and unreviewed, whose tampering would have been invisible
+    to both git and the authority digest.
+
+    Enumerated from the Dockerfile and .dockerignore rather than restated, so the
+    scope and the image cannot drift apart silently again: adding a COPY, or
+    removing an ignore rule, fails here.
+    """
+    from nornyx_forge.governed_subject import RUNTIME_IMAGE_SCOPE
+    from nornyx_forge.subject_observer import observe_governed_paths
+
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    patterns = _dockerignore_patterns(ROOT)
+    covered = set(observe_governed_paths(ROOT, RUNTIME_IMAGE_SCOPE))
+    # The scope covers contracts through `required_contracts` rather than
+    # through the path walk, and `non_authoritative` is its vocabulary for
+    # "this ships, it is downstream of the subject, and here is the reason".
+    # Both are coverage; only content the scope has never considered is a gap.
+    covered.update(
+        f".nornyx/contracts/{name}" for name in RUNTIME_IMAGE_SCOPE.required_contracts
+    )
+    declared_downstream = tuple(RUNTIME_IMAGE_SCOPE.non_authoritative)
+
+    uncovered: list[str] = []
+    for source in copy_sources(dockerfile):
+        if source in {".", ""}:
+            pytest.fail("the image copies the whole build context")
+        location = ROOT / source
+        candidates = (
+            [path for path in location.rglob("*") if path.is_file()]
+            if location.is_dir()
+            else [location]
+        )
+        for path in candidates:
+            if not path.exists():
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            if _excluded(relative, patterns):
+                continue
+            if relative in covered:
+                continue
+            if any(
+                relative == prefix or relative.startswith(prefix.rstrip("/") + "/")
+                for prefix in declared_downstream
+            ):
+                continue
+            uncovered.append(relative)
+
+    assert uncovered == [], (
+        "the runtime image ships content the runtime subject does not describe, "
+        "so tampering with it would be invisible to runtime authority: "
+        + ", ".join(sorted(uncovered)[:12])
+    )

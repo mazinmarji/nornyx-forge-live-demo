@@ -28,3 +28,18 @@ evidence/
 .nornyx/requirements/
 .nornyx/in-session/
 .nornyx/demo-data.json
+
+# Builder-local state that is gitignored and therefore never reviewed.
+# `.nornyx/generated/brd_contract.nyx` is a governance contract: it was
+# shipping into the image from whatever the builder happened to have on
+# disk, outside the runtime subject, so tampering with it was invisible to
+# both git and the authority digest.
+.nornyx/generated/
+.nornyx/foundation-decision.json
+.nornyx/goals.json
+.nornyx/qualification.json
+.nornyx/scout-results.json
+
+# `*.egg-info/` above matches only at the root: Docker's pattern matching
+# does not cross directory separators, so src/<name>.egg-info/ shipped.
+**/*.egg-info/

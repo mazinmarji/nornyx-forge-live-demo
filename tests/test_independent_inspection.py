@@ -342,18 +342,41 @@ def test_a_duplicate_role_cannot_be_resolved_by_ordering(settled):
 
 
 def test_the_builder_cannot_satisfy_an_inspector_role(tmp_path: Path):
-    """Even holding a trusted key for it. Independence is derived, not granted."""
+    """Even holding a trusted key issued in their own name.
+
+    This asserted a disjunction -- identity mismatch OR builder -- and the
+    fixture overrode only the *claimed* reviewer name, so the record was signed
+    by `reviewer.security`'s key while claiming to be the builder. Identity
+    mismatch fired, the builder branch was never reached, and an independent
+    review deleted the builder check entirely with this test still green.
+
+    So the store now genuinely vouches for the builder: the key belongs to them,
+    the signature is theirs, the claimed name matches. Every other check passes,
+    which leaves exactly one control able to produce the refusal.
+    """
     work = _workspace(tmp_path)
     _settle(work)
     reviewers = Reviewers(tmp_path)
-    _attest(work, reviewers, reviewer_override={"security-inspector": BUILDER})
+
+    # Re-issue the security-inspector slot in the builder's own name.
+    store = json.loads(reviewers.store.read_text(encoding="utf-8"))
+    for entry in store["reviewers"]:
+        if "security-inspector" in entry["roles"]:
+            entry["reviewer"] = BUILDER
+    reviewers.store.write_text(json.dumps(store, indent=2), encoding="utf-8")
+    reviewers.names["security-inspector"] = BUILDER
+
+    _attest(work, reviewers)
 
     state = _assurance(work, reviewers)
     assert state["assurance_state"] == "not_independently_inspected"
-    assert any(
-        "REVIEWER_IDENTITY_MISMATCH" in p or "REVIEWER_IS_THE_BUILDER" in p
-        for p in state["assurance_problems"]
-    ), state["assurance_problems"]
+    assert any("REVIEWER_IS_THE_BUILDER" in p for p in state["assurance_problems"]), (
+        "the refusal did not come from the independence derivation: "
+        + repr(state["assurance_problems"])
+    )
+    assert not any(
+        "REVIEWER_IDENTITY_MISMATCH" in p for p in state["assurance_problems"]
+    ), "identity mismatch fired, so this proves the identity binding, not independence"
 
 
 # --------------------------------------------------------------------------

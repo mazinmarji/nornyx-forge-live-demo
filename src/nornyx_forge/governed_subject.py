@@ -261,7 +261,12 @@ REPOSITORY_SCOPE = SubjectScope(
 RUNTIME_IMAGE_SCOPE = SubjectScope(
     scope_id="forge.runtime-image.v1",
     required_roots=("src/nornyx_forge", "src/demo_app"),
-    required_files=("BRD.md",),
+    # Everything the Dockerfile copies at the top level. `pyproject.toml` pins
+    # the dependency set and declares the console entrypoint, so it decides what
+    # code the image can run -- it belongs in the subject that authorises that
+    # image. A review found it shipping outside the scope, along with README.md,
+    # while this scope's own comment claimed that covering what ships is a fact.
+    required_files=("BRD.md", "pyproject.toml", "README.md"),
     # All three, because the image copies the whole `.nornyx` tree and Model B
     # binds authority to what is actually packaged. The closure check found this
     # on its first run: two governance contracts shipped in the image while the

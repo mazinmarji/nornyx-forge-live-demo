@@ -138,3 +138,90 @@ def test_an_ordinary_os_import_is_not_flagged(workspace: Path):
         )
     finally:
         target.write_bytes(original)
+
+
+# --------------------------------------------------------------------------
+# A declared dependency graph the code can step around describes nothing
+# --------------------------------------------------------------------------
+
+#: Snippets are assembled from `chr(10)` joins rather than written with escape
+#: sequences. Every previous attempt to add source-text fixtures to this repo
+#: through a shell heredoc silently turned the escapes into real newlines and
+#: broke the file; building them this way removes the class of mistake instead
+#: of getting the quoting right one more time.
+DYNAMIC_IMPORTS = [
+    (
+        "importlib into a purity-constrained domain module",
+        "src/nornyx_forge/governed_subject.py",
+        chr(10).join(["import importlib", "def _probe():", "    return importlib.import_module('subprocess')"]) + chr(10),
+        "forbidden dependency subprocess",
+    ),
+    (
+        "importlib across a layer boundary from a declared leaf",
+        "src/nornyx_forge/models.py",
+        chr(10).join(["import importlib", "def _probe():", "    return importlib.import_module('demo_app.store')"]) + chr(10),
+        "demo_app.store",
+    ),
+    (
+        "__import__ builtin",
+        "src/nornyx_forge/governed_subject.py",
+        chr(10).join(["def _probe():", "    return __import__('subprocess')"]) + chr(10),
+        "forbidden dependency subprocess",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "target", "snippet", "expected"),
+    DYNAMIC_IMPORTS,
+    ids=[case[0] for case in DYNAMIC_IMPORTS],
+)
+def test_a_dynamic_import_is_a_dependency(
+    workspace: Path, label: str, target: str, snippet: str, expected: str
+):
+    """`importlib.import_module` was invisible to the dependency graph.
+
+    An independent review reached `subprocess` from the module held to a purity
+    constraint whose own comment says the gate fails if it ever gains a
+    dependency, and reached infrastructure from a domain leaf declared
+    `depends_on: []`. The gate reported `violations: []` both times, because it
+    read only `ast.Import` and `ast.ImportFrom`.
+
+    A literal dynamic import is now an ordinary dependency, checked like one.
+    """
+    path = workspace / target
+    original = path.read_bytes()
+    try:
+        path.write_bytes(original + chr(10).encode() * 2 + snippet.encode("utf-8"))
+        completed = _run_gate(workspace)
+        assert completed.returncode == 2, f"{label}: not detected{chr(10)}{completed.stdout}"
+        assert expected in completed.stdout, f"{label}: wrong diagnostic"
+        assert "Traceback" not in completed.stderr, completed.stderr
+    finally:
+        path.write_bytes(original)
+
+
+def test_a_module_name_assembled_at_runtime_is_refused(workspace: Path):
+    """What cannot be read must not pass silently.
+
+    Modelling a literal dynamic import is possible; modelling a computed one is
+    not. Ignoring it would leave the hole the literal case just closed, reachable
+    by concatenating two strings. Refusing is the honest option, and passing a
+    literal is the supported form -- visible, and something the graph can hold.
+    """
+    path = workspace / "src/nornyx_forge/models.py"
+    original = path.read_bytes()
+    snippet = chr(10).join(["import importlib", "_P = ['demo', 'app']", "def _probe():", "    return importlib.import_module('_'.join(_P) + '.store')"]) + chr(10)
+    try:
+        path.write_bytes(original + chr(10).encode() * 2 + snippet.encode("utf-8"))
+        completed = _run_gate(workspace)
+        assert completed.returncode == 2
+        assert "named at runtime" in completed.stdout, completed.stdout
+    finally:
+        path.write_bytes(original)
+
+
+def test_an_ordinary_declared_import_is_still_accepted(workspace: Path):
+    """The gate must not start refusing the imports the contract permits."""
+    completed = _run_gate(workspace)
+    assert completed.returncode == 0, completed.stdout
