@@ -132,7 +132,10 @@ def signed_governance_approval(
     approval: str = "granted",
     generated_at: str = "2026-08-02T00:00:00Z",
     expires_at: str = "2026-08-05T00:00:00Z",
-    producer_id: str = SUBJECT,
+    # A realistic subject:role identity. This defaulted to a role-less SUBJECT,
+    # so every governance fixture in the suite took the branch where the role
+    # check was skipped -- the bypass was the only path the tests executed.
+    producer_id: str = SUBJECT + ':network_governance_owner',
     key_id: str = KEY_ID,
 ) -> dict:
     """A governance approval record signed by the session key.

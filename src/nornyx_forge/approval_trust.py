@@ -129,26 +129,57 @@ def canonical_governance_payload(approval: "Mapping[str, Any]") -> bytes:
     return json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+#: Roles a key may hold to approve GOVERNED CONTENT. Closed, and separate from
+#: ACTION_APPROVER_ROLES: approving "this content is fit to govern" is not the
+#: same authority as approving "this effect may be released", and a vocabulary
+#: shared between them would let one key do both by accident.
+GOVERNANCE_APPROVER_ROLES = frozenset(
+    {"network_governance_owner", "architecture_reviewer"}
+)
+
+
 def verify_signed_governance_approval(
     approval: "Mapping[str, Any] | None",
     *,
     trust_store: "ApprovalTrustStore | None" = None,
 ) -> "tuple[bool, str, dict[str, Any]]":
-    """Decide whether this governance approval was signed by a trusted human.
+    """Authenticate a human governance approval.
 
-    Returns ``(authenticated, reason, evidence)``. Shape validation lives in the
-    caller; this establishes only who signed, which is the question shape can
-    never answer.
+    THE PROPERTY: a governance approval is authoritative only when an externally
+    trusted HUMAN identity is cryptographically authenticated FOR THE EXACT ROLE
+    it claims, over the EXACT governed subject it names.
+
+    Every clause of that sentence is a separate refusal below, and each returns
+    before any later evidence is recorded. The previous version failed three of
+    them:
+
+    - ``evidence["role_verified"] = True`` sat outside the ``if claimed_role:``
+      guard, so an approval whose ``producer.id`` carried no role skipped the
+      role check entirely AND reported that a role had been verified. The
+      repository's own fixture used a role-less id, so that was the only path
+      the suite ever executed.
+    - There was no role vocabulary: any string a trusted key happened to list
+      authenticated.
+    - ``subject_type`` was never consulted, so a machine key signed an artifact
+      saying ``producer.type: "human"`` and became a human approval. The sibling
+      action verifier has that check, with a test. Verified where written,
+      absent where copied.
+
+    Evidence flags are set only on the line after the check they describe
+    passes. A flag that can be true while its check was skipped is a false
+    statement in an audit record, which is worse than a missing one.
     """
     evidence: dict[str, Any] = {
         "signature_verified": False,
         "identity_verified": False,
         "role_verified": False,
+        "subject_type_verified": False,
     }
     if approval is None:
         return False, "no governance approval was supplied", evidence
 
-    store = trust_store if trust_store is not None else ApprovalTrustStore.load()
+    # Fail closed on absence: an empty store must never be the permissive case.
+    store = trust_store if trust_store is not None else ApprovalTrustStore()
     evidence["trust_store_digest"] = store.digest
     if not store.signers:
         return (
@@ -159,11 +190,7 @@ def verify_signed_governance_approval(
         )
 
     if approval.get("schema") != GOVERNANCE_APPROVAL_SCHEMA:
-        return (
-            False,
-            f"APPROVAL_SCHEMA_UNKNOWN: {approval.get('schema')!r}",
-            evidence,
-        )
+        return False, f"APPROVAL_SCHEMA_UNKNOWN: {approval.get('schema')!r}", evidence
 
     key_id = str(approval.get("signer_key_id", ""))
     if not key_id:
@@ -184,6 +211,26 @@ def verify_signed_governance_approval(
         )
     evidence["signer_key_id"] = key_id
 
+    # The trust store decides what a key IS; the artifact only claims. Checked
+    # before the signature so a machine key is refused for being a machine.
+    if signer.subject_type != "human":
+        return (
+            False,
+            f"APPROVER_NOT_HUMAN: signer key {key_id!r} belongs to a "
+            f"{signer.subject_type!r}, which cannot give a human approval "
+            "however the artifact describes itself",
+            evidence,
+        )
+    producer = approval.get("producer")
+    claimed_type = producer.get("type") if isinstance(producer, Mapping) else None
+    if claimed_type != "human":
+        return (
+            False,
+            f"APPROVAL_PRODUCER_NOT_HUMAN: producer.type is {claimed_type!r}",
+            evidence,
+        )
+    evidence["subject_type_verified"] = True
+
     signature = approval.get("signature")
     if not isinstance(signature, str) or not signature:
         return False, "APPROVAL_UNSIGNED: no signature present", evidence
@@ -197,9 +244,6 @@ def verify_signed_governance_approval(
         return False, "APPROVAL_VERIFIER_UNAVAILABLE", evidence
 
     try:
-        # Raw base64, matching how this store already carries approver keys.
-        # PEM was the first spelling written here and would have failed every
-        # signature for a reason unrelated to the signature.
         public_key = Ed25519PublicKey.from_public_bytes(b64decode(signer.public_key))
         public_key.verify(b64decode(signature), canonical_governance_payload(approval))
     except InvalidSignature:
@@ -208,17 +252,20 @@ def verify_signed_governance_approval(
         return False, f"APPROVAL_NOT_AUTHENTICATED: {type(exc).__name__}", evidence
     evidence["signature_verified"] = True
 
-    # `producer.id` carries `subject:role` — the identity and the capacity it
-    # acted in. Both are checked. Comparing the whole string against the key's
-    # subject would reject every honest record that names a role, and dropping
-    # the role would let a key approve in a capacity it does not hold, which is
-    # the separation the trust store's `roles` list exists to express.
-    producer = approval.get("producer")
     claimed = producer.get("id") if isinstance(producer, Mapping) else None
     if not isinstance(claimed, str) or not claimed:
         return False, "APPROVER_IDENTITY_MISSING: producer.id is absent", evidence
-    claimed_subject, _, claimed_role = claimed.partition(":")
-    if signer.subject and claimed_subject != signer.subject:
+    claimed_subject, separator, claimed_role = claimed.partition(":")
+
+    # An empty trusted subject must not silently disable the comparison.
+    if not signer.subject:
+        return (
+            False,
+            f"APPROVER_NOT_TRUSTED: key {key_id!r} names no subject, so no "
+            "identity can be matched against it",
+            evidence,
+        )
+    if claimed_subject != signer.subject:
         return (
             False,
             f"APPROVER_IDENTITY_MISMATCH: signed as {claimed_subject!r}, key "
@@ -228,17 +275,36 @@ def verify_signed_governance_approval(
     evidence["identity_verified"] = True
     evidence["approver"] = claimed_subject
 
-    if claimed_role:
-        if claimed_role not in signer.roles:
-            return (
-                False,
-                f"APPROVER_ROLE_UNAUTHORIZED: {signer.subject!r} may not approve "
-                f"as {claimed_role!r}",
-                evidence,
-            )
-        evidence["approver_role"] = claimed_role
+    # PRESENCE, then authorization. A missing role is a refusal, not a skip:
+    # "approved by someone" is not an approval, and omitting the capacity was
+    # exactly how the previous version was bypassed.
+    if not separator or not claimed_role:
+        return (
+            False,
+            "APPROVER_ROLE_MISSING: producer.id names no role. An approval must "
+            "state the capacity it was given in, as 'subject:role'",
+            evidence,
+        )
+    if claimed_role not in GOVERNANCE_APPROVER_ROLES:
+        return (
+            False,
+            f"APPROVER_ROLE_UNAUTHORIZED: {claimed_role!r} is not a governance "
+            f"approver role {sorted(GOVERNANCE_APPROVER_ROLES)}",
+            evidence,
+        )
+    if claimed_role not in signer.roles:
+        return (
+            False,
+            f"APPROVER_ROLE_UNAUTHORIZED: {signer.subject!r} may not approve as "
+            f"{claimed_role!r}",
+            evidence,
+        )
     evidence["role_verified"] = True
+    evidence["approver_role"] = claimed_role
+
     return True, "authenticated", evidence
+
+
 
 
 class TrustStoreUnavailable(RuntimeError):

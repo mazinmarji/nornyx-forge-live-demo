@@ -93,6 +93,8 @@ REQUIRED_MODULES = (
     "tests/test_documented_claims.py",
     "tests/test_process_execution_spellings.py",
     "tests/test_approval_artifact_authentication.py",
+    "tests/test_governance_approval_verifier.py",
+    "tests/test_process_capability.py",
     "tests/test_dockerfile_surface.py",
 )
 

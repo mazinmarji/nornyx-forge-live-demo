@@ -415,51 +415,168 @@ PROCESS_CALLS = {
 }
 
 
-def _process_execution_markers(path: Path, relative: str) -> set[str]:
-    """Return concrete process-execution markers, by import and by call site."""
+#: Modules whose reason for existing is starting a process. Importing one in a
+#: delegating layer IS the capability -- no call site needs to be found.
+EXEC_ONLY_MODULES = {"subprocess", "pty", "multiprocessing", "posix", "nt"}
+
+#: Modules that are ordinary to import and have an exec family inside them.
+#: Importing is fine; binding one of EXEC_FUNCTIONS from them is not.
+# "shutil" is deliberately absent: it has no exec family. "shutil.which" only
+# resolves a name against PATH -- it starts nothing -- and flagging it made the
+# gate refuse "cli.py doctor", which reports tool availability. A control that
+# cries wolf on ordinary code gets switched off, so the false-positive side is
+# part of the property, not an afterthought.
+DUAL_USE_MODULES = {"os", "asyncio"}
+
+#: Names that start a process, wherever they are reached from.
+EXEC_FUNCTIONS = {
+    "system", "popen", "startfile", "fork", "forkpty",
+    "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe",
+    "spawnl", "spawnle", "spawnlp", "spawnv", "spawnve", "spawnvp",
+    "posix_spawn", "posix_spawnp",
+    "run", "call", "check_call", "check_output", "Popen",
+    "getoutput", "getstatusoutput",
+    "create_subprocess_exec", "create_subprocess_shell",
+}
+
+#: Reflection that hides the member being reached.
+OPAQUE_ACCESSORS = {"getattr"}
+
+
+def _process_capability_markers(path: Path, relative: str) -> set[str]:
+    """Return the ways this module ACQUIRES process-execution capability.
+
+    THE PROPERTY: a layer forbidden from executing processes cannot acquire the
+    capability to execute one. Not "cannot be seen calling os.system" — cannot
+    hold the means.
+
+    This function used to recognise invocation syntax: a set of dangerous call
+    spellings, matched as `owner.attr` where `owner` was a literal name in a
+    list. Two independent reviews walked straight through it. The first used
+    `from os import system` (the import filter did not contain `os`, and the
+    call was an `ast.Name`, not an `ast.Attribute`). That was patched by adding
+    those spellings. The second then used `import os as _o` — and every other
+    equivalent form: `getattr(os, "system")`, `os.__dict__["system"]`,
+    `import posix`, `_RUN = os.system`, `functools.partial(os.system)`. Each fix
+    closed the demonstrated spelling and left the adjacent one open, because a
+    list of spellings can always be extended by one more.
+
+    So the question changed. Not "is this call dangerous?" but "does this module
+    obtain access to a process-capable module at all?" Reaching `os` is
+    ordinary; `os.getenv` and `os.path.join` are everywhere and a gate that
+    flagged them would be switched off within a day. Reaching `subprocess`,
+    `pty`, `posix`, `nt` or `multiprocessing` is not ordinary in a delegating
+    layer — those modules exist to start processes.
+
+    That splits the surface cleanly:
+
+    - EXEC-ONLY MODULES (`subprocess`, `pty`, `posix`, `nt`, `multiprocessing`):
+      importing one at all, under any spelling or alias, is the marker. No call
+      needs to be seen. This is capability acquisition.
+
+    - DUAL-USE MODULES (`os`, `asyncio`, `shutil`): importing is fine; binding
+      one of their exec-family NAMES is the marker. Tracked through aliases and
+      assignment, so `_o = os` then `_o.system` is caught, as is
+      `_RUN = os.system` with no call site at all.
+
+    - OPAQUE ACCESS (`getattr(...)`, `__dict__[...]`, computed imports): the
+      target cannot be resolved statically. Inside a layer forbidden from
+      process execution, that is refused rather than ignored — fail closed,
+      because "I cannot tell" must never read as "it is fine".
+
+    The result is that the reviewers' whole equivalence class collapses to one
+    of three cases, and a new spelling nobody has thought of lands in the third.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
     markers: set[str] = set()
 
-    # Names bound by `from <owner> import <exec-family>`, including aliases. A
-    # call through one of these is an ast.Name, not an ast.Attribute, so without
-    # tracking the binding the call site is invisible to the walk below.
-    bound_exec_names: dict[str, str] = {}
+    #: Local names currently bound to a dual-use module (`os` and friends),
+    #: including aliases and re-bindings.
+    module_aliases: dict[str, str] = {}
+    #: Local names bound directly to an exec-family callable.
+    exec_aliases: dict[str, str] = {}
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".")[0]
-                if root in PROCESS_MODULES:
+                bound = alias.asname or alias.name.split(".")[0]
+                if root in EXEC_ONLY_MODULES:
+                    # Holding it IS the capability. No call required.
                     markers.add(alias.name)
+                elif root in DUAL_USE_MODULES:
+                    module_aliases[bound] = root
+
         elif isinstance(node, ast.ImportFrom) and node.module:
             root = node.module.split(".")[0]
-            if root in PROCESS_MODULES:
+            if root in EXEC_ONLY_MODULES:
                 markers.add(node.module)
-            elif root in PROCESS_CALL_OWNERS:
-                # `from os import system as _s` — the module is ordinary, the
-                # name imported is not.
+            elif root in DUAL_USE_MODULES:
                 for alias in node.names:
-                    if alias.name in PROCESS_FUNCTIONS:
-                        bound = alias.asname or alias.name
-                        bound_exec_names[bound] = f"{node.module}.{alias.name}"
+                    if alias.name == "*":
+                        # Cannot know what came in; assume the exec family did.
+                        markers.add(f"{node.module}.*")
+                    elif alias.name in EXEC_FUNCTIONS:
+                        exec_aliases[alias.asname or alias.name] = (
+                            f"{node.module}.{alias.name}"
+                        )
+                    elif alias.name in DUAL_USE_MODULES:
+                        module_aliases[alias.asname or alias.name] = alias.name
+
+        elif isinstance(node, ast.Assign):
+            # `_RUN = os.system`, `_o = os`, `handler = _o.popen`.
+            bound = [t.id for t in node.targets if isinstance(t, ast.Name)]
+            if not bound:
+                continue
+            value = node.value
+            # No branch here for `_RUN = os.system`: the attribute pass below
+            # already marks `os.system` wherever it appears, including on the
+            # right-hand side of an assignment. A mutation removing such a
+            # branch killed no test, which is the signature of dead code that
+            # reads as load-bearing -- in a security control, the worst kind.
+            if isinstance(value, ast.Name):
+                if value.id in module_aliases:
+                    for name in bound:
+                        module_aliases[name] = module_aliases[value.id]
+                elif value.id in exec_aliases:
+                    for name in bound:
+                        exec_aliases[name] = exec_aliases[value.id]
+
+    # Second pass: names are all bound, so attribute access and calls resolve.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = module_aliases.get(node.value.id)
+            if owner and node.attr in EXEC_FUNCTIONS:
+                markers.add(f"{owner}.{node.attr}")
+            elif owner and node.attr == "__dict__":
+                # `os.__dict__[...]` — the subscript target is unknowable.
+                markers.add(f"{owner}.__dict__ (opaque member access)")
+
+        elif isinstance(node, ast.Name) and node.id in exec_aliases:
+            markers.add(exec_aliases[node.id])
+
         elif isinstance(node, ast.Call):
             func = node.func
-            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-                owner = func.value.id
-                dotted = f"{owner}.{func.attr}"
-                if (
-                    dotted in PROCESS_CALLS
-                    or owner in PROCESS_MODULES
-                    or (owner in PROCESS_CALL_OWNERS and func.attr in PROCESS_FUNCTIONS)
-                ):
-                    markers.add(dotted)
-            elif isinstance(func, ast.Name) and func.id in bound_exec_names:
-                markers.add(bound_exec_names[func.id])
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name in OPAQUE_ACCESSORS:
+                target = node.args[0] if node.args else None
+                owner = (
+                    module_aliases.get(target.id)
+                    if isinstance(target, ast.Name)
+                    else None
+                )
+                literal = (
+                    node.args[1].value
+                    if len(node.args) > 1
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                    else None
+                )
+                if owner and literal in EXEC_FUNCTIONS:
+                    markers.add(f"{owner}.{literal}")
+                elif owner and literal is None:
+                    markers.add(f"{owner}.<computed> (opaque member access)")
 
-    # An exec-family name imported into the module is a marker whether or not a
-    # call is visible here: it can be re-exported, stored, or invoked through a
-    # reference the AST cannot follow.
-    markers.update(bound_exec_names.values())
     return markers
 
 
@@ -470,7 +587,7 @@ for module in declared_modules.values():
     if not path.exists():
         continue
     relative = str(path.relative_to(ROOT)).replace("\\", "/")
-    for marker in sorted(_process_execution_markers(path, relative)):
+    for marker in sorted(_process_capability_markers(path, relative)):
         violations.append(
             f"{relative} performs process execution ({marker}) outside a declared adapter"
         )

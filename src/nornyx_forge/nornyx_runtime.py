@@ -522,6 +522,85 @@ def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) ->
     return "sha256:" + hashlib.sha256(material).hexdigest()
 
 
+#: Columns the consumption record must carry. Names, because `consume` writes by
+#: name: a table missing one accepts the INSERT nowhere or silently drops it.
+REQUIRED_LEDGER_COLUMNS = frozenset(
+    {"fingerprint", "request_digest", "approval_id", "consumed_at"}
+)
+
+#: Single-column uniqueness the authorization model depends on, and what each
+#: one is actually promising.
+#:
+#: `fingerprint` stops one human decision being spent twice under different
+#: labels. `request_digest` stops one consequential act running twice under ANY
+#: decision. They answer different questions, so both are required and each is
+#: checked separately.
+REQUIRED_LEDGER_UNIQUE_COLUMNS = {
+    "fingerprint": "one human decision could be spent twice under different labels",
+    "request_digest": "one consequential act could run twice under different decisions",
+}
+
+
+def _assert_ledger_structure(
+    conn: sqlite3.Connection, path: Path, code: str
+) -> None:
+    """Refuse a ledger whose structure cannot enforce single use.
+
+    THE PROPERTY: replay state is accepted only when the database itself
+    enforces the uniqueness the authorization model assumes. Not when it claims
+    to; when it does.
+
+    This previously matched the strings "primary key" and "unique" against
+    `sqlite_master.sql` — the original DDL *text*, comments included. An
+    independent review put both words in comments over a constraint-free table
+    and released one grant three times. The check was written because "checking
+    that a table called consumed_approvals exists was checking the label on the
+    box"; matching the DDL text read the label in a different font.
+
+    SQLite's own metadata is the authority here, because it describes what the
+    engine will ENFORCE rather than what someone wrote. `PRAGMA index_list`
+    reports every index with its uniqueness and origin; `PRAGMA index_info`
+    reports the columns each covers. A comment cannot appear in either, and
+    neither can a constraint that was described but not created.
+
+    Partial indexes are rejected: a `UNIQUE ... WHERE` index enforces uniqueness
+    only over the rows matching its predicate, so rows outside it may repeat.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(consumed_approvals)")}
+    if not columns:
+        raise NornyxRuntimeUnavailable(
+            f"action approval ledger at {path} is unusable: {code}, it holds no "
+            "consumed_approvals table"
+        )
+
+    missing = REQUIRED_LEDGER_COLUMNS - columns
+    if missing:
+        raise NornyxRuntimeUnavailable(
+            f"action approval ledger at {path} is unusable: {code}, "
+            f"consumed_approvals is missing columns {sorted(missing)}"
+        )
+
+    # Every column covered by a full single-column unique index, whatever
+    # syntax produced it: PRIMARY KEY, a UNIQUE constraint, or CREATE UNIQUE
+    # INDEX all appear here identically, which is the point of asking the engine.
+    enforced: set[str] = set()
+    for _seq, name, unique, _origin, partial in conn.execute(
+        "PRAGMA index_list(consumed_approvals)"
+    ):
+        if not unique or partial:
+            continue
+        covered = [row[2] for row in conn.execute(f"PRAGMA index_info({name!r})")]
+        if len(covered) == 1:
+            enforced.add(covered[0])
+
+    for column, consequence in REQUIRED_LEDGER_UNIQUE_COLUMNS.items():
+        if column not in enforced:
+            raise NornyxRuntimeUnavailable(
+                f"action approval ledger at {path} is unusable: {code}, nothing "
+                f"enforces uniqueness on {column!r}, so {consequence}"
+            )
+
+
 class ApprovalLedger:
     """Durable, atomic, single-use consumption of action approvals.
 
@@ -614,32 +693,8 @@ class ApprovalLedger:
 
         try:
             with self._session() as conn:
-                present = conn.execute(
-                    "SELECT sql FROM sqlite_master WHERE type='table'"
-                    " AND name='consumed_approvals'"
-                ).fetchone()
-                if not present:
-                    raise NornyxRuntimeUnavailable(
-                        f"action approval ledger at {self.path} is unusable: "
-                        f"{self.UNREADABLE}, it holds no consumed_approvals table"
-                    )
+                _assert_ledger_structure(conn, self.path, self.UNREADABLE)
 
-                # The constraints ARE the single-use guarantee. A table with the
-                # right name and no PRIMARY KEY / UNIQUE accepts every duplicate
-                # insert, so `consume` would report success for a grant already
-                # spent. An independent review replaced the ledger with exactly
-                # that and released the same grant three times; checking only
-                # that a table called `consumed_approvals` exists was checking
-                # the label on the box.
-                schema = str(present[0] or "").lower()
-                for required in ("primary key", "unique"):
-                    if required not in schema:
-                        raise NornyxRuntimeUnavailable(
-                            f"action approval ledger at {self.path} is unusable: "
-                            f"{self.UNREADABLE}, consumed_approvals is missing its "
-                            f"{required.upper()} constraint, so a duplicate claim "
-                            "would be accepted rather than refused"
-                        )
                 # An INSERT that fails *after* the boundary has decided to
                 # release an effect is the worst moment to discover the ledger is
                 # read-only, so take the write lock now and give it straight back.

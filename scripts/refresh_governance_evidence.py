@@ -233,12 +233,24 @@ def load_canonical_approval(filename: str) -> dict | None:
         "subject_revision": subject_revision,
         "producer": {"id": producer_id, "type": producer_type},
         "authored_by": "human",
+        # Read from what the verifier returned, never asserted. These were
+        # literal True, so the record affirmed that a role had been verified in
+        # exactly the cases where the role check was skipped. An auditor reading
+        # the artifact could not distinguish "checked and passed" from "not
+        # checked" -- a boolean asserting trust, which is the defect class this
+        # repository removes everywhere else.
         "approval_authentication": {
-            "signer_key_id": evidence.get("signer_key_id"),
-            "trust_store_digest": evidence.get("trust_store_digest"),
-            "signature_verified": True,
-            "identity_verified": True,
-            "role_verified": True,
+            key: evidence.get(key)
+            for key in (
+                "signer_key_id",
+                "trust_store_digest",
+                "approver",
+                "approver_role",
+                "signature_verified",
+                "identity_verified",
+                "role_verified",
+                "subject_type_verified",
+            )
         },
         "payload": payload,
     }

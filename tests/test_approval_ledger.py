@@ -493,4 +493,11 @@ def test_provisioning_over_a_legacy_schema_refuses_rather_than_reporting_success
 
     with pytest.raises(NornyxRuntimeUnavailable) as refusal:
         ApprovalLedger.provision(path)
-    assert "unique" in str(refusal.value).lower()
+    # The refusal names the missing COLUMN, not the missing constraint: this
+    # legacy table has no "fingerprint" column at all, so it fails the structural
+    # before uniqueness is even considered. Asserting the precise class matters
+    # -- "some refusal happened" would pass equally if the ledger were rejected
+    # for an unrelated reason.
+    message = str(refusal.value).lower()
+    assert "missing columns" in message
+    assert "fingerprint" in message

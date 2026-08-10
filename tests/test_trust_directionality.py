@@ -98,9 +98,11 @@ def _approval(work: Path, filename: str = RUNTIME_APPROVAL, **overrides: object)
     sys.path.insert(0, str(ROOT / "tests"))
     from signing import signed_governance_approval  # noqa: PLC0415
 
+    # No producer_id override: the helper's default now carries a realistic
+    # subject:role identity. Overriding it to a role-less subject was how this
+    # fixture ended up exercising the branch where the role check was skipped.
     payload: dict[str, object] = signed_governance_approval(
         subject_revision=_head(work),
-        producer_id="human.test_fixture",
     )
     payload.update(overrides)
     if set(overrides) - {"statement"}:
