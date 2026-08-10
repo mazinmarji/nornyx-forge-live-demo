@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import typer
@@ -16,6 +17,38 @@ from .repo_scout import scout as scout_repositories
 from .requirements import parse_brd, profile_from_brd
 from .runtime_preparation import prepare_runtime_contract
 from .util import write_json
+
+
+def _make_output_encoding_safe() -> None:
+    """Stop the console's encoding from being able to crash a governed run.
+
+    Reproduced on a Windows workstation: `sys.stdout.encoding` is `cp1252`, and
+    writing `\\u2713` raises `UnicodeEncodeError: 'charmap' codec can't encode
+    character`. CrewAI's event bus prints progress marks like that one, so
+    selecting the CrewAI backend on a legacy console could abort the run partway
+    through — after side effects, with a traceback about a checkmark rather than
+    about anything that went wrong.
+
+    Applied once at the interface boundary and process-wide, because the writer
+    is a third-party library, not this code. `backslashreplace` rather than
+    `replace`: a mangled character should still be legible as what it was, and
+    evidence should never silently lose content to a display concern.
+
+    Presentation only. Nothing here reaches an authorization decision, and every
+    governed artifact is written as UTF-8 bytes through its own path regardless
+    of what the terminal can render.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # a redirected or wrapped stream
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):  # pragma: no cover - stream cannot be retuned
+            pass
+
+
+_make_output_encoding_safe()
 
 app = typer.Typer(no_args_is_help=True, help="Nornyx Forge live-demo CLI")
 console = Console()

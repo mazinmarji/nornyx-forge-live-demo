@@ -217,3 +217,58 @@ def test_the_hostile_environment_fixture_actually_sets_the_variables(hostile_env
     """Guards the guard: a fixture that set nothing would make the tests vacuous."""
     for name in ("FORGE_ALLOW_POLICY_FALLBACK", "FORGE_STRICT_CREWAI"):
         assert os.environ.get(name), f"{name} was not set, so the binding tests prove nothing"
+
+
+# --------------------------------------------------------------------------
+# R5: a backend name is a claim about what runs
+# --------------------------------------------------------------------------
+
+
+def test_requesting_crewai_without_crewai_refuses_rather_than_downgrading(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The refusal exists in the source. This proves it fires.
+
+    Every other test of this path runs in an environment where CrewAI imports,
+    so the branch that matters has been trusted because it reads correctly —
+    the same standard that let a self-certifying acceptance gate survive a P1.
+
+    A silent downgrade here would be the worst kind: `execution_backend=crewai`
+    is a claim about what executed, and running something else under that label
+    is how the whole suite stayed green with CrewAI absent.
+    """
+    monkeypatch.setattr(agentic, "CREWAI_AVAILABLE", False)
+
+    with pytest.raises(agentic.ExecutionBackendUnavailable) as refusal:
+        agentic.run_case(
+            dict(CASE),
+            root=ROOT,
+            worker_mode="deterministic",
+            config=RuntimeAuthorityConfig("deterministic_demo", "crewai"),
+        )
+
+    message = str(refusal.value)
+    assert "crewai" in message.lower()
+    assert "sequential" not in message.lower().split("refusing")[0], (
+        "the refusal describes a downgrade it is supposed to be refusing"
+    )
+
+
+def test_the_sequential_backend_still_runs_when_crewai_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The refusal must be about the claim, not about CrewAI being installed.
+
+    A control that failed both backends when CrewAI is missing would be safe and
+    useless. Naming `sequential` asks for something that does not need CrewAI,
+    and it must still run.
+    """
+    monkeypatch.setattr(agentic, "CREWAI_AVAILABLE", False)
+
+    result = agentic.run_case(
+        dict(CASE),
+        root=ROOT,
+        worker_mode="deterministic",
+        config=RuntimeAuthorityConfig("deterministic_demo", "sequential"),
+    )
+    assert result["observed_execution_backend"] == "sequential"
