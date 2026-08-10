@@ -593,7 +593,7 @@ class ApprovalLedger:
         try:
             with self._session() as conn:
                 present = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
+                    "SELECT sql FROM sqlite_master WHERE type='table'"
                     " AND name='consumed_approvals'"
                 ).fetchone()
                 if not present:
@@ -601,6 +601,23 @@ class ApprovalLedger:
                         f"action approval ledger at {self.path} is unusable: "
                         f"{self.UNREADABLE}, it holds no consumed_approvals table"
                     )
+
+                # The constraints ARE the single-use guarantee. A table with the
+                # right name and no PRIMARY KEY / UNIQUE accepts every duplicate
+                # insert, so `consume` would report success for a grant already
+                # spent. An independent review replaced the ledger with exactly
+                # that and released the same grant three times; checking only
+                # that a table called `consumed_approvals` exists was checking
+                # the label on the box.
+                schema = str(present[0] or "").lower()
+                for required in ("primary key", "unique"):
+                    if required not in schema:
+                        raise NornyxRuntimeUnavailable(
+                            f"action approval ledger at {self.path} is unusable: "
+                            f"{self.UNREADABLE}, consumed_approvals is missing its "
+                            f"{required.upper()} constraint, so a duplicate claim "
+                            "would be accepted rather than refused"
+                        )
                 # An INSERT that fails *after* the boundary has decided to
                 # release an effect is the worst moment to discover the ledger is
                 # read-only, so take the write lock now and give it straight back.

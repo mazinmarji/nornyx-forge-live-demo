@@ -378,3 +378,119 @@ def test_a_ledger_missing_its_table_is_unavailable_not_silently_rebuilt(tmp_path
     with pytest.raises(NornyxRuntimeUnavailable) as raised:
         ApprovalLedger(path)
     assert "unusable" in str(raised.value)
+
+
+def test_a_constraint_free_table_is_refused(tmp_path: Path):
+    """The constraints ARE the single-use guarantee, so the name is not enough.
+
+    An independent review replaced the ledger with a table of the right name and
+    no PRIMARY KEY or UNIQUE, and released the same grant three times: every
+    duplicate insert succeeded, so `consume` reported a fresh claim each time.
+    Opening checked that a table called `consumed_approvals` existed, which is
+    checking the label on the box.
+    """
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    path = tmp_path / "constraint_free.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE consumed_approvals ("
+        " fingerprint TEXT, request_digest TEXT, approval_id TEXT, consumed_at TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger(path)
+    assert "constraint" in str(refusal.value).lower()
+
+
+def test_a_partially_constrained_table_is_refused(tmp_path: Path):
+    """Both constraints, not either. They answer different questions.
+
+    PRIMARY KEY stops one human decision being spent twice under different
+    labels; UNIQUE stops one consequential act running twice under any decision.
+    A table with only the first would still let two distinct grants release the
+    same act.
+    """
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    path = tmp_path / "half_constrained.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE consumed_approvals ("
+        " fingerprint TEXT PRIMARY KEY, request_digest TEXT NOT NULL,"
+        " approval_id TEXT NOT NULL, consumed_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger(path)
+    assert "unique" in str(refusal.value).lower()
+
+
+def test_re_provisioning_over_a_deleted_ledger_starts_empty(tmp_path: Path):
+    """Documented, not defended. This leg of the finding stays open.
+
+    Deleting the ledger and re-running the documented provisioning command
+    yields an empty ledger in which nothing has been spent, so a still-valid
+    grant releases again. Constraint checking cannot see this: the recreated
+    table is correct in every respect except that it has forgotten.
+
+    Distinguishing "first-time setup" from "setup after someone removed the
+    history" needs state the ledger cannot hold about itself. Asserting the
+    current behaviour rather than pretending otherwise, so the exposure is
+    recorded and a future anchor has a test to flip.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    request = _request()
+    fingerprint = _fingerprint("ACT-REPROVISION-GAP", request)
+    assert ApprovalLedger.provision(path).consume(fingerprint, request.digest, at=NOW)[0] is True
+
+    path.unlink()
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+
+    reborn = ApprovalLedger.provision(path)
+    claimed, _ = reborn.consume(fingerprint, request.digest, at=NOW)
+    assert claimed is True, (
+        "behaviour changed: if re-provisioning now refuses a previously spent "
+        "grant, this exposure is closed and this test should assert that instead"
+    )
+
+
+def test_provisioning_over_a_legacy_schema_refuses_rather_than_reporting_success(
+    tmp_path: Path,
+):
+    """`CREATE TABLE IF NOT EXISTS` cannot upgrade a table that already exists.
+
+    Found in the working tree, not in theory: a ledger created before the
+    fingerprint model survived there with `approval_id TEXT PRIMARY KEY` and no
+    UNIQUE on request_digest -- keying single use on a caller-selectable label,
+    which is the defect that motivated binding consumption to a validated
+    approval fingerprint in the first place.
+
+    An operator re-running the documented provisioning command over such a file
+    must not be told `status: pass`, because the obsolete table would remain and
+    the ledger still could not promise single use. This holds because `provision`
+    returns through the ordinary constructor and so inherits its checks; building
+    the instance directly would skip them and hand back a false success.
+    """
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable
+
+    path = tmp_path / "legacy.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE consumed_approvals ("
+        " approval_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL,"
+        " consumed_at TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger.provision(path)
+    assert "unique" in str(refusal.value).lower()

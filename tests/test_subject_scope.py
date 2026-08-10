@@ -222,3 +222,69 @@ def test_no_governed_file_escapes_the_canonical_text_rule():
         "governed text outside CANONICAL_TEXT_SUFFIXES is hashed raw, so its "
         "digest depends on the checkout's line endings: " + ", ".join(undeclared_text)
     )
+
+
+def test_a_narrowed_scope_moves_the_governed_subject_digest():
+    """The binding itself, asserted directly.
+
+    `test_narrowing_a_scope_moves_the_subject_even_with_an_identical_id` claims
+    this in its name and proves something else: it asserts
+    `scope_definition_digest` differs — a different function, computed from the
+    scope alone — and that SUBJECT_SCOPE_ESCAPE fires. Neither touches
+    `governed_subject_digest`.
+
+    An independent review deleted `scope_definition_digest` from the subject
+    digest's inputs and the whole of six test files stayed green, then showed a
+    scope with an identical id and `authority_universe=()` — closure enforcement
+    entirely removed — producing a byte-identical subject digest to the honest
+    scope. `governed_subject_digest` is the `subject_revision` an approval binds
+    to, so two different authority surfaces became indistinguishable to every
+    grant.
+
+    A scope that covers less must be a different subject, and this asserts that
+    and nothing else.
+    """
+    work = _tree()
+    honest = _subject(work, RUNTIME_IMAGE_SCOPE)
+    assert honest.subject_verified, honest.unavailable_reason
+
+    # Same id, same declared surface, closure enforcement removed. The only way
+    # this can produce a different digest is if the scope definition is bound in.
+    unguarded = SubjectScope(
+        scope_id=RUNTIME_IMAGE_SCOPE.scope_id,
+        required_roots=RUNTIME_IMAGE_SCOPE.required_roots,
+        required_files=RUNTIME_IMAGE_SCOPE.required_files,
+        required_contracts=RUNTIME_IMAGE_SCOPE.required_contracts,
+        authority_universe=(),
+        non_authoritative=RUNTIME_IMAGE_SCOPE.non_authoritative,
+    )
+    weakened = _subject(work, unguarded)
+
+    assert weakened.scope_id == honest.scope_id
+    assert weakened.subject_verified, weakened.unavailable_reason
+    assert weakened.governed_subject_digest != honest.governed_subject_digest, (
+        "a scope with closure enforcement removed produced the same subject "
+        "digest as the honest scope, so an approval bound to one authorizes the "
+        "other"
+    )
+
+
+def test_the_authority_config_also_moves_the_subject_digest():
+    """The sibling binding, asserted the same way.
+
+    Kept adjacent deliberately: these two are the inputs a subject digest must
+    cover beyond content, and the review found one of them provable and the
+    other not. Proving them side by side makes the asymmetry visible if it
+    returns.
+    """
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig
+
+    work = _tree()
+    governed = _subject(work, RUNTIME_IMAGE_SCOPE)
+    demo = establish_subject(
+        work,
+        scope=RUNTIME_IMAGE_SCOPE,
+        config=RuntimeAuthorityConfig("deterministic_demo", "sequential"),
+    )
+    assert governed.subject_verified and demo.subject_verified
+    assert demo.governed_subject_digest != governed.governed_subject_digest
