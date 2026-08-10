@@ -384,35 +384,103 @@ def test_the_session_report_path_is_outside_the_governed_input_paths():
     assert ".nornyx/in-session/" in (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
+def _contains_derived_name(node, derived: set[str]) -> bool:
+    """True when this expression mentions a derived artifact by name."""
+    import ast
+
+    return any(
+        isinstance(child, ast.Constant)
+        and isinstance(child.value, str)
+        and child.value in derived
+        for child in ast.walk(node)
+    )
+
+
+#: The module that writes these artifacts, and the only one allowed to read them
+#: back. `refresh_governance_evidence` re-reads `INDEX.json` to update it in
+#: place, which is read-modify-write by the owner rather than a decision drawn
+#: from derived output. It is exempt here and NOT exempt behaviourally: the
+#: forged-index tests above run against this same module and prove that editing
+#: the index changes no approval, no producer, no window and no verdict.
+DERIVED_ARTIFACT_OWNER = "scripts/refresh_governance_evidence.py"
+
+
 def test_no_first_party_source_reads_a_derived_index_for_a_decision():
-    """Structural, not behavioural. Derived output is written, never consulted.
+    """Derived output is written by its owner, and read back by nobody else.
 
-    The behavioural tests above prove that forging `INDEX.json` today changes
-    nothing. They prove it about today's code: a future reader who parses the
-    index to answer a question would restore the upward flow without failing any
-    of them, because the forged-index tests assert on outcomes the new read
-    might happen to agree with.
+    Three shapes of this scan have been wrong, each in a way worth keeping
+    written down.
 
-    So this asserts the shape instead — nothing under `src/` or `scripts/` reads
-    these artifacts back. Writing them is the whole point; reading them is the
-    defect.
+    Requiring the artifact name and the reading verb on one physical line was
+    defeated by an independent review in two lines -- bind the path, read it on
+    the next -- and recognised only three read spellings.
+
+    Flagging any module that both names an artifact and performs any read failed
+    the other way, firing on the module whose job is to write them.
+
+    Tracking tainted locals across the whole module failed a third way: variable
+    names repeat between functions, so a `path` bound to `review_binding.json`
+    in one function condemned every `path.read_bytes()` in the file, including
+    the one that reads human approval artifacts.
+
+    Taint is therefore per-function, and the owning module is named rather than
+    inferred.
     """
+    import ast
+
     root = Path(__file__).resolve().parents[1]
-    derived = ("INDEX.json", "review_binding.json")
+    derived = {"INDEX.json", "review_binding.json"}
+    readers = {"read_text", "read_bytes", "load", "loads", "read"}
     offenders: list[str] = []
+
+    def scopes(tree):
+        """Each function body, plus module level, as an independent scope."""
+        yield tree
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node
 
     for directory in ("src", "scripts"):
         for source in sorted((root / directory).rglob("*.py")):
-            for number, line in enumerate(
-                source.read_text(encoding="utf-8").splitlines(), 1
-            ):
-                code = line.split("#", 1)[0]
-                if not any(name in code for name in derived):
-                    continue
-                if any(read in code for read in ("read_text", "read_bytes", "json.load")):
-                    offenders.append(f"{source.relative_to(root)}:{number}")
+            relative = str(source.relative_to(root)).replace("\\", "/")
+            if relative == DERIVED_ARTIFACT_OWNER:
+                continue
+            try:
+                tree = ast.parse(source.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover
+                continue
 
-    assert offenders == [], (
-        "a derived artifact is read back, so output can flow upward into a "
-        "decision: " + ", ".join(offenders)
+            for scope in scopes(tree):
+                tainted: set[str] = set()
+                for node in ast.walk(scope):
+                    if isinstance(node, ast.Assign) and _contains_derived_name(
+                        node.value, derived
+                    ):
+                        tainted.update(
+                            target.id
+                            for target in node.targets
+                            if isinstance(target, ast.Name)
+                        )
+
+                for node in ast.walk(scope):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    func = node.func
+                    if isinstance(func, ast.Attribute) and func.attr in readers:
+                        receiver = func.value
+                        if _contains_derived_name(receiver, derived) or (
+                            isinstance(receiver, ast.Name) and receiver.id in tainted
+                        ):
+                            offenders.append(f"{relative}:{node.lineno}")
+                    elif isinstance(func, ast.Name) and func.id == "open":
+                        for argument in node.args:
+                            if _contains_derived_name(argument, derived) or (
+                                isinstance(argument, ast.Name)
+                                and argument.id in tainted
+                            ):
+                                offenders.append(f"{relative}:{node.lineno}")
+
+    assert sorted(set(offenders)) == [], (
+        "a derived artifact is read back outside its owning module, so output "
+        "can flow upward into a decision: " + ", ".join(sorted(set(offenders)))
     )
