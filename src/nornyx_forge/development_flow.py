@@ -242,9 +242,22 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     for item in in_session_reviews
                     if isinstance(item, dict)
                 }
+                # `builder_self_approval is False` used to be a term in this
+                # expression. It was the builder certifying their own
+                # independence, in a gitignored file the builder writes — the
+                # same defect removed from the evidence tool, still gating
+                # acceptance here. A file cannot witness the conditions under
+                # which it was produced, so nothing it says about its own
+                # provenance is consulted.
+                #
+                # What remains is a completeness and outcome check over records
+                # this session produced. That is a useful local gate and it is
+                # not an independent review: independence requires an
+                # authenticated attestation from a reviewer who is not the
+                # builder, which lives in `nornyx_forge.reviewer_trust` and
+                # cannot be satisfied by anything written here.
                 review_passed = (
                     payload.get("schema") == "nornyx.forge.in_session_reviews.v1"
-                    and payload.get("builder_self_approval") is False
                     and payload.get("human_review") == "not_performed"
                     and required_roles.issubset(observed_roles)
                     and all(
@@ -254,7 +267,8 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     )
                 )
                 detail = (
-                    f"Validated {len(in_session_reviews)} in-session review records."
+                    f"Validated {len(in_session_reviews)} self-reported in-session "
+                    "review records. Establishes completeness, not independence."
                     if review_passed
                     else "The in-session review artifact is incomplete or contains a failed review."
                 )
@@ -262,7 +276,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 review_passed = False
                 detail = f"Cannot load in-session review evidence: {type(exc).__name__}: {exc}"
             self.pre_gate_failures.append(
-                GateResult("independent in-session AI review", review_passed, detail)
+                GateResult("in-session AI review records complete", review_passed, detail)
             )
         gates = [*self.pre_gate_failures, *default_gates(self.root)]
         while not all(gate.passed for gate in gates) and self.worker_mode == "claude-code":
@@ -333,7 +347,13 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             "mode": "autonomous_demonstration",
             "human_review": "not_performed",
             "production_approval": "not_granted",
-            "independent_ai_review": bool(reviews),
+            # A count of worker processes that ran, named as such. It was
+            # `independent_ai_review: bool(reviews)` — a non-empty list of
+            # subprocesses standing in for a verdict, so launching a reviewer
+            # was indistinguishable from passing a review, and neither was
+            # independent of the builder that launched it.
+            "review_workers_executed": len(reviews),
+            "independent_ai_review": "not_established",
         }
         self.ledger.append(
             "build_acceptance",

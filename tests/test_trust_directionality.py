@@ -349,3 +349,37 @@ def test_the_session_report_path_is_outside_the_governed_input_paths():
 
     assert not any(p.startswith(".nornyx/in-session") for p in GOVERNED_INPUT_PATHS)
     assert ".nornyx/in-session/" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_no_first_party_source_reads_a_derived_index_for_a_decision():
+    """Structural, not behavioural. Derived output is written, never consulted.
+
+    The behavioural tests above prove that forging `INDEX.json` today changes
+    nothing. They prove it about today's code: a future reader who parses the
+    index to answer a question would restore the upward flow without failing any
+    of them, because the forged-index tests assert on outcomes the new read
+    might happen to agree with.
+
+    So this asserts the shape instead — nothing under `src/` or `scripts/` reads
+    these artifacts back. Writing them is the whole point; reading them is the
+    defect.
+    """
+    root = Path(__file__).resolve().parents[1]
+    derived = ("INDEX.json", "review_binding.json")
+    offenders: list[str] = []
+
+    for directory in ("src", "scripts"):
+        for source in sorted((root / directory).rglob("*.py")):
+            for number, line in enumerate(
+                source.read_text(encoding="utf-8").splitlines(), 1
+            ):
+                code = line.split("#", 1)[0]
+                if not any(name in code for name in derived):
+                    continue
+                if any(read in code for read in ("read_text", "read_bytes", "json.load")):
+                    offenders.append(f"{source.relative_to(root)}:{number}")
+
+    assert offenders == [], (
+        "a derived artifact is read back, so output can flow upward into a "
+        "decision: " + ", ".join(offenders)
+    )

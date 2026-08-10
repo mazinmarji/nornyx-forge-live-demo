@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import subprocess
 import sys
@@ -1849,7 +1848,12 @@ def main() -> int:
         return 0
 
     if args.adopt_approval:
-        raw = args.as_of or os.getenv("FORGE_RUNTIME_AS_OF")
+        # `--as-of` only. The environment fallback that stood here was the same
+        # ambient time authority removed from the runtime, surviving in the tool
+        # that writes the evidence: `generated_at` is what the agentic-network
+        # approval window is measured from, so a variable nobody has to declare
+        # could move when an approval appears to have been granted.
+        raw = args.as_of
         moment = (
             datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if raw
@@ -1899,7 +1903,10 @@ def main() -> int:
     # Default to the real instant. Truncating to midnight silently backdated
     # every record, which matters because the agentic-network approval window is
     # measured from generated_at.
-    raw = args.as_of or os.getenv("FORGE_RUNTIME_AS_OF")
+    # Explicit argument or the real clock. No environment route, for the reason
+    # above: an instant that can be set without appearing at the call site is
+    # ambient authority over how old every generated record claims to be.
+    raw = args.as_of
     if raw:
         moment = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if moment.tzinfo is None:

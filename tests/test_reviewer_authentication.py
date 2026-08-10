@@ -146,8 +146,14 @@ def test_builder_self_approval_is_not_consulted_anywhere():
     """
     import ast
 
+    # `development_flow.py` is here because it was missed. The evidence tool
+    # stopped consulting the field while the runtime acceptance gate went on
+    # doing exactly the same thing with the same file, and a regression scoped
+    # to the two files being edited could not see it. Scope this to every place
+    # the field could plausibly be read, not to the place it was just removed.
     for name in ("scripts/refresh_governance_evidence.py",
-                 "src/nornyx_forge/reviewer_trust.py"):
+                 "src/nornyx_forge/reviewer_trust.py",
+                 "src/nornyx_forge/development_flow.py"):
         source = (ROOT / name).read_text(encoding="utf-8")
         tree = ast.parse(source)
 

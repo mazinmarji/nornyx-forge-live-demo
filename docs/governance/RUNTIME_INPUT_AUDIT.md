@@ -22,7 +22,7 @@ Scanned for: `read_text` / `read_bytes` / `open(` / `json.load` / `yaml.safe_loa
 | Builder identity from env | `reviewer_trust.py` (`FORGE_BUILDER_IDENTITY`) | **Closed (R2/R3).** It replaced the identity independence was measured against, so naming another builder excused the real one. It is a union now — ambient input adds an excluded identity and can never remove one — and the resolved set is frozen into `TrustConfiguration`. |
 | **Application root from env** | `main.py:22` (`FORGE_ROOT`) | **R1.** Selects which tree the application governs — ambient authority over subject identity itself. Must become an explicit bootstrap parameter, not a per-process environment read. |
 | Policy fallback toggle | `agentic.py:319,377`, `development_flow.py` | **R1/R5.** `FORGE_ALLOW_POLICY_FALLBACK` permits a deterministic fallback for the governance path. Authority-relevant ambient state. |
-| `reviews.json` | `development_flow.py:230` | **R4.** Derived artifact reaching an assurance claim (`independent_ai_review = bool(reviews)`). |
+| `reviews.json` | `development_flow.py` | **Closed (R4).** Two claims came off a gitignored, builder-written file: acceptance was gated on `builder_self_approval is False` (the builder certifying their own independence), and `independent_ai_review` was `bool(reviews)` (a non-empty list of subprocesses standing in for a verdict). Neither is read now. The gate checks completeness and outcome only, and reports `independent_ai_review: not_established`. |
 | CrewAI backend toggles | `agentic.py:324,345`, `development_flow.py:383,395` | **R5.** `FORGE_USE_CREWAI_KICKOFF` / `FORGE_STRICT_CREWAI` silently select a degraded backend while the product claim stays "CrewAI". |
 
 ## Non-authoritative — reason required, negative test owed

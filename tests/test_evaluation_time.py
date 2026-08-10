@@ -142,3 +142,35 @@ def test_seven_day_expiry_rule_is_not_weakened():
     # The approval must also still refuse non-human authority.
     for denied in ("ai_tool", "autonomous_agent", "model", "generated_output"):
         assert denied in text
+
+
+def test_no_first_party_module_reads_a_retired_time_or_revision_override():
+    """Retired means retired everywhere, not only where it was first removed.
+
+    Both variables were removed from the runtime, and the evidence tool went on
+    honouring `FORGE_RUNTIME_AS_OF` as a fallback for `--as-of`. That mattered:
+    `generated_at` is what the agentic-network approval window is measured from,
+    so an instant nobody had to declare could move when an approval appeared to
+    have been granted.
+
+    Scoped to every first-party source rather than to the module the original
+    review named — a control that only watches where a defect was found cannot
+    see where it was copied.
+    """
+    root = Path(__file__).resolve().parents[1]
+    offenders: list[str] = []
+    for directory in ("src", "scripts"):
+        for source in sorted((root / directory).rglob("*.py")):
+            for number, line in enumerate(
+                source.read_text(encoding="utf-8").splitlines(), 1
+            ):
+                code = line.split("#", 1)[0]
+                if "getenv" not in code and "environ" not in code:
+                    continue
+                if RETIRED_TIME_ENV in code or RETIRED_REVISION_ENV in code:
+                    offenders.append(f"{source.relative_to(root)}:{number}")
+
+    assert offenders == [], (
+        "a retired override is read again, so time or revision can be aimed "
+        "from the environment: " + ", ".join(offenders)
+    )
