@@ -91,6 +91,7 @@ REQUIRED_MODULES = (
     "tests/test_execution_semantics.py",
     "tests/test_skip_gate.py",
     "tests/test_documented_claims.py",
+    "tests/test_process_execution_spellings.py",
 )
 
 

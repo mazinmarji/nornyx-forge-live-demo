@@ -286,18 +286,53 @@ for relative, banned in forbidden.items():
 # modules here still legitimately open files and SQLite. What none of them may
 # do is start a process, and the previous set let one do so unremarked.
 DELEGATING_LAYERS = {"layer.interface", "layer.application", "layer.domain"}
-PROCESS_MODULES = {"subprocess", "pty"}
+PROCESS_MODULES = {"subprocess", "pty", "multiprocessing"}
+
+#: Exec-family names that start a process. Tracked as bare names as well as
+#: attributes, because `from os import system` then `system(cmd)` produced no
+#: marker at all: the import filter only looked at PROCESS_MODULES (which does
+#: not contain `os`), and the call filter only matched ast.Attribute. An
+#: unauthenticated endpoint spelled that way passed both the architecture gate
+#: and the security gate with zero findings.
+PROCESS_FUNCTIONS = {
+    "system",
+    "popen",
+    "execl",
+    "execle",
+    "execlp",
+    "execv",
+    "execve",
+    "execvp",
+    "execvpe",
+    "spawnl",
+    "spawnle",
+    "spawnlp",
+    "spawnv",
+    "spawnve",
+    "spawnvp",
+    "posix_spawn",
+    "posix_spawnp",
+    "startfile",
+    "fork",
+    "forkpty",
+    "run",
+    "call",
+    "check_call",
+    "check_output",
+    "Popen",
+    "getoutput",
+    "getstatusoutput",
+    "create_subprocess_exec",
+    "create_subprocess_shell",
+}
+
+#: Modules whose exec-family members count. `os` belongs here and not in
+#: PROCESS_MODULES because importing `os` is ordinary; calling its exec family
+#: is not.
+PROCESS_CALL_OWNERS = {"os", "subprocess", "asyncio", "multiprocessing", "pty"}
+
 PROCESS_CALLS = {
-    "os.system",
-    "os.popen",
-    "os.execl",
-    "os.execlp",
-    "os.execv",
-    "os.execvp",
-    "os.execve",
-    "os.spawnv",
-    "os.spawnvp",
-    "os.posix_spawn",
+    f"{owner}.{name}" for owner in ("os",) for name in PROCESS_FUNCTIONS
 }
 
 
@@ -305,22 +340,47 @@ def _process_execution_markers(path: Path, relative: str) -> set[str]:
     """Return concrete process-execution markers, by import and by call site."""
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
     markers: set[str] = set()
+
+    # Names bound by `from <owner> import <exec-family>`, including aliases. A
+    # call through one of these is an ast.Name, not an ast.Attribute, so without
+    # tracking the binding the call site is invisible to the walk below.
+    bound_exec_names: dict[str, str] = {}
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            markers.update(
-                alias.name
-                for alias in node.names
-                if alias.name.split(".")[0] in PROCESS_MODULES
-            )
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in PROCESS_MODULES:
+                    markers.add(alias.name)
         elif isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.split(".")[0] in PROCESS_MODULES:
+            root = node.module.split(".")[0]
+            if root in PROCESS_MODULES:
                 markers.add(node.module)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            owner = node.func.value
-            if isinstance(owner, ast.Name):
-                dotted = f"{owner.id}.{node.func.attr}"
-                if dotted in PROCESS_CALLS or owner.id in PROCESS_MODULES:
+            elif root in PROCESS_CALL_OWNERS:
+                # `from os import system as _s` — the module is ordinary, the
+                # name imported is not.
+                for alias in node.names:
+                    if alias.name in PROCESS_FUNCTIONS:
+                        bound = alias.asname or alias.name
+                        bound_exec_names[bound] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                owner = func.value.id
+                dotted = f"{owner}.{func.attr}"
+                if (
+                    dotted in PROCESS_CALLS
+                    or owner in PROCESS_MODULES
+                    or (owner in PROCESS_CALL_OWNERS and func.attr in PROCESS_FUNCTIONS)
+                ):
                     markers.add(dotted)
+            elif isinstance(func, ast.Name) and func.id in bound_exec_names:
+                markers.add(bound_exec_names[func.id])
+
+    # An exec-family name imported into the module is a marker whether or not a
+    # call is visible here: it can be re-exported, stored, or invoked through a
+    # reference the AST cannot follow.
+    markers.update(bound_exec_names.values())
     return markers
 
 

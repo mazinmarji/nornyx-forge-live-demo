@@ -159,6 +159,16 @@ def test_classify_reports_which_modules_contributed(tmp_path: Path):
 
 def test_every_required_module_exists_and_is_a_test_file():
     """A required module that was renamed away would fail the gate forever."""
+    # The guard that was missing. `test_every_expected_skip_records_why_it_is
+    # _acceptable` carries exactly this assertion two functions earlier; it was
+    # not repeated here, so emptying the tuple made this loop vacuous and the
+    # whole anti-shrink gate could be neutered with a one-line edit while this
+    # file stayed green. An independent review found it by doing precisely that.
+    assert REQUIRED_MODULES, (
+        "an empty required-module list would make the gate meaningless: a "
+        "deleted governance test module would contribute no tests and nothing "
+        "would notice"
+    )
     for name in REQUIRED_MODULES:
         path = ROOT / name
         assert path.is_file(), f"{name} is required by the gate but does not exist"
@@ -173,7 +183,13 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
         source.read_text(encoding="utf-8").count("def test_")
         for source in (ROOT / "tests").glob("test_*.py")
     )
-    assert MINIMUM_COLLECTED > 0
+    # `> 0` was the whole lower bound, so a floor of 1 satisfied a test whose
+    # docstring says "a floor at zero is decoration". A floor of 1 is the same
+    # decoration. It must sit within reach of the real suite to mean anything.
+    assert MINIMUM_COLLECTED >= collected // 2, (
+        f"a floor of {MINIMUM_COLLECTED} against roughly {collected} tests is "
+        "decoration: almost any deletion would pass it"
+    )
     assert MINIMUM_COLLECTED <= collected * 2, (
         "the floor is above what the suite can collect, so every run fails"
     )
