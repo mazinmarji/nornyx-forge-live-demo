@@ -78,13 +78,50 @@ def bootstrap_security_context(
     serve low-risk work, while consequential authority is simply not on offer.
     Those are different outcomes and were previously conflated — the container
     fell back to an unverified revision and carried on.
+
+    That claim now covers root resolution too. It did not: `resolve_packaged_
+    root()` raises when the deployment markers are absent, so a docstring
+    promising "not an exception" was describing observation failure only, and an
+    unresolvable root took the application down at import instead of leaving it
+    running without consequential authority. Both are failures; only one of them
+    is the one this function says it produces.
+
+    A context with no resolvable root carries no ledger location, so anything
+    reaching for replay state refuses in its own vocabulary rather than being
+    handed a plausible-looking path that points nowhere.
     """
     authority_config = config if config is not None else RuntimeAuthorityConfig()
-    resolved = root if root is not None else resolve_packaged_root()
+    try:
+        resolved = root if root is not None else resolve_packaged_root()
+    except GovernedSubjectError as exc:
+        return RuntimeSecurityContext(
+            runtime_subject=RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id),
+            authority_config=authority_config,
+            trust=unrooted_trust_configuration(),
+        )
     return RuntimeSecurityContext(
         runtime_subject=establish_subject(resolved, scope=scope, config=authority_config),
         authority_config=authority_config,
         trust=resolve_trust_configuration(resolved),
+    )
+
+
+def unrooted_trust_configuration() -> TrustConfiguration:
+    """Trust anchors for a deployment whose root could not be resolved.
+
+    The two stores are absolute locations that never depended on the root, so
+    they are still reported honestly. The ledger is empty rather than guessed:
+    a replay history is per-deployment, and inventing a path for one whose
+    deployment tree is unknown would create replay state somewhere arbitrary.
+    """
+    from .approval_trust import trust_store_path as approver_store_path
+    from .reviewer_trust import excluded_inspector_identities, reviewer_store_path
+
+    return TrustConfiguration(
+        approver_store=str(approver_store_path()),
+        reviewer_store=str(reviewer_store_path()),
+        approval_ledger="",
+        builder_identities=excluded_inspector_identities(),
     )
 
 

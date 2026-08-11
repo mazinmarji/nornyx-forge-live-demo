@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .agentic import (
     NornyxRuntimeUnavailable,
+    application_security_context,
     demonstration_authority,
     run_case,
     run_demo_scenarios,
@@ -62,6 +63,15 @@ ROOT = _packaged_root()
 #: refusal when Nornyx cannot authorize, which is the honest outcome when no
 #: human approval exists.
 AUTHORITY = demonstration_authority()
+
+#: The security context every request runs under, bound here at startup.
+#:
+#: Held explicitly rather than left implicit inside the application layer, so
+#: that the one-per-application property is visible at the surface that serves
+#: requests. Handlers pass this object down; none of them may establish one,
+#: because a request that can cause subject identity to be resolved has a say in
+#: the authority that judges it.
+SECURITY_CONTEXT = application_security_context()
 STATIC = Path(__file__).resolve().parent / "static"
 STORE = JsonStore(ROOT / ".nornyx/demo-data.json")
 
@@ -142,7 +152,9 @@ def create_case(payload: CaseInput):
         "timeline": [],
     }
     try:
-        case = run_case(case, root=ROOT, config=AUTHORITY)
+        case = run_case(
+            case, root=ROOT, config=AUTHORITY, security_context=SECURITY_CONTEXT
+        )
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,
@@ -169,7 +181,9 @@ def get_case(case_id: str):
 @app.post("/api/demo/run")
 def run_demo():
     try:
-        result = run_demo_scenarios(ROOT, config=AUTHORITY)
+        result = run_demo_scenarios(
+            ROOT, config=AUTHORITY, security_context=SECURITY_CONTEXT
+        )
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,

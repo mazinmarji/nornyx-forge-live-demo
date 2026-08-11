@@ -15,13 +15,17 @@ from nornyx_forge.nornyx_runtime import (
     NornyxRuntimeUnavailable,
     canonical_action_request,
 )
-from nornyx_forge.subject_bootstrap import RuntimeSecurityContext
+from nornyx_forge.subject_bootstrap import (
+    RuntimeSecurityContext,
+    bootstrap_security_context,
+)
 
 # Re-exported so the interface layer can handle a governed refusal without
 # importing the governance module directly.
 __all__ = [
     "CustomerCaseFlow",
     "NornyxRuntimeUnavailable",
+    "application_security_context",
     "assurance_state",
     "run_case",
     "run_demo_scenarios",
@@ -63,6 +67,37 @@ def demonstration_authority() -> RuntimeAuthorityConfig:
         policy_backend="deterministic_demo",
         execution_backend="sequential",
     )
+
+
+#: The one security context this process runs under.
+#:
+#: Established at import, which is the application's startup: module import
+#: happens once per process under the interpreter's own lock, so there is no
+#: window in which two requests could each establish one and no lazy accessor
+#: that a request could be the first to reach.
+#:
+#: This existed as a parameter that production never filled. `bootstrap_
+#: security_context()` had no caller outside the tests, so every real flow ran
+#: with `security_context=None` and the boundary fell back to resolving its own
+#: trust anchors — the per-use ambient resolution the whole subject model exists
+#: to remove. The tests proved the mechanism worked; nothing proved it was used.
+#:
+#: Failure is a context with an unavailable subject, never an exception and
+#: never a fabricated digest: the application may start and serve read-only work
+#: while consequential authority is simply not on offer. An import that raised
+#: would turn "this deployment cannot authorize effects" into "this deployment
+#: does not start", which are different outcomes.
+_SECURITY_CONTEXT = bootstrap_security_context(config=demonstration_authority())
+
+
+def application_security_context() -> RuntimeSecurityContext:
+    """Return the established context. The same object every time.
+
+    Identity is the property, not equality. Handing back an equal copy would
+    satisfy any digest comparison while still allowing each request to observe
+    the tree afresh, which is exactly what this prevents.
+    """
+    return _SECURITY_CONTEXT
 
 
 class ExecutionBackendUnavailable(RuntimeError):
@@ -400,12 +435,21 @@ def run_case(
     authority = config if config is not None else RuntimeAuthorityConfig()
     mode = worker_mode or "deterministic"
     fallback = authority.policy_backend == "deterministic_demo"
+    # The established context, unless a caller deliberately supplied another.
+    # `None` used to mean "no context at all", so the production path — which
+    # passes nothing — ran every flow unestablished and let the boundary resolve
+    # its own trust anchors per use. An omitted argument now means "the one this
+    # application established", which is what a request should never get to
+    # choose.
+    context = (
+        security_context if security_context is not None else application_security_context()
+    )
     flow = CustomerCaseFlow(
         case,
         root=root,
         worker_mode=mode,
         allow_policy_fallback=fallback,
-        security_context=security_context,
+        security_context=context,
     )
     flow.case["configured_execution_backend"] = authority.execution_backend
     flow.case["configured_policy_backend"] = authority.policy_backend
@@ -465,6 +509,7 @@ def run_demo_scenarios(
     worker_mode: str | None = None,
     allow_policy_fallback: bool | None = None,
     config: RuntimeAuthorityConfig | None = None,
+    security_context: RuntimeSecurityContext | None = None,
 ) -> dict[str, Any]:
     """Run both demonstration cases.
 
@@ -494,6 +539,7 @@ def run_demo_scenarios(
         worker_mode=worker_mode,
         config=authority,
         allow_policy_fallback=allow_policy_fallback,
+        security_context=security_context,
     )
     high = run_case(
         {
@@ -507,6 +553,7 @@ def run_demo_scenarios(
         worker_mode=worker_mode,
         config=authority,
         allow_policy_fallback=allow_policy_fallback,
+        security_context=security_context,
     )
     final_report = EvidenceLedger(
         runtime_dir / "events.jsonl",
