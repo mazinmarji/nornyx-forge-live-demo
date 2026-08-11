@@ -19,6 +19,11 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from signing import live_window  # noqa: E402
+
+#: Validity is a PREREQUISITE for these fixtures, not the property.
+_WINDOW = live_window()
 REFRESH = "scripts/refresh_governance_evidence.py"
 CONTRACTS = Path(".nornyx/contracts")
 
@@ -111,8 +116,12 @@ def _hostile_approval(workspace: Path, field: str, value: str) -> None:
         "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
         "status": "pass",
         "subject_revision": _head(workspace),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production governance loader
+        # judges the signed window against the trusted clock, so a date pinned
+        # to the calendar is genuinely expired and the failure would say
+        # nothing about what this test asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
     if field == "producer.id":
@@ -204,8 +213,12 @@ def test_a_legitimate_approval_still_wires(tmp_path: Path):
         "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
         "status": "pass",
         "subject_revision": _head(workspace),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production governance loader
+        # judges the signed window against the trusted clock, so a date pinned
+        # to the calendar is genuinely expired and the failure would say
+        # nothing about what this test asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
     # Signed over whatever this fixture crafted, so the refusal below must
@@ -296,8 +309,12 @@ def _approval(workspace: Path, **overrides: str) -> None:
         "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
         "status": "pass",
         "subject_revision": _head(workspace),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production governance loader
+        # judges the signed window against the trusted clock, so a date pinned
+        # to the calendar is genuinely expired and the failure would say
+        # nothing about what this test asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
         **overrides,
     }
@@ -403,8 +420,12 @@ def test_a_malformed_producer_fails_legibly(tmp_path: Path):
         "producer": "human.someone:network_governance_owner",
         "status": "pass",
         "subject_revision": _head(workspace),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production governance loader
+        # judges the signed window against the trusted clock, so a date pinned
+        # to the calendar is genuinely expired and the failure would say
+        # nothing about what this test asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
     # Signed over whatever this fixture crafted, so the refusal below must

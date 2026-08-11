@@ -23,6 +23,11 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+from signing import live_window  # noqa: E402
+
+#: Validity is a PREREQUISITE for these fixtures, not the property.
+_WINDOW = live_window()
 CONTRACTS = Path(".nornyx/contracts")
 REFRESH = "scripts/refresh_governance_evidence.py"
 CANONICAL = "runtime_human_approval.json"
@@ -79,8 +84,12 @@ def _approval(work: Path, filename: str = CANONICAL, **overrides: object) -> Non
         "producer": {"id": "human.test_fixture:network_governance_owner", "type": "human"},
         "status": "pass",
         "subject_revision": _head(work),
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production governance loader
+        # judges the signed window against the trusted clock, so a date pinned
+        # to the calendar is genuinely expired and the failure would say
+        # nothing about what this test asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
     payload.update(overrides)
