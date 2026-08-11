@@ -170,3 +170,150 @@ def test_the_loader_no_longer_relies_on_shape_alone():
     assert "producer.get(\"type\") != \"human\"" in loader, (
         "the shape checks were removed rather than supplemented"
     )
+
+
+# --------------------------------------------------------------------------
+# With a trust store present, so authentication is what decides
+# --------------------------------------------------------------------------
+#
+# Every test above refuses before reaching `verify_signed_governance_approval`.
+# `_authenticate_approval` returns APPROVER_TRUST_UNAVAILABLE when the store has
+# no signers, and no test in this module ever configured one -- the `_run`
+# helper that sets `FORGE_APPROVER_TRUST_STORE` was written and never called.
+#
+# Measured consequence: replacing the entire authentication call with
+# `return True, "authenticated", {}` left 195 tests passing, across every module
+# that can reach the loader. The module is in REQUIRED_MODULES, so its presence
+# satisfied the anti-shrink gate while proving nothing about the control it is
+# named for.
+#
+# This is the defect the module's own docstring describes -- a thorough-looking
+# validator that authenticates nothing -- reproduced one layer up, in the tests
+# written to prove it had been fixed.
+#
+# So these install a real store first. With one present the store check cannot
+# fire, and whatever refuses has to be the authentication.
+
+
+@pytest.fixture
+def anchored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An evidence directory and a real trust store the loader will consult."""
+    from signing import write_trust_store  # noqa: PLC0415
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import refresh_governance_evidence as r  # noqa: PLC0415
+
+    evidence = tmp_path / "evidence"
+    evidence.mkdir(parents=True)
+    store = write_trust_store(tmp_path / "approvers.json")
+    monkeypatch.setenv("FORGE_APPROVER_TRUST_STORE", str(store))
+    monkeypatch.setattr(r, "EVIDENCE_DIR", evidence)
+    return r, evidence
+
+
+def _write(evidence: Path, payload: dict) -> None:
+    (evidence / ARTIFACT).write_bytes(json.dumps(payload, indent=2).encode("utf-8"))
+
+
+def _approval(revision: str) -> dict:
+    """A shape-valid approval naming the fixture's trusted human approver."""
+    from signing import SUBJECT  # noqa: PLC0415
+
+    payload = _unsigned_approval(revision)
+    payload["producer"] = {
+        "id": f"{SUBJECT}:architecture_reviewer",
+        "type": "human",
+    }
+    return payload
+
+
+def test_an_unsigned_artifact_is_refused_when_a_store_is_present(anchored):
+    """The exploit, with the store check unable to answer for the refusal.
+
+    This is the case that kills the mutation. With no store the loader refused
+    for a reason that had nothing to do with the artifact; with one, an unsigned
+    artifact must be refused BY the authentication.
+    """
+    r, evidence = anchored
+    _write(evidence, _approval("sha256:" + "c" * 64))
+
+    with pytest.raises(SystemExit) as refusal:
+        r.load_canonical_approval(ARTIFACT)
+
+    message = str(refusal.value)
+    assert "not an authenticated human approval" in message
+    assert "APPROVAL_UNSIGNED" in message, (
+        f"refused, but not for being unsigned: {message}"
+    )
+    assert "APPROVER_TRUST_UNAVAILABLE" not in message, (
+        "the store check answered again, so this test measures nothing"
+    )
+
+
+def test_a_signature_from_an_untrusted_key_is_refused(anchored):
+    """A real signature is not authority; a signature from a trusted key is."""
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    r, evidence = anchored
+    payload = sign_governance_record(_approval("sha256:" + "d" * 64))
+    payload["signer_key_id"] = "not-in-the-store"
+    _write(evidence, payload)
+
+    with pytest.raises(SystemExit) as refusal:
+        r.load_canonical_approval(ARTIFACT)
+    assert "not an authenticated human approval" in str(refusal.value)
+
+
+def test_an_artifact_altered_after_signing_is_refused(anchored):
+    """The signature covers the claim, so changing the claim breaks it."""
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    r, evidence = anchored
+    payload = sign_governance_record(_approval("sha256:" + "e" * 64))
+    payload["subject_revision"] = "sha256:" + "f" * 64
+    _write(evidence, payload)
+
+    with pytest.raises(SystemExit) as refusal:
+        r.load_canonical_approval(ARTIFACT)
+    assert "not an authenticated human approval" in str(refusal.value)
+
+
+def test_a_correctly_signed_approval_is_adopted(anchored):
+    """The benign control, and what makes the three refusals above mean anything.
+
+    Without it every refusal here could be "the loader refuses everything", and
+    an implementation that always refused would satisfy this module completely.
+
+    This is a SYNTHETIC fixture: an ephemeral key, a temp trust store and a temp
+    evidence directory, all discarded when the test ends. It creates no approval
+    for this repository and none of it is written into the governed tree.
+    """
+    from signing import sign_governance_record  # noqa: PLC0415
+
+    r, evidence = anchored
+    revision = "sha256:" + "1" * 64
+    _write(evidence, sign_governance_record(_approval(revision)))
+
+    adopted = r.load_canonical_approval(ARTIFACT)
+
+    assert adopted is not None, "a correctly signed approval was not adopted"
+    assert adopted["subject_revision"] == revision
+    assert adopted["producer"]["type"] == "human"
+
+
+def test_the_loader_authenticates_before_it_reports_success(anchored):
+    """Deleting the authentication call must break something here.
+
+    The structural test below pins that `_authenticate_approval(` appears in the
+    loader. That survives a mutation of what `_authenticate_approval` RETURNS,
+    which is exactly the mutation that went unnoticed -- so this asserts the
+    behaviour instead: an artifact that cannot authenticate is not adopted, with
+    a store present and the shape entirely valid.
+    """
+    r, evidence = anchored
+    payload = _approval("sha256:" + "2" * 64)
+    payload["signature"] = "bm90LWEtc2lnbmF0dXJl"  # valid base64, wrong bytes
+    _write(evidence, payload)
+
+    with pytest.raises(SystemExit):
+        r.load_canonical_approval(ARTIFACT)
