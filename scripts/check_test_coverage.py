@@ -95,7 +95,15 @@ REQUIRED_MODULES = (
     "tests/test_approval_artifact_authentication.py",
     "tests/test_governance_approval_verifier.py",
     "tests/test_process_capability.py",
+    "tests/test_evidence_integrity_verifier.py",
     "tests/test_dockerfile_surface.py",
+    # The security context proven where it is USED, not only where it is built.
+    # `test_security_context.py` passed in full while nothing under `src/` ever
+    # called the bootstrap, so the mechanism suite cannot stand in for this one.
+    "tests/test_production_security_context.py",
+    # Canonical-LF enforced on WRITE. It was enforced on read only, so this
+    # system's own tooling produced files its subject observer then refused.
+    "tests/test_canonical_text_writes.py",
 )
 
 
@@ -112,7 +120,7 @@ def node_id(case) -> str:
     return f"{classname}.py::{name}" if classname else name
 
 
-def classify(report: Path) -> tuple[int, int, list[str], set[str]]:
+def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
     Separated from the run so the gate itself is testable: a guard whose failure
@@ -122,6 +130,7 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str]]:
     root = ET.parse(report).getroot()
     unexpected: list[str] = []
     seen_modules: set[str] = set()
+    skipped_identities: set[str] = set()
     allowed = 0
     total = 0
     for case in root.iter("testcase"):
@@ -133,9 +142,10 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str]]:
         message = (skipped.get("message") or "") + (skipped.text or "")
         if node_id(case) in EXPECTED_SKIPS:
             allowed += 1
+            skipped_identities.add(node_id(case))
             continue
         unexpected.append(f"{node_id(case)} — {message.strip()}")
-    return total, allowed, unexpected, seen_modules
+    return total, allowed, unexpected, seen_modules, skipped_identities
 
 
 def evaluate(report: Path, pytest_returncode: int) -> int:
@@ -147,9 +157,24 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
     whose failure path has never run is a guess about what it would do; only
     `classify` had been separated far enough to act on that.
     """
-    total, allowed, unexpected, seen_modules = classify(report)
+    total, allowed, unexpected, seen_modules, skipped_identities = classify(report)
 
     print(f"collected {total}, expected skips {allowed}, unexpected skips {len(unexpected)}")
+
+    # An exemption whose test did not skip is a STANDING PERMISSION nobody
+    # needs: if that test later starts skipping for an unrelated reason, the
+    # census stays silent because the name is already on the list. Reported
+    # rather than failed, because these are legitimately platform-dependent --
+    # the POSIX exemptions are unused on Linux and the Docker ones on a machine
+    # with a daemon. A reviewer needs to see which permissions were live.
+    unused = sorted(set(EXPECTED_SKIPS) - skipped_identities)
+    if unused:
+        print(
+            NEWLINE + f"{len(unused)} skip exemption(s) were not used in this run "
+            "(platform-dependent, or stale):"
+        )
+        for name in unused:
+            print(f"  {name}")
 
     if unexpected:
         print(NEWLINE + "These tests did not run, and were not declared as expected skips:" + NEWLINE)

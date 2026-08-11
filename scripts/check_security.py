@@ -51,6 +51,10 @@ result = {
     "findings": findings,
 }
 REPORT.parent.mkdir(parents=True, exist_ok=True)
-REPORT.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+# newline="" keeps this report canonical-LF on every platform, matching the
+# canonical form the subject observer enforces when it hashes governed text.
+REPORT.write_text(
+    json.dumps(result, indent=2) + "\n", encoding="utf-8", newline=""
+)
 print(json.dumps(result, indent=2))
 raise SystemExit(0 if not findings else 2)

@@ -68,7 +68,11 @@ class EvidenceLedger:
             )
             self._events.append(event)
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as handle:
+            # newline="" so a record is the bytes this line built. Text mode
+            # translates on Windows, which would make one append produce a
+            # different record than the same append on Linux -- and these lines
+            # are evidence, read back and counted.
+            with self.path.open("a", encoding="utf-8", newline="") as handle:
                 handle.write(json.dumps(asdict(event), sort_keys=True) + "\n")
             return event
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from .requirements import RequirementsModel
+from .util import write_canonical_text
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 
@@ -207,9 +208,7 @@ def generate_brd_contract(root: Path, model: RequirementsModel) -> Path:
         ],
     }
     target = root / ".nornyx/generated/brd_contract.nyx"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump(contract, sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
+    write_canonical_text(
+        target, yaml.safe_dump(contract, sort_keys=False, allow_unicode=True)
     )
     return target
