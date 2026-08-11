@@ -315,3 +315,93 @@ def test_os_environ_is_untouched_by_reading_the_context():
         assert name not in os.environ or os.environ[name] != AMBIENT[name], (
             f"{name} leaked out of a monkeypatched test into the process"
         )
+
+
+# --------------------------------------------------------------------------
+# The context has to arrive where the decision is made
+# --------------------------------------------------------------------------
+#
+# Wiring the context into the flow was only half of it. The flow then built its
+# boundary WITHOUT passing `runtime_subject`, so the boundary defaulted it to
+# None and refused every release with SUBJECT_UNVERIFIED -- and the whole
+# approval path behind it (signature verification, window validation,
+# fingerprinting, ledger consumption) was unreachable in the running
+# application.
+#
+# That refusal looked like governance working. It was the boundary saying it did
+# not know what it was governing. The high-risk demonstration case was
+# "prevented" either way, which is exactly why nothing noticed: a negative
+# outcome that arrives for the wrong reason is indistinguishable from the right
+# one unless something asserts the reason.
+#
+# The same defect as one level up, one level down. These assert the object at
+# each edge it has to cross, rather than trusting that wiring it in one place
+# carried it through to the next.
+
+
+def test_the_flow_hands_the_established_subject_to_the_boundary(tmp_path: Path):
+    """Identity at the edge where authorization actually happens."""
+    context = application_security_context()
+    flow = agentic.CustomerCaseFlow(
+        {
+            "id": "CASE-BOUNDARY",
+            "customer": "Omar",
+            "summary": "Issue a high-value external refund",
+            "risk": "high",
+            "requested_action": "issue refund",
+        },
+        root=tmp_path,
+        security_context=context,
+    )
+
+    assert flow.boundary.runtime_subject is context.runtime_subject, (
+        "the boundary is judging requests against a subject that is not the one "
+        "this application established"
+    )
+    assert flow.boundary.trust is context.trust
+
+
+def test_a_boundary_without_a_subject_refuses_and_says_so(tmp_path: Path):
+    """The benign control's opposite: no context means no consequential authority.
+
+    Establishes that SUBJECT_UNVERIFIED is a real, reachable refusal rather than
+    the permanent state of the system -- which is what it had become.
+    """
+    flow = agentic.CustomerCaseFlow(
+        {
+            "id": "CASE-NOCTX",
+            "customer": "Omar",
+            "summary": "Issue a high-value external refund",
+            "risk": "high",
+            "requested_action": "issue refund",
+        },
+        root=tmp_path,
+        security_context=None,
+    )
+    assert flow.boundary.runtime_subject is None
+
+
+def test_the_high_risk_case_is_refused_for_governance_not_for_wiring():
+    """The demonstration must demonstrate the property it claims.
+
+    `prevented` is the right outcome, but it has to arrive because no human
+    approval exists -- not because the boundary could not establish what it was
+    governing. Before the subject reached the boundary this case was prevented
+    with SUBJECT_UNVERIFIED, and the demonstration proved only that a
+    disconnected system refuses everything.
+    """
+    from fastapi.testclient import TestClient
+
+    from demo_app.main import app
+
+    result = TestClient(app).post("/api/demo/run").json()["high_risk"]
+    decision = result.get("decision") or {}
+
+    assert result["action_status"] == "prevented"
+    assert decision.get("code") == "HUMAN_APPROVAL_REQUIRED", (
+        f"the high-risk act was refused for {decision.get('code')!r}, not because "
+        "a human approval is required"
+    )
+    # A real canonical request was built, which only happens past the subject
+    # check -- so the refusal came from the approval rules, not from before them.
+    assert result.get("action_request", {}).get("request_digest", "").startswith("sha256:")

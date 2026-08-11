@@ -181,13 +181,31 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # would let a file changed between two cases silently re-aim the second
         # one, which is the ambient re-resolution this model removes.
         self.security_context = security_context
-        # Trust anchors come from the established context, not from a fresh
-        # environment read per boundary. The context resolved them once at
-        # startup; handing them down is what makes that resolution binding.
+        # Trust anchors AND the established subject come from the context, not
+        # from a fresh environment read per boundary. The context resolved them
+        # once at startup; handing them down is what makes that resolution
+        # binding.
+        #
+        # `runtime_subject` was the half that never arrived. The boundary
+        # defaulted it to None and refused every release with
+        # SUBJECT_UNVERIFIED, so the whole approval path -- signature
+        # verification, window validation, fingerprinting, ledger consumption --
+        # was unreachable in the running application. Worse than unreachable:
+        # the refusal LOOKED like governance working, while it was really the
+        # boundary saying it did not know what it was governing.
+        #
+        # This is the same defect as the one above it, one level down. The
+        # context was wired into the flow and then not out of it, which is why
+        # `test_the_flow_hands_the_established_subject_to_the_boundary` asserts
+        # the object identity at this edge rather than trusting the wiring to
+        # have been carried through.
         self.boundary = NornyxActionBoundary(
             root,
             allow_fallback=allow_policy_fallback,
             trust=security_context.trust if security_context is not None else None,
+            runtime_subject=(
+                security_context.runtime_subject if security_context is not None else None
+            ),
         )
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.
