@@ -580,6 +580,175 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
     return markers
 
 
+def _exported_capability_names(path: Path, relative: str, dotted: str) -> set[str]:
+    """Module-level names this module hands out that ARE process capability.
+
+    The per-file marker scan asks what a module acquires from the standard
+    library. It cannot see capability arriving through a FIRST-PARTY module,
+    because `helper` is not `subprocess` and never will be. So a delegating
+    module could write:
+
+        from .helper import runner     # helper.py: runner = subprocess.run
+        runner(["curl", url])
+
+    and acquire exactly the capability the layer forbids, through a name the
+    scan had no reason to distrust. Closing that by adding `helper` to a list
+    would be the enumeration mistake again, one module at a time.
+
+    This computes what each module EXPORTS instead, so the question asked of an
+    importer is "is this name capability?" rather than "is this module on a
+    list?". Resolved to a fixed point below, because a re-export can itself be
+    re-exported.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    exported: set[str] = set()
+    _ = dotted  # the shape is per-file; the name is carried for the caller's sake
+
+    for node in tree.body:  # module level only: a local name is not an export
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in EXEC_ONLY_MODULES:
+                    # The module object itself is the capability.
+                    exported.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split(".")[0]
+            if root in EXEC_ONLY_MODULES:
+                for alias in node.names:
+                    exported.add(alias.asname or alias.name)
+            elif root in DUAL_USE_MODULES:
+                for alias in node.names:
+                    if alias.name in EXEC_FUNCTIONS:
+                        exported.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign):
+            # `runner = subprocess.run`, `runner = os.system`, `runner = other`.
+            value = node.value
+            capable = False
+            if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
+                capable = (
+                    value.value.id in EXEC_ONLY_MODULES
+                    or (value.value.id in DUAL_USE_MODULES and value.attr in EXEC_FUNCTIONS)
+                )
+            elif isinstance(value, ast.Name):
+                capable = value.id in EXEC_ONLY_MODULES or value.id in exported
+            if capable:
+                exported.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return exported
+
+
+def _first_party_capability_exports() -> dict[str, set[str]]:
+    """Capability exports per first-party module, resolved transitively.
+
+    Iterated to a fixed point rather than walked once: A re-exporting B while B
+    re-exports C is an ordinary package layout, and a single pass in the wrong
+    order would report A as clean.
+    """
+    sources: dict[str, tuple[Path, str]] = {}
+    for candidate in SOURCE_ROOT.rglob("*.py"):
+        name = (
+            str(candidate.relative_to(SOURCE_ROOT))
+            .replace("\\", "/")
+            .removesuffix(".py")
+            .replace("/", ".")
+        )
+        sources[name.removesuffix(".__init__")] = (
+            candidate,
+            str(candidate.relative_to(ROOT)).replace("\\", "/"),
+        )
+
+    exports = {
+        name: _exported_capability_names(path, relative, name)
+        for name, (path, relative) in sources.items()
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for name, (path, relative) in sources.items():
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+            package = _containing_package(name, path)
+            for node in tree.body:
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                target = _resolve_relative(node, package)
+                if target not in exports:
+                    continue
+                incoming = exports[target]
+                gained = set()
+                for alias in node.names:
+                    if alias.name == "*":
+                        gained |= incoming
+                    elif alias.name in incoming:
+                        gained.add(alias.asname or alias.name)
+                if gained - exports[name]:
+                    exports[name] |= gained
+                    changed = True
+    return exports
+
+
+def _containing_package(dotted: str, path: Path) -> str:
+    """The package a relative import inside this file is anchored to.
+
+    A package's `__init__.py` is anchored to the package ITSELF, while an
+    ordinary module is anchored to its parent. Collapsing the two cases is an
+    off-by-one that resolves `from ._deep import runner` inside
+    `nornyx_forge._helper` to `nornyx_forge._helper._deep` -- a module that does
+    not exist, so the capability arriving through it becomes invisible.
+    """
+    if path.name == "__init__.py":
+        return dotted
+    return dotted.rsplit(".", 1)[0] if "." in dotted else ""
+
+
+def _resolve_relative(node: ast.ImportFrom, package: str) -> str:
+    """The absolute dotted name an ImportFrom refers to.
+
+    ``package`` is what a single leading dot means here; each extra dot climbs
+    one level above it.
+    """
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".") if package else []
+    climb = node.level - 1
+    base = parts[: len(parts) - climb] if climb <= len(parts) else []
+    return ".".join([*base, node.module] if node.module else base)
+
+
+CAPABILITY_EXPORTS = _first_party_capability_exports()
+
+
+def _inherited_capability(path: Path, relative: str, dotted: str) -> set[str]:
+    """Capability this module takes IN from a first-party module."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    taken: set[str] = set()
+    module_aliases: dict[str, str] = {}
+    package = _containing_package(dotted, path)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            target = _resolve_relative(node, package)
+            exported = CAPABILITY_EXPORTS.get(target, set())
+            for alias in node.names:
+                if alias.name == "*" and exported:
+                    taken.add(f"{target}.* ({', '.join(sorted(exported))})")
+                elif alias.name in exported:
+                    taken.add(f"{target}.{alias.name}")
+                elif f"{target}.{alias.name}" in CAPABILITY_EXPORTS:
+                    # `from nornyx_forge import claude_worker` — the submodule
+                    # is bound as a name, so track it for attribute access.
+                    module_aliases[alias.asname or alias.name] = f"{target}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in CAPABILITY_EXPORTS:
+                    module_aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            owner = module_aliases.get(node.value.id)
+            if owner and node.attr in CAPABILITY_EXPORTS.get(owner, set()):
+                taken.add(f"{owner}.{node.attr}")
+    return taken
+
+
 for module in declared_modules.values():
     if module.get("layer") not in DELEGATING_LAYERS:
         continue
@@ -590,6 +759,11 @@ for module in declared_modules.values():
     for marker in sorted(_process_capability_markers(path, relative)):
         violations.append(
             f"{relative} performs process execution ({marker}) outside a declared adapter"
+        )
+    for marker in sorted(_inherited_capability(path, relative, module["name"])):
+        violations.append(
+            f"{relative} acquires process-execution capability re-exported by a "
+            f"first-party module ({marker}) outside a declared adapter"
         )
 
 # --- constraint.api_no_commands and governed action boundary ---
@@ -624,6 +798,11 @@ result = {
     "violations": violations,
 }
 REPORT.parent.mkdir(parents=True, exist_ok=True)
-REPORT.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+# newline="" keeps this report canonical-LF on every platform. The repository
+# declares text content canonical-LF and the subject observer refuses CR bytes,
+# so a gate that emitted CRLF made its own output unhashable on Windows.
+REPORT.write_text(
+    json.dumps(result, indent=2) + "\n", encoding="utf-8", newline=""
+)
 print(json.dumps(result, indent=2))
 raise SystemExit(0 if not violations else 2)
