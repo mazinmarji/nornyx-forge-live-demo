@@ -27,7 +27,27 @@ GOVERNANCE_CONTRACTS = (
     ".nornyx/contracts/architecture_governance.nyx",
 )
 
-#: Diagnostics that mean "a human has not approved this yet", and nothing else.
+#: Diagnostics that mean "an accountable prerequisite is genuinely absent", and
+#: nothing else.
+#:
+#: The set used to name only the human approval, because a second missing
+#: prerequisite was hidden. The architecture contract recorded
+#: `independent_review_record` with `status: pass` while the evidence index and
+#: the artifact itself both reported it as merely `observed` with
+#: `authenticated_inspections: {}`. Nornyx counts only `pass` records as usable
+#: evidence, so that one hand-authored word was satisfying change control,
+#: required evidence, and the separation-of-duties assignment on the strength of
+#: an unsigned self-report the builder wrote about its own work.
+#:
+#: With the status now synced from the index like every other derived field,
+#: the contract states the truth: this branch has neither an accountable human
+#: approval NOR an authenticated independent inspection. Both are absent for the
+#: same underlying reason -- nobody with standing has attested to this content --
+#: and neither can be manufactured from inside the repository.
+#:
+#: Every diagnostic below is therefore still "a prerequisite requiring an
+#: authority outside this build is missing". None of them can be cleared by
+#: changing code, and none of them may be cleared by relabelling an artifact.
 #:
 #: Matched on the structured triple Nornyx documents as its stable vocabulary —
 #: code, path, source module — never on message text. The previous version
@@ -56,6 +76,20 @@ EXPECTED_PRE_APPROVAL_DIAGNOSTICS = frozenset(
             "APPROVAL_EVIDENCE_MISSING",
             "approvals[0].required_evidence",
             "human_approval.v1",
+        ),
+        # The three below are the consequences of having no AUTHENTICATED
+        # independent inspection. They appeared the moment the contract stopped
+        # claiming `pass` for an inspection nothing had signed, so they are not
+        # a regression -- they are the state that stamp was concealing.
+        (
+            "CHANGE_EVIDENCE_MISSING",
+            "changes[0].required_evidence",
+            "change_control.v1",
+        ),
+        (
+            "SOD_EVIDENCE_PRODUCER_UNKNOWN",
+            "separation_of_duties.assignments[0].evidence_producers",
+            "separation_of_duties.v1",
         ),
     }
 )

@@ -673,6 +673,14 @@ _TOP_LEVEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
 #: evidence freshness. Regenerated on the same window; see EVIDENCE_FRESHNESS.md.
 AUTHORIZATION_INTERVAL_BLOCKS = frozenset({"agent_identities", "agentic_network"})
 _RECORD_START_RE = re.compile(r"^\s*-\s+(?:id|schema):")
+#: A record's verdict, which is DERIVED and must therefore be synced like a
+#: digest rather than written by hand. `independent_review_record` sat at
+#: `status: pass` in the contract while the index carried `observed` for the
+#: same bytes and the artifact itself reported `authenticated_inspections: {}`.
+#: Nornyx counts only `pass` records as usable evidence, so that one word was
+#: satisfying the approval prerequisite, the change-control requirement and the
+#: separation-of-duties assignment on the strength of an unsigned self-report.
+_STATUS_RE = re.compile(r"^(?P<lead>\s*status:\s*)(?P<value>[A-Za-z_]+)\s*$")
 _TIMESTAMP_RE = re.compile(
     r"^(?P<lead>\s*(?P<field>generated_at|expires_at):\s*)[\"']?[0-9T:+\-Z.]+[\"']?\s*$"
 )
@@ -713,6 +721,14 @@ def sync_contracts() -> list[str]:
         )
         for entry in index["entries"].values()
     }
+    # The verdict travels with the digest. It was the one derived field left to
+    # hand-authoring, and it drifted: the contract asserted `pass` for an
+    # inspection the index and the artifact both reported as merely observed.
+    status_by_artifact = {
+        entry["artifact"]: entry["status"]
+        for entry in index["entries"].values()
+        if entry.get("status")
+    }
     changes: list[str] = []
     for contract in CONTRACTS:
         original = contract.read_text(encoding="utf-8")
@@ -748,6 +764,19 @@ def sync_contracts() -> list[str]:
                 if expected and expected not in line:
                     lines[position] = f"{digest.group('lead')}{expected}\n"
                     changes.append(f"{contract.name}: {current} -> {expected}")
+                continue
+            verdict = _STATUS_RE.match(line)
+            if verdict and current is not None and block in {
+                "governance_evidence",
+                "architecture_evidence",
+            }:
+                derived = status_by_artifact.get(current)
+                if derived and derived != verdict.group("value"):
+                    lines[position] = f"{verdict.group('lead')}{derived}\n"
+                    changes.append(
+                        f"{contract.name}: {current} status "
+                        f"{verdict.group('value')} -> {derived}"
+                    )
                 continue
             # Evidence freshness lives only in the evidence blocks. The approval
             # declaration's own expires_at is governed by the P7D rule and is
