@@ -443,3 +443,90 @@ def test_the_required_roles_are_stated_not_inferred():
         "architecture-inspector",
         "security-inspector",
     }
+
+
+# --------------------------------------------------------------------------
+# Refusals that arrived incidentally rather than on purpose
+# --------------------------------------------------------------------------
+#
+# Deleting the unknown-key refusal left this suite green. Not because nothing
+# refused -- something did -- but because with `reviewer` left as None the very
+# next line read `reviewer.public_key`, raised `AttributeError`, and the broad
+# `except Exception` reported `ATTESTATION_NOT_AUTHENTICATED`. The attestation
+# was rejected for a crash rather than for being signed by a key nobody trusts.
+#
+# That is a refusal nobody designed. It holds only while the following lines
+# happen to dereference the missing reviewer, so an ordinary refactor could turn
+# it into an unhandled crash or, worse, into a pass. These pin the intended
+# refusal so the check has to exist on its own account.
+
+
+def test_an_unknown_reviewer_key_is_refused_as_untrusted():
+    """A key nobody trusts is not a signature problem; it is an authority one."""
+    private, public = _keypair()
+    store = _store(_reviewer("reviewer-known", "Amina", ["security-inspector"], public))
+    attestation = _attest(
+        private, reviewer="Amina", key_id="reviewer-unknown", role="security-inspector"
+    )
+
+    ok, reason, evidence = verify_signed_attestation(
+        attestation, store=store, builder_identity=BUILDER
+    )
+    assert ok is False
+    assert "REVIEWER_NOT_TRUSTED" in reason, (
+        f"refused, but not as an untrusted key: {reason}"
+    )
+    assert evidence.get("signature_verified") is not True
+
+
+def test_a_store_with_no_reviewers_list_is_refused():
+    """A store that lists nothing is malformed, not a store that trusts nobody.
+
+    The two are different: an ABSENT store is an ordinary state and authenticates
+    nothing quietly, while a store present but shaped wrongly means the operator
+    intended to configure trust and the configuration cannot be read. Silently
+    treating it as empty would turn a misconfiguration into "no reviewer is
+    trusted", which reads like a policy decision nobody made.
+    """
+    path = Path(tempfile.mkdtemp()) / "reviewers.json"
+    path.write_text(
+        json.dumps({"schema": "nornyx.forge.reviewer_trust_store.v1"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewerStoreUnavailable) as refusal:
+        ReviewerTrustStore.load(path)
+    assert "no reviewers list" in str(refusal.value)
+
+
+def test_a_reviewers_field_of_the_wrong_type_is_refused():
+    """`reviewers: {}` is not an empty list, and must not be read as one."""
+    path = Path(tempfile.mkdtemp()) / "reviewers.json"
+    path.write_text(
+        json.dumps(
+            {"schema": "nornyx.forge.reviewer_trust_store.v1", "reviewers": {}}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewerStoreUnavailable) as refusal:
+        ReviewerTrustStore.load(path)
+    assert "no reviewers list" in str(refusal.value)
+
+
+def test_a_store_listing_no_reviewers_loads_and_trusts_nobody():
+    """The benign control: an empty list is a legible, valid configuration.
+
+    Without this, the two refusals above could be satisfied by a store loader
+    that rejected every shape, and nothing would notice.
+    """
+    store = _store()
+    assert store.available is True
+    assert store.reviewers == {}
+
+    private, _ = _keypair()
+    ok, reason, _ = verify_signed_attestation(
+        _attest(private, reviewer="Amina", key_id="anyone", role="security-inspector"),
+        store=store,
+        builder_identity=BUILDER,
+    )
+    assert ok is False
+    assert "REVIEWER_NOT_TRUSTED" in reason

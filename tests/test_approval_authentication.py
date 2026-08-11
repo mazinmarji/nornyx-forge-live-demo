@@ -45,6 +45,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from signing import LEDGER_ESTABLISHED  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -167,7 +168,7 @@ def _release(work: Path, grant, store, *, request=None, attempt: int = 1):
         runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION),
     )
     boundary.approver_trust_store = store
-    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id="CASE-1",
@@ -222,7 +223,7 @@ def test_the_reported_exploit_is_refused(tmp_path: Path, trust_store):
         work, runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION)
     )
     boundary.approver_trust_store = trust_store
-    boundary.approval_ledger = ApprovalLedger.provision(ledger)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id="CASE-1",
@@ -646,3 +647,102 @@ def test_authentication_evidence_names_the_store_without_leaking_key_material(
 
     _, public = keypair
     assert public not in json.dumps(decision.evidence), "public key material leaked"
+
+
+# --------------------------------------------------------------------------
+# Authority the signature cannot vouch for
+# --------------------------------------------------------------------------
+#
+# The table above tampers with a grant AFTER it is signed, so every case in it
+# is refused by the signature check. That makes the labels misleading: "role not
+# trusted for this key" passes because the signature no longer matches, not
+# because the role was rejected, and deleting the role check entirely left the
+# whole suite green.
+#
+# The attack those labels describe is a VALIDLY SIGNED grant from a genuinely
+# trusted key that claims authority the key does not hold. A signature proves
+# who wrote the bytes; it cannot prove that writer may act as `operations_owner`
+# or that they are the approver they name. Only the trust store says that, and
+# these are the cases where it has to.
+
+
+def _authentic_grant(request, keypair, **claims) -> dict:
+    """A grant SIGNED OVER its own claims, so the signature is genuinely valid.
+
+    `sign_over` makes the signed payload and the presented payload agree, which
+    is what turns a tampering test into an authority test.
+    """
+    return _grant(request, keypair, sign_over=dict(claims), **claims)
+
+
+def test_a_trusted_key_cannot_claim_another_approver(tmp_path: Path, keypair, trust_store):
+    """Identity is what the trust store binds to the key, not what the grant says.
+
+    Signed correctly by a key that IS trusted, naming somebody else as the
+    approver. The signature verifies; the claim is still false, and the store is
+    the only thing that can say so.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _authentic_grant(request, keypair, approver="human.someone_else")
+
+    decision, ran, rows = _release(work, grant, trust_store, request=request)
+    assert decision.effect == "DENY", "a trusted key released an act as another approver"
+    assert ran == 0 and rows == 0
+
+
+def test_a_trusted_key_cannot_claim_a_role_it_does_not_hold(
+    tmp_path: Path, keypair, trust_store
+):
+    """Authority is per-role, and the grant does not get to award itself one.
+
+    The fixture key is trusted as `operations_owner`. Here it signs a grant
+    claiming `network_governance_owner` -- a role it does not hold -- and the
+    signature over that claim is entirely valid.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _authentic_grant(request, keypair, approver_role="network_governance_owner")
+
+    decision, ran, rows = _release(work, grant, trust_store, request=request)
+    assert decision.effect == "DENY", "a key acted in a role it is not trusted for"
+    assert ran == 0 and rows == 0
+
+
+def test_a_signed_grant_under_the_wrong_schema_is_refused(
+    tmp_path: Path, keypair, trust_store
+):
+    """The schema names which decision this is, and it is signed, not assumed.
+
+    A governance approval and an action approval authorize different things. A
+    correctly signed record of the wrong kind must not release an effect just
+    because the signature is good.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _authentic_grant(request, keypair, schema="nornyx.forge.governance_approval.v1")
+
+    decision, ran, rows = _release(work, grant, trust_store, request=request)
+    assert decision.effect == "DENY", "a grant of the wrong schema released an effect"
+    assert ran == 0 and rows == 0
+
+
+def test_the_authentic_grant_helper_actually_produces_a_valid_signature(
+    tmp_path: Path, keypair, trust_store
+):
+    """The benign control, and the one that makes the three above mean anything.
+
+    If `_authentic_grant` produced a broken signature, all three refusals would
+    arrive for the same uninteresting reason and the tests would prove nothing.
+    This signs over a role the key DOES hold and requires the effect to run.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _authentic_grant(request, keypair, approver_role="operations_owner")
+
+    decision, ran, rows = _release(work, grant, trust_store, request=request)
+    assert decision.effect == "ALLOW", (
+        "a correctly signed, correctly authorised grant was refused, so the "
+        "refusals above cannot be attributed to the authority checks"
+    )
+    assert ran == 1 and rows == 1
