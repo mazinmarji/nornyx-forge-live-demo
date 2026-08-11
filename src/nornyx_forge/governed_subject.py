@@ -678,3 +678,100 @@ class GovernanceIntegrityState:
         type exists to remove.
         """
         return self.status == INTEGRITY_INTACT
+
+
+# --------------------------------------------------------------------------
+# What kind of authority an artifact carries
+# --------------------------------------------------------------------------
+#
+# Every artifact that can influence a governance verdict, an assurance verdict,
+# an approval state or a consequential authorization needs exactly one declared
+# classification, and the classification decides which mechanism must verify it.
+#
+# The alternative -- an artifact-specific `if` in whichever module happened to
+# read it -- is how `architecture_independent_review.json` came to be stamped
+# `status: pass` in a contract while its own bytes reported no authenticated
+# inspection. Nobody had written down what kind of thing it was, so nothing
+# could say which check applied.
+
+#: Authored by a human, in the inspection subject, verified by an independent
+#: inspection of what it says. Changing one changes what was reviewed.
+AUTHORED_SEMANTIC = "authored_semantic"
+
+#: Signed by a principal outside this build -- a human approver, an independent
+#: reviewer. Verified by signature against a trust store established at startup.
+#: Never trusted for its content alone, however plausible.
+AUTHENTICATED_EXTERNAL = "authenticated_external"
+
+#: Computed by the tooling FROM authenticated external material. Outside the
+#: inspection subject, because regeneration rewrites it; verified by recomputing
+#: it and by `GovernanceIntegrityState`, which must be `intact` before any
+#: consequential authority is available.
+DERIVED_AUTHENTICATED = "derived_authenticated"
+
+#: Computed by the tooling from content that is already covered elsewhere.
+#: Carries no authority of its own: forging one changes no decision, which is a
+#: claim each such artifact has to make good on behaviourally.
+DERIVED_NON_AUTHORITATIVE = "derived_non_authoritative"
+
+#: True of the moment something was written, never a claim about content.
+PROVENANCE_ONLY = "provenance_only"
+
+AUTHORITY_CLASSIFICATIONS = frozenset({
+    AUTHORED_SEMANTIC,
+    AUTHENTICATED_EXTERNAL,
+    DERIVED_AUTHENTICATED,
+    DERIVED_NON_AUTHORITATIVE,
+    PROVENANCE_ONLY,
+})
+
+#: Every evidence artifact this repository produces or accepts, classified once.
+#:
+#: `architecture_independent_review.json` and `architecture_approval_record.json`
+#: are DERIVED_AUTHENTICATED rather than authoritative in themselves: each is
+#: recomputed from signed material (attestations, approval artifacts), and a
+#: hand-edited verdict in either is caught by integrity observation before any
+#: authority depends on it.
+ARTIFACT_AUTHORITY: dict[str, str] = {
+    "architecture_human_approval.json": AUTHENTICATED_EXTERNAL,
+    "runtime_human_approval.json": AUTHENTICATED_EXTERNAL,
+    "architecture_inspection_attestation.json": AUTHENTICATED_EXTERNAL,
+    "architecture_independent_review.json": DERIVED_AUTHENTICATED,
+    "architecture_approval_record.json": DERIVED_AUTHENTICATED,
+    "architecture_conformance_report.json": DERIVED_NON_AUTHORITATIVE,
+    "architecture_change_record.json": DERIVED_NON_AUTHORITATIVE,
+    "architecture_exception_review.json": DERIVED_NON_AUTHORITATIVE,
+    "runtime_network_contract_review.json": DERIVED_NON_AUTHORITATIVE,
+    "architecture_evidence_manifest.json": DERIVED_NON_AUTHORITATIVE,
+    "runtime_evidence_manifest.json": DERIVED_NON_AUTHORITATIVE,
+    "INDEX.json": DERIVED_NON_AUTHORITATIVE,
+    "review_binding.json": DERIVED_NON_AUTHORITATIVE,
+}
+
+#: Signed attestations live one directory down and are named per role, so they
+#: are matched by location rather than by filename.
+ATTESTATION_DIRECTORY = "attestations"
+
+
+class UnclassifiedArtifact(GovernedSubjectError):
+    """An artifact nobody has said what kind of authority it carries."""
+
+
+def artifact_authority(name: str, *, parent: str = "") -> str:
+    """The declared classification, or refuse.
+
+    Fails closed. An artifact whose kind nobody declared cannot be verified by
+    the right mechanism, and guessing from its filename or its directory is how
+    a new authority-bearing file joins the evidence set unnoticed.
+    """
+    if parent == ATTESTATION_DIRECTORY:
+        return AUTHENTICATED_EXTERNAL
+    try:
+        return ARTIFACT_AUTHORITY[name]
+    except KeyError:
+        raise UnclassifiedArtifact(
+            f"{name} carries no authority classification. Every artifact that "
+            "can influence a governance, assurance, approval or authorization "
+            "decision must declare one, so the mechanism that verifies it is "
+            "decided in the open rather than by whichever module reads it first."
+        ) from None

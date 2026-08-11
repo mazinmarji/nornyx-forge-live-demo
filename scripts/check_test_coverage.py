@@ -133,6 +133,9 @@ REQUIRED_MODULES = (
     # effect. Without this, excluding derived governance state from the
     # inspection subject is a hole rather than a channel.
     "tests/test_governance_integrity_authority.py",
+    # Every artifact that can influence a decision declares what kind of
+    # authority it carries, and each class proves its claim behaviourally.
+    "tests/test_artifact_authority.py",
 )
 
 
