@@ -282,7 +282,11 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
             f"approval can be authenticated ({store.source})",
             {},
         )
-    return verify_signed_governance_approval(payload, trust_store=store)
+    # The trusted clock, not a value from the artifact. An approval supplying
+    # the instant it is judged against would be marking its own homework.
+    return verify_signed_governance_approval(
+        payload, trust_store=store, as_of=runtime_as_of()
+    )
 
 
 def load_canonical_approvals() -> dict[str, dict]:
@@ -337,6 +341,7 @@ INSPECTION_ATTESTATION = "architecture_inspection_attestation.json"
 #: Inspector roles that must all have reported before a verdict can be `pass`.
 #: Imported rather than restated. Two copies of "which lenses are required" can
 #: drift, and the direction that drifts silently is the one that shrinks.
+from nornyx_forge.nornyx_runtime import runtime_as_of  # noqa: E402
 from nornyx_forge.reviewer_trust import (  # noqa: E402
     REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,
 )

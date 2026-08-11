@@ -22,6 +22,14 @@ REFRESH = "scripts/refresh_governance_evidence.py"
 #: The instant the fixture settles its evidence at. The same value the approvals
 #: are dated from, so the whole fixture describes one coherent moment.
 AS_OF = "2026-08-02T00:00:00Z"
+sys.path.insert(0, str(ROOT / "tests"))
+from signing import live_window  # noqa: E402
+
+#: Validity is a PREREQUISITE for these tests, not the property. The
+#: production loader judges the signed window against a trusted instant,
+#: so a calendar-pinned fixture expires and the failure says nothing
+#: about wiring.
+_WINDOW = live_window()
 BASELINE = "scripts/check_pre_approval_baseline.py"
 CONTRACTS = Path(".nornyx/contracts")
 
@@ -121,7 +129,7 @@ def _write_approvals(workspace: Path, revision: str, *, expires: str) -> None:
             "producer": {"id": f"human.test_fixture:{role}", "type": "human"},
             "status": "pass",
             "subject_revision": revision,
-            "generated_at": "2026-08-02T00:00:00Z",
+            "generated_at": _WINDOW[0],
             "expires_at": expires,
             "statement": FIXTURE_STATEMENT,
         }
@@ -212,7 +220,7 @@ def _check(workspace: Path, contract: str, as_of: str) -> subprocess.CompletedPr
 def test_approvals_wire_in_without_hand_editing_yaml(tmp_path: Path):
     """Both contracts must validate after the documented commands alone."""
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
     for contract in ("runtime_network.nyx", "architecture_governance.nyx"):
@@ -226,7 +234,7 @@ def test_approvals_wire_in_without_hand_editing_yaml(tmp_path: Path):
 def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
     """Deleting the human artifacts must put the contracts back, mechanically."""
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     assert _check(workspace, "runtime_network.nyx", "2026-08-03T00:00:00Z").returncode == 0
 
@@ -253,7 +261,7 @@ def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
 @needs_nornyx
 def test_wiring_is_idempotent(tmp_path: Path):
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     first = {
         name: (workspace / CONTRACTS / name).read_bytes()
@@ -274,7 +282,7 @@ def test_advancing_head_after_approval_fails_closed(tmp_path: Path):
     """
     workspace = _inspected(tmp_path)
     approved = _head(workspace)
-    _write_approvals(workspace, approved, expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, approved, expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
     (workspace / "NOTES.md").write_text("moved on\n", encoding="utf-8")
@@ -310,7 +318,7 @@ def test_advancing_head_after_approval_fails_closed(tmp_path: Path):
 def test_tooling_never_authors_or_edits_an_approval(tmp_path: Path):
     """The human files must come back byte-identical after a full run."""
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     evidence = workspace / CONTRACTS / "evidence"
     originals = {
         name: (evidence / name).read_bytes()
@@ -332,7 +340,7 @@ def test_a_non_human_producer_is_refused(tmp_path: Path):
         "status": "pass",
         "subject_revision": _head(workspace),
         "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        "expires_at": _WINDOW[1],
         "statement": FIXTURE_STATEMENT,
     }
     (workspace / CONTRACTS / "evidence" / "runtime_human_approval.json").write_text(
@@ -351,10 +359,10 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
     re-rots the baseline the moment that date passes.
     """
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     contract = workspace / CONTRACTS / "runtime_network.nyx"
-    assert "2026-08-05T00:00:00Z" in contract.read_text(encoding="utf-8")
+    assert _WINDOW[1] in contract.read_text(encoding="utf-8")
 
     evidence = workspace / CONTRACTS / "evidence"
     for name in ("runtime_human_approval.json", "architecture_human_approval.json"):
@@ -362,7 +370,7 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
     text = contract.read_text(encoding="utf-8")
-    assert "2026-08-05T00:00:00Z" not in text, "a stale reviewer window was left behind"
+    assert _WINDOW[1] not in text, "a stale reviewer window was left behind"
     # Back to the non-expiring representation, not a distant date pretending to
     # be one. A declaration of who may approve has no reason to decay.
     for declaration in yaml.safe_load(text)["approvals"]:
@@ -383,7 +391,7 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
 def test_review_binding_refuses_on_a_revision_mismatch(tmp_path: Path):
     """It is the document a human reads before approving, so it must not lie."""
     workspace = _inspected(tmp_path)
-    _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
+    _write_approvals(workspace, _head(workspace), expires=_WINDOW[1])
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     _run(workspace, REFRESH, "--review-binding")
     binding = workspace / CONTRACTS / "evidence" / "review_binding.json"

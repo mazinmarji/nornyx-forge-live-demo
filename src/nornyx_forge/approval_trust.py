@@ -58,6 +58,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -138,10 +139,44 @@ GOVERNANCE_APPROVER_ROLES = frozenset(
 )
 
 
+
+#: Temporal refusals, distinct because the operator response differs: an expired
+#: approval needs a new decision, an unreadable one needs a corrected artifact,
+#: and an invalid window means the issuing tool is wrong.
+APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+APPROVAL_NOT_YET_VALID = "APPROVAL_NOT_YET_VALID"
+APPROVAL_TIME_UNREADABLE = "APPROVAL_TIME_UNREADABLE"
+APPROVAL_WINDOW_INVALID = "APPROVAL_WINDOW_INVALID"
+
+#: The same seven-day cap the agentic-network module applies to action approvals.
+#: A governance approval that outlived it would be a standing authorisation.
+GOVERNANCE_APPROVAL_MAX_AGE = timedelta(days=7)
+
+
+def _aware_instant(value: object) -> datetime | None:
+    """Parse to an aware UTC instant, or None when it cannot be read.
+
+    Never a string comparison. `2026-08-10T23:00:00+02:00` is 21:00Z -- earlier
+    than `2026-08-10T22:00:00Z` -- but sorts after it as text, so lexical
+    comparison gets the dangerous direction wrong. A naive stamp has no instant
+    at all, and guessing a zone would decide validity by assumption.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 def verify_signed_governance_approval(
     approval: "Mapping[str, Any] | None",
     *,
     trust_store: "ApprovalTrustStore | None" = None,
+    as_of: str,
 ) -> "tuple[bool, str, dict[str, Any]]":
     """Authenticate a human governance approval.
 
@@ -301,6 +336,74 @@ def verify_signed_governance_approval(
         )
     evidence["role_verified"] = True
     evidence["approver_role"] = claimed_role
+
+    # Temporal validity, last and mandatory.
+    #
+    # The window was SIGNED and never evaluated. Signing the bounds stops them
+    # being re-dated; it does not bound anything. Measured against this
+    # repository's own fixtures before this clause existed:
+    #
+    #     generated 2020-01-01 / expires 2020-01-08  -> (True, "authenticated")
+    #     expires BEFORE generated                   -> (True, "authenticated")
+    #     generated "not-a-time", expires null       -> (True, "authenticated")
+    #
+    # and the evidence returned `signature_verified`, `identity_verified`,
+    # `role_verified` and `subject_type_verified` all true with nothing about
+    # time -- the same "a flag can be true while its check was skipped" defect
+    # this function's docstring says it removed.
+    #
+    # The sibling action path enforces exactly this at
+    # `nornyx_runtime.validate_action_approval`; the check was present in one
+    # code path and absent in its twin.
+    moment = _aware_instant(as_of)
+    generated = _aware_instant(approval.get("generated_at"))
+    expires = _aware_instant(approval.get("expires_at"))
+    if moment is None:
+        return (
+            False,
+            f"{APPROVAL_TIME_UNREADABLE}: the evaluation instant {as_of!r} is not "
+            "a timezone-aware ISO-8601 timestamp, so validity cannot be judged",
+            evidence,
+        )
+    if generated is None or expires is None:
+        return (
+            False,
+            f"{APPROVAL_TIME_UNREADABLE}: the approval does not carry a readable "
+            "timezone-aware validity interval, so it bounds nothing",
+            evidence,
+        )
+    if expires <= generated:
+        return (
+            False,
+            f"{APPROVAL_WINDOW_INVALID}: the approval expires at "
+            f"{expires.isoformat()}, at or before it was issued at "
+            f"{generated.isoformat()}",
+            evidence,
+        )
+    if expires - generated > GOVERNANCE_APPROVAL_MAX_AGE:
+        return (
+            False,
+            f"{APPROVAL_WINDOW_INVALID}: the approval claims a validity window "
+            f"longer than {GOVERNANCE_APPROVAL_MAX_AGE.days} days",
+            evidence,
+        )
+    # Half-open [generated, expires), stated rather than left to a reader of the
+    # operators. The instant of issue is valid; the instant of expiry is not.
+    if moment < generated:
+        return (
+            False,
+            f"{APPROVAL_NOT_YET_VALID}: the approval becomes valid at "
+            f"{generated.isoformat()}, which is after {moment.isoformat()}",
+            evidence,
+        )
+    if moment >= expires:
+        return (
+            False,
+            f"{APPROVAL_EXPIRED}: the approval expired at {expires.isoformat()}, "
+            f"at or before {moment.isoformat()}",
+            evidence,
+        )
+    evidence["validity_verified"] = True
 
     return True, "authenticated", evidence
 

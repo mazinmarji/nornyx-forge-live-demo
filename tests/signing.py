@@ -95,6 +95,12 @@ def signed_grant(
     *,
     approval_id: str = "ACT-0001",
     role: str = "operations_owner",
+    # A window around the real clock, not a calendar date. The production
+    # verifier now evaluates the signed window against a trusted instant, so a
+    # pinned date is genuinely expired the day after it is written -- and every
+    # fixture whose validity is a PREREQUISITE would start failing for a reason
+    # that has nothing to do with what it asserts. Tests about temporal
+    # semantics pass explicit instants instead.
     generated_at: str = "2026-08-02T00:00:00Z",
     expires_at: str = "2026-08-05T00:00:00Z",
     **overrides: Any,
@@ -106,6 +112,12 @@ def signed_grant(
     alongside, because they are already covered transitively by
     ``request_digest``.
     """
+    # Fixed dates deliberately, unlike the governance builder. Action fixtures
+    # run inside a SIMULATED frame -- the boundary is given an explicit
+    # `as_of` of 2026-08-03 -- so a window around the real clock would be "not
+    # yet valid" in the world those tests describe. The governance loader has no
+    # such injection point and judges against the trusted clock, which is why
+    # the two builders differ.
 
     private, _ = _keypair()
     signed = {
@@ -141,8 +153,8 @@ def signed_governance_approval(
     subject_revision: str,
     status: str = "pass",
     approval: str = "granted",
-    generated_at: str = "2026-08-02T00:00:00Z",
-    expires_at: str = "2026-08-05T00:00:00Z",
+    generated_at: str | None = None,
+    expires_at: str | None = None,
     # A realistic subject:role identity. This defaulted to a role-less SUBJECT,
     # so every governance fixture in the suite took the branch where the role
     # check was skipped -- the bypass was the only path the tests executed.
@@ -155,6 +167,13 @@ def signed_governance_approval(
     written to disk, and vouched for only by a trust store built in-process. It
     cannot and does not constitute a human approval for this repository.
     """
+    # Defaults resolved here rather than in the signature: a default evaluated
+    # at import would freeze the window at collection time, which is the same
+    # calendar-pinning problem one step removed.
+    if generated_at is None or expires_at is None:
+        default_start, default_end = live_window()
+        generated_at = generated_at or default_start
+        expires_at = expires_at or default_end
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     from nornyx_forge.approval_trust import (
@@ -216,6 +235,28 @@ def write_trust_store(path, *, roles: tuple[str, ...] = ROLES,
     )
     return location
 
+
+
+def live_window(*, days: int = 3) -> tuple[str, str]:
+    """A validity window around the real clock, for fixtures the loader judges.
+
+    `verify_signed_governance_approval` now evaluates the signed window against
+    a trusted instant, so a fixture pinned to a fixed calendar date is genuinely
+    expired the day after it was written -- and a test asserting adoption would
+    start failing for a reason that has nothing to do with what it tests.
+
+    Tests that exercise temporal semantics deliberately still pass explicit
+    instants; this is for the ones where validity is a PREREQUISITE rather than
+    the property under test.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    started = now - timedelta(minutes=5)
+    return (
+        started.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        (started + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
 def sign_governance_record(payload: dict) -> dict:
     """Sign an already-built governance approval payload in place.

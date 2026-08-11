@@ -35,6 +35,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 REFRESH = "scripts/refresh_governance_evidence.py"
+sys.path.insert(0, str(ROOT / "tests"))
+from signing import live_window  # noqa: E402
+
+_WINDOW = live_window()
 ARTIFACT = "architecture_human_approval.json"
 
 
@@ -46,8 +50,12 @@ def _unsigned_approval(revision: str) -> dict:
         "producer": {"id": "human.attacker:architecture_reviewer", "type": "human"},
         "status": "pass",
         "subject_revision": revision,
-        "generated_at": "2026-08-02T00:00:00Z",
-        "expires_at": "2026-08-05T00:00:00Z",
+        # A window around the real clock. The production loader now judges the
+        # signed window against a trusted instant, so a date pinned to the
+        # calendar expires the day after it is written and every adoption test
+        # would fail for a reason unrelated to what it asserts.
+        "generated_at": _WINDOW[0],
+        "expires_at": _WINDOW[1],
         "statement": "SYNTHETIC TEST FIXTURE - NOT A REAL APPROVAL.",
     }
 
