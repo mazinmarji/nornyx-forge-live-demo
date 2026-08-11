@@ -54,3 +54,45 @@ that vanishes teaches nothing.
 3. **Trust store and ledger paths were read per use.** Closed by
    `TrustConfiguration`, resolved once at `bootstrap_security_context` and
    injected into the boundary.
+
+4. **The established context had no production caller.** `bootstrap_security_
+   context()` was reached only from tests, so every real flow ran with
+   `security_context=None` and the boundary resolved its own trust anchors per
+   use — the exact per-use resolution finding 3 claims to have closed. Closed by
+   establishing one context at application import (`demo_app.agentic`), binding
+   it at the HTTP surface, and defaulting `run_case` to it. Proven by identity
+   rather than equality in `tests/test_production_security_context.py`: two
+   independently bootstrapped contexts over an unchanged tree compare equal on
+   every digest, so an equality assertion would pass on the architecture being
+   prevented.
+
+5. **Deleting the replay ledger restored spent grants.** A recreated table is
+   correct in every respect except that it has forgotten, so schema checking
+   could not see it. Closed by recording `established_at` when the history
+   begins and refusing any grant issued before it: losing the history now makes
+   outstanding grants *unusable* rather than reusable. See the residual below.
+
+## Residual exposure — replay continuity under ledger write access
+
+Stated rather than implied, because the control's limit is part of what it is.
+
+`established_at` is stored in the ledger it anchors. An attacker who can WRITE
+that file can set the anchor back and delete the consumption rows together, and
+the ledger will then vouch for a grant it never saw. No local anchor survives an
+adversary with write access to the thing being anchored, and adding a second
+local file would move the same weakness rather than remove it.
+
+What the control does close is the realistic path the finding described, and it
+closes it fail-shut:
+
+| Scenario | Before | Now |
+| --- | --- | --- |
+| Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `GRANT_PREDATES_LEDGER`, a fresh human approval required |
+| Redeploy onto ephemeral storage | silently empty history | outstanding grants refused until reissued |
+| Approval carrying no issuance instant | continuity check skipped entirely | `GRANT_ISSUANCE_UNKNOWN` |
+| Ledger with no, or more than one, establishment row | first row silently chosen | `LEDGER_CONTINUITY_UNKNOWN` |
+
+Closing the write-access case needs an epoch anchored outside the ledger. The
+operator's trust store is the natural home, since it is already an out-of-band
+artifact the runtime only reads. That is not implemented here and is not claimed
+to be.

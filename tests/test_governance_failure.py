@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from signing import LEDGER_ESTABLISHED  # noqa: E402
 
 from nornyx_forge.governed_subject import RuntimeSubject
 from nornyx_forge.nornyx_runtime import (
@@ -136,7 +137,7 @@ def _permissive_boundary(
     # in tests/test_approval_ledger.py.
     from nornyx_forge.nornyx_runtime import ApprovalLedger, approval_ledger_path  # noqa: PLC0415
 
-    ApprovalLedger.provision(approval_ledger_path(root))
+    ApprovalLedger.provision(approval_ledger_path(root), established_at=LEDGER_ESTABLISHED)
 
     boundary = NornyxActionBoundary(
         root,

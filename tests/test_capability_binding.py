@@ -21,7 +21,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from signing import signed_grant  # noqa: E402
+from signing import GRANT_ISSUED, signed_grant  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -107,5 +107,5 @@ def test_the_mismatch_is_refused_before_the_approval_is_spent(tmp_path: Path) ->
 
     claimed, reason = boundary.approval_ledger.consume(
         "ACT-MISLABELLED", mislabelled.digest, at=NOW
-    )
+    , grant_issued_at=GRANT_ISSUED)
     assert claimed is True, f"the refused request spent the approval: {reason}"

@@ -42,6 +42,17 @@ SUBJECT = "human.test_fixture"
 ROLES = ("operations_owner", "network_governance_owner", "architecture_reviewer")
 
 
+#: The fixture time frame, stated once so every test shares one coherent world.
+#:
+#: The ledger's replay history begins, THEN the human issues the grant, THEN it
+#: is consumed. A fixture that provisioned on the real clock while signing a
+#: grant dated 2026-08-02 was describing a grant issued before the ledger
+#: existed -- which continuity correctly refuses, and which is not the scenario
+#: those tests meant to describe.
+LEDGER_ESTABLISHED = "2026-08-01T00:00:00Z"
+GRANT_ISSUED = "2026-08-02T00:00:00Z"
+
+
 @lru_cache(maxsize=1)
 def _keypair() -> tuple[bytes, str]:
     """One ephemeral keypair per test session. Never written to disk."""

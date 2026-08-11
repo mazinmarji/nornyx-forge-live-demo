@@ -27,12 +27,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from check_pre_approval_baseline import (  # noqa: E402
     EXPECTED_PRE_APPROVAL_DIAGNOSTICS,
     UnstructuredCheckerOutput,
     _diagnostics,
 )
+from signing import LEDGER_ESTABLISHED  # noqa: E402
 from test_governance_failure import _permissive_boundary  # noqa: E402
 
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
@@ -170,7 +170,7 @@ def test_an_unknown_risk_consumes_no_approval(tmp_path: Path):
 
     ledger_path = tmp_path / "ledger.sqlite3"
     boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
-    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
     boundary.evaluate_and_execute(
         mission_id="CASE-1", risk="HIGH-RISK", action=lambda: "ran",
         action_approval={"granted": True, "approval_id": "ACT-1"},

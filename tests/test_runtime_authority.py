@@ -31,7 +31,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from signing import signed_grant  # noqa: E402
+from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: E402
 from test_governance_failure import _permissive_boundary  # noqa: E402
 
 #: The retired overrides. Set hostile in every test, expected to do nothing.
@@ -126,7 +126,7 @@ def _release(work: Path, context: RuntimeContext, grant, request=None, *, attemp
     ledger_path = work / "ledger.sqlite3"
     boundary = _permissive_boundary(work, runtime_context=context)
     boundary.runtime_subject = SUBJECT
-    boundary.approval_ledger = ApprovalLedger.provision(ledger_path)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
         mission_id=(request.mission_id if request is not None else "CASE-1"),

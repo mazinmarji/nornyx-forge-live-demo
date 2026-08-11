@@ -522,6 +522,77 @@ def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) ->
     return "sha256:" + hashlib.sha256(material).hexdigest()
 
 
+#: The ledger's own establishment record. One row, one column that matters.
+#:
+#: THE PROPERTY: previously established replay state cannot disappear and then
+#: be silently interpreted as legitimate first provisioning.
+#:
+#: The disclosed residual was: consume G, delete the ledger, run the documented
+#: provisioning command, present G again, and G releases. Correct SQL schema
+#: does not touch this — the recreated table is right in every respect except
+#: that it has forgotten. Distinguishing "first setup" from "setup after the
+#: history was removed" needs something the deleted file cannot carry.
+#:
+#: The move is to stop trying to remember what was spent, and instead make
+#: forgetting SELF-DEFEATING. The ledger records when it was established, and a
+#: grant is consumable only if the human issued it AFTER that moment. Then:
+#:
+#:     ledger established T0, grant issued T1 > T0   -> consumable, once
+#:     ledger deleted, re-provisioned at T2          -> every grant issued
+#:                                                      before T2 is refused
+#:     operator obtains a fresh approval at T3 > T2  -> works normally
+#:
+#: Deleting the replay history therefore makes outstanding grants UNUSABLE
+#: rather than reusable. An attacker who removes the file to replay G finds G
+#: refused, because G predates the ledger now being asked to vouch for it.
+#:
+#: What this does and does not defend, stated plainly rather than implied:
+#:
+#: - Operational loss — a redeploy on ephemeral storage, an operator "restoring"
+#:   a lost ledger with the documented command — now fails closed. That is the
+#:   realistic path and the one the finding described.
+#: - An attacker who can WRITE the ledger can also set `established_at` back and
+#:   delete rows. No local anchor survives an adversary with write access to the
+#:   thing being anchored, and inventing a second local file would only move the
+#:   same weakness. Defending that requires an externally anchored epoch — the
+#:   operator's trust store is the natural home — and is recorded in
+#:   docs/governance/RUNTIME_INPUT_AUDIT.md as the remaining exposure rather
+#:   than papered over here.
+LEDGER_METADATA_TABLE = "ledger_identity"
+
+#: Refusal codes for continuity, distinct because the operator response differs:
+#: a grant older than the ledger needs a fresh approval, while a ledger with no
+#: identity row at all needs re-provisioning.
+GRANT_PREDATES_LEDGER = "GRANT_PREDATES_LEDGER"
+LEDGER_CONTINUITY_UNKNOWN = "LEDGER_CONTINUITY_UNKNOWN"
+GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
+
+
+def _instant(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 instant, or None if it is absent or unreadable.
+
+    Continuity compares two timestamps, and comparing them as STRINGS was a
+    real bypass rather than a style problem. `2026-08-10T23:00:00+02:00` is
+    21:00Z — earlier than `2026-08-10T22:00:00Z` — but sorts after it, because
+    `'2' > 'Z'` is false and the offset digits are compared as text. A grant
+    issued before the ledger would have been read as issued after it, which is
+    the exact direction the control exists to refuse.
+
+    Both sides are therefore parsed to aware instants and compared as time.
+    """
+    if value is None or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # A naive stamp has no instant. Guessing a zone here would decide the
+        # comparison by assumption, so it is treated as unreadable.
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 #: Columns the consumption record must carry. Names, because `consume` writes by
 #: name: a table missing one accepts the INSERT nowhere or silently drops it.
 REQUIRED_LEDGER_COLUMNS = frozenset(
@@ -539,6 +610,27 @@ REQUIRED_LEDGER_UNIQUE_COLUMNS = {
     "fingerprint": "one human decision could be spent twice under different labels",
     "request_digest": "one consequential act could run twice under different decisions",
 }
+
+
+def _read_established_at(conn: sqlite3.Connection) -> str | None:
+    """When this replay history began, or None when it cannot say.
+
+    Two rows is not "pick the first one". A ledger carrying two establishment
+    instants cannot say when its history began, and reading it with `fetchone()`
+    silently chose between them in whatever order SQLite happened to return --
+    which made an extra row a way to move the anchor rather than an error. The
+    table constrains itself to one row; this refuses to guess if it ever holds
+    more, because the constraint is only present on ledgers this code created.
+    """
+    try:
+        rows = conn.execute(
+            f"SELECT established_at FROM {LEDGER_METADATA_TABLE}"
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    if len(rows) != 1:
+        return None
+    return str(rows[0][0]) if rows[0][0] else None
 
 
 def _assert_ledger_structure(
@@ -629,7 +721,7 @@ class ApprovalLedger:
     UNWRITABLE = "APPROVAL_LEDGER_UNWRITABLE"
 
     @classmethod
-    def provision(cls, path: Path) -> ApprovalLedger:
+    def provision(cls, path: Path, *, established_at: str | None = None) -> ApprovalLedger:
         """Create the ledger. Explicit, and never reached from the boundary.
 
         Separate from opening one because creation used to happen at the point
@@ -637,6 +729,18 @@ class ApprovalLedger:
         the file produced an empty ledger in which nothing had been spent, and
         every previously consumed grant became replayable. Deleting a file is not
         an authorization decision, and it must not act like one.
+
+        ``established_at`` follows :func:`runtime_as_of`: the trusted clock by
+        default, with an explicit argument a caller must pass on purpose so a
+        test can build a coherent time frame. It is deliberately not an
+        environment variable — ambient authority over when a replay history
+        began would let anything in the process decide which grants outlive it.
+        Setting it back is not a new exposure: it needs the same write access
+        that could edit the rows directly, which is the disclosed residual.
+
+        Re-provisioning a live ledger preserves the original instant, so running
+        the documented setup command on a healthy ledger does not invalidate
+        every outstanding approval.
         """
         location = Path(path)
         location.parent.mkdir(parents=True, exist_ok=True)
@@ -651,6 +755,30 @@ class ApprovalLedger:
                     " approval_id TEXT NOT NULL,"
                     " consumed_at TEXT NOT NULL)"
                 )
+                # When this replay history began. A grant issued before it
+                # cannot be vouched for by it, so losing the history makes
+                # outstanding grants unusable rather than reusable.
+                connection.execute(
+                    f"CREATE TABLE IF NOT EXISTS {LEDGER_METADATA_TABLE} ("
+                    # Exactly one row, enforced by the database rather than by
+                    # the care of whoever writes to it. Without the constraint
+                    # a second INSERT simply appended, and the reader's
+                    # `fetchone()` took whichever row SQLite returned first --
+                    # so a ledger could carry two establishment instants and
+                    # quietly choose between them. A mutation that made
+                    # provisioning re-insert on every call survived the suite
+                    # for exactly that reason.
+                    " id INTEGER PRIMARY KEY CHECK (id = 1),"
+                    " established_at TEXT NOT NULL)"
+                )
+                if not connection.execute(
+                    f"SELECT established_at FROM {LEDGER_METADATA_TABLE}"
+                ).fetchone():
+                    connection.execute(
+                        f"INSERT INTO {LEDGER_METADATA_TABLE} (id, established_at)"
+                        " VALUES (1, ?)",
+                        (runtime_as_of(established_at),),
+                    )
         except (sqlite3.Error, OSError) as exc:
             raise NornyxRuntimeUnavailable(
                 f"action approval ledger at {location} could not be provisioned: "
@@ -682,6 +810,7 @@ class ApprovalLedger:
         """
         self.path = Path(path)
         self.unavailable_reason = ""
+        self.established_at: str | None = None
 
         if not self.path.is_file():
             self.unavailable_reason = (
@@ -694,6 +823,7 @@ class ApprovalLedger:
         try:
             with self._session() as conn:
                 _assert_ledger_structure(conn, self.path, self.UNREADABLE)
+                self.established_at = _read_established_at(conn)
 
                 # An INSERT that fails *after* the boundary has decided to
                 # release an effect is the worst moment to discover the ledger is
@@ -742,6 +872,7 @@ class ApprovalLedger:
         request_digest: str,
         *,
         at: str,
+        grant_issued_at: str,
         approval_id: str = "",
     ) -> tuple[bool, str]:
         """Claim the approval, or refuse. The insert is the claim.
@@ -760,6 +891,41 @@ class ApprovalLedger:
         """
         if not self.available:
             return False, self.unavailable_reason
+
+        # Continuity. A ledger cannot say whether a grant older than itself was
+        # already spent, so it must not pretend the grant is fresh.
+        #
+        # `grant_issued_at` is a required argument rather than an optional one.
+        # It was optional, defaulting to None, and the boundary passed
+        # `str(approval.get("generated_at", "")) or None` — so an approval with
+        # no issuance stamp produced None and skipped this check entirely. An
+        # unanswered question was being read as a satisfied one.
+        established = _instant(self.established_at)
+        if established is None:
+            return (
+                False,
+                f"{LEDGER_CONTINUITY_UNKNOWN}: {self.path} carries no readable "
+                f"establishment record ({self.established_at!r}), so it cannot "
+                "say which grants it has seen. Re-provision it deliberately.",
+            )
+        issued = _instant(grant_issued_at)
+        if issued is None:
+            return (
+                False,
+                f"{GRANT_ISSUANCE_UNKNOWN}: the approval does not state a "
+                f"readable issuance instant ({grant_issued_at!r}), so it cannot "
+                "be placed against this replay history. An approval that will "
+                "not say when it was issued is not evidence that it is unspent.",
+            )
+        if issued < established:
+            return (
+                False,
+                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "
+                f"{grant_issued_at}, before this replay history began at "
+                f"{self.established_at}. Replay state was lost or replaced, so "
+                "whether this grant was already spent is unknown. A fresh human "
+                "approval is required; the old one cannot regain usability.",
+            )
 
         try:
             with self._session() as conn:
@@ -1213,6 +1379,10 @@ class NornyxActionBoundary:
                     request.digest,
                     at=self.as_of,
                     approval_id=str(action_approval.get("approval_id", "")),
+                    # No `or None`: an absent stamp must reach the ledger as an
+                    # empty string and be refused, not vanish into a default
+                    # that means "do not check".
+                    grant_issued_at=str(action_approval.get("generated_at", "")),
                 )
             withheld = not released
         else:

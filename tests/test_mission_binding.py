@@ -28,7 +28,7 @@ from nornyx_forge.nornyx_runtime import (
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from signing import signed_grant  # noqa: E402
+from signing import GRANT_ISSUED, LEDGER_ESTABLISHED, signed_grant  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -127,11 +127,11 @@ def test_the_refusal_does_not_consume_the_approval(tmp_path: Path):
     approved = _request(MISSION_A)
     ledger = tmp_path / "ledger.sqlite3"
     boundary = _permissive_boundary(tmp_path, as_of=NOW)
-    boundary.approval_ledger = ApprovalLedger.provision(ledger)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
 
     _execute(boundary, MISSION_B, approval=_grant(approved), request=approved)
 
-    claimed, reason = ApprovalLedger.provision(ledger).consume("ACT-A", approved.digest, at=NOW)
+    claimed, reason = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED).consume("ACT-A", approved.digest, at=NOW, grant_issued_at=GRANT_ISSUED)
     assert claimed is True, f"the refused mission spent the approval: {reason}"
 
 
@@ -142,12 +142,12 @@ def test_the_original_mission_can_still_use_its_approval(tmp_path: Path):
     ledger = tmp_path / "ledger.sqlite3"
 
     stolen = _permissive_boundary(tmp_path, as_of=NOW)
-    stolen.approval_ledger = ApprovalLedger.provision(ledger)
+    stolen.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
     decision, _, executed = _execute(stolen, MISSION_B, approval=grant, request=approved)
     assert decision.effect == "DENY" and executed == []
 
     rightful = _permissive_boundary(tmp_path, as_of=NOW)
-    rightful.approval_ledger = ApprovalLedger.provision(ledger)
+    rightful.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
     decision, result, executed = _execute(
         rightful, MISSION_A, approval=grant, descriptor=_descriptor()
     )
@@ -263,7 +263,7 @@ def test_binding_survives_boundary_reconstruction_and_ledger_reopen(tmp_path: Pa
 
     def run(mission_id: str, *, request=None, descriptor=None):
         boundary = _permissive_boundary(tmp_path, as_of=NOW)
-        boundary.approval_ledger = ApprovalLedger.provision(ledger)
+        boundary.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
         return _execute(
             boundary, mission_id, approval=grant, request=request, descriptor=descriptor
         )
