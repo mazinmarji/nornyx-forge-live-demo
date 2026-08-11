@@ -194,6 +194,7 @@ def test_every_required_module_exists_and_is_a_test_file():
         "tests/test_process_capability.py",
         "tests/test_skip_gate.py",
         "tests/test_subject_completeness.py",
+        "tests/test_governance_integrity_authority.py",
     }
     missing = sorted(must_include - set(REQUIRED_MODULES))
     assert missing == [], (

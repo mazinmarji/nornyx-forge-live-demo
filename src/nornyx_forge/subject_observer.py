@@ -202,6 +202,118 @@ def observe_contract_semantics_digest(contracts_dir: Path) -> str:
     return digest_of(contract_semantics(observe_contract_documents(contracts_dir)))
 
 
+def observe_governance_integrity(contracts_dir: Path) -> tuple[str, ...]:
+    """Every evidence digest a contract records, checked against the artifact.
+
+    The inspection subject deliberately digests what the contracts SAY, so
+    derived governance state -- an evidence record's `status`, a recorded
+    `content_hash` -- sits outside it. That is only admissible while compromise
+    of those fields withdraws every authority that could depend on them, and
+    runtime authority was not among them: a mutated `content_hash` changed the
+    Nornyx verdict, left the inspection subject untouched, and the action
+    boundary released the effect and spent the approval anyway.
+
+    Measured, before this existed:
+
+        derived status mutated   effect=ALLOW callbacks=1 ledger_spent=True
+        content_hash mutated     effect=ALLOW callbacks=1 ledger_spent=True
+
+    So the boundary needs an integrity verdict of its own. Returns the problems
+    found; empty means every recorded digest matches the artifact it names. An
+    unreadable contract is a problem rather than a pass, because a runtime that
+    cannot check its own governance state has not checked it.
+    """
+    problems: list[str] = []
+    for contract in sorted(contracts_dir.glob("*.nyx")):
+        try:
+            document = yaml.safe_load(contract.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            problems.append(f"{contract.name} could not be read: {exc}")
+            continue
+        for record in _evidence_records(document):
+            artifact = record.get("artifact")
+            recorded = record.get("content_hash")
+            if not isinstance(artifact, str) or not isinstance(recorded, str):
+                continue
+            location = contracts_dir / artifact
+            if not location.is_file():
+                problems.append(
+                    f"{contract.name} records evidence {artifact}, which is absent"
+                )
+                continue
+            actual = "sha256:" + hashlib.sha256(location.read_bytes()).hexdigest()
+            if actual != recorded:
+                problems.append(
+                    f"{contract.name} records {artifact} as {recorded}, but it "
+                    f"digests to {actual}"
+                )
+                continue
+            problems.extend(_status_contradictions(contract.name, artifact, record, location))
+    return tuple(problems)
+
+
+def _status_contradictions(
+    contract: str, artifact: str, record: dict, location: Path
+) -> list[str]:
+    """A recorded verdict that its own artifact contradicts.
+
+    The digest check above catches a tampered `content_hash` but not a flipped
+    `status`, because a status is not a digest -- and a flipped status changes
+    the Nornyx verdict just as surely. Measured: with `status` moved from
+    `observed` to `pass`, the boundary released the effect and spent the
+    approval while every digest still matched.
+
+    A status is DERIVED. So it is checked against the derivation: an artifact
+    that reports no authenticated inspection cannot be a passing independent
+    review, and an artifact that reports approval was not granted cannot be a
+    passing approval record. Narrow on purpose -- it asserts only what the
+    artifacts actually state about themselves, rather than guessing a general
+    rule from two examples.
+    """
+    if str(record.get("status")) != "pass":
+        return []
+    try:
+        payload = json.loads(location.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return [f"{contract} records {artifact} as passing, but it is unreadable: {exc}"]
+    if not isinstance(payload, dict):
+        return []
+
+    found: list[str] = []
+    inspections = payload.get("authenticated_inspections")
+    if isinstance(inspections, dict) and not inspections:
+        found.append(
+            f"{contract} records {artifact} as passing, but the artifact "
+            "reports no authenticated inspection"
+        )
+    if payload.get("approval") == "not_granted":
+        found.append(
+            f"{contract} records {artifact} as passing, but the artifact "
+            "reports approval was not granted"
+        )
+    return found
+
+
+def _evidence_records(document: object) -> list[dict]:
+    """Every governance-evidence record in a parsed contract, at any depth.
+
+    Walked structurally rather than read from one known key: a contract that
+    grows a second evidence block would otherwise go unchecked, and the point of
+    this observation is that nothing recording a digest escapes it.
+    """
+    found: list[dict] = []
+    if isinstance(document, dict):
+        for key, value in document.items():
+            if key == "records" and isinstance(value, list):
+                found.extend(item for item in value if isinstance(item, dict))
+            else:
+                found.extend(_evidence_records(value))
+    elif isinstance(document, list):
+        for item in document:
+            found.extend(_evidence_records(item))
+    return found
+
+
 def observe_settled_contracts(root: Path, contracts_dir: Path, scope: SubjectScope) -> dict:
     """Every contract exactly as Nornyx will evaluate it. No projection.
 

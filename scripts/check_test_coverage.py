@@ -129,6 +129,10 @@ REQUIRED_MODULES = (
     # trading contract bytes for contract meaning rests on an argument rather
     # than a measurement.
     "tests/test_subject_completeness.py",
+    # An integrity-compromised runtime must not reach a consequential
+    # effect. Without this, excluding derived governance state from the
+    # inspection subject is a hole rather than a channel.
+    "tests/test_governance_integrity_authority.py",
 )
 
 

@@ -29,6 +29,7 @@ from .governed_subject import (
 )
 from .subject_observer import (
     observe_contract_semantics_digest,
+    observe_governance_integrity,
     observe_input_manifest,
     observe_settled_contracts,
     observe_source_commit,
@@ -58,6 +59,15 @@ class RuntimeSecurityContext:
     runtime_subject: RuntimeSubject
     authority_config: RuntimeAuthorityConfig
     trust: TrustConfiguration
+    #: Problems found comparing what the contracts RECORD about the evidence
+    #: set against the artifacts themselves. Empty means intact.
+    #:
+    #: Derived governance state sits outside the inspection subject, which is
+    #: only admissible while compromising it withdraws every authority that
+    #: could depend on it. Runtime authority did not: a mutated content_hash
+    #: or an upgraded status changed the Nornyx verdict, left the subject
+    #: untouched, and the boundary released the effect anyway.
+    governance_integrity: tuple[str, ...] = ()
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -103,6 +113,7 @@ def bootstrap_security_context(
         runtime_subject=establish_subject(resolved, scope=scope, config=authority_config),
         authority_config=authority_config,
         trust=resolve_trust_configuration(resolved),
+        governance_integrity=observe_governance_integrity(resolved / ".nornyx/contracts"),
     )
 
 

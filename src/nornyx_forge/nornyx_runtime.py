@@ -126,6 +126,10 @@ def normalize_risk(value: object) -> str:
 #: facts and a reviewer must not have to guess which one happened.
 #: The runtime cannot establish what it is, so nothing consequential may run.
 SUBJECT_UNVERIFIED = "SUBJECT_UNVERIFIED"
+#: The governance evidence a decision would rest on does not match what the
+#: contracts record. Distinct from SUBJECT_UNVERIFIED: the runtime knows
+#: exactly what it is, and what it is has been tampered with.
+GOVERNANCE_INTEGRITY_COMPROMISED = "GOVERNANCE_INTEGRITY_COMPROMISED"
 #: An authenticated grant describes a different subject than the one running.
 #: Deliberately generic: distinguishing "stale assurance" from "different
 #: subject" would require both identities as authenticated claims, and a falsely
@@ -1135,6 +1139,7 @@ class NornyxActionBoundary:
         allow_fallback: bool = True,
         runtime_context: RuntimeContext | None = None,
         runtime_subject: RuntimeSubject | None = None,
+        governance_integrity: tuple[str, ...] = (),
         approver_trust_store: ApprovalTrustStore | None = None,
         trust: TrustConfiguration | None = None,
     ) -> None:
@@ -1143,6 +1148,10 @@ class NornyxActionBoundary:
         # Injected, never discovered. A boundary that established its own
         # subject would let the request influence the authority judging it.
         self.runtime_subject = runtime_subject
+        #: Injected, never observed here. The domain does not reach a
+        #: filesystem to decide its own trustworthiness; the application
+        #: establishes this alongside the subject and hands both down.
+        self.governance_integrity = tuple(governance_integrity)
         # Trusted by default, and the only alternative is RuntimeContext.for_test,
         # which a caller must name at the construction site. There is no ambient
         # route to either value.
@@ -1305,6 +1314,38 @@ class NornyxActionBoundary:
             # First: is the subject established? A runtime that cannot say what
             # it is cannot release a consequential effect. Asked before anything
             # else, so no grant is spent discovering it.
+            # Integrity, immediately after subject and before any decision.
+            #
+            # Derived governance state -- an evidence record's `status`, a
+            # recorded `content_hash` -- is deliberately outside the inspection
+            # subject, because binding an inspection to values the tooling
+            # rewrites made authenticated inspection unreachable. That exclusion
+            # is only admissible while compromise of those values withdraws
+            # every authority depending on them, and runtime authority did not:
+            # mutating either changed the Nornyx verdict, left the subject
+            # untouched, and this boundary released the effect and spent the
+            # approval regardless.
+            #
+            #     derived status mutated   effect=ALLOW callbacks=1 spent=True
+            #     content_hash mutated     effect=ALLOW callbacks=1 spent=True
+            #
+            # Asked before the request is built, so no grant is spent finding
+            # out, and before the authorizer is consulted, because a compromised
+            # contract is what the authorizer would be reading.
+            if self.governance_integrity:
+                return RuntimeDecision(
+                    effect="DENY",
+                    code=GOVERNANCE_INTEGRITY_COMPROMISED,
+                    reason=(
+                        "the governance evidence this runtime would be judged "
+                        "under does not match what the contracts record: "
+                        + "; ".join(self.governance_integrity[:3])
+                        + ". Consequential authority is unavailable until the "
+                        "evidence set is regenerated and re-approved."
+                    ),
+                    source=self.mode,
+                )
+
             subject = self.runtime_subject
             if subject is None or not subject.subject_verified:
                 release_reason = (

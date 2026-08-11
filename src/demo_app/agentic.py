@@ -206,6 +206,14 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             runtime_subject=(
                 security_context.runtime_subject if security_context is not None else None
             ),
+            # Established with the subject and injected with it. A boundary
+            # that observed its own integrity would be deciding whether to
+            # trust itself.
+            governance_integrity=(
+                security_context.governance_integrity
+                if security_context is not None
+                else ()
+            ),
         )
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.
