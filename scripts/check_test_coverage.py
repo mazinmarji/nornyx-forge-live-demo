@@ -71,7 +71,16 @@ EXPECTED_SKIPS = {
 #: grows; lowering it is a decision someone has to make on purpose, in a diff.
 NEWLINE = chr(10)
 
-MINIMUM_COLLECTED = 440
+#: Raised from 440 against a suite of 645. That floor left 200 tests of slack:
+#: ten whole modules -- including the untrusted-text vocabulary, the dirty-tree
+#: gate, action binding and mission binding -- could be deleted with this gate
+#: still printing PASS. A floor that permits a third of the suite to vanish is
+#: not an anti-shrink control.
+#:
+#: Kept just below the real count rather than equal to it, so ordinary
+#: consolidation does not fail the gate while a deletion of any consequence
+#: does. It is meant to be raised when the suite grows.
+MINIMUM_COLLECTED = 620
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -104,6 +113,18 @@ REQUIRED_MODULES = (
     # Canonical-LF enforced on WRITE. It was enforced on read only, so this
     # system's own tooling produced files its subject observer then refused.
     "tests/test_canonical_text_writes.py",
+    # The five controls this module's own docstring names as the ones the
+    # incident silenced. Naming them in the prose and omitting them from the
+    # list meant the gate did not protect the thing it was written for.
+    "tests/test_approval_wiring.py",
+    "tests/test_approval_injection.py",
+    "tests/test_materialization_injection.py",
+    "tests/test_expiry_semantics.py",
+    "tests/test_pre_approval_baseline.py",
+    # A grant binds to one act, and the risk vocabulary is closed. Both are
+    # reproduced-exploit proofs and both were absent from this list.
+    "tests/test_action_binding.py",
+    "tests/test_untrusted_text.py",
 )
 
 

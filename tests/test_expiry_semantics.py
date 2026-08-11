@@ -29,10 +29,23 @@ needs_nornyx = pytest.mark.skipif(
 
 # The three diagnostics that mean "no human has approved this yet". A healthy
 # pre-approval baseline produces these and nothing else, at any instant.
+#: What a contract may legitimately be blocked by before anyone with standing
+#: has attested to it. Two prerequisites are absent, not one: no accountable
+#: human approval, and no authenticated independent inspection.
+#:
+#: The last three appeared when the contract stopped recording
+#: `independent_review_record` as `status: pass` regardless of whether anything
+#: had signed it. They are not a regression -- they are the second missing
+#: prerequisite, which that stamp had been concealing. Neither prerequisite can
+#: be satisfied from inside this repository, which is what makes every code here
+#: an acceptable reason to be blocked.
 APPROVAL_GAP_CODES = {
     "AN_APPROVAL_RECORD_MISSING",
     "APPROVAL_EVIDENCE_MISSING",
     "EVIDENCE_REQUIRED_MISSING",
+    "CHANGE_EVIDENCE_MISSING",
+    "EVIDENCE_DEPENDENCY_UNSATISFIED",
+    "SOD_EVIDENCE_PRODUCER_UNKNOWN",
 }
 
 FAR_FUTURE = ["2100-01-01T00:00:00Z", "2200-01-01T00:00:00Z"]

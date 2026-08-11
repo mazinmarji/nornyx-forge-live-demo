@@ -13,6 +13,7 @@ guess about what it would do.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -165,10 +166,38 @@ def test_every_required_module_exists_and_is_a_test_file():
     # not repeated here, so emptying the tuple made this loop vacuous and the
     # whole anti-shrink gate could be neutered with a one-line edit while this
     # file stayed green. An independent review found it by doing precisely that.
-    assert REQUIRED_MODULES, (
-        "an empty required-module list would make the gate meaningless: a "
-        "deleted governance test module would contribute no tests and nothing "
-        "would notice"
+    # Non-emptiness was the fix for a reviewer who emptied the tuple. One
+    # surviving entry satisfies it, so the same edit still worked: the list was
+    # cut from twenty modules to one and this file stayed green.
+    #
+    # A named set is what a count cannot be talked out of. These are the
+    # reproduced-exploit proofs, and dropping one has to be a deliberate edit
+    # here that a reviewer can see, not a quiet deletion over there.
+    must_include = {
+        "tests/test_approval_authentication.py",
+        "tests/test_approval_artifact_authentication.py",
+        "tests/test_approval_ledger.py",
+        "tests/test_approval_injection.py",
+        "tests/test_approval_wiring.py",
+        "tests/test_action_binding.py",
+        "tests/test_materialization_injection.py",
+        "tests/test_expiry_semantics.py",
+        "tests/test_pre_approval_baseline.py",
+        "tests/test_reviewer_authentication.py",
+        "tests/test_governance_approval_verifier.py",
+        "tests/test_independent_inspection.py",
+        "tests/test_trust_directionality.py",
+        "tests/test_content_binding.py",
+        "tests/test_untrusted_text.py",
+        "tests/test_production_security_context.py",
+        "tests/test_evidence_integrity_verifier.py",
+        "tests/test_process_capability.py",
+        "tests/test_skip_gate.py",
+    }
+    missing = sorted(must_include - set(REQUIRED_MODULES))
+    assert missing == [], (
+        "the anti-shrink gate no longer requires these reproduced-exploit "
+        f"proofs, so deleting them would go unnoticed: {missing}"
     )
     for name in REQUIRED_MODULES:
         path = ROOT / name
@@ -180,16 +209,34 @@ def test_every_required_module_exists_and_is_a_test_file():
 
 def test_the_floor_sits_below_the_current_suite_and_above_nothing():
     """A floor at zero is decoration; a floor above the suite blocks every run."""
-    collected = sum(
-        source.read_text(encoding="utf-8").count("def test_")
-        for source in (ROOT / "tests").glob("test_*.py")
+    # Counted by COLLECTING, not by counting `def test_` strings. That count
+    # missed every parametrised case -- 426 function definitions against 645
+    # collected -- so a guard reading "at least half" licensed a floor of 213,
+    # a third of the real suite. The guard measuring the floor has to measure
+    # the same thing the floor is compared against.
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
+    collected = sum(
+        int(line.rsplit(":", 1)[1])
+        for line in completed.stdout.splitlines()
+        if line.startswith("tests/") and line.rsplit(":", 1)[-1].strip().isdigit()
+    )
+    assert collected > 0, f"collection produced no counts:\n{completed.stdout[-500:]}"
+
     # `> 0` was the whole lower bound, so a floor of 1 satisfied a test whose
-    # docstring says "a floor at zero is decoration". A floor of 1 is the same
-    # decoration. It must sit within reach of the real suite to mean anything.
-    assert MINIMUM_COLLECTED >= collected // 2, (
-        f"a floor of {MINIMUM_COLLECTED} against roughly {collected} tests is "
-        "decoration: almost any deletion would pass it"
+    # docstring says "a floor at zero is decoration". Half was the same
+    # decoration one step up. The floor has to sit close enough to the suite
+    # that deleting a module of any size trips it.
+    assert MINIMUM_COLLECTED >= collected * 9 // 10, (
+        f"a floor of {MINIMUM_COLLECTED} against {collected} collected tests "
+        f"leaves {collected - MINIMUM_COLLECTED} of slack: whole modules could "
+        "be deleted with this gate still passing"
     )
     assert MINIMUM_COLLECTED <= collected * 2, (
         "the floor is above what the suite can collect, so every run fails"
