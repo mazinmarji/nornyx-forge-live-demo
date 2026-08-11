@@ -19,6 +19,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REFRESH = "scripts/refresh_governance_evidence.py"
+#: The instant the fixture settles its evidence at. The same value the approvals
+#: are dated from, so the whole fixture describes one coherent moment.
+AS_OF = "2026-08-02T00:00:00Z"
 BASELINE = "scripts/check_pre_approval_baseline.py"
 CONTRACTS = Path(".nornyx/contracts")
 
@@ -87,6 +90,15 @@ def _run(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env['FORGE_APPROVER_TRUST_STORE'] = str(
         write_trust_store(workspace.parent / 'approver_trust.json')
     )
+    # The reviewer anchor too. A contract requires BOTH an accountable human
+    # approval and an authenticated independent inspection, and this fixture
+    # used to supply only the first -- passing solely because the contract
+    # stamped the review `pass` whether or not anything had signed it.
+    reviewer_store = workspace.parent / 'reviewer_trust.json'
+    env['FORGE_REVIEWER_TRUST_STORE'] = str(
+        reviewer_store if reviewer_store.exists() else workspace / 'no-such-store.json'
+    )
+    env['FORGE_BUILDER_IDENTITY'] = 'builder.nornyx_forge'
     return subprocess.run(
         [sys.executable, *args], cwd=workspace, capture_output=True, text=True, env=env
     )
@@ -126,6 +138,53 @@ def _write_approvals(workspace: Path, revision: str, *, expires: str) -> None:
         )
 
 
+
+def _inspected(tmp_path: Path) -> Path:
+    """A repository whose independent inspection is signed AND committed.
+
+    Order matters and the dirty-tree gate enforces it. A human approval pins a
+    revision, so the attestations have to be part of that revision -- writing
+    them afterwards leaves untracked files inside governed paths and the
+    approval is correctly refused for covering content the tree no longer holds.
+
+    Both prerequisites, in the order the documented workflow requires:
+    inspectors sign the settled subject, the result is committed, and only then
+    does a human approve that exact content.
+    """
+    workspace = _repo(tmp_path)
+
+    # Settle the evidence, commit it, then regenerate once so every artifact
+    # carries the committed revision. Repeated regeneration over an unchanged
+    # tree now yields the same subject, which it did not before: the review
+    # record embedded the current subject digest and lived inside the manifest
+    # the subject was computed from, so every run produced a new one.
+    for step in (["--as-of", AS_OF], ["--sync-contracts"], ["--review-binding"]):
+        settled = _run(workspace, REFRESH, *step)
+        assert settled.returncode == 0, settled.stdout + settled.stderr
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "settled evidence")
+    # A second pass, so every artifact names the revision that actually holds
+    # it. Committing the evidence moves HEAD, and the artifacts written before
+    # that commit name its parent. Left uncommitted this is drift, and an
+    # approval pinning HEAD would correctly be refused.
+    assert _run(workspace, REFRESH, "--as-of", AS_OF).returncode == 0
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "evidence names its own revision")
+
+    # Inspectors sign the settled subject, and the attestations are committed so
+    # they are part of the revision a human then approves. This order only works
+    # because the inspection subject now survives adoption: it is computed from
+    # what the contracts SAY rather than the bytes adoption rebinds, so
+    # `--adopt-approval` no longer invalidates the inspection it depends on.
+    sys.path.insert(0, str(ROOT / 'tests'))
+    from inspection import authenticate_inspection  # noqa: PLC0415
+
+    authenticate_inspection(workspace, workspace.parent)
+    assert _run(workspace, REFRESH, "--as-of", AS_OF).returncode == 0
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "authenticated independent inspection")
+    return workspace
+
 def _prepare(workspace: Path, *, as_of: str) -> None:
     """The documented sequence, as one atomic operation.
 
@@ -152,7 +211,7 @@ def _check(workspace: Path, contract: str, as_of: str) -> subprocess.CompletedPr
 @needs_nornyx
 def test_approvals_wire_in_without_hand_editing_yaml(tmp_path: Path):
     """Both contracts must validate after the documented commands alone."""
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
 
@@ -166,7 +225,7 @@ def test_approvals_wire_in_without_hand_editing_yaml(tmp_path: Path):
 @needs_nornyx
 def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
     """Deleting the human artifacts must put the contracts back, mechanically."""
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     assert _check(workspace, "runtime_network.nyx", "2026-08-03T00:00:00Z").returncode == 0
@@ -193,7 +252,7 @@ def test_removing_the_approvals_restores_the_pre_approval_state(tmp_path: Path):
 
 @needs_nornyx
 def test_wiring_is_idempotent(tmp_path: Path):
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     first = {
@@ -213,7 +272,7 @@ def test_advancing_head_after_approval_fails_closed(tmp_path: Path):
     Otherwise evidence built from the new tree would be stamped with the old
     approved revision, describing code nobody approved.
     """
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     approved = _head(workspace)
     _write_approvals(workspace, approved, expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
@@ -250,7 +309,7 @@ def test_advancing_head_after_approval_fails_closed(tmp_path: Path):
 @needs_nornyx
 def test_tooling_never_authors_or_edits_an_approval(tmp_path: Path):
     """The human files must come back byte-identical after a full run."""
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     evidence = workspace / CONTRACTS / "evidence"
     originals = {
@@ -265,7 +324,7 @@ def test_tooling_never_authors_or_edits_an_approval(tmp_path: Path):
 @needs_nornyx
 def test_a_non_human_producer_is_refused(tmp_path: Path):
     """A machine cannot be laundered into an approval by renaming the file."""
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     payload = {
         "schema": "nornyx.forge.human_approval_record.v1",
         "approval": "granted",
@@ -291,7 +350,7 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
     Leaving the short reviewer window behind after an approval is withdrawn
     re-rots the baseline the moment that date passes.
     """
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     contract = workspace / CONTRACTS / "runtime_network.nyx"
@@ -323,7 +382,7 @@ def test_withdrawing_an_approval_restores_the_authority_placeholder(tmp_path: Pa
 @needs_nornyx
 def test_review_binding_refuses_on_a_revision_mismatch(tmp_path: Path):
     """It is the document a human reads before approving, so it must not lie."""
-    workspace = _repo(tmp_path)
+    workspace = _inspected(tmp_path)
     _write_approvals(workspace, _head(workspace), expires="2026-08-05T00:00:00Z")
     _prepare(workspace, as_of="2026-08-02T00:00:00Z")
     _run(workspace, REFRESH, "--review-binding")

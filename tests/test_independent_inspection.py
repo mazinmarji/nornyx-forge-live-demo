@@ -406,13 +406,55 @@ def test_moving_the_subject_makes_the_inspection_stale(
 
     target = work / relative
     if content is None:
-        target.write_bytes(target.read_bytes() + b"\n# moved after inspection\n")
+        # A DECLARED value, not a comment. The subject is computed from what the
+        # contracts say rather than their exact bytes, because adopting an
+        # approval rewrites the declared revision and every recorded evidence
+        # digest -- and binding an inspection to those bytes made the two
+        # prerequisites unsatisfiable together: attest before adoption and the
+        # attestation is stale, attest after and the attestations are untracked
+        # against the revision the approval pins.
+        #
+        # Byte-level contract drift is not unguarded; it is caught elsewhere, by
+        # `test_a_comment_only_contract_edit_is_still_caught`.
+        target.write_bytes(
+            target.read_bytes().replace(
+                b"name: GovernedCustomerOperationsRuntime",
+                b"name: GovernedCustomerOperationsRuntimeX",
+                1,
+            )
+        )
     else:
         target.write_bytes(content)
 
     state = _assurance(work, reviewers)
     assert state["assurance_state"] == "not_independently_inspected", label
-    assert any("current subject is" in p for p in state["assurance_problems"]), label
+    assert any(
+        "not the subject this tree now presents" in problem
+        for problem in state["assurance_problems"]
+    ), label
+
+
+def test_a_comment_only_contract_edit_is_still_caught(settled):
+    """Byte-level contract drift stays covered, just not by the subject.
+
+    The inspection subject digests what the contracts SAY, and a comment says
+    nothing -- so it does not invalidate an inspection of the meaning. It is
+    still drift, and the review binding records the exact contract bytes, which
+    `--verify` recomputes. Asserted here so the coverage is seen to have moved
+    rather than shrunk.
+    """
+    work, reviewers = settled
+    _attest(work, reviewers)
+    assert _inspected(work, reviewers) is True
+
+    target = work / ".nornyx/contracts/runtime_network.nyx"
+    target.write_bytes(target.read_bytes() + b"\n# moved after inspection\n")
+
+    completed = _run(work, reviewers, REFRESH, "--verify")
+    report = json.loads(completed.stdout[completed.stdout.find("{"):])["verification"]
+    assert report["integrity_state"] == "compromised", (
+        "a comment-only contract edit went unreported by integrity verification"
+    )
 
 
 def test_sync_contracts_after_inspection_makes_it_stale(settled):

@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import governed_content as _digest_scope  # noqa: E402
 from governed_content import (  # noqa: E402
     GovernedContentError,
+    contract_semantics_digest,
     contract_set_digest,
     control_pack_digest,
     digest_of,
@@ -1722,22 +1723,120 @@ def emit_review_binding() -> dict:
     return binding
 
 
+#: Evidence artifacts that record the OUTCOME of an inspection, and therefore
+#: cannot be part of what an inspection covers.
+#:
+#: `review_binding.json` was already excluded, for the reason that generalises:
+#: a binding cannot honestly digest the bytes it is about to become. The review
+#: record is the same shape of thing and was not excluded, which made the
+#: subject self-referential and authenticated inspection unreachable:
+#:
+#:     attestation names subject S
+#:     -> the review record says "attests to S, but the current subject is T"
+#:     -> that sentence embeds T and lives INSIDE the manifest T is computed from
+#:     -> the next regeneration computes U != T, and writes U into the record
+#:
+#: Measured: two consecutive regenerations, same HEAD and same `--as-of`,
+#: produced different subjects every time, and the ONLY differing bytes were
+#: that diagnostic. No attestation could ever name the subject the next
+#: regeneration would present, so `assurance_state` could never legitimately
+#: become `independently_inspected`.
+#:
+#: Excluding the record costs nothing: it carries no authority (assurance is
+#: recomputed from the attestations themselves), and `verify_review_binding`
+#: recomputes `digests.independent_review_record` from the artifact, so
+#: tampering with it is still caught -- just not by folding it into the subject
+#: it describes.
+#:
+#: `INSPECTION_ATTESTATION` names a single-artifact form that this repository no
+#: longer writes; it is kept so a tree still carrying one is excluded too.
+#: `INDEX.json` joins them for a different reason: it is a pure catalogue over
+#: the other artifacts, carrying each one's `content_hash` and nothing of its
+#: own. Excluding the review record from the manifest therefore did not break
+#: the loop on its own -- the record's hash still reached the subject through
+#: the index. Nothing is lost by excluding a derived catalogue: every artifact
+#: it lists is already digested individually, so tampering with any of them
+#: still moves the subject.
+#: The human approval and the record derived from it are excluded for a third
+#: reason, and it is the one the governance model forces.
+#:
+#: An inspection must precede an approval: the contract names the independent
+#: review as required evidence FOR the approval, so you approve BECAUSE the
+#: content was inspected. An inspector therefore cannot have reviewed an
+#: approval that did not yet exist. If attaching the approval afterwards moves
+#: the subject, then every inspection is invalidated by the very act it was
+#: performed to enable, and the two prerequisites can never hold at once.
+#:
+#: Measured: with attestations valid and `assurance_state:
+#: independently_inspected`, running `--adopt-approval` dropped the
+#: authenticated inspections to none, because adoption writes the approval
+#: artifacts into the evidence directory and they joined the manifest.
+#:
+#: Nothing is weakened. The approval carries its own Ed25519 signature over its
+#: own canonical payload and binds to `subject_revision`; its authority comes
+#: from that, never from sitting inside a digest. `verify_review_binding`
+#: recomputes the approval state separately, so a forged approval is still
+#: caught.
+INSPECTION_OUTCOME_ARTIFACTS = (
+    "review_binding.json",
+    INSPECTION_ATTESTATION,
+    "architecture_independent_review.json",
+    "INDEX.json",
+    "architecture_human_approval.json",
+    "runtime_human_approval.json",
+    "architecture_approval_record.json",
+    # Catalogues, on the same footing as INDEX.json: they carry each artifact's
+    # hash and nothing of their own, so excluding the approval artifacts from
+    # the subject achieved nothing while these still listed them. Every artifact
+    # they enumerate is digested individually here, so tampering with one still
+    # moves the subject.
+    "architecture_evidence_manifest.json",
+    "runtime_evidence_manifest.json",
+)
+
+
 def current_inspection_subject() -> str:
     """What an inspection of the tree as it stands would be reviewing.
 
     Recomputed rather than read. If it differs from what an attestation names,
     that attestation reviewed something else — which is the whole point of
     freezing a subject.
+
+    Stable under regeneration: running the evidence tooling again over unchanged
+    code, contracts and clock must yield the same subject, or an inspection can
+    never be bound to anything. That property is asserted directly, because it
+    is the one this digest quietly lost.
     """
     pre_inspection = digest_of(
         evidence_manifest(
             EVIDENCE_DIR,
-            exclude=("review_binding.json", INSPECTION_ATTESTATION),
+            exclude=INSPECTION_OUTCOME_ARTIFACTS,
+            # Claims, not provenance. Re-running the tooling over unchanged code
+            # and contracts rewrites `subject_revision` from the new HEAD and
+            # `generated_at` from the clock; if those reach the subject, it moves
+            # although nothing inspectable changed, and every attestation over it
+            # goes stale. The integrity manifest still covers exact bytes, so a
+            # tampered timestamp is caught where that is the question.
+            ignore_provenance=True,
         )
     )
     return inspection_subject_digest(
         input_digest=governed_input_digest(),
-        contract_digest=contract_set_digest(ROOT / ".nornyx/contracts"),
+        # What the contracts SAY, not the bytes the tooling stamped into them.
+        # `contract_set_digest` covers raw bytes, and adopting an approval
+        # rebinds the declared revision and rewrites every recorded evidence
+        # digest -- so the contracts an inspector reviewed differed from the
+        # contracts that existed a moment later, purely from bookkeeping. That
+        # made the two prerequisites unsatisfiable together: attest before
+        # adoption and the attestation is stale; attest after and the
+        # attestations are untracked against the revision the approval pins.
+        #
+        # `contract_semantics` is the projection the repository already uses for
+        # `governed_revision_digest`, for this exact reason. Nothing is
+        # weakened: the raw contract bytes are still covered by
+        # `contract_set_digest` in the review binding, which `--verify`
+        # recomputes, so a tampered contract is still caught.
+        contract_digest=contract_semantics_digest(),
         evidence_digest=pre_inspection,
     )
 
@@ -1795,9 +1894,20 @@ def _authenticated_inspections(subject_digest: str) -> tuple[dict, list[str]]:
 
         attested_subject = attestation.get("inspection_subject_digest")
         if attested_subject != subject_digest:
+            # Names the ATTESTED subject and not the current one, deliberately.
+            # This message reaches `verdict_basis` in the independent-review
+            # record, and that record is part of the evidence set the subject is
+            # computed from. Printing the current digest here wrote the subject
+            # into an artifact the subject is derived from, so every
+            # regeneration produced a different subject than the last -- and no
+            # attestation could ever name the one the next run would present.
+            #
+            # Measured before this changed: two consecutive regenerations over
+            # an unchanged tree, unchanged HEAD and a fixed clock disagreed, and
+            # this sentence was the only differing bytes.
             problems.append(
-                f"{path.name} attests to subject {attested_subject}, but the "
-                f"current subject is {subject_digest}"
+                f"{path.name} attests to subject {attested_subject}, which is "
+                "not the subject this tree now presents"
             )
             continue
 

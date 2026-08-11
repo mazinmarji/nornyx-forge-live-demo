@@ -20,6 +20,7 @@ subject with no `.git` present.
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -265,13 +266,54 @@ def contract_set_digest(contracts_dir: Path, root: Path) -> str:
     return digest_of({"schema": "nornyx.forge.contract_set.v1", "entries": entries})
 
 
+#: Fields that record WHEN an artifact was written and WHICH revision it
+#: describes. They are provenance, not claims about content, and the same
+#: classification already governs `review_binding.json`.
+#:
+#: They are stripped when digesting evidence for an INSPECTION subject. An
+#: inspector binds to what they reviewed; re-running the evidence tooling over
+#: unchanged code and contracts rewrites `subject_revision` from the new HEAD
+#: and `generated_at` from the clock, and if those reach the subject then the
+#: subject moves although nothing inspectable changed -- which silently
+#: re-couples content identity to commit identity, the thing A-011 retired.
+#:
+#: Measured: committing the attestations did not move the subject, but the next
+#: regeneration did, and `subject_revision` was the difference.
+PROVENANCE_KEYS = frozenset({
+    "generated_at", "expires_at", "subject_revision", "source_commit",
+})
+
+
+def _without_provenance(value: object) -> object:
+    """Recursively drop provenance keys, so what remains is the claim."""
+    if isinstance(value, dict):
+        return {
+            key: _without_provenance(item)
+            for key, item in value.items()
+            if key not in PROVENANCE_KEYS
+        }
+    if isinstance(value, list):
+        return [_without_provenance(item) for item in value]
+    return value
+
+
 def evidence_manifest(
-    evidence_dir: Path, root: Path, *, exclude: tuple[str, ...] = ()
+    evidence_dir: Path,
+    root: Path,
+    *,
+    exclude: tuple[str, ...] = (),
+    ignore_provenance: bool = False,
 ) -> dict:
     """Describe the generated evidence set, separately from the content.
 
     Its own layer, because evidence is derived from governed content and must
     not be folded back into the digest of the thing it describes.
+
+    ``ignore_provenance`` digests each artifact's CLAIMS rather than its bytes,
+    which is what an inspection subject needs: stable across a regeneration that
+    changed only when it ran and which commit it names. It is deliberately not
+    the default -- the integrity manifest still covers exact bytes, so tampering
+    with a recorded timestamp is still caught where that matters.
     """
 
     entries: list[dict[str, object]] = []
@@ -279,6 +321,17 @@ def evidence_manifest(
         if location.name in exclude:
             continue
         blob = location.read_bytes()
+        if ignore_provenance:
+            try:
+                claims = _without_provenance(json.loads(blob.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                # Unreadable as JSON: digest the bytes rather than skip it, so
+                # a corrupt artifact still changes the subject.
+                pass
+            else:
+                blob = json.dumps(claims, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
         entries.append(
             {
                 "path": normalise_path(str(location.relative_to(root))),

@@ -121,5 +121,12 @@ def contract_set_digest(contracts_dir: Path | None = None) -> str:
     return _contract_set_digest(_contracts(contracts_dir), ROOT)
 
 
-def evidence_manifest(evidence_dir: Path, *, exclude: tuple[str, ...] = ()) -> dict:
-    return _evidence_manifest(evidence_dir, ROOT, exclude=exclude)
+def evidence_manifest(
+    evidence_dir: Path,
+    *,
+    exclude: tuple[str, ...] = (),
+    ignore_provenance: bool = False,
+) -> dict:
+    return _evidence_manifest(
+        evidence_dir, ROOT, exclude=exclude, ignore_provenance=ignore_provenance
+    )
