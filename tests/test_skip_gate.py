@@ -48,7 +48,7 @@ def _report(tmp_path: Path, reason: str, name: str = "test_wiring") -> Path:
 
 def test_the_historical_failure_is_now_caught(tmp_path: Path):
     """The exact skip reason that hid 63 tests behind a green run."""
-    total, allowed, unexpected, _modules = classify(_report(tmp_path, "nornyx CLI is not installed"))
+    total, allowed, unexpected, _modules, _skipped = classify(_report(tmp_path, "nornyx CLI is not installed"))
     assert total == 3
     assert allowed == 1, "the declared Docker skip should still be allowed"
     assert len(unexpected) == 1
@@ -58,7 +58,7 @@ def test_the_historical_failure_is_now_caught(tmp_path: Path):
 
 def test_a_declared_skip_is_allowed(tmp_path: Path):
     """The gate must not force tests to run where the design says they cannot."""
-    total, allowed, unexpected, _modules = classify(
+    total, allowed, unexpected, _modules, _skipped = classify(
         _report(
             tmp_path,
             "cannot be built on a Windows workstation",
@@ -84,7 +84,7 @@ def test_borrowing_a_declared_reason_does_not_exempt_a_new_test(tmp_path: Path):
 
     Word for word the declared reason, on a test nobody exempted.
     """
-    total, allowed, unexpected, _modules = classify(
+    total, allowed, unexpected, _modules, _skipped = classify(
         _report(
             tmp_path,
             "set FORGE_DOCKER_TESTS=1 with Docker running to build",
@@ -151,7 +151,7 @@ def test_classify_reports_which_modules_contributed(tmp_path: Path):
     Counting alone keeps the total up while an invariant goes unproven, so the
     census reports module identity and not just arithmetic.
     """
-    _total, _allowed, _unexpected, modules = classify(
+    _total, _allowed, _unexpected, modules, _skipped = classify(
         _report(tmp_path, "nornyx CLI is not installed")
     )
     assert "tests/test_container_launch.py" in modules
