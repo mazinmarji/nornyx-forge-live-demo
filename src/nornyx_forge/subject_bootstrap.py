@@ -17,7 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .governed_subject import (
+    INTEGRITY_UNAVAILABLE,
     REPOSITORY_SCOPE,
+    GovernanceIntegrityState,
     GovernedSubjectError,
     RuntimeAuthorityConfig,
     RuntimeSubject,
@@ -67,7 +69,7 @@ class RuntimeSecurityContext:
     #: could depend on it. Runtime authority did not: a mutated content_hash
     #: or an upgraded status changed the Nornyx verdict, left the subject
     #: untouched, and the boundary released the effect anyway.
-    governance_integrity: tuple[str, ...] = ()
+    governance_integrity: GovernanceIntegrityState | None = None
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -108,6 +110,13 @@ def bootstrap_security_context(
             runtime_subject=RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id),
             authority_config=authority_config,
             trust=unrooted_trust_configuration(),
+            # No root means nothing was observed. Left as None this would be
+            # indistinguishable from "observed and sound", which is the
+            # unknown-reads-as-intact failure the state type exists to remove.
+            governance_integrity=GovernanceIntegrityState(
+                status=INTEGRITY_UNAVAILABLE,
+                problems=(str(exc),),
+            ),
         )
     return RuntimeSecurityContext(
         runtime_subject=establish_subject(resolved, scope=scope, config=authority_config),

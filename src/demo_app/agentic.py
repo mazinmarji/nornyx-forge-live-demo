@@ -212,7 +212,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             governance_integrity=(
                 security_context.governance_integrity
                 if security_context is not None
-                else ()
+                else None
             ),
         )
         #: Whether the consequential stage has been entered on this flow. One

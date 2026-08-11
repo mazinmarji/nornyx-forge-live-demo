@@ -27,7 +27,11 @@ from pathlib import Path
 import yaml
 
 from .governed_subject import (
+    INTEGRITY_COMPROMISED,
+    INTEGRITY_INTACT,
+    INTEGRITY_UNAVAILABLE,
     SETTLED_SCHEMA,
+    GovernanceIntegrityState,
     GovernedSubjectError,
     SubjectEntry,
     SubjectScope,
@@ -202,7 +206,7 @@ def observe_contract_semantics_digest(contracts_dir: Path) -> str:
     return digest_of(contract_semantics(observe_contract_documents(contracts_dir)))
 
 
-def observe_governance_integrity(contracts_dir: Path) -> tuple[str, ...]:
+def observe_governance_integrity(contracts_dir: Path) -> GovernanceIntegrityState:
     """Every evidence digest a contract records, checked against the artifact.
 
     The inspection subject deliberately digests what the contracts SAY, so
@@ -223,8 +227,27 @@ def observe_governance_integrity(contracts_dir: Path) -> tuple[str, ...]:
     unreadable contract is a problem rather than a pass, because a runtime that
     cannot check its own governance state has not checked it.
     """
+    if not contracts_dir.is_dir():
+        return GovernanceIntegrityState(
+            status=INTEGRITY_UNAVAILABLE,
+            problems=(
+                f"{contracts_dir} is not a directory, so the governance evidence "
+                "this runtime would be judged under cannot be observed at all",
+            ),
+        )
+    contracts = sorted(contracts_dir.glob("*.nyx"))
+    if not contracts:
+        return GovernanceIntegrityState(
+            status=INTEGRITY_UNAVAILABLE,
+            problems=(
+                f"{contracts_dir} holds no contracts, so there is nothing to "
+                "check the derived governance state against",
+            ),
+        )
+
+    verified = 0
     problems: list[str] = []
-    for contract in sorted(contracts_dir.glob("*.nyx")):
+    for contract in contracts:
         try:
             document = yaml.safe_load(contract.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
@@ -248,8 +271,27 @@ def observe_governance_integrity(contracts_dir: Path) -> tuple[str, ...]:
                     f"digests to {actual}"
                 )
                 continue
+            verified += 1
             problems.extend(_status_contradictions(contract.name, artifact, record, location))
-    return tuple(problems)
+
+    if problems:
+        return GovernanceIntegrityState(
+            status=INTEGRITY_COMPROMISED,
+            verified_claims=verified,
+            problems=tuple(problems),
+        )
+    if not verified:
+        # Contracts exist but record no evidence digest at all. Nothing was
+        # checked, so nothing is known -- and "nothing known" must not be
+        # spelled the same way as "everything matched".
+        return GovernanceIntegrityState(
+            status=INTEGRITY_UNAVAILABLE,
+            problems=(
+                f"{contracts_dir} records no evidence digests, so the derived "
+                "governance state is unverifiable rather than sound",
+            ),
+        )
+    return GovernanceIntegrityState(status=INTEGRITY_INTACT, verified_claims=verified)
 
 
 def _status_contradictions(

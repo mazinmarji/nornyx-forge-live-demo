@@ -38,6 +38,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from nornyx_forge.governed_subject import (  # noqa: E402
+    INTEGRITY_COMPROMISED,
+    INTEGRITY_INTACT,
+    INTEGRITY_UNAVAILABLE,
+    GovernanceIntegrityState,
+)
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
     GOVERNANCE_INTEGRITY_COMPROMISED,
     ActionDescriptor,
@@ -53,7 +59,7 @@ DESCRIPTOR = ActionDescriptor(
 )
 
 
-def _release(tmp_path: Path, integrity: tuple[str, ...]):
+def _release(tmp_path: Path, integrity: GovernanceIntegrityState | None):
     """Drive the real boundary with a valid grant. Integrity is the only variable."""
     from signing import signed_grant  # noqa: PLC0415
     from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
@@ -80,14 +86,23 @@ def _release(tmp_path: Path, integrity: tuple[str, ...]):
 
 def test_an_intact_runtime_still_releases(tmp_path: Path):
     """The benign control. Without it every refusal below could be 'always refuses'."""
-    decision, calls, spent = _release(tmp_path, ())
+    decision, calls, spent = _release(
+        tmp_path, GovernanceIntegrityState(status=INTEGRITY_INTACT, verified_claims=8)
+    )
     assert decision.effect == "ALLOW", decision.reason
     assert len(calls) == 1
     assert spent is True
 
 
 def test_a_compromised_runtime_releases_nothing(tmp_path: Path):
-    decision, calls, spent = _release(tmp_path, ("architecture_governance.nyx records X",))
+    decision, calls, spent = _release(
+        tmp_path,
+        GovernanceIntegrityState(
+            status=INTEGRITY_COMPROMISED,
+            verified_claims=8,
+            problems=("architecture_governance.nyx records X",),
+        ),
+    )
 
     assert decision.effect == "DENY"
     assert decision.code == GOVERNANCE_INTEGRITY_COMPROMISED
@@ -102,7 +117,12 @@ def test_the_refusal_precedes_the_approval_being_spent(tmp_path: Path):
     If integrity were checked after consumption, an attacker could burn a
     victim's outstanding approval by tampering with an artifact.
     """
-    _decision, _calls, spent = _release(tmp_path, ("problem",))
+    _decision, _calls, spent = _release(
+        tmp_path,
+        GovernanceIntegrityState(
+            status=INTEGRITY_COMPROMISED, problems=("problem",)
+        ),
+    )
     assert spent is False
 
 
@@ -113,7 +133,11 @@ def test_the_refusal_precedes_the_approval_being_spent(tmp_path: Path):
 
 def test_the_real_repository_reports_intact_governance_integrity():
     """The benign control for the observer: it must not flag a healthy tree."""
-    assert observe_governance_integrity(ROOT / ".nornyx/contracts") == ()
+    state = observe_governance_integrity(ROOT / ".nornyx/contracts")
+    assert state.status == INTEGRITY_INTACT, state.problems
+    assert state.verified_claims > 0, (
+        "intact with nothing verified would mean the observer checked nothing"
+    )
 
 
 @pytest.mark.parametrize(
@@ -148,11 +172,12 @@ def test_a_tampered_derived_field_is_observed(
     original = target.read_bytes()
     try:
         target.write_bytes(original.replace(find, replace, 1))
-        problems = observe_governance_integrity(ROOT / ".nornyx/contracts")
+        state = observe_governance_integrity(ROOT / ".nornyx/contracts")
     finally:
         target.write_bytes(original)
 
-    assert problems, f"{label}: the tamper was not observed"
+    assert state.status == INTEGRITY_COMPROMISED, f"{label}: the tamper was not observed"
+    assert state.problems, f"{label}: compromised with no diagnostic"
     assert target.read_bytes() == original, "the test did not restore the contract"
 
 
@@ -178,3 +203,70 @@ def test_the_established_context_carries_integrity_to_the_boundary():
         security_context=context,
     )
     assert flow.boundary.governance_integrity is context.governance_integrity
+
+
+# --------------------------------------------------------------------------
+# "I could not look" is not "I looked and it is sound"
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "location"),
+    [
+        ("a missing contracts directory", "no/such/directory"),
+        ("a directory holding no contracts", "tests"),
+    ],
+)
+def test_an_unobservable_governance_surface_is_not_intact(
+    tmp_path: Path, label: str, location: str
+):
+    """The fail-open this state type exists to remove.
+
+    The first version returned a list of problems, so "nothing to check" and
+    "everything matched" were the same empty value. Measured then: a missing
+    contracts directory reported intact, which would have authorized a
+    consequential effect on a tree with no governance surface at all.
+    """
+    state = observe_governance_integrity(ROOT / location)
+    assert state.status == INTEGRITY_UNAVAILABLE, label
+    assert state.verified_claims == 0
+    assert state.problems, "unavailable must say why"
+    assert state.authorizes_consequential_action is False, label
+
+
+def test_an_unavailable_observation_denies_at_the_boundary(tmp_path: Path):
+    """Checked where authority is consumed, not only where it is observed."""
+    decision, calls, spent = _release(
+        tmp_path,
+        GovernanceIntegrityState(
+            status=INTEGRITY_UNAVAILABLE, problems=("could not observe",)
+        ),
+    )
+    assert decision.effect == "DENY"
+    assert decision.code == GOVERNANCE_INTEGRITY_COMPROMISED
+    assert calls == []
+    assert spent is False
+
+
+def test_no_established_observation_denies(tmp_path: Path):
+    """A boundary handed no observation must not treat that as permission."""
+    decision, calls, spent = _release(tmp_path, None)
+    assert decision.effect == "DENY"
+    assert calls == []
+    assert spent is False
+
+
+def test_the_state_refuses_to_be_constructed_dishonestly():
+    """The type will not hold a contradiction.
+
+    `intact` with problems, or a refusal with no reason, are both states a
+    caller could otherwise build and then act on.
+    """
+    from nornyx_forge.governed_subject import GovernedSubjectError
+
+    with pytest.raises(GovernedSubjectError):
+        GovernanceIntegrityState(status=INTEGRITY_INTACT, problems=("x",))
+    with pytest.raises(GovernedSubjectError):
+        GovernanceIntegrityState(status=INTEGRITY_COMPROMISED)
+    with pytest.raises(GovernedSubjectError):
+        GovernanceIntegrityState(status="probably_fine", problems=("x",))

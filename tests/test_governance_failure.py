@@ -13,7 +13,11 @@ from pathlib import Path
 import pytest
 from signing import LEDGER_ESTABLISHED  # noqa: E402
 
-from nornyx_forge.governed_subject import RuntimeSubject
+from nornyx_forge.governed_subject import (
+    INTEGRITY_INTACT,
+    GovernanceIntegrityState,
+    RuntimeSubject,
+)
 from nornyx_forge.nornyx_runtime import (
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
@@ -155,6 +159,14 @@ def _permissive_boundary(
     )
     boundary.authorizer = _PermissiveAuthorizer()
     boundary.context = object()
+    # Integrity is a prerequisite, not the property these tests are about. A
+    # boundary handed no observation refuses -- correctly, since "nobody looked"
+    # must not read as "sound" -- so a fixture that omitted this would exercise
+    # the integrity gate while claiming to test approval semantics, and every
+    # refusal below would pass for the wrong reason.
+    boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_INTACT, verified_claims=8
+    )
     boundary._imports = {
         "CapabilityRequest": lambda *a, **k: None,
         "ZoneCrossingRequest": lambda *a, **k: None,

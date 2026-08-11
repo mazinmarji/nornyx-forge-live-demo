@@ -621,3 +621,60 @@ def inspection_subject_digest(
             "pre_inspection_evidence_manifest_digest": evidence_digest,
         }
     )
+
+
+#: The three answers an integrity observation can give. Three, not two: "I could
+#: not look" is a different fact from "I looked and it is sound", and collapsing
+#: them is how an absent governance surface came to read as intact.
+INTEGRITY_INTACT = "intact"
+INTEGRITY_COMPROMISED = "compromised"
+INTEGRITY_UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class GovernanceIntegrityState:
+    """Whether the derived governance state matches what produced it.
+
+    Derived governance values -- an evidence record's `status`, a recorded
+    `content_hash` -- sit outside the inspection subject, because binding an
+    inspection to values the tooling rewrites made authenticated inspection
+    unreachable. The exclusion is admissible only while compromising those
+    values withdraws every authority depending on them, so this is the state a
+    consequential decision consults.
+
+    `verified_claims` is carried deliberately. A result reporting no problems
+    could mean every claim was checked and matched, or that nothing was checked
+    at all, and those must not be the same value. A count of zero with status
+    `intact` is refused at construction rather than left for a caller to notice.
+    """
+
+    status: str
+    verified_claims: int = 0
+    problems: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status not in {
+            INTEGRITY_INTACT,
+            INTEGRITY_COMPROMISED,
+            INTEGRITY_UNAVAILABLE,
+        }:
+            raise GovernedSubjectError(
+                f"unknown governance integrity status {self.status!r}"
+            )
+        if self.status == INTEGRITY_INTACT and self.problems:
+            raise GovernedSubjectError("intact integrity cannot carry problems")
+        if self.status != INTEGRITY_INTACT and not self.problems:
+            raise GovernedSubjectError(
+                f"{self.status} integrity must say why; a refusal with no reason "
+                "cannot be acted on"
+            )
+
+    @property
+    def authorizes_consequential_action(self) -> bool:
+        """Only `intact` does.
+
+        Written as an allow-list of one rather than `status != compromised`:
+        that spelling let `unavailable` through, which is the fail-open this
+        type exists to remove.
+        """
+        return self.status == INTEGRITY_INTACT

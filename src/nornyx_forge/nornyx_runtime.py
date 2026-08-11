@@ -19,7 +19,11 @@ from .approval_trust import (
     canonical_grant_payload,
     verify_signed_approval,
 )
-from .governed_subject import RuntimeSubject, TrustConfiguration
+from .governed_subject import (
+    GovernanceIntegrityState,
+    RuntimeSubject,
+    TrustConfiguration,
+)
 from .util import write_json
 
 RUNTIME_CONTRACT = ".nornyx/contracts/runtime_network.nyx"
@@ -1139,7 +1143,7 @@ class NornyxActionBoundary:
         allow_fallback: bool = True,
         runtime_context: RuntimeContext | None = None,
         runtime_subject: RuntimeSubject | None = None,
-        governance_integrity: tuple[str, ...] = (),
+        governance_integrity: GovernanceIntegrityState | None = None,
         approver_trust_store: ApprovalTrustStore | None = None,
         trust: TrustConfiguration | None = None,
     ) -> None:
@@ -1151,7 +1155,7 @@ class NornyxActionBoundary:
         #: Injected, never observed here. The domain does not reach a
         #: filesystem to decide its own trustworthiness; the application
         #: establishes this alongside the subject and hands both down.
-        self.governance_integrity = tuple(governance_integrity)
+        self.governance_integrity = governance_integrity
         # Trusted by default, and the only alternative is RuntimeContext.for_test,
         # which a caller must name at the construction site. There is no ambient
         # route to either value.
@@ -1332,14 +1336,19 @@ class NornyxActionBoundary:
             # Asked before the request is built, so no grant is spent finding
             # out, and before the authorizer is consulted, because a compromised
             # contract is what the authorizer would be reading.
-            if self.governance_integrity:
+            integrity = self.governance_integrity
+            if integrity is None or not integrity.authorizes_consequential_action:
                 return RuntimeDecision(
                     effect="DENY",
                     code=GOVERNANCE_INTEGRITY_COMPROMISED,
                     reason=(
                         "the governance evidence this runtime would be judged "
                         "under does not match what the contracts record: "
-                        + "; ".join(self.governance_integrity[:3])
+                        + (
+                            "; ".join(integrity.problems[:3])
+                            if integrity is not None
+                            else "no integrity observation was established"
+                        )
                         + ". Consequential authority is unavailable until the "
                         "evidence set is regenerated and re-approved."
                     ),
