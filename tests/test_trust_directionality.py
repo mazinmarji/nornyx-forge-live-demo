@@ -196,6 +196,13 @@ def test_a_forged_index_cannot_alter_a_real_approval(tmp_path: Path):
     """With a genuine artifact present, the index still decides nothing."""
     work = _workspace(tmp_path)
     _approval(work, ARCHITECTURE_APPROVAL)
+    # What the CANONICAL artifact actually says, read from the artifact rather
+    # than restated as a literal. The governance window is resolved against the
+    # real clock now, so a hardcoded date here would assert the fixture's
+    # calendar instead of the property: that the index cannot overwrite it.
+    canonical = json.loads(
+        (work / CONTRACTS / "evidence" / ARCHITECTURE_APPROVAL).read_text(encoding="utf-8")
+    )
     assert _run(work, REFRESH, "--as-of", "2026-08-02T00:00:00Z").returncode == 0
 
     index = _index(work)
@@ -216,8 +223,10 @@ def test_a_forged_index_cannot_alter_a_real_approval(tmp_path: Path):
     assert record["producer"]["id"] == "human.test_fixture:architecture_reviewer" or (
         "attacker" not in record["producer"]["id"]
     )
-    assert record["expires_at"] == "2026-08-05T00:00:00Z"
-    assert record["generated_at"] == "2026-08-02T00:00:00Z"
+    assert record["expires_at"] == canonical["expires_at"]
+    assert record["generated_at"] == canonical["generated_at"]
+    assert record["expires_at"] != "2099-01-01T00:00:00Z", "the forged index won"
+    assert record["generated_at"] != "1999-01-01T00:00:00Z", "the forged index won"
     assert record["subject_revision"] == _head(work)
 
 

@@ -211,14 +211,14 @@ def test_the_established_context_carries_integrity_to_the_boundary():
 
 
 @pytest.mark.parametrize(
-    ("label", "location"),
+    ("label", "location", "because"),
     [
-        ("a missing contracts directory", "no/such/directory"),
-        ("a directory holding no contracts", "tests"),
+        ("a missing contracts directory", "no/such/directory", "is not a directory"),
+        ("a directory holding no contracts", "tests", "holds no contracts"),
     ],
 )
 def test_an_unobservable_governance_surface_is_not_intact(
-    tmp_path: Path, label: str, location: str
+    tmp_path: Path, label: str, location: str, because: str
 ):
     """The fail-open this state type exists to remove.
 
@@ -230,8 +230,15 @@ def test_an_unobservable_governance_surface_is_not_intact(
     state = observe_governance_integrity(ROOT / location)
     assert state.status == INTEGRITY_UNAVAILABLE, label
     assert state.verified_claims == 0
-    assert state.problems, "unavailable must say why"
     assert state.authorizes_consequential_action is False, label
+    # The DISTINGUISHING diagnostic, not merely "unavailable". The two branches
+    # cover each other otherwise -- delete the directory check and the empty-glob
+    # check still returns unavailable, so a mutation removing either survived a
+    # test that asked only for the status. An operator also needs to know which
+    # of the two happened: one is a deployment error, the other an empty tree.
+    assert any(because in problem for problem in state.problems), (
+        f"{label}: refused, but not because it {because}: {state.problems}"
+    )
 
 
 def test_an_unavailable_observation_denies_at_the_boundary(tmp_path: Path):
