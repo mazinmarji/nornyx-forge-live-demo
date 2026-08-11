@@ -1430,6 +1430,179 @@ def _sha256(path: Path) -> str | None:
         return None
 
 
+#: Every field of `review_binding.json`, classified exactly once.
+#:
+#: THE PROPERTY: `integrity_state: intact` means every integrity-bearing claim
+#: the binding records has been RECOMPUTED from its authoritative source and
+#: matched. Not "the two digests we happened to compare still match".
+#:
+#: The binding records 22 fields. `verify()` compared two. An independent review
+#: edited `required_evidence` in a governance contract -- removing the
+#: conformance report and the independent review record from what a future human
+#: approval must be accompanied by -- and `--verify` printed `status: pass`,
+#: `integrity_state: intact`, `problems: []`, exit 0. `contract_set_digest` was
+#: sitting in the binding the whole time, recording the value that would have
+#: caught it.
+#:
+#: A digest that is written and never verified is not evidence. It is decoration
+#: that reads as evidence, which is worse than its absence.
+#:
+#: Classification is exhaustive and mutually exclusive, so a new field cannot be
+#: added without deciding which kind it is -- `test_every_binding_field_is_
+#: classified` fails otherwise.
+INTEGRITY_BEARING_FIELDS = {
+    "governed_input_digest": "the authored content the evidence set describes",
+    "contract_set_digest": "the settled .nyx contracts the evidence set covers",
+    "evidence_manifest_digest": "the evidence artifacts the binding claims to cover",
+    "inspection_subject_digest": "what an inspection of this tree would be reviewing",
+    "control_pack_digest": "the composed identity of inputs, contracts and evidence",
+    "digests.runtime_contract": "the runtime network contract",
+    "digests.architecture_contract": "the architecture governance contract",
+    "digests.forge_control_contract": "the forge control contract",
+    "digests.evidence_index": "the generated evidence index",
+    "digests.evidence_manifest": "the evidence manifest artifact",
+    "digests.independent_review_record": "the independent review record artifact",
+}
+
+#: Derived from artifacts that are themselves integrity-bearing, and reported for
+#: a human reader. Forging one changes no authorization: the assurance
+#: derivation recomputes independence from authenticated attestations, and the
+#: approval path recomputes from the canonical signed artifact.
+DERIVED_REPORTING_FIELDS = {
+    "schema",
+    "note",
+    "production_approval",
+    "approvals.human_review",
+    "approvals.records",
+    "independent_review.artifact",
+    "independent_review.embedded",
+    "independent_review.status",
+}
+
+#: True of the moment the binding was written, and not a claim about content.
+#: `source_commit` is provenance only -- git reaches no decision -- and
+#: `subject_revision` is the content digest already covered above.
+PROVENANCE_FIELDS = {"generated_at", "source_commit", "subject_revision"}
+
+
+def _binding_claim(binding: dict, field: str):
+    """Read a dotted field from the binding, or None when absent."""
+    node: object = binding
+    for part in field.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def recompute_binding_claims() -> dict[str, str]:
+    """Recompute every integrity-bearing claim from its authoritative source.
+
+    Each value here is derived from artifacts on disk, never read back from the
+    binding. That direction is the whole point: authoritative artifacts produce
+    digests, the binding records them, and verification recomputes from the
+    artifacts again. Reading a claim to check a claim proves only that a file is
+    self-consistent.
+
+    `evidence_manifest_digest` excludes `review_binding.json` itself, exactly as
+    the writer does -- a binding cannot honestly digest the bytes it is about to
+    become.
+    """
+    contracts = ROOT / ".nornyx/contracts"
+    input_digest = governed_input_digest()
+    evidence_digest = digest_of(
+        evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",))
+    )
+    contract_digest = contract_set_digest(contracts)
+
+    claims = {
+        "governed_input_digest": input_digest,
+        "contract_set_digest": contract_digest,
+        "evidence_manifest_digest": evidence_digest,
+        "inspection_subject_digest": current_inspection_subject(),
+        "control_pack_digest": control_pack_digest(
+            input_digest=input_digest,
+            contract_digest=contract_digest,
+            evidence_digest=evidence_digest,
+        ),
+    }
+    for field, relative in (
+        ("digests.runtime_contract", ".nornyx/contracts/runtime_network.nyx"),
+        ("digests.architecture_contract", ".nornyx/contracts/architecture_governance.nyx"),
+        ("digests.forge_control_contract", ".nornyx/contracts/forge_control.nyx"),
+        ("digests.evidence_index", ".nornyx/contracts/evidence/INDEX.json"),
+        (
+            "digests.evidence_manifest",
+            ".nornyx/contracts/evidence/architecture_evidence_manifest.json",
+        ),
+        (
+            "digests.independent_review_record",
+            ".nornyx/contracts/evidence/architecture_independent_review.json",
+        ),
+    ):
+        location = ROOT / relative
+        claims[field] = (
+            "sha256:" + hashlib.sha256(location.read_bytes()).hexdigest()
+            if location.exists()
+            else "<absent>"
+        )
+    return claims
+
+
+def verify_review_binding(binding: dict) -> list[str]:
+    """Every integrity-bearing claim, recomputed and compared.
+
+    Returns a problem per mismatch, each naming the field, what the binding
+    claims, what the tree actually digests to, and what that field is about --
+    so a reader knows which artifact drifted rather than only that something did.
+    """
+    problems: list[str] = []
+    actual = recompute_binding_claims()
+
+    # Derived fields are recomputed too, from the derivation that produces them.
+    # Classifying a field as "derived" is a claim that forging it changes no
+    # authorization -- and a claim has to be PROVEN, not asserted by putting the
+    # name in the other set. An independent review would otherwise find
+    # `production_approval: granted` written into the binding by hand while
+    # --verify called the evidence set intact.
+    #
+    # _approval_state() reads only authenticated canonical approvals, so it is
+    # the authority for both of these. There is no recursion: it derives from
+    # signed artifacts, never from the binding.
+    approvals = _approval_state()
+    for field, derived in (
+        ("approvals.human_review", approvals["human_review"]),
+        (
+            "production_approval",
+            "granted" if approvals["human_review"] == "performed" else "not_granted",
+        ),
+    ):
+        claimed = _binding_claim(binding, field)
+        if claimed != derived:
+            problems.append(
+                f"review_binding claims {field} is {claimed!r}, but the "
+                f"authenticated approval set derives {derived!r}. A derived "
+                "field that disagrees with its derivation is an assertion, not "
+                "a report."
+            )
+
+    for field, describes in sorted(INTEGRITY_BEARING_FIELDS.items()):
+        claimed = _binding_claim(binding, field)
+        if claimed is None:
+            problems.append(
+                f"review_binding records no {field}, so {describes} is covered by "
+                "nothing. A binding that omits a claim cannot be verified against it."
+            )
+            continue
+        if claimed != actual[field]:
+            problems.append(
+                f"review_binding claims {field} is {claimed}, but {describes} "
+                f"digests to {actual[field]}. The evidence set describes content "
+                "that is not what is here."
+            )
+    return problems
+
+
 def emit_review_binding() -> dict:
     """Record exactly which artifacts a human approval would be approving.
 
@@ -1723,6 +1896,15 @@ def derive_assurance_state() -> dict:
                 f"{binding.get('governed_input_digest')} but the tree digests "
                 f"to {observed}"
             )
+
+        # Every integrity-bearing claim, not the two that were convenient. The
+        # binding records eleven; two were compared, and a governance contract
+        # tamper passed as intact while contract_set_digest sat in the file
+        # recording the value that would have caught it.
+        binding_problems = verify_review_binding(binding)
+        if binding_problems:
+            state["evidence_manifest_match"] = False
+            state["problems"].extend(binding_problems)
 
     # Independence and completeness, recomputed rather than read.
     #
