@@ -1396,8 +1396,29 @@ def _unstaged_governed_paths() -> list[str]:
     excluded = _digest_scope.EXCLUDED_PREFIXES
     try:
         changed = _git_lines("diff", "--name-only", "--", *roots)
-    except Exception:  # pragma: no cover - a git failure is reported elsewhere
-        return []
+    except OSError as exc:
+        # Being unable to ASK is not the same as being told everything is fine.
+        #
+        # This was `except Exception: return []`, with a comment claiming a git
+        # failure is reported elsewhere. `_git_lines` does raise SystemExit on a
+        # non-zero exit, and SystemExit is not an Exception, so that path was
+        # genuinely fail-closed. What the handler actually caught was git being
+        # unreachable -- no binary on PATH -- and it answered "no unstaged
+        # paths", which reads as a clean governed tree.
+        #
+        # Measured: with `git` raising FileNotFoundError, this returned `[]` and
+        # the dirty-tree gate reported the tree clean, so an approval could be
+        # honoured over content nobody could prove was unchanged.
+        #
+        # The fourth instance of one class in this repository: required evidence
+        # being absent read as successful empty verification. Absence is its own
+        # state, so this refuses in the same vocabulary `_git_lines` already
+        # uses rather than inventing a second one.
+        raise SystemExit(
+            f"git could not be run ({exc}). A clean governed tree cannot be "
+            "proven, so nothing was modified. Install git or run where it is "
+            "available; an unprovable tree is not a clean one."
+        ) from exc
     return sorted(
         path
         for path in (name.replace("\\", "/").strip() for name in changed)

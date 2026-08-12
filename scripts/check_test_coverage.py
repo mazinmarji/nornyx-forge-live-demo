@@ -139,6 +139,10 @@ REQUIRED_MODULES = (
     # Deleting an expected member of an authority collection must become
     # visible. Six collections answered correctly and one did not.
     "tests/test_collection_completeness.py",
+    # The class behind four separate defects, written down as a control:
+    # required evidence being absent is not a successful empty
+    # verification.
+    "tests/test_absence_is_not_success.py",
 )
 
 
