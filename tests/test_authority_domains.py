@@ -133,11 +133,57 @@ def test_a_governance_role_cannot_release_a_consequential_effect(tmp_path: Path)
     assert "architecture_reviewer" in GOVERNANCE_APPROVER_ROLES
     assert "architecture_reviewer" not in ACTION_APPROVER_ROLES
 
+    # PREREQUISITES, so the refusal can only be the authority clause:
+    #   signature ✓  trust ✓  identity ✓  subject ✓  time ✓
+    # The authenticator accepting this artifact is what makes the test
+    # meaningful -- if it refused earlier, the boundary result would prove
+    # nothing about authority.
+    from signing import signed_grant, trust_store  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION  # noqa: PLC0415
+
+    prerequisite = canonical_action_request(
+        mission_id="CASE-PREREQ", risk="high",
+        subject_revision=TEST_REVISION, descriptor=DESCRIPTOR, attempt=1,
+    )
+    authentic, why, _evidence = verify_signed_approval(
+        signed_grant(prerequisite, approval_id="ACT-PRE", role="architecture_reviewer"),
+        trust_store=trust_store(),
+    )
+    assert authentic is True, f"the artifact failed an EARLIER clause: {why}"
+
     decision, calls, spent = _release(tmp_path, "architecture_reviewer")
 
     assert decision.effect == "DENY"
+    # The exact clause. A boolean-only assertion passed for a broken signature
+    # once already in this very file, so the reason is pinned.
+    assert "may not release a high-risk effect" in decision.reason, (
+        f"refused, but not on the authority clause: {decision.reason}"
+    )
+    assert "architecture_reviewer" in decision.reason
     assert calls == [], "a governance-only role released a consequential effect"
     assert spent is False, "the grant was consumed by a run that must not start"
+
+
+def test_a_governance_role_is_authoritative_in_the_governance_domain():
+    """The positive half, without which the matrix is only "one side denied".
+
+    Every governance prerequisite is satisfied deliberately -- signature,
+    trusted key, human subject type, matching identity, authorized role,
+    subject binding, and a live temporal window -- so this asserts ACCEPTANCE
+    rather than the absence of one particular refusal.
+    """
+    ok, reason, evidence = verify_signed_governance_approval(
+        _governance_approval("architecture_reviewer"),
+        trust_store=trust_store(roles=("architecture_reviewer",)),
+        as_of=AS_OF,
+    )
+    assert ok is True, reason
+    assert evidence["signature_verified"] is True
+    assert evidence["identity_verified"] is True
+    assert evidence["subject_type_verified"] is True
+    assert evidence["role_verified"] is True
+    assert evidence["validity_verified"] is True
+    assert evidence["approver_role"] == "architecture_reviewer"
 
 
 def test_an_action_role_cannot_approve_governed_content():
@@ -145,13 +191,20 @@ def test_an_action_role_cannot_approve_governed_content():
     assert "operations_owner" in ACTION_APPROVER_ROLES
     assert "operations_owner" not in GOVERNANCE_APPROVER_ROLES
 
-    ok, reason, _evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_signed_governance_approval(
         _governance_approval("operations_owner"),
         trust_store=trust_store(roles=("operations_owner",)),
         as_of=AS_OF,
     )
     assert ok is False
-    assert "APPROVER_ROLE_UNAUTHORIZED" in reason
+    # PREREQUISITES reached, then the role clause failed -- proven by the
+    # evidence flags rather than asserted in prose.
+    assert evidence["signature_verified"] is True, "refused before the signature check"
+    assert evidence["identity_verified"] is True, "refused before the identity check"
+    assert evidence["subject_type_verified"] is True
+    assert evidence.get("role_verified") is not True
+    assert "APPROVER_ROLE_UNAUTHORIZED" in reason, reason
+    assert "operations_owner" in reason
 
 
 def test_an_action_role_does_release_with_an_otherwise_valid_grant(tmp_path: Path):
@@ -197,13 +250,24 @@ def test_cryptographic_authentication_is_not_authority_authorization():
 
 
 def test_no_authority_consumer_calls_the_generic_authenticator_alone():
-    """Structural: authentication alone must never gate a consequential effect.
+    """Symbol presence only. NOT a bypass detector -- measured, not assumed.
 
-    The property currently rests on the boundary composing
-    `verify_signed_approval` with `validate_action_approval`. A future caller
-    that used only the first would authenticate a governance principal into an
-    action release, and no behavioural test would notice because the boundary
-    still behaves.
+    This catches the crude case: a function that authenticates a grant and never
+    mentions the validator at all. It does NOT catch a real authority bypass,
+    and two mutations proved that:
+
+        call the validator, discard its result   -> guard PASSES, boundary test kills
+        validate on a branch that never runs     -> guard PASSES, boundary test kills
+
+    Both were caught by `test_a_governance_role_cannot_release_a_consequential
+    _effect`, which drives the actual boundary. So the real protection is
+    behavioural, and this is a cheap tripwire for the obvious shape.
+
+    Recorded plainly because a structural test that looks like it proves
+    composition, while only proving two names appear in one function, is the
+    kind of decoration this programme keeps finding. Step 2 replaces it with
+    authority-specific APIs, where the primitive cannot be mistaken for a grant
+    because it does not return one.
     """
     import ast  # noqa: PLC0415
 
@@ -240,7 +304,12 @@ def test_no_authority_consumer_calls_the_generic_authenticator_alone():
         "signal to convert it into a permanent directionality assertion rather "
         "than to delete it."
     ),
-    strict=False,
+    # STRICT. A non-strict xfail turns into a silent xpass the moment the
+    # refactor lands, and a migration alarm nobody hears is not an alarm. With
+    # strict=True the run FAILS when the characterized defect stops holding,
+    # which is the signal to convert this into a permanent directionality
+    # assertion rather than to delete it.
+    strict=True,
 )
 def test_one_provisioning_should_not_grant_both_authorities(tmp_path: Path):
     """Today a single provisioning spans both domains. It should not.
