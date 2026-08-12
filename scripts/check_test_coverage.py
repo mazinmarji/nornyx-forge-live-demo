@@ -80,7 +80,7 @@ NEWLINE = chr(10)
 #: Kept just below the real count rather than equal to it, so ordinary
 #: consolidation does not fail the gate while a deletion of any consequence
 #: does. It is meant to be raised when the suite grows.
-MINIMUM_COLLECTED = 630
+MINIMUM_COLLECTED = 660
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -136,6 +136,9 @@ REQUIRED_MODULES = (
     # Every artifact that can influence a decision declares what kind of
     # authority it carries, and each class proves its claim behaviourally.
     "tests/test_artifact_authority.py",
+    # Deleting an expected member of an authority collection must become
+    # visible. Six collections answered correctly and one did not.
+    "tests/test_collection_completeness.py",
 )
 
 
