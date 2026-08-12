@@ -70,6 +70,18 @@ class RuntimeSecurityContext:
     #: or an upgraded status changed the Nornyx verdict, left the subject
     #: untouched, and the boundary released the effect anyway.
     governance_integrity: GovernanceIntegrityState | None = None
+    #: The trusted approvers, PARSED AND FROZEN at bootstrap.
+    #:
+    #: `trust` carries locations, and a location is not authority. The
+    #: boundary reopened the approver store on every construction -- which is
+    #: per request -- so editing the file between two calls changed who the
+    #: second one trusted. Measured: one context served request 1 with
+    #: signer `test-approval-01` and request 2 with `attacker-key`, having
+    #: been handed nothing new.
+    #:
+    #: Held as an object rather than re-derived, so a request cannot reach
+    #: the filesystem to decide who may approve it.
+    approver_trust: object | None = None
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -123,7 +135,28 @@ def bootstrap_security_context(
         authority_config=authority_config,
         trust=resolve_trust_configuration(resolved),
         governance_integrity=observe_governance_integrity(resolved / ".nornyx/contracts"),
+        approver_trust=_load_approver_trust(resolved),
     )
+
+
+
+def _load_approver_trust(root: Path) -> object:
+    """Parse the approver trust store once, here, at startup.
+
+    An unparseable store is held as a refusal rather than raised: the
+    application may start and serve read-only work while consequential approval
+    authority is simply unavailable, which is the same distinction the subject
+    makes. What must not happen is starting up as though no store were
+    configured, because "nobody is trusted" and "the trust material is broken"
+    authorize the same amount but mean different things to an operator.
+    """
+    from .approval_trust import ApprovalTrustStore, TrustStoreUnavailable
+
+    _ = root  # the store lives outside the governed tree, by design
+    try:
+        return ApprovalTrustStore.load()
+    except TrustStoreUnavailable as exc:
+        return ApprovalTrustStore(source=str(exc))
 
 
 def unrooted_trust_configuration() -> TrustConfiguration:

@@ -1144,6 +1144,7 @@ class NornyxActionBoundary:
         runtime_context: RuntimeContext | None = None,
         runtime_subject: RuntimeSubject | None = None,
         governance_integrity: GovernanceIntegrityState | None = None,
+        frozen_approver_trust: ApprovalTrustStore | None = None,
         approver_trust_store: ApprovalTrustStore | None = None,
         trust: TrustConfiguration | None = None,
     ) -> None:
@@ -1175,6 +1176,12 @@ class NornyxActionBoundary:
         self.trust = trust
         if approver_trust_store is not None:
             self.approver_trust_store = approver_trust_store
+        elif frozen_approver_trust is not None:
+            # The store the application parsed at startup. Preferred over the
+            # path because a location is not authority: reopening the file per
+            # boundary meant an edit between two requests changed who the second
+            # one trusted, with the same context serving both.
+            self.approver_trust_store = frozen_approver_trust
         else:
             try:
                 self.approver_trust_store = ApprovalTrustStore.load(

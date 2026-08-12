@@ -143,6 +143,9 @@ REQUIRED_MODULES = (
     # required evidence being absent is not a successful empty
     # verification.
     "tests/test_absence_is_not_success.py",
+    # Trust is parsed and frozen at bootstrap; a running context cannot be
+    # re-aimed by editing the file it was built from.
+    "tests/test_trust_snapshot.py",
 )
 
 

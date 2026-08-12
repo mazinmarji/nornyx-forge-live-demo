@@ -214,6 +214,14 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 if security_context is not None
                 else None
             ),
+            # The store parsed at startup, not its path. Reopening the file
+            # per boundary meant an edit between two requests changed who
+            # the second one trusted.
+            frozen_approver_trust=(
+                security_context.approver_trust
+                if security_context is not None
+                else None
+            ),
         )
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.
