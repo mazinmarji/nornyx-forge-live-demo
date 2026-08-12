@@ -28,6 +28,16 @@ from signing import live_window  # noqa: E402
 
 #: Validity is a PREREQUISITE for these fixtures, not the property.
 _WINDOW = live_window()
+
+#: Two DISTINCT expiries, both temporally valid against the live clock.
+#:
+#: These were 2026-08-05 and 2026-08-04 -- fixed dates that are now earlier than
+#: the live `generated_at`, so the approvals were refused for an inverted window
+#: before conflict detection was ever reached, and the test asserted a
+#: diagnostic it could not get to. The property under test is that two canonical
+#: sources disagreeing about the window are refused, so each one has to be
+#: individually valid first.
+_CONFLICT_A, _CONFLICT_B = live_window(days=3)[1], live_window(days=4)[1]
 CONTRACTS = Path(".nornyx/contracts")
 REFRESH = "scripts/refresh_governance_evidence.py"
 CANONICAL = "runtime_human_approval.json"
@@ -186,8 +196,8 @@ def test_a_wildcard_matching_file_has_no_authority(filename: str, tmp_path: Path
 def test_conflicting_canonical_expiries_are_refused(tmp_path: Path):
     """Two approvals over one subject must agree, or neither is honored."""
     work = _workspace(tmp_path)
-    _approval(work, filename="runtime_human_approval.json", expires_at="2026-08-05T00:00:00Z")
-    _approval(work, filename="architecture_human_approval.json", expires_at="2026-08-04T00:00:00Z")
+    _approval(work, filename="runtime_human_approval.json", expires_at=_CONFLICT_A)
+    _approval(work, filename="architecture_human_approval.json", expires_at=_CONFLICT_B)
     before = _contracts_digest(work)
 
     completed = _run(work, REFRESH, "--materialize-approval-window")
@@ -226,7 +236,11 @@ def test_a_legitimate_window_still_materializes(tmp_path: Path):
             (work / CONTRACTS / name).read_text(encoding="utf-8")
         )["approvals"]
         for declaration in declarations:
-            assert str(declaration["expires_at"]).startswith("2026-08-05")
+            # The SIGNED value, not a literal. Materialization must carry the
+            # authenticated window through unchanged -- neither normalised nor
+            # silently extended into a different interval -- so the assertion
+            # compares against what the approval actually says.
+            assert declaration["expires_at"] == _WINDOW[1], declaration
 
 
 @needs_nornyx

@@ -25,17 +25,65 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import governed_content as _digest_scope  # noqa: E402
-from governed_content import (  # noqa: E402
-    GovernedContentError,
-    contract_semantics_digest,
-    contract_set_digest,
-    control_pack_digest,
-    digest_of,
-    evidence_manifest,
-    governed_input_digest,
-    inspection_subject_digest,
-)
+
+def _refuse_missing_governed_module(exc: ModuleNotFoundError) -> None:
+    """Report a missing governed dependency as a governance finding.
+
+    Removing a governed module is a legitimate state to DESCRIBE, and an
+    unhandled ModuleNotFoundError describes nothing: an operator learns that
+    Python could not import something, not that governed content is absent.
+    Measured -- deleting `src/nornyx_forge/util.py` produced a traceback, while
+    deleting a governed module this tool does NOT import moved the input digest
+    and was reported properly.
+
+    This is not the integrity question, and it must not be mistaken for one.
+    Deletion is already visible: the digest covers the enumerated set, so a
+    removed member changes it and the evidence goes stale. What was missing is a
+    legible refusal when the removed file happens to be one this tool runs on.
+
+    Deliberately narrow. Only a module under the governed source packages is
+    translated; anything else is a real environment fault and keeps its
+    traceback rather than being dressed up as a governance finding.
+    """
+    if (exc.name or "").split(".")[0] not in {"governed_content", "nornyx_forge"}:
+        raise exc
+    print(
+        json.dumps(
+            {
+                "schema": "nornyx.forge.evidence_verification.v1",
+                "status": "fail",
+                "verification": {
+                    "integrity_state": "unavailable",
+                    "assurance_state": "not_independently_inspected",
+                    "governed_input_match": False,
+                    "problems": [
+                        "governed content is missing: this tool depends on "
+                        f"{exc.name!r}, which is not present in the tree. The "
+                        "evidence cannot describe content that is not here."
+                    ],
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    raise SystemExit(2) from exc
+
+
+try:
+    import governed_content as _digest_scope  # noqa: E402
+    from governed_content import (  # noqa: E402
+        GovernedContentError,
+        contract_semantics_digest,
+        contract_set_digest,
+        control_pack_digest,
+        digest_of,
+        evidence_manifest,
+        governed_input_digest,
+        inspection_subject_digest,
+    )
+except ModuleNotFoundError as exc:
+    _refuse_missing_governed_module(exc)
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_DIR = ROOT / ".nornyx/contracts/evidence"
@@ -341,10 +389,13 @@ INSPECTION_ATTESTATION = "architecture_inspection_attestation.json"
 #: Inspector roles that must all have reported before a verdict can be `pass`.
 #: Imported rather than restated. Two copies of "which lenses are required" can
 #: drift, and the direction that drifts silently is the one that shrinks.
-from nornyx_forge.nornyx_runtime import runtime_as_of  # noqa: E402
-from nornyx_forge.reviewer_trust import (  # noqa: E402
-    REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,
-)
+try:
+    from nornyx_forge.nornyx_runtime import runtime_as_of  # noqa: E402
+    from nornyx_forge.reviewer_trust import (  # noqa: E402
+        REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,
+    )
+except ModuleNotFoundError as exc:
+    _refuse_missing_governed_module(exc)
 
 _REQUIRED_ATTESTATION_FIELDS = (
     "producer",
