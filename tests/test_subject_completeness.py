@@ -103,7 +103,11 @@ MUTATIONS = [
 
 @pytest.fixture(scope="module")
 def baseline():
-    return _subject(), {ARCH: _verdict(ARCH), RUNTIME: _verdict(RUNTIME)}
+    return (
+        _subject(),
+        {ARCH: _verdict(ARCH), RUNTIME: _verdict(RUNTIME)},
+        {name: (ROOT / name).read_bytes() for name in (ARCH, RUNTIME)},
+    )
 
 
 @needs_nornyx
@@ -120,7 +124,7 @@ def test_a_decision_changing_mutation_is_always_caught(
     Mutates the real tree and restores it from the original bytes, because a
     copied tree could not reproduce Nornyx's own evaluation.
     """
-    base_subject, base_verdicts = baseline
+    base_subject, base_verdicts, _bytes = baseline
     target = ROOT / relative
     original = target.read_bytes()
     text = original.decode("utf-8")
@@ -149,15 +153,19 @@ def test_a_decision_changing_mutation_is_always_caught(
 
 @needs_nornyx
 def test_the_tree_is_restored_after_the_matrix(baseline):
-    """The matrix mutates the real repository, so it must leave no trace."""
-    completed = subprocess.run(
-        ["git", "-C", str(ROOT), "status", "--porcelain", ARCH, RUNTIME],
-        capture_output=True, text=True,
-    )
-    assert completed.stdout.strip() == "", (
-        f"the completeness matrix left the contracts modified: {completed.stdout}"
-    )
-    assert _subject() == baseline[0], "the subject did not return to its baseline"
+    """The matrix mutates the real repository, so it must leave no trace.
+
+    Compared against the bytes captured when this module started, not against
+    `git status`. Git cleanliness is a claim about the whole working tree and
+    would fail on an unrelated uncommitted change -- reporting that the matrix
+    leaked when it had not, which is a false accusation in either direction.
+    """
+    _base_subject, _base_verdicts, original = baseline
+    for name, blob in original.items():
+        assert (ROOT / name).read_bytes() == blob, (
+            f"the completeness matrix left {name} modified"
+        )
+    assert _subject() == _base_subject, "the subject did not return to its baseline"
 
 
 @pytest.mark.parametrize(
