@@ -146,6 +146,9 @@ REQUIRED_MODULES = (
     # Trust is parsed and frozen at bootstrap; a running context cannot be
     # re-aimed by editing the file it was built from.
     "tests/test_trust_snapshot.py",
+    # Authentication proves who signed; authorization proves what they may
+    # do. The directionality matrix keeps those separate.
+    "tests/test_authority_domains.py",
 )
 
 
