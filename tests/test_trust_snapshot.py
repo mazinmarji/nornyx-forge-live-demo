@@ -267,3 +267,94 @@ def test_a_broken_store_at_bootstrap_says_why(tmp_path: Path, monkeypatch):
         "operator cannot tell a damaged file from an unprovisioned one"
     )
     assert "broken.json" in store.source or "json" in store.source.lower()
+
+
+# --------------------------------------------------------------------------
+# The other trust domains, and where each is actually consumed
+# --------------------------------------------------------------------------
+#
+# Task 4 asks that every runtime trust domain follow the bootstrap model. That
+# is answerable only after establishing which domains HAVE a runtime consumer,
+# and the answer is not symmetrical:
+#
+#   action-approval trust   consumed by the action boundary, per request
+#                           -> must be frozen, and is
+#   reviewer trust          consumed by the assurance derivation in the CLI
+#                           tooling, once per invocation
+#                           -> each invocation is its own bootstrap
+#
+# Measured rather than assumed: `ReviewerTrustStore.load` is called exactly once
+# per `derive_assurance_state()`, and nothing under `src/` consumes reviewer
+# trust at all. Freezing it into `RuntimeSecurityContext` would add a field with
+# no consumer, which is the shape of defect this programme keeps finding rather
+# than a fix for one.
+#
+# So the property asserted here is the honest one: reviewer trust has no runtime
+# authorization consumer, and if that ever changes the change has to be
+# deliberate because this test fails.
+
+
+def test_reviewer_trust_has_no_runtime_authorization_consumer():
+    """If this fails, reviewer trust gained a runtime consumer and must freeze.
+
+    The action boundary reads approver trust and must be handed a snapshot,
+    because it runs per request. Reviewer trust is consumed by the assurance
+    derivation, which is a tool invocation -- its own bootstrap. Those need
+    different treatments, and the difference is only defensible while it is
+    true, so this pins it.
+    """
+    import ast  # noqa: PLC0415
+
+    runtime_modules = [
+        "src/nornyx_forge/nornyx_runtime.py",
+        "src/demo_app/agentic.py",
+        "src/demo_app/main.py",
+    ]
+    offenders: list[str] = []
+    for relative in runtime_modules:
+        tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in {
+                "ReviewerTrustStore", "reviewer_store_path",
+            }:
+                offenders.append(f"{relative}:{node.lineno}")
+            if isinstance(node, ast.Name) and node.id in {
+                "ReviewerTrustStore", "reviewer_store_path",
+            }:
+                offenders.append(f"{relative}:{node.lineno}")
+    assert offenders == [], (
+        "reviewer trust is now consumed by a runtime path, so it must be "
+        f"frozen at bootstrap like approver trust: {offenders}"
+    )
+
+
+def test_the_assurance_derivation_reads_reviewer_trust_once():
+    """One load per invocation, so there is no window to swap it mid-run.
+
+    A second load inside one derivation would be the same defect approver trust
+    had, at a smaller scale: the file could change between them and the two
+    halves of one answer would disagree.
+    """
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    import nornyx_forge.reviewer_trust as reviewer_trust  # noqa: PLC0415
+
+    loads: list[object] = []
+    original = reviewer_trust.ReviewerTrustStore.load
+
+    def counting(*args, **kwargs):
+        loads.append(args[0] if args else None)
+        return original(*args, **kwargs)
+
+    reviewer_trust.ReviewerTrustStore.load = counting  # type: ignore[assignment]
+    try:
+        refresh.derive_assurance_state()
+    finally:
+        reviewer_trust.ReviewerTrustStore.load = original  # type: ignore[assignment]
+
+    assert len(loads) <= 1, (
+        f"the assurance derivation read reviewer trust {len(loads)} times; the "
+        "file could change between them and one answer would rest on two "
+        "different roots of trust"
+    )
