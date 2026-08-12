@@ -2074,7 +2074,28 @@ def derive_assurance_state() -> dict:
 
     # The evidence set the review binding claims to cover.
     binding_path = EVIDENCE_DIR / "review_binding.json"
-    if binding_path.exists():
+    if not binding_path.exists():
+        # Deleting the check must not be a way to pass it.
+        #
+        # This was `if binding_path.exists():` with no else, so removing the
+        # binding removed every comparison it drives -- eleven integrity-bearing
+        # claims -- and `verify()` reported `integrity_state: intact` with no
+        # problems. Measured: with a real authenticated inspection in place,
+        # deleting this one file left `assurance_state:
+        # independently_inspected` standing while nothing verified anything.
+        #
+        # The same shape as the governance-integrity observer, where "nothing to
+        # check" and "everything matched" were the same empty result. An absent
+        # binding is not a clean tree; it is a tree nobody can make a statement
+        # about.
+        state["evidence_manifest_match"] = False
+        state["governed_input_match"] = False
+        state["problems"].append(
+            "the review binding is absent, so nothing records what the evidence "
+            "set claims to cover and no claim can be recomputed. Regenerate it "
+            "with --review-binding; its absence is not a passing verification."
+        )
+    else:
         binding = json.loads(binding_path.read_text(encoding="utf-8"))
         current = digest_of(evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",)))
         if binding.get("evidence_manifest_digest") != current:
