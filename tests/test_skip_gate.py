@@ -338,3 +338,50 @@ def test_a_clean_report_passes(tmp_path, capsys):
     captured = capsys.readouterr().out.strip().splitlines()
     assert code == 0
     assert captured[-1] == "GATE: PASS"
+
+
+_XFAIL_REPORT = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" tests="2">
+  <testcase classname="tests.test_ran" name="test_ran"/>
+  <testcase classname="tests.test_authority_domains" name="test_characterized">
+    <skipped type="{kind}" message="{reason}"/>
+  </testcase>
+</testsuite></testsuites>
+"""
+
+
+def _typed_report(tmp_path: Path, kind: str) -> Path:
+    path = tmp_path / "typed.xml"
+    path.write_text(
+        _XFAIL_REPORT.format(kind=kind, reason="characterization"), encoding="utf-8"
+    )
+    return path
+
+
+def test_an_expected_failure_is_not_counted_as_a_skip(tmp_path: Path):
+    """An xfail ran and asserted. A skip did not. They are different facts.
+
+    pytest reports both as `<skipped>` in JUnit XML, distinguished only by
+    `type`, and the gate conflated them -- so a strict xfail failed the run as
+    an undeclared skip. "Fixing" that by adding it to EXPECTED_SKIPS would put a
+    test that executes into a list whose stated meaning is "asserts nothing",
+    and would then also exempt it if it ever became a genuine skip.
+    """
+    _total, allowed, unexpected, _modules, _skipped = classify(
+        _typed_report(tmp_path, "pytest.xfail")
+    )
+    assert unexpected == [], "an expected failure was reported as an undeclared skip"
+    assert allowed == 0, "an xfail must not consume a skip exemption either"
+
+
+def test_a_real_skip_with_the_same_shape_is_still_caught(tmp_path: Path):
+    """The discrimination must cut only where intended.
+
+    Same test id, same message, same element -- only `type` differs. If the gate
+    keyed on anything looser, an undeclared skip could dress itself as an xfail.
+    """
+    _total, _allowed, unexpected, _modules, _skipped = classify(
+        _typed_report(tmp_path, "pytest.skip")
+    )
+    assert len(unexpected) == 1
+    assert "test_characterized" in unexpected[0]

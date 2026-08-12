@@ -80,7 +80,7 @@ NEWLINE = chr(10)
 #: Kept just below the real count rather than equal to it, so ordinary
 #: consolidation does not fail the gate while a deletion of any consequence
 #: does. It is meant to be raised when the suite grows.
-MINIMUM_COLLECTED = 660
+MINIMUM_COLLECTED = 710
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -183,6 +183,19 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
         seen_modules.add(node_id(case).split("::", 1)[0])
         skipped = case.find("skipped")
         if skipped is None:
+            continue
+        # An EXPECTED FAILURE is not a skip. pytest reports both as `<skipped>`
+        # in JUnit XML, distinguished only by `type`, and conflating them is a
+        # vocabulary error with real consequences in both directions: a strict
+        # xfail would have to be added to EXPECTED_SKIPS to pass this gate,
+        # putting a test that runs and asserts into a list whose stated meaning
+        # is "asserts nothing", and thereafter its exemption would also cover it
+        # if it ever became a genuine skip.
+        #
+        # The distinction is the gate's own premise. A skipped test did not
+        # execute; an xfail executed, failed exactly as predicted, and is
+        # strict here, so it fails the run the moment it stops failing.
+        if (skipped.get("type") or "") == "pytest.xfail":
             continue
         message = (skipped.get("message") or "") + (skipped.text or "")
         if node_id(case) in EXPECTED_SKIPS:
