@@ -14,10 +14,12 @@ from typing import Any, Callable
 
 from . import __version__
 from .approval_trust import (
+    ACTION_TRUST_DOMAIN,
     ApprovalTrustStore,
+    AuthorityDecision,
     TrustStoreUnavailable,
+    authenticate_action_grant,
     canonical_grant_payload,
-    verify_signed_approval,
 )
 from .governed_subject import (
     GovernanceIntegrityState,
@@ -998,13 +1000,98 @@ def approval_ledger_path(root: Path) -> Path:
     return Path(override) if override else root / DEFAULT_APPROVAL_LEDGER
 
 
-def validate_action_approval(
+def verify_action_approval(
+    approval: Mapping[str, Any] | None,
+    request: ActionRequest,
+    *,
+    trust_store: ApprovalTrustStore | None,
+    as_of: str,
+) -> AuthorityDecision:
+    """Decide whether ACTION authority was granted to release exactly this request.
+
+    THE ONLY entry point a consequential boundary may use. The clauses are
+    joined here rather than at the call site, because a call site that composes
+    them is a call site that can stop composing them -- and the composition was
+    the whole property. Measured before this API existed, all three of these
+    passed the repository's structural guard while defeating the control:
+
+        authentic, _, _ = verify_signed_approval(...)   # discard the validator
+        if False: validate_action_approval(...)         # unreachable branch
+        released = authentic                            # authentication as authority
+
+    Only the behavioural boundary test caught them. Now there is nothing to
+    discard: authentication does not return a decision, and the decision cannot
+    be reached without it.
+
+        cryptographic authentication of a trusted human key
+        AND membership in the ACTION trust domain
+        AND a role valid for consequential release
+        AND that domain trusting this key to claim that role
+        AND binding to this exact request
+        AND temporal validity
+
+    Replay is NOT a clause here. It is a stateful claim on the ledger, taken by
+    the boundary after this returns, so that a decision cannot be spent by a run
+    that never starts.
+    """
+    signer = authenticate_action_grant(approval, trust_store=trust_store)
+    evidence: dict[str, Any] = {
+        **signer.as_evidence(),
+        "signer_authenticated": signer.signer_authenticated,
+        "role_verified": False,
+    }
+
+    def refuse(reason: str) -> AuthorityDecision:
+        return AuthorityDecision(
+            authority=ACTION_TRUST_DOMAIN,
+            granted=False,
+            reason=reason,
+            evidence=evidence,
+        )
+
+    if not signer.signer_authenticated:
+        return refuse(signer.reason)
+
+    # BOTH clauses. `network_governance_owner` is deliberately present in the
+    # governance vocabulary AND this one, so neither the role name nor the key
+    # identity may bridge a domain it was not provisioned into: the second
+    # clause asks the ACTION store, and only the action store.
+    claimed_role = signer.claimed_role or ""
+    if claimed_role not in ACTION_APPROVER_ROLES:
+        return refuse(
+            f"APPROVER_ROLE_UNAUTHORIZED: approver role {claimed_role!r} may not "
+            "release a high-risk effect"
+        )
+    if claimed_role not in signer.trusted_roles:
+        return refuse(
+            f"APPROVER_ROLE_UNAUTHORIZED: {signer.signer_subject!r} may not "
+            f"approve as {claimed_role!r} in the {ACTION_TRUST_DOMAIN} trust domain"
+        )
+    evidence["role_verified"] = True
+    evidence["approver_role"] = claimed_role
+
+    released, reason = _bind_action_approval(approval, request, as_of=as_of)
+    evidence["binding_verified"] = released
+    return AuthorityDecision(
+        authority=ACTION_TRUST_DOMAIN,
+        granted=released,
+        reason=reason,
+        evidence=evidence,
+    )
+
+
+def _bind_action_approval(
     approval: Mapping[str, Any] | None,
     request: ActionRequest,
     *,
     as_of: str,
 ) -> tuple[bool, str]:
-    """Decide whether this approval releases *this* request, and only this one.
+    """Bind an ALREADY-AUTHENTICATED grant to *this* request, and only this one.
+
+    Private, and named for what it does. It answers no question about who
+    signed and none about trust, so on its own it is not an authority and must
+    never be read as one -- the public entry point is
+    :func:`verify_action_approval`.
 
     Every check is a reason to refuse. A grant is bound to one request id, one
     subject revision, one capability, one destination, and one request digest,
@@ -1403,28 +1490,32 @@ class NornyxActionBoundary:
                 released = False
                 release_reason = mismatch
             else:
-                # Authentication first. Everything after this asks what the grant
-                # says; this asks whether anyone trusted actually said it. A
-                # self-issued grant claiming `approver_type: human` released a
-                # $10,000,000 transfer, because that field was treated as
-                # evidence of the thing it merely asserted.
-                authentic, authentication, authentication_evidence = verify_signed_approval(
-                    action_approval, trust_store=self.approver_trust_store
+                # ONE authority call. Not authentication composed with a
+                # validator: composing them here is what let a self-issued grant
+                # claiming `approver_type: human` release a $10,000,000 transfer,
+                # because a field was read as evidence of the thing it asserted.
+                # The clauses now live behind the API, where a caller cannot
+                # forget one.
+                authority = verify_action_approval(
+                    action_approval,
+                    request,
+                    trust_store=self.approver_trust_store,
+                    as_of=self.as_of,
                 )
-                if not authentic:
-                    released = False
-                    release_reason = authentication
-                    # Nobody claiming anything is a different fact from someone
-                    # claiming and failing to prove it. Collapsing them would
-                    # tell an operator to go find a key when the real answer is
-                    # that no approval was ever sought.
-                    if action_approval is not None:
-                        release_reason = f"{APPROVAL_NOT_AUTHENTICATED}: {authentication}"
-                        withheld_code = APPROVAL_NOT_AUTHENTICATED
-                else:
-                    released, release_reason = validate_action_approval(
-                        action_approval, request, as_of=self.as_of
-                    )
+                released = authority.granted
+                release_reason = authority.reason
+                authentication_evidence = authority.evidence
+                # Nobody claiming anything is a different fact from someone
+                # claiming and failing to prove it. Collapsing them would tell an
+                # operator to go find a key when the real answer is that no
+                # approval was ever sought.
+                if (
+                    not released
+                    and action_approval is not None
+                    and not authority.evidence.get("signer_authenticated")
+                ):
+                    release_reason = f"{APPROVAL_NOT_AUTHENTICATED}: {authority.reason}"
+                    withheld_code = APPROVAL_NOT_AUTHENTICATED
             if released:
                 # Consume before the effect runs. A claim that loses the race, or
                 # that was already spent in an earlier process, withholds here.

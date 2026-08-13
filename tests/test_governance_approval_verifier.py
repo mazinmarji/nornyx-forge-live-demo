@@ -1,4 +1,4 @@
-"""Direct control tests for `verify_signed_governance_approval`.
+"""Direct control tests for `verify_governance_approval`.
 
 This verifier authenticates the artifact granting the strongest authority the
 system recognises, and until now **no test called it**. It was reached only
@@ -42,7 +42,7 @@ from nornyx_forge.approval_trust import (  # noqa: E402
     GOVERNANCE_APPROVER_ROLES,
     ApprovalTrustStore,
     canonical_governance_payload,
-    verify_signed_governance_approval,
+    verify_governance_approval,
 )
 
 SUBJECT = "human.test_fixture"
@@ -140,7 +140,7 @@ def _approval(keypair, *, sign: bool = True, **overrides) -> dict:
 
 
 def test_a_trusted_human_in_an_authorized_role_authenticates(keypair):
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is True, reason
@@ -154,7 +154,7 @@ def test_a_trusted_human_in_an_authorized_role_authenticates(keypair):
 
 def test_the_other_authorized_role_also_authenticates(keypair):
     """The vocabulary is a set, not one blessed string."""
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:architecture_reviewer", "type": "human"}),
         trust_store=_store(keypair, roles=("architecture_reviewer",)),
      as_of=VERIFY_AS_OF,)
@@ -174,7 +174,7 @@ def test_an_omitted_role_is_refused(keypair):
     repository's own fixture used a role-less id, so this was the only path the
     suite executed.
     """
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair, producer={"id": SUBJECT, "type": "human"}),
         trust_store=_store(keypair),
      as_of=VERIFY_AS_OF,)
@@ -184,7 +184,7 @@ def test_an_omitted_role_is_refused(keypair):
 
 
 def test_an_empty_role_after_the_colon_is_refused(keypair):
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:", "type": "human"}),
         trust_store=_store(keypair),
      as_of=VERIFY_AS_OF,)
@@ -199,7 +199,7 @@ def test_a_role_outside_the_governance_vocabulary_is_refused(keypair):
     There was no vocabulary at all: any string the key happened to list
     authenticated, so a `documentation_reader` key approved governed content.
     """
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:documentation_reader", "type": "human"}),
         trust_store=_store(keypair, roles=("documentation_reader",)),
      as_of=VERIFY_AS_OF,)
@@ -209,7 +209,7 @@ def test_a_role_outside_the_governance_vocabulary_is_refused(keypair):
 
 
 def test_an_authorized_role_this_key_does_not_hold_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:architecture_reviewer", "type": "human"}),
         trust_store=_store(keypair, roles=(ROLE,)),
      as_of=VERIFY_AS_OF,)
@@ -219,7 +219,7 @@ def test_an_authorized_role_this_key_does_not_hold_is_refused(keypair):
 
 def test_an_action_approver_role_cannot_approve_governance(keypair):
     """The two vocabularies are separate authorities, not one shared list."""
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:operations_owner", "type": "human"}),
         trust_store=_store(keypair, roles=("operations_owner",)),
      as_of=VERIFY_AS_OF,)
@@ -240,7 +240,7 @@ def test_a_machine_key_cannot_give_a_human_approval(keypair):
     action verifier has this check, with a test — verified where written,
     absent where copied.
     """
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair, subject_type="machine")
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -249,7 +249,7 @@ def test_a_machine_key_cannot_give_a_human_approval(keypair):
 
 
 def test_an_artifact_declaring_a_non_human_producer_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, producer={"id": f"{SUBJECT}:{ROLE}", "type": "tool"}),
         trust_store=_store(keypair),
      as_of=VERIFY_AS_OF,)
@@ -258,7 +258,7 @@ def test_an_artifact_declaring_a_non_human_producer_is_refused(keypair):
 
 
 def test_signing_as_someone_else_is_refused(keypair):
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair, producer={"id": f"human.attacker:{ROLE}", "type": "human"}),
         trust_store=_store(keypair),
      as_of=VERIFY_AS_OF,)
@@ -273,7 +273,7 @@ def test_a_trust_entry_with_an_empty_subject_cannot_match_anyone(keypair):
     `if signer.subject and claimed_subject != signer.subject` skipped the whole
     identity check when the store carried `subject: ""`.
     """
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair, producer={"id": f":{ROLE}", "type": "human"}),
         trust_store=_store(keypair, subject=""),
      as_of=VERIFY_AS_OF,)
@@ -288,7 +288,7 @@ def test_a_trust_entry_with_an_empty_subject_cannot_match_anyone(keypair):
 
 
 def test_an_unknown_key_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, signer_key_id="not-in-the-store"), trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -296,7 +296,7 @@ def test_an_unknown_key_is_refused(keypair):
 
 
 def test_a_revoked_key_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair, status="revoked")
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -304,7 +304,7 @@ def test_a_revoked_key_is_refused(keypair):
 
 
 def test_an_absent_trust_store_is_not_permission(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair), trust_store=ApprovalTrustStore()
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -319,7 +319,7 @@ def test_the_default_trust_store_is_the_empty_one(keypair):
     which is the per-verification ambient trust resolution the module argues
     against everywhere else.
     """
-    ok, reason, _ = verify_signed_governance_approval(_approval(keypair), as_of=VERIFY_AS_OF)
+    ok, reason, _ = verify_governance_approval(_approval(keypair), as_of=VERIFY_AS_OF)
     assert ok is False
     assert "APPROVER_TRUST_UNAVAILABLE" in reason
 
@@ -330,7 +330,7 @@ def test_the_default_trust_store_is_the_empty_one(keypair):
 
 
 def test_an_unsigned_approval_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, sign=False), trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -340,7 +340,7 @@ def test_an_unsigned_approval_is_refused(keypair):
 def test_a_corrupt_signature_is_refused(keypair):
     record = _approval(keypair)
     record["signature"] = b64encode(b"\x00" * 64).decode("ascii")
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         record, trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -362,7 +362,7 @@ def test_every_authority_bearing_field_is_covered_by_the_signature(keypair, fiel
     """
     record = _approval(keypair)
     record[field] = "tampered-after-signing"
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         record, trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is False, f"{field} is not covered by the signature"
@@ -373,7 +373,7 @@ def test_the_producer_identity_is_covered_by_the_signature(keypair):
     """`producer.id` is flattened into the signed payload as `producer_id`."""
     record = _approval(keypair)
     record["producer"] = {"id": f"{SUBJECT}:architecture_reviewer", "type": "human"}
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         record, trust_store=_store(keypair, roles=(ROLE, "architecture_reviewer"))
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -384,7 +384,7 @@ def test_an_approval_cannot_be_moved_to_another_subject(keypair):
     """Re-pointing a signed approval at different governed content must fail."""
     record = _approval(keypair)
     record["subject_revision"] = "sha256:" + "b" * 64
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         record, trust_store=_store(keypair)
     , as_of=VERIFY_AS_OF)
     assert ok is False
@@ -392,7 +392,7 @@ def test_an_approval_cannot_be_moved_to_another_subject(keypair):
 
 
 def test_a_foreign_schema_is_refused(keypair):
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, schema="nornyx.forge.action_approval.v1"),
         trust_store=_store(keypair),
      as_of=VERIFY_AS_OF,)
@@ -434,7 +434,7 @@ WINDOW_END = "2026-08-05T00:00:00Z"
 
 def test_an_approval_inside_its_window_authenticates(keypair):
     """The benign control for this whole section."""
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-03T12:00:00Z"
     )
     assert ok is True, reason
@@ -443,7 +443,7 @@ def test_an_approval_inside_its_window_authenticates(keypair):
 
 def test_an_expired_approval_is_refused(keypair):
     """One second past the end. Everything else about it is impeccable."""
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-05T00:00:01Z"
     )
     assert ok is False
@@ -456,7 +456,7 @@ def test_an_expired_approval_is_refused(keypair):
 
 def test_an_approval_not_yet_valid_is_refused(keypair):
     """One second before the start."""
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-01T23:59:59Z"
     )
     assert ok is False
@@ -466,7 +466,7 @@ def test_an_approval_not_yet_valid_is_refused(keypair):
 
 def test_the_lower_boundary_instant_is_valid(keypair):
     """Half-open [start, end): the instant of issue is inside the window."""
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of=WINDOW_START
     )
     assert ok is True, reason
@@ -478,7 +478,7 @@ def test_the_upper_boundary_instant_is_not_valid(keypair):
     Stated as a test rather than left to a reader of `<` versus `<=`, because an
     off-by-one here is a whole extra second of authority nobody granted.
     """
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of=WINDOW_END
     )
     assert ok is False
@@ -492,24 +492,24 @@ def test_the_same_instant_in_a_different_offset_gives_the_same_answer(keypair):
     offset form sorts differently, and lexical comparison gets the dangerous
     direction wrong -- so both spellings must reach the same answer.
     """
-    utc = verify_signed_governance_approval(
+    utc = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-05T00:00:00Z"
     )
-    offset = verify_signed_governance_approval(
+    offset = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-05T02:00:00+02:00"
     )
-    assert utc[0] is False and offset[0] is False
-    assert "APPROVAL_EXPIRED" in utc[1]
-    assert "APPROVAL_EXPIRED" in offset[1]
+    assert utc.granted is False and offset.granted is False
+    assert "APPROVAL_EXPIRED" in utc.reason
+    assert "APPROVAL_EXPIRED" in offset.reason
 
-    inside_utc = verify_signed_governance_approval(
+    inside_utc = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-03T00:00:00Z"
     )
-    inside_offset = verify_signed_governance_approval(
+    inside_offset = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="2026-08-03T02:00:00+02:00"
     )
-    assert inside_utc[0] is True
-    assert inside_offset[0] is True
+    assert inside_utc.granted is True
+    assert inside_offset.granted is True
 
 
 TEMPORAL_DEFECTS = [
@@ -540,7 +540,7 @@ def test_a_defective_window_is_refused(keypair, label, override, expected):
     signed approval carrying a broken window -- not a broken signature, which
     would refuse one clause earlier and prove nothing about time.
     """
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair, **override),
         trust_store=_store(keypair),
         as_of="2026-08-03T00:00:00Z",
@@ -556,7 +556,7 @@ def test_an_unreadable_evaluation_instant_is_refused(keypair):
     cannot say when it is asking has not established the time, and quietly
     substituting `now` would answer a question nobody asked.
     """
-    ok, reason, _ = verify_signed_governance_approval(
+    ok, reason, _ = verify_governance_approval(
         _approval(keypair), trust_store=_store(keypair), as_of="whenever"
     )
     assert ok is False
@@ -571,7 +571,7 @@ def test_temporal_validity_is_not_optional_at_the_call_site():
     """
     import inspect
 
-    parameter = inspect.signature(verify_signed_governance_approval).parameters["as_of"]
+    parameter = inspect.signature(verify_governance_approval).parameters["as_of"]
     assert parameter.default is inspect.Parameter.empty, (
         "as_of has a default, so a caller that omits it skips temporal validity"
     )

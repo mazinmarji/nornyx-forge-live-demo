@@ -184,7 +184,7 @@ def test_the_loader_no_longer_relies_on_shape_alone():
 # With a trust store present, so authentication is what decides
 # --------------------------------------------------------------------------
 #
-# Every test above refuses before reaching `verify_signed_governance_approval`.
+# Every test above refuses before reaching `verify_governance_approval`.
 # `_authenticate_approval` returns APPROVER_TRUST_UNAVAILABLE when the store has
 # no signers, and no test in this module ever configured one -- the `_run`
 # helper that sets `FORGE_APPROVER_TRUST_STORE` was written and never called.

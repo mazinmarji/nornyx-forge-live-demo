@@ -316,7 +316,7 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
     from nornyx_forge.approval_trust import (
         ApprovalTrustStore,
         TrustStoreUnavailable,
-        verify_signed_governance_approval,
+        verify_governance_approval,
     )
 
     try:
@@ -332,7 +332,7 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
         )
     # The trusted clock, not a value from the artifact. An approval supplying
     # the instant it is judged against would be marking its own homework.
-    return verify_signed_governance_approval(
+    return verify_governance_approval(
         payload, trust_store=store, as_of=runtime_as_of()
     )
 

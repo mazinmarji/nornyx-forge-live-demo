@@ -34,7 +34,7 @@ from nornyx_forge.approval_trust import (  # noqa: E402
     APPROVAL_SCHEMA,
     ApprovalTrustStore,
     TrustStoreUnavailable,
-    verify_signed_approval,
+    authenticate_action_grant,
 )
 from nornyx_forge.nornyx_runtime import (
     APPROVAL_NOT_AUTHENTICATED,
@@ -143,7 +143,7 @@ def _grant(request, keypair, **overrides) -> dict:
     signature = sign_grant(sign_over, private)
 
     payload.update(overrides)
-    # The fields validate_action_approval also needs, outside the signed set.
+    # The fields _bind_action_approval also needs, outside the signed set.
     payload.update(
         {
             "approver_type": "human",
@@ -551,7 +551,7 @@ def test_an_operator_issued_approval_verifies_through_the_production_verifier(
             capture_output=True, text=True, check=True,
         ).stdout
     )
-    # The bindings validate_action_approval checks, carried alongside.
+    # The bindings _bind_action_approval checks, carried alongside.
     signed.update(
         {
             "approver_type": "human",
@@ -572,9 +572,9 @@ def test_an_operator_issued_approval_verifies_through_the_production_verifier(
           "public_key": generated["public_key"], "status": "active"}],
         tmp_path,
     )
-    authentic, reason, evidence = verify_signed_approval(signed, trust_store=store)
-    assert authentic, reason
-    assert evidence["signature_verified"] is True
+    signer = authenticate_action_grant(signed, trust_store=store)
+    assert signer.signer_authenticated, signer.reason
+    assert signer.as_evidence()["signature_verified"] is True
 
 
 def test_the_verifier_process_cannot_mint_what_it_accepts():

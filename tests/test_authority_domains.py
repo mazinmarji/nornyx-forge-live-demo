@@ -39,8 +39,8 @@ from nornyx_forge.approval_trust import (  # noqa: E402
     GOVERNANCE_APPROVAL_SCHEMA,
     GOVERNANCE_APPROVER_ROLES,
     canonical_governance_payload,
-    verify_signed_approval,
-    verify_signed_governance_approval,
+    authenticate_action_grant,
+    verify_governance_approval,
 )
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
     ACTION_APPROVER_ROLES,
@@ -145,11 +145,13 @@ def test_a_governance_role_cannot_release_a_consequential_effect(tmp_path: Path)
         mission_id="CASE-PREREQ", risk="high",
         subject_revision=TEST_REVISION, descriptor=DESCRIPTOR, attempt=1,
     )
-    authentic, why, _evidence = verify_signed_approval(
+    signer = authenticate_action_grant(
         signed_grant(prerequisite, approval_id="ACT-PRE", role="architecture_reviewer"),
         trust_store=trust_store(),
     )
-    assert authentic is True, f"the artifact failed an EARLIER clause: {why}"
+    assert signer.signer_authenticated is True, (
+        f"the artifact failed an EARLIER clause: {signer.reason}"
+    )
 
     decision, calls, spent = _release(tmp_path, "architecture_reviewer")
 
@@ -172,7 +174,7 @@ def test_a_governance_role_is_authoritative_in_the_governance_domain():
     subject binding, and a live temporal window -- so this asserts ACCEPTANCE
     rather than the absence of one particular refusal.
     """
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _governance_approval("architecture_reviewer"),
         trust_store=trust_store(roles=("architecture_reviewer",)),
         as_of=AS_OF,
@@ -191,7 +193,7 @@ def test_an_action_role_cannot_approve_governed_content():
     assert "operations_owner" in ACTION_APPROVER_ROLES
     assert "operations_owner" not in GOVERNANCE_APPROVER_ROLES
 
-    ok, reason, evidence = verify_signed_governance_approval(
+    ok, reason, evidence = verify_governance_approval(
         _governance_approval("operations_owner"),
         trust_store=trust_store(roles=("operations_owner",)),
         as_of=AS_OF,
@@ -215,17 +217,24 @@ def test_an_action_role_does_release_with_an_otherwise_valid_grant(tmp_path: Pat
     assert len(calls) == 1
     assert spent is True, "the grant must be spent exactly once"
 
+def test_the_primitive_result_cannot_be_read_as_a_decision():
+    """The structural fix, asserted at the language level.
 
-def test_cryptographic_authentication_is_not_authority_authorization():
-    """The distinction, named and pinned.
+    `authenticate_action_grant` answers "a trusted human key signed this
+    artifact". It does NOT answer "this principal may release a consequential
+    effect". Previously that separation rested on every caller remembering to
+    compose a second check -- and a caller that forgets is exactly the bug.
 
-    `verify_signed_approval` answers "a trusted human key signed this artifact".
-    It does NOT answer "this principal may release a consequential effect" --
-    `validate_action_approval` does, and the boundary calls both.
+    Now the primitive returns evidence that REFUSES to be a boolean, so the
+    single likeliest misuse is a TypeError at the call site:
 
-    This asserts the generic primitive ACCEPTS a governance-only role, which is
-    correct for what it measures and dangerous only if a caller stops there. The
-    architectural test below is what stops that.
+        if authenticate_action_grant(grant, ...):   ->  TypeError
+        released = evidence                          ->  TypeError when tested
+
+    This test authenticates a governance-only role deliberately. The primitive
+    ACCEPTING it is correct for what it measures -- the artifact is genuinely
+    signed by a trusted human key -- and is dangerous only if a caller can stop
+    there. It no longer can.
     """
     from signing import signed_grant  # noqa: PLC0415
     from test_governance_failure import TEST_REVISION  # noqa: PLC0415
@@ -237,56 +246,68 @@ def test_cryptographic_authentication_is_not_authority_authorization():
     grant = signed_grant(
         request, approval_id="ACT-PRIM", role="architecture_reviewer"
     )
-    authentic, _reason, _evidence = verify_signed_approval(
-        grant, trust_store=trust_store()
-    )
+    signer = authenticate_action_grant(grant, trust_store=trust_store())
 
-    assert authentic is True, (
+    assert signer.signer_authenticated is True, (
         "the primitive should authenticate a correctly signed artifact from a "
-        "trusted key regardless of which authority the role belongs to"
+        f"trusted key regardless of authority: {signer.reason}"
     )
-    # And the same artifact is refused where authority is actually decided --
-    # asserted in test_a_governance_role_cannot_release_a_consequential_effect.
+    with pytest.raises(TypeError, match="not an authority decision"):
+        bool(signer)
+    with pytest.raises(TypeError, match="not an authority decision"):
+        # The shape a careless caller actually writes.
+        if signer:  # noqa: SIM103
+            pass
+
+    # No field in the evidence may name an authority it did not decide.
+    forbidden = {"authorized", "approved", "granted", "authenticated", "released"}
+    fields = set(vars(signer)) | set(signer.as_evidence())
+    assert not (fields & forbidden), (
+        f"the primitive exposes an authority-shaped field: {sorted(fields & forbidden)}"
+    )
 
 
-def test_no_authority_consumer_calls_the_generic_authenticator_alone():
-    """Symbol presence only. NOT a bypass detector -- measured, not assumed.
+def test_an_authority_decision_is_a_decision():
+    """The mirror. A type that refused to be a boolean everywhere would be
+    unusable, so the distinction has to cut in both directions: the authority
+    API returns something whose truth value IS the grant."""
+    from nornyx_forge.approval_trust import AuthorityDecision  # noqa: PLC0415
 
-    This catches the crude case: a function that authenticates a grant and never
-    mentions the validator at all. It does NOT catch a real authority bypass,
-    and two mutations proved that:
+    assert bool(AuthorityDecision("action", True, "r", {})) is True
+    assert bool(AuthorityDecision("action", False, "r", {})) is False
 
-        call the validator, discard its result   -> guard PASSES, boundary test kills
-        validate on a branch that never runs     -> guard PASSES, boundary test kills
 
-    Both were caught by `test_a_governance_role_cannot_release_a_consequential
-    _effect`, which drives the actual boundary. So the real protection is
-    behavioural, and this is a cheap tripwire for the obvious shape.
+def test_no_consequential_consumer_reaches_past_the_authority_api():
+    """Structural, and this time it constrains something real.
 
-    Recorded plainly because a structural test that looks like it proves
-    composition, while only proving two names appear in one function, is the
-    kind of decoration this programme keeps finding. Step 2 replaces it with
-    authority-specific APIs, where the primitive cannot be mistaken for a grant
-    because it does not return one.
+    The old version of this test looked for two symbols in one function and
+    passed for two live bypasses -- discarding the validator's result, and
+    validating on an unreachable branch. It proved that two names appeared
+    together, which is not composition.
+
+    What replaced it is not a better grep: the composition moved INTO
+    `verify_action_approval`, so there is no longer a call site that could
+    compose it wrongly. This asserts that arrangement holds -- the primitive
+    has exactly one caller in the runtime, and it is the authority verifier.
     """
     import ast  # noqa: PLC0415
 
     source = (ROOT / "src/nornyx_forge/nornyx_runtime.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        called = {
-            inner.func.id
+    callers = [
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "authenticate_action_grant"
             for inner in ast.walk(node)
-            if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Name)
-        }
-        if "verify_signed_approval" in called:
-            assert "validate_action_approval" in called, (
-                f"{node.name} authenticates a grant without authorizing it: "
-                "authentication proves who signed, not what they may do"
-            )
+        )
+    ]
+    assert callers == ["verify_action_approval"], (
+        "the authentication primitive is reachable from somewhere other than the "
+        f"action authority verifier: {callers}"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -322,7 +343,7 @@ def test_one_provisioning_should_not_grant_both_authorities(tmp_path: Path):
     assert "network_governance_owner" in GOVERNANCE_APPROVER_ROLES
     assert "network_governance_owner" in ACTION_APPROVER_ROLES
 
-    governance_ok, _reason, _evidence = verify_signed_governance_approval(
+    governance_ok, _reason, _evidence = verify_governance_approval(
         _governance_approval("network_governance_owner"),
         trust_store=trust_store(roles=("network_governance_owner",)),
         as_of=AS_OF,

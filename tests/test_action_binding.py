@@ -7,7 +7,7 @@ import pytest
 from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     ActionRequest,
-    validate_action_approval,
+    _bind_action_approval,
 )
 
 NOW = "2026-08-03T00:00:00Z"
@@ -53,7 +53,7 @@ def _grant(request: ActionRequest, **overrides: object) -> dict[str, object]:
 
 def test_a_complete_grant_releases_its_own_request():
     request = _request()
-    released, reason = validate_action_approval(_grant(request), request, as_of=NOW)
+    released, reason = _bind_action_approval(_grant(request), request, as_of=NOW)
     assert released is True, reason
 
 
@@ -84,7 +84,7 @@ def test_a_grant_never_releases_a_different_operation(label: str, overrides: dic
     """
     approved = _request()
     grant = _grant(approved)
-    released, reason = validate_action_approval(grant, _request(**overrides), as_of=NOW)
+    released, reason = _bind_action_approval(grant, _request(**overrides), as_of=NOW)
     assert released is False, f"{label} was released: {reason}"
 
 
@@ -94,7 +94,7 @@ def test_same_mission_and_request_id_but_different_payload_is_refused():
     escalated = _request(parameters={"amount": 1_000_000, "currency": "USD"})
     assert approved.request_id == escalated.request_id
     assert approved.mission_id == escalated.mission_id
-    released, reason = validate_action_approval(_grant(approved), escalated, as_of=NOW)
+    released, reason = _bind_action_approval(_grant(approved), escalated, as_of=NOW)
     assert released is False, reason
 
 
@@ -126,7 +126,7 @@ def test_payload_digest_is_order_and_type_stable():
 )
 def test_defective_grants_are_refused(label: str, overrides: dict[str, object]):
     request = _request()
-    released, reason = validate_action_approval(
+    released, reason = _bind_action_approval(
         _grant(request, **overrides), request, as_of=NOW
     )
     assert released is False, f"{label} was released: {reason}"
@@ -135,16 +135,16 @@ def test_defective_grants_are_refused(label: str, overrides: dict[str, object]):
 def test_grant_outside_its_window_is_refused():
     request = _request()
     grant = _grant(request)
-    early, reason = validate_action_approval(grant, request, as_of="2026-08-01T00:00:00Z")
+    early, reason = _bind_action_approval(grant, request, as_of="2026-08-01T00:00:00Z")
     assert early is False and "not yet valid" in reason
-    late, reason = validate_action_approval(grant, request, as_of="2026-08-06T00:00:00Z")
+    late, reason = _bind_action_approval(grant, request, as_of="2026-08-06T00:00:00Z")
     assert late is False and "expired" in reason
 
 
 def test_absent_approval_is_refused():
     request = _request()
-    assert validate_action_approval(None, request, as_of=NOW)[0] is False
-    assert validate_action_approval({}, request, as_of=NOW)[0] is False
+    assert _bind_action_approval(None, request, as_of=NOW)[0] is False
+    assert _bind_action_approval({}, request, as_of=NOW)[0] is False
 
 
 def test_request_digest_covers_every_bound_field():

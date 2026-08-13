@@ -108,7 +108,7 @@ def signed_grant(
     """A complete, correctly signed grant for exactly this request.
 
     The signature covers the canonical payload only. Fields outside that set —
-    the per-request bindings ``validate_action_approval`` checks — are carried
+    the per-request bindings ``_bind_action_approval`` checks — are carried
     alongside, because they are already covered transitively by
     ``request_digest``.
     """
@@ -240,7 +240,7 @@ def write_trust_store(path, *, roles: tuple[str, ...] = ROLES,
 def live_window(*, days: int = 3) -> tuple[str, str]:
     """A validity window around the real clock, for fixtures the loader judges.
 
-    `verify_signed_governance_approval` now evaluates the signed window against
+    `verify_governance_approval` now evaluates the signed window against
     a trusted instant, so a fixture pinned to a fixed calendar date is genuinely
     expired the day after it was written -- and a test asserting adoption would
     start failing for a reason that has nothing to do with what it tests.

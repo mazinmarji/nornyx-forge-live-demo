@@ -57,7 +57,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -130,10 +130,37 @@ def canonical_governance_payload(approval: "Mapping[str, Any]") -> bytes:
     return json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-#: Roles a key may hold to approve GOVERNED CONTENT. Closed, and separate from
-#: ACTION_APPROVER_ROLES: approving "this content is fit to govern" is not the
-#: same authority as approving "this effect may be released", and a vocabulary
-#: shared between them would let one key do both by accident.
+#: The two authority domains, named so a refusal can say WHICH store did not
+#: hold a key. "Unknown key" and "known key, wrong domain" send an operator in
+#: opposite directions, and only one of them is a provisioning error.
+GOVERNANCE_TRUST_DOMAIN = "governance"
+ACTION_TRUST_DOMAIN = "action"
+
+#: Roles a key may hold to approve GOVERNED CONTENT.
+#:
+#: These vocabularies are NOT disjoint, and a comment here used to claim they
+#: were -- that a shared vocabulary "would let one key do both by accident", as
+#: though the separation rested on the role names. It does not, and it must not:
+#: `network_governance_owner` appears in this set and in ACTION_APPROVER_ROLES,
+#: which is a legitimate operational fact rather than a defect to rename away.
+#:
+#: THE REAL INVARIANT. Authority requires BOTH clauses:
+#:
+#:     membership in the trust domain for THIS authority
+#:     AND a role valid for THIS authority
+#:
+#: so the same principal, holding the same role name, resolves differently by
+#: where it is provisioned:
+#:
+#:     network_governance_owner, trusted in governance only -> governance ALLOW,
+#:                                                             action REFUSE
+#:     network_governance_owner, trusted in action only     -> action ALLOW,
+#:                                                             governance REFUSE
+#:     network_governance_owner, trusted in both            -> both, deliberately
+#:
+#: A shared role name therefore bridges nothing. Renaming the role to make the
+#: sets look disjoint would have removed the evidence for that property while
+#: leaving the property itself unproven.
 GOVERNANCE_APPROVER_ROLES = frozenset(
     {"network_governance_owner", "architecture_reviewer"}
 )
@@ -172,21 +199,28 @@ def _aware_instant(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def verify_signed_governance_approval(
+def verify_governance_approval(
     approval: "Mapping[str, Any] | None",
     *,
     trust_store: "ApprovalTrustStore | None" = None,
     as_of: str,
-) -> "tuple[bool, str, dict[str, Any]]":
-    """Authenticate a human governance approval.
+) -> "AuthorityDecision":
+    """Decide whether GOVERNANCE authority was granted over the named subject.
 
-    THE PROPERTY: a governance approval is authoritative only when an externally
-    trusted HUMAN identity is cryptographically authenticated FOR THE EXACT ROLE
-    it claims, over the EXACT governed subject it names.
+    THE AUTHORITY EQUATION, with no clause standing in for another:
 
-    Every clause of that sentence is a separate refusal below, and each returns
-    before any later evidence is recorded. The previous version failed three of
-    them:
+        cryptographic authentication of a trusted human key
+        AND membership in the GOVERNANCE trust domain
+        AND a role valid for governance approval
+        AND that domain trusting this key to claim that role
+        AND subject binding
+        AND temporal validity
+
+    Authentication is delegated to `_authenticate_signed_human_artifact`, which
+    cannot answer any of the remaining clauses -- its result type refuses to be
+    read as a boolean at all. What remains here is authorization.
+
+    The previous version failed three clauses at once:
 
     - ``evidence["role_verified"] = True`` sat outside the ``if claimed_role:``
       guard, so an approval whose ``producer.id`` carried no role skipped the
@@ -196,143 +230,58 @@ def verify_signed_governance_approval(
     - There was no role vocabulary: any string a trusted key happened to list
       authenticated.
     - ``subject_type`` was never consulted, so a machine key signed an artifact
-      saying ``producer.type: "human"`` and became a human approval. The sibling
-      action verifier has that check, with a test. Verified where written,
-      absent where copied.
+      saying ``producer.type: "human"`` and became a human approval.
 
-    Evidence flags are set only on the line after the check they describe
-    passes. A flag that can be true while its check was skipped is a false
-    statement in an audit record, which is worse than a missing one.
+    Evidence flags are set only after the check they describe passes. A flag
+    that can be true while its check was skipped is a false statement in an
+    audit record, which is worse than a missing one.
     """
+    signer = _authenticate_signed_human_artifact(
+        approval,
+        trust_store=trust_store,
+        trust_domain=GOVERNANCE_TRUST_DOMAIN,
+        spec=_GOVERNANCE_ARTIFACT,
+    )
     evidence: dict[str, Any] = {
-        "signature_verified": False,
-        "identity_verified": False,
+        **signer.as_evidence(),
         "role_verified": False,
-        "subject_type_verified": False,
+        "validity_verified": False,
     }
-    if approval is None:
-        return False, "no governance approval was supplied", evidence
 
-    # Fail closed on absence: an empty store must never be the permissive case.
-    store = trust_store if trust_store is not None else ApprovalTrustStore()
-    evidence["trust_store_digest"] = store.digest
-    if not store.signers:
-        return (
-            False,
-            "APPROVER_TRUST_UNAVAILABLE: no approver trust store, so no human "
-            f"approval can be authenticated ({store.source})",
-            evidence,
+    def refuse(reason: str) -> AuthorityDecision:
+        return AuthorityDecision(
+            authority=GOVERNANCE_TRUST_DOMAIN,
+            granted=False,
+            reason=reason,
+            evidence=evidence,
         )
 
-    if approval.get("schema") != GOVERNANCE_APPROVAL_SCHEMA:
-        return False, f"APPROVAL_SCHEMA_UNKNOWN: {approval.get('schema')!r}", evidence
-
-    key_id = str(approval.get("signer_key_id", ""))
-    if not key_id:
-        return False, "APPROVAL_UNSIGNED: names no signer key", evidence
-    signer = store.signers.get(key_id)
-    if signer is None:
-        return (
-            False,
-            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is not in the approver "
-            "trust store",
-            evidence,
-        )
-    if signer.status != "active":
-        return (
-            False,
-            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is {signer.status}",
-            evidence,
-        )
-    evidence["signer_key_id"] = key_id
-
-    # The trust store decides what a key IS; the artifact only claims. Checked
-    # before the signature so a machine key is refused for being a machine.
-    if signer.subject_type != "human":
-        return (
-            False,
-            f"APPROVER_NOT_HUMAN: signer key {key_id!r} belongs to a "
-            f"{signer.subject_type!r}, which cannot give a human approval "
-            "however the artifact describes itself",
-            evidence,
-        )
-    producer = approval.get("producer")
-    claimed_type = producer.get("type") if isinstance(producer, Mapping) else None
-    if claimed_type != "human":
-        return (
-            False,
-            f"APPROVAL_PRODUCER_NOT_HUMAN: producer.type is {claimed_type!r}",
-            evidence,
-        )
-    evidence["subject_type_verified"] = True
-
-    signature = approval.get("signature")
-    if not isinstance(signature, str) or not signature:
-        return False, "APPROVAL_UNSIGNED: no signature present", evidence
-
-    try:
-        from base64 import b64decode
-
-        from cryptography.exceptions import InvalidSignature
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError:  # pragma: no cover - cryptography is a hard dependency
-        return False, "APPROVAL_VERIFIER_UNAVAILABLE", evidence
-
-    try:
-        public_key = Ed25519PublicKey.from_public_bytes(b64decode(signer.public_key))
-        public_key.verify(b64decode(signature), canonical_governance_payload(approval))
-    except InvalidSignature:
-        return False, "APPROVAL_NOT_AUTHENTICATED: signature invalid", evidence
-    except Exception as exc:
-        return False, f"APPROVAL_NOT_AUTHENTICATED: {type(exc).__name__}", evidence
-    evidence["signature_verified"] = True
-
-    claimed = producer.get("id") if isinstance(producer, Mapping) else None
-    if not isinstance(claimed, str) or not claimed:
-        return False, "APPROVER_IDENTITY_MISSING: producer.id is absent", evidence
-    claimed_subject, separator, claimed_role = claimed.partition(":")
-
-    # An empty trusted subject must not silently disable the comparison.
-    if not signer.subject:
-        return (
-            False,
-            f"APPROVER_NOT_TRUSTED: key {key_id!r} names no subject, so no "
-            "identity can be matched against it",
-            evidence,
-        )
-    if claimed_subject != signer.subject:
-        return (
-            False,
-            f"APPROVER_IDENTITY_MISMATCH: signed as {claimed_subject!r}, key "
-            f"belongs to {signer.subject!r}",
-            evidence,
-        )
-    evidence["identity_verified"] = True
-    evidence["approver"] = claimed_subject
+    if not signer.signer_authenticated:
+        return refuse(signer.reason)
 
     # PRESENCE, then authorization. A missing role is a refusal, not a skip:
     # "approved by someone" is not an approval, and omitting the capacity was
     # exactly how the previous version was bypassed.
-    if not separator or not claimed_role:
-        return (
-            False,
+    claimed_role = signer.claimed_role
+    if not claimed_role:
+        return refuse(
             "APPROVER_ROLE_MISSING: producer.id names no role. An approval must "
-            "state the capacity it was given in, as 'subject:role'",
-            evidence,
+            "state the capacity it was given in, as 'subject:role'"
         )
+    # BOTH clauses, neither sufficient alone. The first asks whether this role
+    # carries governance authority at all; the second asks whether THIS trust
+    # domain lets THIS key speak in it. A key trusted to hold the role in some
+    # other domain satisfies neither.
     if claimed_role not in GOVERNANCE_APPROVER_ROLES:
-        return (
-            False,
+        return refuse(
             f"APPROVER_ROLE_UNAUTHORIZED: {claimed_role!r} is not a governance "
-            f"approver role {sorted(GOVERNANCE_APPROVER_ROLES)}",
-            evidence,
+            f"approver role {sorted(GOVERNANCE_APPROVER_ROLES)}"
         )
-    if claimed_role not in signer.roles:
-        return (
-            False,
-            f"APPROVER_ROLE_UNAUTHORIZED: {signer.subject!r} may not approve as "
-            f"{claimed_role!r}",
-            evidence,
+    if claimed_role not in signer.trusted_roles:
+        return refuse(
+            f"APPROVER_ROLE_UNAUTHORIZED: {signer.signer_subject!r} may not "
+            f"approve as {claimed_role!r} in the {GOVERNANCE_TRUST_DOMAIN} "
+            "trust domain"
         )
     evidence["role_verified"] = True
     evidence["approver_role"] = claimed_role
@@ -351,61 +300,50 @@ def verify_signed_governance_approval(
     # `role_verified` and `subject_type_verified` all true with nothing about
     # time -- the same "a flag can be true while its check was skipped" defect
     # this function's docstring says it removed.
-    #
-    # The sibling action path enforces exactly this at
-    # `nornyx_runtime.validate_action_approval`; the check was present in one
-    # code path and absent in its twin.
     moment = _aware_instant(as_of)
     generated = _aware_instant(approval.get("generated_at"))
     expires = _aware_instant(approval.get("expires_at"))
     if moment is None:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_TIME_UNREADABLE}: the evaluation instant {as_of!r} is not "
-            "a timezone-aware ISO-8601 timestamp, so validity cannot be judged",
-            evidence,
+            "a timezone-aware ISO-8601 timestamp, so validity cannot be judged"
         )
     if generated is None or expires is None:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_TIME_UNREADABLE}: the approval does not carry a readable "
-            "timezone-aware validity interval, so it bounds nothing",
-            evidence,
+            "timezone-aware validity interval, so it bounds nothing"
         )
     if expires <= generated:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_WINDOW_INVALID}: the approval expires at "
             f"{expires.isoformat()}, at or before it was issued at "
-            f"{generated.isoformat()}",
-            evidence,
+            f"{generated.isoformat()}"
         )
     if expires - generated > GOVERNANCE_APPROVAL_MAX_AGE:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_WINDOW_INVALID}: the approval claims a validity window "
-            f"longer than {GOVERNANCE_APPROVAL_MAX_AGE.days} days",
-            evidence,
+            f"longer than {GOVERNANCE_APPROVAL_MAX_AGE.days} days"
         )
     # Half-open [generated, expires), stated rather than left to a reader of the
     # operators. The instant of issue is valid; the instant of expiry is not.
     if moment < generated:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_NOT_YET_VALID}: the approval becomes valid at "
-            f"{generated.isoformat()}, which is after {moment.isoformat()}",
-            evidence,
+            f"{generated.isoformat()}, which is after {moment.isoformat()}"
         )
     if moment >= expires:
-        return (
-            False,
+        return refuse(
             f"{APPROVAL_EXPIRED}: the approval expired at {expires.isoformat()}, "
-            f"at or before {moment.isoformat()}",
-            evidence,
+            f"at or before {moment.isoformat()}"
         )
     evidence["validity_verified"] = True
 
-    return True, "authenticated", evidence
+    return AuthorityDecision(
+        authority=GOVERNANCE_TRUST_DOMAIN,
+        granted=True,
+        reason="authenticated",
+        evidence=evidence,
+    )
 
 
 
@@ -533,117 +471,306 @@ def load_trust_store(path: Path | None = None) -> dict[str, TrustedSigner]:
     return dict(ApprovalTrustStore.load(path).signers)
 
 
-def verify_signed_approval(
-    approval: "Mapping[str, Any] | None",
-    *,
-    trust_store: "ApprovalTrustStore | None" = None,
-) -> "tuple[bool, str, dict[str, Any]]":
-    """Decide whether this grant was signed by a key trusted to make it.
+# ---------------------------------------------------------------------------
+# LAYER 1 -- the cryptographic primitive
+# ---------------------------------------------------------------------------
 
-    Returns ``(authenticated, reason, evidence)``. The evidence names which
-    checks passed and which store answered, and deliberately carries no
-    public-key material: a reader needs to know the decision was anchored, not
-    to re-derive it.
+
+@dataclass(frozen=True)
+class AuthenticatedSignerEvidence:
+    """WHO signed a human artifact. Never WHAT that signer may do.
+
+    This is deliberately not a decision, and the type enforces it: ``__bool__``
+    raises, so ``if authenticate(...)`` -- the single most likely misuse -- is a
+    TypeError at the call site rather than a silent grant. There is no field
+    named ``authorized``, ``approved``, ``granted`` or ``authenticated``; the
+    boolean it does carry is ``signer_authenticated``, which answers only
+    "a trusted human key signed exactly these bytes".
+
+    `trusted_roles` is reported as a FACT about the trust domain -- the roles
+    that domain says this key may speak in -- not as a permission. Deciding
+    whether a role carries an authority is the authority verifier's job, and it
+    needs both clauses: the role must be valid FOR THAT AUTHORITY and the key
+    must be trusted to claim it IN THAT DOMAIN.
+
+    `claimed_role` is repeated here only because it is covered by the signature
+    in both artifact schemas (``producer_id`` for governance, ``approver_role``
+    for action grants), so it is an authenticated claim rather than a hint.
+    """
+
+    trust_domain: str
+    trust_store_digest: str
+    signer_authenticated: bool = False
+    reason: str = ""
+    signer_key_id: str | None = None
+    signer_subject: str | None = None
+    signer_subject_type: str | None = None
+    trusted_roles: frozenset[str] = frozenset()
+    claimed_role: str | None = None
+    signature_verified: bool = False
+    identity_verified: bool = False
+    subject_type_verified: bool = False
+
+    def __bool__(self) -> bool:
+        raise TypeError(
+            "AuthenticatedSignerEvidence is not an authority decision. It "
+            "records that a trusted human key signed an artifact, which is "
+            "authentication, not authorization. Call verify_governance_approval"
+            "(...) or verify_action_approval(...) and test that result."
+        )
+
+    def as_evidence(self) -> "dict[str, Any]":
+        """The audit projection, carrying no key material."""
+        return {
+            "trust_domain": self.trust_domain,
+            "trust_store_digest": self.trust_store_digest,
+            "signer_key_id": self.signer_key_id,
+            "approver": self.signer_subject,
+            "signature_verified": self.signature_verified,
+            "identity_verified": self.identity_verified,
+            "subject_type_verified": self.subject_type_verified,
+        }
+
+
+@dataclass(frozen=True)
+class AuthorityDecision:
+    """Whether a named authority was granted, and on what evidence.
+
+    ``__bool__`` IS the grant here, which is the whole difference from
+    :class:`AuthenticatedSignerEvidence`: an authority decision is a decision.
+    """
+
+    authority: str
+    granted: bool
+    reason: str
+    evidence: "dict[str, Any]"
+
+    def __bool__(self) -> bool:
+        return self.granted
+
+    def __iter__(self):
+        # Migration affordance for `ok, reason, evidence = verify_...(...)`
+        # call sites. Exactly the three fields, in the order they were returned
+        # as a tuple before this type existed -- nothing is hidden behind it.
+        yield from (self.granted, self.reason, self.evidence)
+
+
+@dataclass(frozen=True)
+class _SignedHumanArtifact:
+    """How one artifact schema exposes the fields the primitive authenticates.
+
+    Two schemas, one verifier. The alternative -- a second Ed25519 path for the
+    second artifact type -- is how the governance verifier came to be missing
+    the ``subject_type`` check its action twin already had: a control verified
+    where it was written and absent where it was copied.
+    """
+
+    noun: str
+    schema: str
+    canonical: "Any"
+    #: artifact -> (claimed subject, claimed role, self-described subject type)
+    identity: "Any"
+
+
+def _governance_identity(
+    artifact: "Mapping[str, Any]",
+) -> "tuple[str | None, str | None, object]":
+    producer = artifact.get("producer")
+    if not isinstance(producer, Mapping):
+        return None, None, None
+    claimed = producer.get("id")
+    if not isinstance(claimed, str) or not claimed:
+        return None, None, producer.get("type")
+    subject, separator, role = claimed.partition(":")
+    return subject, (role if separator and role else None), producer.get("type")
+
+
+def _action_identity(
+    artifact: "Mapping[str, Any]",
+) -> "tuple[str | None, str | None, object]":
+    approver = artifact.get("approver")
+    role = artifact.get("approver_role")
+    return (
+        approver if isinstance(approver, str) and approver else None,
+        role if isinstance(role, str) and role else None,
+        artifact.get("approver_type"),
+    )
+
+
+def _authenticate_signed_human_artifact(
+    artifact: "Mapping[str, Any] | None",
+    *,
+    trust_store: "ApprovalTrustStore | None",
+    trust_domain: str,
+    spec: _SignedHumanArtifact,
+) -> AuthenticatedSignerEvidence:
+    """Prove a trusted human key signed exactly these bytes. Nothing more.
+
+    Every refusal is coded, and the code names the clause that failed, because
+    an operator's response differs by clause: an untrusted key needs
+    provisioning, an invalid signature needs a reissued artifact, and a
+    machine-owned key needs a different approver entirely.
+
+    The trust domain is named in the refusal. A key trusted for governance
+    presenting an action grant must not read as "unknown key" -- it is a known
+    key in the wrong domain, and hiding that would send an operator to add it
+    to the very store that must not hold it.
     """
 
     store = trust_store if trust_store is not None else ApprovalTrustStore()
-    evidence: dict[str, Any] = {
-        "signer_key_id": None,
-        "trust_store_digest": store.digest,
-        "signature_verified": False,
-        "identity_verified": False,
-        "role_verified": False,
-    }
+    blank = AuthenticatedSignerEvidence(
+        trust_domain=trust_domain, trust_store_digest=store.digest
+    )
 
-    if not isinstance(approval, Mapping):
-        return False, "no action approval was supplied", evidence
+    def refuse(reason: str, **fields: "Any") -> AuthenticatedSignerEvidence:
+        return replace(blank, signer_authenticated=False, reason=reason, **fields)
 
-    signature = approval.get("signature")
-    if not isinstance(signature, str) or not signature.strip():
-        return (
-            False,
-            "action approval carries no signature. A self-declared "
-            "'approver_type: human' is a claim, not authentication.",
-            evidence,
-        )
+    if not isinstance(artifact, Mapping):
+        return refuse(f"no {spec.noun} was supplied")
 
-    key_id = approval.get("signer_key_id")
-    if not isinstance(key_id, str) or not key_id.strip():
-        return False, "action approval names no signer key", evidence
-    evidence["signer_key_id"] = key_id
-
+    # Fail closed on absence. An empty store is "nothing can be authenticated
+    # here", which is the opposite of "anything may pass".
     if not store.available or not store.signers:
-        return (
-            False,
-            "no approver trust store is available, so no signer can be trusted. "
-            "The application runs; consequential approval authority does not.",
-            evidence,
+        return refuse(
+            f"APPROVER_TRUST_UNAVAILABLE: no {trust_domain} approver trust store, "
+            f"so no human {spec.noun} can be authenticated ({store.source})"
         )
 
+    if artifact.get("schema") != spec.schema:
+        return refuse(f"APPROVAL_SCHEMA_UNKNOWN: {artifact.get('schema')!r}")
+
+    key_id = artifact.get("signer_key_id")
+    if not isinstance(key_id, str) or not key_id.strip():
+        return refuse("APPROVAL_UNSIGNED: names no signer key")
     signer = store.signers.get(key_id)
     if signer is None:
-        return False, f"signer key {key_id!r} is not in the approver trust store", evidence
+        return refuse(
+            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is not in the "
+            f"{trust_domain} approver trust store",
+            signer_key_id=key_id,
+        )
     if signer.status != "active":
-        return False, f"signer key {key_id!r} is {signer.status}, not active", evidence
+        return refuse(
+            f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is {signer.status}",
+            signer_key_id=key_id,
+        )
+    known = replace(
+        blank,
+        signer_key_id=key_id,
+        signer_subject=signer.subject,
+        signer_subject_type=signer.subject_type,
+        trusted_roles=frozenset(signer.roles),
+    )
 
-    # The trust store is the authority on who this key is and what it may do.
-    # The grant's own claims are compared against it, never believed over it.
+    def refuse_known(reason: str, **fields: "Any") -> AuthenticatedSignerEvidence:
+        return replace(known, signer_authenticated=False, reason=reason, **fields)
+
+    # The trust store decides what a key IS; the artifact only claims it.
+    # Checked before the signature so a machine key is refused for being a
+    # machine rather than for whatever it signed.
     if signer.subject_type != "human":
-        return (
-            False,
-            f"signer key {key_id!r} belongs to a {signer.subject_type}, which may "
-            "not release a consequential human approval",
-            evidence,
+        return refuse_known(
+            f"APPROVER_NOT_HUMAN: signer key {key_id!r} belongs to a "
+            f"{signer.subject_type!r}, which cannot give a human {spec.noun} "
+            "however the artifact describes itself"
         )
-    claimed_approver = str(approval.get("approver", ""))
-    if claimed_approver != signer.subject:
-        return (
-            False,
-            f"approval claims approver {claimed_approver!r} but key {key_id!r} "
-            f"belongs to {signer.subject!r}",
-            evidence,
+    claimed_subject, claimed_role, declared_type = spec.identity(artifact)
+    if declared_type != "human":
+        # An UNSIGNED self-description in both schemas, so it proves nothing on
+        # its own and is checked only after the store has already established
+        # the key is human. Kept because an artifact that describes itself as
+        # machine-produced should not be adopted as a human approval whatever
+        # key signed it.
+        return refuse_known(
+            f"APPROVAL_PRODUCER_NOT_HUMAN: the {spec.noun} describes its "
+            f"producer as {declared_type!r}"
         )
-    evidence["identity_verified"] = True
+    known = replace(known, subject_type_verified=True)
 
-    claimed_role = str(approval.get("approver_role", ""))
-    if claimed_role not in signer.roles:
-        return (
-            False,
-            f"key {key_id!r} is not trusted to act as {claimed_role!r} "
-            f"(trusted roles: {sorted(signer.roles)})",
-            evidence,
-        )
-    evidence["role_verified"] = True
-
-    if approval.get("schema") != APPROVAL_SCHEMA:
-        return (
-            False,
-            f"action approval schema is {approval.get('schema')!r}, expected "
-            f"{APPROVAL_SCHEMA!r}",
-            evidence,
-        )
+    signature = artifact.get("signature")
+    if not isinstance(signature, str) or not signature.strip():
+        return refuse_known("APPROVAL_UNSIGNED: no signature present")
 
     try:
         from base64 import b64decode
 
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError as exc:  # pragma: no cover - packaging boundary
-        return False, f"signature verification is unavailable: {exc}", evidence
+    except ImportError:  # pragma: no cover - cryptography is a hard dependency
+        return refuse_known("APPROVAL_VERIFIER_UNAVAILABLE")
 
     try:
         public_key = Ed25519PublicKey.from_public_bytes(b64decode(signer.public_key))
-        public_key.verify(b64decode(signature), canonical_grant_payload(approval))
+        public_key.verify(b64decode(signature), spec.canonical(artifact))
     except InvalidSignature:
-        return (
-            False,
-            "action approval signature does not match the grant it accompanies. "
-            "Any change to the decision, approver, role, window, or bound request "
-            "invalidates it.",
-            evidence,
+        return refuse_known(
+            "APPROVAL_NOT_AUTHENTICATED: signature invalid. Any change to the "
+            "decision, approver, role, window or bound subject invalidates it."
         )
-    except (ValueError, TypeError) as exc:
-        return False, f"action approval signature is malformed: {exc}", evidence
+    except Exception as exc:
+        return refuse_known(f"APPROVAL_NOT_AUTHENTICATED: {type(exc).__name__}")
+    known = replace(known, signature_verified=True)
 
-    evidence["signature_verified"] = True
-    return True, f"signed by {signer.subject} using trusted key {key_id}", evidence
+    # Identity AFTER the signature. Before it, a match only says the forged
+    # artifact was internally consistent -- and recording `identity_verified`
+    # at that point puts a statement in an audit record that the evidence does
+    # not support.
+    if not signer.subject:
+        return refuse_known(
+            f"APPROVER_NOT_TRUSTED: key {key_id!r} names no subject, so no "
+            "identity can be matched against it",
+            signature_verified=True,
+        )
+    if not claimed_subject:
+        return refuse_known(
+            "APPROVER_IDENTITY_MISSING: the artifact names no approver identity",
+            signature_verified=True,
+        )
+    if claimed_subject != signer.subject:
+        return refuse_known(
+            f"APPROVER_IDENTITY_MISMATCH: signed as {claimed_subject!r}, key "
+            f"belongs to {signer.subject!r}",
+            signature_verified=True,
+        )
+
+    return replace(
+        known,
+        signer_authenticated=True,
+        identity_verified=True,
+        claimed_role=claimed_role,
+        reason=f"signed by {signer.subject} using trusted key {key_id}",
+    )
+
+
+_GOVERNANCE_ARTIFACT = _SignedHumanArtifact(
+    noun="governance approval",
+    schema=GOVERNANCE_APPROVAL_SCHEMA,
+    canonical=canonical_governance_payload,
+    identity=_governance_identity,
+)
+
+_ACTION_ARTIFACT = _SignedHumanArtifact(
+    noun="action approval",
+    schema=APPROVAL_SCHEMA,
+    canonical=canonical_grant_payload,
+    identity=_action_identity,
+)
+
+
+def authenticate_action_grant(
+    grant: "Mapping[str, Any] | None",
+    *,
+    trust_store: "ApprovalTrustStore | None",
+) -> AuthenticatedSignerEvidence:
+    """Authenticate an action grant's signer. NOT an authority to release.
+
+    Exposed for the action authority verifier, which lives with `ActionRequest`
+    in the runtime module. Its result cannot be used as a decision: see
+    :class:`AuthenticatedSignerEvidence`.
+    """
+    return _authenticate_signed_human_artifact(
+        grant,
+        trust_store=trust_store,
+        trust_domain=ACTION_TRUST_DOMAIN,
+        spec=_ACTION_ARTIFACT,
+    )
