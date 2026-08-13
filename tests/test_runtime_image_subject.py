@@ -28,14 +28,52 @@ import pytest
 
 IMAGE = "nornyx-forge-subject-probe:test"
 
+def _daemon_reachable() -> bool:
+    """Whether a Docker daemon answers RIGHT NOW.
+
+    `shutil.which` alone would answer a different question -- whether the CLI is
+    installed -- and a client with no daemon behind it reports every build as a
+    failure of whatever was being built.
+    """
+    if shutil.which("docker") is None:
+        return False
+    return (
+        subprocess.run(  # noqa: S603, S607
+            ["docker", "info"], capture_output=True, text=True
+        ).returncode
+        == 0
+    )
+
+
 needs_docker = pytest.mark.skipif(
-    shutil.which("docker") is None
-    or subprocess.run(
-        ["docker", "info"], capture_output=True, text=True
-    ).returncode
-    != 0,
+    not _daemon_reachable(),
     reason="requires a running Docker daemon; proved in the container-launch CI job",
 )
+
+
+def _refuse_or_skip(completed) -> None:
+    """A failed build is a failure. A vanished daemon is not.
+
+    Collection happens once and the daemon is checked there, so a workstation
+    that stops Docker mid-run makes every remaining case fail with an assertion
+    about the image -- a governance gate reporting FAIL for a reason that has
+    nothing to do with the repository, which is a verdict nobody can act on.
+
+    The distinction is RE-VERIFIED rather than pattern-matched out of the error
+    text: the daemon is asked again, and only its absence buys a skip. A build
+    that fails while the daemon is answering is a real failure and stays one --
+    laundering those would be exactly the false green this suite exists to stop.
+    The skip is declared in the census, and CI's container-launch job runs these
+    with a daemon guaranteed, where a skip fails that job instead.
+    """
+    if completed.returncode == 0:
+        return
+    if not _daemon_reachable():
+        pytest.skip(
+            "the Docker daemon became unreachable during the run, so the image "
+            "was never built; this is unavailability, not a failed property"
+        )
+    raise AssertionError(completed.stdout[-3000:] + completed.stderr[-3000:])
 
 #: Run inside the image. Uses the production bootstrap, not a reimplementation:
 #: a probe that computed the subject its own way would prove nothing about what
@@ -75,7 +113,7 @@ def _build() -> None:
         encoding="utf-8",
         errors="replace",
     )
-    assert completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-3000:]
+    _refuse_or_skip(completed)
 
 
 def _probe() -> dict:
@@ -87,7 +125,7 @@ def _probe() -> dict:
         encoding="utf-8",
         errors="replace",
     )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
+    _refuse_or_skip(completed)
     return json.loads(completed.stdout.strip().splitlines()[-1])
 
 
@@ -195,3 +233,57 @@ def test_the_dockerfile_still_omits_the_issuer_tooling():
 
     assert_image_excludes('scripts', root=ROOT)
 
+
+
+# --------------------------------------------------------------------------
+# The unavailability/failure discrimination itself, which needs no daemon.
+# --------------------------------------------------------------------------
+
+
+class _Completed:
+    def __init__(self, code: int) -> None:
+        self.returncode = code
+        self.stdout = "the image is wrong"
+        self.stderr = ""
+
+
+def test_a_build_failure_with_a_live_daemon_is_still_a_failure(monkeypatch):
+    """The half that must NOT become a skip.
+
+    An exemption that swallowed real build failures would be strictly worse
+    than the flake it was written for: the daemon check is re-run, and a daemon
+    that answers means the failure is about the image.
+    """
+    monkeypatch.setattr(
+        "test_runtime_image_subject._daemon_reachable", lambda: True
+    )
+    with pytest.raises(AssertionError, match="the image is wrong"):
+        _refuse_or_skip(_Completed(1))
+
+
+def test_a_vanished_daemon_is_unavailability_not_a_failed_property(monkeypatch):
+    """The half that must. Same failing process, opposite verdict, and the only
+    thing that differs is whether a daemon answered when asked again.
+
+    `pytest.skip` raises `Skipped`, which derives from BaseException -- so
+    `pytest.raises(Exception)` does not catch it and this test SKIPS itself
+    while appearing to assert. Caught by the skip census, which is what it is
+    for, but it is worth naming: a test that silently becomes a skip proves
+    exactly nothing, which is the defect this whole gate exists to find.
+    """
+    monkeypatch.setattr(
+        "test_runtime_image_subject._daemon_reachable", lambda: False
+    )
+    with pytest.raises(
+        pytest.skip.Exception, match="unavailability, not a failed property"
+    ):
+        _refuse_or_skip(_Completed(1))
+
+
+def test_a_successful_build_is_neither(monkeypatch):
+    """And success must not consult the daemon at all."""
+    monkeypatch.setattr(
+        "test_runtime_image_subject._daemon_reachable",
+        lambda: pytest.fail("success re-probed the daemon"),
+    )
+    _refuse_or_skip(_Completed(0))
