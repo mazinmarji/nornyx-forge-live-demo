@@ -90,9 +90,20 @@ MUTATIONS = [
     ("evidence record status", ARCH, "status: observed", "status: pass"),
     ("required evidence list", ARCH,
      "- independent_review_record", "- runtime_evidence_manifest"),
-    ("separation of duties role", ARCH, "architecture_reviewer", "operations_owner"),
+    # The bare role name first occurs in a COMMENT explaining why eligibility
+    # was narrowed, so this case had been mutating prose and passing
+    # vacuously -- found by _refuse_comment_target the moment it existed,
+    # having survived every run before that. Pinned to the semantic field.
+    ("separation of duties role", ARCH,
+     "required_roles: [architecture_reviewer]", "required_roles: [operations_owner]"),
+    # Was `ui_direct_persistence_access`. That token was retired -- it denied
+    # an edge the same contract declares -- and the only surviving occurrence
+    # is a comment recording why. A probe aimed at a comment changes no
+    # governance verdict, so it passes vacuously: the assertion below is
+    # satisfied by `not verdict_changed` alone. Retargeted to a token that is
+    # still a live policy term, and _refuse_comment_target keeps it that way.
     ("architecture constraint", ARCH,
-     "ui_direct_persistence_access", "ui_direct_persistence_access_disabled"),
+     "api_direct_command_execution", "api_direct_command_execution_disabled"),
     ("capability declaration", RUNTIME,
      "execute_high_risk_effect", "execute_high_risk_effect_renamed"),
     ("declared name", RUNTIME,
@@ -107,6 +118,27 @@ def baseline():
         _subject(),
         {ARCH: _verdict(ARCH), RUNTIME: _verdict(RUNTIME)},
         {name: (ROOT / name).read_bytes() for name in (ARCH, RUNTIME)},
+    )
+
+
+def _refuse_comment_target(label: str, text: str, find: str) -> None:
+    """A probe whose target has drifted into a comment proves nothing.
+
+    `str.replace(find, replace, 1)` hits the FIRST occurrence. When a term is
+    retired from a policy list but left in a comment explaining the removal,
+    that first occurrence silently becomes the comment -- the mutation then
+    changes no governance verdict, and the assertion in the caller is satisfied
+    by `not verdict_changed` without measuring anything.
+
+    That happened here, so the drift is now an error rather than a green tick.
+    """
+    offset = text.index(find)
+    line = text.rfind(chr(10), 0, offset) + 1
+    prefix = text[line:offset]
+    assert not prefix.lstrip().startswith("#"), (
+        f"{label}: the first occurrence of {find!r} is inside a comment, so "
+        "this case mutates prose and cannot change a governance decision. "
+        "Point it at a live semantic term."
     )
 
 
@@ -130,6 +162,8 @@ def test_a_decision_changing_mutation_is_always_caught(
     text = original.decode("utf-8")
     mutated = text + replace if find is None else text.replace(find, replace, 1)
     assert mutated != text, f"{label}: the mutation changed nothing, so it tests nothing"
+    if find is not None:
+        _refuse_comment_target(label, text, find)
 
     try:
         target.write_text(mutated, encoding="utf-8", newline="")

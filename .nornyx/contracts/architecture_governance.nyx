@@ -31,7 +31,14 @@ agents:
 
 policies:
   - name: ArchitecturePolicy
-    deny: [undeclared_component_dependency, ui_direct_persistence_access, api_direct_command_execution]
+    # `ui_direct_persistence_access` was removed from this list. It denied
+    # an edge THIS CONTRACT declares -- component.api depends_on
+    # component.persistence -- and no check consumed the token, so it was a
+    # prohibition in the governance source of truth that governed nothing.
+    # A control name with no decision point is worse than no name: it reads
+    # as protection. The remaining two are enforced, and
+    # tests/test_architecture_vocabulary.py holds each to a decision point.
+    deny: [undeclared_component_dependency, api_direct_command_execution]
     require: [architecture_evidence_per_change, revision_binding, bounded_external_adapter]
   - name: ArchitectureReviewPolicy
     deny: [reviewer_modifies_implementation, ai_architecture_approval]

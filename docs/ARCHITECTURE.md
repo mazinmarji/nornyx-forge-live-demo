@@ -31,12 +31,29 @@ module the contract does not model fails the gate instead of being skipped by it
 ## Dependency direction
 
 ```text
-UI/API -> application service -> agentic flow -> governed actions -> persistence
-                         |-> evidence
-                         |-> Nornyx policy boundary
+UI/API -> agentic flow -> governed actions -> Nornyx policy boundary
+     |                            |-> evidence
+     |-> case store (declared, direct)
 ```
 
-The UI does not call persistence or execution actions directly. The runtime flow cannot grant human or production approval.
+The UI does not reach execution or governance directly. It DOES read and write
+the case store directly, and that edge is declared: `component.api depends_on
+component.persistence` in the architecture contract, and `module.api depends_on
+module.persistence`.
+
+This paragraph used to say "the UI does not call persistence or execution
+actions directly", which was false about persistence -- `demo_app.main` imports
+`JsonStore` on line 19 and always has. Three artifacts disagreed: this document
+forbade the edge, the contract's policy list denied it, and the contract's own
+component graph declared it. The graph and the code agreed; the prose did not.
+
+The edge is kept rather than routed through the application layer, deliberately.
+The governance boundary is EXECUTION, not storage: the case store holds case
+records and is not a route to a consequential effect. Making `demo_app.agentic`
+the persistence gateway would move file I/O into the module that owns the action
+boundary, which is worse for the property that actually matters.
+
+The runtime flow cannot grant human or production approval.
 
 Two rules keep that from eroding. `demo_app.main` may not import `nornyx_forge`
 at all, checked by path so that no contract edit can grant the edge — the action

@@ -111,6 +111,11 @@ REQUIRED_MODULES = (
     "tests/test_authority_domains.py",
     "tests/test_domain_immutability.py",
     "tests/test_domain_collapse_mutations.py",
+    # What each execution mode DOES, and every policy control name held to
+    # a decision point. Both exist because a document outlived the thing it
+    # described.
+    "tests/test_execution_mode_truth.py",
+    "tests/test_architecture_vocabulary.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.
