@@ -65,6 +65,37 @@ ACQUISITIONS = [
     ("multiprocessing", _source("import multiprocessing as mp", "def p(f):", "    mp.Process(target=f).start()")),
     ("asyncio subprocess", _source("import asyncio", "async def p(c):", "    await asyncio.create_subprocess_shell(c)")),
     ("pty", _source("import pty", "def p(c):", "    pty.spawn(c)")),
+    # DYNAMIC ACQUISITION. Seven of these were accepted by the gate while the
+    # static `import subprocess` two lines away was refused, so the control was
+    # not "process capability must be declared" but "must be declared if you
+    # spell it the way the analyser expects". Only the computed name refused,
+    # and for the unrelated reason that unreadable names are refused wholesale.
+    ("importlib literal", _source(
+        "import importlib", "def p(c):",
+        "    return importlib.import_module('subprocess').run(c)")),
+    ("importlib from-import", _source(
+        "from importlib import import_module", "def p(c):",
+        "    return import_module('subprocess').run(c)")),
+    ("importlib from-import aliased", _source(
+        "from importlib import import_module as _im", "def p(c):",
+        "    return _im('subprocess').run(c)")),
+    ("importlib module aliased", _source(
+        "import importlib as _il", "def p(c):",
+        "    return _il.import_module('subprocess').run(c)")),
+    ("__import__ literal", _source(
+        "def p(c):", "    return __import__('subprocess').run(c)")),
+    ("__import__ rebound", _source(
+        "_imp = __import__", "def p(c):", "    return _imp('subprocess').run(c)")),
+    ("sys.modules lookup", _source(
+        "import sys", "def p(c):", "    return sys.modules['subprocess'].run(c)")),
+    ("computed module name", _source(
+        "import importlib", "def p(c):",
+        "    return importlib.import_module('sub' + 'process').run(c)")),
+    # Dual-use reached dynamically, then used for exec. The module object is
+    # the same object however it was obtained.
+    ("dynamic os bound then exec", _source(
+        "import importlib", "_o = importlib.import_module('os')", "def p(c):",
+        "    return _o.system(c)")),
 ]
 
 BENIGN = [
@@ -74,6 +105,23 @@ BENIGN = [
     ("os.environ mapping", _source("import os", "def p():", "    return dict(os.environ)")),
     ("unrelated stdlib", _source("import json", "from pathlib import Path", "def p(x):", "    return json.loads(Path(x).read_text())")),
     ("shutil.which is a PATH lookup", _source("import shutil", "def p(n):", "    return shutil.which(n)")),
+    # The other half of the dynamic rule. Importing a module dynamically is
+    # ordinary; a gate that refused every `import_module` would be refusing
+    # plugin loading rather than process capability, and would be turned off.
+    ("dynamic import of json", _source(
+        "import importlib", "def p():",
+        "    return importlib.import_module('json').dumps({})")),
+    ("dynamic import aliased, benign module", _source(
+        "from importlib import import_module as _im", "def p():",
+        "    return _im('pathlib').Path('.')")),
+    ("sys.modules for a benign module", _source(
+        "import sys", "def p():", "    return sys.modules.get('json')")),
+    ("dynamic os, ordinary member", _source(
+        "import importlib", "def p():",
+        "    return importlib.import_module('os').getenv('HOME')")),
+    ("dynamic os bound, ordinary member", _source(
+        "import importlib", "_o = importlib.import_module('os')", "def p():",
+        "    return _o.getenv('HOME')")),
 ]
 
 

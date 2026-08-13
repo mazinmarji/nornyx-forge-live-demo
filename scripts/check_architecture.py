@@ -443,6 +443,39 @@ EXEC_FUNCTIONS = {
 OPAQUE_ACCESSORS = {"getattr"}
 
 
+#: Returned when a dynamic import names a module that cannot be read
+#: statically. Distinct from None, which means "not a dynamic import at all".
+_COMPUTED = "<computed>"
+
+
+def _dynamically_imported_module(
+    node: "ast.Call",
+    importlib_modules: set[str],
+    dynamic_importers: set[str],
+    sys_aliases: set[str],
+) -> str | None:
+    """The module a dynamic-import call names, or None if this is not one.
+
+    Every spelling that reaches a module object without an import statement:
+    `importlib.import_module`, an aliased `importlib`, a bare or aliased
+    `import_module`, `__import__`, and a name bound to any of them.
+    """
+    func = node.func
+    is_dynamic = (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id in importlib_modules
+        and func.attr == "import_module"
+    ) or (isinstance(func, ast.Name) and func.id in dynamic_importers)
+    _ = sys_aliases
+    if not is_dynamic:
+        return None
+    target = node.args[0] if node.args else None
+    if isinstance(target, ast.Constant) and isinstance(target.value, str):
+        return target.value
+    return _COMPUTED
+
+
 def _process_capability_markers(path: Path, relative: str) -> set[str]:
     """Return the ways this module ACQUIRES process-execution capability.
 
@@ -495,6 +528,32 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
     module_aliases: dict[str, str] = {}
     #: Local names bound directly to an exec-family callable.
     exec_aliases: dict[str, str] = {}
+    #: Local names bound to the `importlib` module, and local names that ARE a
+    #: dynamic import callable.
+    #:
+    #: Measured before this existed: a module forbidden process capability could
+    #: acquire it through SEVEN spellings the gate reported clean, while the
+    #: static `import subprocess` two lines away was refused --
+    #:
+    #:     importlib.import_module("subprocess").run(c)          accepted
+    #:     from importlib import import_module; import_module(…) accepted
+    #:     from importlib import import_module as _im; _im(…)    accepted
+    #:     import importlib as _il; _il.import_module(…)         accepted
+    #:     __import__("subprocess").run(c)                       accepted
+    #:     _imp = __import__; _imp("subprocess").run(c)          accepted
+    #:     sys.modules["subprocess"].run(c)                      accepted
+    #:
+    #: Only the COMPUTED name was refused, and for an unrelated reason: names
+    #: that cannot be read are refused wholesale. So the control was not
+    #: "process capability must be declared"; it was "process capability must be
+    #: declared if you spell it the way the analyser expects", which is a
+    #: convention rather than a boundary.
+    importlib_modules: set[str] = set()
+    #: `__import__` is a builtin, so it needs no import to be in scope and is
+    #: seeded here rather than discovered.
+    dynamic_importers: set[str] = {"__import__"}
+    #: Local names bound to `sys`, for `sys.modules[...]` lookups.
+    sys_aliases: set[str] = set()
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -506,6 +565,10 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
                     markers.add(alias.name)
                 elif root in DUAL_USE_MODULES:
                     module_aliases[bound] = root
+                elif root == "importlib":
+                    importlib_modules.add(bound)
+                elif root == "sys":
+                    sys_aliases.add(bound)
 
         elif isinstance(node, ast.ImportFrom) and node.module:
             root = node.module.split(".")[0]
@@ -522,6 +585,10 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
                         )
                     elif alias.name in DUAL_USE_MODULES:
                         module_aliases[alias.asname or alias.name] = alias.name
+            elif root == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        dynamic_importers.add(alias.asname or alias.name)
 
         elif isinstance(node, ast.Assign):
             # `_RUN = os.system`, `_o = os`, `handler = _o.popen`.
@@ -541,6 +608,26 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
                 elif value.id in exec_aliases:
                     for name in bound:
                         exec_aliases[name] = exec_aliases[value.id]
+                elif value.id in dynamic_importers:
+                    # `_imp = __import__`, and the chain that follows from it.
+                    dynamic_importers.update(bound)
+            elif (
+                isinstance(value, ast.Attribute)
+                and isinstance(value.value, ast.Name)
+                and value.value.id in importlib_modules
+                and value.attr == "import_module"
+            ):
+                dynamic_importers.update(bound)
+            elif isinstance(value, ast.Call):
+                # `runner = importlib.import_module("os")` -- a dual-use module
+                # reached dynamically is still that module, so it joins the
+                # ordinary alias map and the exec-family pass below applies.
+                imported = _dynamically_imported_module(
+                    value, importlib_modules, dynamic_importers, sys_aliases
+                )
+                if imported and imported.split(".")[0] in DUAL_USE_MODULES:
+                    for name in bound:
+                        module_aliases[name] = imported.split(".")[0]
 
     # Second pass: names are all bound, so attribute access and calls resolve.
     for node in ast.walk(tree):
@@ -555,9 +642,36 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
         elif isinstance(node, ast.Name) and node.id in exec_aliases:
             markers.add(exec_aliases[node.id])
 
+        elif isinstance(node, ast.Subscript):
+            # `sys.modules["subprocess"]` -- no import node anywhere, and the
+            # module object it yields is the capability.
+            owner = node.value
+            if (
+                isinstance(owner, ast.Attribute)
+                and isinstance(owner.value, ast.Name)
+                and owner.value.id in sys_aliases
+                and owner.attr == "modules"
+            ):
+                key = node.slice
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    if key.value.split(".")[0] in EXEC_ONLY_MODULES:
+                        markers.add(f"sys.modules[{key.value!r}]")
+                else:
+                    markers.add("sys.modules[<computed>] (opaque module access)")
+
         elif isinstance(node, ast.Call):
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            imported = _dynamically_imported_module(
+                node, importlib_modules, dynamic_importers, sys_aliases
+            )
+            if imported is not None:
+                if imported == _COMPUTED:
+                    markers.add("import_module(<computed>) (opaque module access)")
+                elif imported.split(".")[0] in EXEC_ONLY_MODULES:
+                    # Acquiring it dynamically acquires it. The spelling is not
+                    # the control; holding the module is.
+                    markers.add(imported)
             if name in OPAQUE_ACCESSORS:
                 target = node.args[0] if node.args else None
                 owner = (
