@@ -116,6 +116,9 @@ REQUIRED_MODULES = (
     # described.
     "tests/test_execution_mode_truth.py",
     "tests/test_architecture_vocabulary.py",
+    # Regeneration stability, and derived-evidence tamper followed all the
+    # way to the effect boundary rather than to a diagnosis.
+    "tests/test_inspection_subject_matrix.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.

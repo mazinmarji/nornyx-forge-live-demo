@@ -127,6 +127,7 @@ def _permissive_boundary(
     runtime_context: RuntimeContext | None = None,
     runtime_subject: RuntimeSubject | None = None,
     action_trust: object | None = None,
+    governance_integrity: object | None = None,
 ) -> NornyxActionBoundary:
     """A boundary whose authorizer allows everything, to isolate our control.
 
@@ -167,8 +168,10 @@ def _permissive_boundary(
     # must not read as "sound" -- so a fixture that omitted this would exercise
     # the integrity gate while claiming to test approval semantics, and every
     # refusal below would pass for the wrong reason.
-    boundary.governance_integrity = GovernanceIntegrityState(
-        status=INTEGRITY_INTACT, verified_claims=8
+    boundary.governance_integrity = (
+        governance_integrity
+        if governance_integrity is not None
+        else GovernanceIntegrityState(status=INTEGRITY_INTACT, verified_claims=8)
     )
     boundary._imports = {
         "CapabilityRequest": lambda *a, **k: None,
