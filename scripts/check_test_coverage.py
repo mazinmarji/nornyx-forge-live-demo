@@ -106,6 +106,11 @@ REQUIRED_MODULES = (
     "tests/test_process_capability.py",
     "tests/test_evidence_integrity_verifier.py",
     "tests/test_dockerfile_surface.py",
+    # The two approval authorities are independently provisioned. Deleting
+    # either of these leaves the split in place and the proof of it gone.
+    "tests/test_authority_domains.py",
+    "tests/test_domain_immutability.py",
+    "tests/test_domain_collapse_mutations.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.

@@ -631,3 +631,40 @@ def test_the_action_store_is_refused_by_the_governance_authority(tmp_path: Path)
     )
     assert refused.granted is False
     assert "TRUST_DOMAIN_MISMATCH" in refused.reason, refused.reason
+
+
+def test_every_prerequisite_holds_before_the_domain_clause_refuses(tmp_path: Path):
+    """The false-green audit, made an assertion instead of a habit.
+
+    A cross-domain negative is only evidence if execution REACHED the domain
+    clause. Here the key IS trusted in the action domain -- it simply holds a
+    governance role there -- so signature, identity, subject type and trust all
+    succeed and are asserted from the evidence, and the refusal can only be the
+    authority clause.
+
+    Written because the opposite happened in this very file: a mis-spelled
+    keyword put the role into an UNSIGNED field, every grant carried the default
+    role under a signature that no longer matched, and each case refused for a
+    broken signature while reporting a clean authority test.
+    """
+    domains = _provision(tmp_path, action=(GOVERNANCE_ROLE,))
+
+    from nornyx_forge.approval_trust import authenticate_action_grant  # noqa: PLC0415
+
+    grant = _grant(tmp_path, GOVERNANCE_ROLE)
+    signer = authenticate_action_grant(grant, trust_store=domains.action)
+    assert signer.signer_authenticated is True, signer.reason
+    assert signer.signature_verified is True
+    assert signer.identity_verified is True
+    assert signer.subject_type_verified is True
+    assert signer.claimed_role == GOVERNANCE_ROLE
+    assert GOVERNANCE_ROLE in signer.trusted_roles, (
+        "the action domain does not trust this key in the claimed role, so the "
+        "refusal below would be the membership clause rather than the role one"
+    )
+
+    decision, calls, spent = _release(
+        tmp_path, GOVERNANCE_ROLE, action_trust=domains.action
+    )
+    _refused_effect(decision, calls, spent, clause="may not release a high-risk effect")
+    assert GOVERNANCE_ROLE in decision.reason

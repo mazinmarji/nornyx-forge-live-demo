@@ -312,6 +312,17 @@ def test_a_broken_store_at_bootstrap_says_why(tmp_path: Path, monkeypatch):
 # So the property asserted here is the honest one: reviewer trust has no runtime
 # authorization consumer, and if that ever changes the change has to be
 # deliberate because this test fails.
+#
+# THE STANDING RULE, for whoever reads that failure:
+#
+#   If reviewer trust gains a long-lived runtime consumer, that consumer must
+#   establish an immutable reviewer-trust snapshot at its composition boundary.
+#
+# It is the rule the approval domains already follow, and it is written here
+# rather than applied pre-emptively: a snapshot with no consumer is unused
+# security state, and this programme has found that shape to be a defect more
+# often than a fix. The rule costs nothing until it is needed, and the test
+# below is what makes sure it is read at the moment it becomes needed.
 
 
 def test_reviewer_trust_has_no_runtime_authorization_consumer():
