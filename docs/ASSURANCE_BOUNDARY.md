@@ -65,9 +65,18 @@ Consequences when no human approval record exists:
 
 - `nornyx check .nornyx/contracts/runtime_network.nyx` fails.
 - `scripts/prepare_runtime.py` fails at its first step, so no runtime lock is produced.
-- `NornyxActionBoundary` cannot load `nornyx.agentic`. With
-  `FORGE_ALLOW_POLICY_FALLBACK=false` (the `docker-compose.yml` default) the
-  application **fails closed** and refuses to process any case.
+- `NornyxActionBoundary` cannot load `nornyx.agentic`. Whether the
+  application then **fails closed** or falls back is decided by
+  `RuntimeAuthorityConfig.policy_backend`, not by any environment variable:
+  `"nornyx"` refuses, `"deterministic_demo"` permits the fallback. The mode is
+  bound into the governed subject, so the two are different things to approve.
+- This paragraph previously attributed that behaviour to
+  `FORGE_ALLOW_POLICY_FALLBACK=false` "the `docker-compose.yml` default". That
+  variable was retired and nothing read it, so the sentence described a
+  fail-closed deployment that did not exist -- and the effective default is
+  `deterministic_demo`, the permissive one. Recorded rather than quietly
+  corrected, because a document that has been wrong once about which control is
+  load-bearing should say so.
 - With the fallback permitted, the demonstration runs and still denies
   high-risk external actions, but every decision is labelled
   `source: deterministic_fallback` rather than `nornyx.agentic`.

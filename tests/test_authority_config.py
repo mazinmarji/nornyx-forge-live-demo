@@ -272,3 +272,76 @@ def test_the_sequential_backend_still_runs_when_crewai_is_absent(
         config=RuntimeAuthorityConfig("deterministic_demo", "sequential"),
     )
     assert result["observed_execution_backend"] == "sequential"
+
+
+def test_no_deployment_file_sets_a_retired_authority_control():
+    """A retired control must not come back as deployment configuration.
+
+    The code ignoring a variable is only half the property. `docker-compose.yml`
+    went on setting `FORGE_ALLOW_POLICY_FALLBACK: "false"` and
+    `FORGE_STRICT_CREWAI: "true"` long after both were retired, and
+    `docs/ASSURANCE_BOUNDARY.md` cited that file as the reason the deployment
+    failed closed. Nothing read either variable. The document described a
+    posture that did not exist, and the posture it described was the STRICT one
+    while the effective default is the permissive backend -- so the error ran in
+    the dangerous direction.
+
+    Deployment configuration is read by operators as a statement about what the
+    system does. A key nothing consumes is a false statement, and this is the
+    test that keeps one from being written again.
+    """
+    offenders: list[str] = []
+    for relative in ("docker-compose.yml", "Dockerfile"):
+        path = ROOT / relative
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            bare = line.strip()
+            if bare.startswith("#"):
+                continue
+            offenders.extend(
+                f"{relative}: {bare[:70]}"
+                for name in RETIRED_AUTHORITY_ENV
+                if name in bare
+            )
+    assert offenders == [], (
+        "these deployment files set controls the application retired, so they "
+        f"describe a governance posture nothing implements: {offenders}"
+    )
+
+
+#: Consumed by libraries rather than by this repository. Exempt BY NAME with a
+#: reason, never by a pattern -- a pattern would also exempt the next dead
+#: Forge control, which is the thing being prevented.
+THIRD_PARTY_ENV = {
+    "CREWAI_DISABLE_TELEMETRY": "read by crewai",
+    "OTEL_SDK_DISABLED": "read by the OpenTelemetry SDK",
+}
+
+
+def test_the_compose_environment_names_only_variables_something_reads():
+    """The general form: no deployment key that nothing consumes."""
+    import re  # noqa: PLC0415
+
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    declared = set()
+    for line in compose.splitlines():
+        if line.strip().startswith("#"):
+            continue
+        match = re.match(r"\s+([A-Z][A-Z0-9_]+):\s", line)
+        if match:
+            declared.add(match.group(1))
+    assert declared, "no environment keys were parsed, so this proves nothing"
+
+    sources = "\n".join(
+        path.read_text(encoding="utf-8") for path in (ROOT / "src").rglob("*.py")
+    )
+    unread = sorted(
+        name
+        for name in declared - set(THIRD_PARTY_ENV)
+        if f'"{name}"' not in sources
+    )
+    assert unread == [], (
+        "docker-compose.yml sets variables no module under src/ reads. Either "
+        f"they control nothing, or the control moved and this did not: {unread}"
+    )
