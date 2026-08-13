@@ -31,7 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from issue_action_approval import sign_grant  # noqa: E402
 
 from nornyx_forge.approval_trust import (  # noqa: E402
+    ACTION_TRUST_DOMAIN,
     APPROVAL_SCHEMA,
+    GOVERNANCE_TRUST_DOMAIN,
     ApprovalTrustStore,
     TrustStoreUnavailable,
     authenticate_action_grant,
@@ -96,13 +98,29 @@ def trust_store(keypair):
     )
 
 
-def load_trust_store_from_entries(entries: list[dict], tmp: Path | None = None):
-    """Build a store the way a deployment would: a real file, loaded once."""
+def load_trust_store_from_entries(
+    entries: list[dict], tmp: Path | None = None, *, domain: str = ACTION_TRUST_DOMAIN
+):
+    """Build a store the way a deployment would: a real file, loaded once.
+
+    Provisions ONLY the named domain. Writing the same entries into both would
+    be the cross-domain grant this module's sibling suite exists to refuse, and
+    a fixture that quietly does it would make every directionality test green
+    for the wrong reason. This file tests the ACTION boundary, so that is the
+    domain it provisions; the other is present and empty.
+    """
     import tempfile
 
     target = Path(tmp or tempfile.mkdtemp()) / "trusted_approvers.json"
-    target.write_text(json.dumps({"signers": entries}, indent=2), encoding="utf-8")
-    return ApprovalTrustStore.load(target)
+    other = GOVERNANCE_TRUST_DOMAIN if domain == ACTION_TRUST_DOMAIN else ACTION_TRUST_DOMAIN
+    target.write_text(
+        json.dumps(
+            {"domains": {domain: {"signers": entries}, other: {"signers": []}}},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return ApprovalTrustStore.load(target, domain=domain)
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -167,7 +185,7 @@ def _release(work: Path, grant, store, *, request=None, attempt: int = 1):
         work,
         runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION),
     )
-    boundary.approver_trust_store = store
+    boundary.action_trust_store = store
     boundary.approval_ledger = ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
@@ -222,7 +240,7 @@ def test_the_reported_exploit_is_refused(tmp_path: Path, trust_store):
     boundary = _permissive_boundary(
         work, runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION)
     )
-    boundary.approver_trust_store = trust_store
+    boundary.action_trust_store = trust_store
     boundary.approval_ledger = ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
     ran: list[int] = []
     decision, _ = boundary.evaluate_and_execute(
@@ -364,7 +382,7 @@ def test_no_trust_store_means_no_consequential_authority(tmp_path: Path, keypair
     boundary = _permissive_boundary(
         work, runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION)
     )
-    boundary.approver_trust_store = ApprovalTrustStore()
+    boundary.action_trust_store = ApprovalTrustStore()
     low, result = boundary.evaluate_and_execute(
         mission_id="CASE-LOW", risk="low", action=lambda: "done"
     )
@@ -392,7 +410,7 @@ def test_a_malformed_trust_store_is_a_governed_refusal(
     store = tmp_path / "trusted_approvers.json"
     store.write_text(payload, encoding="utf-8")
     with pytest.raises(TrustStoreUnavailable):
-        ApprovalTrustStore.load(store)
+        ApprovalTrustStore.load(store, domain=ACTION_TRUST_DOMAIN)
 
 
 def test_a_revoked_key_cannot_release(tmp_path: Path, keypair):

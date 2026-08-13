@@ -314,13 +314,14 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
     used to take.
     """
     from nornyx_forge.approval_trust import (
+        GOVERNANCE_TRUST_DOMAIN,
         ApprovalTrustStore,
         TrustStoreUnavailable,
         verify_governance_approval,
     )
 
     try:
-        store = ApprovalTrustStore.load()
+        store = ApprovalTrustStore.load(domain=GOVERNANCE_TRUST_DOMAIN)
     except TrustStoreUnavailable as exc:
         return False, f"APPROVER_TRUST_UNUSABLE: {exc}", {}
     if not store.signers:

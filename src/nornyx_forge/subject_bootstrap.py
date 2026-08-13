@@ -81,7 +81,17 @@ class RuntimeSecurityContext:
     #:
     #: Held as an object rather than re-derived, so a request cannot reach
     #: the filesystem to decide who may approve it.
-    approver_trust: object | None = None
+    #:
+    #: TWO memberships, provisioned independently. One store served both
+    #: authorities, and the role vocabularies overlap on
+    #: `network_governance_owner`, so trusting a key to approve governed
+    #: content also trusted it -- as far as trust was concerned -- to release
+    #: consequential effects. Only a role check downstream stood between those,
+    #: and a control that rests on every caller remembering it is not a
+    #: boundary. These are separate objects because they answer separate
+    #: questions, and neither can be reached from the other.
+    governance_approval_trust: object | None = None
+    action_approval_trust: object | None = None
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -135,28 +145,50 @@ def bootstrap_security_context(
         authority_config=authority_config,
         trust=resolve_trust_configuration(resolved),
         governance_integrity=observe_governance_integrity(resolved / ".nornyx/contracts"),
-        approver_trust=_load_approver_trust(resolved),
+        **_load_approval_domains(resolved),
     )
 
 
 
-def _load_approver_trust(root: Path) -> object:
-    """Parse the approver trust store once, here, at startup.
+def _load_approval_domains(root: Path) -> dict[str, object]:
+    """Parse BOTH approval trust domains once, here, at startup.
 
-    An unparseable store is held as a refusal rather than raised: the
-    application may start and serve read-only work while consequential approval
-    authority is simply unavailable, which is the same distinction the subject
-    makes. What must not happen is starting up as though no store were
-    configured, because "nobody is trusted" and "the trust material is broken"
-    authorize the same amount but mean different things to an operator.
+    One read of one document, two independent memberships. An unparseable store
+    is held as a refusal rather than raised: the application may start and serve
+    read-only work while consequential approval authority is simply unavailable,
+    which is the same distinction the subject makes. What must not happen is
+    starting up as though no store were configured, because "nobody is trusted"
+    and "the trust material is broken" authorize the same amount but mean
+    different things to an operator.
+
+    A failure takes BOTH domains down together, deliberately. The failure is a
+    property of the document, so keeping one domain alive would report an
+    authority the operator never successfully provisioned.
     """
-    from .approval_trust import ApprovalTrustStore, TrustStoreUnavailable
+    from .approval_trust import (
+        ACTION_TRUST_DOMAIN,
+        GOVERNANCE_TRUST_DOMAIN,
+        ApprovalTrustDomains,
+        ApprovalTrustStore,
+        TrustStoreUnavailable,
+    )
 
     _ = root  # the store lives outside the governed tree, by design
     try:
-        return ApprovalTrustStore.load()
+        domains = ApprovalTrustDomains.load()
     except TrustStoreUnavailable as exc:
-        return ApprovalTrustStore(source=str(exc))
+        return {
+            "governance_approval_trust": ApprovalTrustStore(
+                source=str(exc), domain=GOVERNANCE_TRUST_DOMAIN
+            ),
+            "action_approval_trust": ApprovalTrustStore(
+                source=str(exc), domain=ACTION_TRUST_DOMAIN
+            ),
+        }
+    return {
+        "governance_approval_trust": domains.governance,
+        "action_approval_trust": domains.action,
+    }
 
 
 def unrooted_trust_configuration() -> TrustConfiguration:

@@ -71,22 +71,36 @@ def _keypair() -> tuple[bytes, str]:
     return raw, b64encode(public).decode("ascii")
 
 
-def trust_store(*, roles: tuple[str, ...] = ROLES, status: str = "active",
-                subject_type: str = "human") -> ApprovalTrustStore:
-    """A trust store vouching for the session key."""
+def signer_entry(*, roles: tuple[str, ...] = ROLES, status: str = "active",
+                 subject_type: str = "human", key_id: str = KEY_ID,
+                 subject: str = SUBJECT) -> dict:
+    """One trusted-signer record for the session key."""
     _, public = _keypair()
+    return {
+        "key_id": key_id,
+        "algorithm": "Ed25519",
+        "subject": subject,
+        "subject_type": subject_type,
+        "roles": list(roles),
+        "public_key": public,
+        "status": status,
+    }
+
+
+def trust_store(*, roles: tuple[str, ...] = ROLES, status: str = "active",
+                subject_type: str = "human",
+                domain: str = "") -> ApprovalTrustStore:
+    """A trust store vouching for the session key.
+
+    `domain` defaults to unlabelled, which the authenticator treats as "asserts
+    nothing about which authority this membership is for" and therefore does not
+    refuse on the domain clause. A test that means to prove domain separation
+    must say which domain it is building -- silence must not be mistaken for
+    "trusted in whichever domain is asking".
+    """
     return ApprovalTrustStore.for_test(
-        [
-            {
-                "key_id": KEY_ID,
-                "algorithm": "Ed25519",
-                "subject": SUBJECT,
-                "subject_type": subject_type,
-                "roles": list(roles),
-                "public_key": public,
-                "status": status,
-            }
-        ]
+        [signer_entry(roles=roles, status=status, subject_type=subject_type)],
+        domain=domain,
     )
 
 
@@ -200,41 +214,66 @@ def signed_governance_approval(
     return record
 
 
-def write_trust_store(path, *, roles: tuple[str, ...] = ROLES,
-                      status: str = "active") -> "Path":
+def write_trust_store(
+    path,
+    *,
+    roles: tuple[str, ...] | None = None,
+    governance_roles: tuple[str, ...] | None = None,
+    action_roles: tuple[str, ...] | None = None,
+    governance_extra: tuple[dict, ...] = (),
+    action_extra: tuple[dict, ...] = (),
+    status: str = "active",
+) -> "Path":
     """Write the session trust store to disk for subprocess runs.
 
     Public keys only, and the private half never leaves memory. A subprocess
     cannot be handed an in-process store, and building one by hand in each test
     would let the tests and the production loader drift apart.
+
+    The two domains are provisioned SEPARATELY. `roles=` sets both, which is
+    what a test asserting something other than domain separation wants; passing
+    `governance_roles=` or `action_roles=` provisions one domain and leaves the
+    other empty, which is what the directionality matrix needs. Omitting a
+    domain entirely leaves it with no signers, and an empty domain authorizes
+    nothing rather than everything.
+
+    `governance_extra` / `action_extra` add UNRELATED principals. A negative
+    directionality test needs them: against an empty domain the refusal is
+    "this domain has no approvers", which proves the domain was unprovisioned
+    rather than that this key was rejected by it. With another principal
+    present, the refusal has to name the key.
     """
     import json as _json
     from pathlib import Path as _Path
 
-    _, public = _keypair()
+    both = roles if roles is not None else ROLES
+    if governance_roles is None and action_roles is None:
+        governance, action = both, both
+    else:
+        governance = governance_roles or ()
+        action = action_roles or ()
+
+    def section(domain_roles: tuple[str, ...], extra: tuple[dict, ...]) -> dict:
+        entries = list(extra)
+        if domain_roles:
+            entries.insert(0, signer_entry(roles=domain_roles, status=status))
+        return {"signers": entries}
+
     location = _Path(path)
     location.parent.mkdir(parents=True, exist_ok=True)
     location.write_text(
         _json.dumps(
             {
-                "signers": [
-                    {
-                        "key_id": KEY_ID,
-                        "algorithm": "Ed25519",
-                        "subject": SUBJECT,
-                        "subject_type": "human",
-                        "roles": list(roles),
-                        "public_key": public,
-                        "status": status,
-                    }
-                ]
+                "domains": {
+                    "governance": section(tuple(governance), tuple(governance_extra)),
+                    "action": section(tuple(action), tuple(action_extra)),
+                }
             },
             indent=2,
         ),
         encoding="utf-8",
     )
     return location
-
 
 
 def live_window(*, days: int = 3) -> tuple[str, str]:
@@ -279,3 +318,15 @@ def sign_governance_record(payload: dict) -> dict:
         )
     ).decode("ascii")
     return signed
+
+
+#: A second, unrelated principal. Present so a domain a test means to leave
+#: THIS key out of is still a provisioned domain, and a refusal there is about
+#: the key rather than about the domain being empty.
+OTHER_KEY_ID = "test-approval-other"
+OTHER_SUBJECT = "human.other_principal"
+
+
+def other_signer(roles: tuple[str, ...]) -> dict:
+    """A trusted-signer record for a principal that is not the session key."""
+    return signer_entry(roles=roles, key_id=OTHER_KEY_ID, subject=OTHER_SUBJECT)

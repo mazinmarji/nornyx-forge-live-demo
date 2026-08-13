@@ -1231,8 +1231,8 @@ class NornyxActionBoundary:
         runtime_context: RuntimeContext | None = None,
         runtime_subject: RuntimeSubject | None = None,
         governance_integrity: GovernanceIntegrityState | None = None,
-        frozen_approver_trust: ApprovalTrustStore | None = None,
-        approver_trust_store: ApprovalTrustStore | None = None,
+        frozen_action_trust: ApprovalTrustStore | None = None,
+        action_trust_store: ApprovalTrustStore | None = None,
         trust: TrustConfiguration | None = None,
     ) -> None:
         self.root = root
@@ -1261,23 +1261,26 @@ class NornyxActionBoundary:
         #: the per-construction environment read that R3 removes from the
         #: serving path.
         self.trust = trust
-        if approver_trust_store is not None:
-            self.approver_trust_store = approver_trust_store
-        elif frozen_approver_trust is not None:
+        if action_trust_store is not None:
+            self.action_trust_store = action_trust_store
+        elif frozen_action_trust is not None:
             # The store the application parsed at startup. Preferred over the
             # path because a location is not authority: reopening the file per
             # boundary meant an edit between two requests changed who the second
             # one trusted, with the same context serving both.
-            self.approver_trust_store = frozen_approver_trust
+            self.action_trust_store = frozen_action_trust
         else:
             try:
-                self.approver_trust_store = ApprovalTrustStore.load(
-                    Path(trust.approver_store) if trust is not None else None
+                self.action_trust_store = ApprovalTrustStore.load(
+                    Path(trust.approver_store) if trust is not None else None,
+                    domain=ACTION_TRUST_DOMAIN,
                 )
             except TrustStoreUnavailable as exc:
                 # A store we cannot parse is not an empty store. Hold the
                 # refusal rather than starting up as though none was configured.
-                self.approver_trust_store = ApprovalTrustStore(source=str(exc))
+                self.action_trust_store = ApprovalTrustStore(
+                    source=str(exc), domain=ACTION_TRUST_DOMAIN
+                )
         #: Durable single-use ledger. Survives boundary and process restarts.
         #: Never provisioned here: a boundary that could create its own replay
         #: state could also reset it.
@@ -1499,7 +1502,7 @@ class NornyxActionBoundary:
                 authority = verify_action_approval(
                     action_approval,
                     request,
-                    trust_store=self.approver_trust_store,
+                    trust_store=self.action_trust_store,
                     as_of=self.as_of,
                 )
                 released = authority.granted

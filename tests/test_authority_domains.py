@@ -22,6 +22,7 @@ No generic authenticator result may be read as an authority grant.
 
 from __future__ import annotations
 
+import json
 import sys
 from base64 import b64encode
 from datetime import datetime, timedelta, timezone
@@ -33,13 +34,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from signing import trust_store  # noqa: E402
+from signing import (  # noqa: E402
+    KEY_ID,
+    OTHER_KEY_ID,
+    other_signer,
+    trust_store,
+    write_trust_store,
+)
 
 from nornyx_forge.approval_trust import (  # noqa: E402
     GOVERNANCE_APPROVAL_SCHEMA,
     GOVERNANCE_APPROVER_ROLES,
-    canonical_governance_payload,
     authenticate_action_grant,
+    canonical_governance_payload,
     verify_governance_approval,
 )
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
@@ -89,12 +96,53 @@ def _governance_approval(role: str) -> dict:
     return record
 
 
-def _release(tmp_path: Path, role: str):
+def _provision(tmp_path: Path, *, governance=(), action=(),
+               governance_extra=(), action_extra=()):
+    """Provision the two authority domains THROUGH THE REAL DOCUMENT.
+
+    Not two hand-built in-memory stores. The distinction decided this file's
+    own migration: the characterization below kept xfailing after the domains
+    were split, because its fixtures constructed stores directly and so never
+    exercised provisioning at all. A test about what one provisioning grants
+    has to provision.
+    """
+    from signing import write_trust_store  # noqa: PLC0415
+
+    from nornyx_forge.approval_trust import ApprovalTrustDomains  # noqa: PLC0415
+
+    path = write_trust_store(
+        tmp_path / "trusted_approvers.json",
+        governance_roles=tuple(governance),
+        action_roles=tuple(action),
+        governance_extra=tuple(governance_extra),
+        action_extra=tuple(action_extra),
+    )
+    return ApprovalTrustDomains.load(path)
+
+
+def _grant(tmp_path: Path, role: str) -> dict:
+    """The exact grant `_release` presents, for prerequisite checks."""
+    from signing import signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION  # noqa: PLC0415
+
+    return signed_grant(
+        canonical_action_request(
+            mission_id="CASE-DOMAIN", risk="high",
+            subject_revision=TEST_REVISION, descriptor=DESCRIPTOR, attempt=1,
+        ),
+        approval_id="ACT-DOMAIN",
+        role=role,
+    )
+
+
+def _release(tmp_path: Path, role: str, *, action_trust=None):
     """Drive the REAL consequential boundary with a grant claiming `role`."""
     from signing import signed_grant  # noqa: PLC0415
     from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
 
-    boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+    boundary = _permissive_boundary(
+        tmp_path, as_of="2026-08-03T00:00:00Z", action_trust=action_trust
+    )
     request = canonical_action_request(
         mission_id="CASE-DOMAIN", risk="high",
         subject_revision=TEST_REVISION, descriptor=DESCRIPTOR, attempt=1,
@@ -311,48 +359,275 @@ def test_no_consequential_consumer_reaches_past_the_authority_api():
 
 
 # --------------------------------------------------------------------------
-# CHARACTERIZATION -- expected to change
+# THE DIRECTIONALITY MATRIX
+#
+# Replaces a strict xfail that characterized the shared-trust model. That alarm
+# was observed doing its job: after the domains were split it reported
+# [XPASS(strict)] and failed the run, which is the signal these permanent tests
+# exist to answer. It is recorded rather than deleted quietly, and the sequence
+# is worth keeping because the FIRST run after the split still xfailed -- the
+# characterization built its stores in memory and so never exercised
+# provisioning at all. A test about what one provisioning grants has to
+# provision. Only once its fixture went through the real trust document did the
+# alarm fire.
+#
+#   G  governance-only principal
+#   A  action-only principal
+#   R  reviewer-only principal
+#   D  principal explicitly provisioned in BOTH approval domains
+#
+# Every negative below establishes its prerequisites first, so a refusal can
+# only be the domain or role clause. Reading the boolean alone once let a
+# whole file pass on broken signatures while appearing to test authority.
 # --------------------------------------------------------------------------
 
+#: In GOVERNANCE_APPROVER_ROLES only.
+GOVERNANCE_ROLE = "architecture_reviewer"
+#: In ACTION_APPROVER_ROLES only.
+ACTION_ROLE = "operations_owner"
+#: In BOTH vocabularies, deliberately. The matrix is only decisive because of
+#: it: a shared role name must bridge nothing.
+SHARED_ROLE = "network_governance_owner"
 
-@pytest.mark.xfail(
-    reason=(
-        "CHARACTERIZATION of the shared-trust model, not the intended end state. "
-        "`network_governance_owner` appears in BOTH role vocabularies and both "
-        "authorities read one ApprovalTrustStore, so provisioning a principal "
-        "once grants both. The intended model is independent provisioning per "
-        "domain: this xfail becomes an xpass when that lands, which is the "
-        "signal to convert it into a permanent directionality assertion rather "
-        "than to delete it."
-    ),
-    # STRICT. A non-strict xfail turns into a silent xpass the moment the
-    # refactor lands, and a migration alarm nobody hears is not an alarm. With
-    # strict=True the run FAILS when the characterized defect stops holding,
-    # which is the signal to convert this into a permanent directionality
-    # assertion rather than to delete it.
-    strict=True,
-)
-def test_one_provisioning_should_not_grant_both_authorities(tmp_path: Path):
-    """Today a single provisioning spans both domains. It should not.
 
-    The comment in `approval_trust.py` claims the vocabularies are disjoint
-    "so one key cannot do both by accident". That is false as written --
-    `network_governance_owner` is in both -- and this test records the
-    consequence rather than the wording.
+def _prerequisites_met(grant, store) -> None:
+    """Assert everything EARLIER than authority succeeded, or say which failed.
+
+    Without this a cross-domain refusal is indistinguishable from a broken
+    fixture. That is not hypothetical: a mis-spelled keyword once made every
+    grant in this file carry an unsigned role under a non-matching signature,
+    so each case refused for an invalid signature while appearing to prove
+    something about authority.
     """
-    assert "network_governance_owner" in GOVERNANCE_APPROVER_ROLES
-    assert "network_governance_owner" in ACTION_APPROVER_ROLES
+    from nornyx_forge.approval_trust import authenticate_action_grant  # noqa: PLC0415
 
-    governance_ok, _reason, _evidence = verify_governance_approval(
-        _governance_approval("network_governance_owner"),
-        trust_store=trust_store(roles=("network_governance_owner",)),
-        as_of=AS_OF,
+    signer = authenticate_action_grant(grant, trust_store=store)
+    assert signer.signer_authenticated is True, (
+        f"the grant failed a clause EARLIER than authority: {signer.reason}"
     )
-    decision, calls, _spent = _release(tmp_path, "network_governance_owner")
+    assert signer.signature_verified is True
+    assert signer.identity_verified is True
+    assert signer.subject_type_verified is True
 
-    # The assertion is the DESIRED property, so it fails today by design.
-    assert not (governance_ok and decision.effect == "ALLOW"), (
-        "one provisioning of network_governance_owner exercised BOTH governance "
-        f"approval and consequential release (calls={len(calls)}); the domains "
-        "are not independently provisioned"
+
+def _governance(domains, role: str, as_of: str = AS_OF):
+    return verify_governance_approval(
+        _governance_approval(role), trust_store=domains.governance, as_of=as_of
     )
+
+
+def _refused_effect(decision, calls, spent, *, clause: str) -> None:
+    """A negative action case is proven by the EFFECT, not by the verdict.
+
+    effect DENY, callback never invoked, grant unconsumed -- and the refusal
+    naming the clause the test is about.
+    """
+    assert decision.effect == "DENY", decision.reason
+    assert clause in decision.reason, (
+        f"refused, but not on the clause under test: {decision.reason}"
+    )
+    assert calls == [], "the effect ran despite a DENY"
+    assert spent is False, "a run that must not start consumed the grant"
+
+
+def test_G_a_governance_only_principal_cannot_release_an_effect(tmp_path: Path):
+    """G: governance ✓, action ✗ -- proven at the effect boundary."""
+    domains = _provision(
+        tmp_path,
+        governance=(GOVERNANCE_ROLE,),
+        action_extra=(other_signer((ACTION_ROLE,)),),
+    )
+
+    granted = _governance(domains, GOVERNANCE_ROLE)
+    assert granted.granted is True, granted.reason
+    assert granted.evidence["role_verified"] is True
+    assert granted.evidence["validity_verified"] is True
+
+    # The ACTION domain is provisioned -- with somebody else. So the refusal
+    # has to be about this key, not about an empty store.
+    assert domains.action.signers, "the action domain must not be empty here"
+    decision, calls, spent = _release(
+        tmp_path, GOVERNANCE_ROLE, action_trust=domains.action
+    )
+    _refused_effect(decision, calls, spent, clause="not in the action approver")
+
+
+def test_A_an_action_only_principal_cannot_approve_governance(tmp_path: Path):
+    """A: action ✓, governance ✗."""
+    domains = _provision(
+        tmp_path,
+        action=(ACTION_ROLE,),
+        governance_extra=(other_signer((GOVERNANCE_ROLE,)),),
+    )
+
+    _prerequisites_met(_grant(tmp_path, ACTION_ROLE), domains.action)
+    decision, calls, spent = _release(tmp_path, ACTION_ROLE, action_trust=domains.action)
+    assert decision.effect == "ALLOW", decision.reason
+    assert len(calls) == 1
+    assert spent is True, "the grant must be spent exactly once"
+
+    assert domains.governance.signers, "the governance domain must not be empty"
+    refused = _governance(domains, ACTION_ROLE)
+    assert refused.granted is False
+    assert "not in the governance approver trust store" in refused.reason, refused.reason
+
+
+def test_R_a_reviewer_is_not_an_approver_in_either_domain(tmp_path: Path):
+    """R: reviewer attestation ✓, governance ✗, action ✗.
+
+    Reviewer trust is a SEPARATE document with its own schema, so the direction
+    is enforced by the parser rather than by a role check: an approver store
+    handed to the reviewer loader is refused for being the wrong kind of thing,
+    and the reverse holds too.
+    """
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ApprovalTrustDomains,
+        TrustStoreUnavailable,
+    )
+    from nornyx_forge.reviewer_trust import (  # noqa: PLC0415
+        ReviewerStoreUnavailable,
+        ReviewerTrustStore,
+    )
+
+    approver = write_trust_store(tmp_path / "approvers.json", roles=(SHARED_ROLE,))
+    reviewer = tmp_path / "reviewers.json"
+    reviewer.write_text(
+        json.dumps(
+            {
+                "schema": "nornyx.forge.reviewer_trust_store.v1",
+                "reviewers": [
+                    {
+                        "key_id": "reviewer-only-01",
+                        "reviewer": "human.reviewer",
+                        "roles": ["architecture_inspector"],
+                        "public_key": "AAAA",
+                        "status": "active",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReviewerStoreUnavailable, match="not a reviewer trust store"):
+        ReviewerTrustStore.load(approver)
+    with pytest.raises(TrustStoreUnavailable, match="declares no authority domains"):
+        ApprovalTrustDomains.load(reviewer)
+
+    # And the reviewer identity is in neither approval domain.
+    domains = ApprovalTrustDomains.load(approver)
+    assert "reviewer-only-01" not in domains.governance.signers
+    assert "reviewer-only-01" not in domains.action.signers
+
+
+def test_D_a_dual_domain_principal_holds_both_because_it_was_provisioned_twice(
+    tmp_path: Path,
+):
+    """D: both authorities, and ONLY because both were granted explicitly.
+
+    The same key, the same identity, the same role name throughout. What makes
+    the difference is provisioning, which is the whole claim.
+    """
+    domains = _provision(tmp_path, governance=(SHARED_ROLE,), action=(SHARED_ROLE,))
+
+    granted = _governance(domains, SHARED_ROLE)
+    assert granted.granted is True, granted.reason
+
+    decision, calls, spent = _release(tmp_path, SHARED_ROLE, action_trust=domains.action)
+    assert decision.effect == "ALLOW", decision.reason
+    assert len(calls) == 1
+    assert spent is True
+
+
+def test_D_removing_only_the_governance_grant_leaves_action_intact(tmp_path: Path):
+    """Losing one authority must not collapse the other.
+
+    The mirror of the bridging tests, and the one most likely to be got wrong
+    by a "simplification" that reads both domains from one place.
+    """
+    domains = _provision(
+        tmp_path,
+        action=(SHARED_ROLE,),
+        governance_extra=(other_signer((SHARED_ROLE,)),),
+    )
+
+    refused = _governance(domains, SHARED_ROLE)
+    assert refused.granted is False
+    assert "not in the governance approver trust store" in refused.reason
+
+    decision, calls, spent = _release(tmp_path, SHARED_ROLE, action_trust=domains.action)
+    assert decision.effect == "ALLOW", (
+        f"withdrawing GOVERNANCE trust withdrew ACTION authority too: "
+        f"{decision.reason}"
+    )
+    assert len(calls) == 1
+    assert spent is True
+
+
+def test_D_removing_only_the_action_grant_leaves_governance_intact(tmp_path: Path):
+    """The other direction, with the effect boundary as the witness."""
+    domains = _provision(
+        tmp_path,
+        governance=(SHARED_ROLE,),
+        action_extra=(other_signer((ACTION_ROLE,)),),
+    )
+
+    granted = _governance(domains, SHARED_ROLE)
+    assert granted.granted is True, (
+        f"withdrawing ACTION trust withdrew GOVERNANCE authority too: "
+        f"{granted.reason}"
+    )
+
+    decision, calls, spent = _release(tmp_path, SHARED_ROLE, action_trust=domains.action)
+    _refused_effect(decision, calls, spent, clause="not in the action approver")
+
+
+def test_nothing_about_the_key_bridges_a_domain_it_was_not_granted(tmp_path: Path):
+    """Same public key, same key id, same identity, same role spelling.
+
+    Every property an implementation might be tempted to treat as sufficient is
+    held constant across the two domains; only the provisioning differs. If any
+    of them bridged, this would pass in both directions.
+    """
+    domains = _provision(
+        tmp_path,
+        governance=(SHARED_ROLE,),
+        action_extra=(other_signer((SHARED_ROLE,)),),
+    )
+
+    trusted = domains.governance.signers[KEY_ID]
+    other = domains.action.signers[OTHER_KEY_ID]
+    # The bridging candidates, stated so the test says what it holds constant.
+    assert other.public_key == trusted.public_key, "same key material"
+    assert SHARED_ROLE in trusted.roles and SHARED_ROLE in other.roles, "same role"
+    assert trusted.subject_type == other.subject_type == "human"
+    assert KEY_ID not in domains.action.signers, "only the provisioning differs"
+
+    decision, calls, spent = _release(tmp_path, SHARED_ROLE, action_trust=domains.action)
+    _refused_effect(decision, calls, spent, clause="not in the action approver")
+
+
+def test_the_governance_store_is_refused_by_the_action_authority(tmp_path: Path):
+    """Wiring the wrong domain in is a refusal, not a silent cross-domain grant.
+
+    Every signature in the governance store is valid, so nothing about the
+    artifact is wrong. What is wrong is the question being asked of it, and the
+    authenticator says so rather than leaving it to whoever wired the call.
+    """
+    domains = _provision(tmp_path, governance=(SHARED_ROLE,), action=(SHARED_ROLE,))
+
+    decision, calls, spent = _release(
+        tmp_path, SHARED_ROLE, action_trust=domains.governance
+    )
+    _refused_effect(decision, calls, spent, clause="TRUST_DOMAIN_MISMATCH")
+
+
+def test_the_action_store_is_refused_by_the_governance_authority(tmp_path: Path):
+    """The mirror, at the governance verifier."""
+    domains = _provision(tmp_path, governance=(SHARED_ROLE,), action=(SHARED_ROLE,))
+
+    refused = verify_governance_approval(
+        _governance_approval(SHARED_ROLE), trust_store=domains.action, as_of=AS_OF
+    )
+    assert refused.granted is False
+    assert "TRUST_DOMAIN_MISMATCH" in refused.reason, refused.reason

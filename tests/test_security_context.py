@@ -239,4 +239,4 @@ def test_the_boundary_uses_the_established_anchors_not_a_fresh_lookup(
 
     assert str(boundary.approval_ledger.path) == established.approval_ledger
     assert "attacker" not in str(boundary.approval_ledger.path)
-    assert "attacker" not in boundary.approver_trust_store.source
+    assert "attacker" not in boundary.action_trust_store.source

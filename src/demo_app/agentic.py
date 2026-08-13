@@ -119,11 +119,15 @@ def assurance_state() -> dict[str, Any]:
 
     Carries no store path and no key material.
     """
-    from nornyx_forge.approval_trust import ApprovalTrustStore, TrustStoreUnavailable
+    from nornyx_forge.approval_trust import ApprovalTrustDomains, TrustStoreUnavailable
 
     try:
-        store = ApprovalTrustStore.load()
-        loaded = store.available and bool(store.signers)
+        domains = ApprovalTrustDomains.load()
+        # BOTH domains, reported together. Saying "trust is available"
+        # while only one authority is provisioned would describe a
+        # deployment that cannot do what the word implies.
+        stores = (domains.governance, domains.action)
+        loaded = all(s.available and s.signers for s in stores)
         state = "available" if loaded else "unavailable"
     except TrustStoreUnavailable:
         loaded, state = False, "unusable"
@@ -217,8 +221,8 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             # The store parsed at startup, not its path. Reopening the file
             # per boundary meant an edit between two requests changed who
             # the second one trusted.
-            frozen_approver_trust=(
-                security_context.approver_trust
+            frozen_action_trust=(
+                security_context.action_approval_trust
                 if security_context is not None
                 else None
             ),

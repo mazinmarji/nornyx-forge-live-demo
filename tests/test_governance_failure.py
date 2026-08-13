@@ -126,6 +126,7 @@ def _permissive_boundary(
     *,
     runtime_context: RuntimeContext | None = None,
     runtime_subject: RuntimeSubject | None = None,
+    action_trust: object | None = None,
 ) -> NornyxActionBoundary:
     """A boundary whose authorizer allows everything, to isolate our control.
 
@@ -150,7 +151,9 @@ def _permissive_boundary(
         or RuntimeContext.for_test(root, at=as_of, revision=TEST_REVISION),
         # A real trust store holding a real ephemeral key. Tests about refusal
         # supply a defective grant; they do not rely on trust being absent.
-        approver_trust_store=trust_store(),
+        action_trust_store=(
+            action_trust if action_trust is not None else trust_store()
+        ),
         # An established subject. Authority is content identity now, so a test
         # states one explicitly rather than letting the boundary discover it —
         # a boundary that could discover its own subject is the ambient

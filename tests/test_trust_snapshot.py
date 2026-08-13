@@ -38,7 +38,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: E402
+from nornyx_forge.approval_trust import (  # noqa: E402
+    ACTION_TRUST_DOMAIN,
+    ApprovalTrustStore,
+)
 from nornyx_forge.governed_subject import TrustConfiguration  # noqa: E402
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
     ApprovalLedger,
@@ -47,8 +50,15 @@ from nornyx_forge.nornyx_runtime import (  # noqa: E402
     approval_ledger_path,
 )
 
+#: A hostile replacement, in the domained shape. Written into the ACTION
+#: domain only: an attacker who could add a key to the action store is the
+#: threat this file reproduces, and provisioning both domains would prove
+#: something weaker -- that a totally replaced document is observed -- while
+#: hiding whether one domain can be attacked without the other.
 ATTACKER = {
-    "signers": [
+    "domains": {
+        "governance": {"signers": []},
+        "action": {"signers": [
         {
             "key_id": "attacker-key",
             "algorithm": "Ed25519",
@@ -58,7 +68,8 @@ ATTACKER = {
             "public_key": "AAAA",
             "status": "active",
         }
-    ]
+    ]},
+    }
 }
 
 
@@ -89,9 +100,9 @@ def _signers(root: Path, trust: TrustConfiguration, frozen) -> list[str]:
             root, at="2026-08-03T00:00:00Z", revision=TEST_REVISION
         ),
         runtime_subject=TEST_SUBJECT,
-        frozen_approver_trust=frozen,
+        frozen_action_trust=frozen,
     )
-    return sorted(boundary.approver_trust_store.signers)
+    return sorted(boundary.action_trust_store.signers)
 
 
 def test_two_requests_through_one_context_see_the_same_trust(tmp_path: Path):
@@ -101,7 +112,7 @@ def test_two_requests_through_one_context_see_the_same_trust(tmp_path: Path):
     anything downstream reopens it.
     """
     store_path, trust = _anchored(tmp_path)
-    frozen = ApprovalTrustStore.load(store_path)
+    frozen = ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN)
 
     first = _signers(tmp_path, trust, frozen)
     store_path.write_text(json.dumps(ATTACKER), encoding="utf-8")
@@ -123,7 +134,7 @@ def test_an_explicit_new_bootstrap_observes_the_change(tmp_path: Path):
     store_path, _trust = _anchored(tmp_path)
     store_path.write_text(json.dumps(ATTACKER), encoding="utf-8")
 
-    assert sorted(ApprovalTrustStore.load(store_path).signers) == ["attacker-key"]
+    assert sorted(ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN).signers) == ["attacker-key"]
 
 
 def test_deleting_the_trust_file_leaves_an_existing_context_intact(tmp_path: Path):
@@ -134,11 +145,11 @@ def test_deleting_the_trust_file_leaves_an_existing_context_intact(tmp_path: Pat
     trust to offer and says so.
     """
     store_path, trust = _anchored(tmp_path)
-    frozen = ApprovalTrustStore.load(store_path)
+    frozen = ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN)
     store_path.unlink()
 
     assert _signers(tmp_path, trust, frozen) == ["test-approval-01"]
-    assert ApprovalTrustStore.load(store_path).signers == {}, (
+    assert ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN).signers == {}, (
         "a new bootstrap over a missing store must offer no trusted signer"
     )
 
@@ -148,12 +159,12 @@ def test_corrupting_the_trust_file_leaves_an_existing_context_intact(tmp_path: P
     from nornyx_forge.approval_trust import TrustStoreUnavailable  # noqa: PLC0415
 
     store_path, trust = _anchored(tmp_path)
-    frozen = ApprovalTrustStore.load(store_path)
+    frozen = ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN)
     store_path.write_text("{ this is not json", encoding="utf-8")
 
     assert _signers(tmp_path, trust, frozen) == ["test-approval-01"]
     with pytest.raises(TrustStoreUnavailable):
-        ApprovalTrustStore.load(store_path)
+        ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN)
 
 
 def test_the_established_context_carries_the_frozen_store(tmp_path: Path):
@@ -177,8 +188,10 @@ def test_the_established_context_carries_the_frozen_store(tmp_path: Path):
         root=ROOT,
         security_context=context,
     )
-    assert context.approver_trust is not None, "bootstrap parsed no trust at all"
-    assert flow.boundary.approver_trust_store is context.approver_trust, (
+    assert context.action_approval_trust is not None, (
+        "bootstrap parsed no action approval trust at all"
+    )
+    assert flow.boundary.action_trust_store is context.action_approval_trust, (
         "the boundary is answering from a store the application did not freeze"
     )
 
@@ -260,8 +273,15 @@ def test_a_broken_store_at_bootstrap_says_why(tmp_path: Path, monkeypatch):
     broken.write_text("{ not json", encoding="utf-8")
     monkeypatch.setenv("FORGE_APPROVER_TRUST_STORE", str(broken))
 
-    store = subject_bootstrap._load_approver_trust(tmp_path)
-    assert store.signers == {}, "a broken store must vouch for nobody"
+    loaded = subject_bootstrap._load_approval_domains(tmp_path)
+    # BOTH domains must report the damage. One of them silently reading as
+    # "no approvers provisioned" would be the absence-reads-as-configured
+    # confusion in the half nobody looked at.
+    assert set(loaded) == {"governance_approval_trust", "action_approval_trust"}
+    for name, store in loaded.items():
+        assert store.signers == {}, f"a broken store must vouch for nobody: {name}"
+        assert store.domain, f"{name} does not say which authority it is for"
+    store = loaded["action_approval_trust"]
     assert store.source, (
         "the context carries no reason the trust material is unusable, so an "
         "operator cannot tell a damaged file from an unprovisioned one"

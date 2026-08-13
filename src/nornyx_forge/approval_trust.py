@@ -414,31 +414,112 @@ def _parse_signers(payload: Any, location: Path) -> dict[str, TrustedSigner]:
 
 @dataclass(frozen=True)
 class ApprovalTrustStore:
-    """The trusted signers, fixed at the moment they were loaded.
+    """The trusted signers of ONE authority domain, fixed when they were loaded.
 
     Immutable and injected, so an authorization decision consults an object
     rather than the filesystem or the environment. Two decisions in one process
     answer to the same authority by construction, and a variable changed after
     startup cannot re-point the root of trust.
+
+    `domain` names which authority this membership is for. It is not decoration:
+    the authenticator refuses a store whose domain does not match the authority
+    asking, so handing the governance store to the action verifier is a refusal
+    rather than a silent cross-domain grant.
     """
 
     signers: Mapping[str, TrustedSigner] = field(default_factory=dict)
     digest: str = "sha256:" + hashlib.sha256(b"").hexdigest()
     source: str = "<none>"
     available: bool = False
+    domain: str = ""
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "ApprovalTrustStore":
-        """Read and validate the store once, at startup.
+    def load(cls, path: Path | None = None, *, domain: str) -> "ApprovalTrustStore":
+        """Read one authority domain's membership, once, at startup.
 
-        Absence and malformation are different facts. Absence means no
-        consequential authority is available here, an ordinary deployment state.
-        Malformation means the store cannot be understood, and must raise rather
-        than degrade into an empty mapping that quietly means the same thing.
+        The domain is a required keyword. A default would be the whole defect
+        this signature exists to prevent: every load site must say which
+        authority it is provisioning, in the diff, where it can be reviewed.
+        """
+        return ApprovalTrustDomains.load(path).of(domain)
+
+    @classmethod
+    def for_test(
+        cls, entries: list[dict[str, Any]], *, domain: str = ""
+    ) -> "ApprovalTrustStore":
+        payload = json.dumps({"signers": entries}, sort_keys=True).encode("utf-8")
+        return cls(
+            signers=_parse_signers({"signers": entries}, Path("<test>")),
+            digest="sha256:" + hashlib.sha256(payload).hexdigest(),
+            source="<test>",
+            available=True,
+            domain=domain,
+        )
+
+
+@dataclass(frozen=True)
+class ApprovalTrustDomains:
+    """Two independently provisioned memberships, read from one document.
+
+    WHY TWO. Governance approval and consequential action release were one
+    membership. The role vocabularies overlap on `network_governance_owner`, so
+    provisioning a key to approve governed content also provisioned it -- as far
+    as trust was concerned -- to release effects, and the separation survived
+    only because each caller happened to check a role vocabulary afterwards.
+    Membership in one trust domain must never imply authority in another.
+
+    WHY ONE DOCUMENT. One file to provision, one file to mount read-only, one
+    parser, one Ed25519 implementation. The separation is in the document's
+    structure, not in the filesystem, so it cannot be half-deployed: a store
+    that predates domains is refused outright rather than being read as both.
+
+    The sections do not share a principal map. A key listed under `governance`
+    is simply absent from `action` -- there is no set to subset, no wrapper over
+    a common list, and nothing to relax into "trusted everywhere".
+    """
+
+    governance: ApprovalTrustStore
+    action: ApprovalTrustStore
+    source: str = "<none>"
+
+    #: Named so a typo cannot open a third, ungoverned section.
+    KNOWN = (GOVERNANCE_TRUST_DOMAIN, ACTION_TRUST_DOMAIN)
+
+    def of(self, domain: str) -> ApprovalTrustStore:
+        if domain == GOVERNANCE_TRUST_DOMAIN:
+            return self.governance
+        if domain == ACTION_TRUST_DOMAIN:
+            return self.action
+        raise TrustStoreUnavailable(
+            f"{domain!r} is not an approval authority domain {list(self.KNOWN)}"
+        )
+
+    @classmethod
+    def load(cls, path: Path | None = None) -> "ApprovalTrustDomains":
+        """Read and validate both domains once, at startup.
+
+        Absence, un-migration and malformation are three different facts.
+
+        - The file is missing: no consequential authority is available here, an
+          ordinary deployment state, and each domain says so in its own source.
+        - The file exists but declares no domains: it cannot answer a per-domain
+          question at all, and guessing would grant every governance approver
+          the power to release effects. Refused, loudly, with the shape to fix
+          it.
+        - The file is unreadable: refused, rather than degrading into an empty
+          mapping that quietly means "nobody is trusted".
         """
         location = path or trust_store_path()
         if not location.exists():
-            return cls(source=str(location))
+            return cls(
+                governance=ApprovalTrustStore(
+                    source=str(location), domain=GOVERNANCE_TRUST_DOMAIN
+                ),
+                action=ApprovalTrustStore(
+                    source=str(location), domain=ACTION_TRUST_DOMAIN
+                ),
+                source=str(location),
+            )
         try:
             raw = location.read_bytes()
             payload = json.loads(raw.decode("utf-8"))
@@ -447,28 +528,69 @@ class ApprovalTrustStore:
                 f"approver trust store at {location} is unreadable: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
+
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("domains"), dict
+        ):
+            raise TrustStoreUnavailable(
+                f"approver trust store at {location} declares no authority "
+                "domains. A store that lists signers without saying which "
+                "authority they hold cannot answer 'may this key approve "
+                "GOVERNANCE' and 'may this key release an ACTION' separately, "
+                "and reading it as both would give every governance approver "
+                "the power to release consequential effects. Provision it as "
+                '{"domains": {"governance": {"signers": [...]}, '
+                '"action": {"signers": [...]}}}'
+            )
+        domains = payload["domains"]
+        unknown = sorted(set(domains) - set(cls.KNOWN))
+        if unknown:
+            # A misspelled section would otherwise sit in the file looking
+            # provisioned while granting nothing, which is the failure mode
+            # where an operator believes a key is trusted and it is not.
+            raise TrustStoreUnavailable(
+                f"approver trust store at {location} declares unknown authority "
+                f"domains {unknown}; known domains are {list(cls.KNOWN)}"
+            )
+
+        def section(name: str) -> ApprovalTrustStore:
+            if name not in domains:
+                # Present-but-unprovisioned. Distinct from a missing file, and
+                # named so the refusal tells an operator which section to add.
+                return ApprovalTrustStore(
+                    source=f"{location} declares no {name!r} approval domain",
+                    domain=name,
+                )
+            body = domains[name]
+            if not isinstance(body, dict):
+                raise TrustStoreUnavailable(
+                    f"the {name!r} approval domain in {location} is not an object"
+                )
+            material = json.dumps(body, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+            return ApprovalTrustStore(
+                signers=_parse_signers(body, location),
+                # Per DOMAIN, not per file. A digest shared between the two
+                # would report the same trust identity for two different
+                # memberships, and the evidence is meant to distinguish them.
+                digest="sha256:" + hashlib.sha256(material).hexdigest(),
+                source=str(location),
+                available=True,
+                domain=name,
+            )
+
         return cls(
-            signers=_parse_signers(payload, location),
-            digest="sha256:" + hashlib.sha256(raw).hexdigest(),
+            governance=section(GOVERNANCE_TRUST_DOMAIN),
+            action=section(ACTION_TRUST_DOMAIN),
             source=str(location),
-            available=True,
-        )
-
-    @classmethod
-    def for_test(cls, entries: list[dict[str, Any]]) -> "ApprovalTrustStore":
-        """An in-memory store for tests. Never constructed by governed code."""
-        raw = json.dumps({"signers": entries}, sort_keys=True).encode("utf-8")
-        return cls(
-            signers=_parse_signers({"signers": entries}, Path("<test>")),
-            digest="sha256:" + hashlib.sha256(raw).hexdigest(),
-            source="<test>",
-            available=True,
         )
 
 
-def load_trust_store(path: Path | None = None) -> dict[str, TrustedSigner]:
-    """The signer mapping alone, for callers that only need to inspect it."""
-    return dict(ApprovalTrustStore.load(path).signers)
+#: `load_trust_store()` -- a domain-less accessor returning the signer mapping
+#: alone -- was removed here rather than given a domain parameter. It had no
+#: production caller, and a way to obtain "the trusted signers" without saying
+#: for which authority is the exact shape this split exists to remove.
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +749,18 @@ def _authenticate_signed_human_artifact(
 
     if not isinstance(artifact, Mapping):
         return refuse(f"no {spec.noun} was supplied")
+
+    # The store must belong to the authority asking. Handing the governance
+    # membership to the action verifier is a cross-domain grant even though
+    # every signature in it is valid, so it is refused here rather than being
+    # left to whoever wired the call. An unlabelled store (an in-memory fixture)
+    # asserts nothing about domain and is not refused on this clause.
+    if store.domain and store.domain != trust_domain:
+        return refuse(
+            f"TRUST_DOMAIN_MISMATCH: a {trust_domain!r} authority was asked to "
+            f"decide against the {store.domain!r} approver trust store. "
+            "Membership in one domain is not authority in another."
+        )
 
     # Fail closed on absence. An empty store is "nothing can be authenticated
     # here", which is the opposite of "anything may pass".
