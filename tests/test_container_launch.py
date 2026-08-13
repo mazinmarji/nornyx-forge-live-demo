@@ -53,11 +53,43 @@ def test_compose_declares_the_documented_application_port():
     assert service["build"] == "."
 
 
-def test_compose_defaults_to_fail_closed_governance():
-    """The declared compose default must not silently permit the fallback."""
+def test_the_compose_default_does_not_claim_a_governance_mode():
+    """The governance mode is not in the deployment, and must not appear to be.
+
+    This test used to assert `FORGE_ALLOW_POLICY_FALLBACK == "false"` and was
+    named for the property it believed that proved -- a fail-closed default.
+    The variable had been retired; nothing read it; the effective default was
+    the permissive backend. So the suite was requiring the presence of a key
+    that controlled nothing, and reporting a posture the application did not
+    have. The false claim was encoded as required behaviour, which is the
+    failure mode that makes a test worse than no test.
+
+    What is asserted now is the real arrangement: the mode lives in
+    `RuntimeAuthorityConfig.policy_backend`, bound into the governed subject, so
+    the deployment cannot select it at all. Changing it is a code change that
+    moves the subject digest -- which is what makes the mode something an
+    approval can cover.
+    """
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     environment = compose["services"]["app"]["environment"]
-    assert environment["FORGE_ALLOW_POLICY_FALLBACK"] == "false"
+
+    assert "FORGE_ALLOW_POLICY_FALLBACK" not in environment
+    assert "FORGE_STRICT_CREWAI" not in environment
+
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    #: The mode is part of authority identity, not of the environment.
+    assert "policy_backend" in RuntimeAuthorityConfig.__dataclass_fields__
+    subject_fields = RuntimeAuthorityConfig(
+        policy_backend="nornyx", execution_backend="sequential"
+    )
+    permissive = RuntimeAuthorityConfig(
+        policy_backend="deterministic_demo", execution_backend="sequential"
+    )
+    assert subject_fields != permissive, (
+        "the two governance modes are indistinguishable, so an approval of one "
+        "would cover the other"
+    )
 
 
 def test_dockerfile_copies_the_governance_contracts():
