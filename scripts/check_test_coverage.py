@@ -174,7 +174,9 @@ REQUIRED_MODULES = (
     "tests/test_trust_snapshot.py",
     # Authentication proves who signed; authorization proves what they may
     # do. The directionality matrix keeps those separate.
-    "tests/test_authority_domains.py",
+    # The historical security inventory, and the meta-controls that keep it
+    # from silently shrinking.
+    "tests/test_historical_reproof.py",
 )
 
 
