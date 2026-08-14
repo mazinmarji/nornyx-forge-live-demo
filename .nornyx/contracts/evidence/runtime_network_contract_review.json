@@ -7,10 +7,10 @@
     "sensitive_categories_never_shared"
   ],
   "generated_at": "2026-08-11T00:00:00Z",
-  "governed_input_digest": "sha256:e393bd445ea650aeef09589a1abc5d7ad69076f9ccc1121f449ee0457a3ce603",
+  "governed_input_digest": "sha256:70d231d6a85bae748c94d65b024c030d51d7a403c05ec32a139130f5aa3de67f",
   "human_review": "not_performed",
   "reviewer_type": "deterministic_tool",
   "schema": "nornyx.forge.network_contract_review.v1",
   "statement": "The declared agentic-network contract was reviewed by deterministic reference checks. This is a machine review, not a human approval.",
-  "subject_revision": "git:01c5de57f9509bd918fe0eef7add887348659c07"
+  "subject_revision": "git:9428056d334349d1da26d83a4e88d4da8c3cbd2b"
 }
