@@ -30,6 +30,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mutation_validity import InvalidMutation, mutate  # noqa: F401
+
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Copied wholesale so imports inside the mutant resolve to the mutant. A
@@ -70,25 +72,19 @@ def _materialize(destination: Path) -> Path:
 
 
 def apply_edits(tree: Path, edits) -> None:
-    """Apply every edit, refusing when one did not match what it expected.
+    """Apply every edit, refusing any that did not reach an executable node.
 
-    A mutation that silently fails to apply produces a mutant identical to the
-    original, which then "survives" -- and a survivor is read as a missing test.
-    The count is asserted so a renamed line cannot quietly turn this catalogue
-    into a list of no-ops.
+    The proof is delegated to `mutation_validity`, which enforces the standing
+    rule this repository adopted after three false greens: a mutation counts
+    only when the matched occurrence is shown to be an executable or
+    authoritative construct, never a comment or docstring, and the parsed
+    structure is shown to differ afterwards.
+
+    `InvalidMutation` is deliberately distinct from a failed assertion in the
+    caller: an invalid mutation is neither a kill nor a survivor, and folding it
+    into either produces a catalogue number that means nothing.
     """
-    for relative, old, new, occurrences in edits:
-        target = tree / relative
-        source = target.read_text(encoding="utf-8")
-        found = source.count(old)
-        if found != occurrences:
-            raise AssertionError(
-                f"mutation anchor did not match in {relative}: expected "
-                f"{occurrences} occurrence(s) of {old.strip()[:70]!r}, found {found}. "
-                "The mutation did not apply, so any result would be the "
-                "unmutated behaviour wearing a mutant's name."
-            )
-        target.write_text(source.replace(old, new), encoding="utf-8", newline="")
+    mutate(tree, edits)
 
 
 def probe(destination: Path, scenario: str, *, edits=(), flags=()) -> dict:

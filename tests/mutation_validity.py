@@ -1,0 +1,215 @@
+"""A mutation is valid only if it changed an executable or authoritative node.
+
+THREE FALSE GREENS forced this rule, all of them the same shape: a textual
+first-occurrence replacement landed somewhere that could not affect behaviour,
+and the result was read as evidence.
+
+    a retired policy token survived in a comment explaining its removal, so the
+    probe searching for it mutated prose
+
+    `architecture_reviewer` first occurs in a comment about narrowing
+    eligibility, so a "separation of duties" probe had been mutating prose for
+    as long as that comment existed
+
+    a mutation harness that could not tell "the anchor no longer matches" from
+    "the mutation applied and nothing happened" would report a survivor
+
+None of those changed a governance decision. All of them passed.
+
+THE RULE, enforced here rather than remembered:
+
+    TARGET FOUND                 the anchor matches, the expected number of times
+    TARGET IS EXECUTABLE         the match is not inside a comment or docstring
+    TARGET CHANGED               the parsed structure differs afterwards
+    NO INERT-ONLY MATCH          prose changes are refused outright
+    STILL PARSES                 a syntax error is an invalid mutation, not a kill
+
+`INTENDED TEST EXECUTED` and `INTENDED PROPERTY FAILED` are the caller's half,
+because only the caller knows which property it aimed at. This module makes the
+first five mechanical.
+"""
+
+from __future__ import annotations
+
+import ast
+import io
+import json
+import tokenize
+from pathlib import Path
+
+import yaml
+
+
+class InvalidMutation(AssertionError):
+    """The mutation did not modify an executable or authoritative construct.
+
+    Deliberately NOT an ordinary assertion failure in the caller's vocabulary:
+    an invalid mutation is neither a kill nor a survivor, and collapsing it into
+    either is how a catalogue reports a number that means nothing.
+    """
+
+
+def _line_starts(source: str) -> list[int]:
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    return offsets
+
+
+def _offset(starts: list[int], lineno: int, col: int) -> int:
+    return starts[lineno - 1] + col
+
+
+def inert_spans(source: str) -> list[tuple[int, int]]:
+    """Offset ranges that cannot change behaviour: comments and docstrings.
+
+    Docstrings are included even though they DO appear in the AST, because a
+    changed docstring changes the parse tree while changing nothing a security
+    control consults. Treating that as a mutation is exactly the false green
+    this module exists to refuse.
+    """
+    spans: list[tuple[int, int]] = []
+    starts = _line_starts(source)
+
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.COMMENT:
+                spans.append(
+                    (
+                        _offset(starts, token.start[0], token.start[1]),
+                        _offset(starts, token.end[0], token.end[1]),
+                    )
+                )
+    except (tokenize.TokenError, IndentationError):
+        # A file that cannot be tokenized cannot be reasoned about; the caller's
+        # parse check below will refuse it.
+        pass
+
+    tree = ast.parse(source)
+    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, holders):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+            and first.end_lineno is not None
+        ):
+            spans.append(
+                (
+                    _offset(starts, first.lineno, first.col_offset),
+                    _offset(starts, first.end_lineno, first.end_col_offset or 0),
+                )
+            )
+    return spans
+
+
+def _occurrences(source: str, anchor: str) -> list[int]:
+    found, start = [], 0
+    while (index := source.find(anchor, start)) != -1:
+        found.append(index)
+        start = index + 1
+    return found
+
+
+def check_python_mutation(
+    relative: str, before: str, after: str, anchor: str, expected: int
+) -> None:
+    """Refuse anything that is not a real change to executable Python."""
+    offsets = _occurrences(before, anchor)
+    if len(offsets) != expected:
+        raise InvalidMutation(
+            f"TARGET NOT FOUND in {relative}: expected {expected} occurrence(s) "
+            f"of {anchor.strip()[:70]!r}, found {len(offsets)}. The mutation did "
+            "not apply, so any result would be the unmutated behaviour wearing a "
+            "mutant's name."
+        )
+
+    inert = inert_spans(before)
+    for offset in offsets:
+        if any(start <= offset < end for start, end in inert):
+            line = before.count("\n", 0, offset) + 1
+            raise InvalidMutation(
+                f"TARGET IS INERT in {relative}:{line}: {anchor.strip()[:60]!r} "
+                "matches inside a comment or docstring, so this mutation changes "
+                "prose and cannot change a governance decision. Three false "
+                "greens in this repository had exactly this shape."
+            )
+
+    try:
+        mutated_tree = ast.parse(after)
+    except SyntaxError as exc:
+        raise InvalidMutation(
+            f"MUTANT DOES NOT PARSE ({relative}): {exc}. A syntax error is an "
+            "invalid mutation, never a killed one."
+        ) from exc
+
+    if ast.dump(mutated_tree) == ast.dump(ast.parse(before)):
+        raise InvalidMutation(
+            f"TARGET UNCHANGED in {relative}: the parse tree is identical after "
+            "the edit, so nothing executable was modified."
+        )
+
+
+def check_structured_mutation(relative: str, before: str, after: str) -> None:
+    """Refuse a contract/config edit that did not change the parsed document.
+
+    A `.nyx` or `.json` edit that only touches comments or whitespace leaves the
+    loaded structure identical -- and the loaded structure is what any governance
+    check reads.
+    """
+    loader = json.loads if relative.endswith(".json") else yaml.safe_load
+    try:
+        parsed_after = loader(after)
+    except Exception as exc:  # noqa: BLE001 - any parse failure is invalid
+        raise InvalidMutation(
+            f"MUTANT DOES NOT PARSE ({relative}): {type(exc).__name__}: {exc}"
+        ) from exc
+    if parsed_after == loader(before):
+        raise InvalidMutation(
+            f"TARGET UNCHANGED in {relative}: the parsed document is identical "
+            "after the edit, so only prose or formatting moved."
+        )
+
+
+def check_mutation(relative: str, before: str, after: str, anchor: str, expected: int) -> None:
+    """Dispatch on file kind. Unknown kinds are refused rather than waved through."""
+    if relative.endswith(".py"):
+        check_python_mutation(relative, before, after, anchor, expected)
+    elif relative.endswith((".nyx", ".yml", ".yaml", ".json")):
+        offsets = _occurrences(before, anchor)
+        if len(offsets) != expected:
+            raise InvalidMutation(
+                f"TARGET NOT FOUND in {relative}: expected {expected} "
+                f"occurrence(s) of {anchor.strip()[:70]!r}, found {len(offsets)}"
+            )
+        for offset in offsets:
+            line_start = before.rfind("\n", 0, offset) + 1
+            if before[line_start:offset].lstrip().startswith("#"):
+                line = before.count("\n", 0, offset) + 1
+                raise InvalidMutation(
+                    f"TARGET IS INERT in {relative}:{line}: the match is inside a "
+                    "comment, so it cannot change what any check reads."
+                )
+        check_structured_mutation(relative, before, after)
+    else:
+        raise InvalidMutation(
+            f"UNSUPPORTED TARGET {relative}: this harness can only prove a "
+            "mutation reached an executable or authoritative construct for "
+            "Python and parsed contract/config formats."
+        )
+
+
+def mutate(tree: Path, edits) -> None:
+    """Apply every edit, proving each one reached something that can decide."""
+    for relative, old, new, occurrences in edits:
+        target = tree / relative
+        before = target.read_text(encoding="utf-8")
+        after = before.replace(old, new)
+        check_mutation(relative, before, after, old, occurrences)
+        target.write_text(after, encoding="utf-8", newline="")

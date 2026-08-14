@@ -31,7 +31,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
-from mutation import Mutation, probe  # noqa: E402
+from mutation import InvalidMutation, Mutation, probe  # noqa: E402
 
 RUNTIME = "src/nornyx_forge/nornyx_runtime.py"
 TRUST = "src/nornyx_forge/approval_trust.py"
@@ -306,9 +306,67 @@ def test_a_mutation_that_does_not_apply_is_refused(tmp_path: Path):
     would otherwise turn this whole catalogue into a list of unmutated builds
     reporting the pristine behaviour.
     """
-    with pytest.raises(AssertionError, match="mutation anchor did not match"):
+    with pytest.raises(InvalidMutation, match="TARGET NOT FOUND"):
         probe(
             tmp_path,
             "action_only",
             edits=((RUNTIME, "this text is not in the source", "x", 1),),
+        )
+
+
+def test_a_mutation_that_lands_in_a_comment_is_refused(tmp_path: Path):
+    """The standing rule, enforced rather than remembered.
+
+    Three false greens in this repository were textual replacements that landed
+    in prose: a retired policy token surviving in the comment that explained its
+    removal, and a role name whose first occurrence had been a comment for as
+    long as the comment existed. Each changed the file, changed no decision, and
+    was read as evidence.
+
+    `# ONE authority call.` is a real comment in the action boundary, so this
+    mutation genuinely applies and genuinely alters the file -- and is still
+    refused, because nothing executable moved.
+    """
+    with pytest.raises(InvalidMutation, match="TARGET IS INERT"):
+        probe(
+            tmp_path,
+            "action_only",
+            edits=((RUNTIME, "# ONE authority call.", "# mutated comment.", 1),),
+        )
+
+
+def test_a_mutation_that_breaks_the_syntax_is_refused(tmp_path: Path):
+    """A crash is not a kill.
+
+    Without this, deleting a control could 'pass' by making the module
+    unimportable -- the intended test would never execute, and the catalogue
+    would count a mutation it never measured.
+    """
+    with pytest.raises(InvalidMutation, match="DOES NOT PARSE"):
+        probe(
+            tmp_path,
+            "action_only",
+            edits=((RUNTIME, "def verify_action_approval(", "def (", 1),),
+        )
+
+
+def test_a_docstring_mutation_is_refused_even_though_the_tree_changes(tmp_path: Path):
+    """Docstrings ARE in the parse tree, which is why the tree test is not enough.
+
+    A changed docstring changes `ast.dump`, so a harness proving only "the AST
+    differs" would accept it. Nothing consults a docstring to make an authority
+    decision, so it is refused explicitly.
+    """
+    with pytest.raises(InvalidMutation, match="TARGET IS INERT"):
+        probe(
+            tmp_path,
+            "action_only",
+            edits=(
+                (
+                    RUNTIME,
+                    "THE ONLY entry point a consequential boundary may use.",
+                    "A mutated docstring sentence.",
+                    1,
+                ),
+            ),
         )
