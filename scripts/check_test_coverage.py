@@ -129,6 +129,9 @@ REQUIRED_MODULES = (
     # Task 8 stated as its own theorem: what happens to an ALREADY VALID
     # inspection when the governed input changes underneath it.
     "tests/test_task8_closure.py",
+    # The semantic-binding theorem: no VALID authored change may move a
+    # Nornyx decision while the inspection identity holds still.
+    "tests/test_semantic_binding_theorem.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.
