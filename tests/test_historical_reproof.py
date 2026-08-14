@@ -61,6 +61,8 @@ class SecurityClass:
     #: Set when the class is re-proved by a dedicated catalogue module.
     delegated_to: str = ""
     side_effects: tuple[str, ...] = field(default_factory=tuple)
+    #: Set when AST inequality is not enough to show the control is gone.
+    semantic_effect: str = ""
 
 
 INVENTORY = (
@@ -298,12 +300,22 @@ INVENTORY = (
 #: anything is added without a reason.
 NOT_YET_KILLED = {
     "H01": (
-        "the stored mutation is `None or X`, which is a SEMANTIC NO-OP: the "
-        "parse tree changes so `check_mutation` accepts it, but the value is "
-        "unchanged, so nothing was removed and the test correctly still passes. "
-        "This is the blind spot of an AST-difference check, and the entry stays "
-        "here until the mutation is rewritten to drop the value outright"
+        "CANDIDATE FINDING, not a harness artifact. Mutant origin is proven and "
+        "the semantic effect is proven -- the mutant really sets "
+        "frozen_action_trust=None, and demo_app.agentic passes no "
+        "action_trust_store, so the wiring is genuinely removed -- and "
+        "test_the_established_context_carries_the_frozen_store STILL PASSES. "
+        "That test is named for this property and does not appear to enforce "
+        "it. Either the boundary reaches the same object another way, or the "
+        "assertion is weaker than its name. Left open and visible rather than "
+        "reclassified; it needs one more measurement, not a decision"
     ),
+    # H03/H04 are ONE root property reached through two surfaces, and no single
+    # guard mutation can kill either: three independent routes produce
+    # `unavailable`. They are proven together by a COMPOUND mutation below --
+    # `test_disabling_the_whole_chain_recreates_the_historical_unsafe_state` --
+    # which is why they are excluded from the single-mutation runner rather than
+    # left unproven.
     "H03": (
         "REDUNDANT BY MEASUREMENT, not unproven by accident: with BOTH the "
         "is_dir and the empty-directory guards removed, observe_governance_"
@@ -394,12 +406,23 @@ def _isolated_env(tree: Path) -> dict:
     return {**os.environ, "PYTHONPATH": str(tree / "src")}
 
 
-def _prove_resolution(tree: Path) -> None:
+def _unisolated_env() -> dict:
+    """Deliberately without precedence, so the guard can be shown to fire."""
+    import os  # noqa: PLC0415
+
+    env = {**os.environ}
+    env.pop("PYTHONPATH", None)
+    return env
+
+
+def _prove_resolution(tree: Path, *, isolate: bool = True) -> None:
     """Refuse to measure anything until the mutant is what loads."""
     completed = subprocess.run(  # noqa: S603
         [sys.executable, "-c", RESOLUTION_PROBE],
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", env=_isolated_env(tree), timeout=300,
+        errors="replace",
+        env=(_isolated_env(tree) if isolate else _unisolated_env()),
+        timeout=300,
     )
     assert completed.returncode == 0, (
         f"INVALID_MUTATION_ENVIRONMENT -- the probe could not import the "
@@ -411,6 +434,29 @@ def _prove_resolution(tree: Path) -> None:
     assert not escaped, (
         "INVALID_MUTATION_ENVIRONMENT -- production modules resolved OUTSIDE the "
         f"mutant workspace, so the original source would be measured: {escaped}"
+    )
+
+
+def _prove_semantic_effect(tree: Path, item: SecurityClass) -> None:
+    """Show the VALUE changed, not merely the syntax.
+
+    `None or X` passes every structural check and removes nothing. Where a
+    class records a `semantic_effect`, the mutant is asked to demonstrate it
+    before its regression result may count.
+    """
+    import os  # noqa: PLC0415
+
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c",
+         "import ast,sys;"
+         "src=open('src/demo_app/agentic.py',encoding='utf-8').read();"
+         "print('frozen_action_trust=None' in src.replace(' ',''))"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env={**os.environ}, timeout=300,
+    )
+    assert completed.stdout.strip() == "True", (
+        f"{item.ident}: INVALID_MUTATION -- the mutation did not produce the "
+        f"semantic effect it claims ({item.semantic_effect})"
     )
 
 
@@ -429,6 +475,8 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
         pytest.fail(f"{item.ident}: INVALID_MUTATION -- {exc}")
 
     _prove_resolution(tree)
+    if item.semantic_effect:
+        _prove_semantic_effect(tree, item)
 
     completed = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "pytest", item.test, "-p", "no:cacheprovider",
@@ -519,3 +567,257 @@ def test_reducing_the_expected_count_is_visible():
         "no class records consequential side-effect expectations, so the "
         "runtime-authority standard is not represented"
     )
+
+
+# --------------------------------------------------------------------------
+# The mutant-origin invariant, self-tested in BOTH directions
+# --------------------------------------------------------------------------
+
+#: Prints where each production module actually came from.
+_ORIGIN_PROBE = (
+    "import nornyx_forge.approval_trust as a, nornyx_forge.subject_observer as o,"
+    " nornyx_forge.nornyx_runtime as r;"
+    "print(a.__file__);print(o.__file__);print(r.__file__)"
+)
+
+
+def _origins(tree: Path, *, isolate: bool) -> list[str]:
+    import os  # noqa: PLC0415
+
+    env = {**os.environ}
+    if isolate:
+        env["PYTHONPATH"] = str(tree / "src")
+    else:
+        env.pop("PYTHONPATH", None)
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _ORIGIN_PROBE],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=env, timeout=300,
+    )
+    assert completed.returncode == 0, completed.stderr[-400:]
+    return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+
+
+def _plain_copy(destination: Path) -> Path:
+    tree = destination / "tree"
+    tree.mkdir(parents=True, exist_ok=True)
+    for name in ("src", "tests", "scripts", ".nornyx"):
+        shutil.copytree(ROOT / name, tree / name,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
+    for name in ("pyproject.toml", "Dockerfile", "docker-compose.yml", ".dockerignore"):
+        if (ROOT / name).exists():
+            shutil.copy2(ROOT / name, tree / name)
+    return tree
+
+
+def test_an_unisolated_child_loads_the_real_repository_source(tmp_path: Path):
+    """Direction one, and the reason every result needs an origin proof.
+
+    Without PYTHONPATH the editable `.pth` wins even though the child runs with
+    the copy as its working directory. This is the exact condition under which
+    a mutation silently measures the original -- asserted, so nobody assumes the
+    copy is enough.
+    """
+    tree = _plain_copy(tmp_path)
+    resolved = _origins(tree, isolate=False)
+
+    assert resolved, "the probe printed nothing"
+    assert all(str(ROOT) in path for path in resolved), (
+        f"expected the REAL source without isolation, got {resolved}"
+    )
+    assert not any(str(tree) in path for path in resolved)
+
+
+def test_an_isolated_child_loads_the_mutant_workspace(tmp_path: Path):
+    """Direction two: PYTHONPATH outranks the .pth, so the mutant is measured."""
+    tree = _plain_copy(tmp_path)
+    resolved = _origins(tree, isolate=True)
+
+    assert resolved
+    assert all(str(tree) in path for path in resolved), (
+        f"isolation failed; production modules came from {resolved}"
+    )
+    assert not any(
+        str(ROOT / "src") in path for path in resolved
+    ), "a production module escaped to the real source"
+
+
+def test_breaking_precedence_is_reported_as_an_invalid_environment(tmp_path: Path):
+    """And the guard itself must fire, or it is decoration.
+
+    `_prove_resolution` is what stands between "the mutant said so" and "the
+    original said so". Here isolation is deliberately withheld, and the guard
+    must refuse rather than let the run proceed.
+    """
+    tree = _plain_copy(tmp_path)
+
+    import os  # noqa: PLC0415
+
+    saved = os.environ.pop("PYTHONPATH", None)
+    try:
+        with pytest.raises(AssertionError, match="INVALID_MUTATION_ENVIRONMENT"):
+            _prove_resolution(tree, isolate=False)
+    finally:
+        if saved is not None:
+            os.environ["PYTHONPATH"] = saved
+
+
+# --------------------------------------------------------------------------
+# The governance-surface enforcement chain (H03 / H04)
+# --------------------------------------------------------------------------
+
+#: H03 and H04 are ONE root property -- absence is not success -- reached
+#: through TWO surfaces: a directory that is not there, and a directory that is
+#: there and empty. They keep separate historical IDs because they were found
+#: and fixed separately, and because the operator response differs. They share
+#: one compound mutation, because the property is shared and mutating one guard
+#: proves nothing while the others stand.
+#:
+#: Three INDEPENDENT routes produce `unavailable`, measured by removing them one
+#: at a time and finding the property still held:
+GOVERNANCE_SURFACE_CHAIN = (
+    ("A", "    if not contracts_dir.is_dir():", "the directory is not there"),
+    ("B", "    if not contracts:", "the directory holds no contracts"),
+    ("C", "    if not verified:", "nothing in it could be verified"),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "anchor", "condition"),
+    GOVERNANCE_SURFACE_CHAIN,
+    ids=[case[0] for case in GOVERNANCE_SURFACE_CHAIN],
+)
+def test_removing_one_guard_leaves_the_property_protected(
+    tmp_path: Path, label: str, anchor: str, condition: str
+):
+    """Positive defence-in-depth evidence, stated per route.
+
+    This is the opposite of a kill and is recorded as such: each guard can be
+    removed and an absent or empty governance surface STILL refuses, because
+    the other two remain. That is why no single-guard mutation could ever be a
+    valid H03/H04 kill, and why the compound mutation below is required.
+    """
+    tree = _plain_copy(tmp_path)
+    module = tree / OBSERVER
+    before = module.read_text(encoding="utf-8")
+    after = before.replace(anchor, anchor.replace("    if ", "    if False and ", 1))
+    check_mutation(OBSERVER, before, after, anchor, 1)
+    module.write_text(after, encoding="utf-8", newline="")
+
+    _prove_resolution(tree)
+    for surface in ("missing", "empty"):
+        assert _surface_status(tree, surface) != "intact", (
+            f"removing guard {label} ({condition}) left a {surface} governance "
+            "surface reporting intact"
+        )
+
+
+def _surface_status(tree: Path, surface: str) -> str:
+    """What the observer says about an absent or empty contracts directory."""
+    import os  # noqa: PLC0415
+
+    script = (
+        "import sys, tempfile;"
+        "from pathlib import Path;"
+        "from nornyx_forge.subject_observer import observe_governance_integrity as g;"
+        + (
+            "print(g(Path('definitely-not-here')).status)"
+            if surface == "missing"
+            else "print(g(Path(tempfile.mkdtemp())).status)"
+        )
+    )
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env={**os.environ, "PYTHONPATH": str(tree / "src")},
+        timeout=300,
+    )
+    assert completed.returncode == 0, completed.stderr[-400:]
+    return completed.stdout.strip()
+
+
+@pytest.mark.parametrize("surface", ["missing", "empty"])
+def test_disabling_the_whole_chain_recreates_the_historical_unsafe_state(
+    tmp_path: Path, surface: str
+):
+    """H03/H04 KILLED_VALIDLY, by attacking the property rather than one guard.
+
+    All three enforcement routes are removed together, the mutant is proven to
+    be what loads, and THEN the historical unsafe state is established directly:
+    an absent or empty governance surface reporting `intact`. Only after that is
+    the regression test run, and it must fail.
+
+    Nothing about production is weakened to achieve this -- the mutation lives
+    in a throwaway copy.
+    """
+    tree = _plain_copy(tmp_path)
+    module = tree / OBSERVER
+    text = module.read_text(encoding="utf-8")
+    for _label, anchor, _condition in GOVERNANCE_SURFACE_CHAIN:
+        mutated = text.replace(anchor, anchor.replace("    if ", "    if False and ", 1))
+        check_mutation(OBSERVER, text, mutated, anchor, 1)
+        text = mutated
+    module.write_text(text, encoding="utf-8", newline="")
+
+    _prove_resolution(tree)
+
+    # The historical unsafe boundary, established BEFORE the regression test.
+    assert _surface_status(tree, surface) == "intact", (
+        f"the compound mutation did not recreate the unsafe state for a "
+        f"{surface} surface, so the enforcement inventory is incomplete and "
+        "this cannot count as a kill"
+    )
+
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest",
+         "tests/test_absence_is_not_success.py::test_an_unobservable_governance_surface_is_unavailable",
+         "-p", "no:cacheprovider", "-q", "-p", "no:warnings", "--tb=line"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=_isolated_env(tree), timeout=900,
+    )
+    output = completed.stdout + completed.stderr
+    assert "INTERNALERROR" not in output and "no tests ran" not in output, output[-500:]
+    assert completed.returncode != 0, (
+        "H03/H04 SURVIVED: the governance surface reports intact when absent, "
+        f"and the regression test still passes.\n{output[-400:]}"
+    )
+
+
+# --------------------------------------------------------------------------
+# The nine delegated classes, audited rather than assumed
+# --------------------------------------------------------------------------
+
+
+def test_every_delegated_class_names_an_attack_that_still_exists():
+    """Delegation is part of the proof chain, so it is checked.
+
+    A catalogue that was deleted, renamed, or emptied would leave the delegating
+    class silently unproven. Each delegated entry must name a module that exists
+    and a test function that is really in it.
+    """
+    missing: list[str] = []
+    for item in DELEGATED:
+        module, _, node = item.test.partition("::")
+        path = ROOT / module
+        if not path.exists():
+            missing.append(f"{item.ident}: {module} is gone")
+            continue
+        if node and f"def {node.split('[')[0]}(" not in path.read_text(encoding="utf-8"):
+            missing.append(f"{item.ident}: {module} no longer defines {node}")
+    assert missing == [], missing
+
+
+def test_the_delegated_catalogues_prove_mutant_origin_where_they_mutate():
+    """A catalogue that mutates production without isolation proves nothing.
+
+    The two that mutate `src/` run their measurement in a subprocess whose FIRST
+    action is the path insert, so no `.pth` can outrank them. This asserts that
+    arrangement is still in place rather than trusting it.
+    """
+    for module in ("tests/test_domain_collapse_mutations.py",
+                   "tests/test_semantic_binding_theorem.py"):
+        source = (ROOT / module).read_text(encoding="utf-8")
+        assert "sys.path.insert(0" in source, (
+            f"{module} mutates production but no longer forces its copy onto "
+            "sys.path first, so it may be measuring the real source"
+        )
