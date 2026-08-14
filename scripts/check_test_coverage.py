@@ -122,6 +122,10 @@ REQUIRED_MODULES = (
     # The two subjects kept apart: scope and authority-config changes
     # move the RUNTIME subject, and neither moves what was inspected.
     "tests/test_subject_layer_matrix.py",
+    # Nothing leaves the semantic projection without an authority
+    # classification. Deleting this file re-opens the one-line diff that
+    # removes an authored block from inspection binding.
+    "tests/test_semantic_projection_exclusions.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.
