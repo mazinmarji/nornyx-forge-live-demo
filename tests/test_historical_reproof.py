@@ -23,13 +23,18 @@ authority-domain collapse (14 mutations) and semantic-projection collapse (8).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
+from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
 
 RUNTIME = "src/nornyx_forge/nornyx_runtime.py"
 OBSERVER = "src/nornyx_forge/subject_observer.py"
@@ -287,7 +292,39 @@ INVENTORY = (
     ),
 )
 
-DIRECT = tuple(item for item in INVENTORY if item.mutation is not None)
+#: Measured, and honest about why each is not yet a valid kill. Recorded as
+#: data so the set cannot grow silently -- an entry here is a debt, not an
+#: exemption, and `test_the_unproven_set_is_exactly_what_was_measured` fails if
+#: anything is added without a reason.
+NOT_YET_KILLED = {
+    "H01": (
+        "the stored mutation is `None or X`, which is a SEMANTIC NO-OP: the "
+        "parse tree changes so `check_mutation` accepts it, but the value is "
+        "unchanged, so nothing was removed and the test correctly still passes. "
+        "This is the blind spot of an AST-difference check, and the entry stays "
+        "here until the mutation is rewritten to drop the value outright"
+    ),
+    "H03": (
+        "REDUNDANT BY MEASUREMENT, not unproven by accident: with BOTH the "
+        "is_dir and the empty-directory guards removed, observe_governance_"
+        "integrity still returns `unavailable`. A third layer refuses. Reviving "
+        "this defect needs a mutation that removes every layer, and until that "
+        "exists no single-guard mutation can be a valid kill"
+    ),
+    "H04": (
+        "the same measurement, from the other guard. Removing the empty-"
+        "directory check alone leaves the surface unavailable"
+    ),
+}
+
+DIRECT = tuple(
+    item for item in INVENTORY
+    if item.mutation is not None and item.ident.split()[0] not in NOT_YET_KILLED
+)
+PENDING = tuple(
+    item for item in INVENTORY
+    if item.mutation is not None and item.ident.split()[0] in NOT_YET_KILLED
+)
 DELEGATED = tuple(item for item in INVENTORY if item.mutation is None)
 
 #: Independently written, so shrinking INVENTORY fails rather than passing.
@@ -301,54 +338,115 @@ EXPECTED_IDS = frozenset(
 # --------------------------------------------------------------------------
 
 
-#: WHY NO EXECUTION HAPPENS IN THIS MODULE YET.
+#: WHY MUTANT ISOLATION NEEDS ITS OWN PROOF.
 #:
-#: The obvious harness -- copy the tree, mutate `src/`, run the named test
-#: inside the copy -- is NOT SOUND in this repository, and the measurement that
-#: showed it is recorded here so nobody rebuilds it.
+#: The obvious harness -- copy the tree, mutate `src/`, run the named test in
+#: the copy -- silently measures the ORIGINAL source in this repository. The
+#: package is installed editable, so
+#: `site-packages/__editable__.nornyx_forge_live_demo-*.pth` puts the real `src`
+#: on `sys.path` during site initialisation, and a test module's own
+#: `sys.path.insert` runs later than conftest's imports.
 #:
-#: The package is installed editable, so
-#: `site-packages/__editable__.nornyx_forge_live_demo-0.2.0.pth` puts the REAL
-#: `src` on `sys.path` at interpreter startup. A test module's own
-#: `sys.path.insert(0, ROOT / "src")` runs later, and later still than any
-#: conftest import of `nornyx_forge`. Whether the mutant or the original is
-#: loaded therefore depends on import order rather than on the harness.
+#: Measured, both directions, by printing `__file__` from inside pytest:
 #:
-#: Measured: a direct `python -c` with the insert first DOES load the mutant
-#: (verified by printing `__file__`), while the same mutation under `pytest`
-#: left `test_an_expired_approval_is_refused` passing with the expiry clause
-#: disabled. Under those conditions a "kill" may be the original code failing
-#: for its own reasons and a "survivor" may be a mutation that never applied.
-#: Both directions are wrong, which is why nothing here is reported as
-#: KILLED_VALIDLY.
+#:     no PYTHONPATH            -> .../nornyx-forge-live-demo/src/...  REAL
+#:     PYTHONPATH=<mutant>/src  -> .../tmp.../tree/src/...             MUTANT
 #:
-#: The two catalogues that DO execute -- `test_domain_collapse_mutations.py`
-#: and `test_semantic_binding_theorem.py` -- avoid this entirely: they run a
-#: standalone probe or compute a digest in a subprocess whose FIRST action is
-#: the path insert, with no pytest and no conftest in between. A sound harness
-#: for this module has to do the same, or force the mutant ahead of the .pth.
+#: PYTHONPATH entries precede site-packages, so they outrank the .pth. That is
+#: the fix, and it is not taken on faith: every run below PROVES where the
+#: module resolved before its result is allowed to count. A run that loads the
+#: real source is INVALID_MUTATION_ENVIRONMENT, never a kill and never a
+#: survivor.
 #:
-#: Until that exists, this module is an INVENTORY with meta-controls, and the
-#: re-proof status of every non-delegated class is UNPROVEN. That is recorded
-#: below as an explicit, failing-if-understated debt rather than left implicit.
-UNPROVEN = frozenset(item.ident.split()[0] for item in DIRECT)
+#: This also corrected an earlier false-green CANDIDATE. Under the unisolated
+#: harness, disabling the expiry clause left `test_an_expired_approval_is_refused`
+#: passing, which looked like a test refusing on a clause it does not name.
+#: Isolated, the same mutation FAILS that test. The test was sound; the harness
+#: was not.
+RESOLUTION_PROBE = (
+    "import nornyx_forge.approval_trust as m, nornyx_forge.subject_observer as o;"
+    "print(m.__file__);print(o.__file__)"
+)
 
 
-def test_the_unproven_debt_is_recorded_exactly():
-    """The debt is visible and cannot be quietly reduced.
+def _mutated_tree(destination: Path, item: SecurityClass) -> Path:
+    tree = destination / "tree"
+    tree.mkdir(parents=True, exist_ok=True)
+    for name in ("src", "tests", "scripts", ".nornyx"):
+        shutil.copytree(ROOT / name, tree / name,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
+    for name in ("pyproject.toml", "Dockerfile", "docker-compose.yml", ".dockerignore"):
+        if (ROOT / name).exists():
+            shutil.copy2(ROOT / name, tree / name)
 
-    If someone builds the sound harness and re-proves a class, this fails until
-    UNPROVEN is narrowed to match -- which is the point. An inventory that
-    silently claims more coverage than it has is the defect this whole
-    programme exists to remove.
-    """
-    assert UNPROVEN == {item.ident.split()[0] for item in DIRECT}
-    assert len(UNPROVEN) == 10, (
-        f"{len(UNPROVEN)} classes are unproven; the recorded figure is 10"
+    relative, anchor, replacement, count = item.mutation
+    target = tree / relative
+    before = target.read_text(encoding="utf-8")
+    after = before.replace(anchor, replacement)
+    check_mutation(relative, before, after, anchor, count)
+    target.write_text(after, encoding="utf-8", newline="")
+    return tree
+
+
+def _isolated_env(tree: Path) -> dict:
+    import os  # noqa: PLC0415
+
+    return {**os.environ, "PYTHONPATH": str(tree / "src")}
+
+
+def _prove_resolution(tree: Path) -> None:
+    """Refuse to measure anything until the mutant is what loads."""
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", RESOLUTION_PROBE],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=_isolated_env(tree), timeout=300,
     )
-    proven_elsewhere = {item.ident.split()[0] for item in DELEGATED}
-    assert len(proven_elsewhere) == 9
-    assert not (UNPROVEN & proven_elsewhere), "a class cannot be both"
+    assert completed.returncode == 0, (
+        f"INVALID_MUTATION_ENVIRONMENT -- the probe could not import the "
+        f"package at all: {completed.stderr[-400:]}"
+    )
+    resolved = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    assert resolved, "INVALID_MUTATION_ENVIRONMENT -- the probe printed nothing"
+    escaped = [path for path in resolved if str(tree) not in path]
+    assert not escaped, (
+        "INVALID_MUTATION_ENVIRONMENT -- production modules resolved OUTSIDE the "
+        f"mutant workspace, so the original source would be measured: {escaped}"
+    )
+
+
+@pytest.mark.parametrize("item", DIRECT, ids=[i.ident for i in DIRECT])
+def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: Path):
+    """KILLED_VALIDLY, or the control is not what stops the defect.
+
+    Three outcomes and no fourth. The mutation must reach an executable node
+    (`check_mutation`), the mutant must be what loads (`_prove_resolution`), and
+    the mutant must run to completion. Only then does a failing test count as a
+    kill.
+    """
+    try:
+        tree = _mutated_tree(tmp_path, item)
+    except InvalidMutation as exc:
+        pytest.fail(f"{item.ident}: INVALID_MUTATION -- {exc}")
+
+    _prove_resolution(tree)
+
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", item.test, "-p", "no:cacheprovider",
+         "-q", "-p", "no:warnings", "--tb=line"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=_isolated_env(tree), timeout=1800,
+    )
+    output = completed.stdout + completed.stderr
+
+    assert "INTERNALERROR" not in output and "no tests ran" not in output, (
+        f"{item.ident}: INVALID_MUTATION -- the intended test could not run: "
+        f"{output[-600:]}"
+    )
+    assert completed.returncode != 0, (
+        f"{item.ident} SURVIVED. Removing the control ({item.control}) left "
+        f"{item.test} passing, so that test is not what proves this property. "
+        f"{output[-400:]}"
+    )
 
 
 # --------------------------------------------------------------------------
