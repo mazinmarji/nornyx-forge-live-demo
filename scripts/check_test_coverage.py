@@ -119,6 +119,9 @@ REQUIRED_MODULES = (
     # Regeneration stability, and derived-evidence tamper followed all the
     # way to the effect boundary rather than to a diagnosis.
     "tests/test_inspection_subject_matrix.py",
+    # The two subjects kept apart: scope and authority-config changes
+    # move the RUNTIME subject, and neither moves what was inspected.
+    "tests/test_subject_layer_matrix.py",
     # The security context proven where it is USED, not only where it is built.
     # `test_security_context.py` passed in full while nothing under `src/` ever
     # called the bootstrap, so the mechanism suite cannot stand in for this one.
