@@ -455,3 +455,314 @@ def test_every_inventory_entry_states_a_reason_and_a_category():
         assert field.category in {"A", "B"}, field.label
         assert len(field.why) > 25, f"{field.label} is classified without a reason"
         assert field.anchor != field.replacement, f"{field.label} mutates nothing"
+
+
+# --------------------------------------------------------------------------
+# 9.4 -- A -> B -> A reversibility
+# --------------------------------------------------------------------------
+
+
+def _only_intended_change(contract: str, anchor: str, replacement: str) -> None:
+    """The working tree differs from HEAD in exactly the intended way.
+
+    Without this, a case could "prove" subject motion while some unrelated edit
+    was sitting in the tree doing the work.
+    """
+    diff = subprocess.run(  # noqa: S603
+        ["git", "diff", "--", contract],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout
+    changed = [
+        line for line in diff.splitlines()
+        if (line.startswith("+") or line.startswith("-"))
+        and not line.startswith(("+++", "---"))
+    ]
+    assert changed, "git reports no change, so nothing was mutated"
+    removed = "".join(line[1:] for line in changed if line.startswith("-"))
+    added = "".join(line[1:] for line in changed if line.startswith("+"))
+    assert removed.strip() in anchor.strip() or anchor.strip() in removed.strip(), (
+        f"the diff removed something other than the intended anchor: {removed[:200]}"
+    )
+    if replacement.strip():
+        assert added.strip() in replacement.strip() or replacement.strip() in added.strip(), (
+            f"the diff added something other than the intended value: {added[:200]}"
+        )
+
+    # Scoped to `.nornyx/`, deliberately. What could contaminate THIS
+    # measurement is another contract or a generated artifact moving: the
+    # inspection subject is contract semantics plus the evidence manifest, and
+    # nothing else feeds it. An earlier version of this guard forbade any
+    # modified file anywhere and failed on the uncommitted test module itself --
+    # correct in spirit, wrong in scope, and a guard that fires on irrelevant
+    # state is one people learn to work around.
+    others = subprocess.run(  # noqa: S603
+        ["git", "status", "--porcelain", "--", ".nornyx"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    ).stdout.splitlines()
+    unexpected = [line for line in others if contract not in line and line.strip()]
+    assert unexpected == [], (
+        "other governed evidence is modified, so the measurement is "
+        f"contaminated: {unexpected[:4]}"
+    )
+
+
+@needs_nornyx
+@pytest.mark.parametrize(
+    "field", DECISION_BEARING, ids=[f.label for f in DECISION_BEARING]
+)
+def test_semantic_identity_is_reversible(field: FieldClass, restored_contracts):
+    """9.4. A -> B -> A, with NO evidence regeneration in between.
+
+    Regenerating between the observations would be the wrong instrument: it
+    rewrites derived state, so a subject that moved could be moving for that
+    reason. Restoring the exact original bytes and re-observing is stronger --
+    if the identity returns to precisely where it was, subject motion is a pure
+    function of the authored semantics rather than residual churn.
+
+    A failure here would mean hidden mutable state contaminates semantic
+    identity, which is why the assertion is equality and not "close enough".
+    """
+    d1, s1 = _semantics(), _subject()
+
+    _apply(field)
+    _only_intended_change(field.contract, field.anchor, field.replacement)
+    d2, s2 = _semantics(), _subject()
+
+    assert d2 != d1, f"{field.label}: the authored change did not move the digest"
+    assert s2 != s1, f"{field.label}: the authored change did not move the subject"
+
+    for path, data in restored_contracts.items():
+        if path.read_bytes() != data:
+            path.write_bytes(data)
+
+    d3, s3 = _semantics(), _subject()
+    assert d3 == d1, (
+        f"{field.label}: restoring the exact original bytes did NOT restore the "
+        "semantic digest, so something other than the authored semantics is "
+        "feeding it"
+    )
+    assert s3 == s1, (
+        f"{field.label}: restoring the exact original bytes did NOT restore the "
+        "inspection subject, so hidden mutable state contaminates identity"
+    )
+
+
+# --------------------------------------------------------------------------
+# 9C -- attack the production projection itself
+# --------------------------------------------------------------------------
+
+_PROJECTION_FILTER = (
+    "            if key not in GENERATED_KEYS and key not in GENERATED_BLOCKS\n"
+)
+_LIST_BRANCH = "        return [semantic_projection(item) for item in node]\n"
+_SCALAR_BRANCH = "    return node\n"
+_AGGREGATE = (
+    '        "contracts": {name: semantic_projection(doc)'
+    " for name, doc in sorted(documents.items())},\n"
+)
+_KEYS_HEAD = 'GENERATED_KEYS = frozenset(\n    {\n        "content_hash",'
+_BLOCKS = 'GENERATED_BLOCKS = frozenset({"governance_evidence"})'
+
+
+@dataclass(frozen=True)
+class ProjectionAttack:
+    """One way the projection could stop distinguishing two governed states."""
+
+    ident: str
+    module: str
+    anchor: str
+    replacement: str
+    #: Which enumerated Category-A pair this attack must be able to hide.
+    field_label: str
+    why: str
+
+
+#: Eight attacks. The mechanisms are deliberately different from one another --
+#: inclusion, block exclusion, key matching, canonicalisation, structural
+#: reclassification, section blanking and aggregation -- because a catalogue
+#: that attacked one mechanism eight ways would prove one thing eight times.
+PROJECTION_ATTACKS = (
+    ProjectionAttack(
+        "9C-0 suppress the capability risk field",
+        "governed_subject.py", _KEYS_HEAD,
+        _KEYS_HEAD.replace('"content_hash",', '"content_hash",\n        "risk",'),
+        "capability risk low->high",
+        "the original causation proof: inclusion of a decision-bearing key",
+    ),
+    ProjectionAttack(
+        "9C-1 suppress the approval role field",
+        "governed_subject.py", _KEYS_HEAD,
+        _KEYS_HEAD.replace('"content_hash",', '"content_hash",\n        "required_roles",'),
+        "approval required role changed",
+        "a second, genuinely distinct decision-bearing class",
+    ),
+    ProjectionAttack(
+        "9C-2 swallow an authored block as generated",
+        "governed_subject.py", _BLOCKS,
+        'GENERATED_BLOCKS = frozenset({"governance_evidence", "capabilities"})',
+        "capability risk low->high",
+        "an authored decision-bearing block reclassified out of binding",
+    ),
+    ProjectionAttack(
+        "9C-3 broaden the ignored-key rule by suffix",
+        "governed_subject.py", _PROJECTION_FILTER,
+        _PROJECTION_FILTER.rstrip("\n")
+        + ' and not key.endswith("_roles")\n',
+        "approval required role changed",
+        "the plausible cleanup: ignore anything matching a shape",
+    ),
+    ProjectionAttack(
+        "9C-4 normalise decision-distinct values together",
+        "governed_subject.py", _SCALAR_BRANCH,
+        '    return "low" if node in ("low", "high") else node\n',
+        "capability risk low->high",
+        "collapse inside canonicalisation, which inclusion tests cannot see",
+    ),
+    ProjectionAttack(
+        "9C-5 treat an authored structure as derived",
+        "governed_subject.py", _LIST_BRANCH,
+        "        return [\n"
+        "            semantic_projection(item)\n"
+        "            for item in node\n"
+        '            if not (isinstance(item, dict) and "revision_binding" in item)\n'
+        "        ]\n",
+        "approval required role changed",
+        "structural reclassification, not a name list",
+    ),
+    ProjectionAttack(
+        "9C-6 blank one authored section",
+        "governed_subject.py",
+        "            key: semantic_projection(value)\n",
+        '            key: ({} if key == "capabilities" else semantic_projection(value))\n',
+        "capability risk low->high",
+        "a section that still appears but carries nothing",
+    ),
+    ProjectionAttack(
+        "9C-7 omit one contract from the aggregate",
+        "governed_subject.py", _AGGREGATE,
+        '        "contracts": {\n'
+        "            name: semantic_projection(doc)\n"
+        "            for name, doc in sorted(documents.items())\n"
+        '            if name != "runtime_network.nyx"\n'
+        "        },\n",
+        "capability risk low->high",
+        "the contract is present and Nornyx still reads it; identity does not",
+    ),
+)
+
+EXPECTED_9C_IDS = frozenset(a.ident for a in PROJECTION_ATTACKS)
+
+
+def _mutated_src(attack: ProjectionAttack) -> Path:
+    """A copy of `src` with one projection attack installed, proven to apply."""
+    import tempfile  # noqa: PLC0415
+
+    from mutation_validity import check_python_mutation  # noqa: PLC0415
+
+    destination = Path(tempfile.mkdtemp()) / "src"
+    shutil.copytree(ROOT / "src", destination,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    module = destination / "nornyx_forge" / attack.module
+    before = module.read_text(encoding="utf-8")
+    after = before.replace(attack.anchor, attack.replacement)
+    check_python_mutation(
+        f"src/nornyx_forge/{attack.module}", before, after, attack.anchor, 1
+    )
+    module.write_text(after, encoding="utf-8", newline="")
+    return destination
+
+
+def _semantics_under(src: Path) -> str:
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c",
+         "import sys;"
+         f"sys.path.insert(0, {str(src)!r});"
+         "from nornyx_forge.subject_observer import observe_contract_semantics_digest;"
+         "from pathlib import Path;"
+         "print(observe_contract_semantics_digest(Path('.nornyx/contracts')))"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    assert completed.returncode == 0, (
+        "the mutated projection did not run to completion, so nothing was "
+        f"measured: {completed.stderr[-400:]}"
+    )
+    return completed.stdout.strip()
+
+
+@pytest.mark.parametrize(
+    "attack", PROJECTION_ATTACKS, ids=[a.ident for a in PROJECTION_ATTACKS]
+)
+def test_the_projection_attack_is_killed(attack: ProjectionAttack, restored_contracts):
+    """Each attack must be able to hide a real decision difference -- and be caught.
+
+    A mutation is KILLED_VALIDLY here when, with it installed, two governed
+    states that Nornyx treats differently become indistinguishable to the
+    semantic identity. That is precisely the condition the Task-9 theorem test
+    asserts against, so a surviving attack is a hole in the theorem.
+
+    The honest projection is measured on the same pair every time, so an attack
+    that "hides" a difference that was never there earns nothing.
+    """
+    field = next(f for f in INVENTORY if f.label == attack.field_label)
+    src = _mutated_src(attack)
+
+    honest_a, attacked_a = _semantics(), _semantics_under(src)
+    _apply(field)
+    honest_b, attacked_b = _semantics(), _semantics_under(src)
+
+    assert honest_b != honest_a, (
+        f"{attack.ident}: the honest projection does not distinguish this pair, "
+        "so there is nothing for the attack to hide and this case proves nothing"
+    )
+    assert attacked_b == attacked_a, (
+        f"{attack.ident} SURVIVED. {attack.why}. The mutated projection still "
+        "distinguishes the two states, so this attack does not reach the "
+        "property -- repair the mutation rather than counting it."
+    )
+
+
+# --------------------------------------------------------------------------
+# 9C meta-control
+# --------------------------------------------------------------------------
+
+
+def test_the_attack_catalogue_is_exactly_what_is_expected():
+    """Set equality, not iteration.
+
+    `for attack in ATTACKS` passes over an empty list. The expected identifiers
+    are asserted independently so removing a case, emptying the catalogue or
+    quietly reducing the count all fail.
+    """
+    actual = frozenset(a.ident for a in PROJECTION_ATTACKS)
+    assert actual == EXPECTED_9C_IDS
+    assert len(PROJECTION_ATTACKS) == 8, (
+        f"the projection attack catalogue has {len(PROJECTION_ATTACKS)} cases, "
+        "expected 8"
+    )
+    assert len({a.ident for a in PROJECTION_ATTACKS}) == 8, "duplicate attack ids"
+
+
+def test_the_attacks_cover_more_than_one_mechanism_and_more_than_one_field():
+    """A catalogue attacking one mechanism eight ways proves one thing eight times."""
+    anchors = {a.anchor for a in PROJECTION_ATTACKS}
+    assert len(anchors) >= 5, (
+        f"only {len(anchors)} distinct production anchors are attacked, so the "
+        "catalogue does not cover the projection's separate mechanisms"
+    )
+    fields = {a.field_label for a in PROJECTION_ATTACKS}
+    assert len(fields) >= 2, (
+        "every attack hides the same field class, so a second decision-bearing "
+        "class is untested"
+    )
+    assert fields <= {f.label for f in DECISION_BEARING}, (
+        "an attack names a field class that is not inventoried as decision-bearing"
+    )
+
+
+def test_removing_an_inventory_row_is_visible():
+    """The Category-A inventory cannot be quietly reduced."""
+    assert len(DECISION_BEARING) >= 3, (
+        f"only {len(DECISION_BEARING)} decision-bearing classes are inventoried"
+    )
+    labels = {f.label for f in DECISION_BEARING}
+    assert {a.field_label for a in PROJECTION_ATTACKS} <= labels
