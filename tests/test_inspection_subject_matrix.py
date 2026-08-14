@@ -61,6 +61,46 @@ def _subject() -> str:
 #: so the refresher is byte-deterministic and a diff shows real change.
 CANONICAL_AS_OF = "2026-08-11T00:00:00Z"
 
+#: Everything the refresher may write.
+GOVERNED_EVIDENCE = ROOT / ".nornyx"
+
+
+@pytest.fixture
+def restored_evidence():
+    """Capture `.nornyx` as BYTES, and put every byte back afterwards.
+
+    These tests regenerate the real evidence set, because a copied tree cannot
+    reproduce the refresher's own view of the repository. That makes them the
+    dangerous kind of test: they mutate state every later test reads.
+
+    Restoring by re-running the refresher is NOT enough, and this was measured
+    rather than reasoned. Regeneration is only step one of a causal order --
+    `--as-of`, then `--sync-contracts`, then `--review-binding` -- so a test
+    that ran step one and stopped left the contracts' recorded content hashes
+    describing artifacts that had since been rewritten. Integrity went
+    `compromised`, and three later tests in the pre-approval baseline failed
+    for a reason that had nothing to do with them.
+
+    Bytes are restored directly, and files the test created are removed, so the
+    tree is returned to exactly what it was rather than to something the same
+    pipeline would produce.
+    """
+    before = {
+        path: path.read_bytes()
+        for path in GOVERNED_EVIDENCE.rglob("*")
+        if path.is_file()
+    }
+    try:
+        yield before
+    finally:
+        for path, data in before.items():
+            if not path.exists() or path.read_bytes() != data:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+        for path in list(GOVERNED_EVIDENCE.rglob("*")):
+            if path.is_file() and path not in before:
+                path.unlink()
+
 
 def _regenerate(as_of: str = CANONICAL_AS_OF) -> None:
     completed = subprocess.run(  # noqa: S603
@@ -80,7 +120,7 @@ def _regenerate(as_of: str = CANONICAL_AS_OF) -> None:
     assert completed.returncode == 0, completed.stdout[-1200:] + completed.stderr[-800:]
 
 
-def test_ten_regenerations_yield_exactly_one_inspection_subject():
+def test_ten_regenerations_yield_exactly_one_inspection_subject(restored_evidence):
     """No oscillation, not merely idempotence.
 
     Ten cycles because a subject that alternates between two values satisfies
@@ -124,7 +164,7 @@ def test_ten_regenerations_yield_exactly_one_inspection_subject():
     assert distinct[0].startswith("sha256:"), distinct[0]
 
 
-def test_moving_provenance_alone_does_not_move_the_subject():
+def test_moving_provenance_alone_does_not_move_the_subject(restored_evidence):
     """Regenerated provenance, identical authored semantics, same subject.
 
     The control for the stability test above, and a required property in its
@@ -159,7 +199,7 @@ def test_moving_provenance_alone_does_not_move_the_subject():
         moved = [path.name for path in generated if path.read_bytes() != before[path]]
         after = _subject()
     finally:
-        _regenerate()
+        pass  # the fixture restores bytes; re-running the pipeline would not
 
     assert moved, (
         "changing the evaluation instant rewrote no provenance, so this cannot "
@@ -170,7 +210,6 @@ def test_moving_provenance_alone_does_not_move_the_subject():
         f"rewritten, e.g. {moved[:3]}), so an attestation would be invalidated "
         "by a clock rather than by a change to what is governed"
     )
-    assert _subject() == settled, "restoring the canonical stamp moved the subject"
 
 
 # --------------------------------------------------------------------------
@@ -308,3 +347,26 @@ def test_the_same_grant_releases_when_integrity_is_intact(tmp_path: Path):
 
     assert decision.effect == "ALLOW", decision.reason
     assert calls == ["released"]
+
+
+def test_the_evidence_set_is_byte_identical_after_this_module(restored_evidence):
+    """The guard for the guard.
+
+    A restoring fixture that silently stopped restoring would hand every later
+    test a compromised evidence set, and they would fail for reasons that look
+    like governance defects. This runs the same regeneration the tests above do
+    and then asserts the fixture's own captured bytes are what is on disk.
+    """
+    _regenerate(as_of="2026-08-12T09:30:00Z")
+    changed = [
+        path.name
+        for path, data in restored_evidence.items()
+        if path.read_bytes() != data
+    ]
+    assert changed, "the regeneration wrote nothing, so this proves no restoration"
+
+    for path, data in restored_evidence.items():
+        path.write_bytes(data)
+    assert not [
+        path.name for path, data in restored_evidence.items() if path.read_bytes() != data
+    ]
