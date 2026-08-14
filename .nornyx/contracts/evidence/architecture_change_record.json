@@ -1,8 +1,8 @@
 {
   "architecture_impact": "none",
   "generated_at": "2026-08-11T00:00:00Z",
-  "governed_input_digest": "sha256:96e83eb1bae26009516b66d331433cce37e6adc0212e0cde25ee37096b590efb",
+  "governed_input_digest": "sha256:3c2941b6bd2765358e1644aa5b84c1ef00bc09681551915451da6368aaf89c95",
   "schema": "nornyx.forge.change_record.v1",
   "statement": "Governance contracts were bound to the actual repository revision and completed with required evidence. Declared components, layers, modules, and dependency directions are unchanged.",
-  "subject_revision": "git:1311dbd53774dbbcf24fa48f6ffd0cc0154d542f"
+  "subject_revision": "git:9a3bf3526aeb987716ebb2796a241ec0ed3c8466"
 }
