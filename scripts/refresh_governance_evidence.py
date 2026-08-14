@@ -2285,7 +2285,33 @@ def verify() -> list[str]:
     for name in APPROVAL_WIRING:
         contract = ROOT / ".nornyx/contracts" / name
         try:
-            _assert_single_managed_approval(name, contract.read_text(encoding="utf-8"))
+            declared = contract.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            # Absence, reported in this tool's own vocabulary. It used to raise
+            # here: deleting a required contract produced a bare
+            # FileNotFoundError traceback while deleting a required FILE
+            # produced a clean structured refusal. Same class of absence, two
+            # behaviours, and the crash was the more security-relevant one --
+            # a traceback reads as "the tool is broken", so an operator retries
+            # or reinstalls instead of restoring the governed content.
+            #
+            # `continue` only after recording the problem. Skipping quietly
+            # would be the opposite defect: a missing contract passing
+            # verification because nothing was left to check.
+            problems.append(
+                f"{name} is required by the approval wiring and is not present "
+                "under .nornyx/contracts, so its approval binding cannot be "
+                "verified at all"
+            )
+            continue
+        except OSError as exc:
+            problems.append(
+                f"{name} could not be read, so its approval binding cannot be "
+                f"verified: {type(exc).__name__}: {exc}"
+            )
+            continue
+        try:
+            _assert_single_managed_approval(name, declared)
         except SystemExit as exc:
             problems.append(str(exc))
 
