@@ -52,6 +52,40 @@ SPELLINGS = [
     ("os.execvp", "from os import execvp\ndef _probe(a, b):\n    execvp(a, b)\n"),
     ("multiprocessing", "import multiprocessing\ndef _probe(f):\n    multiprocessing.Process(target=f).start()\n"),
     ("imported, not visibly called", "from os import system\n_HANDLE = system\n"),
+    # ACQUISITION WITHOUT AN IMPORT STATEMENT, and without the word.
+    #
+    # Every case above spells `os` or `subprocess` as a literal, so all of them
+    # were also caught by a substring test over the source text -- which meant
+    # this file could not tell whether the AST analysis was working. Two
+    # spellings walked through both gates at exit 0 with `violations: []`:
+    # `sys.modules.get` (the subscript form was covered, the method form was
+    # not) and an importer fetched by a computed `getattr`. The split literal is
+    # what made them invisible: it defeated the substring test, and nothing else
+    # was looking.
+    #
+    # The invocation is spelled through a computed attribute on purpose. A probe
+    # that also writes `.run(` proves only that `.run(` is recognised, which is
+    # how these stayed hidden behind a check that was answering for a different
+    # one. Holding the module IS the capability.
+    ("sys.modules subscript, split literal",
+     "import sys\n_R = sys.modules['sub' + 'process']\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
+    ("sys.modules.get, split literal",
+     "import sys\n_R = sys.modules.get('sub' + 'process')\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
+    ("sys.modules.pop, split literal",
+     "import sys\n_R = sys.modules.pop('sub' + 'process')\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
+    ("builtins.__import__, split literal",
+     "import builtins\n_R = builtins.__import__('sub' + 'process')\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
+    ("importer via computed getattr",
+     "import builtins\n_I = getattr(builtins, '__imp' + 'ort__')\n"
+     "_R = _I('sub' + 'process')\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
+    ("aliased sys, modules.get",
+     "import sys as _y\n_R = _y.modules.get('sub' + 'process')\n"
+     "def _probe(c):\n    return getattr(_R, 'r' + 'un')(c)\n"),
 ]
 
 #: A governed module in a delegating layer — process execution here is exactly
@@ -225,3 +259,32 @@ def test_an_ordinary_declared_import_is_still_accepted(workspace: Path):
     """The gate must not start refusing the imports the contract permits."""
     completed = _run_gate(workspace)
     assert completed.returncode == 0, completed.stdout
+
+
+def test_the_constraint_is_structural_not_textual(workspace: Path):
+    """The other direction, and the one that proves the substring test is gone.
+
+    `api_no_commands` was `if "subprocess" in main_text`. Wrong both ways: a
+    split literal passed it, and the word in a comment failed it. It also masked
+    the acquisition gate -- every probe above spells the module name somewhere,
+    so this fired and answered for a check that had never seen the payload,
+    which is why two real bypasses sat behind a green gate.
+
+    Mentioning process execution is not performing it.
+    """
+    target = workspace / TARGET
+    original = target.read_bytes()
+    prose = (
+        "# This layer must never hold subprocess, or call os.system directly;\n"
+        "# consequential work goes through the governed action boundary.\n"
+        "_NOTE = 'subprocess and os.system are forbidden in this layer'\n"
+    )
+    try:
+        target.write_bytes(original + b"\n\n" + prose.encode("utf-8"))
+        completed = _run_gate(workspace)
+        assert completed.returncode == 0, (
+            "the gate refused a module that only NAMES process execution, so it "
+            "is still reading text rather than structure:\n" + completed.stdout
+        )
+    finally:
+        target.write_bytes(original)

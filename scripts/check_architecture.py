@@ -459,15 +459,50 @@ def _dynamically_imported_module(
     Every spelling that reaches a module object without an import statement:
     `importlib.import_module`, an aliased `importlib`, a bare or aliased
     `import_module`, `__import__`, and a name bound to any of them.
+
+    `sys_aliases` was accepted and discarded (`_ = sys_aliases`) -- a parameter
+    for a check nobody wrote. Two spellings walked through both gates at exit 0
+    with an empty violations list, measured on the real `src/demo_app/main.py`:
+
+        sys.modules.get('sub' + 'process')
+        getattr(builtins, '__imp' + 'ort__')('sub' + 'process')
+
+    `sys.modules[...]` was covered and `sys.modules.get(...)` was not, though
+    both hand back the same module object; the split literal was needed only to
+    get past the separate substring test, which is why this went unseen. The
+    question here is how a module ARRIVES, so every route that yields one
+    answers it -- subscript, method lookup, or an importer reached by name.
     """
     func = node.func
-    is_dynamic = (
+
+    # A module object by lookup rather than by import. `pop` and `setdefault`
+    # return one too; listing the mutators is not thoroughness, it is that each
+    # of them evaluates to the module.
+    if (
         isinstance(func, ast.Attribute)
-        and isinstance(func.value, ast.Name)
-        and func.value.id in importlib_modules
-        and func.attr == "import_module"
-    ) or (isinstance(func, ast.Name) and func.id in dynamic_importers)
-    _ = sys_aliases
+        and func.attr in {"get", "pop", "setdefault"}
+        and isinstance(func.value, ast.Attribute)
+        and func.value.attr == "modules"
+        and isinstance(func.value.value, ast.Name)
+        and func.value.value.id in sys_aliases
+    ):
+        key = node.args[0] if node.args else None
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+        return _COMPUTED
+
+    is_dynamic = (
+        (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id in importlib_modules
+            and func.attr == "import_module"
+        )
+        # `builtins.__import__(...)`, and the same through any other holder. The
+        # attribute IS the importer; which object carries it is not the control.
+        or (isinstance(func, ast.Attribute) and func.attr == "__import__")
+        or (isinstance(func, ast.Name) and func.id in dynamic_importers)
+    )
     if not is_dynamic:
         return None
     target = node.args[0] if node.args else None
@@ -616,6 +651,26 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
                 and isinstance(value.value, ast.Name)
                 and value.value.id in importlib_modules
                 and value.attr == "import_module"
+            ):
+                dynamic_importers.update(bound)
+            elif (
+                isinstance(value, ast.Attribute) and value.attr == "__import__"
+            ) or (
+                # `_imp = getattr(builtins, "__imp" + "ort__")` -- an importer
+                # fetched by a name the checker cannot read. Measured bypassing
+                # both gates at exit 0 with an empty violations list. A computed
+                # attribute is treated as an importer rather than ignored,
+                # because the alternative is deciding it is safe on the strength
+                # of not being able to see what it is.
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id == "getattr"
+                and len(value.args) > 1
+                and not (
+                    isinstance(value.args[1], ast.Constant)
+                    and isinstance(value.args[1].value, str)
+                    and value.args[1].value != "__import__"
+                )
             ):
                 dynamic_importers.update(bound)
             elif isinstance(value, ast.Call):
@@ -882,8 +937,24 @@ for module in declared_modules.values():
 
 # --- constraint.api_no_commands and governed action boundary ---
 main_text = (ROOT / "src/demo_app/main.py").read_text(encoding="utf-8")
-if "subprocess" in main_text or "os.system" in main_text:
-    violations.append("API layer contains direct command execution")
+# THE CONSTRAINT IS STRUCTURAL, not textual. This was
+#
+#     if "subprocess" in main_text or "os.system" in main_text
+#
+# which is a substring test over source text: `"sub" + "process"` passes it, and
+# the word in a comment fails it. Wrong in both directions, and it masked a
+# second defect -- every probe of the acquisition gate also spelled `subprocess`
+# somewhere, so this fired and answered for a gate that had never seen the
+# payload. The same AST capability analysis the layer rules use is asked instead:
+# what does this module HOLD, by any spelling.
+_api_markers = _process_capability_markers(
+    ROOT / "src/demo_app/main.py", "src/demo_app/main.py"
+)
+if _api_markers:
+    violations.append(
+        "API layer contains direct command execution: "
+        + ", ".join(sorted(_api_markers))
+    )
 agentic_text = (ROOT / "src/demo_app/agentic.py").read_text(encoding="utf-8")
 if "NornyxActionBoundary" not in agentic_text:
     violations.append("runtime orchestration does not use the declared Nornyx action boundary")
