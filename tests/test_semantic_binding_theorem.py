@@ -650,7 +650,28 @@ PROJECTION_ATTACKS = (
     ),
 )
 
-EXPECTED_9C_IDS = frozenset(a.ident for a in PROJECTION_ATTACKS)
+#: The eight projection attacks, BY NAME.
+#:
+#: This was `frozenset(a.ident for a in PROJECTION_ATTACKS)` -- derived from the
+#: very catalogue it checks, so `actual == EXPECTED_9C_IDS` held for any
+#: catalogue whatsoever, including one carrying eight different attacks or eight
+#: copies of the same one. The count assertions beside it did have force; the
+#: identity assertion had none.
+#:
+#: Written out so that replacing an attack has to be replaced here too, in the
+#: diff, where a reviewer can see which invariant stopped being attacked.
+EXPECTED_9C_IDS = frozenset(
+    {
+        "9C-0 suppress the capability risk field",
+        "9C-1 suppress the approval role field",
+        "9C-2 swallow an authored block as generated",
+        "9C-3 broaden the ignored-key rule by suffix",
+        "9C-4 normalise decision-distinct values together",
+        "9C-5 treat an authored structure as derived",
+        "9C-6 blank one authored section",
+        "9C-7 omit one contract from the aggregate",
+    }
+)
 
 
 def _mutated_src(attack: ProjectionAttack) -> Path:
@@ -734,7 +755,21 @@ def test_the_attack_catalogue_is_exactly_what_is_expected():
     quietly reducing the count all fail.
     """
     actual = frozenset(a.ident for a in PROJECTION_ATTACKS)
-    assert actual == EXPECTED_9C_IDS
+    assert actual == EXPECTED_9C_IDS, (
+        "the projection attacks no longer match the written inventory. "
+        f"missing: {sorted(EXPECTED_9C_IDS - actual)} "
+        f"added: {sorted(actual - EXPECTED_9C_IDS)}"
+    )
+    # The inventory must be WRITTEN, not computed from the catalogue. A derived
+    # expectation agrees with its source by construction, which is exactly what
+    # this assertion used to do.
+    declaration = Path(__file__).read_text(encoding="utf-8")
+    declaration = declaration[declaration.index("EXPECTED_9C_IDS = frozenset("):]
+    declaration = declaration[: declaration.index(chr(10) + ")" + chr(10))]
+    assert "PROJECTION_ATTACKS" not in declaration, (
+        "EXPECTED_9C_IDS is derived from the catalogue it checks, so the "
+        "equality above is a tautology"
+    )
     assert len(PROJECTION_ATTACKS) == 8, (
         f"the projection attack catalogue has {len(PROJECTION_ATTACKS)} cases, "
         "expected 8"
