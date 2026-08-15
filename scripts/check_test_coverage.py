@@ -65,6 +65,13 @@ EXPECTED_SKIPS = {
 }
 
 
+#: Tests allowed to be expected failures, keyed by identity. INTENTIONALLY
+#: EMPTY: a security proof that is expected to fail is a proof that is off,
+#: and the honest response is to fix it or delete it rather than to record
+#: that it does not work. An entry here needs a reason a reviewer can check.
+EXPECTED_XFAILS: dict[str, str] = {}
+
+
 #: The suite must not quietly get smaller. A collection error, a renamed
 #: directory or a deleted file all reduce the count without failing anything —
 #: which is how 63 tests once sat behind a green run. Raise this as the suite
@@ -184,6 +191,9 @@ REQUIRED_MODULES = (
     # its guard. Deleting this file removes the only proof the proof system
     # cannot succeed for the wrong reason.
     "tests/test_false_green_audit.py",
+    # Strict xfail and a closed expected-failure inventory. Without this a
+    # single decorator silences a security proof with the gate still green.
+    "tests/test_xfail_strictness.py",
 )
 
 
@@ -200,7 +210,9 @@ def node_id(case) -> str:
     return f"{classname}.py::{name}" if classname else name
 
 
-def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
+def classify(
+    report: Path,
+) -> tuple[int, int, list[str], set[str], set[str], list[str]]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
     Separated from the run so the gate itself is testable: a guard whose failure
@@ -209,6 +221,7 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
 
     root = ET.parse(report).getroot()
     unexpected: list[str] = []
+    unexpected_xfails: list[str] = []
     seen_modules: set[str] = set()
     skipped_identities: set[str] = set()
     allowed = 0
@@ -228,9 +241,19 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
         # if it ever became a genuine skip.
         #
         # The distinction is the gate's own premise. A skipped test did not
-        # execute; an xfail executed, failed exactly as predicted, and is
-        # strict here, so it fails the run the moment it stops failing.
+        # execute; an xfail executed and failed exactly as predicted.
+        #
+        # But `continue` was WRONG, and the comment that justified it was false:
+        # it claimed xfails are strict here, and `xfail_strict` was set nowhere.
+        # One `@pytest.mark.xfail` could therefore silence a failing security
+        # proof with the census reporting nothing. Strictness is now configured
+        # AND xfails are counted against a closed allowlist, so an undeclared
+        # expected-failure fails the run in its own vocabulary rather than
+        # borrowing the skip exemption list.
         if (skipped.get("type") or "") == "pytest.xfail":
+            identity = node_id(case)
+            if identity not in EXPECTED_XFAILS:
+                unexpected_xfails.append(identity)
             continue
         message = (skipped.get("message") or "") + (skipped.text or "")
         if node_id(case) in EXPECTED_SKIPS:
@@ -238,7 +261,7 @@ def classify(report: Path) -> tuple[int, int, list[str], set[str], set[str]]:
             skipped_identities.add(node_id(case))
             continue
         unexpected.append(f"{node_id(case)} — {message.strip()}")
-    return total, allowed, unexpected, seen_modules, skipped_identities
+    return total, allowed, unexpected, seen_modules, skipped_identities, unexpected_xfails
 
 
 def evaluate(report: Path, pytest_returncode: int) -> int:
@@ -250,9 +273,28 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
     whose failure path has never run is a guess about what it would do; only
     `classify` had been separated far enough to act on that.
     """
-    total, allowed, unexpected, seen_modules, skipped_identities = classify(report)
+    total, allowed, unexpected, seen_modules, skipped_identities, unexpected_xfails = (
+        classify(report)
+    )
 
-    print(f"collected {total}, expected skips {allowed}, unexpected skips {len(unexpected)}")
+    print(
+        f"collected {total}, expected skips {allowed}, "
+        f"unexpected skips {len(unexpected)}, "
+        f"unexpected xfails {len(unexpected_xfails)}"
+    )
+
+    if unexpected_xfails:
+        print(NEWLINE + "These tests are marked as expected failures and are not "
+              "in EXPECTED_XFAILS:" + NEWLINE)
+        for entry in unexpected_xfails:
+            print(f"  {entry}")
+        print(
+            NEWLINE + "An xfail is a proof with an off switch. Fix the test, or "
+            "add it to EXPECTED_XFAILS with why an expected failure is the "
+            "honest state. The intended inventory is EMPTY."
+        )
+        print(NEWLINE + "GATE: FAIL - undeclared expected failures")
+        return 2
 
     # An exemption whose test did not skip is a STANDING PERMISSION nobody
     # needs: if that test later starts skipping for an unrelated reason, the

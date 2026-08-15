@@ -54,6 +54,13 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# An xfail that is not strict is a security proof with an off switch. The
+# census used to skip xfails outright on the stated ground that they were
+# strict here -- and this setting did not exist, so one decorator could
+# silence a failing integrity proof with the gate still green. Strict means
+# an XPASS fails the run, so a marked test that starts passing is reported
+# rather than quietly accepted.
+xfail_strict = true
 
 [tool.setuptools.package-data]
 demo_app = ["static/*"]
