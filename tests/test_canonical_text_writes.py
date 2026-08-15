@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -166,17 +167,34 @@ def test_the_repository_carries_no_cr_bytes_in_canonical_text():
     bytes on disk, so that is where the property has to hold. A checkout whose
     files carry CR bytes cannot establish a subject at all, however clean the
     repository content is.
+
+    Scoped to what git TRACKS, and the scope matters as much as the bytes. This
+    walked the whole tree behind a hand-written skip list, so it also read
+    generated output that no subject contains: a JUnit report written to the
+    gitignored `.nornyx/runs/` failed it, and pytest writes XML with CRLF on
+    Windows. That is a real CR byte in a file that cannot break subject
+    establishment, because the file is not part of the subject.
+
+    Asking git removes the skip list too. Every future build artifact is
+    excluded for the reason it should be -- the repository does not carry it --
+    rather than because someone remembered to add its directory here.
     """
-    skip = {".venv", ".git", "__pycache__", ".pytest_cache", ".ruff_cache", "node_modules"}
+    tracked = subprocess.run(  # noqa: S603
+        ["git", "ls-files", "-z"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", check=True, timeout=120,
+    ).stdout.split("\0")
+
     carriers: list[str] = []
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or skip & set(path.parts):
+    for name in tracked:
+        if not name:
             continue
-        if path.suffix not in CANONICAL_TEXT_SUFFIXES:
+        path = ROOT / name
+        if path.suffix not in CANONICAL_TEXT_SUFFIXES or not path.is_file():
             continue
         try:
             if b"\r" in path.read_bytes():
-                carriers.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+                carriers.append(name)
         except OSError:
             continue
     assert carriers == [], (
