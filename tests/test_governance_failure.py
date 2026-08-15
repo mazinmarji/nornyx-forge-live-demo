@@ -7,6 +7,7 @@ a governed decision rather than an unhandled traceback.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -380,3 +381,127 @@ def test_health_declares_assurance_limits() -> None:
     assert payload["assurance_mode"] == "autonomous_demonstration"
     assert payload["human_review"] == "not_performed"
     assert payload["production_approval"] == "not_granted"
+
+
+# --------------------------------------------------------------------------
+# A-P2-2. A released effect must leave evidence, especially when it fails.
+# --------------------------------------------------------------------------
+
+
+def _released_grant(tmp_path, *, effect):
+    """Drive one high-risk grant all the way to release, with `effect` as the act."""
+    from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        ApprovalLedger,
+        approval_ledger_path,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 10_000_000, "currency": "USD"},
+    )
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    request = canonical_action_request(
+        mission_id="CASE-EVIDENCE", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-EVIDENCE", role="operations_owner")
+    boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+    return boundary.evaluate_and_execute(
+        mission_id="CASE-EVIDENCE", risk="high", action=effect,
+        action_approval=grant, action_descriptor=descriptor, attempt=1,
+    )
+
+
+def _evidence_files(tmp_path):
+    directory = tmp_path / "evidence/runtime/nornyx"
+    return sorted(p.name for p in directory.glob("*.json")) if directory.is_dir() else []
+
+
+def test_an_effect_that_raises_still_leaves_evidence(tmp_path: Path):
+    """The finding. The grant is spent either way; the record was not written.
+
+    `consume` runs BEFORE the effect, deliberately, because at-most-once is the
+    safe direction for something that may already have happened. But the
+    exception propagated past the recorder and past both writes, so the one
+    situation where an operator most needs to know what was attempted produced
+    the least evidence of any path through this method: a ledger row, and
+    nothing else.
+    """
+    def explodes() -> str:
+        raise RuntimeError("the payment rail timed out")
+
+    with pytest.raises(RuntimeError, match="payment rail"):
+        _released_grant(tmp_path, effect=explodes)
+
+    files = _evidence_files(tmp_path)
+    assert files, (
+        "a consequential effect was released, the grant is spent, and no "
+        "evidence was written at all"
+    )
+    report = json.loads(
+        next(p for p in (tmp_path / "evidence/runtime/nornyx").glob("*.report.json"))
+        .read_text(encoding="utf-8")
+    )
+    release = report.get("effect_release")
+    assert release, f"the report does not record the failed release: {sorted(report)}"
+    assert release["released"] is True
+    assert release["completed"] is False
+    assert release["outcome"] == "unknown"
+    assert "payment rail" in release["error"]
+
+
+def test_the_failed_release_is_not_recorded_as_a_successful_invocation(tmp_path: Path):
+    """`tool_invoked` is a SUCCESS terminal in the evidence vocabulary.
+
+    Recording it for an effect that raised would make the stream say the tool
+    completed. The failure belongs in the report, where it can be stated without
+    inventing an event type the schema does not define -- an unvalidatable
+    stream is not evidence.
+    """
+    def explodes() -> str:
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        _released_grant(tmp_path, effect=explodes)
+
+    events = json.loads(
+        next(p for p in (tmp_path / "evidence/runtime/nornyx").glob("*.events.json"))
+        .read_text(encoding="utf-8")
+    )
+    kinds = [
+        event.get("event_type") or event.get("type")
+        for event in (events if isinstance(events, list) else events.get("events", []))
+    ]
+    assert "tool_invoked" not in kinds, (
+        f"the stream claims the tool completed after it raised: {kinds}"
+    )
+
+
+def test_a_successful_release_still_records_the_invocation(tmp_path: Path):
+    """The control. Both artifacts, and no failure record on a clean run."""
+    calls: list[str] = []
+    decision, _result = _released_grant(
+        tmp_path, effect=lambda: (calls.append("ran"), "done")[1]
+    )
+
+    assert calls == ["ran"], "the control did not release the effect"
+    assert decision.effect == "ALLOW", decision.reason
+    files = _evidence_files(tmp_path)
+    assert any(name.endswith(".events.json") for name in files), files
+    assert any(name.endswith(".report.json") for name in files), files
+
+    report = json.loads(
+        next(p for p in (tmp_path / "evidence/runtime/nornyx").glob("*.report.json"))
+        .read_text(encoding="utf-8")
+    )
+    assert "effect_release" not in report, (
+        "a clean run recorded a release failure, so the field does not "
+        "distinguish the two states"
+    )

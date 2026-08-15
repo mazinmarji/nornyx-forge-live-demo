@@ -1598,31 +1598,48 @@ class NornyxActionBoundary:
             )
 
         allowed = decision.allowed and not withheld
+        #: Set when the effect was released and then raised. Not a decision --
+        #: the decision was ALLOW and it stands -- but the record has to say
+        #: that what happened next is unknown.
+        release_failure = ""
         if allowed:
-            action()
+            try:
+                action()
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                # THE GRANT IS ALREADY SPENT. `consume` runs before the effect,
+                # deliberately, because at-most-once is the safe direction. But
+                # the exception used to propagate straight out of here, past the
+                # recorder and past both `write_json` calls -- so a consequential
+                # act that may have partially happened left the ledger row and
+                # NOTHING ELSE: no event stream, no report, no case record. The
+                # one situation where an operator most needs to know what was
+                # attempted produced the least evidence of any path through this
+                # method.
+                #
+                # No `tool_invoked` observation: that is a SUCCESS terminal in
+                # the evidence vocabulary and the tool did not complete. The
+                # failure is carried in the report instead, because inventing an
+                # event type the schema does not define would make the stream
+                # unvalidatable -- and an unvalidatable stream is not evidence.
+                release_failure = f"{type(exc).__name__}: {exc}"
+                self._emit_evidence(
+                    mission_id=mission_id,
+                    recorder=recorder,
+                    nornyx_effect=nornyx_effect,
+                    nornyx_code=nornyx_code,
+                    nornyx_reason=nornyx_reason,
+                    action_approval=action_approval,
+                    release_reason=release_reason,
+                    authentication_evidence=authentication_evidence,
+                    release_failure=release_failure,
+                )
+                raise
             recorder.record_observation(
                 "tool_invoked",
                 mission_id=mission_id,
                 actor_ref="identity.execution",
                 capability_ref=capability_name,
             )
-        stream = recorder.stream()
-        report = recorder.validate()
-        if isinstance(report, dict):
-            report = {
-                **report,
-                "nornyx_decision": {
-                    "effect": nornyx_effect,
-                    "code": nornyx_code,
-                    "reason": nornyx_reason,
-                },
-                "action_approval_present": _action_approval_present(action_approval),
-                "action_binding": release_reason,
-                "approval_authentication": authentication_evidence,
-                # Revision fields removed with the model that produced them.
-                # `subject_verified` and the governed subject digests replace
-                # them once the runtime subject is injected.
-            }
         if withheld and request is not None:
             # Emit the exact request an approver would be signing. Without this
             # an operator has to reconstruct mission, attempt, capability and
@@ -1646,12 +1663,16 @@ class NornyxActionBoundary:
                 },
             )
 
-        evidence_dir = self.root / "evidence/runtime/nornyx"
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        # The identifier is data in the payload, never a path component.
-        storage_key = evidence_storage_key(mission_id)
-        write_json(evidence_dir / f"{storage_key}.events.json", stream)
-        write_json(evidence_dir / f"{storage_key}.report.json", report)
+        report = self._emit_evidence(
+            mission_id=mission_id,
+            recorder=recorder,
+            nornyx_effect=nornyx_effect,
+            nornyx_code=nornyx_code,
+            nornyx_reason=nornyx_reason,
+            action_approval=action_approval,
+            release_reason=release_reason,
+            authentication_evidence=authentication_evidence,
+        )
         if withheld:
             return RuntimeDecision(
                 effect="DENY",
@@ -1671,6 +1692,65 @@ class NornyxActionBoundary:
             source="nornyx.agentic",
             evidence=report,
         )
+
+    def _emit_evidence(
+        self,
+        *,
+        mission_id: str,
+        recorder,
+        nornyx_effect: str,
+        nornyx_code: str,
+        nornyx_reason: str,
+        action_approval,
+        release_reason: str,
+        authentication_evidence,
+        release_failure: str = "",
+    ) -> dict:
+        """Write the event stream and the report. The ONLY place either is written.
+
+        Extracted because the effect-raises path used to write neither: the
+        exception propagated out of `_official` before the recorder was drained,
+        so a spent grant produced a ledger row and no other trace at all. Two
+        copies of this would drift, and the copy on the failure path is the one
+        nobody exercises.
+        """
+        stream = recorder.stream()
+        report = recorder.validate()
+        if isinstance(report, dict):
+            report = {
+                **report,
+                "nornyx_decision": {
+                    "effect": nornyx_effect,
+                    "code": nornyx_code,
+                    "reason": nornyx_reason,
+                },
+                "action_approval_present": _action_approval_present(action_approval),
+                "action_binding": release_reason,
+                "approval_authentication": authentication_evidence,
+            }
+            if release_failure:
+                # SUCCESS and FAILURE-AFTER-RELEASE are different states, and
+                # neither is a denial. The decision was ALLOW and it stands;
+                # what the effect did is unknown, and saying so is the point.
+                report["effect_release"] = {
+                    "released": True,
+                    "completed": False,
+                    "outcome": "unknown",
+                    "error": release_failure,
+                    "note": (
+                        "The approval was consumed before the effect ran, so it "
+                        "is spent. Whether the effect took place, partially or "
+                        "at all, cannot be determined from here. A fresh human "
+                        "approval is required for any retry."
+                    ),
+                }
+        evidence_dir = self.root / "evidence/runtime/nornyx"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        # The identifier is data in the payload, never a path component.
+        storage_key = evidence_storage_key(mission_id)
+        write_json(evidence_dir / f"{storage_key}.events.json", stream)
+        write_json(evidence_dir / f"{storage_key}.report.json", report)
+        return report
 
     def evaluate_and_execute(
         self,
