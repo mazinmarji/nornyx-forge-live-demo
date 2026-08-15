@@ -30,6 +30,7 @@ authorizer would be reading.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -158,7 +159,7 @@ def test_the_real_repository_reports_intact_governance_integrity():
     ],
 )
 def test_a_tampered_derived_field_is_observed(
-    label: str, relative: str, find: bytes, replace: bytes
+    label: str, relative: str, find: bytes, replace: bytes, tmp_path: Path
 ):
     """Both measured attacks, at the observation that feeds the boundary.
 
@@ -167,18 +168,29 @@ def test_a_tampered_derived_field_is_observed(
     would assert nothing. A status is derived, so it is checked against the
     derivation -- an artifact reporting no authenticated inspection cannot back
     a passing independent review.
+
+    Against a copy. This tampered the REAL contracts and restored them in
+    `finally`, which holds until a run does not reach the restore. The identical
+    pattern in test_artifact_authority.py did not: forged inspection records
+    survived an interrupted run and were committed, and a governed artifact in
+    this repository asserted three authenticated inspections that never
+    happened. A `finally` is not isolation.
     """
-    target = ROOT / relative
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
+
+    tree = faithful_copy(tmp_path)
+    target = tree / relative
     original = target.read_bytes()
-    try:
-        target.write_bytes(original.replace(find, replace, 1))
-        state = observe_governance_integrity(ROOT / ".nornyx/contracts")
-    finally:
-        target.write_bytes(original)
+    assert find in original, f"{label}: the fixture no longer matches the contract"
+
+    target.write_bytes(original.replace(find, replace, 1))
+    state = observe_governance_integrity(tree / ".nornyx/contracts")
 
     assert state.status == INTEGRITY_COMPROMISED, f"{label}: the tamper was not observed"
     assert state.problems, f"{label}: compromised with no diagnostic"
-    assert target.read_bytes() == original, "the test did not restore the contract"
+    assert (ROOT / relative).read_bytes() != target.read_bytes(), (
+        "the tamper reached the real contract"
+    )
 
 
 def test_the_established_context_carries_integrity_to_the_boundary():
@@ -308,3 +320,166 @@ def test_intact_with_verified_claims_is_still_accepted():
 
     assert state.authorizes_consequential_action is True
     assert state.problems == ()
+
+
+# --------------------------------------------------------------------------
+# A refusal for compromised governance must leave a record.
+# --------------------------------------------------------------------------
+
+
+def _compromised_boundary(root):
+    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+
+    from nornyx_forge.governed_subject import (  # noqa: PLC0415
+        INTEGRITY_COMPROMISED,
+        GovernanceIntegrityState,
+    )
+
+    return _permissive_boundary(
+        root,
+        as_of="2026-08-03T00:00:00Z",
+        governance_integrity=GovernanceIntegrityState(
+            status=INTEGRITY_COMPROMISED,
+            verified_claims=8,
+            problems=("architecture_approval_record.json does not match",),
+        ),
+    )
+
+
+def test_a_compromised_refusal_is_recorded(tmp_path: Path):
+    """The attempt most worth finding afterwards produced the least evidence.
+
+    A consequential act attempted against a runtime whose own governance state
+    is compromised used to return DENY and write nothing at all -- no stream, no
+    report, no case record -- so nothing showed an operator that it had
+    happened.
+    """
+    from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        ApprovalLedger,
+        approval_ledger_path,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 10_000_000, "currency": "USD"},
+    )
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    request = canonical_action_request(
+        mission_id="CASE-COMPROMISED", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-C1", role="operations_owner")
+
+    calls: list[str] = []
+    decision, _result = _compromised_boundary(tmp_path).evaluate_and_execute(
+        mission_id="CASE-COMPROMISED", risk="high",
+        action=lambda: (calls.append("ran"), "done")[1],
+        action_approval=grant, action_descriptor=descriptor, attempt=1,
+    )
+
+    assert decision.effect == "DENY"
+    assert calls == [], "a compromised runtime released the effect"
+
+    written = sorted((tmp_path / "evidence/runtime/refused").glob("*.refused.json"))
+    assert written, "the refusal left no record at all"
+
+    record = json.loads(written[0].read_text(encoding="utf-8"))
+    assert record["schema"] == "nornyx.forge.refused_action_attempt.v1"
+    assert record["effect_released"] is False
+    assert record["approval_consumed"] is False
+    assert record["integrity_status"] == "compromised"
+    assert record["integrity_problems"], "the record does not say what was wrong"
+
+
+def test_the_refusal_record_is_not_a_governance_decision(tmp_path: Path):
+    """It must not imitate an evidence stream it never had.
+
+    This path runs BEFORE the authorizer is consulted -- deliberately, because a
+    compromised contract is what the authorizer would be reading. So there is no
+    Nornyx decision to report, and the record carries its own schema rather than
+    borrowing one that would imply a verdict nobody reached.
+    """
+    from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        ApprovalLedger,
+        approval_ledger_path,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer", parameters={"amount": 1},
+    )
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    request = canonical_action_request(
+        mission_id="CASE-NO-VERDICT", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-C2", role="operations_owner")
+
+    _compromised_boundary(tmp_path).evaluate_and_execute(
+        mission_id="CASE-NO-VERDICT", risk="high", action=lambda: "done",
+        action_approval=grant, action_descriptor=descriptor, attempt=1,
+    )
+
+    record = json.loads(
+        next((tmp_path / "evidence/runtime/refused").glob("*.refused.json"))
+        .read_text(encoding="utf-8")
+    )
+    assert "nornyx_decision" not in record, (
+        "the refusal record claims a Nornyx verdict, but the authorizer was "
+        "never consulted on this path"
+    )
+    # And it must not land among the real evidence streams.
+    assert not (tmp_path / "evidence/runtime/nornyx").exists() or not list(
+        (tmp_path / "evidence/runtime/nornyx").glob("*.events.json")
+    ), "a refusal before the authorizer wrote an event stream"
+
+
+def test_an_intact_runtime_writes_no_refusal_record(tmp_path: Path):
+    """The control. A record written unconditionally would distinguish nothing."""
+    from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        ApprovalLedger,
+        approval_ledger_path,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer", parameters={"amount": 1},
+    )
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    request = canonical_action_request(
+        mission_id="CASE-INTACT", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-C3", role="operations_owner")
+
+    _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z").evaluate_and_execute(
+        mission_id="CASE-INTACT", risk="high", action=lambda: "done",
+        action_approval=grant, action_descriptor=descriptor, attempt=1,
+    )
+
+    refused = tmp_path / "evidence/runtime/refused"
+    assert not refused.exists() or not list(refused.glob("*.refused.json")), (
+        "an intact runtime wrote a compromised-governance refusal record"
+    )

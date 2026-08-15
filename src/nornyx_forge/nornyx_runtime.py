@@ -1552,21 +1552,60 @@ class NornyxActionBoundary:
             # contract is what the authorizer would be reading.
             integrity = self.governance_integrity
             if integrity is None or not integrity.authorizes_consequential_action:
+                reason = (
+                    "the governance evidence this runtime would be judged "
+                    "under does not match what the contracts record: "
+                    + (
+                        "; ".join(integrity.problems[:3])
+                        if integrity is not None
+                        else "no integrity observation was established"
+                    )
+                    + ". Consequential authority is unavailable until the "
+                    "evidence set is regenerated and re-approved."
+                )
+                # Recorded, not just returned. This refusal wrote nothing at
+                # all: no event stream, no report, no case record -- so an
+                # operator could not see that a consequential act had been
+                # attempted against a runtime whose own governance state was
+                # compromised. That is the attempt most worth being able to
+                # find afterwards.
+                #
+                # A Nornyx event stream is not available here and is not
+                # invented: this runs before the authorizer is consulted,
+                # deliberately, because a compromised contract is what the
+                # authorizer would be reading. What is written is a refusal
+                # record in its own schema, which claims nothing about a
+                # governance decision that was never made.
+                record = {
+                    "schema": "nornyx.forge.refused_action_attempt.v1",
+                    "mission_id": mission_id,
+                    "risk": normalize_risk(risk),
+                    "attempt": attempt,
+                    "code": GOVERNANCE_INTEGRITY_COMPROMISED,
+                    "reason": reason,
+                    "integrity_status": (
+                        integrity.status if integrity is not None else "unobserved"
+                    ),
+                    "integrity_problems": list(
+                        integrity.problems if integrity is not None else ()
+                    ),
+                    "action_approval_present": _action_approval_present(action_approval),
+                    "approval_consumed": False,
+                    "effect_released": False,
+                    "refused_at": self.as_of,
+                }
+                refusals = self.root / "evidence/runtime/refused"
+                refusals.mkdir(parents=True, exist_ok=True)
+                write_json(
+                    refusals / f"{evidence_storage_key(mission_id)}.refused.json",
+                    record,
+                )
                 return RuntimeDecision(
                     effect="DENY",
                     code=GOVERNANCE_INTEGRITY_COMPROMISED,
-                    reason=(
-                        "the governance evidence this runtime would be judged "
-                        "under does not match what the contracts record: "
-                        + (
-                            "; ".join(integrity.problems[:3])
-                            if integrity is not None
-                            else "no integrity observation was established"
-                        )
-                        + ". Consequential authority is unavailable until the "
-                        "evidence set is regenerated and re-approved."
-                    ),
+                    reason=reason,
                     source=self.mode,
+                    evidence=record,
                 )
 
             subject = self.runtime_subject
