@@ -179,10 +179,10 @@ def _load_approval_domains(root: Path) -> dict[str, object]:
     except TrustStoreUnavailable as exc:
         return {
             "governance_approval_trust": ApprovalTrustStore(
-                source=str(exc), domain=GOVERNANCE_TRUST_DOMAIN
+                source=str(exc), domain=GOVERNANCE_TRUST_DOMAIN, unusable=True
             ),
             "action_approval_trust": ApprovalTrustStore(
-                source=str(exc), domain=ACTION_TRUST_DOMAIN
+                source=str(exc), domain=ACTION_TRUST_DOMAIN, unusable=True
             ),
         }
     return {

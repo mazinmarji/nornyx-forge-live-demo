@@ -507,3 +507,149 @@ def test_removing_the_frozen_store_changes_the_consequential_decision(tmp_path: 
     assert refused.effect == "DENY"
     assert not_released == [], "an empty trust store released a consequential effect"
     assert not_spent is False, "the grant was spent by a run that must not start"
+
+
+# --------------------------------------------------------------------------
+# P1-1. ONE question, asked once. Reporting is a view of the snapshot.
+# --------------------------------------------------------------------------
+
+
+def _context_with(action_store, governance_store=None):
+    """A stand-in context carrying exactly the two frozen approval domains."""
+    from dataclasses import replace  # noqa: PLC0415
+
+    from demo_app import agentic  # noqa: PLC0415
+
+    # The established object itself, not the accessor: these tests replace the
+    # accessor, and reading it here would call back into this function.
+    return replace(
+        agentic._SECURITY_CONTEXT,  # noqa: SLF001
+        action_approval_trust=action_store,
+        governance_approval_trust=governance_store
+        if governance_store is not None
+        else action_store,
+    )
+
+
+def test_the_reported_state_never_reads_the_trust_store(monkeypatch):
+    """The defect itself: a second consumer that re-opens the file.
+
+    `assurance_state()` called `ApprovalTrustDomains.load()` again, so the
+    interface answered from the filesystem while the boundary answered from a
+    snapshot taken at startup. Counting the loads is the direct measurement --
+    zero, because the answer is already held.
+    """
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge import approval_trust  # noqa: PLC0415
+
+    loads: list[int] = []
+    original = approval_trust.ApprovalTrustDomains.load
+
+    def counting(*args, **kwargs):
+        loads.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(approval_trust.ApprovalTrustDomains, "load", counting)
+    agentic.assurance_state()
+
+    assert loads == [], (
+        f"the reported assurance state read the trust store {len(loads)} time(s); "
+        "it must be a view of the established snapshot, or the interface and the "
+        "boundary can answer the same question differently"
+    )
+
+
+def test_reporting_cannot_claim_authority_the_boundary_lacks(monkeypatch):
+    """The dangerous direction, and the reason this was a P1.
+
+    Measured before the fix, bootstrapping against no store and provisioning one
+    afterwards:
+
+        boundary   action_signers=[]  available=False   -- refuses
+        reported   consequential_authority="available"  -- claims it can
+
+    Nothing was released; only the reporting path re-read. But a deployment that
+    misdescribes its own authority is what an operator plans against.
+    """
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        ApprovalTrustStore,
+    )
+
+    empty = ApprovalTrustStore(source="<absent>", domain=ACTION_TRUST_DOMAIN)
+    assert not empty.available and not empty.signers  # the boundary would refuse
+
+    monkeypatch.setattr(
+        agentic, "application_security_context", lambda: _context_with(empty)
+    )
+    reported = agentic.assurance_state()
+
+    assert reported["consequential_authority"] != "available", reported
+    assert reported["trusted_approvers_loaded"] is False, reported
+
+
+def test_absent_and_unusable_stay_different_states(monkeypatch):
+    """Both authorize nothing. They send an operator to different fixes.
+
+    Collapsing them would trade one truthfulness defect for another, so the
+    third state is carried ON the snapshot rather than re-derived by reopening
+    the file -- which is the only other way to answer it later.
+    """
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        ApprovalTrustStore,
+    )
+
+    absent = ApprovalTrustStore(source="<no such file>", domain=ACTION_TRUST_DOMAIN)
+    broken = ApprovalTrustStore(
+        source="store is unreadable: JSONDecodeError",
+        domain=ACTION_TRUST_DOMAIN,
+        unusable=True,
+    )
+
+    monkeypatch.setattr(
+        agentic, "application_security_context", lambda: _context_with(absent)
+    )
+    absent_state = agentic.assurance_state()["action_approval_authentication"]
+
+    monkeypatch.setattr(
+        agentic, "application_security_context", lambda: _context_with(broken)
+    )
+    broken_state = agentic.assurance_state()["action_approval_authentication"]
+
+    assert absent_state == "unavailable", absent_state
+    assert broken_state == "unusable", broken_state
+    assert absent_state != broken_state
+
+
+def test_a_provisioned_snapshot_is_reported_available(monkeypatch):
+    """The control. A reporter that said "unavailable" always would also pass
+    every test above and describe nothing."""
+    from signing import trust_store  # noqa: PLC0415
+
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        GOVERNANCE_TRUST_DOMAIN,
+    )
+
+    action = trust_store()
+    action = type(action)(
+        signers=action.signers, digest=action.digest, source=action.source,
+        available=True, domain=ACTION_TRUST_DOMAIN,
+    )
+    governance = type(action)(
+        signers=action.signers, digest=action.digest, source=action.source,
+        available=True, domain=GOVERNANCE_TRUST_DOMAIN,
+    )
+    assert action.signers, "the control needs a genuinely provisioned domain"
+
+    monkeypatch.setattr(
+        agentic, "application_security_context", lambda: _context_with(action, governance)
+    )
+    reported = agentic.assurance_state()
+
+    assert reported["consequential_authority"] == "available", reported
+    assert reported["trusted_approvers_loaded"] is True, reported

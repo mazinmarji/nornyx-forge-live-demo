@@ -53,7 +53,7 @@ At least three of those kills were invalid.
   governed state G1 with request-time governance semantics read from a
   materially different G2 — either freeze the semantics it authorizes, or
   re-establish both together and refuse on drift.
-- **Disposition** OPEN
+- **Disposition** CLOSED — see Remediation progress
 
 ### P1-2 — one SQLite trigger defeats single use
 - **Lens** A · **Severity** P1 · **Confirmed by builder** yes
@@ -76,7 +76,7 @@ At least three of those kills were invalid.
   treated as validly consumed.
 - **Precondition** write access to the ledger file. `docker-compose.yml`
   bind-mounts `./evidence/runtime` read-write and the ledger lives inside it.
-- **Disposition** OPEN
+- **Disposition** CLOSED — see Remediation progress
 
 ### P1-3 — mutation kills credited without a pristine baseline
 - **Lens** B · **Severity** P1 · **Confirmed by builder** yes
@@ -102,7 +102,7 @@ At least three of those kills were invalid.
   declared on every `SecurityClass` and never read.
 - **Expected** `INVALID_BASELINE` as a first-class outcome; final acceptance
   requires `INVALID_BASELINE = 0`.
-- **Disposition** OPEN
+- **Disposition** CLOSED — see Remediation progress
 
 ### P1-4 — a missing test node counts as a kill
 - **Lens** B · **Severity** P1 · **Confirmed by builder** no (accepted on Lens B
@@ -121,7 +121,7 @@ At least three of those kills were invalid.
 - **Expected** the catalogue must distinguish TEST FAILED / TEST NOT FOUND /
   COLLECTION ERROR / ENVIRONMENT ERROR, and never classify the last three as
   killed.
-- **Disposition** OPEN
+- **Disposition** CLOSED — see Remediation progress
 
 ### P1-5 — non-strict xfail can silence security proofs
 - **Lens** B · **Severity** P1 · **Confirmed by builder** no (accepted; the
@@ -140,7 +140,7 @@ At least three of those kills were invalid.
 - **Expected** `xfail_strict = true`, a closed allowlist of expected xfails
   (ideally empty), an unapproved xfail failing the gate, and a meta-test that
   fails if the setting is removed or flipped.
-- **Disposition** OPEN
+- **Disposition** CLOSED — see Remediation progress
 
 ---
 
@@ -245,7 +245,68 @@ Node existence is asked of pytest directly and the exit code is read rather than
 the prose: 4 and 5 are INVALID_TEST_TARGET, never a kill. A deleted or renamed
 proof can no longer be mistaken for a failing one.
 
+### P1-5 — CLOSED
+
+`xfail_strict = true` is configured and parsed from the real file rather than
+asserted about in prose, so an XPASS fails the run. The census no longer skips
+xfails past the gate: they are counted against `EXPECTED_XFAILS`, which is
+intentionally empty, and an undeclared one fails in its own vocabulary. Ten
+tests, including the unstrict control — without it the strict test measures
+nothing.
+
+### P1-2 — CLOSED
+
+The ledger schema is closed over what may be PRESENT. `PRAGMA index_list`
+reports what the engine will constrain, not what it will do with the write, and
+one `BEFORE INSERT … RAISE(IGNORE)` trigger made every consumption a silent
+no-op: five callbacks from one grant, zero rows, every uniqueness and continuity
+check still passing.
+
+Closed asymmetrically, and that is the finding within the finding. The first fix
+also *required* `ledger_identity`, which refused a ledger with no establishment
+record as unusable — true, and the wrong state: that case is already modelled as
+`LEDGER_CONTINUITY_UNKNOWN`, a denial that names the unanswered question. The
+symmetric version was caught by two execution-semantics tests failing on a
+clause they were not written to reach. An extra object is an outage; a missing
+establishment record is a denial; neither may be reported as the other.
+
+### P1-1 — CLOSED
+
+Measured before patching, per instruction; the table is
+[AUTHORITY\_VALUE\_FLOW.md](AUTHORITY_VALUE_FLOW.md).
+
+The result reframed the finding. `RuntimeSecurityContext` is **uniformly
+frozen** — every authority-bearing field is a bootstrap snapshot, which is the
+intended model, so staleness alone was not the defect. The defect was a *second
+consumer of the same question that read live*: `assurance_state()` re-opened the
+trust store while the boundary answered from the snapshot.
+
+Measured, bootstrapping against no store and provisioning one afterwards:
+
+```
+boundary   action_signers=[]  available=False        -- refuses
+reported   consequential_authority="available"       -- claims it can
+DANGEROUS_DIVERGENCE  true
+```
+
+Reporting is now a view of the snapshot, so the two cannot drift: after the fix
+`DANGEROUS_DIVERGENCE false` and `INCOHERENT false`. The snapshot gained an
+explicit `unusable` flag so absent and broken stay distinguishable without
+reopening the file — three states preserved, not two.
+
+Scope, stated plainly: only the reporting path re-read. The action boundary
+takes `frozen_action_trust` from the context on the serving path, so this was a
+truthfulness defect and is **not** reported as an action-release bypass.
+
+One sub-question is left explicitly open rather than closed quietly:
+`load_authorizer` re-reads the runtime contract and lock at every boundary
+construction. Three attempts to measure whether that can change what is
+permitted all produced INVALID_BASELINE — the authorizer does not load in a
+copied tree (no lock, no generated evidence) and the current runtime contract
+does not pass governance validation. No classification was made. It is deferred
+to the gate that regenerates evidence in causal order, and recorded in
+[AUTHORITY_VALUE_FLOW.md](AUTHORITY_VALUE_FLOW.md) §4.
+
 ### Still OPEN
 
-P1-1 (stale authority snapshot), P1-2 (SQLite trigger defeats single use),
-P1-5 (xfail_strict unset), all twelve P2s, all seventeen P3s.
+All twelve P2s, all seventeen P3s.

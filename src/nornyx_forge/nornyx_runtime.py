@@ -1330,7 +1330,7 @@ class NornyxActionBoundary:
                 # A store we cannot parse is not an empty store. Hold the
                 # refusal rather than starting up as though none was configured.
                 self.action_trust_store = ApprovalTrustStore(
-                    source=str(exc), domain=ACTION_TRUST_DOMAIN
+                    source=str(exc), domain=ACTION_TRUST_DOMAIN, unusable=True
                 )
         #: Durable single-use ledger. Survives boundary and process restarts.
         #: Never provisioned here: a boundary that could create its own replay

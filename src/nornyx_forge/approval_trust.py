@@ -432,6 +432,14 @@ class ApprovalTrustStore:
     source: str = "<none>"
     available: bool = False
     domain: str = ""
+    #: True when the store EXISTED and could not be used. Absence and
+    #: malformation both authorize nothing, so `available` cannot tell them
+    #: apart -- but "nobody is trusted here" and "the trust material is broken"
+    #: mean different things to an operator, and a report that says the first
+    #: when the second is true sends them looking for the wrong problem. Carried
+    #: on the snapshot rather than re-derived, because the only other way to
+    #: answer it later is to open the file again.
+    unusable: bool = False
 
     @classmethod
     def load(cls, path: Path | None = None, *, domain: str) -> "ApprovalTrustStore":

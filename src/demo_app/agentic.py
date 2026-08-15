@@ -118,19 +118,41 @@ def assurance_state() -> dict[str, Any]:
     authenticated" are different states.
 
     Carries no store path and no key material.
-    """
-    from nornyx_forge.approval_trust import ApprovalTrustDomains, TrustStoreUnavailable
 
-    try:
-        domains = ApprovalTrustDomains.load()
-        # BOTH domains, reported together. Saying "trust is available"
-        # while only one authority is provisioned would describe a
-        # deployment that cannot do what the word implies.
-        stores = (domains.governance, domains.action)
-        loaded = all(s.available and s.signers for s in stores)
-        state = "available" if loaded else "unavailable"
-    except TrustStoreUnavailable:
-        loaded, state = False, "unusable"
+    READ FROM THE ESTABLISHED CONTEXT, never re-loaded. This called
+    `ApprovalTrustDomains.load()` again, which made it a second consumer of a
+    question the boundary already had a frozen answer to -- so the same question
+    got two answers whenever the store changed after startup. Measured, with the
+    process bootstrapped against no store and one provisioned afterwards:
+
+        boundary   action_signers=[]  action_available=False   (refuses)
+        reported   consequential_authority="available"         (claims it can)
+
+    The interface told an operator this deployment could release consequential
+    effects while the boundary that releases them held an empty trust domain.
+    Nothing was released -- only the reporting path re-read, so this was never
+    an action-release bypass -- but a deployment that misdescribes its own
+    authority is the thing an operator plans against.
+
+    The snapshot is now the only source, so what is reported and what is
+    enforced cannot drift apart: they are the same object.
+    """
+    context = application_security_context()
+    stores = (context.governance_approval_trust, context.action_approval_trust)
+
+    # BOTH domains, reported together. Saying "trust is available" while only
+    # one authority is provisioned would describe a deployment that cannot do
+    # what the word implies.
+    loaded = all(getattr(s, "available", False) and getattr(s, "signers", None)
+                 for s in stores)
+    if loaded:
+        state = "available"
+    elif any(getattr(s, "unusable", False) for s in stores):
+        # Present and broken. Distinct from absent, and it stays distinct:
+        # both authorize nothing, and they send an operator to different fixes.
+        state = "unusable"
+    else:
+        state = "unavailable"
     return {
         "action_approval_authentication": state,
         "trusted_approvers_loaded": loaded,
