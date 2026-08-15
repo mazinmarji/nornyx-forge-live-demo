@@ -122,55 +122,69 @@ DERIVED_AUTHENTICATED_ATTACKS = [
     ids=[case[0] for case in DERIVED_AUTHENTICATED_ATTACKS],
 )
 def test_forging_a_derived_authenticated_artifact_is_caught(
-    label: str, name: str, find: bytes, replace: bytes
+    label: str, name: str, find: bytes, replace: bytes, tmp_path: Path
 ):
     """Its digest is recorded, so editing it breaks the recorded digest.
 
     This is what makes `DERIVED_AUTHENTICATED` safe to keep outside the
     inspection subject: the contract records what the artifact hashed to, and
     integrity observation recomputes it before any authority is granted.
+
+    Against a copy. A sibling test in this file forged inspection records into
+    the real tree under `try/finally`, an interrupted run left them there, and
+    they reached a commit. The same hazard applies here.
     """
-    target = EVIDENCE / name
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
+
+    tree = faithful_copy(tmp_path)
+    target = tree / ".nornyx/contracts/evidence" / name
     original = target.read_bytes()
     assert find in original, f"{label}: the fixture no longer matches the artifact"
-    try:
-        target.write_bytes(original.replace(find, replace, 1))
-        state = observe_governance_integrity(CONTRACTS)
-    finally:
-        target.write_bytes(original)
+
+    target.write_bytes(original.replace(find, replace, 1))
+    state = observe_governance_integrity(tree / ".nornyx/contracts")
 
     assert state.status == INTEGRITY_COMPROMISED, f"{label}: forgery went unobserved"
     assert state.authorizes_consequential_action is False
-    assert target.read_bytes() == original
 
 
-def test_forging_a_derived_authenticated_artifact_cannot_mint_assurance():
+def test_forging_a_derived_authenticated_artifact_cannot_mint_assurance(tmp_path: Path):
     """The forged verdict must not become `independently_inspected`.
 
     Editing the review record to claim inspections it does not have is the
     most direct route to fabricated independence, so it is attacked directly
     rather than inferred from the digest check above.
+
+    RUN IN A COPY, and that is not a stylistic preference. This forged three
+    `authenticated_inspections` records into the REAL tracked evidence file and
+    restored them in `finally` -- which holds right up until a run is
+    interrupted between the two. One was: the forged content stayed on disk and
+    reached a commit, so a governed artifact in this repository carried three
+    `"reviewer": "forged", "verdict": "pass"` entries and `verdict_basis:
+    "forged"` until it was regenerated.
+
+    A `finally` is not isolation. The attack is identical against a copy, and a
+    copy cannot leave a manufactured attestation in the repository.
     """
     import subprocess  # noqa: PLC0415
 
-    target = EVIDENCE / "architecture_independent_review.json"
-    original = target.read_bytes()
-    payload = json.loads(original.decode("utf-8"))
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
+
+    tree = faithful_copy(tmp_path)
+    target = tree / ".nornyx/contracts/evidence/architecture_independent_review.json"
+    payload = json.loads(target.read_bytes().decode("utf-8"))
     payload["authenticated_inspections"] = {
         role: {"reviewer": "forged", "verdict": "pass"}
         for role in ("test-inspector", "architecture-inspector", "security-inspector")
     }
     payload["verdict_basis"] = "forged"
-    try:
-        target.write_bytes(
-            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-        )
-        completed = subprocess.run(
-            [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
-            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-    finally:
-        target.write_bytes(original)
+    target.write_bytes(
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    )
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
 
     report = json.loads(completed.stdout[completed.stdout.find("{"):])["verification"]
     assert report["assurance_state"] == "not_independently_inspected", (
@@ -186,42 +200,46 @@ NON_AUTHORITATIVE = [
 
 
 @pytest.mark.parametrize("name", sorted(NON_AUTHORITATIVE))
-def test_a_non_authoritative_artifact_cannot_mint_assurance(name: str):
+def test_a_non_authoritative_artifact_cannot_mint_assurance(name: str, tmp_path: Path):
     """The claim each of these makes: forging it changes no verdict.
 
     Asserted rather than assumed. "It is only a report" was exactly the belief
     that was wrong about the independent review record, and the only way to
     know is to edit the file and look at what the derivation says afterwards.
+
+    Against a copy, for the reason recorded on the sibling tests: a `finally`
+    restores nothing if the run does not reach it, and one that did not left
+    forged attestation records in a commit.
     """
     import subprocess  # noqa: PLC0415
 
-    target = EVIDENCE / name
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
+
+    tree = faithful_copy(tmp_path)
+    target = tree / ".nornyx/contracts/evidence" / name
     if not target.exists():
         pytest.skip(f"{name} is not present in this tree")
-    original = target.read_bytes()
-    payload = json.loads(original.decode("utf-8"))
+    payload = json.loads(target.read_bytes().decode("utf-8"))
     if not isinstance(payload, dict):
         pytest.skip(f"{name} is not an object")
     payload["status"] = "pass"
     payload["approval"] = "granted"
     payload["independent"] = True
-    try:
-        target.write_bytes(
-            json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-        )
-        completed = subprocess.run(
-            [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
-            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
-        )
-    finally:
-        target.write_bytes(original)
+    target.write_bytes(
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    )
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
 
     report = json.loads(completed.stdout[completed.stdout.find("{"):])["verification"]
     assert report["assurance_state"] == "not_independently_inspected", (
         f"{name} is classified non-authoritative, but forging it produced "
         "independent inspection"
     )
-    assert target.read_bytes() == original
+    # The forgery stays in the copy; the real tree was never touched, so there
+    # is nothing here to assert about restoring it.
 
 
 def test_the_attestation_directory_is_authenticated_external():
