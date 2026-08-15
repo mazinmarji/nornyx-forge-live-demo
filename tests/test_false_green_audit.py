@@ -395,10 +395,47 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
 
     This does not re-run them -- the suite does -- it asserts none can vanish
     while the inventory still claims nine guarded classes.
+
+    A NAME IS NOT A TEST. This checked that `def <node>(` appeared in the source
+    and that the guard string was long enough, so gutting any self-attack's body
+    to `pass` left all nine reported as guarded: the audit that exists to catch
+    proofs which assert nothing could itself be reduced to nine that assert
+    nothing. Each named function is now parsed and required to carry at least
+    one assertion or an expected-refusal block.
+
+    Still not proof that the assertion is the right one -- only the suite
+    running can show that -- but it is the difference between a body and a
+    placeholder, which is what the finding was about.
     """
+    import ast  # noqa: PLC0415
+
     for item in INVENTORY:
         module, _, node = item.owner.partition("::")
         source = (ROOT / module).read_text(encoding="utf-8")
         assert f"def {node}(" in source, f"{item.ident}: {node} is gone"
         assert len(item.guard) > 15, f"{item.ident} names no guard"
+
+        tree = ast.parse(source, filename=module)
+        found = [
+            fn for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and fn.name == node
+        ]
+        assert len(found) == 1, f"{item.ident}: {node} is defined {len(found)} times"
+
+        exercised = sum(
+            1
+            for child in ast.walk(found[0])
+            if isinstance(child, ast.Assert)
+            or (
+                isinstance(child, ast.withitem)
+                and isinstance(child.context_expr, ast.Call)
+                and "raises" in ast.dump(child.context_expr)
+            )
+        )
+        assert exercised >= 1, (
+            f"{item.ident}: {node} contains no assertion and no expected "
+            "refusal, so it would pass with its body deleted. A self-attack "
+            "that asserts nothing is the defect this inventory exists to find."
+        )
     assert len({item.owner for item in INVENTORY}) >= 9, "self-attacks were merged"
