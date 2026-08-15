@@ -277,3 +277,34 @@ def test_the_state_refuses_to_be_constructed_dishonestly():
         GovernanceIntegrityState(status=INTEGRITY_COMPROMISED)
     with pytest.raises(GovernedSubjectError):
         GovernanceIntegrityState(status="probably_fine", problems=("x",))
+
+
+def test_intact_with_nothing_verified_is_refused():
+    """The refusal the docstring described and the code never performed.
+
+    `verified_claims` exists precisely because "no problems found" can mean
+    every claim was checked and matched, or that nothing was checked at all.
+    The class docstring said a count of zero with status `intact` "is refused at
+    construction rather than left for a caller to notice" -- and `__post_init__`
+    contained no such check, so the state most worth refusing was the one state
+    it would accept, and it authorizes consequential action.
+
+    `observe_governance_integrity` returns `unavailable` on that path already,
+    so this is a backstop on the type rather than a change of behaviour: the
+    invariant now holds for every construction site, including future ones.
+    """
+    from nornyx_forge.governed_subject import GovernedSubjectError
+
+    with pytest.raises(GovernedSubjectError, match="nothing was checked"):
+        GovernanceIntegrityState(status=INTEGRITY_INTACT, verified_claims=0)
+    with pytest.raises(GovernedSubjectError, match="nothing was checked"):
+        GovernanceIntegrityState(status=INTEGRITY_INTACT)  # the default is zero
+
+
+def test_intact_with_verified_claims_is_still_accepted():
+    """The control. A type that refused every intact state would also pass
+    the case above while making the sound outcome unrepresentable."""
+    state = GovernanceIntegrityState(status=INTEGRITY_INTACT, verified_claims=1)
+
+    assert state.authorizes_consequential_action is True
+    assert state.problems == ()

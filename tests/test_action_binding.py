@@ -235,3 +235,93 @@ def test_the_crossing_is_evaluated_at_every_risk_level():
         "claims the external destination regardless of risk"
     )
     assert "if capability.allowed:" in crossing, crossing
+
+
+# --------------------------------------------------------------------------
+# Canonicalization must be injective, not merely deterministic.
+# --------------------------------------------------------------------------
+
+
+def test_two_different_descriptors_cannot_share_a_digest():
+    """`str(key)` mapped {1: ...} and {"1": ...} onto one canonical form.
+
+    Determinism and injectivity are different requirements and only the first
+    was met. Two DIFFERENT requests shared a payload_digest, so an approval
+    bound to either would release the other -- the whole point of binding an
+    approval to a digest is that this cannot happen.
+
+    Refused rather than resolved: coercing the key silently picks a winner
+    between two distinct requests.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        NornyxRuntimeUnavailable,
+    )
+
+    string_keyed = ActionDescriptor(
+        operation="refund", resource="customer:amina",
+        destination="zone.external_customer", parameters={"1": 10},
+    )
+    int_keyed = ActionDescriptor(
+        operation="refund", resource="customer:amina",
+        destination="zone.external_customer", parameters={1: 10},
+    )
+
+    # The string-keyed one is ordinary and must still canonicalize.
+    assert string_keyed.canonical()["parameters"] == {"1": 10}
+
+    with pytest.raises(NornyxRuntimeUnavailable, match="not strings"):
+        int_keyed.canonical()
+
+
+def test_the_refusal_names_the_offending_keys():
+    """A refusal a caller cannot act on is a crash with better manners."""
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        NornyxRuntimeUnavailable,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="refund", resource="customer:amina",
+        destination="zone.external_customer", parameters={7: "a", None: "b"},
+    )
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        descriptor.canonical()
+
+    message = str(refusal.value)
+    assert "7" in message and "None" in message, message
+
+
+def test_the_deliberate_numeric_normalisation_survives():
+    """100 and 100.0 are the same AMOUNT, and must still digest identically.
+
+    That collapse is between two spellings of one value. The one removed was
+    between two different values. Keeping them apart is the point of this test:
+    a stricter canonicaliser that also split 100 from 100.0 would break the
+    property the numeric branch exists to provide.
+    """
+    from nornyx_forge.nornyx_runtime import ActionDescriptor  # noqa: PLC0415
+
+    def descriptor(amount):
+        return ActionDescriptor(
+            operation="refund", resource="customer:amina",
+            destination="zone.external_customer", parameters={"amount": amount},
+        )
+
+    assert descriptor(100).canonical() == descriptor(100.0).canonical()
+
+
+def test_nested_mappings_are_checked_too():
+    """A collision one level down is still a collision."""
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        NornyxRuntimeUnavailable,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="refund", resource="customer:amina",
+        destination="zone.external_customer",
+        parameters={"outer": {2: "deep"}},
+    )
+    with pytest.raises(NornyxRuntimeUnavailable, match="not strings"):
+        descriptor.canonical()

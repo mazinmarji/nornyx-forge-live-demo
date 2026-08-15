@@ -235,9 +235,35 @@ ACTION_APPROVER_ROLES = frozenset({"operations_owner", "network_governance_owner
 
 
 def _canonical(value: Any) -> Any:
-    """Normalize a value so equal operations always digest identically."""
+    """Normalize a value so equal operations always digest identically.
+
+    And so UNEQUAL operations never do. The two halves are not the same
+    requirement, and only the first was being met: `str(key)` mapped `{1: ...}`
+    and `{"1": ...}` onto one canonical form, so two different requests shared a
+    `payload_digest` and an approval bound to one released the other.
+
+    Ambiguity is refused rather than resolved. Coercing the key silently picks
+    a winner between two distinct requests; refusing says the descriptor cannot
+    be canonicalized and lets the caller spell it unambiguously. JSON has only
+    string keys, so no request arriving over the API is affected -- what this
+    stops is an in-process caller constructing one that collides.
+
+    `100` and `100.0` still normalize together, deliberately: they are the same
+    amount, and that collapse is between two spellings of ONE value rather than
+    between two different ones.
+    """
     if isinstance(value, Mapping):
-        return {str(key): _canonical(value[key]) for key in sorted(value, key=str)}
+        offending = sorted(
+            repr(key) for key in value if not isinstance(key, str)
+        )
+        if offending:
+            raise NornyxRuntimeUnavailable(
+                "an action descriptor cannot be canonicalized: these keys are "
+                f"not strings {offending}. Coercing them would let {{1: ...}} "
+                'and {"1": ...} -- two different requests -- share one digest, '
+                "so an approval bound to either would release the other."
+            )
+        return {key: _canonical(value[key]) for key in sorted(value)}
     if isinstance(value, (list, tuple)):
         return [_canonical(item) for item in value]
     if isinstance(value, bool) or value is None:

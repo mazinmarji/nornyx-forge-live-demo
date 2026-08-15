@@ -668,6 +668,17 @@ class GovernanceIntegrityState:
                 f"{self.status} integrity must say why; a refusal with no reason "
                 "cannot be acted on"
             )
+        if self.status == INTEGRITY_INTACT and self.verified_claims < 1:
+            # The refusal the docstring above has always described, and which
+            # was never written. `intact` with nothing verified is the sentence
+            # "every claim was checked and matched" said about zero claims --
+            # unknown reported as sound, which is the single failure this type
+            # exists to remove. It reached the boundary as an authorizing state.
+            raise GovernedSubjectError(
+                "intact integrity with no verified claims: nothing was checked, "
+                "so soundness was not observed. Report unavailable instead; "
+                "'checked and fine' and 'not checked' are different states."
+            )
 
     @property
     def authorizes_consequential_action(self) -> bool:
