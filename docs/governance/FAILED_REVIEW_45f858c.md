@@ -205,3 +205,42 @@ three classes, and the builder reported them as settled.
 The three lenses were instructed to assume the newest controls were defective.
 That instruction is what produced these findings; a review told to confirm
 remediation would have returned green.
+
+
+---
+
+## Remediation progress
+
+### P1-3 — CLOSED, and it exposed a real survivor
+
+The workspace is no longer an allowlist. `tests/mutation_workspace.py` copies
+every file `git ls-files` reports and initialises real git metadata, so a
+pristine proof can pass; measured, all eight direct classes now pass their
+named test before any mutation, where three previously failed.
+
+The admission protocol is enforced in order, each failure carrying its own
+outcome and none reportable as a kill: node exists (INVALID_TEST_TARGET),
+pristine baseline passes (INVALID_BASELINE), mutation reaches executable code
+(INVALID_MUTATION), mutant is what loads (INVALID_MUTATION_ENVIRONMENT, read
+from the module rather than grepped), semantic effect present, then the same
+node runs and fails.
+
+**With a valid baseline, H05 SURVIVES.** Seven of eight kill validly. The
+control credited to H05 -- the approval-wiring loop recording a missing contract
+and continuing -- is not what
+`test_the_verifier_refuses_missing_governed_content_without_crashing` proves;
+disabling it leaves that test passing. Either an earlier refusal reaches the
+same outcome first (defence in depth, as with H03/H04) or the control is not
+load-bearing. **DISPOSITION: OPEN — SURVIVED, unexplained.** It is recorded as a
+survivor rather than reclassified, and the suite is red for a true reason.
+
+### P1-4 — CLOSED
+
+Node existence is asked of pytest directly and the exit code is read rather than
+the prose: 4 and 5 are INVALID_TEST_TARGET, never a kill. A deleted or renamed
+proof can no longer be mistaken for a failing one.
+
+### Still OPEN
+
+P1-1 (stale authority snapshot), P1-2 (SQLite trigger defeats single use),
+P1-5 (xfail_strict unset), all twelve P2s, all seventeen P3s.

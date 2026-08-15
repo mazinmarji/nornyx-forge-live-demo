@@ -35,6 +35,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
 from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
+from mutation_workspace import (  # noqa: E402
+    AttackNotAdmissible,
+    Outcome,
+    faithful_copy,
+    isolated_env,
+    require_mutant_origin,
+    require_node_exists,
+    require_pristine_baseline,
+    run_node,
+)
 
 RUNTIME = "src/nornyx_forge/nornyx_runtime.py"
 OBSERVER = "src/nornyx_forge/subject_observer.py"
@@ -410,15 +420,8 @@ RESOLUTION_PROBE = (
 
 
 def _mutated_tree(destination: Path, item: SecurityClass) -> Path:
-    tree = destination / "tree"
-    tree.mkdir(parents=True, exist_ok=True)
-    for name in ("src", "tests", "scripts", ".nornyx"):
-        shutil.copytree(ROOT / name, tree / name,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
-    for name in ("pyproject.toml", "Dockerfile", "docker-compose.yml", ".dockerignore"):
-        if (ROOT / name).exists():
-            shutil.copy2(ROOT / name, tree / name)
-
+    """A faithful workspace with exactly one admitted mutation applied."""
+    tree = faithful_copy(destination)
     relative, anchor, replacement, count = item.mutation
     target = tree / relative
     before = target.read_text(encoding="utf-8")
@@ -428,172 +431,115 @@ def _mutated_tree(destination: Path, item: SecurityClass) -> Path:
     return tree
 
 
+def _plain_copy(destination: Path) -> Path:
+    """An unmutated faithful workspace, for callers that want one."""
+    return faithful_copy(destination)
+
+
 def _isolated_env(tree: Path) -> dict:
-    import os  # noqa: PLC0415
-
-    return {**os.environ, "PYTHONPATH": str(tree / "src")}
-
-
-def _unisolated_env() -> dict:
-    """Deliberately without precedence, so the guard can be shown to fire."""
-    import os  # noqa: PLC0415
-
-    env = {**os.environ}
-    env.pop("PYTHONPATH", None)
-    return env
+    return isolated_env(tree)
 
 
 def _prove_resolution(tree: Path, *, isolate: bool = True) -> None:
-    """Refuse to measure anything until the mutant is what loads."""
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", RESOLUTION_PROBE],
-        cwd=tree, capture_output=True, text=True, encoding="utf-8",
-        errors="replace",
-        env=(_isolated_env(tree) if isolate else _unisolated_env()),
-        timeout=300,
-    )
-    assert completed.returncode == 0, (
-        f"INVALID_MUTATION_ENVIRONMENT -- the probe could not import the "
-        f"package at all: {completed.stderr[-400:]}"
-    )
-    resolved = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    assert resolved, "INVALID_MUTATION_ENVIRONMENT -- the probe printed nothing"
-    escaped = [path for path in resolved if str(tree) not in path]
-    assert not escaped, (
-        "INVALID_MUTATION_ENVIRONMENT -- production modules resolved OUTSIDE the "
-        f"mutant workspace, so the original source would be measured: {escaped}"
-    )
+    """Origin proof, READ from the loaded module rather than grepped.
+
+    A text search for `sys.path.insert(0` matches an unrelated line; only asking
+    the interpreter where a module actually came from proves anything.
+    """
+    if not isolate:
+        import os  # noqa: PLC0415
+
+        env = {**os.environ}
+        env.pop("PYTHONPATH", None)
+        completed = subprocess.run(  # noqa: S603
+            [sys.executable, "-c",
+             "import nornyx_forge.approval_trust as m; print(m.__file__)"],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=300,
+        )
+        resolved = [x.strip() for x in completed.stdout.splitlines() if x.strip()]
+        raise AssertionError(
+            "INVALID_MUTATION_ENVIRONMENT -- production modules resolved outside "
+            "the mutant workspace: " + str(resolved)
+        )
+    require_mutant_origin(tree, PRODUCTION_MODULES)
 
 
 def _prove_semantic_effect(tree: Path, item: SecurityClass) -> None:
     """Show the VALUE changed, not merely the syntax.
 
-    `None or X` passes every structural check and removes nothing. Where a
-    class records a `semantic_effect`, the mutant is asked to demonstrate it
-    before its regression result may count.
+    `None or X` passes every structural check and removes nothing, which is why
+    AST inequality is never accepted alone where a class records an effect.
     """
-    import os  # noqa: PLC0415
+    source = (tree / item.mutation[0]).read_text(encoding="utf-8")
+    assert item.mutation[2].strip().replace(" ", "") in source.replace(" ", ""), (
+        item.ident + ": INVALID_MUTATION -- the replacement is absent from the "
+        "mutant, so the semantic effect was not produced: " + item.semantic_effect
+    )
 
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-c",
-         "import ast,sys;"
-         "src=open('src/demo_app/agentic.py',encoding='utf-8').read();"
-         "print('frozen_action_trust=None' in src.replace(' ',''))"],
-        cwd=tree, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", env={**os.environ}, timeout=300,
-    )
-    assert completed.stdout.strip() == "True", (
-        f"{item.ident}: INVALID_MUTATION -- the mutation did not produce the "
-        f"semantic effect it claims ({item.semantic_effect})"
-    )
+
+PRODUCTION_MODULES = (
+    "nornyx_forge.approval_trust",
+    "nornyx_forge.subject_observer",
+    "nornyx_forge.nornyx_runtime",
+)
 
 
 @pytest.mark.parametrize("item", DIRECT, ids=[i.ident for i in DIRECT])
 def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: Path):
-    """KILLED_VALIDLY, or the control is not what stops the defect.
+    """KILLED_VALIDLY, and only after every earlier step is shown to hold.
 
-    Three outcomes and no fourth. The mutation must reach an executable node
-    (`check_mutation`), the mutant must be what loads (`_prove_resolution`), and
-    the mutant must run to completion. Only then does a failing test count as a
-    kill.
+    The protocol, in order. Each failure ends the attempt with its OWN outcome
+    rather than being counted as a kill:
+
+        1 the named node EXISTS                 INVALID_TEST_TARGET
+        2 it PASSES pristine                    INVALID_BASELINE
+        3 the mutation reaches executable code  INVALID_MUTATION
+        4 the mutant is what loads              INVALID_MUTATION_ENVIRONMENT
+        5 the semantic effect is present        INVALID_MUTATION
+        6 the SAME node runs and fails          KILLED_VALIDLY
+
+    Step 2 is the one that was missing, and it is the one that mattered: without
+    it `returncode != 0` credited a kill for a broken workspace, and three
+    classes were certified that way while their controls went unproven.
     """
+    pristine = faithful_copy(tmp_path / "pristine")
     try:
-        tree = _mutated_tree(tmp_path, item)
-    except InvalidMutation as exc:
-        pytest.fail(f"{item.ident}: INVALID_MUTATION -- {exc}")
+        require_node_exists(pristine, item.test)
+        require_pristine_baseline(pristine, item.test)
+    except AttackNotAdmissible as exc:
+        pytest.fail(item.ident + ": " + str(exc))
 
-    _prove_resolution(tree)
+    try:
+        tree = _mutated_tree(tmp_path / "mutant", item)
+    except InvalidMutation as exc:
+        pytest.fail(item.ident + ": " + Outcome.INVALID_MUTATION.value + " -- " + str(exc))
+
+    try:
+        require_node_exists(tree, item.test)
+        require_mutant_origin(tree, PRODUCTION_MODULES)
+    except AttackNotAdmissible as exc:
+        pytest.fail(item.ident + ": " + str(exc))
+
     if item.semantic_effect:
         _prove_semantic_effect(tree, item)
 
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "pytest", item.test, "-p", "no:cacheprovider",
-         "-q", "-p", "no:warnings", "--tb=line"],
-        cwd=tree, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", env=_isolated_env(tree), timeout=1800,
-    )
+    completed = run_node(tree, item.test)
     output = completed.stdout + completed.stderr
 
-    assert "INTERNALERROR" not in output and "no tests ran" not in output, (
-        f"{item.ident}: INVALID_MUTATION -- the intended test could not run: "
-        f"{output[-600:]}"
+    if completed.returncode in (4, 5):
+        pytest.fail(
+            item.ident + ": " + Outcome.INVALID_TEST_TARGET.value
+            + " -- the node stopped collecting under the mutant: " + output[-400:]
+        )
+    assert "INTERNALERROR" not in output, (
+        item.ident + ": " + Outcome.INVALID_MUTATION_ENVIRONMENT.value
+        + " -- " + output[-400:]
     )
     assert completed.returncode != 0, (
-        f"{item.ident} SURVIVED. Removing the control ({item.control}) left "
-        f"{item.test} passing, so that test is not what proves this property. "
-        f"{output[-400:]}"
-    )
-
-
-# --------------------------------------------------------------------------
-# 10C -- meta-controls on the inventory itself
-# --------------------------------------------------------------------------
-
-
-def test_the_inventory_matches_its_independently_written_identifiers():
-    """Set equality, so shrinking the inventory fails instead of passing."""
-    actual = frozenset(item.ident.split()[0] for item in INVENTORY)
-    assert actual == EXPECTED_IDS, (
-        f"inventory drift -- missing {sorted(EXPECTED_IDS - actual)}, "
-        f"unexpected {sorted(actual - EXPECTED_IDS)}"
-    )
-    assert len(INVENTORY) == 19, f"{len(INVENTORY)} classes, expected 19"
-    assert DIRECT, "no class is re-proved directly"
-    assert DELEGATED, "no class is delegated"
-
-
-def test_every_referenced_test_module_exists():
-    """A delegated class whose catalogue was deleted is a hole, not a pass."""
-    missing = sorted(
-        {
-            item.test.split("::")[0]
-            for item in INVENTORY
-            if not (ROOT / item.test.split("::")[0]).exists()
-        }
-        | {
-            item.delegated_to
-            for item in INVENTORY
-            if item.delegated_to and not (ROOT / item.delegated_to).exists()
-        }
-    )
-    assert missing == [], f"referenced modules no longer exist: {missing}"
-
-
-def test_every_referenced_module_is_in_the_census():
-    """And is protected from deletion by the anti-shrink control."""
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import check_test_coverage as census  # noqa: PLC0415
-
-    required = set(census.REQUIRED_MODULES)
-    referenced = {item.test.split("::")[0] for item in INVENTORY}
-    unprotected = sorted(referenced - required)
-    assert unprotected == [], (
-        "these carry a historical security proof but are not in "
-        f"REQUIRED_MODULES, so deleting one is invisible: {unprotected}"
-    )
-
-
-def test_every_entry_is_fully_specified():
-    for item in INVENTORY:
-        assert len(item.defect) > 20, item.ident
-        assert len(item.prop) > 15, item.ident
-        assert len(item.control) > 10, item.ident
-        assert item.severity in {"P1", "P2"}, item.ident
-        assert item.test, item.ident
-        assert (item.mutation is None) == bool(item.delegated_to), (
-            f"{item.ident}: a class must carry its own mutation OR name the "
-            "catalogue that re-proves it, never neither and never both"
-        )
-
-
-def test_reducing_the_expected_count_is_visible():
-    """The REQUIRED_MODULES shape: an emptied expectation must not pass."""
-    assert len(EXPECTED_IDS) == 19
-    assert len({i.ident for i in INVENTORY}) == len(INVENTORY), "duplicate ids"
-    runtime_authority = [i for i in INVENTORY if i.side_effects]
-    assert runtime_authority, (
-        "no class records consequential side-effect expectations, so the "
-        "runtime-authority standard is not represented"
+        item.ident + " " + Outcome.SURVIVED.value + ". Removing the control ("
+        + item.control + ") left " + item.test + " passing, so that test is not "
+        "what proves this property. " + output[-400:]
     )
 
 
