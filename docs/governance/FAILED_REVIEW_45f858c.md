@@ -1,0 +1,207 @@
+# Failed internal review — 45f858c
+
+`45f858c260113d96f7f970da1e42431cdbe08bf7` is a **failed pre-candidate head**, not a
+review candidate. No tag was created for it and none should be.
+
+Three fresh internal red teams ran against this exact SHA, each independently
+confirming `git rev-parse HEAD` first and working only in temporary copies. The
+repository was not modified by any of them; `git status --porcelain` was empty
+before and after.
+
+The gate at this head reported 938 collected, 9 expected skips, 0 unexpected, 0
+xfail, GATE PASS, integrity intact, `governed_input_match` true. **That position
+was not sound.** Five P1 findings were confirmed. The Task-10/11/12/13
+conclusions are invalidated as *current evidence*; their implementations remain
+in the tree and may still be useful, but their claimed proof status must be
+re-established after remediation.
+
+    Lens A   P1 2   P2 4   P3 6      authority / trust / integrity
+    Lens B   P1 3   P2 6   P3 9      proof system / false greens / meta-controls
+    Lens C   P1 0   P2 2   P3 2      architecture / packaging / evidence / claims
+    dedup    P1 5   P2 12  P3 17
+
+Three of the five P1s are defects in the proof system itself — work written by
+the builder to establish that the other controls were sound. The mutation
+catalogue reported "34 attacks, 31 kills, 0 survivors, 0 invalid" at this head.
+At least three of those kills were invalid.
+
+---
+
+## P1 findings
+
+### P1-1 — stale authority snapshot / split-brain state
+- **Lens** A · **Severity** P1 · **Confirmed by builder** yes
+- **Root property** authority conclusions must describe the governed state that
+  the same request is judged against
+- **Affected control** `subject_bootstrap.bootstrap_security_context`,
+  `RuntimeSecurityContext`, `subject_observer.observe_governance_integrity`,
+  `NornyxActionBoundary.__init__`
+- **Reproduction** copy the tree to `<T>`; `ctx = bootstrap_security_context(<T>)`;
+  sign a grant for `canonical_action_request(subject_revision=<startup digest>)`;
+  then edit `<T>/.nornyx/contracts/runtime_network.nyx` (or tamper a recorded
+  `content_hash`); fire the same grant through a boundary built from `ctx` and
+  through one built from a fresh `bootstrap_security_context(<T>)`.
+- **Observed** subject digest and integrity verdict are frozen at import while
+  the contracts and lock they certify are re-opened at every boundary
+  construction. Builder measurement: startup `intact / authorizes=True`;
+  after tampering, a cold observation of the same tree reports `compromised /
+  authorizes=False` while the warm context still reports `intact /
+  authorizes=True`. Lens A drove this to `ALLOW, calls=1, spent=True` where a
+  cold start gives `DENY, calls=0`, and reproduced it through the real HTTP
+  surface across two `POST /api/cases`.
+- **Expected** a context must never combine authority conclusions derived from
+  governed state G1 with request-time governance semantics read from a
+  materially different G2 — either freeze the semantics it authorizes, or
+  re-establish both together and refuse on drift.
+- **Disposition** OPEN
+
+### P1-2 — one SQLite trigger defeats single use
+- **Lens** A · **Severity** P1 · **Confirmed by builder** yes
+- **Root property** one grant releases at most one consequential effect
+- **Affected control** `nornyx_runtime._assert_ledger_structure`, `ApprovalLedger.consume`
+- **Reproduction** `ApprovalLedger.provision(<root>/evidence/runtime/action_approvals.sqlite3,
+  established_at="2026-08-01T00:00:00Z")`; then
+  `CREATE TRIGGER t BEFORE INSERT ON consumed_approvals BEGIN SELECT RAISE(IGNORE); END`;
+  present one valid grant through `evaluate_and_execute` repeatedly.
+- **Observed** builder measurement: 5 runs, each `effect=ALLOW calls=1
+  ledger_row=None`; total 5 callbacks from one grant; `rows in
+  consumed_approvals = 0`; `ledger.available=True` and `established_at` intact
+  throughout, so continuity checks pass. An `AFTER INSERT … DELETE` trigger
+  behaves identically. `_assert_ledger_structure` asks `PRAGMA index_list` /
+  `index_info` — what the engine will *constrain* — and never what it will *do*
+  with the write, while its own comment claims SQLite metadata is authoritative
+  "because it describes what the engine will ENFORCE".
+- **Expected** a hostile ledger structure must DENY before the callback, with an
+  exact `LEDGER_STRUCTURE_INVALID`-class diagnostic, and the grant must not be
+  treated as validly consumed.
+- **Precondition** write access to the ledger file. `docker-compose.yml`
+  bind-mounts `./evidence/runtime` read-write and the ledger lives inside it.
+- **Disposition** OPEN
+
+### P1-3 — mutation kills credited without a pristine baseline
+- **Lens** B · **Severity** P1 · **Confirmed by builder** yes
+- **Root property** an attack may be classified only when its named proof passes
+  in the exact pristine mutation environment
+- **Affected control** `tests/test_historical_reproof.py` — `_plain_copy`,
+  `_mutated_tree`, `test_removing_the_control_revives_the_defect`
+- **Reproduction** for each entry in `DIRECT`, build `_plain_copy(...)` with **no
+  mutation applied** and run the entry's named test under `_isolated_env`.
+- **Observed** builder measurement across all eight direct classes:
+
+      H01 rc=0   H02 rc=0   H05 rc=1 *   H06 rc=0
+      H07 rc=1 * H08 rc=0   H09 rc=0     H10 rc=1 *
+
+  H05 (`FileNotFoundError` — `.github` absent), H07 (`shutil.copy2` of
+  `README.md`/`BRD.md`, absent), H10 (`git ls-files` returned 128 — no `.git`)
+  already fail unmutated, so their kills were credited for a broken workspace.
+  Lens B closed the loop: replacing H07's mutation with a **docstring-only** edit
+  that leaves `if not is_dynamic: return None` intact also reports `1 passed`.
+- **Cause** `_plain_copy` copies only `src, tests, scripts, .nornyx` plus four
+  root files, omitting `docs/`, `README.md`, `BRD.md`, `.github/` and `.git`;
+  and the kill criterion was `returncode != 0` with no baseline. `item.expect` is
+  declared on every `SecurityClass` and never read.
+- **Expected** `INVALID_BASELINE` as a first-class outcome; final acceptance
+  requires `INVALID_BASELINE = 0`.
+- **Disposition** OPEN
+
+### P1-4 — a missing test node counts as a kill
+- **Lens** B · **Severity** P1 · **Confirmed by builder** no (accepted on Lens B
+  evidence; mechanism independently legible in the code at
+  `test_historical_reproof.py:517-521`)
+- **Root property** the named killing test must be proven to exist and to run
+- **Reproduction** copy the repo to temp; delete
+  `tests/test_governance_integrity_authority.py::test_a_compromised_runtime_releases_nothing`;
+  run the H02 case of `test_removing_the_control_revives_the_defect`.
+- **Observed** `pytest module::missing_node` exits **4** and prints
+  `ERROR: not found: …`, which contains neither `"no tests ran"` nor
+  `"INTERNALERROR"`, so the guard does not fire and a kill is credited. H02
+  reports KILLED with its only proof deleted and the integrity gate fully
+  intact; collection 937 against floor 895; `REQUIRED_MODULES` still satisfied
+  because the module still contributes other tests.
+- **Expected** the catalogue must distinguish TEST FAILED / TEST NOT FOUND /
+  COLLECTION ERROR / ENVIRONMENT ERROR, and never classify the last three as
+  killed.
+- **Disposition** OPEN
+
+### P1-5 — non-strict xfail can silence security proofs
+- **Lens** B · **Severity** P1 · **Confirmed by builder** no (accepted; the
+  absence of `xfail_strict` is directly checkable in `pyproject.toml`)
+- **Root property** a security proof cannot be turned off without the census
+  noticing
+- **Affected control** `scripts/check_test_coverage.py` xfail carve-out,
+  `pyproject.toml [tool.pytest.ini_options]`
+- **Reproduction** copy to temp; disable the integrity gate in
+  `nornyx_runtime.py`; mark the four integrity proofs
+  `@pytest.mark.xfail(reason="…")`; run the census.
+- **Observed** pytest exit 0; JUnit shows `<skipped type="pytest.xfail">`; the
+  census reports total 12, expected skips 0, unexpected skips `[]`, module seen;
+  gate PASS. The carve-out's stated justification is that xfails are strict —
+  `xfail_strict` is set nowhere and no test asserts it.
+- **Expected** `xfail_strict = true`, a closed allowlist of expected xfails
+  (ideally empty), an unapproved xfail failing the gate, and a meta-test that
+  fails if the setting is removed or flipped.
+- **Disposition** OPEN
+
+---
+
+## P2 findings
+
+| ID | Lens | Root property | Observed | Confirmed |
+| --- | --- | --- | --- | --- |
+| A-P2-1 | A | governing contract and subject must describe one tree | caller-supplied `root` selects the contract while subject/integrity describe the packaged root; reachable from `nornyx-forge demo --offline` | Lens A |
+| A-P2-2 | A | a released effect must leave evidence | effect callable raising leaves the grant spent, no evidence, no case record | Lens A |
+| A-P2-3 | A | health must report the authority in force | `/api/health` re-reads trust at request time and ignores signer `status`; reports available authority that does not exist | Lens A |
+| A-P2-4 | A | zone crossing must be authorized where claimed | every action is canonically pinned to `zone.external_customer`, but low/medium never evaluate `ZoneCrossingRequest` | Lens A |
+| B-P2-1 | B | the attack catalogue cannot shrink silently | 6 of 14 domain-collapse mutations deletable, landing exactly on `MINIMUM_ATTACKS = 28` | Lens B |
+| B-P2-2 | B | critical proofs cannot be deleted | 43 tests across six modules deletable, landing exactly on floor 895; includes the dirty-tree gate the floor was raised for | Lens B |
+| B-P2-3 | B | a kill must be caused by the mutation | re-aiming H06 at an unrelated rename credits a kill via an ImportError | Lens B |
+| B-P2-4 | B | mutations must change executable semantics | `check_python_mutation` admits docstring-only changes when the anchor starts on code | Lens B |
+| B-P2-5 | B | mutant origin must be proven | the origin check is a grep that matches `sys.path.insert(0, ROOT/"tests")`, unrelated to production isolation | Lens B |
+| B-P2-6 | B | the accounting cannot be restated at will | marking all 14 domain attacks `defence_in_depth` yields 34 = 17 + 17 with every catalogue test green | Lens B |
+| C-P2-1 | C | capability acquisition must fail closed on unknown spellings | `builtins.__import__`, `__builtins__["__import__"]`, `sys.modules.get` all bypass both gates | builder |
+| C-P2-2 | C | the API must not hold process capability | `constraint.api_no_commands` is a substring test defeated by `"sub" + "process"` | builder |
+
+All twelve are OPEN.
+
+---
+
+## P3 findings
+
+Seventeen, OPEN, to be triaged after P1/P2 closure and before any freeze, each
+receiving FIXED or ACCEPTED_NON_BLOCKING_WITH_RATIONALE. Summarised by lens:
+
+- **Lens A (6)** — `GovernanceIntegrityState` docstring claims a constructor
+  refusal that does not exist; `_canonical` is not injective (`{1:…}` and
+  `{'1':…}` share a `payload_digest`); the integrity-compromised refusal
+  produces no evidence at all; `governance_approval_trust`, `reviewer_store` and
+  `builder_identities` are bootstrap state with no runtime consumer; the
+  "trust resolved once" closure is not total on the unresolvable-root branch;
+  the trust-domain guard is opt-in for unlabelled stores.
+- **Lens B (9)** — `EXPECTED_9C_IDS` is derived from the thing it checks, making
+  the equality a tautology; `total == kills + defence` is likewise tautological
+  and 34/31/3 appear only in prose; two catalogue "self-attacks" assert that
+  invented names do not exist; `MINIMUM_ATTACKS`' own guard weakens as campaigns
+  shrink; gutting a false-green self-attack body to `pass` keeps 9/9 green;
+  `expect`/`severity`/`side_effects` are recorded and never compared to observed
+  behaviour; H13–H19 have no attack representation in the "authoritative"
+  inventory; the semantic-binding suite mutates the real contracts in place and
+  a hard kill leaves them mutated; `classify()` counts collection errors toward
+  the total and marks the errored module seen.
+- **Lens C (2)** — `_dynamically_imported_module`'s docstring overstates its
+  coverage; `_unstaged_governed_paths`' docstring misstates the digest source
+  (the implementation is safer than documented, which is its own hazard).
+
+---
+
+## What the builder got wrong
+
+The mutation catalogue proved that the controls written were load-bearing. It
+could not report that the harness was crediting kills it never earned, because
+the harness had no baseline — the one discipline enforced on every other
+campaign and omitted from the campaign written last. The reported figures at
+this head ("31 kills, 0 survivors, 0 invalid") were not trustworthy for at least
+three classes, and the builder reported them as settled.
+
+The three lenses were instructed to assume the newest controls were defective.
+That instruction is what produced these findings; a review told to confirm
+remediation would have returned green.
