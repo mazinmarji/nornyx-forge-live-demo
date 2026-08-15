@@ -215,6 +215,27 @@ def test_a_root_property_may_hold_several_attacks_without_being_deduplicated():
     assert len({a.attack_id for a in surface}) == 4
 
 
+def test_the_accounting_is_kills_plus_defence_in_depth():
+    """34 = 31 + 3, with  as METADATA on one of the kills.
+
+    Stated mechanically because the alternative reading -- 31 + 3 + 1 -- would
+    count the compound attack twice and imply a fourth category. A compound
+    attack is a kill that had to remove an entire enforcement chain; it is not
+    a separate outcome.
+    """
+    total = len(CATALOGUE)
+    defence = sum(1 for a in CATALOGUE if a.defence_in_depth)
+    kills = sum(1 for a in CATALOGUE if not a.defence_in_depth)
+    compound = [a for a in CATALOGUE if a.compound]
+
+    assert total == kills + defence, f"{total} != {kills} + {defence}"
+    assert len(compound) == 1, [a.attack_id for a in compound]
+    assert not compound[0].defence_in_depth, (
+        "the compound attack is marked defence-in-depth, which would take it "
+        "out of the kill count and make the arithmetic 31 + 3 + 1"
+    )
+
+
 def test_the_two_counts_are_reported_separately():
     """Root properties and attack representations are different numbers."""
     roots = {attack.root_property_id for attack in CATALOGUE}

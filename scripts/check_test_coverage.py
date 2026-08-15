@@ -180,6 +180,10 @@ REQUIRED_MODULES = (
     # The authoritative mutation inventory: two counts kept apart, every
     # owner mechanically verifiable, and its own shrinkage self-attacked.
     "tests/test_mutation_catalogue.py",
+    # The nine false-green classes, each with a self-attack that must trip
+    # its guard. Deleting this file removes the only proof the proof system
+    # cannot succeed for the wrong reason.
+    "tests/test_false_green_audit.py",
 )
 
 
