@@ -44,6 +44,21 @@ ARCHGATE = "scripts/check_architecture.py"
 CENSUS = "scripts/check_test_coverage.py"
 
 
+def _read_current_floor() -> str:
+    """The census's own MINIMUM_COLLECTED line, exactly as written."""
+    import re  # noqa: PLC0415
+
+    source = (ROOT / CENSUS).read_text(encoding="utf-8")
+    found = re.findall(r"^MINIMUM_COLLECTED = \d+$", source, re.MULTILINE)
+    assert len(found) == 1, (
+        f"expected exactly one MINIMUM_COLLECTED assignment, found {len(found)}"
+    )
+    return found[0]
+
+
+_CURRENT_FLOOR = _read_current_floor()
+
+
 @dataclass(frozen=True)
 class SecurityClass:
     """One historical defect class and the mutation that must revive it."""
@@ -156,7 +171,12 @@ INVENTORY = (
         defect="a green run executed 139 of 202 tests; the floor once allowed a third to vanish",
         prop="the suite cannot quietly get smaller",
         control="check_test_coverage.MINIMUM_COLLECTED, guarded at 90% of collected",
-        mutation=(CENSUS, "MINIMUM_COLLECTED = 830", "MINIMUM_COLLECTED = 1", 1),
+        # Anchored on the CURRENT floor, read from the census itself. A literal
+        # went stale the moment the suite grew and the floor was raised, and the
+        # harness then refused it as a stale anchor -- correctly, but it fails
+        # the gate for maintenance rather than for a defect. Deriving it keeps
+        # the anchor exact while tracking a value that legitimately moves.
+        mutation=(CENSUS, _CURRENT_FLOOR, "MINIMUM_COLLECTED = 1", 1),
         test="tests/test_skip_gate.py::test_the_floor_sits_below_the_current_suite_and_above_nothing",
         expect="a floor of 1 leaves the whole suite deletable",
         severity="P1",
