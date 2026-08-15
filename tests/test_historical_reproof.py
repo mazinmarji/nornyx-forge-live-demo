@@ -49,6 +49,7 @@ from mutation_workspace import (  # noqa: E402
 
 RUNTIME = "src/nornyx_forge/nornyx_runtime.py"
 OBSERVER = "src/nornyx_forge/subject_observer.py"
+SUBJECT = "src/nornyx_forge/governed_subject.py"
 TRUST = "src/nornyx_forge/approval_trust.py"
 REFRESH = "scripts/refresh_governance_evidence.py"
 ARCHGATE = "scripts/check_architecture.py"
@@ -667,20 +668,39 @@ def test_breaking_precedence_is_reported_as_an_invalid_environment(tmp_path: Pat
 #:
 #: Three INDEPENDENT routes produce `unavailable`, measured by removing them one
 #: at a time and finding the property still held:
+#: Every INDEPENDENT route that stops an absent or empty governance surface
+#: reporting `intact`, with the module each lives in.
+#:
+#: Route D arrived later, when `GovernanceIntegrityState` was made to perform
+#: the constructor refusal its docstring had always described. It is in a
+#: different module from the other three, which is why this carries a path: the
+#: property is defended across a file boundary, and a chain that could only name
+#: anchors in the observer would have missed it.
+#:
+#: The compound test found it, not a reviewer. Disabling A, B and C stopped
+#: producing the unsafe state and started producing a refusal from D, and the
+#: test declined to credit a kill on the grounds that the inventory must be
+#: incomplete. It was.
 GOVERNANCE_SURFACE_CHAIN = (
-    ("A", "    if not contracts_dir.is_dir():", "the directory is not there"),
-    ("B", "    if not contracts:", "the directory holds no contracts"),
-    ("C", "    if not verified:", "nothing in it could be verified"),
+    ("A", OBSERVER, "    if not contracts_dir.is_dir():",
+     "the directory is not there"),
+    ("B", OBSERVER, "    if not contracts:",
+     "the directory holds no contracts"),
+    ("C", OBSERVER, "    if not verified:",
+     "nothing in it could be verified"),
+    ("D", SUBJECT,
+     "        if self.status == INTEGRITY_INTACT and self.verified_claims < 1:",
+     "the state itself refuses to be intact having verified nothing"),
 )
 
 
 @pytest.mark.parametrize(
-    ("label", "anchor", "condition"),
+    ("label", "relative", "anchor", "condition"),
     GOVERNANCE_SURFACE_CHAIN,
     ids=[case[0] for case in GOVERNANCE_SURFACE_CHAIN],
 )
 def test_removing_one_guard_leaves_the_property_protected(
-    tmp_path: Path, label: str, anchor: str, condition: str
+    tmp_path: Path, label: str, relative: str, anchor: str, condition: str
 ):
     """Positive defence-in-depth evidence, stated per route.
 
@@ -690,10 +710,12 @@ def test_removing_one_guard_leaves_the_property_protected(
     valid H03/H04 kill, and why the compound mutation below is required.
     """
     tree = _plain_copy(tmp_path)
-    module = tree / OBSERVER
+    module = tree / relative
     before = module.read_text(encoding="utf-8")
-    after = before.replace(anchor, anchor.replace("    if ", "    if False and ", 1))
-    check_mutation(OBSERVER, before, after, anchor, 1)
+    stripped = anchor.lstrip()
+    indent = anchor[: len(anchor) - len(stripped)]
+    after = before.replace(anchor, indent + "if False and " + stripped[len("if "):], 1)
+    check_mutation(relative, before, after, anchor, 1)
     module.write_text(after, encoding="utf-8", newline="")
 
     _prove_resolution(tree)
@@ -743,13 +765,14 @@ def test_disabling_the_whole_chain_recreates_the_historical_unsafe_state(
     in a throwaway copy.
     """
     tree = _plain_copy(tmp_path)
-    module = tree / OBSERVER
-    text = module.read_text(encoding="utf-8")
-    for _label, anchor, _condition in GOVERNANCE_SURFACE_CHAIN:
-        mutated = text.replace(anchor, anchor.replace("    if ", "    if False and ", 1))
-        check_mutation(OBSERVER, text, mutated, anchor, 1)
-        text = mutated
-    module.write_text(text, encoding="utf-8", newline="")
+    for _label, relative, anchor, _condition in GOVERNANCE_SURFACE_CHAIN:
+        module = tree / relative
+        text = module.read_text(encoding="utf-8")
+        stripped = anchor.lstrip()
+        indent = anchor[: len(anchor) - len(stripped)]
+        mutated = text.replace(anchor, indent + "if False and " + stripped[len("if "):], 1)
+        check_mutation(relative, text, mutated, anchor, 1)
+        module.write_text(mutated, encoding="utf-8", newline="")
 
     _prove_resolution(tree)
 

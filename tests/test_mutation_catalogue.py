@@ -112,7 +112,7 @@ def _historical_attacks() -> list[Attack]:
             killed_by="test_removing_one_guard_leaves_the_property_protected",
             defence_in_depth=True,
         )
-        for label, _anchor, _condition in historical.GOVERNANCE_SURFACE_CHAIN
+        for label, _relative, _anchor, _condition in historical.GOVERNANCE_SURFACE_CHAIN
     ]
     attacks.append(
         Attack(
@@ -204,7 +204,7 @@ def test_attack_identifiers_are_unique():
 def test_a_root_property_may_hold_several_attacks_without_being_deduplicated():
     """The accounting that keeps defence-in-depth honest.
 
-    GOVERNANCE_SURFACE_ABSENCE carries four representations: three that prove
+    GOVERNANCE_SURFACE_ABSENCE carries five representations: four that prove
     the property SURVIVES losing one guard, and one compound attack that removes
     every route and kills it. Collapsing those to "one attack" would report the
     three survivals as failures, and dropping them would hide the evidence that
@@ -214,10 +214,10 @@ def test_a_root_property_may_hold_several_attacks_without_being_deduplicated():
         attack for attack in CATALOGUE
         if attack.root_property_id == "GOVERNANCE_SURFACE_ABSENCE"
     ]
-    assert len(surface) == 4, [a.attack_id for a in surface]
-    assert sum(1 for a in surface if a.defence_in_depth) == 3
+    assert len(surface) == 5, [a.attack_id for a in surface]
+    assert sum(1 for a in surface if a.defence_in_depth) == 4
     assert sum(1 for a in surface if a.compound) == 1
-    assert len({a.attack_id for a in surface}) == 4
+    assert len({a.attack_id for a in surface}) == 5
 
 
 #: The attacks that are DEFENCE-IN-DEPTH evidence rather than kills, BY NAME.
@@ -237,19 +237,24 @@ DEFENCE_IN_DEPTH_ATTACKS = frozenset(
         "SURFACE-GUARD-A",
         "SURFACE-GUARD-B",
         "SURFACE-GUARD-C",
+        # Route D is the constructor refusal on GovernanceIntegrityState, added
+        # when that refusal stopped being only a docstring. It lives in a
+        # different module from A, B and C: the property is defended across a
+        # file boundary.
+        "SURFACE-GUARD-D",
     }
 )
 
 #: What the campaign actually measured. Pinned, because a floor is not a count.
-EXPECTED_TOTAL_ATTACKS = 34
+EXPECTED_TOTAL_ATTACKS = 35
 EXPECTED_KILLS = 31
-EXPECTED_DEFENCE_IN_DEPTH = 3
+EXPECTED_DEFENCE_IN_DEPTH = 4
 
 
 def test_the_accounting_is_kills_plus_defence_in_depth():
-    """34 = 31 + 3, with `compound` as METADATA on one of the kills.
+    """35 = 31 + 4, with `compound` as METADATA on one of the kills.
 
-    Not 31 + 3 + 1: that reading counts the compound attack twice and implies a
+    Not 31 + 4 + 1: that reading counts the compound attack twice and implies a
     fourth category. A compound attack is a kill that had to remove an entire
     enforcement chain.
 
@@ -263,7 +268,7 @@ def test_the_accounting_is_kills_plus_defence_in_depth():
     kills = [a for a in CATALOGUE if not a.defence_in_depth]
     compound = [a for a in CATALOGUE if a.compound]
 
-    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 34"
+    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 35"
     assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 31"
     assert len(defence) == EXPECTED_DEFENCE_IN_DEPTH, sorted(defence)
     assert total == len(kills) + len(defence), f"{total} != {len(kills)} + {len(defence)}"
@@ -554,7 +559,7 @@ REQUIRED_ATTACK_IDS = frozenset(
         # The governance-surface family: three defence-in-depth probes and the
         # compound attack that kills the property.
         "SURFACE-GUARD-A", "SURFACE-GUARD-B", "SURFACE-GUARD-C",
-        "SURFACE-WHOLE-CHAIN",
+        "SURFACE-GUARD-D", "SURFACE-WHOLE-CHAIN",
     }
 )
 
