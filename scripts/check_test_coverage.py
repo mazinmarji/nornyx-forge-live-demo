@@ -80,7 +80,7 @@ NEWLINE = chr(10)
 #: Kept just below the real count rather than equal to it, so ordinary
 #: consolidation does not fail the gate while a deletion of any consequence
 #: does. It is meant to be raised when the suite grows.
-MINIMUM_COLLECTED = 830
+MINIMUM_COLLECTED = 895
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
