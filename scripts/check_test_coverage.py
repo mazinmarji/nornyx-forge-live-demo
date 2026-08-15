@@ -177,6 +177,9 @@ REQUIRED_MODULES = (
     # The historical security inventory, and the meta-controls that keep it
     # from silently shrinking.
     "tests/test_historical_reproof.py",
+    # The authoritative mutation inventory: two counts kept apart, every
+    # owner mechanically verifiable, and its own shrinkage self-attacked.
+    "tests/test_mutation_catalogue.py",
 )
 
 
