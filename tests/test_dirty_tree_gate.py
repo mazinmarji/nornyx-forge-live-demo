@@ -222,3 +222,48 @@ def test_the_refusal_names_what_drifted(tmp_path: Path):
     combined = output + _run(work, [REFRESH, "--wire-approvals"]).stderr
     assert "runtime_network.nyx" in combined, combined
     assert "injected_module.py" in combined, combined
+
+
+def test_an_unstaged_edit_moves_the_governed_subject_digest(tmp_path: Path):
+    """The digest reads the WORKING TREE, and that is worth a test.
+
+    `_unstaged_governed_paths` used to document the opposite -- "computed over
+    the index ... an unstaged edit cannot move it" -- which describes a system
+    where that function is the only thing between an unstaged edit and a
+    silently honoured approval. The implementation being safer than its
+    description is its own hazard: a maintainer could reasonably "simplify" the
+    digest to read the index, since the prose said it already did, and only then
+    would the gap the prose described become real.
+
+    This is the assertion that makes such a change fail loudly.
+    """
+    import subprocess  # noqa: PLC0415
+
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
+    from nornyx_forge.governed_subject import REPOSITORY_SCOPE  # noqa: PLC0415
+    from nornyx_forge.subject_bootstrap import establish_subject  # noqa: PLC0415
+
+    # Every tracked file, not a hand-picked subset. A partial copy fails scope
+    # completeness -- SUBJECT_SCOPE_INCOMPLETE -- which is the same defect the
+    # mutation harness had, and it would make this test refuse before reaching
+    # the property it is named for.
+    tree = faithful_copy(tmp_path)
+
+    before = establish_subject(tree, scope=REPOSITORY_SCOPE)
+    assert before.subject_verified, before.unavailable_reason
+
+    # An edit that is NEVER staged. The index still holds the committed bytes.
+    victim = tree / "src/demo_app/main.py"
+    victim.write_bytes(victim.read_bytes() + b"\n# unstaged\n")
+    staged = subprocess.run(  # noqa: S603
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tree, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert staged == "", f"the edit reached the index, so this proves nothing: {staged}"
+
+    after = establish_subject(tree, scope=REPOSITORY_SCOPE)
+    assert after.governed_subject_digest != before.governed_subject_digest, (
+        "an unstaged edit did not move the governed subject digest, so the "
+        "digest is being read from the index and the unstaged-paths check is "
+        "now the only thing standing between an edit and a honoured approval"
+    )

@@ -1383,9 +1383,24 @@ def _git_lines(*args: str) -> list[str]:
 def _unstaged_governed_paths() -> list[str]:
     """Paths the digest covers whose working copy differs from what git holds.
 
-    The digest is computed over the index, so it is identical on every platform
-    and equal to what a reviewer fetches. The cost is that an unstaged edit
-    cannot move it, and this is the check that closes that gap.
+    THE DIGEST IS COMPUTED OVER THE WORKING TREE. `subject_observer` reads each
+    governed file with `location.read_bytes()`; nothing here consults the index.
+
+    This said the opposite -- "computed over the index ... an unstaged edit
+    cannot move it, and this is the check that closes that gap" -- which
+    describes a system where this function is the only thing standing between an
+    unstaged edit and a silently honoured approval. It is not. An unstaged edit
+    DOES move the digest, so the subject changes and the approval bound to the
+    old digest stops matching on its own.
+
+    The implementation being safer than its description is its own hazard: a
+    maintainer reading that paragraph could reasonably "simplify" the digest to
+    read the index, since the prose says it already does, and only then would
+    this check become load-bearing -- silently, with no test failing.
+
+    What this check is actually for: reporting that the tree a reviewer would
+    FETCH is not the tree being described here. Both are real states and they
+    are different ones.
 
     Scoped to `governed_content`'s path set, not the one defined below. The two
     are deliberately different -- the dirty-tree gate also watches `docs/`,
