@@ -800,3 +800,153 @@ def test_provisioning_twice_leaves_exactly_one_establishment_row(tmp_path: Path)
     finally:
         conn.close()
     assert len(rows) == 1, f"provisioning twice left {len(rows)} establishment rows"
+
+
+# --------------------------------------------------------------------------
+# The ledger schema is CLOSED, because the replay property is defeated by an
+# EXTRA object rather than by a missing constraint.
+# --------------------------------------------------------------------------
+
+HOSTILE_LEDGER_OBJECTS = [
+    ("a trigger that discards the insert",
+     "CREATE TRIGGER t BEFORE INSERT ON consumed_approvals "
+     "BEGIN SELECT RAISE(IGNORE); END"),
+    ("a trigger that deletes the claim it just wrote",
+     "CREATE TRIGGER t AFTER INSERT ON consumed_approvals "
+     "BEGIN DELETE FROM consumed_approvals; END"),
+    ("a deletion trigger",
+     "CREATE TRIGGER t AFTER DELETE ON consumed_approvals BEGIN SELECT 1; END"),
+    ("a view shadowing the consumption table",
+     "CREATE VIEW consumed_shadow AS SELECT * FROM consumed_approvals"),
+    ("an unexpected table",
+     "CREATE TABLE side_channel (x TEXT)"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "ddl"), HOSTILE_LEDGER_OBJECTS,
+    ids=[case[0] for case in HOSTILE_LEDGER_OBJECTS],
+)
+def test_an_unexpected_database_object_is_refused(tmp_path: Path, label: str, ddl: str):
+    """`PRAGMA index_list` reports what the engine will CONSTRAIN, not what it
+    will DO with the write.
+
+    Measured before the schema was closed: one
+    `BEFORE INSERT ... RAISE(IGNORE)` trigger made every consumption a silent
+    no-op -- no IntegrityError, so `consume` reported success forever, the table
+    stayed empty, and five callbacks came from one grant while `established_at`
+    was intact and every uniqueness and continuity check passed.
+
+    A trigger IS engine metadata and IS what the engine will do, so the object
+    set is enumerated rather than sampled: anything not permitted is refused,
+    because the next hostile object is the one nobody listed.
+    """
+    from signing import LEDGER_ESTABLISHED  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable  # noqa: PLC0415
+
+    path = tmp_path / "hostile.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    conn = sqlite3.connect(path)
+    conn.execute(ddl)
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger(path)
+    assert "does not permit" in str(refusal.value), str(refusal.value)
+
+
+def test_the_permitted_schema_is_still_accepted(tmp_path: Path):
+    """The control. A closed set that refused everything would also be useless."""
+    from signing import LEDGER_ESTABLISHED  # noqa: PLC0415
+
+    path = tmp_path / "clean.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert ledger.available, ledger.unavailable_reason
+
+
+def test_a_hostile_trigger_releases_no_effect(tmp_path: Path):
+    """The consequence, not the diagnosis.
+
+    One grant must never produce more than one callback. Before the schema was
+    closed this produced five.
+    """
+    from signing import LEDGER_ESTABLISHED, signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 10_000_000, "currency": "USD"},
+    )
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    conn = sqlite3.connect(approval_ledger_path(tmp_path))
+    conn.execute(
+        "CREATE TRIGGER t BEFORE INSERT ON consumed_approvals "
+        "BEGIN SELECT RAISE(IGNORE); END"
+    )
+    conn.commit()
+    conn.close()
+
+    request = canonical_action_request(
+        mission_id="CASE-HOSTILE", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-HOSTILE", role="operations_owner")
+
+    calls: list[str] = []
+    from nornyx_forge.nornyx_runtime import NornyxRuntimeUnavailable  # noqa: PLC0415
+
+    with pytest.raises(NornyxRuntimeUnavailable):
+        boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+        boundary.evaluate_and_execute(
+            mission_id="CASE-HOSTILE", risk="high",
+            action=lambda: (calls.append("released"), "done")[1],
+            action_approval=grant, action_descriptor=descriptor, attempt=1,
+        )
+    assert calls == [], "a hostile ledger structure released a consequential effect"
+
+
+def test_a_missing_identity_table_denies_rather_than_reporting_an_outage(tmp_path: Path):
+    """The closed set is closed over PRESENCE, and that asymmetry is deliberate.
+
+    Written because closing the schema very nearly closed it symmetrically. A
+    required-objects clause would have refused a ledger with no `ledger_identity`
+    as unusable -- true, but it renames a decision as a fault. The ledger CAN
+    say something about this grant: that it cannot place it against a history it
+    has no start for. That is LEDGER_CONTINUITY_UNKNOWN, a DENY with a question
+    attached, and it is not the same security state as a broken database.
+
+    So: an EXTRA object is an outage, a MISSING establishment record is a denial,
+    and neither may be reported as the other.
+    """
+    path = tmp_path / "no_identity.sqlite3"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE consumed_approvals ("
+        " fingerprint TEXT PRIMARY KEY, request_digest TEXT NOT NULL,"
+        " approval_id TEXT NOT NULL, consumed_at TEXT NOT NULL,"
+        " UNIQUE (fingerprint), UNIQUE (request_digest))"
+    )
+    conn.commit()
+    conn.close()
+
+    ledger = ApprovalLedger(path)  # constructs: this is not an outage
+    assert ledger.available, ledger.unavailable_reason
+    assert ledger.established_at is None
+
+    consumed, reason = ledger.consume(
+        "f" * 64, "r" * 64, approval_id="ACT-1",
+        grant_issued_at="2026-08-03T00:00:00Z", at="2026-08-03T00:00:01Z",
+    )
+    assert consumed is False
+    assert "LEDGER_CONTINUITY_UNKNOWN" in reason, reason

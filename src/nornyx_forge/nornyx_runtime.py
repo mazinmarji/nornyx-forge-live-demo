@@ -603,6 +603,14 @@ def _instant(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+#: Every object the ledger database may contain, by name. A CLOSED set: the
+#: replay property is defeated not by a missing constraint but by an EXTRA
+#: object -- a trigger that discards the insert, or a view that shadows the
+#: table a later read consults. Both are engine metadata and both leave every
+#: uniqueness check passing, so the question asked here is "what is in this
+#: database" rather than "is what I expected present".
+PERMITTED_LEDGER_OBJECTS = frozenset({"consumed_approvals", "ledger_identity"})
+
 #: Columns the consumption record must carry. Names, because `consume` writes by
 #: name: a table missing one accepts the INSERT nowhere or silently drops it.
 REQUIRED_LEDGER_COLUMNS = frozenset(
@@ -668,6 +676,49 @@ def _assert_ledger_structure(
     Partial indexes are rejected: a `UNIQUE ... WHERE` index enforces uniqueness
     only over the rows matching its predicate, so rows outside it may repeat.
     """
+    # THE SCHEMA IS CLOSED, not merely sufficient.
+    #
+    # `PRAGMA index_list` reports what the engine will CONSTRAIN. It says
+    # nothing about what the engine will DO with the write. One statement --
+    #
+    #     CREATE TRIGGER t BEFORE INSERT ON consumed_approvals
+    #     BEGIN SELECT RAISE(IGNORE); END
+    #
+    # -- makes every consumption a silent no-op: no IntegrityError, so `consume`
+    # reports success forever, the table stays empty, and every uniqueness and
+    # continuity check above still passes. Measured before this existed: five
+    # callbacks from one grant, zero rows, `established_at` intact, the ledger
+    # reporting itself sound. An `AFTER INSERT ... DELETE` trigger behaves
+    # identically, and a view can shadow the name a later query reads.
+    #
+    # A trigger IS engine metadata and IS what the engine will do, so the fix is
+    # to enumerate every object rather than to add "no triggers" to a list of
+    # things checked. Anything not in the permitted set is refused, because the
+    # next hostile object is the one nobody enumerated.
+    present = {
+        (kind, name)
+        for kind, name in conn.execute(
+            "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        )
+    }
+    unexpected = sorted(
+        f"{kind} {name!r}" for kind, name in present if name not in PERMITTED_LEDGER_OBJECTS
+    )
+    if unexpected:
+        raise NornyxRuntimeUnavailable(
+            f"action approval ledger at {path} is unusable: {code}, it carries "
+            f"objects the replay model does not permit: {unexpected}. A trigger "
+            "or view can silently discard, rewrite or shadow a consumption "
+            "record while every uniqueness check still passes."
+        )
+    # Deliberately NOT the mirror image. A ledger MISSING `ledger_identity` is
+    # not an outage: `_read_established_at` returns None by design and `consume`
+    # denies with LEDGER_CONTINUITY_UNKNOWN, which is a decision that names the
+    # unanswered question. Requiring the table here would report that decision as
+    # a broken database instead, merging two different security states -- and
+    # absence, unavailability and invalidity are not the same thing. What is
+    # closed here is the set of things that may be PRESENT.
+
     columns = {row[1] for row in conn.execute("PRAGMA table_info(consumed_approvals)")}
     if not columns:
         raise NornyxRuntimeUnavailable(
