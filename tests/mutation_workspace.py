@@ -199,7 +199,16 @@ def require_mutant_origin(tree: Path, modules: tuple[str, ...]) -> None:
             f"the origin probe could not import: {completed.stderr[-400:]}",
         )
     resolved = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
-    escaped = [path for path in resolved if str(tree) not in path]
+    # Compared as PATHS, not as strings. Windows hands back the same directory
+    # as both `C:\Users\MAZIN~1.LAP\...` and `C:\Users\mazin.LAPTOP-...\...`, so
+    # a substring test reports a correctly isolated workspace as an escape --
+    # measured while investigating B-P2-5, where it did exactly that. Getting
+    # this wrong is not conservative: it turns admissible attacks into
+    # environment errors and would push someone to relax the check.
+    root = tree.resolve()
+    escaped = [
+        path for path in resolved if root not in Path(path).resolve().parents
+    ]
     if not resolved or escaped:
         raise AttackNotAdmissible(
             Outcome.INVALID_MUTATION_ENVIRONMENT,

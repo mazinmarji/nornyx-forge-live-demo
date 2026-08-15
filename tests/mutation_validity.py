@@ -109,6 +109,35 @@ def inert_spans(source: str) -> list[tuple[int, int]]:
     return spans
 
 
+def executable_projection(source: str) -> str:
+    """`source` with every comment and docstring blanked out.
+
+    The offset test below asks where the ANCHOR STARTS. That is not the same
+    question as what the edit CHANGED: an anchor beginning on a line of code and
+    running on into a docstring passes the start-offset test while the only
+    bytes that actually differ are prose. A mutation like that changes the parse
+    tree -- docstrings are AST nodes -- so the AST-inequality check downstream
+    passes too, and the result is credited as a kill for an edit that removed
+    nothing. Lens B demonstrated exactly this against H07.
+
+    Comparing projections asks the real question: after ignoring everything that
+    cannot execute, is this still a different program?
+    """
+    spans = inert_spans(source)
+    if not spans:
+        return source
+    kept: list[str] = []
+    cursor = 0
+    for start, end in sorted(spans):
+        if start < cursor:  # overlapping spans; keep the outermost
+            cursor = max(cursor, end)
+            continue
+        kept.append(source[cursor:start])
+        cursor = end
+    kept.append(source[cursor:])
+    return "".join(kept)
+
+
 def _occurrences(source: str, anchor: str) -> list[int]:
     found, start = [], 0
     while (index := source.find(anchor, start)) != -1:
@@ -153,6 +182,21 @@ def check_python_mutation(
         raise InvalidMutation(
             f"TARGET UNCHANGED in {relative}: the parse tree is identical after "
             "the edit, so nothing executable was modified."
+        )
+
+    # AST inequality is necessary and NOT sufficient. Docstrings are AST nodes,
+    # so a prose-only edit clears the check above; and the inert test earlier
+    # asks where the anchor STARTS, which an anchor beginning on code and
+    # running into a docstring satisfies while changing only prose. Lens B built
+    # exactly that against H07 and it reported `1 passed`, a kill credited for
+    # an edit that removed nothing.
+    if executable_projection(before) == executable_projection(after):
+        raise InvalidMutation(
+            f"PROSE-ONLY MUTATION in {relative}: with comments and docstrings "
+            "removed, the mutant is byte-identical to the original. The parse "
+            "tree differs because docstrings are AST nodes, not because any "
+            "executable construct changed. Whatever the named test then does, "
+            "it is not responding to this edit."
         )
 
 

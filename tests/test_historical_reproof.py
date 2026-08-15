@@ -795,17 +795,56 @@ def test_every_delegated_class_names_an_attack_that_still_exists():
     assert missing == [], missing
 
 
-def test_the_delegated_catalogues_prove_mutant_origin_where_they_mutate():
+def test_the_delegated_catalogues_prove_mutant_origin_where_they_mutate(tmp_path):
     """A catalogue that mutates production without isolation proves nothing.
 
-    The two that mutate `src/` run their measurement in a subprocess whose FIRST
-    action is the path insert, so no `.pth` can outrank them. This asserts that
-    arrangement is still in place rather than trusting it.
+    This used to be `assert "sys.path.insert(0" in source` -- a text search that
+    matches the unrelated `sys.path.insert(0, str(ROOT / "tests"))` at the top of
+    almost every test module here. It passed for a module that had no production
+    isolation code at all, so it certified nothing it claimed to.
+
+    Asked of the interpreter instead: materialize a catalogue workspace, import
+    the production modules the way that catalogue's probe does, and read
+    `__file__`. The property turns out to hold -- `authority_probe.py` inserts
+    its own `src` at position 0, which outranks the editable-install `.pth` --
+    but it holds as a measured fact rather than as a matched string.
     """
-    for module in ("tests/test_domain_collapse_mutations.py",
-                   "tests/test_semantic_binding_theorem.py"):
-        source = (ROOT / module).read_text(encoding="utf-8")
-        assert "sys.path.insert(0" in source, (
-            f"{module} mutates production but no longer forces its copy onto "
-            "sys.path first, so it may be measuring the real source"
-        )
+    import json  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    from mutation import _materialize  # noqa: PLC0415
+
+    tree = _materialize(tmp_path)
+    spy = tree / "tests" / "origin_spy.py"
+    spy.write_text(
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        "sys.path.insert(0, str(ROOT / 'src'))\n"
+        "sys.path.insert(0, str(ROOT / 'tests'))\n"
+        "import nornyx_forge.nornyx_runtime as rt\n"
+        "import nornyx_forge.approval_trust as at\n"
+        "import nornyx_forge.subject_bootstrap as sb\n"
+        "print(json.dumps([rt.__file__, at.__file__, sb.__file__]))\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, str(spy)],
+        capture_output=True, text=True, cwd=str(tree), timeout=300,
+        encoding="utf-8", errors="replace",
+    )
+    assert completed.returncode == 0, (
+        "the origin probe did not run, so isolation was not measured:\n"
+        + completed.stderr[-800:]
+    )
+
+    origins = json.loads(completed.stdout.strip().splitlines()[-1])
+    root = tree.resolve()
+    # Resolved, never substring-matched: Windows returns the same directory in
+    # 8.3 short form and long form, and comparing the text calls that an escape.
+    escaped = [p for p in origins if root not in Path(p).resolve().parents]
+    assert not escaped, (
+        "production modules resolved OUTSIDE the catalogue workspace, so those "
+        f"mutations measured the real source: {escaped}"
+    )

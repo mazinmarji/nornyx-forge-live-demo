@@ -37,6 +37,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from mutation_validity import (  # noqa: E402
+    InvalidMutation,
+    check_python_mutation,
+    executable_projection,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -391,3 +396,67 @@ def test_the_validity_contract_admits_a_real_change():
         "probe.py", "def f():\n    return 1\n", "def f():\n    return 2\n",
         "return 1", 1,
     )
+
+
+# --------------------------------------------------------------------------
+# B-P2-4. AST inequality is necessary and not sufficient.
+# --------------------------------------------------------------------------
+
+_PROSE_TARGET = '''def guard(request):
+    """Refuse anything unsigned."""
+    if not request.signature:
+        return False
+    return True
+'''
+
+
+def test_a_docstring_only_edit_is_refused_even_when_the_anchor_starts_on_code():
+    """The exact shape Lens B used to credit a kill that removed nothing.
+
+    The anchor begins on `def guard(request):` -- a line of code, so the
+    start-offset test is satisfied -- and runs on into the docstring. Only the
+    prose differs. Docstrings are AST nodes, so the parse trees differ too and
+    the AST-inequality check passes. Both guards clear, and the control is
+    entirely intact.
+    """
+    anchor = 'def guard(request):\n    """Refuse anything unsigned."""'
+    replacement = 'def guard(request):\n    """Refuse anything at all."""'
+    after = _PROSE_TARGET.replace(anchor, replacement)
+
+    assert after != _PROSE_TARGET, "the edit must actually apply"
+    assert ast.dump(ast.parse(after)) != ast.dump(ast.parse(_PROSE_TARGET)), (
+        "if the parse trees matched, the older check would already refuse this "
+        "and the case would prove nothing"
+    )
+
+    with pytest.raises(InvalidMutation) as refusal:
+        check_python_mutation("probe.py", _PROSE_TARGET, after, anchor, 1)
+    assert "PROSE-ONLY MUTATION" in str(refusal.value), str(refusal.value)
+
+
+def test_a_real_edit_at_the_same_anchor_is_still_admitted():
+    """The control. A checker that refused everything would also pass above."""
+    anchor = "    if not request.signature:"
+    replacement = "    if False:"
+    after = _PROSE_TARGET.replace(anchor, replacement)
+
+    check_python_mutation("probe.py", _PROSE_TARGET, after, anchor, 1)
+
+
+def test_the_projection_keeps_executable_text_and_drops_prose():
+    """Measured directly, so the guard above rests on something checkable."""
+    projected = executable_projection(_PROSE_TARGET)
+
+    assert "Refuse anything unsigned" not in projected
+    assert "if not request.signature:" in projected
+    assert "return False" in projected
+
+
+def test_a_comment_only_edit_is_refused_too():
+    """Comments were already covered by the offset test; this proves the
+    projection does not quietly regress that."""
+    source = "def f():\n    x = 1  # keep\n    return x\n"
+    after = "def f():\n    x = 1  # drop\n    return x\n"
+
+    with pytest.raises(InvalidMutation):
+        check_python_mutation("probe.py", source, after, "    x = 1  # keep", 1)
