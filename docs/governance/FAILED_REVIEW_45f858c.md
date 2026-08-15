@@ -161,7 +161,7 @@ At least three of those kills were invalid.
 | C-P2-1 | C | capability acquisition must fail closed on unknown spellings | `builtins.__import__`, `__builtins__["__import__"]`, `sys.modules.get` all bypass both gates | builder |
 | C-P2-2 | C | the API must not hold process capability | `constraint.api_no_commands` is a substring test defeated by `"sub" + "process"` | builder |
 
-Seven closed, five open.
+**All twelve closed.**
 
 | ID | Disposition |
 | --- | --- |
@@ -173,10 +173,10 @@ Seven closed, five open.
 | B-P2-6 | CLOSED - `DEFENCE_IN_DEPTH_ATTACKS` names which attacks carry the claim; 34/31/3 are asserted against written constants instead of a tautology |
 | C-P2-1 | CLOSED - every route that yields a module answers the acquisition question |
 | C-P2-2 | CLOSED - `api_no_commands` is the AST capability analysis, not a substring test |
-| A-P2-1 | OPEN |
-| A-P2-2 | OPEN |
-| A-P2-3 | OPEN |
-| A-P2-4 | OPEN |
+| A-P2-1 | CLOSED - the context records `established_root` and the boundary refuses a root that carries its own contract and is not it. Scoped: a scratch root supplies no policy, and the scoping has its own test |
+| A-P2-2 | CLOSED - one `_emit_evidence`, used by both paths. A failed release records `effect_release` (released, not completed, outcome unknown) and NOT `tool_invoked`, which is a success terminal |
+| A-P2-3 | CLOSED - the report reads the frozen snapshot and counts `active_signers`; one `ACTIVE_SIGNER_STATUS` shared with the authenticator |
+| A-P2-4 | CLOSED - every request pins the external destination, so the crossing is evaluated at every risk level. Risk selects which capability is exercised, not whether a trust boundary is real |
 
 ---
 

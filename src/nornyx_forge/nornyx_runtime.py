@@ -1460,7 +1460,17 @@ class NornyxActionBoundary:
         )
         recorder.record_decision(capability, mission_id=mission_id)
         decision = capability
-        if capability.allowed and high_risk:
+        # AUTHORIZED WHERE CLAIMED. `canonical_action_request` pins
+        # `destination=EXTERNAL_TRUST_ZONE` on EVERY request, whatever its risk
+        # -- that is what an approver signs and what the digest binds. The
+        # crossing was then evaluated only for high risk, so a low or medium
+        # action asserted a crossing into the external zone that nothing ever
+        # authorized, and the evidence stream carried no `trust_zone_crossed`
+        # decision to show for the claim it had already made.
+        #
+        # Risk selects WHICH CAPABILITY is exercised. It does not decide whether
+        # a boundary between trust zones is real.
+        if capability.allowed:
             decision = self.authorizer.evaluate(
                 ZoneCrossingRequest(
                     "identity.execution",

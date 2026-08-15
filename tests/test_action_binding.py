@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from nornyx_forge.nornyx_runtime import (
@@ -176,3 +178,60 @@ def json_dumps(value: object) -> str:
     import json
 
     return json.dumps(value, sort_keys=True)
+
+
+# --------------------------------------------------------------------------
+# A-P2-4. A claimed zone crossing must be authorized, at every risk level.
+# --------------------------------------------------------------------------
+
+
+def test_every_risk_level_claims_the_external_destination():
+    """The premise, measured rather than assumed.
+
+    If low-risk requests did not name the external zone, there would be no
+    unauthorized claim and nothing to fix. They do: the destination is pinned
+    canonically, so it is part of what the digest binds and what an approver
+    would sign.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        EXTERNAL_TRUST_ZONE,
+        ActionDescriptor,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="send guidance", resource="customer:amina",
+        destination=EXTERNAL_TRUST_ZONE, parameters={},
+    )
+    for risk in ("low", "medium", "high"):
+        request = canonical_action_request(
+            mission_id="CASE-ZONE", risk=risk,
+            subject_revision="sha256:" + "a" * 64,
+            descriptor=descriptor, attempt=1,
+        )
+        assert request.destination == EXTERNAL_TRUST_ZONE, (
+            f"{risk} risk does not claim the external zone, so this finding "
+            "would not apply to it"
+        )
+
+
+def test_the_crossing_is_evaluated_at_every_risk_level():
+    """Risk selects which capability is exercised. It does not decide whether a
+    boundary between trust zones is real.
+
+    Read from the source because the authorizer does not load in this tree
+    (the runtime contract does not currently pass governance validation), so the
+    decision itself cannot be driven here. Stated as a structural assertion and
+    labelled as one rather than dressed up as a behavioural proof.
+    """
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    source = Path(nornyx_runtime.__file__).read_text(encoding="utf-8")
+    crossing = source[source.index("        decision = capability"):]
+    crossing = crossing[: crossing.index("ZoneCrossingRequest(")]
+
+    assert "if capability.allowed and high_risk:" not in crossing, (
+        "the zone crossing is evaluated only for high risk, while every request "
+        "claims the external destination regardless of risk"
+    )
+    assert "if capability.allowed:" in crossing, crossing
