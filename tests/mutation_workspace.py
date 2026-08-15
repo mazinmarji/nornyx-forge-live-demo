@@ -34,6 +34,7 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
+from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -120,13 +121,55 @@ def isolated_env(tree: Path) -> dict:
     return {**os.environ, "PYTHONPATH": str(tree / "src")}
 
 
-def run_node(tree: Path, node: str, *, timeout: int = 1800):
+def run_node(tree: Path, node: str, *, timeout: int = 1800, report: Path | None = None):
+    command = [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
+               "-q", "-p", "no:warnings", "--tb=line"]
+    if report is not None:
+        command += ["--junit-xml", str(report)]
     return subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
-         "-q", "-p", "no:warnings", "--tb=line"],
+        command,
         cwd=tree, capture_output=True, text=True, encoding="utf-8",
         errors="replace", env=isolated_env(tree), timeout=timeout,
     )
+
+
+def require_caused_failure(report: Path, node: str, output: str) -> None:
+    """Step 5. The named test must have FAILED, not errored.
+
+    `returncode != 0` does not distinguish "the assertion this control is proven
+    by did not hold" from "the mutant no longer imports". Lens B re-aimed H06 at
+    an unrelated rename and collected a kill on an ImportError -- the control was
+    never reached, never mind removed.
+
+    Read from the JUnit report rather than the summary prose, because `<failure>`
+    and `<error>` are different elements and "1 failed" and "1 error" are the
+    same shape of sentence.
+    """
+    if not report.is_file():
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION_ENVIRONMENT,
+            f"pytest produced no report for {node}, so the run cannot be "
+            f"classified:\n{output[-400:]}",
+        )
+    root = ElementTree.parse(report).getroot()
+    cases = root.iter("testcase")
+    failures = errors = 0
+    for case in cases:
+        failures += len(list(case.iter("failure")))
+        errors += len(list(case.iter("error")))
+
+    if errors:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION,
+            f"{node} ERRORED under the mutant rather than failing ({errors} "
+            "error(s)). An import or collection failure means the control was "
+            f"never reached, so nothing was proven about it:\n{output[-400:]}",
+        )
+    if not failures:
+        raise AttackNotAdmissible(
+            Outcome.SURVIVED,
+            f"{node} reported no failing assertion under the mutant.",
+        )
 
 
 def require_node_exists(tree: Path, node: str) -> None:

@@ -40,6 +40,7 @@ from mutation_workspace import (  # noqa: E402
     Outcome,
     faithful_copy,
     isolated_env,
+    require_caused_failure,
     require_mutant_origin,
     require_node_exists,
     require_pristine_baseline,
@@ -100,13 +101,6 @@ INVENTORY = (
         defect="flows ran unestablished; the boundary resolved its own anchors per use",
         prop="the boundary judges with the context the application established",
         control="demo_app.agentic passes frozen_action_trust from the context",
-        # `None or X` was the first attempt and is a SEMANTIC NO-OP: the parse
-        # tree changes, the value does not. That is the blind spot of an
-        # AST-difference check, and `semantic_effect` below is what closes it.
-        # This removes the wiring outright, so the boundary falls back to
-        # resolving trust for itself and stops answering from the object the
-        # application froze. Measured by object identity: it holds in the
-        # baseline and does not under the mutant.
         # `None or X` was the first attempt and is a SEMANTIC NO-OP: the parse
         # tree changes, the value does not. That is the blind spot of an
         # AST-difference check, and `semantic_effect` below is what closes it.
@@ -538,7 +532,8 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
     if item.semantic_effect:
         _prove_semantic_effect(tree, item)
 
-    completed = run_node(tree, item.test)
+    report = tree.parent / f"{item.ident.replace('/', '_')}.xml"
+    completed = run_node(tree, item.test, report=report)
     output = completed.stdout + completed.stderr
 
     if completed.returncode in (4, 5):
@@ -555,6 +550,15 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
         + item.control + ") left " + item.test + " passing, so that test is not "
         "what proves this property. " + output[-400:]
     )
+    # A non-zero exit says the run was not clean. It does not say the CONTROL
+    # was reached: an ImportError in the mutant exits non-zero too, and Lens B
+    # collected a kill that way by re-aiming H06 at an unrelated rename. The
+    # JUnit report distinguishes a failed assertion from an error, which the
+    # summary prose does not.
+    try:
+        require_caused_failure(report, item.test, output)
+    except AttackNotAdmissible as refusal:
+        pytest.fail(item.ident + ": " + str(refusal))
 
 
 # --------------------------------------------------------------------------
@@ -848,3 +852,79 @@ def test_the_delegated_catalogues_prove_mutant_origin_where_they_mutate(tmp_path
         "production modules resolved OUTSIDE the catalogue workspace, so those "
         f"mutations measured the real source: {escaped}"
     )
+
+
+def test_an_erroring_mutant_is_not_a_kill(tmp_path: Path):
+    """B-P2-3. A non-zero exit is not evidence that the control was reached.
+
+    Lens B re-aimed H06 at an unrelated rename and collected a kill on an
+    ImportError. Nothing about the control was removed, or even executed -- the
+    module never finished importing -- and `returncode != 0` could not tell the
+    difference.
+
+    Built as a real pytest run rather than a hand-written report, so the thing
+    being classified is what pytest actually emits for an import failure.
+    """
+    module = tmp_path / "test_broken.py"
+    module.write_text(
+        "import a_module_that_does_not_exist  # noqa: F401\n\n\n"
+        "def test_something():\n    assert True\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "report.xml"
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "test_broken.py", "-q",
+         "-p", "no:cacheprovider", "-p", "no:warnings",
+         "--junit-xml", str(report)],
+        cwd=tmp_path, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=600,
+    )
+
+    assert completed.returncode != 0, (
+        "the import failure exited 0, so this case cannot show what it is for"
+    )
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_caused_failure(report, "test_broken.py", completed.stdout)
+    assert refusal.value.outcome is Outcome.INVALID_MUTATION, refusal.value.outcome
+    assert "ERRORED" in str(refusal.value)
+
+
+def test_a_genuinely_failing_assertion_is_admitted(tmp_path: Path):
+    """The control. A checker that refused every non-zero run would also pass
+    the case above while making every real kill unprovable."""
+    module = tmp_path / "test_failing.py"
+    module.write_text(
+        "def test_the_control():\n    assert False, 'the control did not hold'\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "report.xml"
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "test_failing.py", "-q",
+         "-p", "no:cacheprovider", "-p", "no:warnings",
+         "--junit-xml", str(report)],
+        cwd=tmp_path, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=600,
+    )
+
+    assert completed.returncode != 0
+    require_caused_failure(report, "test_failing.py", completed.stdout)
+
+
+def test_a_passing_run_is_reported_as_survived(tmp_path: Path):
+    """The third direction: no failure and no error is a SURVIVOR, and must be
+    named as one rather than folded into 'not killed'."""
+    module = tmp_path / "test_passing.py"
+    module.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    report = tmp_path / "report.xml"
+    subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "test_passing.py", "-q",
+         "-p", "no:cacheprovider", "-p", "no:warnings",
+         "--junit-xml", str(report)],
+        cwd=tmp_path, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=600,
+    )
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_caused_failure(report, "test_passing.py", "")
+    assert refusal.value.outcome is Outcome.SURVIVED
