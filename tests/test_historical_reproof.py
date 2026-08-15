@@ -71,11 +71,30 @@ INVENTORY = (
         defect="flows ran unestablished; the boundary resolved its own anchors per use",
         prop="the boundary judges with the context the application established",
         control="demo_app.agentic passes frozen_action_trust from the context",
+        # `None or X` was the first attempt and is a SEMANTIC NO-OP: the parse
+        # tree changes, the value does not. That is the blind spot of an
+        # AST-difference check, and `semantic_effect` below is what closes it.
+        # This removes the wiring outright, so the boundary falls back to
+        # resolving trust for itself and stops answering from the object the
+        # application froze. Measured by object identity: it holds in the
+        # baseline and does not under the mutant.
+        # `None or X` was the first attempt and is a SEMANTIC NO-OP: the parse
+        # tree changes, the value does not. That is the blind spot of an
+        # AST-difference check, and `semantic_effect` below is what closes it.
+        # This removes the wiring outright, so the boundary falls back to
+        # resolving trust for itself and stops answering from the object the
+        # application froze. Measured by object identity: it holds in the
+        # baseline and does not under the mutant.
         mutation=("src/demo_app/agentic.py",
                   "            frozen_action_trust=(\n"
-                  "                security_context.action_approval_trust",
-                  "            frozen_action_trust=(\n"
-                  "                None or security_context.action_approval_trust", 1),
+                  "                security_context.action_approval_trust\n"
+                  "                if security_context is not None\n"
+                  "                else None\n"
+                  "            ),",
+                  "            frozen_action_trust=None,", 1),
+        semantic_effect=(
+            "demo_app.agentic must stop handing the boundary the frozen store"
+        ),
         test="tests/test_trust_snapshot.py::test_the_established_context_carries_the_frozen_store",
         expect="the boundary answers from a store the application did not freeze",
         severity="P1",
@@ -299,17 +318,6 @@ INVENTORY = (
 #: exemption, and `test_the_unproven_set_is_exactly_what_was_measured` fails if
 #: anything is added without a reason.
 NOT_YET_KILLED = {
-    "H01": (
-        "CANDIDATE FINDING, not a harness artifact. Mutant origin is proven and "
-        "the semantic effect is proven -- the mutant really sets "
-        "frozen_action_trust=None, and demo_app.agentic passes no "
-        "action_trust_store, so the wiring is genuinely removed -- and "
-        "test_the_established_context_carries_the_frozen_store STILL PASSES. "
-        "That test is named for this property and does not appear to enforce "
-        "it. Either the boundary reaches the same object another way, or the "
-        "assertion is weaker than its name. Left open and visible rather than "
-        "reclassified; it needs one more measurement, not a decision"
-    ),
     # H03/H04 are ONE root property reached through two surfaces, and no single
     # guard mutation can kill either: three independent routes produce
     # `unavailable`. They are proven together by a COMPOUND mutation below --

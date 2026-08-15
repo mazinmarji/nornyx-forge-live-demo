@@ -168,11 +168,13 @@ def test_corrupting_the_trust_file_leaves_an_existing_context_intact(tmp_path: P
 
 
 def test_the_established_context_carries_the_frozen_store(tmp_path: Path):
-    """Wired, not merely available.
+    """PROPAGATED: the frozen object reaches the boundary.
 
-    A control built and not connected is the defect this repository has
-    produced three times, so this asserts the object reaches the boundary
-    rather than that the mechanism exists.
+    Scoped honestly. This proves possession travels from the context to the
+    boundary -- a control built and not connected is a defect this repository
+    has produced three times -- and it proves nothing about the authority
+    DECISION consulting it. That is the pair of tests at the end of this module,
+    and the distinction is the permanent rule H01 produced.
     """
     from demo_app.agentic import CustomerCaseFlow, application_security_context  # noqa: PLC0415
 
@@ -389,3 +391,119 @@ def test_the_assurance_derivation_reads_reviewer_trust_once():
         "file could change between them and one answer would rest on two "
         "different roots of trust"
     )
+
+
+# --------------------------------------------------------------------------
+# POSSESSION IS NOT CONSUMPTION
+#
+# `test_the_established_context_carries_the_frozen_store` proves the frozen
+# object REACHES the boundary. That is propagation, and its name once implied
+# more. The standing rule this repository now works to:
+#
+#     ESTABLISHED -> PROPAGATED -> CONSUMED BY THE CONSEQUENTIAL DECISION
+#                 -> REMOVAL CHANGES THAT DECISION
+#
+# A security object present in RuntimeSecurityContext proves only possession.
+# The two tests below close the last two arrows for action trust.
+# --------------------------------------------------------------------------
+
+
+def _release_under(tmp_path, store, *, workspace: str = "run"):
+    """Drive the REAL consequential boundary with a chosen frozen store.
+
+    Each call gets its OWN workspace. Sharing one would share the ledger, and a
+    later refusal would then observe the grant spent by an earlier successful
+    release -- which is exactly what the first version of these tests reported,
+    a contaminated observation rather than a real consumption.
+    """
+    tmp_path = tmp_path / workspace
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    from signing import signed_grant  # noqa: PLC0415
+    from test_governance_failure import (  # noqa: PLC0415
+        TEST_REVISION,
+        _permissive_boundary,
+    )
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        ActionDescriptor,
+        canonical_action_request,
+    )
+
+    descriptor = ActionDescriptor(
+        operation="issue refund",
+        resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 100, "currency": "USD"},
+    )
+    boundary = _permissive_boundary(
+        tmp_path, as_of="2026-08-03T00:00:00Z", action_trust=store
+    )
+    request = canonical_action_request(
+        mission_id="CASE-CONSUME", risk="high",
+        subject_revision=TEST_REVISION, descriptor=descriptor, attempt=1,
+    )
+    calls: list[str] = []
+    decision, _detail = boundary.evaluate_and_execute(
+        mission_id="CASE-CONSUME",
+        risk="high",
+        action=lambda: (calls.append("released"), "done")[1],
+        action_approval=signed_grant(
+            request, approval_id="ACT-CONSUME", role="operations_owner"
+        ),
+        action_descriptor=descriptor,
+        attempt=1,
+    )
+    spent = boundary.approval_ledger.lookup(request_digest=request.digest) is not None
+    return decision, calls, spent
+
+
+def test_the_frozen_store_is_what_the_authority_decision_consults(tmp_path: Path):
+    """CONSUMED, not merely carried.
+
+    The same grant is judged against two different frozen stores. One trusts the
+    signer; the other is provisioned and does not. If the boundary consulted
+    anything other than the object it was handed, both would decide alike.
+    """
+    from signing import other_signer, trust_store  # noqa: PLC0415
+
+    from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
+
+    trusting = trust_store()
+    stranger = ApprovalTrustStore.for_test([other_signer(("operations_owner",))])
+    assert stranger.signers, "the control store must be provisioned, just not with this key"
+
+    allowed, released, spent = _release_under(tmp_path, trusting, workspace="trusting")
+    assert allowed.effect == "ALLOW", allowed.reason
+    assert released == ["released"]
+    assert spent is True
+
+    refused, not_released, not_spent = _release_under(tmp_path, stranger, workspace="stranger")
+    assert refused.effect == "DENY", (
+        "the boundary released an effect against a store that does not trust "
+        "the signer, so it is not consulting the store it was handed"
+    )
+    assert "not in the action approver trust store" in refused.reason, refused.reason
+    assert not_released == []
+    assert not_spent is False
+
+
+def test_removing_the_frozen_store_changes_the_consequential_decision(tmp_path: Path):
+    """The last arrow: REMOVAL CHANGES THE DECISION.
+
+    An empty store is not "no opinion" -- it is an authority that vouches for
+    nobody, and the effect must not occur. Without this, a boundary that ignored
+    its store entirely would still pass the positive case above.
+    """
+    from signing import trust_store  # noqa: PLC0415
+
+    from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
+
+    allowed, released, _spent = _release_under(tmp_path, trust_store(), workspace="trusting")
+    assert allowed.effect == "ALLOW" and released == ["released"]
+
+    refused, not_released, not_spent = _release_under(
+        tmp_path, ApprovalTrustStore(source="deliberately empty"), workspace="empty"
+    )
+    assert refused.effect == "DENY"
+    assert not_released == [], "an empty trust store released a consequential effect"
+    assert not_spent is False, "the grant was spent by a run that must not start"
