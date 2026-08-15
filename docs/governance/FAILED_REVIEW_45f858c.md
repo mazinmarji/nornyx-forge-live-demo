@@ -182,8 +182,24 @@ At least three of those kills were invalid.
 
 ## P3 findings
 
-Seventeen, OPEN, to be triaged after P1/P2 closure and before any freeze, each
-receiving FIXED or ACCEPTED_NON_BLOCKING_WITH_RATIONALE. Summarised by lens:
+Seven closed, ten open. Each receives FIXED or
+ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
+
+**Closed**
+
+| Finding | Disposition |
+| --- | --- |
+| A: `GovernanceIntegrityState` docstring claims a constructor refusal that does not exist | FIXED — the refusal is now performed. `intact` with zero verified claims is "nothing was checked" reported as sound, and it authorizes consequential action |
+| A: `_canonical` is not injective | FIXED — non-string mapping keys are refused rather than coerced, so `{1: …}` and `{"1": …}` can no longer share a `payload_digest`. The deliberate `100`/`100.0` collapse is kept and pinned |
+| A: the integrity-compromised refusal produces no evidence | FIXED — writes a refusal record in its own schema. Not a Nornyx stream: the authorizer was never consulted on that path, so there is no verdict to report |
+| A: `governance_approval_trust` has no runtime consumer | FIXED as a side effect of P1-1 — `assurance_state` now reads both frozen domains, so the field is consumed rather than merely held |
+| B: the semantic-binding suite mutates the real contracts in place | MITIGATED — a session guard compares `git status --porcelain` across the run and fails loudly on anything the suite leaves behind. The in-place mutation remains; its failure mode is no longer silent. Verified by a probe test that dirties a tracked file |
+| C: `_dynamically_imported_module`'s docstring overstates its coverage | FIXED — the docstring now describes the routes actually recognised, which grew when C-P2-1 closed |
+| C: `_unstaged_governed_paths`' docstring misstates the digest source | FIXED — the digest reads the working tree, not the index, and an assertion pins it so a "simplification" to the index fails loudly |
+
+**Open**
+
+
 
 - **Lens A (6)** — `GovernanceIntegrityState` docstring claims a constructor
   refusal that does not exist; `_canonical` is not injective (`{1:…}` and
