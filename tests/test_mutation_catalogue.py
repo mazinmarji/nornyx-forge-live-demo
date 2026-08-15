@@ -220,24 +220,93 @@ def test_a_root_property_may_hold_several_attacks_without_being_deduplicated():
     assert len({a.attack_id for a in surface}) == 4
 
 
-def test_the_accounting_is_kills_plus_defence_in_depth():
-    """34 = 31 + 3, with  as METADATA on one of the kills.
+#: The attacks that are DEFENCE-IN-DEPTH evidence rather than kills, BY NAME.
+#:
+#: An arithmetic identity cannot police this. `total == kills + defence` holds
+#: for any labelling whatsoever, because `kills` is defined as "not defence" --
+#: so Lens B marked all fourteen domain attacks defence-in-depth, restated the
+#: campaign as 34 = 17 + 17, and every catalogue test stayed green. The numbers
+#: 34/31/3 existed only in a docstring, where nothing executes them.
+#:
+#: Defence-in-depth is a claim about a specific property having independent
+#: enforcement routes. It is therefore a fact about NAMED attacks, and it is
+#: written here so that reclassifying one has to change this line, in the diff,
+#: where a reviewer can see it.
+DEFENCE_IN_DEPTH_ATTACKS = frozenset(
+    {
+        "SURFACE-GUARD-A",
+        "SURFACE-GUARD-B",
+        "SURFACE-GUARD-C",
+    }
+)
 
-    Stated mechanically because the alternative reading -- 31 + 3 + 1 -- would
-    count the compound attack twice and imply a fourth category. A compound
-    attack is a kill that had to remove an entire enforcement chain; it is not
-    a separate outcome.
+#: What the campaign actually measured. Pinned, because a floor is not a count.
+EXPECTED_TOTAL_ATTACKS = 34
+EXPECTED_KILLS = 31
+EXPECTED_DEFENCE_IN_DEPTH = 3
+
+
+def test_the_accounting_is_kills_plus_defence_in_depth():
+    """34 = 31 + 3, with `compound` as METADATA on one of the kills.
+
+    Not 31 + 3 + 1: that reading counts the compound attack twice and implies a
+    fourth category. A compound attack is a kill that had to remove an entire
+    enforcement chain.
+
+    Every number here is asserted against a written constant rather than against
+    another expression over the same data. The previous version asserted
+    `total == kills + defence`, which is true of any labelling, and the real
+    figures lived in prose.
     """
     total = len(CATALOGUE)
-    defence = sum(1 for a in CATALOGUE if a.defence_in_depth)
-    kills = sum(1 for a in CATALOGUE if not a.defence_in_depth)
+    defence = {a.attack_id for a in CATALOGUE if a.defence_in_depth}
+    kills = [a for a in CATALOGUE if not a.defence_in_depth]
     compound = [a for a in CATALOGUE if a.compound]
 
-    assert total == kills + defence, f"{total} != {kills} + {defence}"
+    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 34"
+    assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 31"
+    assert len(defence) == EXPECTED_DEFENCE_IN_DEPTH, sorted(defence)
+    assert total == len(kills) + len(defence), f"{total} != {len(kills)} + {len(defence)}"
+
+    assert defence == DEFENCE_IN_DEPTH_ATTACKS, (
+        "the set of attacks claimed as defence-in-depth has changed. That claim "
+        "is about specific properties having independent enforcement routes, so "
+        f"it is named, not counted.\n  expected {sorted(DEFENCE_IN_DEPTH_ATTACKS)}"
+        f"\n  found    {sorted(defence)}"
+    )
     assert len(compound) == 1, [a.attack_id for a in compound]
     assert not compound[0].defence_in_depth, (
         "the compound attack is marked defence-in-depth, which would take it "
         "out of the kill count and make the arithmetic 31 + 3 + 1"
+    )
+
+
+def test_relabelling_every_attack_as_defence_in_depth_is_refused():
+    """The self-attack. This is the exact restatement Lens B performed.
+
+    Marking all fourteen domain attacks defence-in-depth produced 34 = 17 + 17
+    with the whole catalogue green. It must now fail on the identity check, not
+    on the arithmetic -- the arithmetic is still perfectly satisfied.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    restated = tuple(
+        replace(attack, defence_in_depth=True)
+        if attack.owner == "tests/test_domain_collapse_mutations.py"
+        else attack
+        for attack in CATALOGUE
+    )
+    defence = {a.attack_id for a in restated if a.defence_in_depth}
+    kills = [a for a in restated if not a.defence_in_depth]
+
+    # The arithmetic the old test relied on still holds under the attack.
+    assert len(restated) == len(kills) + len(defence), (
+        "the restatement must remain arithmetically consistent, or this case "
+        "proves nothing about why counting was insufficient"
+    )
+    assert defence != DEFENCE_IN_DEPTH_ATTACKS, (
+        "the restatement did not change the defence-in-depth set, so it is not "
+        "the attack it claims to be"
     )
 
 
@@ -460,3 +529,85 @@ def test_a_comment_only_edit_is_refused_too():
 
     with pytest.raises(InvalidMutation):
         check_python_mutation("probe.py", source, after, "    x = 1  # keep", 1)
+
+
+#: Every attack that must exist, BY NAME. A floor counts; this identifies.
+#:
+#: Lens B deleted six of the fourteen domain-collapse mutations and the campaign
+#: landed exactly on MINIMUM_ATTACKS = 28 with every test green. A floor cannot
+#: see which attacks are gone -- only how many remain -- so six specific
+#: authority-domain collapses could stop being tested and the catalogue would
+#: still certify itself.
+#:
+#: Written out rather than derived from the catalogue, because a list computed
+#: from the thing it checks agrees with it by construction.
+REQUIRED_ATTACK_IDS = frozenset(
+    {
+        # Authority-domain separation: all fourteen collapses.
+        "M1", "M2", "M3", "M4", "M5", "M6", "M7",
+        "M8", "M9", "M10", "M11", "M12", "M13", "M14",
+        # Semantic-identity binding: all eight projection attacks.
+        "9C-0", "9C-1", "9C-2", "9C-3", "9C-4", "9C-5", "9C-6", "9C-7",
+        # Historical classes proved directly.
+        "H01-DIRECT", "H02-DIRECT", "H05-DIRECT", "H06-DIRECT",
+        "H07-DIRECT", "H08-DIRECT", "H09-DIRECT", "H10-DIRECT",
+        # The governance-surface family: three defence-in-depth probes and the
+        # compound attack that kills the property.
+        "SURFACE-GUARD-A", "SURFACE-GUARD-B", "SURFACE-GUARD-C",
+        "SURFACE-WHOLE-CHAIN",
+    }
+)
+
+
+def test_every_named_attack_is_still_present():
+    """The anti-shrink control that a floor cannot provide.
+
+    Deleting attacks now fails by NAME, and the failure says which ones, so the
+    diff that removes an authority-domain collapse has to argue for it.
+    """
+    present = {attack.attack_id for attack in CATALOGUE}
+    missing = sorted(REQUIRED_ATTACK_IDS - present)
+    assert missing == [], (
+        f"these attacks have disappeared from the catalogue: {missing}. Each was "
+        "a hostile representation of a real invariant; removing one is a "
+        "reduction in what this repository proves, not a consolidation."
+    )
+
+
+def test_the_floor_alone_would_not_have_caught_the_deletion():
+    """Why the identity set exists, stated as a measurement rather than a claim.
+
+    Reproduces Lens B's deletion: drop the six domain attacks it dropped, and
+    show the floor still passes while the identity check does not.
+    """
+    survivors = tuple(
+        attack for attack in CATALOGUE
+        if attack.attack_id not in {"M9", "M10", "M11", "M12", "M13", "M14"}
+    )
+
+    assert len(survivors) >= MINIMUM_ATTACKS, (
+        f"{len(survivors)} left after the deletion, floor {MINIMUM_ATTACKS} -- "
+        "this case only demonstrates the gap if the floor still passes"
+    )
+    missing = sorted(REQUIRED_ATTACK_IDS - {a.attack_id for a in survivors})
+    assert missing == ["M10", "M11", "M12", "M13", "M14", "M9"], missing
+
+
+def test_the_required_set_is_not_derived_from_the_catalogue():
+    """A written expectation, checked by reading the source.
+
+    If REQUIRED_ATTACK_IDS were built from CATALOGUE it would match it always,
+    and the test above would be a tautology -- the exact defect recorded against
+    EXPECTED_9C_IDS.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    declaration = source[source.index("REQUIRED_ATTACK_IDS = frozenset("):]
+    declaration = declaration[: declaration.index("\n)\n")]
+
+    assert "CATALOGUE" not in declaration, (
+        "REQUIRED_ATTACK_IDS is computed from the catalogue it checks, so it "
+        "agrees with it by construction and proves nothing"
+    )
+    assert "for " not in declaration, (
+        "REQUIRED_ATTACK_IDS is built by a comprehension rather than written out"
+    )

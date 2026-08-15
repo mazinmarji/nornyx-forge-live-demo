@@ -653,3 +653,86 @@ def test_a_provisioned_snapshot_is_reported_available(monkeypatch):
 
     assert reported["consequential_authority"] == "available", reported
     assert reported["trusted_approvers_loaded"] is True, reported
+
+
+def _store_with_status(status: str, domain: str):
+    from signing import trust_store  # noqa: PLC0415
+
+    from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
+
+    base = trust_store(status=status)
+    return ApprovalTrustStore(
+        signers=base.signers, digest=base.digest, source="<test>",
+        available=True, domain=domain,
+    )
+
+
+def test_a_revoked_store_is_not_reported_as_available(monkeypatch):
+    """A-P2-3. Membership is not authority.
+
+    A revoked key stays in the store on purpose, so a refusal can say "that key
+    is revoked" rather than "unknown key", and `authenticate_action_grant`
+    refuses it. Counting raw membership reported `consequential_authority:
+    available` for a deployment whose every key was revoked -- measured through
+    `/api/health`, which is what an operator reads.
+    """
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        GOVERNANCE_TRUST_DOMAIN,
+    )
+
+    action = _store_with_status("revoked", ACTION_TRUST_DOMAIN)
+    governance = _store_with_status("revoked", GOVERNANCE_TRUST_DOMAIN)
+    assert action.signers, "the store must carry the revoked keys, not drop them"
+    assert not action.active_signers, "none of them may count as active"
+
+    monkeypatch.setattr(
+        agentic, "application_security_context",
+        lambda: _context_with(action, governance),
+    )
+    reported = agentic.assurance_state()
+
+    assert reported["consequential_authority"] != "available", reported
+    assert reported["trusted_approvers_loaded"] is False, reported
+
+
+def test_an_active_store_is_still_reported_as_available(monkeypatch):
+    """The control. Filtering everything out would also satisfy the case above."""
+    from demo_app import agentic  # noqa: PLC0415
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        GOVERNANCE_TRUST_DOMAIN,
+    )
+
+    action = _store_with_status("active", ACTION_TRUST_DOMAIN)
+    governance = _store_with_status("active", GOVERNANCE_TRUST_DOMAIN)
+    assert action.active_signers
+
+    monkeypatch.setattr(
+        agentic, "application_security_context",
+        lambda: _context_with(action, governance),
+    )
+    assert agentic.assurance_state()["consequential_authority"] == "available"
+
+
+def test_the_report_and_the_authenticator_use_one_rule():
+    """Two spellings of "active" is how these drift apart again.
+
+    `active_signers` and the authenticator's refusal must consult the same
+    constant, so a change to what counts as usable cannot move one without the
+    other.
+    """
+    from nornyx_forge import approval_trust  # noqa: PLC0415
+
+    source = Path(approval_trust.__file__).read_text(encoding="utf-8")
+    assert source.count('!= ACTIVE_SIGNER_STATUS') >= 1, (
+        "the authenticator no longer consults the shared constant"
+    )
+    assert source.count('== ACTIVE_SIGNER_STATUS') >= 1, (
+        "active_signers no longer consults the shared constant"
+    )
+    assert 'status != "active"' not in source, (
+        "a second spelling of the active rule has appeared, which is how the "
+        "report and the authenticator drift onto different answers"
+    )

@@ -143,8 +143,15 @@ def assurance_state() -> dict[str, Any]:
     # BOTH domains, reported together. Saying "trust is available" while only
     # one authority is provisioned would describe a deployment that cannot do
     # what the word implies.
-    loaded = all(getattr(s, "available", False) and getattr(s, "signers", None)
-                 for s in stores)
+    # ACTIVE signers, not raw membership. A revoked key stays in the store so a
+    # refusal can name it, and the boundary refuses it -- but counting it here
+    # reported `consequential_authority: available` for a deployment whose every
+    # key was revoked. Measured, and the same defect as the live re-read above:
+    # the report described an authority that was not in force.
+    loaded = all(
+        getattr(s, "available", False) and getattr(s, "active_signers", None)
+        for s in stores
+    )
     if loaded:
         state = "available"
     elif any(getattr(s, "unusable", False) for s in stores):

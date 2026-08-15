@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import check_test_coverage as census  # noqa: E402
 from check_test_coverage import (  # noqa: E402
     EXPECTED_SKIPS,
     MINIMUM_COLLECTED,
@@ -270,11 +271,30 @@ def _report_with(tmp_path, cases: str):
 
 
 def _module_cases(modules) -> str:
-    """One testcase per named module, so the report mentions each of them."""
-    return "".join(
-        f'<testcase classname="{name.removesuffix(".py").replace("/", ".")}"'
-        ' name="test_probe"/>'
-        for name in modules
+    """Each named module, contributing at least its declared floor.
+
+    One testcase per module was enough while the gate only asked whether a
+    module was PRESENT. It is not enough now: presence was exactly the weakness
+    -- 43 tests could be deleted across six modules with every one still
+    "present" -- so a report meeting the requirements has to meet the per-module
+    floors too. A helper called "complete" that produced an incomplete report
+    would make every test built on it refuse for the wrong clause.
+    """
+    cases = []
+    for name in modules:
+        classname = name.removesuffix(".py").replace("/", ".")
+        for index in range(max(census.REQUIRED_MODULE_MINIMUMS.get(name, 1), 1)):
+            cases.append(
+                f'<testcase classname="{classname}" name="test_probe_{index}"/>'
+            )
+    return "".join(cases)
+
+
+def _required_total() -> int:
+    """How many testcases `_module_cases(REQUIRED_MODULES)` emits."""
+    return sum(
+        max(census.REQUIRED_MODULE_MINIMUMS.get(name, 1), 1)
+        for name in REQUIRED_MODULES
     )
 
 
@@ -287,8 +307,8 @@ def _filler_cases(count: int) -> str:
 
 
 def _complete_report_cases(count: int) -> str:
-    """Every required module present, and enough total tests to clear the floor."""
-    return _module_cases(REQUIRED_MODULES) + _filler_cases(count - len(REQUIRED_MODULES))
+    """Every required module at its floor, and enough total to clear the floor."""
+    return _module_cases(REQUIRED_MODULES) + _filler_cases(count - _required_total())
 
 
 def test_the_missing_module_refusal_actually_runs(tmp_path, capsys):
@@ -385,3 +405,99 @@ def test_a_real_skip_with_the_same_shape_is_still_caught(tmp_path: Path):
     )
     assert len(unexpected) == 1
     assert "test_characterized" in unexpected[0]
+
+
+# --------------------------------------------------------------------------
+# B-P2-2. Presence is not coverage.
+# --------------------------------------------------------------------------
+
+
+def _counted_report(tmp_path, counts: dict[str, int]):
+    """A JUnit report contributing `counts[module]` passing tests per module."""
+    cases = []
+    for module, number in counts.items():
+        classname = module.removesuffix(".py").replace("/", ".")
+        for index in range(number):
+            cases.append(
+                f'<testcase classname="{classname}" name="test_{index}" '
+                f'file="{module}"></testcase>'
+            )
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<testsuites><testsuite '
+        f'name="pytest" tests="{sum(counts.values())}">'
+        + "".join(cases)
+        + "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    return report
+
+
+def test_a_required_module_that_shrinks_is_refused(tmp_path):
+    """The defect: 43 tests deleted across six modules, aggregate floor intact.
+
+    Every module stays PRESENT, so `REQUIRED_MODULES` is satisfied, and the
+    total still clears `MINIMUM_COLLECTED` because the surviving modules were
+    padded. Only a per-module floor can see it.
+    """
+    counts = dict.fromkeys(census.REQUIRED_MODULES, 0)
+    for name, floor in census.REQUIRED_MODULE_MINIMUMS.items():
+        counts[name] = floor
+    victim = "tests/test_action_binding.py"
+    assert victim in counts, "the victim must be a required, floored module"
+
+    # Gut the victim, keeping ONE test so it is still present, and pad another
+    # module by the same amount so the aggregate total does not move.
+    removed = counts[victim] - 1
+    counts[victim] = 1
+    # Padded elsewhere so the AGGREGATE total does not move. That is the whole
+    # shape of the defect: the suite loses a security module's proofs and the
+    # headline count is undisturbed because something else grew.
+    counts["tests/test_filler.py"] = (
+        census.MINIMUM_COLLECTED - sum(counts.values()) + removed + 1
+    )
+
+    assert sum(counts.values()) >= census.MINIMUM_COLLECTED, (
+        "this case only demonstrates the gap while the aggregate floor passes"
+    )
+    assert census.evaluate(_counted_report(tmp_path, counts), 0) != 0, (
+        "the gate accepted a run in which a security module lost all but one "
+        "of its tests"
+    )
+
+
+def test_the_declared_floors_are_met_by_the_real_suite(tmp_path):
+    """The control, and the thing that keeps the floors honest.
+
+    Floors set above what the suite actually contributes would fail every run;
+    floors set at zero would accept anything. Measured against a report built
+    from the current counts.
+    """
+    counts = dict(census.REQUIRED_MODULE_MINIMUMS)
+    padding = census.MINIMUM_COLLECTED - sum(counts.values())
+    if padding > 0:
+        counts["tests/test_filler.py"] = padding
+
+    assert census.evaluate(_counted_report(tmp_path, counts), 0) == 0, (
+        "a run meeting every declared floor was refused, so the floors are "
+        "above what the suite actually proves"
+    )
+
+
+def test_every_required_module_has_a_declared_floor():
+    """A module required but unfloored is one that can be gutted freely."""
+    unfloored = sorted(
+        set(census.REQUIRED_MODULES) - set(census.REQUIRED_MODULE_MINIMUMS)
+    )
+    assert unfloored == [], (
+        f"these modules are required to exist but may shrink to one test: "
+        f"{unfloored}"
+    )
+
+
+def test_no_floor_is_zero():
+    """A zero floor is indistinguishable from having no floor at all."""
+    zeroed = sorted(
+        name for name, floor in census.REQUIRED_MODULE_MINIMUMS.items() if floor < 1
+    )
+    assert zeroed == [], zeroed

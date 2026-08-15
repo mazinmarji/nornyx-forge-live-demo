@@ -64,6 +64,10 @@ from typing import Any
 
 #: Where the trusted signer keys are read from. A location, never authority:
 #: pointing this elsewhere selects a store, it cannot create a trusted key.
+#: The only signer status that can authorize. Named once so the report and
+#: the authenticator cannot drift onto different rules.
+ACTIVE_SIGNER_STATUS = "active"
+
 TRUST_STORE_ENV = "FORGE_APPROVER_TRUST_STORE"
 
 #: Default location, deliberately outside any repository working tree.
@@ -441,6 +445,27 @@ class ApprovalTrustStore:
     #: answer it later is to open the file again.
     unusable: bool = False
 
+    @property
+    def active_signers(self) -> dict[str, "TrustedSigner"]:
+        """The signers that could actually authorize anything.
+
+        Membership is not authority. A revoked or suspended key stays in the
+        store -- deliberately, so a refusal can say "that key is revoked" rather
+        than "unknown key" -- and `authenticate_action_grant` refuses it. But a
+        report that counted the raw membership described a deployment as able to
+        release consequential effects when every one of its keys was revoked.
+        Measured: `consequential_authority: available` with the whole store
+        revoked and the boundary refusing each key in turn.
+
+        The authenticator remains the enforcement point. This exists so that
+        what is REPORTED and what is ENFORCED answer to the same rule.
+        """
+        return {
+            key: signer
+            for key, signer in self.signers.items()
+            if signer.status == ACTIVE_SIGNER_STATUS
+        }
+
     @classmethod
     def load(cls, path: Path | None = None, *, domain: str) -> "ApprovalTrustStore":
         """Read one authority domain's membership, once, at startup.
@@ -791,7 +816,7 @@ def _authenticate_signed_human_artifact(
             f"{trust_domain} approver trust store",
             signer_key_id=key_id,
         )
-    if signer.status != "active":
+    if signer.status != ACTIVE_SIGNER_STATUS:
         return refuse(
             f"APPROVER_NOT_TRUSTED: signer key {key_id!r} is {signer.status}",
             signer_key_id=key_id,

@@ -161,7 +161,22 @@ At least three of those kills were invalid.
 | C-P2-1 | C | capability acquisition must fail closed on unknown spellings | `builtins.__import__`, `__builtins__["__import__"]`, `sys.modules.get` all bypass both gates | builder |
 | C-P2-2 | C | the API must not hold process capability | `constraint.api_no_commands` is a substring test defeated by `"sub" + "process"` | builder |
 
-All twelve are OPEN.
+Seven closed, five open.
+
+| ID | Disposition |
+| --- | --- |
+| B-P2-1 | CLOSED - attacks pinned BY NAME in `REQUIRED_ATTACK_IDS`, plus a case that reproduces the six-attack deletion and shows the floor still passing while the identity check does not |
+| B-P2-2 | CLOSED - `REQUIRED_MODULE_MINIMUMS`, a per-module no-silent-shrink floor. Presence is not coverage |
+| B-P2-3 | CLOSED - the verdict reads a JUnit report, so an errored mutant is INVALID_MUTATION rather than a kill |
+| B-P2-4 | CLOSED - `executable_projection` refuses a mutant that is byte-identical once comments and docstrings are removed |
+| B-P2-5 | CLOSED - mutant origin is measured from `__file__`; the grep is gone. The property held, so this replaced a vacuous proof rather than closing a bypass |
+| B-P2-6 | CLOSED - `DEFENCE_IN_DEPTH_ATTACKS` names which attacks carry the claim; 34/31/3 are asserted against written constants instead of a tautology |
+| C-P2-1 | CLOSED - every route that yields a module answers the acquisition question |
+| C-P2-2 | CLOSED - `api_no_commands` is the AST capability analysis, not a substring test |
+| A-P2-1 | OPEN |
+| A-P2-2 | OPEN |
+| A-P2-3 | OPEN |
+| A-P2-4 | OPEN |
 
 ---
 

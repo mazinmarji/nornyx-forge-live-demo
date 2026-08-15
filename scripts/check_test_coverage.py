@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,68 @@ NEWLINE = chr(10)
 #: Kept just below the real count rather than equal to it, so ordinary
 #: consolidation does not fail the gate while a deletion of any consequence
 #: does. It is meant to be raised when the suite grows.
+#: The smallest number of tests each required module may contribute.
+#:
+#: REQUIRED_MODULES asks whether a module is PRESENT. Lens B deleted 43 tests
+#: across six modules -- including the dirty-tree gate this floor was raised for
+#: -- and the run landed exactly on the aggregate floor with every module still
+#: technically present, because other modules had grown. Presence is not
+#: coverage, and an aggregate cannot see which proofs went.
+#:
+#: Each entry is roughly 90% of what the module contributed when it was written:
+#: a NO-SILENT-SHRINK bound, not a target. Ordinary consolidation passes;
+#: removing a third of a security module does not, and lowering the number has
+#: to happen in the diff where it can be argued with.
+REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
+    "tests/test_approval_authentication.py": 34,
+    "tests/test_approval_ledger.py": 38,
+    "tests/test_reviewer_authentication.py": 23,
+    "tests/test_independent_inspection.py": 14,
+    "tests/test_trust_directionality.py": 8,
+    "tests/test_content_binding.py": 19,
+    "tests/test_subject_scope.py": 13,
+    "tests/test_security_context.py": 10,
+    "tests/test_evaluation_time.py": 12,
+    "tests/test_execution_semantics.py": 10,
+    "tests/test_skip_gate.py": 14,
+    "tests/test_documented_claims.py": 6,
+    "tests/test_process_execution_spellings.py": 22,
+    "tests/test_approval_artifact_authentication.py": 8,
+    "tests/test_governance_approval_verifier.py": 36,
+    "tests/test_process_capability.py": 52,
+    "tests/test_evidence_integrity_verifier.py": 8,
+    "tests/test_dockerfile_surface.py": 16,
+    "tests/test_authority_domains.py": 16,
+    "tests/test_domain_immutability.py": 8,
+    "tests/test_domain_collapse_mutations.py": 18,
+    "tests/test_execution_mode_truth.py": 7,
+    "tests/test_architecture_vocabulary.py": 9,
+    "tests/test_inspection_subject_matrix.py": 4,
+    "tests/test_subject_layer_matrix.py": 15,
+    "tests/test_semantic_projection_exclusions.py": 15,
+    "tests/test_task8_closure.py": 8,
+    "tests/test_semantic_binding_theorem.py": 23,
+    "tests/test_production_security_context.py": 13,
+    "tests/test_canonical_text_writes.py": 7,
+    "tests/test_approval_wiring.py": 7,
+    "tests/test_approval_injection.py": 11,
+    "tests/test_materialization_injection.py": 18,
+    "tests/test_expiry_semantics.py": 7,
+    "tests/test_pre_approval_baseline.py": 5,
+    "tests/test_action_binding.py": 29,
+    "tests/test_untrusted_text.py": 41,
+    "tests/test_subject_completeness.py": 9,
+    "tests/test_governance_integrity_authority.py": 11,
+    "tests/test_artifact_authority.py": 16,
+    "tests/test_collection_completeness.py": 9,
+    "tests/test_absence_is_not_success.py": 6,
+    "tests/test_trust_snapshot.py": 16,
+    "tests/test_historical_reproof.py": 19,
+    "tests/test_mutation_catalogue.py": 24,
+    "tests/test_false_green_audit.py": 12,
+    "tests/test_xfail_strictness.py": 9,
+}
+
 MINIMUM_COLLECTED = 945
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
@@ -212,7 +275,7 @@ def node_id(case) -> str:
 
 def classify(
     report: Path,
-) -> tuple[int, int, list[str], set[str], set[str], list[str]]:
+) -> tuple[int, int, list[str], "Counter[str]", set[str], list[str]]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
     Separated from the run so the gate itself is testable: a guard whose failure
@@ -222,13 +285,15 @@ def classify(
     root = ET.parse(report).getroot()
     unexpected: list[str] = []
     unexpected_xfails: list[str] = []
-    seen_modules: set[str] = set()
+    # A COUNT per module, not a presence set: presence cannot see a module
+    # that kept one test and lost forty.
+    seen_modules: Counter[str] = Counter()
     skipped_identities: set[str] = set()
     allowed = 0
     total = 0
     for case in root.iter("testcase"):
         total += 1
-        seen_modules.add(node_id(case).split("::", 1)[0])
+        seen_modules[node_id(case).split("::", 1)[0]] += 1
         skipped = case.find("skipped")
         if skipped is None:
             continue
@@ -336,6 +401,26 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
         )
         print(NEWLINE + "GATE: FAIL - a required test module is missing")
         return 2
+
+    shrunk = [
+        f"{name}: {seen_modules.get(name, 0)} collected, floor {floor}"
+        for name, floor in sorted(REQUIRED_MODULE_MINIMUMS.items())
+        if seen_modules.get(name, 0) < floor
+    ]
+    if shrunk:
+        print(NEWLINE + "These required modules contribute fewer tests than "
+              "their declared floor:" + NEWLINE)
+        for entry in shrunk:
+            print(f"  {entry}")
+        print(
+            NEWLINE + "An aggregate floor cannot see this: other modules grow and "
+            "absorb the loss, which is how 43 tests across six modules were "
+            "deleted while the run landed exactly on the total. Restore the "
+            "proofs, or lower the floor in the diff where it can be argued with."
+        )
+        print(NEWLINE + "GATE: FAIL - a required module shrank")
+        return 2
+
 
     if total < MINIMUM_COLLECTED:
         print(
