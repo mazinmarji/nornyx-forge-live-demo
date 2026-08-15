@@ -50,7 +50,7 @@ def _report(tmp_path: Path, reason: str, name: str = "test_wiring") -> Path:
 
 def test_the_historical_failure_is_now_caught(tmp_path: Path):
     """The exact skip reason that hid 63 tests behind a green run."""
-    total, allowed, unexpected, _modules, _skipped, _xfails = classify(_report(tmp_path, "nornyx CLI is not installed"))
+    total, allowed, unexpected, _modules, _skipped, _xfails, _errors = classify(_report(tmp_path, "nornyx CLI is not installed"))
     assert total == 3
     assert allowed == 1, "the declared Docker skip should still be allowed"
     assert len(unexpected) == 1
@@ -60,7 +60,7 @@ def test_the_historical_failure_is_now_caught(tmp_path: Path):
 
 def test_a_declared_skip_is_allowed(tmp_path: Path):
     """The gate must not force tests to run where the design says they cannot."""
-    total, allowed, unexpected, _modules, _skipped, _xfails = classify(
+    total, allowed, unexpected, _modules, _skipped, _xfails, _errors = classify(
         _report(
             tmp_path,
             "cannot be built on a Windows workstation",
@@ -86,7 +86,7 @@ def test_borrowing_a_declared_reason_does_not_exempt_a_new_test(tmp_path: Path):
 
     Word for word the declared reason, on a test nobody exempted.
     """
-    total, allowed, unexpected, _modules, _skipped, _xfails = classify(
+    total, allowed, unexpected, _modules, _skipped, _xfails, _errors = classify(
         _report(
             tmp_path,
             "set FORGE_DOCKER_TESTS=1 with Docker running to build",
@@ -153,7 +153,7 @@ def test_classify_reports_which_modules_contributed(tmp_path: Path):
     Counting alone keeps the total up while an invariant goes unproven, so the
     census reports module identity and not just arithmetic.
     """
-    _total, _allowed, _unexpected, modules, _skipped, _xfails = classify(
+    _total, _allowed, _unexpected, modules, _skipped, _xfails, _errors = classify(
         _report(tmp_path, "nornyx CLI is not installed")
     )
     assert "tests/test_container_launch.py" in modules
@@ -387,7 +387,7 @@ def test_an_expected_failure_is_not_counted_as_a_skip(tmp_path: Path):
     test that executes into a list whose stated meaning is "asserts nothing",
     and would then also exempt it if it ever became a genuine skip.
     """
-    _total, allowed, unexpected, _modules, _skipped, _xfails = classify(
+    _total, allowed, unexpected, _modules, _skipped, _xfails, _errors = classify(
         _typed_report(tmp_path, "pytest.xfail")
     )
     assert unexpected == [], "an expected failure was reported as an undeclared skip"
@@ -400,7 +400,7 @@ def test_a_real_skip_with_the_same_shape_is_still_caught(tmp_path: Path):
     Same test id, same message, same element -- only `type` differs. If the gate
     keyed on anything looser, an undeclared skip could dress itself as an xfail.
     """
-    _total, _allowed, unexpected, _modules, _skipped, _xfails = classify(
+    _total, _allowed, unexpected, _modules, _skipped, _xfails, _errors = classify(
         _typed_report(tmp_path, "pytest.skip")
     )
     assert len(unexpected) == 1
@@ -501,3 +501,52 @@ def test_no_floor_is_zero():
         name for name, floor in census.REQUIRED_MODULE_MINIMUMS.items() if floor < 1
     )
     assert zeroed == [], zeroed
+
+
+def test_a_collection_error_is_not_counted_as_coverage(tmp_path):
+    """A module that fails to import cannot have proved anything.
+
+    pytest emits a `<testcase>` carrying `<error>` when collection fails.
+    Counting it meant a broken module still incremented the total, still
+    satisfied REQUIRED_MODULES, and would now still contribute to its
+    per-module floor -- the census certifying coverage that never executed.
+    """
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<testsuites><testsuite name="pytest" tests="1">'
+        '<testcase classname="tests.test_action_binding" name="test_action_binding" '
+        'file="tests/test_action_binding.py">'
+        '<error message="collection failure">ImportError: no module named x</error>'
+        "</testcase></testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    total, *_rest, errors = census.classify(report)
+
+    assert total == 0, "an errored case was counted as a test that ran"
+    assert errors == ["tests/test_action_binding.py::test_action_binding"], errors
+    assert census.evaluate(report, 0) != 0, (
+        "the gate accepted a run whose module failed to import"
+    )
+
+
+def test_the_errored_module_is_not_marked_as_present(tmp_path):
+    """The second half: presence must not be satisfied by a failure to load.
+
+    This is what let a broken security module keep satisfying REQUIRED_MODULES.
+    """
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<testsuites><testsuite name="pytest" tests="1">'
+        '<testcase classname="tests.test_action_binding" name="test_x" '
+        'file="tests/test_action_binding.py">'
+        '<error message="boom">ImportError</error>'
+        "</testcase></testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    _total, _allowed, _unexpected, modules, *_rest = census.classify(report)
+
+    assert "tests/test_action_binding.py" not in modules, (
+        "a module that failed to import was marked as seen"
+    )

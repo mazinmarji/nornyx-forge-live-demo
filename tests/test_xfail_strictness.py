@@ -162,9 +162,9 @@ def test_an_undeclared_xfail_fails_the_gate(tmp_path: Path):
         "</testcase></testsuite></testsuites>",
         encoding="utf-8",
     )
-    total, _allowed, unexpected, _modules, _skipped, unexpected_xfails = census.classify(
-        report
-    )
+    (
+        total, _allowed, unexpected, _modules, _skipped, unexpected_xfails, _errors,
+    ) = census.classify(report)
 
     assert total == 1
     assert unexpected == [], "an xfail must not be counted as a skip"
@@ -195,7 +195,7 @@ def test_a_declared_xfail_would_be_permitted(tmp_path: Path):
         "tests/test_security.py::test_a_control": "declared for this test only"
     }
     try:
-        *_rest, unexpected_xfails = census.classify(report)
+        *_rest, unexpected_xfails, _errors = census.classify(report)
     finally:
         census.EXPECTED_XFAILS = original
     assert unexpected_xfails == []

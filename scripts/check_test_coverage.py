@@ -275,7 +275,9 @@ def node_id(case) -> str:
 
 def classify(
     report: Path,
-) -> tuple[int, int, list[str], "Counter[str]", set[str], list[str]]:
+) -> tuple[
+    int, int, list[str], "Counter[str]", set[str], list[str], list[str]
+]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
     Separated from the run so the gate itself is testable: a guard whose failure
@@ -285,6 +287,7 @@ def classify(
     root = ET.parse(report).getroot()
     unexpected: list[str] = []
     unexpected_xfails: list[str] = []
+    errors: list[str] = []
     # A COUNT per module, not a presence set: presence cannot see a module
     # that kept one test and lost forty.
     seen_modules: Counter[str] = Counter()
@@ -292,6 +295,15 @@ def classify(
     allowed = 0
     total = 0
     for case in root.iter("testcase"):
+        # A COLLECTION ERROR IS NOT A TEST. pytest emits a `<testcase>` carrying
+        # `<error>` when a module fails to import, and counting it meant a module
+        # that does not load still incremented the total, still satisfied
+        # REQUIRED_MODULES, and now would still contribute to its per-module
+        # floor. A broken module read as present and contributing -- the census
+        # certifying coverage that could not have run.
+        if case.find("error") is not None:
+            errors.append(node_id(case))
+            continue
         total += 1
         seen_modules[node_id(case).split("::", 1)[0]] += 1
         skipped = case.find("skipped")
@@ -326,7 +338,10 @@ def classify(
             skipped_identities.add(node_id(case))
             continue
         unexpected.append(f"{node_id(case)} — {message.strip()}")
-    return total, allowed, unexpected, seen_modules, skipped_identities, unexpected_xfails
+    return (
+        total, allowed, unexpected, seen_modules, skipped_identities,
+        unexpected_xfails, errors,
+    )
 
 
 def evaluate(report: Path, pytest_returncode: int) -> int:
@@ -338,9 +353,22 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
     whose failure path has never run is a guess about what it would do; only
     `classify` had been separated far enough to act on that.
     """
-    total, allowed, unexpected, seen_modules, skipped_identities, unexpected_xfails = (
-        classify(report)
-    )
+    (
+        total, allowed, unexpected, seen_modules, skipped_identities,
+        unexpected_xfails, errors,
+    ) = classify(report)
+
+    if errors:
+        print(NEWLINE + "These test cases ERRORED rather than running:" + NEWLINE)
+        for entry in errors:
+            print(f"  {entry}")
+        print(
+            NEWLINE + "A collection error is not a test. A module that fails to "
+            "import cannot have proved anything, so a census over this run "
+            "would certify coverage that never executed."
+        )
+        print(NEWLINE + "GATE: FAIL - the run carries collection errors")
+        return 2
 
     print(
         f"collected {total}, expected skips {allowed}, "
