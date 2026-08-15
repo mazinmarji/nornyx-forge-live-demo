@@ -1285,7 +1285,37 @@ class NornyxActionBoundary:
         frozen_action_trust: ApprovalTrustStore | None = None,
         action_trust_store: ApprovalTrustStore | None = None,
         trust: TrustConfiguration | None = None,
+        established_root: str = "",
     ) -> None:
+        # ONE TREE. `root` selects the contract and the lock; the injected
+        # subject and integrity verdict describe whatever tree the application
+        # observed at startup. Nothing required those to be the same, so a
+        # caller could have policy from tree A judged against an identity from
+        # tree B -- reachable from `nornyx-forge demo --offline`, which passes a
+        # root of its own. An authority conclusion that spans two trees
+        # describes neither.
+        # Scoped to the case that actually produces a cross-tree conclusion: a
+        # root that CARRIES ITS OWN CONTRACT. `root` selects two different
+        # things -- the governing contract and lock, and where evidence and the
+        # ledger are written -- and that conflation is the real defect here.
+        # Refusing every differing root would also refuse writing evidence to a
+        # scratch directory, which supplies no policy from anywhere: with no
+        # contract present the boundary falls back and denies high-risk outright,
+        # so no authority conclusion spans two trees. What must not happen is
+        # tree A's contract judging tree B's identity, and that requires tree A
+        # to have a contract.
+        if (
+            established_root
+            and Path(root).resolve() != Path(established_root)
+            and (Path(root) / RUNTIME_CONTRACT).exists()
+        ):
+            raise NornyxRuntimeUnavailable(
+                f"this boundary was built for {Path(root).resolve()} but the "
+                f"security context describes {established_root}. The contract "
+                "and lock would come from one tree while the governed subject "
+                "and integrity verdict describe another, so the decision would "
+                "belong to neither."
+            )
         self.root = root
         self.allow_fallback = allow_fallback
         # Injected, never discovered. A boundary that established its own

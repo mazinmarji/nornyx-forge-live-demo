@@ -255,6 +255,14 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 if security_context is not None
                 else None
             ),
+            # So a boundary rooted at a different tree than the one this context
+            # describes refuses, instead of judging tree A's policy against tree
+            # B's identity.
+            established_root=(
+                getattr(security_context, "established_root", "")
+                if security_context is not None
+                else ""
+            ),
         )
         #: Whether the consequential stage has been entered on this flow. One
         #: way: never reset, so no recovery path can re-arm it.

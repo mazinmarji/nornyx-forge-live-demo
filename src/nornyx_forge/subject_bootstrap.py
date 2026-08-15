@@ -92,6 +92,15 @@ class RuntimeSecurityContext:
     #: questions, and neither can be reached from the other.
     governance_approval_trust: object | None = None
     action_approval_trust: object | None = None
+    #: The tree this context describes, as a resolved path string.
+    #:
+    #: A LOCATION, not authority -- which is why it is here and not on
+    #: `RuntimeSubject`, whose whole point is that it holds no root. It exists
+    #: so the composition root can refuse an incoherent pairing: the boundary
+    #: takes its own `root` to find the contract and lock, and nothing stopped a
+    #: caller selecting a contract from one tree while the subject and integrity
+    #: verdict described another. `nornyx-forge demo --offline` reaches that.
+    established_root: str = ""
 
     @property
     def consequential_authority_available(self) -> bool:
@@ -132,6 +141,7 @@ def bootstrap_security_context(
             runtime_subject=RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id),
             authority_config=authority_config,
             trust=unrooted_trust_configuration(),
+            established_root="",
             # No root means nothing was observed. Left as None this would be
             # indistinguishable from "observed and sound", which is the
             # unknown-reads-as-intact failure the state type exists to remove.
@@ -145,6 +155,7 @@ def bootstrap_security_context(
         authority_config=authority_config,
         trust=resolve_trust_configuration(resolved),
         governance_integrity=observe_governance_integrity(resolved / ".nornyx/contracts"),
+        established_root=str(Path(resolved).resolve()),
         **_load_approval_domains(resolved),
     )
 

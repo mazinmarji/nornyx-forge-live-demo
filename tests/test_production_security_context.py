@@ -405,3 +405,128 @@ def test_the_high_risk_case_is_refused_for_governance_not_for_wiring():
     # A real canonical request was built, which only happens past the subject
     # check -- so the refusal came from the approval rules, not from before them.
     assert result.get("action_request", {}).get("request_digest", "").startswith("sha256:")
+
+
+# --------------------------------------------------------------------------
+# A-P2-1. The governing contract and the governed subject describe ONE tree.
+# --------------------------------------------------------------------------
+
+
+def test_a_boundary_rooted_elsewhere_than_its_context_is_refused(tmp_path: Path):
+    """The finding: policy from tree A judged against identity from tree B.
+
+    `root` selects the contract and the lock. The injected subject and integrity
+    verdict describe whatever tree the application observed at startup. Nothing
+    required those to be the same tree, and `nornyx-forge demo --offline` passes
+    a root of its own -- so an authority conclusion could span two trees and
+    belong to neither.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        NornyxActionBoundary,
+        NornyxRuntimeUnavailable,
+    )
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context  # noqa: PLC0415
+
+    context = bootstrap_security_context(ROOT)
+    assert context.established_root, "the context must record the tree it describes"
+
+    # The other tree carries ITS OWN CONTRACT. That is the dangerous shape: the
+    # boundary would take governing policy from here while the injected subject
+    # and integrity verdict describe the repository. A scratch directory with no
+    # contract supplies no policy at all -- see the case below.
+    from nornyx_forge.nornyx_runtime import RUNTIME_CONTRACT  # noqa: PLC0415
+
+    elsewhere = tmp_path / "another_tree"
+    planted = elsewhere / RUNTIME_CONTRACT
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_bytes((ROOT / RUNTIME_CONTRACT).read_bytes())
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        NornyxActionBoundary(
+            elsewhere,
+            runtime_subject=context.runtime_subject,
+            governance_integrity=context.governance_integrity,
+            established_root=context.established_root,
+        )
+    message = str(refusal.value)
+    assert "security context describes" in message, message
+    assert str(elsewhere.resolve()) in message, message
+
+
+def test_the_matching_tree_is_accepted():
+    """The control. A check that refused every pairing would also pass above."""
+    from nornyx_forge.nornyx_runtime import NornyxActionBoundary  # noqa: PLC0415
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context  # noqa: PLC0415
+
+    context = bootstrap_security_context(ROOT)
+    boundary = NornyxActionBoundary(
+        ROOT,
+        runtime_subject=context.runtime_subject,
+        governance_integrity=context.governance_integrity,
+        established_root=context.established_root,
+    )
+    assert boundary.root == ROOT
+
+
+def test_a_scratch_root_with_no_contract_is_accepted(tmp_path: Path):
+    """The scoping, stated as a test rather than left to a comment.
+
+    `root` selects two things -- the governing contract and lock, and where
+    evidence and the ledger are written -- and that conflation is the defect
+    underneath this finding. Refusing every differing root would also refuse
+    writing evidence to a scratch directory, which supplies no policy from
+    anywhere: with no contract present the boundary falls back and denies
+    high-risk outright, so no conclusion spans two trees.
+
+    If the two roles are ever separated, this test is the one to delete.
+    """
+    from nornyx_forge.nornyx_runtime import RUNTIME_CONTRACT, NornyxActionBoundary  # noqa: PLC0415
+    from nornyx_forge.subject_bootstrap import bootstrap_security_context  # noqa: PLC0415
+
+    context = bootstrap_security_context(ROOT)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    assert not (scratch / RUNTIME_CONTRACT).exists()
+
+    boundary = NornyxActionBoundary(
+        scratch,
+        runtime_subject=context.runtime_subject,
+        governance_integrity=context.governance_integrity,
+        established_root=context.established_root,
+    )
+    assert boundary.authorizer is None, (
+        "a root with no contract must fall back, or it is supplying policy "
+        "after all and this scoping is wrong"
+    )
+
+
+def test_an_unrooted_context_carries_no_tree_to_check_against():
+    """Absence is not a mismatch.
+
+    A deployment whose root could not be resolved has no tree to compare, and
+    refusing on that would turn "nothing to check" into "checked and wrong" --
+    different states. The empty string disables the comparison rather than
+    failing it, and consequential authority is already unavailable there for
+    its own reasons.
+    """
+    from nornyx_forge.subject_bootstrap import unrooted_trust_configuration  # noqa: PLC0415
+
+    assert unrooted_trust_configuration() is not None
+
+    from nornyx_forge.nornyx_runtime import NornyxActionBoundary  # noqa: PLC0415
+
+    boundary = NornyxActionBoundary(ROOT, established_root="")
+    assert boundary.root == ROOT
+
+
+def test_the_application_passes_its_established_root():
+    """The wiring, not just the mechanism.
+
+    A refusal nothing calls is decoration. Read from the composition site so
+    removing the argument fails here rather than silently disabling the check.
+    """
+    source = (ROOT / "src/demo_app/agentic.py").read_text(encoding="utf-8")
+    assert "established_root=(" in source, (
+        "the application no longer hands the boundary the tree its context "
+        "describes, so the coherence check cannot fire"
+    )
