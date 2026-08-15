@@ -86,6 +86,10 @@ class SecurityClass:
     #: Set when the class is re-proved by a dedicated catalogue module.
     delegated_to: str = ""
     side_effects: tuple[str, ...] = field(default_factory=tuple)
+    #: Further edits applied WITH `mutation`, for a property whose
+    #: enforcement has independent routes. Removing one route is
+    #: defence-in-depth evidence, not a kill.
+    extra_mutations: tuple = ()
     #: Set when AST inequality is not enough to show the control is gone.
     semantic_effect: str = ""
 
@@ -169,9 +173,19 @@ INVENTORY = (
         defect="verify() raised FileNotFoundError while a missing FILE refused cleanly",
         prop="absence is reported in the tool's vocabulary, never as a crash",
         control="the approval-wiring loop records absence and continues",
+        # TWO clauses, not one, and `FileNotFoundError` IS an `OSError` -- so
+        # disabling the first leaves the second catching the same absence and
+        # the refusal is unchanged. Measured: single-clause removal produced
+        # byte-identical output to pristine, which is why this reported as a
+        # SURVIVOR under the new baseline. It was a mis-specified attack, not an
+        # unproven control. Both routes are removed together, and the historical
+        # traceback returns (rc=1, FileNotFoundError propagating out of verify).
         mutation=(REFRESH,
                   "        except FileNotFoundError:",
                   "        except (FileNotFoundError,) if False else ():", 1),
+        extra_mutations=((REFRESH,
+                          "        except OSError as exc:",
+                          "        except (OSError,) if False else () as exc:", 1),),
         test="tests/test_task8_closure.py::test_the_verifier_refuses_missing_governed_content_without_crashing",
         expect="the verifier crashed instead of refusing",
         severity="P2",
@@ -422,12 +436,12 @@ RESOLUTION_PROBE = (
 def _mutated_tree(destination: Path, item: SecurityClass) -> Path:
     """A faithful workspace with exactly one admitted mutation applied."""
     tree = faithful_copy(destination)
-    relative, anchor, replacement, count = item.mutation
-    target = tree / relative
-    before = target.read_text(encoding="utf-8")
-    after = before.replace(anchor, replacement)
-    check_mutation(relative, before, after, anchor, count)
-    target.write_text(after, encoding="utf-8", newline="")
+    for relative, anchor, replacement, count in (item.mutation, *item.extra_mutations):
+        target = tree / relative
+        before = target.read_text(encoding="utf-8")
+        after = before.replace(anchor, replacement)
+        check_mutation(relative, before, after, anchor, count)
+        target.write_text(after, encoding="utf-8", newline="")
     return tree
 
 

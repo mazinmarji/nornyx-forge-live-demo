@@ -231,8 +231,13 @@ and continuing -- is not what
 `test_the_verifier_refuses_missing_governed_content_without_crashing` proves;
 disabling it leaves that test passing. Either an earlier refusal reaches the
 same outcome first (defence in depth, as with H03/H04) or the control is not
-load-bearing. **DISPOSITION: OPEN — SURVIVED, unexplained.** It is recorded as a
-survivor rather than reclassified, and the suite is red for a true reason.
+load-bearing. **RESOLVED — Case A, defence in depth.** Measured: the single-clause mutation
+produced output byte-identical to pristine, because `FileNotFoundError` IS an
+`OSError` and the `except OSError` clause immediately below independently
+catches the same absence. Removing BOTH clauses returns the historical traceback
+(rc=1, `FileNotFoundError` propagating out of `verify`). H05 was a
+MIS-SPECIFIED ATTACK, not an unproven control; it is now a compound attack over
+both routes and kills validly. **DISPOSITION: CLOSED.**
 
 ### P1-4 — CLOSED
 
