@@ -951,3 +951,93 @@ def test_a_passing_run_is_reported_as_survived(tmp_path: Path):
     with pytest.raises(AttackNotAdmissible) as refusal:
         require_caused_failure(report, "test_passing.py", "")
     assert refusal.value.outcome is Outcome.SURVIVED
+
+
+# --------------------------------------------------------------------------
+# The recorded metadata must be compared to something, or deleted.
+# --------------------------------------------------------------------------
+
+#: What a declared side effect means, as a token the killing test must assert on.
+#:
+#: `side_effects` was recorded on one class and read by nothing. A claim nobody
+#: checks is not weaker evidence than a claim that is checked -- it is a
+#: different kind of thing, and printing it beside real results makes it look
+#: like the same kind. Either the killing test asserts it or the class must
+#: stop claiming it.
+SIDE_EFFECT_TOKENS = {
+    "callback 0": "calls == []",
+    "ledger unchanged": "spent is False",
+    "grant unconsumed": "spent is False",
+}
+
+#: The severities this inventory may use. A free-text field cannot be wrong,
+#: which is another way of saying it cannot be checked.
+KNOWN_SEVERITIES = frozenset({"P1", "P2", "P3"})
+
+
+def test_every_recorded_severity_is_from_the_closed_vocabulary():
+    """`severity` was recorded and never read, so any string would have done."""
+    unknown = sorted(
+        f"{item.ident.split()[0]}={item.severity!r}"
+        for item in INVENTORY
+        if item.severity not in KNOWN_SEVERITIES
+    )
+    assert unknown == [], f"severities outside {sorted(KNOWN_SEVERITIES)}: {unknown}"
+
+
+def test_every_class_states_a_distinct_expectation():
+    """`expect` is the reason the killing test should fail.
+
+    Never compared to anything, so a class could carry an empty string or the
+    same sentence as its neighbour and nothing would notice. Distinctness is
+    what makes it a statement about THIS class rather than boilerplate.
+    """
+    blank = [item.ident.split()[0] for item in INVENTORY if not item.expect.strip()]
+    assert blank == [], f"these classes state no expectation: {blank}"
+
+    seen: dict[str, str] = {}
+    duplicates: list[str] = []
+    for item in INVENTORY:
+        ident = item.ident.split()[0]
+        if item.expect in seen:
+            duplicates.append(f"{ident} repeats {seen[item.expect]}")
+        seen[item.expect] = ident
+    assert duplicates == [], duplicates
+
+
+def test_every_declared_side_effect_is_asserted_by_its_killing_test():
+    """A recorded side effect must be one the named test actually checks.
+
+    H02 claims `callback 0`, `ledger unchanged` and `grant unconsumed`. Those
+    are exactly the observations that make an integrity refusal meaningful --
+    and nothing verified that the test named beside them asserts any of it.
+    """
+    unbacked: list[str] = []
+    for item in INVENTORY:
+        if not item.side_effects:
+            continue
+        module, _, _node = item.test.partition("::")
+        source = (ROOT / module).read_text(encoding="utf-8")
+        ident = item.ident.split()[0]
+        for effect in item.side_effects:
+            token = SIDE_EFFECT_TOKENS.get(effect)
+            if token is None:
+                unbacked.append(f"{ident}: {effect!r} has no declared token")
+            elif token not in source:
+                unbacked.append(f"{ident}: {module} does not assert {token!r}")
+    assert unbacked == [], unbacked
+
+
+def test_a_side_effect_nobody_asserts_would_be_caught():
+    """The self-attack. The check above must fail on an unbacked claim."""
+    token = SIDE_EFFECT_TOKENS.get("a side effect that is never asserted")
+    assert token is None, "the probe effect must be undeclared"
+
+    source = (ROOT / "tests/test_governance_integrity_authority.py").read_text(
+        encoding="utf-8"
+    )
+    assert "spent is False" in source, (
+        "the backing assertion H02 claims has disappeared, so the mapping above "
+        "is describing a test that no longer checks it"
+    )
+    assert "calls == []" in source
