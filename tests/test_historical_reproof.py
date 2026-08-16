@@ -381,11 +381,48 @@ INVENTORY = (
         ident="H18 evidence recomputation removed",
         defect="a recorded verdict was read back instead of recomputed",
         prop="assurance is recomputed over what is on disk",
-        control="verify() recomputes rather than reporting a stored verdict",
-        mutation=None,
-        delegated_to="tests/test_evidence_integrity_verifier.py",
-        test="tests/test_evidence_integrity_verifier.py",
-        expect="a tampered artifact is detected by recomputation",
+        control="recompute_binding_claims derives from artifacts, never the binding",
+        # AIMED BY MEASUREMENT. The obvious node --
+        # test_recomputation_reads_artifacts_not_the_binding -- is STRUCTURAL: it
+        # parses the source with `ast` and never executes the function, so
+        # `require_baseline_clause_reached` reported INVALID_TEST_AIM. A test can
+        # describe a property perfectly and still never run the code that holds
+        # it; a structural test is the clearest case of that, and the previous
+        # `test` field here did not even name a node.
+        #
+        # This node forges the binding and requires a refusal, so recomputation
+        # actually runs and its answer decides the verdict.
+        #
+        # Circularity is reintroduced in two edits: read the binding, then let
+        # its recorded values win. A forged binding then agrees with itself,
+        # which is exactly what "recomputing a claim by reading the claim" means.
+        mutation=(REFRESH,
+                  "    claims = {",
+                  "    import json as _circular\n"
+                  "    _self = _circular.loads(\n"
+                  '        (EVIDENCE_DIR / "review_binding.json").read_text(encoding="utf-8")\n'
+                  "    )\n"
+                  "    claims = {", 1),
+        extra_mutations=((REFRESH,
+                          "    return claims",
+                          "    claims.update(\n"
+                          "        {k: v for k, v in _self.items() if k in claims}\n"
+                          "    )\n"
+                          "    return claims", 1),),
+        # RE-AIMED AFTER AN FG15 ENUMERATION. Pointed at
+        # test_forging_the_binding_itself_is_refused, this SURVIVED -- and the
+        # reason was enumerated, not guessed: that test forges
+        # `production_approval` and `approvals.human_review`, which
+        # `_approval_state()` derives independently of recompute_binding_claims.
+        # Two routes; the mutation made one circular and the test exercised the
+        # other.
+        #
+        # This node tampers a BOUND ARTIFACT, so the verdict turns on a digest
+        # recomputation actually produces. Circular recomputation reads the
+        # binding's recorded digest instead, which agrees with itself, and the
+        # tamper stops being visible.
+        test="tests/test_evidence_integrity_verifier.py::test_tampering_a_bound_artifact_is_refused",
+        expect="a tampered bound artifact verifies because the binding vouches for itself",
         severity="P1",
     ),
     SecurityClass(
@@ -422,6 +459,23 @@ NOT_YET_KILLED = {
     "H04": (
         "the same measurement, from the other guard. Removing the empty-"
         "directory check alone leaves the surface unavailable"
+    ),
+    "H18": (
+        "REDUNDANT BY MEASUREMENT, with the routes enumerated rather than "
+        "assumed. Making recompute_binding_claims circular -- reading the "
+        "binding and letting its recorded values win -- was aimed at two nodes "
+        "in turn and survived both. "
+        "test_forging_the_binding_itself_is_refused forges production_approval "
+        "and approvals.human_review, which _approval_state() derives "
+        "INDEPENDENTLY of recompute_binding_claims. "
+        "test_tampering_a_bound_artifact_is_refused survived as well, so at "
+        "least one further route detects a tampered bound artifact without "
+        "consulting the recomputed claim under attack. "
+        "Clause reachability was PROVEN for both -- the probe fires inside "
+        "recompute_binding_claims -- so this is not a bad aim, it is defence in "
+        "depth. A valid kill needs a compound mutation removing every "
+        "anti-circularity route at once, and that inventory is not yet "
+        "complete. Recorded as a debt, not an exemption."
     ),
 }
 
@@ -1119,7 +1173,6 @@ ATTACKING_CATALOGUES = frozenset(
 COVERED_BUT_UNATTACKED = {
     "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
     "H15": "absence-is-not-success, asserted by its suite",
-    "H18": "evidence integrity is asserted, not attacked",
     "H19": "subject scope is asserted, not attacked",
 }
 
