@@ -54,6 +54,12 @@ class Outcome(str, Enum):
     INVALID_MUTATION_ENVIRONMENT = "INVALID_MUTATION_ENVIRONMENT"
     INVALID_BASELINE = "INVALID_BASELINE"
     INVALID_TEST_TARGET = "INVALID_TEST_TARGET"
+    #: The node EXISTS and PASSES pristine, and instrumentation proves it never
+    #: executes the clause the attack removes. Distinct from
+    #: INVALID_TEST_TARGET, which is a node that does not collect at all: here
+    #: the test is real, runs, and is simply aimed somewhere else. Nothing about
+    #: removing the control can be concluded from it.
+    INVALID_TEST_AIM = "INVALID_TEST_AIM"
 
 
 class AttackNotAdmissible(AssertionError):
@@ -317,14 +323,17 @@ def require_baseline_clause_reached(
     output = completed.stdout + completed.stderr
     if completed.returncode == 0:
         raise AttackNotAdmissible(
-            Outcome.INVALID_BASELINE,
+            Outcome.INVALID_TEST_AIM,
             f"{node} PASSES with a raise planted at {relative}'s clause, so it "
             "never executes the control this attack removes. A conclusion drawn "
             "from removing it would be about a clause the test does not reach.",
         )
     if CLAUSE_MARKER not in output:
+        # The clause may well have run; what failed is the harness's ability to
+        # SEE that it did. Reporting this as a test-aim problem would blame the
+        # attack for an instrumentation gap.
         raise AttackNotAdmissible(
-            Outcome.INVALID_BASELINE,
+            Outcome.INVALID_MUTATION_ENVIRONMENT,
             f"{node} failed under the clause probe but not because the clause "
             f"ran -- the marker is absent:\n{output[-400:]}",
         )
