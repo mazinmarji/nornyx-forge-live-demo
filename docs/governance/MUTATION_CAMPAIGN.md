@@ -10,18 +10,29 @@ skips, 0 unexpected skips, 0 unexpected xfails, architecture 0, security 0.
 ## Result
 
 ```
-attacks              35
-kills                31
-defence-in-depth      4
-root properties      11
+attacks                                35
+kills                                  31
+defence-in-depth                        4
+root properties                        11
 
-SURVIVED              0
-INVALID_MUTATION      0
-INVALID_BASELINE      0
-INVALID_TEST_TARGET   0
-INVALID_MUTATION_ENVIRONMENT 0
-UNPROVEN              0
+SURVIVED                                0
+INVALID_MUTATION                        0
+ADMITTED_ATTACK_INVALID_BASELINE        0
+INVALID_TEST_TARGET                     0
+INVALID_MUTATION_ENVIRONMENT            0
+UNPROVEN                                0
+
+DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS 2
+CLASSES_WITH_NO_MUTATION_REPRESENTATION  7
 ```
+
+The baseline count is named `ADMITTED_ATTACK_INVALID_BASELINE` because it counts
+only attacks that ENTERED the protocol. Two questions below never did, and
+reporting them as `INVALID_BASELINE = 0` alongside a description of their
+failing baselines would have been the same sentence meaning two things.
+
+`CLASSES_WITH_NO_MUTATION_REPRESENTATION` is H13-H19, recorded in
+[COVERAGE\_STATEMENT.md](COVERAGE_STATEMENT.md). Task 11 remains open for them.
 
 `35 = 31 + 4`, with `compound` as metadata on one of the kills rather than a
 fourth category. Not `31 + 4 + 1`: that reading counts `SURFACE-WHOLE-CHAIN`
@@ -91,14 +102,44 @@ They are covered by ordinary test modules, which is not nothing and is not the
 same claim. `COVERED_BUT_UNATTACKED` names them with a reason each, so "19
 classes re-proved" and "35 attacks" cannot be read as the same ground.
 
-Two questions remain unmeasured because no valid baseline exists yet, and both
-are recorded as `INVALID_BASELINE` rather than classified:
+### DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS = 2
 
-- whether `load_authorizer` re-reading the contract and lock per boundary
-  construction permits policy from one governed state to judge an identity from
-  another;
-- the behavioural half of A-P2-4, that the zone crossing is authorized at every
-  risk level.
+Neither has entered the admitted mutation protocol, so neither is counted as
+KILLED, DEFENCE_IN_DEPTH, SURVIVED or INVALID_BASELINE. They are not attacks
+that failed admission; they are questions that cannot yet be asked.
 
-Both need the runtime contract to pass governance validation, which needs the
-evidence set regenerated in causal order. Neither is claimed as proven.
+**D1 — does `load_authorizer` re-reading contract and lock permit a G1/G2 mix?**
+`NornyxActionBoundary.__init__` calls `load_authorizer(contract, lock,
+validation_as_of=…)` on EVERY construction. The injected subject and integrity
+verdict are frozen at bootstrap. Whether a contract edited after bootstrap can
+change what is permitted, while the frozen verdict still certifies the pre-edit
+state, is unanswered.
+
+**D2 — is the zone crossing authorized at every risk level, behaviourally?**
+`canonical_action_request` pins `destination=zone.external_customer` on every
+request. The crossing is now evaluated whenever the capability is allowed rather
+than only for high risk, and that change is asserted STRUCTURALLY. The
+behavioural half — that the authorizer actually returns a decision for the
+crossing at low and medium risk — is not.
+
+**Why neither can be measured yet.** Both need `load_authorizer` to succeed,
+and it does not:
+
+```
+AuthorizerLoadError: CONTRACT_INVALID: The contract fails governance
+validation: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING,
+EVIDENCE_REQUIRED_MISSING
+```
+
+Three attempts were made and all three discarded — a copied tree has no runtime
+lock, a copy plus the real lock has no generated evidence, and the real tree's
+contract does not validate. In every case the pristine baseline failed, so no
+mutation could have changed a verdict and any classification would have been
+harness evidence rather than security evidence.
+
+**Evidence regeneration required before they can be measured**: the complete
+established chain, in causal order, until `--verify` reports `status: pass`,
+`integrity_state: intact`, `problems: []` and `governed_input_match: true`. Only
+then does a contract exist that a mutation could move.
+
+Neither is claimed as proven, and neither is claimed as absent.
