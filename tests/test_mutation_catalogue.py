@@ -246,15 +246,15 @@ DEFENCE_IN_DEPTH_ATTACKS = frozenset(
 )
 
 #: What the campaign actually measured. Pinned, because a floor is not a count.
-EXPECTED_TOTAL_ATTACKS = 39
-EXPECTED_KILLS = 35
+EXPECTED_TOTAL_ATTACKS = 40
+EXPECTED_KILLS = 36
 EXPECTED_DEFENCE_IN_DEPTH = 4
 
 
 def test_the_accounting_is_kills_plus_defence_in_depth():
-    """39 = 35 + 4, with `compound` as METADATA on one of the kills.
+    """40 = 36 + 4, with `compound` as METADATA on one of the kills.
 
-    Not 35 + 4 + 1: that reading counts the compound attack twice and implies a
+    Not 36 + 4 + 1: that reading counts the compound attack twice and implies a
     fourth category. A compound attack is a kill that had to remove an entire
     enforcement chain.
 
@@ -268,8 +268,8 @@ def test_the_accounting_is_kills_plus_defence_in_depth():
     kills = [a for a in CATALOGUE if not a.defence_in_depth]
     compound = [a for a in CATALOGUE if a.compound]
 
-    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 39"
-    assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 35"
+    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 40"
+    assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 36"
     assert len(defence) == EXPECTED_DEFENCE_IN_DEPTH, sorted(defence)
     assert total == len(kills) + len(defence), f"{total} != {len(kills)} + {len(defence)}"
 
@@ -597,7 +597,7 @@ REQUIRED_ATTACK_IDS = frozenset(
         # H14/H16/H17/H19 gained direct attacks after the seven-class coverage
         # statement. The identity control refused to let them be protected only
         # by the floor, which is the discipline it was built for.
-        "H14-DIRECT", "H16-DIRECT", "H17-DIRECT", "H19-DIRECT",
+        "H14-DIRECT", "H15-DIRECT", "H16-DIRECT", "H17-DIRECT", "H19-DIRECT",
     }
 )
 

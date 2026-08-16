@@ -326,6 +326,24 @@ INVENTORY = (
         defect="deleting a governed module the tool imports produced a traceback",
         prop="a missing governed module is a refusal, not a crash",
         control="_refuse_missing_governed_module",
+        # TRACED FROM THE OBSERVABLE, not from the helper's name -- which is how
+        # the two earlier attempts went wrong.
+        #
+        # Deleting src/nornyx_forge/reviewer_trust.py and running --verify
+        # produces exit 2 and a structured refusal naming the absent module.
+        # That message is built in exactly one place, and it is this helper.
+        #
+        # The earlier aim failed because the test named for this class deletes a
+        # governed FILE or CONTRACT -- neither raises ModuleNotFoundError, so
+        # the helper never ran. No test in this suite deleted a MODULE, so the
+        # control had no proof at all. One was written.
+        #
+        # Anchored on the helper's own first statement rather than a call site:
+        # the bare call appears twice and the surrounding text is inside an
+        # import's parentheses, which is not a statement boundary. The hardened
+        # probe reports INVALID_MUTATION_ENVIRONMENT for that anchor and
+        # CLAUSE REACHED for this one, which is exactly the distinction it was
+        # built to make.
         # The bare call site appears TWICE, so `check_mutation` refused it as
         # ambiguous rather than silently taking the first. The anchor carries
         # the preceding import to be unique -- which is the honest fix, since
@@ -339,34 +357,9 @@ INVENTORY = (
         # which is why `test_the_verifier_refuses_missing_governed_content_
         # without_crashing` asserts on the refusal's content and not on rc.
         mutation=(REFRESH,
-                  "        inspection_subject_digest,\n"
-                  "    )\n"
-                  "except ModuleNotFoundError as exc:\n"
-                  "    _refuse_missing_governed_module(exc)",
-                  "        inspection_subject_digest,\n"
-                  "    )\n"
-                  "except ModuleNotFoundError as exc:\n"
-                  "    raise exc", 1),
-        # COMPOUND, after an FG15 enumeration. Attacking the first call site
-        # alone SURVIVED: there are TWO independent import guards, and the module
-        # this test deletes is imported at the second. Two routes, one attacked
-        # -- the same shape as H03/H04 and the governance-surface chain.
-        #
-        # ROUTE 1  the governed-subject import block   (inspection_subject_digest)
-        # ROUTE 2  the runtime/reviewer-trust block    (REQUIRED_INSPECTOR_ROLES)
-        #
-        # Both are removed together, so a missing governed module has no
-        # controlled reporting path left anywhere in this tool.
-        extra_mutations=((REFRESH,
-                          "        REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,\n"
-                          "    )\n"
-                          "except ModuleNotFoundError as exc:\n"
-                          "    _refuse_missing_governed_module(exc)",
-                          "        REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,\n"
-                          "    )\n"
-                          "except ModuleNotFoundError as exc:\n"
-                          "    raise exc", 1),),
-        test="tests/test_task8_closure.py::test_the_verifier_refuses_missing_governed_content_without_crashing",
+                  '    if (exc.name or "").split(".")[0] not in {"governed_content", "nornyx_forge"}:',
+                  "    if True:", 1),
+        test="tests/test_absence_is_not_success.py::test_a_deleted_governed_module_is_refused_not_crashed",
         expect="a missing governed module escapes as an uncontrolled traceback",
         severity="P2",
     ),
@@ -502,22 +495,6 @@ NOT_YET_KILLED = {
     "H04": (
         "the same measurement, from the other guard. Removing the empty-"
         "directory check alone leaves the surface unavailable"
-    ),
-    "H15": (
-        "AIM UNPROVEN -- and the earlier 'inventory incomplete' verdict was "
-        "WITHDRAWN, because the evidence behind it was a harness false "
-        "positive. The clause probe was planted inside an import statement's "
-        "parentheses, which made the file unparseable; the test then failed on "
-        "a SyntaxError while --tb=long echoed the offending SOURCE LINE, marker "
-        "and all, into the output. Reachability was read off text that never "
-        "executed. The probe now compiles the probed file and requires the "
-        "marker as a RAISED exception, and this anchor is correctly reported "
-        "INVALID_MUTATION_ENVIRONMENT. "
-        "Separately, the hostile fixture deletes a governed FILE or CONTRACT, "
-        "which never raises ModuleNotFoundError -- so _refuse_missing_governed_"
-        "module is not the control this test exercises at all. The real "
-        "producer of that refusal has to be traced from the diagnostic "
-        "backward, which is Task 11R. No route inventory is claimed here."
     ),
     "H18": (
         "REDUNDANT BY MEASUREMENT, with the routes enumerated rather than "

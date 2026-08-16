@@ -226,3 +226,120 @@ def test_a_missing_review_binding_is_not_a_passing_verification(tmp_path: Path):
     report = json.loads(completed.stdout[completed.stdout.find("{"):])["verification"]
     assert report["integrity_state"] != "intact"
     assert any("review binding is absent" in problem for problem in report["problems"])
+
+
+# --------------------------------------------------------------------------
+# A governed MODULE the tool imports, removed. Distinct from a governed file or
+# contract, which is a different absence handled on a different path.
+# --------------------------------------------------------------------------
+
+
+def _settled_copy(tmp_path: Path) -> Path:
+    """A faithful workspace with its evidence set generated in causal order."""
+    from mutation_workspace import faithful_copy, isolated_env  # noqa: PLC0415
+
+    tree = faithful_copy(tmp_path)
+    env = isolated_env(tree)
+    for step in (["--as-of", "2026-08-11T00:00:00Z"], ["--sync-contracts"],
+                 ["--review-binding"]):
+        completed = subprocess.run(  # noqa: S603
+            [sys.executable, "scripts/refresh_governance_evidence.py", *step],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=900,
+        )
+        assert completed.returncode == 0, completed.stderr[-400:]
+    return tree
+
+
+def _verify(tree: Path):
+    from mutation_workspace import isolated_env  # noqa: PLC0415
+
+    return subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=isolated_env(tree), timeout=900,
+    )
+
+
+def test_a_deleted_governed_module_is_refused_not_crashed(tmp_path: Path):
+    """THE CONTROL THAT HAD NO PROOF.
+
+    `_refuse_missing_governed_module` translates a ModuleNotFoundError for
+    governed source into a governance finding. Nothing exercised it: the test
+    named for this class deletes a governed FILE or CONTRACT, and neither raises
+    ModuleNotFoundError, so the helper never ran in any test in this suite.
+
+    Traced backward from the observable rather than assumed. Deleting
+    `src/nornyx_forge/reviewer_trust.py` and running `--verify` produces exit 2
+    and a structured refusal naming the absent module -- and that message is
+    built in exactly one place, which is the helper.
+
+    The distinction under test is SEMANTIC, not the exit code. A traceback also
+    exits non-zero. What separates a refusal from a crash is that the refusal is
+    machine-readable, names the missing content, and reports integrity as
+    UNAVAILABLE rather than claiming anything about soundness.
+    """
+    tree = _settled_copy(tmp_path)
+    (tree / "src/nornyx_forge/reviewer_trust.py").unlink()
+
+    completed = _verify(tree)
+    combined = completed.stdout + completed.stderr
+
+    # A CRASH would put a traceback on stderr and no JSON on stdout.
+    assert "Traceback (most recent call last)" not in combined, (
+        f"a missing governed module produced an uncontrolled traceback:\n"
+        f"{combined[-600:]}"
+    )
+    assert completed.stdout.strip().startswith("{"), (
+        f"the refusal is not machine-readable:\n{combined[-400:]}"
+    )
+
+    report = json.loads(completed.stdout[completed.stdout.find("{"):])
+    assert report["status"] == "fail"
+    verification = report["verification"]
+    assert verification["integrity_state"] == "unavailable", verification
+    assert verification["governed_input_match"] is False
+    assert any(
+        "nornyx_forge.reviewer_trust" in problem
+        for problem in verification["problems"]
+    ), verification["problems"]
+
+
+def test_the_refusal_names_the_module_rather_than_the_python_error(tmp_path: Path):
+    """An operator must learn that governed content is absent.
+
+    Not that Python could not import something -- which is what a traceback
+    says, and it sends the reader to reinstall the tool instead of restoring the
+    file.
+    """
+    tree = _settled_copy(tmp_path)
+    (tree / "src/nornyx_forge/reviewer_trust.py").unlink()
+
+    report = json.loads(_verify(tree).stdout[_verify(tree).stdout.find("{"):])
+    problem = report["verification"]["problems"][0]
+
+    assert "governed content is missing" in problem, problem
+    assert "not present in the tree" in problem, problem
+    assert "ModuleNotFoundError" not in problem, (
+        "the refusal leaks the Python exception name, which describes the "
+        "interpreter's difficulty rather than the governed state"
+    )
+
+
+def test_a_non_governed_import_failure_keeps_its_traceback(tmp_path: Path):
+    """The control, and the reason the translation is narrow.
+
+    Only modules under the governed source packages are translated. Anything
+    else is a real environment fault, and dressing it up as a governance finding
+    would hide a broken installation behind a sentence about governed content.
+    """
+    source = (ROOT / "scripts/refresh_governance_evidence.py").read_text(
+        encoding="utf-8"
+    )
+    assert '{"governed_content", "nornyx_forge"}' in source, (
+        "the translation is no longer restricted to governed packages, so an "
+        "unrelated ImportError would be reported as missing governed content"
+    )
+    assert "raise exc" in source, (
+        "a non-governed ModuleNotFoundError is no longer re-raised"
+    )
