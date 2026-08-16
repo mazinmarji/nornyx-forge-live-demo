@@ -329,10 +329,17 @@ def test_the_two_counts_are_reported_separately():
 # --------------------------------------------------------------------------
 
 
-def test_every_owner_module_exists_and_defines_its_killing_test():
-    """"Covered elsewhere" is not evidence. The catalogue must say where."""
+def delegation_problems(attacks) -> list[str]:
+    """Every attack whose owner is gone or no longer defines its killing test.
+
+    A function rather than a loop inside one test, so the self-attacks below can
+    RUN it against a deliberately broken attack. They previously asserted that
+    an invented module path did not exist and that an invented function name was
+    not defined -- both true of any string nobody had used, and neither reaching
+    this logic at all.
+    """
     problems: list[str] = []
-    for attack in CATALOGUE:
+    for attack in attacks:
         module = ROOT / attack.owner
         if not module.exists():
             problems.append(f"{attack.attack_id}: {attack.owner} is gone")
@@ -347,6 +354,12 @@ def test_every_owner_module_exists_and_defines_its_killing_test():
                 f"{attack.attack_id}: {attack.owner} no longer defines "
                 f"{attack.killed_by}"
             )
+    return problems
+
+
+def test_every_owner_module_exists_and_defines_its_killing_test():
+    """"Covered elsewhere" is not evidence. The catalogue must say where."""
+    problems = delegation_problems(CATALOGUE)
     assert problems == [], problems
 
 
@@ -412,25 +425,46 @@ def test_lowering_the_floor_below_a_lost_campaign_is_visible():
 
 
 def test_removing_a_delegated_owner_is_visible():
-    """A named owner that no longer exists must fail, not be skipped over."""
+    """A named owner that no longer exists must fail, not be skipped over.
+
+    This used to assert that an invented module path did not exist -- true of
+    any string nobody had used, and it never reached the validation. The phantom
+    now goes THROUGH `delegation_problems`, which is the code that would have to
+    notice a real deletion.
+    """
     phantom = Attack(
         root_property_id="AUTHORITY_DOMAIN_SEPARATION",
         attack_id="PHANTOM",
         owner="tests/test_module_that_does_not_exist.py",
         killed_by="test_nothing",
     )
-    assert not (ROOT / phantom.owner).exists()
+    problems = delegation_problems([phantom])
+
+    assert problems, "a missing owner module produced no problem at all"
+    assert "PHANTOM" in problems[0] and "is gone" in problems[0], problems
 
 
 def test_an_attack_without_a_killing_test_is_visible():
-    """Every attack must name a test that really exists in its owner."""
-    module = ROOT / "tests/test_domain_collapse_mutations.py"
-    tree = ast.parse(module.read_text(encoding="utf-8"))
-    defined = {
-        node.name for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
-    assert "test_a_function_that_does_not_exist" not in defined
+    """Every attack must name a test that really exists in its owner.
+
+    This used to assert an invented function name was not defined in a module,
+    which is true of any name nobody wrote and proves nothing about the
+    catalogue. The phantom now names a REAL owner and a missing killing test,
+    and the validation must report it.
+    """
+    phantom = Attack(
+        root_property_id="AUTHORITY_DOMAIN_SEPARATION",
+        attack_id="ORPHAN",
+        owner="tests/test_domain_collapse_mutations.py",
+        killed_by="test_a_function_that_does_not_exist",
+    )
+    problems = delegation_problems([phantom])
+
+    assert problems, "an attack naming a nonexistent killing test was accepted"
+    assert "no longer defines" in problems[0], problems
+
+    # And the control: a real attack from the shipped catalogue passes.
+    assert delegation_problems([CATALOGUE[0]]) == []
 
 
 # --------------------------------------------------------------------------
@@ -616,3 +650,48 @@ def test_the_required_set_is_not_derived_from_the_catalogue():
     assert "for " not in declaration, (
         "REQUIRED_ATTACK_IDS is built by a comprehension rather than written out"
     )
+
+
+def test_no_attack_is_protected_only_by_the_floor():
+    """The floor's own guard weakens exactly when the catalogue is eroded.
+
+    `MINIMUM_ATTACKS > len(CATALOGUE) - largest` gets EASIER to satisfy as
+    campaigns shrink: the smaller the catalogue, the smaller the shortfall the
+    floor has to exceed. A control that relaxes in proportion to the damage is
+    not an anti-shrink control.
+
+    So the floor is no longer the anti-shrink control -- REQUIRED_ATTACK_IDS is,
+    and this asserts its coverage is TOTAL. Every attack in the catalogue is
+    named there, so losing any one fails by name whatever the floor says, and
+    the floor is left as a secondary sanity bound rather than the thing standing
+    between the campaign and quiet erosion.
+
+    Adding an attack fails here until it is named. That is the same discipline
+    REQUIRED_MODULES applies, and it is the point: the inventory is a decision
+    someone records.
+    """
+    present = {attack.attack_id for attack in CATALOGUE}
+    unprotected = sorted(present - REQUIRED_ATTACK_IDS)
+
+    assert unprotected == [], (
+        f"these attacks are in the catalogue but not named in "
+        f"REQUIRED_ATTACK_IDS, so only the floor protects them: {unprotected}"
+    )
+
+
+def test_the_identity_control_survives_a_floor_that_is_far_too_low():
+    """The floor could be set to 1 and deletion would still fail.
+
+    Measured rather than asserted about: the same six-attack deletion Lens B
+    performed is run against an absurd floor, and the identity check still
+    reports every missing attack.
+    """
+    absurd_floor = 1
+    survivors = tuple(
+        attack for attack in CATALOGUE
+        if attack.attack_id not in {"M9", "M10", "M11", "M12", "M13", "M14"}
+    )
+
+    assert len(survivors) >= absurd_floor, "the floor cannot catch this"
+    missing = sorted(REQUIRED_ATTACK_IDS - {a.attack_id for a in survivors})
+    assert missing == ["M10", "M11", "M12", "M13", "M14", "M9"], missing
