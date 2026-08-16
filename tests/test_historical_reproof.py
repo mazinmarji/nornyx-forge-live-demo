@@ -288,11 +288,29 @@ INVENTORY = (
         ident="H14 independent review self-reports pass",
         defect="independence was read off the artifact being judged",
         prop="independence is derived from authenticated identities",
-        control="reviewer trust store plus signed attestations",
-        mutation=None,
-        delegated_to="tests/test_independent_inspection.py",
-        test="tests/test_independent_inspection.py::test_an_inspection_nobody_can_authenticate_establishes_nothing",
-        expect="an unauthenticated inspection establishes nothing",
+        control="_authenticated_inspections discards what does not authenticate",
+        # HIGHEST SCRUTINY. This is the class that put three forged
+        # `"reviewer": "forged", "verdict": "pass"` records into a commit and
+        # made the tree's own integrity verdict false. Removing the discard
+        # accepts every attestation on disk, authenticated or not -- which IS
+        # "independence read off the artifact being judged".
+        mutation=(REFRESH,
+                  "        if not ok:",
+                  "        if False:", 1),
+        # RE-AIMED, and the first aim is the finding. Pointed at
+        # test_an_inspection_nobody_can_authenticate_establishes_nothing, this
+        # mutation SURVIVED: that test runs with no reviewer trust store, so
+        # _authenticated_inspections returns at the store-availability guard and
+        # never reaches the discard. Two routes, one attacked, and the harness
+        # correctly refused to call it a kill -- FG15 exactly.
+        #
+        # This node genuinely reaches the clause: the store vouches for the
+        # builder, every earlier check passes, and only the discard stands
+        # between a builder-signed attestation and an accepted inspection. Its
+        # own docstring records the same defect happening before, when identity
+        # mismatch fired first and the builder branch was never reached.
+        test="tests/test_independent_inspection.py::test_the_builder_cannot_satisfy_an_inspector_role",
+        expect="a builder-signed attestation is accepted as an inspection",
         severity="P1",
     ),
     SecurityClass(
@@ -310,11 +328,22 @@ INVENTORY = (
         ident="H16 git unavailable read as a clean tree",
         defect="an unreachable git reported no unstaged governed paths",
         prop="an unanswerable question is not an answer of 'clean'",
-        control="_unstaged_governed_paths raises SystemExit on OSError",
-        mutation=None,
-        delegated_to="tests/test_absence_is_not_success.py",
-        test="tests/test_absence_is_not_success.py::test_every_empty_return_from_a_handler_is_classified",
-        expect="every empty-return handler carries a classification",
+        control="_unstaged_governed_paths refuses when git cannot be run",
+        # HIGHEST SCRUTINY. The fourth instance in this repository of required
+        # evidence being absent and read as successful empty verification. The
+        # historical code was `except Exception: return []`; this puts the empty
+        # return back, ahead of the refusal, so an unreachable git once again
+        # answers "no unstaged governed paths" -- which reads as a clean tree.
+        mutation=(REFRESH,
+                  "        raise SystemExit(\n"
+                  '            f"git could not be run ({exc}). A clean governed '
+                  'tree cannot be "',
+                  "        return []\n"
+                  "        raise SystemExit(\n"
+                  '            f"git could not be run ({exc}). A clean governed '
+                  'tree cannot be "', 1),
+        test="tests/test_absence_is_not_success.py::test_an_unrunnable_git_is_not_a_clean_tree",
+        expect="an unrunnable git reports a clean governed tree",
         severity="P1",
     ),
     SecurityClass(
@@ -1069,9 +1098,7 @@ ATTACKING_CATALOGUES = frozenset(
 #: Being covered by tests is not nothing. It is just not the same claim.
 COVERED_BUT_UNATTACKED = {
     "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
-    "H14": "independent inspection is asserted, not attacked",
     "H15": "absence-is-not-success, asserted by its suite",
-    "H16": "absence-is-not-success, asserted by its suite",
     "H17": "absence-is-not-success, asserted by its suite",
     "H18": "evidence integrity is asserted, not attacked",
     "H19": "subject scope is asserted, not attacked",
