@@ -142,4 +142,48 @@ established chain, in causal order, until `--verify` reports `status: pass`,
 `integrity_state: intact`, `problems: []` and `governed_input_match: true`. Only
 then does a contract exist that a mutation could move.
 
-Neither is claimed as proven, and neither is claimed as absent.
+### Resolution attempted. DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS remains 2.
+
+The evidence set was regenerated in causal order — build, `--sync-contracts`,
+`--review-binding` — and `--verify` reports exactly what was required:
+
+```
+status                 pass
+integrity_state        intact
+problems               []
+governed_input_match   True
+evidence_manifest_match True
+
+assurance_state        not_independently_inspected
+independent            False
+authenticated_reviewers []
+```
+
+Those last three are the honest state of the real repository: no reviewer trust
+store exists, so no inspection can be authenticated, and none is claimed.
+
+**The authorizer still does not load.** Regeneration was necessary and was not
+sufficient:
+
+```
+AuthorizerLoadError: CONTRACT_INVALID: The contract fails governance
+validation: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING,
+EVIDENCE_REQUIRED_MISSING
+```
+
+`runtime_network.nyx` declares `approval_record` in `required_evidence`, and no
+adopted approval exists. All three codes trace to one precondition: a genuine
+human approval record. The two refresher flags that would satisfy it —
+`--wire-approvals` and `--adopt-approval` — put an ADOPTED HUMAN APPROVAL into
+the contracts, and there is none to adopt.
+
+So D1 and D2 are blocked on a human approval, not on effort or evidence. They
+stay at 2. Reaching 0 was available only by creating, inferring, simulating or
+backdating an approval record, which is precisely what must never happen, and
+the reviewer who first recorded this called it correctly: *irreducible without a
+genuine human approval_record; correct behaviour for an autonomous
+demonstration.*
+
+Neither question is claimed as proven, and neither is claimed as absent. Both
+become measurable the moment a real approval is adopted by a human, and the
+protocol they must then pass is the same six steps as every other attack.
