@@ -240,6 +240,7 @@ def test_an_unstaged_edit_moves_the_governed_subject_digest(tmp_path: Path):
     import subprocess  # noqa: PLC0415
 
     from mutation_workspace import faithful_copy  # noqa: PLC0415
+
     from nornyx_forge.governed_subject import REPOSITORY_SCOPE  # noqa: PLC0415
     from nornyx_forge.subject_bootstrap import establish_subject  # noqa: PLC0415
 
