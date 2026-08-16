@@ -182,7 +182,7 @@ At least three of those kills were invalid.
 
 ## P3 findings
 
-Seven closed, ten open. Each receives FIXED or
+Twelve closed, five open. Each receives FIXED or
 ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 
 **Closed**
@@ -196,6 +196,11 @@ ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 | B: the semantic-binding suite mutates the real contracts in place | MITIGATED — a session guard compares `git status --porcelain` across the run and fails loudly on anything the suite leaves behind. The in-place mutation remains; its failure mode is no longer silent. Verified by a probe test that dirties a tracked file |
 | C: `_dynamically_imported_module`'s docstring overstates its coverage | FIXED — the docstring now describes the routes actually recognised, which grew when C-P2-1 closed |
 | C: `_unstaged_governed_paths`' docstring misstates the digest source | FIXED — the digest reads the working tree, not the index, and an assertion pins it so a "simplification" to the index fails loudly |
+| B: `classify()` counts collection errors toward the total and marks the module seen | FIXED — a `<testcase>` carrying `<error>` is not a test. A module that failed to import inflated the count, satisfied REQUIRED_MODULES and would have met its per-module floor. Errored runs now fail the gate |
+| B: `EXPECTED_9C_IDS` is derived from the thing it checks | FIXED — the eight attacks are written out by name, with a guard refusing a declaration that mentions the catalogue again |
+| B: gutting a false-green self-attack body to `pass` keeps 9/9 green | FIXED — each named function is parsed and must carry an assertion or expected-refusal block. Verified by gutting FG03 in a copy |
+| B: two catalogue self-attacks assert that invented names do not exist | FIXED — both phantoms now run the real delegation check, with a control proving a genuine entry still passes |
+| B: `MINIMUM_ATTACKS`' own guard weakens as campaigns shrink | FIXED — the floor is no longer the control. `REQUIRED_ATTACK_IDS` has total coverage, demonstrated against a floor of 1 |
 
 **Open**
 
