@@ -772,7 +772,19 @@ def _authenticate_signed_human_artifact(
     to the very store that must not hold it.
     """
 
-    store = trust_store if trust_store is not None else ApprovalTrustStore()
+    # Labelled with the authority that is ASKING. A bare `ApprovalTrustStore()`
+    # here carried no domain, and the domain clause below skips an unlabelled
+    # store -- so the one store this function can construct for itself was also
+    # the one store that would have satisfied any domain. It authenticates
+    # nothing either way (no signers, so the availability clause refuses first),
+    # but a fallback that is exempt from the separation rule is the wrong shape
+    # to leave in an authenticator, and it was the only production site that
+    # built one.
+    store = (
+        trust_store
+        if trust_store is not None
+        else ApprovalTrustStore(source="<none supplied>", domain=trust_domain)
+    )
     blank = AuthenticatedSignerEvidence(
         trust_domain=trust_domain, trust_store_digest=store.digest
     )
@@ -783,24 +795,43 @@ def _authenticate_signed_human_artifact(
     if not isinstance(artifact, Mapping):
         return refuse(f"no {spec.noun} was supplied")
 
-    # The store must belong to the authority asking. Handing the governance
-    # membership to the action verifier is a cross-domain grant even though
-    # every signature in it is valid, so it is refused here rather than being
-    # left to whoever wired the call. An unlabelled store (an in-memory fixture)
-    # asserts nothing about domain and is not refused on this clause.
-    if store.domain and store.domain != trust_domain:
-        return refuse(
-            f"TRUST_DOMAIN_MISMATCH: a {trust_domain!r} authority was asked to "
-            f"decide against the {store.domain!r} approver trust store. "
-            "Membership in one domain is not authority in another."
-        )
-
     # Fail closed on absence. An empty store is "nothing can be authenticated
     # here", which is the opposite of "anything may pass".
     if not store.available or not store.signers:
         return refuse(
             f"APPROVER_TRUST_UNAVAILABLE: no {trust_domain} approver trust store, "
             f"so no human {spec.noun} can be authenticated ({store.source})"
+        )
+
+    # The store must belong to the authority asking. Handing the governance
+    # membership to the action verifier is a cross-domain grant even though
+    # every signature in it is valid, so it is refused here rather than being
+    # left to whoever wired the call.
+    #
+    # NOT TOTAL, and that is a recorded decision rather than an oversight.
+    # `store.domain and ...` lets an UNLABELLED store skip this clause, so
+    # domain separation is opt-in for stores that decline to say which authority
+    # they belong to. Production always labels -- `ApprovalTrustStore.load`
+    # takes the domain as a required keyword with no default -- so no live path
+    # reaches here unlabelled; the affordance exists for in-memory fixtures.
+    #
+    # Making it total was implemented and MEASURED, and reverted on the
+    # evidence. It broke thirteen call sites across five test modules, and two
+    # of those were security proofs whose MECHANISM it changed rather than whose
+    # fixture it inconvenienced: `test_removing_the_frozen_store_changes_the_
+    # consequential_decision` removes the frozen store precisely to show the
+    # decision moves, and a domain refusal reaching it first means the test
+    # stops measuring what it names.
+    #
+    # Trading a latent affordance for a real reduction in what two H01 proofs
+    # measure is a bad trade. The property that actually matters -- production
+    # stores are always labelled -- is asserted directly in
+    # tests/test_authority_domains.py instead.
+    if store.domain and store.domain != trust_domain:
+        return refuse(
+            f"TRUST_DOMAIN_MISMATCH: a {trust_domain!r} authority was asked to "
+            f"decide against the {store.domain!r} approver trust store. "
+            "Membership in one domain is not authority in another."
         )
 
     if artifact.get("schema") != spec.schema:

@@ -40,6 +40,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from nornyx_forge.approval_trust import (  # noqa: E402
     GOVERNANCE_APPROVAL_SCHEMA,
     GOVERNANCE_APPROVER_ROLES,
+    GOVERNANCE_TRUST_DOMAIN,
     ApprovalTrustStore,
     canonical_governance_payload,
     verify_governance_approval,
@@ -99,7 +100,13 @@ def _store(
                 "public_key": public,
                 "status": status,
             }
-        ]
+        ],
+        # Declared, because the domain guard is total: a store that will not say
+        # which authority it belongs to cannot answer a domain-scoped question.
+        # Without this these fixtures refuse on the domain clause and the tests
+        # never reach the expiry, timestamp and instant clauses they name --
+        # failing for a true reason that is not the one under test.
+        domain=GOVERNANCE_TRUST_DOMAIN,
     )
 
 

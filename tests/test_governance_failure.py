@@ -138,6 +138,8 @@ def _permissive_boundary(
     """
     from signing import trust_store  # noqa: PLC0415
 
+    from nornyx_forge.approval_trust import ACTION_TRUST_DOMAIN  # noqa: PLC0415
+
     # Provisioned deliberately, because these tests are about other controls and
     # need a boundary that can actually record a consumption. A boundary no
     # longer creates its own replay state; absence of a ledger is its own test,
@@ -153,8 +155,16 @@ def _permissive_boundary(
         or RuntimeContext.for_test(root, at=as_of, revision=TEST_REVISION),
         # A real trust store holding a real ephemeral key. Tests about refusal
         # supply a defective grant; they do not rely on trust being absent.
+        # Labelled ACTION, because that is the authority a consequential
+        # boundary exercises. The domain guard is total: an unlabelled store
+        # cannot answer a domain-scoped question, so a bare `trust_store()` here
+        # made every test resting on this helper refuse with
+        # TRUST_DOMAIN_MISMATCH instead of reaching the clause it was written
+        # for. One default, rather than a domain argument at each call site.
         action_trust_store=(
-            action_trust if action_trust is not None else trust_store()
+            action_trust
+            if action_trust is not None
+            else trust_store(domain=ACTION_TRUST_DOMAIN)
         ),
         # An established subject. Authority is content identity now, so a test
         # states one explicitly rather than letting the boundary discover it —

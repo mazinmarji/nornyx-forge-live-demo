@@ -22,6 +22,7 @@ No generic authenticator result may be read as an authority grant.
 
 from __future__ import annotations
 
+import inspect
 import json
 import sys
 from base64 import b64encode
@@ -43,8 +44,10 @@ from signing import (  # noqa: E402
 )
 
 from nornyx_forge.approval_trust import (  # noqa: E402
+    ACTION_TRUST_DOMAIN,
     GOVERNANCE_APPROVAL_SCHEMA,
     GOVERNANCE_APPROVER_ROLES,
+    GOVERNANCE_TRUST_DOMAIN,
     authenticate_action_grant,
     canonical_governance_payload,
     verify_governance_approval,
@@ -137,9 +140,15 @@ def _grant(tmp_path: Path, role: str) -> dict:
 
 def _release(tmp_path: Path, role: str, *, action_trust=None):
     """Drive the REAL consequential boundary with a grant claiming `role`."""
-    from signing import signed_grant  # noqa: PLC0415
+    from signing import signed_grant, trust_store  # noqa: PLC0415
     from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
 
+    # The consequential boundary IS the action authority, so its store says so.
+    # The domain guard is total: an unlabelled store cannot answer a
+    # domain-scoped question, and defaulting to one here made these tests refuse
+    # on TRUST_DOMAIN_MISMATCH instead of on the role clause they are named for.
+    if action_trust is None:
+        action_trust = trust_store(domain=ACTION_TRUST_DOMAIN)
     boundary = _permissive_boundary(
         tmp_path, as_of="2026-08-03T00:00:00Z", action_trust=action_trust
     )
@@ -195,7 +204,7 @@ def test_a_governance_role_cannot_release_a_consequential_effect(tmp_path: Path)
     )
     signer = authenticate_action_grant(
         signed_grant(prerequisite, approval_id="ACT-PRE", role="architecture_reviewer"),
-        trust_store=trust_store(),
+        trust_store=trust_store(domain=ACTION_TRUST_DOMAIN),
     )
     assert signer.signer_authenticated is True, (
         f"the artifact failed an EARLIER clause: {signer.reason}"
@@ -224,7 +233,9 @@ def test_a_governance_role_is_authoritative_in_the_governance_domain():
     """
     ok, reason, evidence = verify_governance_approval(
         _governance_approval("architecture_reviewer"),
-        trust_store=trust_store(roles=("architecture_reviewer",)),
+        trust_store=trust_store(
+            roles=("architecture_reviewer",), domain=GOVERNANCE_TRUST_DOMAIN
+        ),
         as_of=AS_OF,
     )
     assert ok is True, reason
@@ -243,7 +254,9 @@ def test_an_action_role_cannot_approve_governed_content():
 
     ok, reason, evidence = verify_governance_approval(
         _governance_approval("operations_owner"),
-        trust_store=trust_store(roles=("operations_owner",)),
+        trust_store=trust_store(
+            roles=("operations_owner",), domain=GOVERNANCE_TRUST_DOMAIN
+        ),
         as_of=AS_OF,
     )
     assert ok is False
@@ -294,7 +307,9 @@ def test_the_primitive_result_cannot_be_read_as_a_decision():
     grant = signed_grant(
         request, approval_id="ACT-PRIM", role="architecture_reviewer"
     )
-    signer = authenticate_action_grant(grant, trust_store=trust_store())
+    signer = authenticate_action_grant(
+        grant, trust_store=trust_store(domain=ACTION_TRUST_DOMAIN)
+    )
 
     assert signer.signer_authenticated is True, (
         "the primitive should authenticate a correctly signed artifact from a "
@@ -668,3 +683,83 @@ def test_every_prerequisite_holds_before_the_domain_clause_refuses(tmp_path: Pat
     )
     _refused_effect(decision, calls, spent, clause="may not release a high-risk effect")
     assert GOVERNANCE_ROLE in decision.reason
+
+
+# --------------------------------------------------------------------------
+# The domain guard is opt-in for unlabelled stores. Recorded, and bounded.
+# --------------------------------------------------------------------------
+
+
+def test_no_production_path_can_build_an_unlabelled_store():
+    """The property the runtime clause relies on, asserted directly.
+
+    `authenticate_action_grant` skips the domain clause for a store carrying no
+    domain, so separation is opt-in there. That is only safe while nothing in
+    production can produce one -- which is a claim about `src/`, and is
+    therefore checked in `src/`.
+
+    Making the runtime clause TOTAL was implemented and measured instead, and
+    reverted on the evidence: it broke thirteen call sites across five modules,
+    and two were security proofs whose MECHANISM it changed. Removing the frozen
+    store to show a decision moves stops proving that if a domain refusal
+    arrives first.
+    """
+    import ast  # noqa: PLC0415
+
+    from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
+
+    # `load` cannot be called without naming a domain: keyword-only, no default.
+    signature = inspect.signature(ApprovalTrustStore.load)
+    domain = signature.parameters["domain"]
+    assert domain.kind is inspect.Parameter.KEYWORD_ONLY, domain.kind
+    assert domain.default is inspect.Parameter.empty, (
+        "ApprovalTrustStore.load has a default domain, so a production caller "
+        "can build a store that answers every authority that asks"
+    )
+
+    # And no constructor call under src/ omits it.
+    unlabelled: list[str] = []
+    for path in sorted((ROOT / "src").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name not in {"ApprovalTrustStore", "for_test"}:
+                continue
+            if not any(kw.arg == "domain" for kw in node.keywords):
+                relative = str(path.relative_to(ROOT)).replace("\\", "/")
+                unlabelled.append(f"{relative}:{node.lineno}")
+
+    assert unlabelled == [], (
+        "these production sites build an approver trust store without naming "
+        f"its authority domain, so it would satisfy every domain: {unlabelled}"
+    )
+
+
+def test_absence_is_decided_before_domain():
+    """An absent store must refuse as ABSENT, not as a domain mismatch.
+
+    Found while measuring the total guard: with the domain clause first, a store
+    that was simply not provisioned reported TRUST_DOMAIN_MISMATCH -- invalidity
+    standing in for absence, which sends an operator to the wrong fix. The
+    ordering fix was kept even though the totality change was reverted.
+    """
+    from nornyx_forge.approval_trust import (  # noqa: PLC0415
+        ACTION_TRUST_DOMAIN,
+        ApprovalTrustStore,
+        authenticate_action_grant,
+    )
+
+    absent = ApprovalTrustStore(source="<no store>", domain=GOVERNANCE_TRUST_DOMAIN)
+    assert not absent.available and not absent.signers
+
+    signer = authenticate_action_grant({}, trust_store=absent)
+    assert "APPROVER_TRUST_UNAVAILABLE" in signer.reason, signer.reason
+    assert "TRUST_DOMAIN_MISMATCH" not in signer.reason, (
+        "an unprovisioned store refused as a domain mismatch, so absence is "
+        f"being reported as invalidity: {signer.reason}"
+    )
+    assert ACTION_TRUST_DOMAIN  # the authority that was asking
