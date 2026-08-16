@@ -485,16 +485,37 @@ NOT_YET_KILLED = {
     # `test_disabling_the_whole_chain_recreates_the_historical_unsafe_state` --
     # which is why they are excluded from the single-mutation runner rather than
     # left unproven.
+    # H03 and H04 are ONE root property reached through two hostile surfaces,
+    # and no single-guard mutation can kill either: four independent routes
+    # produce a refusal. That is no longer an assertion -- Task 11R measured it.
+    #
+    #   suppress nothing        -> R1/R2 refuse, each naming its own reason
+    #   suppress R1             -> R2 becomes decisive, diagnostic changes
+    #   suppress R1+R2          -> R3 becomes decisive, diagnostic changes
+    #   suppress R1+R2+R3       -> R4 becomes decisive, and RAISES
+    #   suppress R1+R2+R3+R4    -> `intact` over zero verified claims
+    #
+    # Only the last stage is the historical unsafe state. The third produces a
+    # CRASH, so a compound stopping there would turn a test red without ever
+    # reaching the defect -- and would have been credited as a kill.
+    #
+    # `test_the_governance_surface_route_inventory_is_complete` pins every stage
+    # and `test_no_route_in_the_inventory_is_inert` refuses a padded inventory,
+    # so the compound below is minimal by measurement rather than by assertion.
     "H03": (
-        "REDUNDANT BY MEASUREMENT, not unproven by accident: with BOTH the "
-        "is_dir and the empty-directory guards removed, observe_governance_"
-        "integrity still returns `unavailable`. A third layer refuses. Reviving "
-        "this defect needs a mutation that removes every layer, and until that "
-        "exists no single-guard mutation can be a valid kill"
+        "PROVEN BY COMPOUND, with a measured route inventory. Four independent "
+        "routes were enumerated by cumulative suppression, each shown decisive "
+        "by the diagnostic changing when the previous one was removed, and the "
+        "full set shown to reach `intact` over zero verified claims -- the "
+        "historical unsafe state. Excluded from the single-mutation runner "
+        "because no single guard can kill it, which is a property of the "
+        "system rather than a gap in the campaign; the kill is "
+        "SURFACE-WHOLE-CHAIN."
     ),
     "H04": (
-        "the same measurement, from the other guard. Removing the empty-"
-        "directory check alone leaves the surface unavailable"
+        "the same measured inventory, reached from the empty-directory surface "
+        "instead of the absent one. Suppressing the empty-directory guard alone "
+        "leaves the surface unavailable via the routes behind it."
     ),
     "H18": (
         "REDUNDANT BY MEASUREMENT, with the routes enumerated rather than "
@@ -1261,3 +1282,151 @@ def test_the_attacked_classes_really_delegate_to_mutation_catalogues():
             f"{ident} is counted as attacked but delegates to "
             f"{item.delegated_to!r}, which is not a mutation catalogue"
         )
+
+
+# --------------------------------------------------------------------------
+# Task 11R. The governance-surface route inventory, measured and pinned.
+# --------------------------------------------------------------------------
+
+#: The probe run inside each mutant workspace. Reports, per hostile state, the
+#: status, the verified count, and the first 60 characters of the diagnostic --
+#: (200 chars: at 80 the phrase that identifies R3 was clipped mid-word)
+#: which is how the DECISIVE route is identified: when a route is suppressed,
+#: the next route answers and the diagnostic changes.
+_SURFACE_PROBE = '''
+import sys, tempfile
+sys.path.insert(0, "src")
+from pathlib import Path
+from nornyx_forge.subject_observer import observe_governance_integrity
+work = Path(tempfile.mkdtemp())
+missing = work / "gone"
+empty = work / "empty"; empty.mkdir(parents=True)
+for label, path in (("MISSING", missing), ("EMPTY", empty)):
+    try:
+        s = observe_governance_integrity(path)
+        first = (s.problems[0] if s.problems else "")
+        print(label + "|" + s.status + "|" + str(s.verified_claims) + "|" + first[:200])
+    except Exception as exc:
+        print(label + "|RAISED " + type(exc).__name__ + "|-|" + str(exc)[:200])
+'''
+
+
+def _surface_observation(tree: Path) -> dict[str, tuple[str, str, str]]:
+    """(status, verified, diagnostic) per hostile state, from the mutant tree."""
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _SURFACE_PROBE],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=isolated_env(tree), timeout=600,
+    )
+    assert completed.returncode == 0, completed.stderr[-300:]
+    observed: dict[str, tuple[str, str, str]] = {}
+    for line in completed.stdout.strip().splitlines():
+        label, status, verified, diagnostic = line.split("|", 3)
+        observed[label] = (status, verified, diagnostic)
+    assert set(observed) == {"MISSING", "EMPTY"}, observed
+    return observed
+
+
+def test_the_governance_surface_route_inventory_is_complete(tmp_path: Path):
+    """TASK 11R. Every independently effective route, and nothing else.
+
+    An inventory is not complete because someone found three checks. It is
+    complete when cumulative suppression of exactly the enumerated routes
+    reaches the DEFINED HISTORICAL UNSAFE STATE -- here, an absent or empty
+    governance surface reporting `intact` -- and no unrelated control had to be
+    removed to get there.
+
+    Each stage below asserts which route BECAME DECISIVE, measured by the
+    diagnostic changing. A check whose removal changes nothing is not a route,
+    however plausible it looks.
+
+    The third stage is why this test exists. With R1, R2 and R3 removed the
+    observer RAISES rather than returning `intact`: a compound that stopped
+    there would turn a test red without ever reaching the unsafe state, and
+    would have been credited as a kill. Only removing R4 as well produces
+    `intact` over nothing -- the sentence "every claim was checked and matched"
+    said about zero claims.
+    """
+    tree = faithful_copy(tmp_path)
+
+    # BASELINE. Both hostile states refuse, each naming its own reason.
+    baseline = _surface_observation(tree)
+    assert baseline["MISSING"][0] == "unavailable", baseline["MISSING"]
+    assert baseline["EMPTY"][0] == "unavailable", baseline["EMPTY"]
+    assert "is not a directory" in baseline["MISSING"][2], baseline["MISSING"]
+    assert "holds no contracts" in baseline["EMPTY"][2], baseline["EMPTY"]
+
+    stages: list[tuple[str, dict[str, tuple[str, str, str]]]] = []
+    for label, relative, anchor, condition in GOVERNANCE_SURFACE_CHAIN:
+        module = tree / relative
+        text = module.read_text(encoding="utf-8")
+        stripped = anchor.lstrip()
+        indent = anchor[: len(anchor) - len(stripped)]
+        mutated = text.replace(anchor, indent + "if False and " + stripped[len("if "):], 1)
+        check_mutation(relative, text, mutated, anchor, 1)
+        module.write_text(mutated, encoding="utf-8", newline="")
+        stages.append((f"{label} ({condition})", _surface_observation(tree)))
+
+    assert len(stages) == 4, [name for name, _ in stages]
+
+    # R1 suppressed: R2 answers for the MISSING case, so the reason changes.
+    after_r1 = stages[0][1]
+    assert after_r1["MISSING"][0] == "unavailable", after_r1["MISSING"]
+    assert "holds no contracts" in after_r1["MISSING"][2], (
+        "removing the is_dir guard did not hand the decision to the "
+        f"empty-directory guard: {after_r1['MISSING']}"
+    )
+
+    # R1+R2 suppressed: R3 answers, and says the surface records no digests.
+    after_r2 = stages[1][1]
+    assert after_r2["MISSING"][0] == "unavailable", after_r2["MISSING"]
+    assert "records no evidence digests" in after_r2["MISSING"][2], after_r2["MISSING"]
+
+    # R1+R2+R3 suppressed: R4 answers, and it REFUSES BY RAISING. Not the
+    # unsafe state -- a crash, which is why the inventory cannot stop here.
+    after_r3 = stages[2][1]
+    for label in ("MISSING", "EMPTY"):
+        assert after_r3[label][0].startswith("RAISED"), after_r3[label]
+        assert "nothing was checked" in after_r3[label][2], after_r3[label]
+
+    # All four suppressed: the historical unsafe state, exactly.
+    after_r4 = stages[3][1]
+    for label in ("MISSING", "EMPTY"):
+        status, verified, _diagnostic = after_r4[label]
+        assert status == "intact", (
+            f"{label}: removing every enumerated route did not reach the unsafe "
+            f"state, so the inventory is INCOMPLETE: {after_r4[label]}"
+        )
+        assert verified == "0", (
+            f"{label}: reported intact having verified {verified} claims, which "
+            "is not the historical defect"
+        )
+
+
+def test_no_route_in_the_inventory_is_inert(tmp_path: Path):
+    """A route that changes nothing when removed is not a route.
+
+    Guards against the inventory being padded with plausible-looking checks
+    that never decide anything -- which would make the compound look minimal
+    while removing more than it needed to.
+    """
+    tree = faithful_copy(tmp_path)
+    previous = _surface_observation(tree)
+    inert: list[str] = []
+
+    for label, relative, anchor, _condition in GOVERNANCE_SURFACE_CHAIN:
+        module = tree / relative
+        text = module.read_text(encoding="utf-8")
+        stripped = anchor.lstrip()
+        indent = anchor[: len(anchor) - len(stripped)]
+        mutated = text.replace(anchor, indent + "if False and " + stripped[len("if "):], 1)
+        module.write_text(mutated, encoding="utf-8", newline="")
+        observed = _surface_observation(tree)
+        if observed == previous:
+            inert.append(label)
+        previous = observed
+
+    assert inert == [], (
+        f"these routes changed nothing when suppressed, so they are not "
+        f"independently effective and do not belong in the inventory: {inert}"
+    )
