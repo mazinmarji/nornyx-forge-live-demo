@@ -1041,3 +1041,90 @@ def test_a_side_effect_nobody_asserts_would_be_caught():
         "is describing a test that no longer checks it"
     )
     assert "calls == []" in source
+
+
+# --------------------------------------------------------------------------
+# What this inventory does NOT attack, stated rather than implied.
+# --------------------------------------------------------------------------
+
+#: The two delegation targets that are MUTATION CATALOGUES. Delegating to one of
+#: these means the class is attacked: hostile edits are applied and a control is
+#: shown to be load-bearing.
+ATTACKING_CATALOGUES = frozenset(
+    {
+        "tests/test_domain_collapse_mutations.py",
+        "tests/test_semantic_binding_theorem.py",
+    }
+)
+
+#: Classes this inventory COVERS WITH TESTS but does not attack, and why that is
+#: recorded rather than quietly implied.
+#:
+#: `delegated_to` was one field doing two jobs. H11 and H12 point at mutation
+#: catalogues; H13-H19 point at ordinary test modules. Both read as "re-proved
+#: elsewhere", so a nineteen-class inventory presented itself as attacked while
+#: seven of those classes had no hostile representation anywhere -- and the
+#: unified catalogue's 35 attacks contain none for them.
+#:
+#: Being covered by tests is not nothing. It is just not the same claim.
+COVERED_BUT_UNATTACKED = {
+    "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
+    "H14": "independent inspection is asserted, not attacked",
+    "H15": "absence-is-not-success, asserted by its suite",
+    "H16": "absence-is-not-success, asserted by its suite",
+    "H17": "absence-is-not-success, asserted by its suite",
+    "H18": "evidence integrity is asserted, not attacked",
+    "H19": "subject scope is asserted, not attacked",
+}
+
+
+def test_the_unattacked_classes_are_named_rather_than_implied():
+    """A class with tests but no attack must say so.
+
+    The failure this prevents is a reader taking "19 classes re-proved" and "35
+    attacks" as covering the same ground. They do not: seven classes contribute
+    no attack at all.
+    """
+    unattacked = {
+        item.ident.split()[0]
+        for item in INVENTORY
+        if not item.mutation and item.delegated_to not in ATTACKING_CATALOGUES
+    }
+
+    assert unattacked == set(COVERED_BUT_UNATTACKED), (
+        "the set of classes covered-but-unattacked has changed.\n"
+        f"  measured: {sorted(unattacked)}\n"
+        f"  recorded: {sorted(COVERED_BUT_UNATTACKED)}\n"
+        "Either an attack was added -- remove it from COVERED_BUT_UNATTACKED -- "
+        "or a class lost one and must be recorded here."
+    )
+
+
+def test_every_unattacked_class_still_names_a_real_covering_module():
+    """Unattacked is not unwatched. Each must point at a module that exists."""
+    missing: list[str] = []
+    for item in INVENTORY:
+        ident = item.ident.split()[0]
+        if ident not in COVERED_BUT_UNATTACKED:
+            continue
+        assert item.delegated_to, f"{ident} names no covering module at all"
+        if not (ROOT / item.delegated_to).exists():
+            missing.append(f"{ident}: {item.delegated_to} is gone")
+    assert missing == [], missing
+
+
+def test_the_attacked_classes_really_delegate_to_mutation_catalogues():
+    """The other half: a class counted as attacked must point at a catalogue.
+
+    Without this, moving a class from an attacking catalogue to an ordinary test
+    module would silently reclassify it as attacked-by-nothing while the
+    accounting still counted it.
+    """
+    for item in INVENTORY:
+        ident = item.ident.split()[0]
+        if item.mutation or ident in COVERED_BUT_UNATTACKED:
+            continue
+        assert item.delegated_to in ATTACKING_CATALOGUES, (
+            f"{ident} is counted as attacked but delegates to "
+            f"{item.delegated_to!r}, which is not a mutation catalogue"
+        )

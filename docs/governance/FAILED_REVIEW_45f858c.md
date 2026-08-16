@@ -182,7 +182,7 @@ At least three of those kills were invalid.
 
 ## P3 findings
 
-Twelve closed, five open. Each receives FIXED or
+Fifteen closed, two open. Each receives FIXED or
 ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 
 **Closed**
@@ -201,6 +201,9 @@ ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 | B: gutting a false-green self-attack body to `pass` keeps 9/9 green | FIXED — each named function is parsed and must carry an assertion or expected-refusal block. Verified by gutting FG03 in a copy |
 | B: two catalogue self-attacks assert that invented names do not exist | FIXED — both phantoms now run the real delegation check, with a control proving a genuine entry still passes |
 | B: `MINIMUM_ATTACKS`' own guard weakens as campaigns shrink | FIXED — the floor is no longer the control. `REQUIRED_ATTACK_IDS` has total coverage, demonstrated against a floor of 1 |
+| B: `expect`/`severity`/`side_effects` recorded and never compared | FIXED — severity drawn from a closed vocabulary, expect required present and distinct, and each declared side effect mapped to a token its killing test must actually assert |
+| B: H13–H19 have no attack representation in the "authoritative" inventory | FIXED by making the claim honest rather than by inventing attacks. `delegated_to` was one field doing two jobs: H11/H12 point at mutation catalogues, H13–H19 at ordinary test modules, and both read as "re-proved elsewhere". `COVERED_BUT_UNATTACKED` now names the seven, so "19 classes" and "35 attacks" can no longer be read as the same ground |
+| A: `governance_approval_trust`, `reviewer_store`, `builder_identities` are bootstrap state with no consumer | PARTIALLY FIXED — `governance_approval_trust` gained a consumer via P1-1. `reviewer_store` and `builder_identities` remain, and the standing decision not to add `ReviewerTrustStore` to `RuntimeSecurityContext` for structural symmetry is unchanged |
 
 **Open**
 
