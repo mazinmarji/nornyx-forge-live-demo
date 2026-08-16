@@ -507,58 +507,15 @@ INVENTORY = (
     ),
 )
 
-#: Measured, and honest about why each is not yet a valid kill. Recorded as
-#: data so the set cannot grow silently -- an entry here is a debt, not an
-#: exemption, and `test_the_unproven_set_is_exactly_what_was_measured` fails if
-#: anything is added without a reason.
-NOT_YET_KILLED = {
-    # H03/H04 are ONE root property reached through two surfaces, and no single
-    # guard mutation can kill either: three independent routes produce
-    # `unavailable`. They are proven together by a COMPOUND mutation below --
-    # `test_disabling_the_whole_chain_recreates_the_historical_unsafe_state` --
-    # which is why they are excluded from the single-mutation runner rather than
-    # left unproven.
-    # H03 and H04 are ONE root property reached through two hostile surfaces,
-    # and no single-guard mutation can kill either: four independent routes
-    # produce a refusal. That is no longer an assertion -- Task 11R measured it.
-    #
-    #   suppress nothing        -> R1/R2 refuse, each naming its own reason
-    #   suppress R1             -> R2 becomes decisive, diagnostic changes
-    #   suppress R1+R2          -> R3 becomes decisive, diagnostic changes
-    #   suppress R1+R2+R3       -> R4 becomes decisive, and RAISES
-    #   suppress R1+R2+R3+R4    -> `intact` over zero verified claims
-    #
-    # Only the last stage is the historical unsafe state. The third produces a
-    # CRASH, so a compound stopping there would turn a test red without ever
-    # reaching the defect -- and would have been credited as a kill.
-    #
-    # `test_the_governance_surface_route_inventory_is_complete` pins every stage
-    # and `test_no_route_in_the_inventory_is_inert` refuses a padded inventory,
-    # so the compound below is minimal by measurement rather than by assertion.
-    "H13": (
-        "MEASURED, NOT KILLED, and the gap is precise. The mutation is correct "
-        "-- it rebinds the stale-attestation diagnostic to name the CURRENT "
-        "subject, which is the historical defect exactly -- and the branch it "
-        "sits in genuinely executes under "
-        "test_moving_the_subject_makes_the_inspection_stale, proven by probing "
-        "INSIDE the branch body rather than at the `if`. "
-        "It survives because that test asserts the VERDICT (the inspection is "
-        "stale, independence withdrawn) and not the diagnostic's wording. "
-        "Rebinding the wording does not change the verdict. "
-        "The real unsafe state is SUBJECT DRIFT: the sentence lands in "
-        "verdict_basis, inside the evidence set the subject is computed from, "
-        "so two regenerations over an unchanged tree stop agreeing. Detecting "
-        "that needs a stale attestation present AND two regenerations compared "
-        "-- and no test does both. The fixed-point test regenerates twice but "
-        "its attestations are never stale (INVALID_TEST_AIM at the branch "
-        "body); the staleness test has a stale attestation but regenerates "
-        "once. "
-        "Same shape as H15: the control is real, the defect is real, and the "
-        "combination that would detect it is untested. The test to write is "
-        "known -- settle, attach a signed attestation, move the subject, "
-        "regenerate twice, require the subject unchanged -- and is not written "
-        "here rather than claimed."
-    ),
+#: CLOSED, and proved by a COMPOUND rather than by a single edit. Terminal
+#: status is KILLED_VALIDLY; "compound" is metadata about HOW it was proved, not
+#: about whether it was.
+#:
+#: These are excluded from the single-mutation runner because no single edit can
+#: kill them -- a measured property of the system, not open work. They were
+#: previously kept in NOT_YET_KILLED, which made the catalogue say "closed" and
+#: "not yet killed" about the same class.
+KILLED_VALIDLY_COMPOUND = {
     "H03": (
         "PROVEN BY COMPOUND, with a measured route inventory. Four independent "
         "routes were enumerated by cumulative suppression, each shown decisive "
@@ -576,13 +533,45 @@ NOT_YET_KILLED = {
     ),
 }
 
+#: GENUINELY OPEN: the terminal proof does not exist yet. An entry here is a
+#: debt, not an exemption, and `test_the_unproven_set_is_exactly_what_was_
+#: measured` fails if anything is added without a reason.
+NOT_YET_KILLED = {
+    "H13": (
+        "MEASURED, NOT KILLED, and the gap is now one step narrower and exactly "
+        "named. The conjunction the two existing tests never covered -- a stale "
+        "attestation present AND two regenerations compared -- is now written "
+        "and passing in tests/test_task8_closure.py: "
+        "test_a_stale_attestation_does_not_perturb_the_next_subject asserts the "
+        "fixed point over an unchanged governed tree, and its partner asserts "
+        "the mismatch stays observable rather than being rewritten. Both are "
+        "real properties and both hold. "
+        "They are NOT yet H13's proof. Branch-body probing reports "
+        "INVALID_TEST_AIM: the attestation those tests attach is UNSIGNED, so "
+        "it is discarded at the authentication step -- H14's clause -- before "
+        "control ever reaches the subject-mismatch branch this attack mutates. "
+        "Reaching that branch requires a provisioned reviewer trust store and a "
+        "genuinely signed attestation, which tests/test_independent_inspection."
+        "py already builds and which this proof should borrow rather than "
+        "reinvent. "
+        "Three mutation attempts and two test-aim attempts have each been "
+        "rejected by measurement rather than argued away, and the remaining "
+        "work is a fixture change, not a question about the control."
+    ),
+}
+
+#: Excluded from the single-mutation runner for either reason -- proved by
+#: compound, or not proved yet. The runner cares about MECHANISM; the catalogue
+#: cares about STATUS, and those are no longer the same set.
+SINGLE_MUTATION_EXEMPT = {**KILLED_VALIDLY_COMPOUND, **NOT_YET_KILLED}
+
 DIRECT = tuple(
     item for item in INVENTORY
-    if item.mutation is not None and item.ident.split()[0] not in NOT_YET_KILLED
+    if item.mutation is not None and item.ident.split()[0] not in SINGLE_MUTATION_EXEMPT
 )
 PENDING = tuple(
     item for item in INVENTORY
-    if item.mutation is not None and item.ident.split()[0] in NOT_YET_KILLED
+    if item.mutation is not None and item.ident.split()[0] in SINGLE_MUTATION_EXEMPT
 )
 DELEGATED = tuple(item for item in INVENTORY if item.mutation is None)
 
