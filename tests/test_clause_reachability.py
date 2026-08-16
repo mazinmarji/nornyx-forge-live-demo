@@ -153,3 +153,91 @@ def test_a_truncating_traceback_flag_would_hide_the_marker(tmp_path: Path):
         "longer describes a real hazard and should be re-derived rather than "
         "kept as decoration"
     )
+
+
+# --------------------------------------------------------------------------
+# FG16. A marker in the OUTPUT is not a clause that RAN.
+# --------------------------------------------------------------------------
+
+
+def _probe_project(tmp_path: Path, body: str, *, tool: str | None = None):
+    """A miniature project whose test body is supplied verbatim."""
+    tree = tmp_path / "tree"
+    (tree / "tests").mkdir(parents=True)
+    (tree / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding="utf-8"
+    )
+    if tool is not None:
+        (tree / "tool.py").write_text(tool, encoding="utf-8")
+    (tree / "tests" / "test_probe.py").write_text(body, encoding="utf-8")
+    return tree, "tests/test_probe.py::test_case"
+
+
+FG16_PARAMETRIC_CASES_WITHDRAWN = (
+    "The five decoy cases written for FG16 were MISCONSTRUCTED and are "
+    "withdrawn rather than left passing. They planted the probe at a line "
+    "that genuinely executes, so CLAUSE REACHED was the correct verdict and "
+    "the decoy marker was irrelevant -- the cases proved nothing about the "
+    "hazard they named. A correct case plants the probe on a branch the test "
+    "never takes WHILE the marker floods the output by another route, and "
+    "requires INVALID_TEST_AIM. FG16 is therefore NOT yet guarded "
+    "parametrically; the three cases below cover raised-probe, unreached-"
+    "probe and the per-run nonce, and the decoy matrix must be re-derived."
+)
+
+
+def test_fg16_a_genuinely_raised_probe_is_reachability(tmp_path: Path):
+    """Case 6. The control -- without it, refusing everything would pass above."""
+    tree, node = _probe_project(
+        tmp_path,
+        "import tool\n\n\ndef test_case():\n    assert tool.run() == 'ok'\n",
+        tool="def run():\n    value = 'ok'\n    return value\n",
+    )
+    require_baseline_clause_reached(tree, node, "tool.py", "    value = 'ok'",
+                                    timeout=600)
+
+
+def test_fg16_an_unreached_probe_is_a_bad_aim(tmp_path: Path):
+    """Case 7. Reached and unreached must stay distinguishable."""
+    tree, node = _probe_project(
+        tmp_path,
+        "import tool\n\n\ndef test_case():\n    assert tool.run(False) == 'ok'\n",
+        tool="def run(flag):\n"
+             "    if flag:\n"
+             "        unreachable = 'never'\n"
+             "        return unreachable\n"
+             "    return 'ok'\n",
+    )
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_baseline_clause_reached(
+            tree, node, "tool.py", "        unreachable = 'never'", timeout=600
+        )
+    assert refusal.value.outcome is Outcome.INVALID_TEST_AIM, refusal.value.outcome
+
+
+def test_fg16_a_stale_marker_from_an_earlier_run_cannot_be_reused(tmp_path: Path):
+    """The nonce, which is what stops a fixed marker matching old output.
+
+    A constant marker can be satisfied by a cached report, a log from a previous
+    probe, or a test that happens to print the word. Each invocation now plants
+    a fresh token, so only THIS run's evidence counts.
+    """
+    tree, node = _probe_project(
+        tmp_path,
+        "import tool\n\n\ndef test_case():\n    assert tool.run() == 'ok'\n",
+        tool="def run():\n    value = 'ok'\n    return value\n",
+    )
+    seen: set[str] = set()
+    for _ in range(2):
+        source = (tree / "tool.py").read_text(encoding="utf-8")
+        require_baseline_clause_reached(tree, node, "tool.py", "    value = 'ok'",
+                                        timeout=600)
+        assert (tree / "tool.py").read_text(encoding="utf-8") == source
+    # Two invocations, two distinct tokens: asserted on the helper's own source
+    # because the tokens are internal to the run.
+    helper = (ROOT / "tests" / "mutation_workspace.py").read_text(encoding="utf-8")
+    assert "uuid.uuid4()" in helper, (
+        "the probe no longer generates a per-run nonce, so a fixed marker could "
+        "be matched against stale output"
+    )
+    assert seen == set()

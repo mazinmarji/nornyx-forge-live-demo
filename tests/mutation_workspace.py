@@ -300,9 +300,15 @@ def require_baseline_clause_reached(
             f"{relative}; found {before.count(anchor)}",
         )
 
+    # A NONCE PER INVOCATION. A fixed marker can be matched against stale
+    # output, a cached report, or -- as actually happened -- a source line
+    # echoed by a traceback. Only this run's token counts.
+    import uuid  # noqa: PLC0415
+
+    token = f"{CLAUSE_MARKER}-{uuid.uuid4().hex[:12]}"
     stripped = anchor.lstrip("\n")
     indent = stripped[: len(stripped) - len(stripped.lstrip())]
-    probe = f'{indent}raise RuntimeError("{CLAUSE_MARKER}")\n{anchor}'
+    probe = f'{indent}raise RuntimeError("{token}")\n{anchor}'
     try:
         target.write_text(before.replace(anchor, probe, 1), encoding="utf-8", newline="")
         # THE PROBE MUST PRODUCE RUNNABLE CODE. Planted inside an import's
@@ -347,7 +353,14 @@ def require_baseline_clause_reached(
     # `--tb=long` pytest prints the offending source line, so searching for the
     # bare marker finds it whether or not that line ever executed -- which is
     # how this reported a reached clause inside a file that did not compile.
-    if f"RuntimeError: {CLAUSE_MARKER}" not in output:
+    # PROVENANCE, not a substring. Three independent things must agree: the
+    # exception was RAISED (`RuntimeError: <token>`), it carries THIS run's
+    # nonce, and the traceback names the file the probe was planted in. Matching
+    # the bare marker found it in echoed source for a file that never ran, and
+    # a fixed marker would also match stale output from an earlier probe.
+    raised = f"RuntimeError: {token}"
+    named_file = Path(relative).name
+    if raised not in output or named_file not in output:
         # The clause may well have run; what failed is the harness's ability to
         # SEE that it did. Reporting this as a test-aim problem would blame the
         # attack for an instrumentation gap.
