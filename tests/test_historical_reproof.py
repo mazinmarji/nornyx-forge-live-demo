@@ -278,10 +278,49 @@ INVENTORY = (
         defect="a diagnostic embedded the current subject in an artifact inside it",
         prop="evidence ABOUT a subject never becomes part of it",
         control="the stale-attestation diagnostic carries no current subject",
-        mutation=None,
-        delegated_to="tests/test_task8_closure.py",
-        test="tests/test_task8_closure.py::test_attaching_and_removing_an_attestation_leaves_the_subject_where_it_was",
-        expect="attach/remove leaves subject and semantics fixed",
+        # THE UNSAFE STATE, defined before touching code: a stale attestation
+        # names S_old while the tree presents S_current, and that mismatch must
+        # stay observable. It must not be rewritable so the stale attestation
+        # appears to belong to S_current.
+        #
+        # The mutation rebinds exactly that -- the diagnostic reports the
+        # CURRENT subject instead of the attested one. That sentence lands in
+        # `verdict_basis`, inside the evidence set the subject is computed from,
+        # so the subject becomes a function of itself.
+        #
+        # The observable consequence is a FIXED POINT that stops holding.
+        # Measured pristine: regenerating over an unchanged tree presents the
+        # same subject twice (sha256:5ebd5a18... both times). Under the mutation
+        # it cannot, because the artifact carrying the sentence is inside the
+        # subject the sentence describes -- and no attestation can then name the
+        # subject the next run will present.
+        # FIRST ATTEMPT MEASURED AND REJECTED. Rebinding the assignment --
+        # `attested_subject = subject_digest` -- makes the comparison always
+        # equal, so the diagnostic never fires. That removes the staleness CHECK
+        # rather than rebinding the stale IDENTITY, which is a different unsafe
+        # state and not this one. It survived, correctly.
+        #
+        # This keeps the comparison and rebinds only the value the message
+        # carries, which is the historical defect exactly.
+        mutation=(REFRESH,
+                  'f"{path.name} attests to subject {attested_subject}, which is "',
+                  'f"{path.name} attests to subject {subject_digest}, which is "', 1),
+        semantic_effect=(
+            "the stale-attestation diagnostic must stop naming the attested "
+            "subject and start naming the current one"
+        ),
+        # AIMED BY BODY REACHABILITY, which is stricter than statement
+        # reachability and had to be, twice over.
+        #
+        # Probing the ASSIGNMENT said reached -- it runs for every attestation.
+        # Probing the `if` said reached -- the probe plants BEFORE a statement,
+        # so it proves control arrives, not that the branch is entered. Only
+        # probing INSIDE the branch body separated the nodes: the fixed-point
+        # test reports INVALID_TEST_AIM because its attestations are never
+        # stale, and this node reports BODY REACHED because it deliberately
+        # moves the subject out from under one.
+        test="tests/test_independent_inspection.py::test_moving_the_subject_makes_the_inspection_stale",
+        expect="a stale attestation is described as belonging to the current subject",
         severity="P1",
     ),
     SecurityClass(
@@ -496,6 +535,30 @@ NOT_YET_KILLED = {
     # `test_the_governance_surface_route_inventory_is_complete` pins every stage
     # and `test_no_route_in_the_inventory_is_inert` refuses a padded inventory,
     # so the compound below is minimal by measurement rather than by assertion.
+    "H13": (
+        "MEASURED, NOT KILLED, and the gap is precise. The mutation is correct "
+        "-- it rebinds the stale-attestation diagnostic to name the CURRENT "
+        "subject, which is the historical defect exactly -- and the branch it "
+        "sits in genuinely executes under "
+        "test_moving_the_subject_makes_the_inspection_stale, proven by probing "
+        "INSIDE the branch body rather than at the `if`. "
+        "It survives because that test asserts the VERDICT (the inspection is "
+        "stale, independence withdrawn) and not the diagnostic's wording. "
+        "Rebinding the wording does not change the verdict. "
+        "The real unsafe state is SUBJECT DRIFT: the sentence lands in "
+        "verdict_basis, inside the evidence set the subject is computed from, "
+        "so two regenerations over an unchanged tree stop agreeing. Detecting "
+        "that needs a stale attestation present AND two regenerations compared "
+        "-- and no test does both. The fixed-point test regenerates twice but "
+        "its attestations are never stale (INVALID_TEST_AIM at the branch "
+        "body); the staleness test has a stale attestation but regenerates "
+        "once. "
+        "Same shape as H15: the control is real, the defect is real, and the "
+        "combination that would detect it is untested. The test to write is "
+        "known -- settle, attach a signed attestation, move the subject, "
+        "regenerate twice, require the subject unchanged -- and is not written "
+        "here rather than claimed."
+    ),
     "H03": (
         "PROVEN BY COMPOUND, with a measured route inventory. Four independent "
         "routes were enumerated by cumulative suppression, each shown decisive "
@@ -1205,7 +1268,6 @@ ATTACKING_CATALOGUES = frozenset(
 #:
 #: Being covered by tests is not nothing. It is just not the same claim.
 COVERED_BUT_UNATTACKED = {
-    "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
 }
 
 
