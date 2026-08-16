@@ -326,10 +326,48 @@ INVENTORY = (
         defect="deleting a governed module the tool imports produced a traceback",
         prop="a missing governed module is a refusal, not a crash",
         control="_refuse_missing_governed_module",
-        mutation=None,
-        delegated_to="tests/test_absence_is_not_success.py",
-        test="tests/test_task8_closure.py::test_a_governed_deletion_ends_the_inspection",
-        expect="the refusal names the missing governed content",
+        # The bare call site appears TWICE, so `check_mutation` refused it as
+        # ambiguous rather than silently taking the first. The anchor carries
+        # the preceding import to be unique -- which is the honest fix, since
+        # the two sites guard different imports and mutating "whichever came
+        # first" would be a different attack each time the file is edited.
+        #
+        # The distinction under test is SEMANTIC, not the exit code. Baseline: a
+        # missing governed module produces a governed refusal that names the
+        # absent content. Mutant: the raw ModuleNotFoundError escapes. Both
+        # terminate unsuccessfully, and only one of them describes anything --
+        # which is why `test_the_verifier_refuses_missing_governed_content_
+        # without_crashing` asserts on the refusal's content and not on rc.
+        mutation=(REFRESH,
+                  "        inspection_subject_digest,\n"
+                  "    )\n"
+                  "except ModuleNotFoundError as exc:\n"
+                  "    _refuse_missing_governed_module(exc)",
+                  "        inspection_subject_digest,\n"
+                  "    )\n"
+                  "except ModuleNotFoundError as exc:\n"
+                  "    raise exc", 1),
+        # COMPOUND, after an FG15 enumeration. Attacking the first call site
+        # alone SURVIVED: there are TWO independent import guards, and the module
+        # this test deletes is imported at the second. Two routes, one attacked
+        # -- the same shape as H03/H04 and the governance-surface chain.
+        #
+        # ROUTE 1  the governed-subject import block   (inspection_subject_digest)
+        # ROUTE 2  the runtime/reviewer-trust block    (REQUIRED_INSPECTOR_ROLES)
+        #
+        # Both are removed together, so a missing governed module has no
+        # controlled reporting path left anywhere in this tool.
+        extra_mutations=((REFRESH,
+                          "        REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,\n"
+                          "    )\n"
+                          "except ModuleNotFoundError as exc:\n"
+                          "    _refuse_missing_governed_module(exc)",
+                          "        REQUIRED_INSPECTOR_ROLES as REQUIRED_INSPECTORS,\n"
+                          "    )\n"
+                          "except ModuleNotFoundError as exc:\n"
+                          "    raise exc", 1),),
+        test="tests/test_task8_closure.py::test_the_verifier_refuses_missing_governed_content_without_crashing",
+        expect="a missing governed module escapes as an uncontrolled traceback",
         severity="P2",
     ),
     SecurityClass(
@@ -430,10 +468,15 @@ INVENTORY = (
         defect="a smaller governed set computed a smaller subject and called it verified",
         prop="a declared member that is absent refuses, never shrinks",
         control="SubjectScope completeness, SUBJECT_SCOPE_INCOMPLETE",
-        mutation=None,
-        delegated_to="tests/test_subject_scope.py",
-        test="tests/test_task8_closure.py::test_a_governed_deletion_ends_the_inspection",
-        expect="deletion refuses or moves the subject, never both silently",
+        # Clause reachability MEASURED before registering, and both candidate
+        # nodes reach it. This one is chosen because its own subject IS the
+        # completeness refusal: a declared member is removed and the observer
+        # must refuse rather than compute a smaller subject and call it verified.
+        mutation=(OBSERVER,
+                  "    if missing:",
+                  "    if False and missing:", 1),
+        test="tests/test_subject_scope.py::test_missing_declared_content_refuses_rather_than_shrinking",
+        expect="a tree missing declared content computes a smaller subject and verifies it",
         severity="P1",
     ),
 )
@@ -459,6 +502,17 @@ NOT_YET_KILLED = {
     "H04": (
         "the same measurement, from the other guard. Removing the empty-"
         "directory check alone leaves the surface unavailable"
+    ),
+    "H15": (
+        "INVENTORY INCOMPLETE, and deliberately not widened further. Two "
+        "independent import guards were enumerated and BOTH removed together -- "
+        "the governed-subject block and the runtime/reviewer-trust block -- and "
+        "the named test still passed. Clause reachability was proven for the "
+        "first site, so this is not a bad aim. Something else still reports a "
+        "missing governed module in the tool's own vocabulary, and until that "
+        "route is identified any wider edit would be removing controls at "
+        "random to force a red result. A compound attack whose components are "
+        "not each proven relevant is not evidence, so no kill is claimed."
     ),
     "H18": (
         "REDUNDANT BY MEASUREMENT, with the routes enumerated rather than "
@@ -1172,8 +1226,6 @@ ATTACKING_CATALOGUES = frozenset(
 #: Being covered by tests is not nothing. It is just not the same claim.
 COVERED_BUT_UNATTACKED = {
     "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
-    "H15": "absence-is-not-success, asserted by its suite",
-    "H19": "subject scope is asserted, not attacked",
 }
 
 
