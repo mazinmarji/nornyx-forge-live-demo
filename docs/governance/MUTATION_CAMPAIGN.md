@@ -22,7 +22,7 @@ INVALID_TEST_TARGET                     0
 INVALID_MUTATION_ENVIRONMENT            0
 UNPROVEN                                0
 
-DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS 2
+HUMAN_BLOCKED_MEASUREMENTS               2
 CLASSES_WITH_NO_MUTATION_REPRESENTATION  7
 ```
 
@@ -102,7 +102,7 @@ They are covered by ordinary test modules, which is not nothing and is not the
 same claim. `COVERED_BUT_UNATTACKED` names them with a reason each, so "19
 classes re-proved" and "35 attacks" cannot be read as the same ground.
 
-### DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS = 2
+### HUMAN_BLOCKED_MEASUREMENTS = 2
 
 Neither has entered the admitted mutation protocol, so neither is counted as
 KILLED, DEFENCE_IN_DEPTH, SURVIVED or INVALID_BASELINE. They are not attacks
@@ -142,7 +142,7 @@ established chain, in causal order, until `--verify` reports `status: pass`,
 `integrity_state: intact`, `problems: []` and `governed_input_match: true`. Only
 then does a contract exist that a mutation could move.
 
-### Resolution attempted. DEFERRED_BASELINE_DEPENDENT_MEASUREMENTS remains 2.
+### Resolution attempted. They are HUMAN_BLOCKED, not INVALID_BASELINE.
 
 The evidence set was regenerated in causal order — build, `--sync-contracts`,
 `--review-binding` — and `--verify` reports exactly what was required:
@@ -177,8 +177,11 @@ human approval record. The two refresher flags that would satisfy it —
 `--wire-approvals` and `--adopt-approval` — put an ADOPTED HUMAN APPROVAL into
 the contracts, and there is none to adopt.
 
-So D1 and D2 are blocked on a human approval, not on effort or evidence. They
-stay at 2. Reaching 0 was available only by creating, inferring, simulating or
+So D1 and D2 are blocked on a human approval, not on effort or evidence, and
+are classified HUMAN_BLOCKED_MEASUREMENTS = 2. That outcome is distinct from
+INVALID_BASELINE, which describes an attack that ENTERED the protocol and failed
+step 2; these never entered it. Full record and the commands to run once a
+genuine approval exists: HUMAN_BLOCKED_MEASUREMENTS.md. Reaching 0 was available only by creating, inferring, simulating or
 backdating an approval record, which is precisely what must never happen, and
 the reviewer who first recorded this called it correctly: *irreducible without a
 genuine human approval_record; correct behaviour for an autonomous
