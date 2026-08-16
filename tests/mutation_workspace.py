@@ -305,6 +305,21 @@ def require_baseline_clause_reached(
     probe = f'{indent}raise RuntimeError("{CLAUSE_MARKER}")\n{anchor}'
     try:
         target.write_text(before.replace(anchor, probe, 1), encoding="utf-8", newline="")
+        # THE PROBE MUST PRODUCE RUNNABLE CODE. Planted inside an import's
+        # parentheses it does not, and the SyntaxError then fails the test for a
+        # reason unrelated to the clause -- while `--tb=long` echoes the
+        # offending SOURCE LINE, marker and all, into the output. Measured: this
+        # reported CLAUSE REACHED for a file that would not compile. A probe
+        # that cannot run cannot report reachability.
+        try:
+            compile(target.read_text(encoding="utf-8"), str(target), "exec")
+        except SyntaxError as exc:
+            raise AttackNotAdmissible(
+                Outcome.INVALID_MUTATION_ENVIRONMENT,
+                f"the clause probe made {relative} unparseable ({exc}), so this "
+                "anchor is not a statement boundary and reachability cannot be "
+                "measured from it",
+            ) from exc
         # `--tb=long`, not the usual `--tb=line`. The marker travels inside the
         # failure message, and a test that asserts on a SUBPROCESS's output
         # carries the whole traceback as its assertion text -- which `--tb=line`
@@ -328,7 +343,11 @@ def require_baseline_clause_reached(
             "never executes the control this attack removes. A conclusion drawn "
             "from removing it would be about a clause the test does not reach.",
         )
-    if CLAUSE_MARKER not in output:
+    # The marker must appear as a RAISED EXCEPTION, not as echoed source. With
+    # `--tb=long` pytest prints the offending source line, so searching for the
+    # bare marker finds it whether or not that line ever executed -- which is
+    # how this reported a reached clause inside a file that did not compile.
+    if f"RuntimeError: {CLAUSE_MARKER}" not in output:
         # The clause may well have run; what failed is the harness's ability to
         # SEE that it did. Reporting this as a test-aim problem would blame the
         # attack for an instrumentation gap.
