@@ -142,6 +142,18 @@ def bootstrap_security_context(
             authority_config=authority_config,
             trust=unrooted_trust_configuration(),
             established_root="",
+            # TOTAL, and it was not. This branch left both approval domains as
+            # None while the rooted branch froze two stores, so "trust is
+            # resolved once, here" was true of one path out of two. None is the
+            # absence of a field, which reads the same as never established --
+            # and a consumer reaching for `action_approval_trust` got nothing to
+            # ask rather than a store that says it is unavailable and why.
+            #
+            # The domains do not depend on the root: `_load_approval_domains`
+            # takes it and discards it, because the approver store deliberately
+            # lives outside the governed tree. There was never a reason this
+            # branch could not resolve them; it simply did not.
+            **_load_approval_domains(resolved_root=None),
             # No root means nothing was observed. Left as None this would be
             # indistinguishable from "observed and sound", which is the
             # unknown-reads-as-intact failure the state type exists to remove.
@@ -161,7 +173,9 @@ def bootstrap_security_context(
 
 
 
-def _load_approval_domains(root: Path) -> dict[str, object]:
+def _load_approval_domains(
+    root: Path | None = None, *, resolved_root: Path | None = None
+) -> dict[str, object]:
     """Parse BOTH approval trust domains once, here, at startup.
 
     One read of one document, two independent memberships. An unparseable store
@@ -184,7 +198,9 @@ def _load_approval_domains(root: Path) -> dict[str, object]:
         TrustStoreUnavailable,
     )
 
-    _ = root  # the store lives outside the governed tree, by design
+    # Neither is consulted: the store lives outside the governed tree, by
+    # design, which is why the unresolvable-root branch can call this at all.
+    _ = (root, resolved_root)
     try:
         domains = ApprovalTrustDomains.load()
     except TrustStoreUnavailable as exc:

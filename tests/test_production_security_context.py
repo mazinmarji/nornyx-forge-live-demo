@@ -530,3 +530,65 @@ def test_the_application_passes_its_established_root():
         "the application no longer hands the boundary the tree its context "
         "describes, so the coherence check cannot fire"
     )
+
+
+def _unrooted_context():
+    """A context from the branch where the deployment root cannot be resolved."""
+    import nornyx_forge.subject_bootstrap as sb  # noqa: PLC0415
+    from nornyx_forge.governed_subject import GovernedSubjectError  # noqa: PLC0415
+
+    def unresolvable(*_args, **_kwargs):
+        raise GovernedSubjectError("no deployment markers")
+
+    original = sb.resolve_packaged_root
+    sb.resolve_packaged_root = unresolvable
+    try:
+        return sb.bootstrap_security_context()
+    finally:
+        sb.resolve_packaged_root = original
+
+
+def test_the_trust_closure_is_total_across_both_bootstrap_branches():
+    """"Trust is resolved once, here" was true of one path out of two.
+
+    The rooted branch froze two approval stores; the unresolvable-root branch
+    left both as None. None is the ABSENCE of a field, which reads the same as
+    never established -- a consumer reaching for `action_approval_trust` got
+    nothing to ask rather than a store that says it is unavailable and why.
+
+    The domains never depended on the root. `_load_approval_domains` takes it
+    and discards it, because the approver store deliberately lives outside the
+    governed tree, so there was no reason this branch could not resolve them.
+    """
+    context = _unrooted_context()
+
+    for name in ("governance_approval_trust", "action_approval_trust"):
+        store = getattr(context, name)
+        assert store is not None, (
+            f"{name} is None on the unresolvable-root branch, so the trust "
+            "closure is not total and absence is indistinguishable from "
+            "never-established"
+        )
+        assert store.domain, f"{name} carries no authority domain"
+        assert store.available is False, (
+            f"{name} reports available on a deployment with no resolvable root"
+        )
+
+
+def test_the_unrooted_branch_still_offers_no_consequential_authority():
+    """The control. Resolving trust must not have granted anything.
+
+    Making the closure total is about being able to ASK the store a question,
+    not about the answer changing. A deployment whose root cannot be resolved
+    still authorizes nothing.
+    """
+    context = _unrooted_context()
+
+    assert context.consequential_authority_available is False
+    assert context.runtime_subject.subject_verified is False
+    assert context.governance_integrity is not None
+    assert context.governance_integrity.authorizes_consequential_action is False
+    assert context.established_root == "", (
+        "an unresolvable root produced a tree path, which the boundary would "
+        "then compare against"
+    )

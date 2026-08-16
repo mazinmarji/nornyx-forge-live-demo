@@ -182,7 +182,7 @@ At least three of those kills were invalid.
 
 ## P3 findings
 
-Sixteen closed, one open. Each receives FIXED or
+**All seventeen closed.** Each receives FIXED or
 ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 
 **Closed**
@@ -205,6 +205,7 @@ ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 | B: H13–H19 have no attack representation in the "authoritative" inventory | FIXED by making the claim honest rather than by inventing attacks. `delegated_to` was one field doing two jobs: H11/H12 point at mutation catalogues, H13–H19 at ordinary test modules, and both read as "re-proved elsewhere". `COVERED_BUT_UNATTACKED` now names the seven, so "19 classes" and "35 attacks" can no longer be read as the same ground |
 | A: `governance_approval_trust`, `reviewer_store`, `builder_identities` are bootstrap state with no consumer | PARTIALLY FIXED — `governance_approval_trust` gained a consumer via P1-1. `reviewer_store` and `builder_identities` remain, and the standing decision not to add `ReviewerTrustStore` to `RuntimeSecurityContext` for structural symmetry is unchanged |
 | A: the trust-domain guard is opt-in for unlabelled stores | ACCEPTED_NON_BLOCKING_WITH_RATIONALE, on measured evidence. Making the clause total was implemented and reverted: it broke thirteen call sites across five modules, and two were security proofs whose MECHANISM it changed — removing the frozen store to show a decision moves stops proving that if a domain refusal arrives first. Trading a latent affordance for a real reduction in what two H01 proofs measure is a bad trade. Bounded instead by asserting the property the clause relies on:  takes the domain as a required keyword, and no site under  builds a store without one. That test immediately found the single production site that did — the authenticator's own fallback store — which is now labelled with the asking authority. Two independently correct changes were kept: absence is decided before domain, so an unprovisioned store refuses as ABSENT rather than as a mismatch; and the shared boundary fixture names ACTION explicitly |
+| A: the "trust resolved once" closure is not total on the unresolvable-root branch | FIXED - that branch left both approval domains as None while the rooted branch froze two stores, so the closure held on one path out of two. None is the absence of a field, indistinguishable from never-established. The domains never depended on the root, so the branch now resolves them and a consumer gets a store that says it is unavailable and why. The control asserts nothing was granted by doing so |
 
 **Open**
 
