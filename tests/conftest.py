@@ -68,6 +68,38 @@ def _contained_scratch(tmp_path_factory: pytest.TempPathFactory):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _reclaim_scratch_between_modules(_contained_scratch: Path):
+    """Delete each module's workspaces as it finishes, not at session end.
+
+    SESSION-END CLEANUP BOUNDS THE LEAK BUT NOT THE PEAK, and the peak is what
+    exhausts a disk. Measured: a full run on this machine consumed more than
+    26 GB of workspaces before the session ended, hit `No space left on device`,
+    and took the suite down with `database or disk is full` and a git
+    `index.lock` write error. The session scratch was then removed correctly on
+    teardown -- leaving 471 MB behind and no evidence of what had happened.
+
+    Every workspace here is a whole repository copy. Holding one module's worth
+    is cheap; holding the entire suite's is not, and nothing needs them to
+    outlive the module that created them.
+
+    MODULE scope, deliberately, not function scope: several suites build a
+    workspace in a module- or class-scoped fixture and share it across tests.
+    Reclaiming between tests would delete a tree still in use, so this runs
+    after the module's own fixtures have torn down.
+    """
+    before = {entry.name for entry in _contained_scratch.iterdir()}
+    yield
+    for entry in _contained_scratch.iterdir():
+        if entry.name in before:
+            continue
+        # `ignore_errors`: a workspace holding an open handle must not fail the
+        # run. Space is the goal; a survivor is retried at session end.
+        shutil.rmtree(entry, ignore_errors=True) if entry.is_dir() else entry.unlink(
+            missing_ok=True
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _governed_tree_is_left_as_found():
     """The suite must not leave the governed tree modified.
