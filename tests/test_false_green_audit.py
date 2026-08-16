@@ -1,8 +1,14 @@
 """Task 12. The proof system must not be able to succeed for the wrong reason.
 
-Nine false-green classes have actually occurred in this repository. Each one
-produced a green run that proved nothing, and each is now a named class with an
-executable guard and a self-attack that must trip it.
+Fifteen false-green classes have actually occurred in this repository. Each
+one produced a green run that proved nothing, and each is now a named class with
+an executable guard and a self-attack that must trip it.
+
+FG01-FG09 are failures of individual proofs. FG10-FG15 are failures of the PROOF
+SYSTEM -- the machinery that decides whether a proof counted -- and they were
+found by an external review after this file already existed and reported 9/9
+guarded. An audit cannot be trusted to notice that it is itself the thing
+failing.
 
 The self-attack matters more than the guard. A guard nobody has fired is a claim;
 a guard that has been shown to reject the exact historical mistake is evidence.
@@ -92,15 +98,57 @@ INVENTORY = (
         "a behavioural differential: X1 and X2 must decide differently",
         "tests/test_false_green_audit.py::test_fg09_possession_does_not_discriminate",
     ),
+    FalseGreen(
+        "FG10", "a kill, when the pristine workspace already failed",
+        "the copy omitted files the named proof depends on",
+        "run the named test unmutated and refuse the attempt if it fails",
+        "tests/test_false_green_audit.py::test_fg10_a_workspace_whose_baseline_already_fails_is_refused",
+    ),
+    FalseGreen(
+        "FG11", "a kill, when the named test node no longer exists",
+        "`pytest module::gone` exits 4 and prints neither guarded phrase",
+        "ask pytest to collect the node and read the exit code",
+        "tests/test_false_green_audit.py::test_fg11_a_missing_test_node_is_not_a_kill",
+    ),
+    FalseGreen(
+        "FG12", "a green census, when a proof was marked as expected to fail",
+        "xfails were skipped past the gate on a false claim of strictness",
+        "xfail_strict configured, and xfails counted against a closed allowlist",
+        "tests/test_false_green_audit.py::test_fg12_an_undeclared_expected_failure_fails_the_census",
+    ),
+    FalseGreen(
+        "FG13", "proven mutant origin, when a text search matched an unrelated line",
+        "`sys.path.insert(0` appears at the top of nearly every test module",
+        "read `module.__file__` from the interpreter, comparing paths as paths",
+        "tests/test_false_green_audit.py::test_fg13_a_text_search_is_not_proof_of_mutant_origin",
+    ),
+    FalseGreen(
+        "FG14", "an intact suite, when critical proofs were deleted",
+        "an aggregate floor absorbs the loss when other modules grow",
+        "per-module minimums, and attacks required BY NAME",
+        "tests/test_false_green_audit.py::test_fg14_an_aggregate_floor_permits_deleting_critical_proofs",
+    ),
+    FalseGreen(
+        "FG15", "SURVIVED or KILLED, when only one route of a chain was removed",
+        "the attempt was valid in every respect; the enforcement inventory was not",
+        "enumerate every route, record each as defence-in-depth, kill with a compound",
+        "tests/test_false_green_audit.py::test_fg15_one_route_of_a_chain_is_not_the_property",
+    ),
 )
 
 
-def test_the_inventory_is_exactly_the_nine_known_classes():
-    """Set equality, so a class cannot be dropped to make the audit smaller."""
+def test_the_inventory_is_exactly_the_fifteen_known_classes():
+    """Set equality, so a class cannot be dropped to make the audit smaller.
+
+    Nine became fifteen when Task 14 audited the proof system itself. FG10-FG15
+    are not new hazards someone imagined -- every one is a green result this
+    repository actually produced from machinery that had not measured what it
+    claimed, and three of them invalidated kills in the previous campaign.
+    """
     assert {item.ident for item in INVENTORY} == {
-        f"FG{n:02d}" for n in range(1, 10)
+        f"FG{n:02d}" for n in range(1, 16)
     }
-    assert len(INVENTORY) == 9
+    assert len(INVENTORY) == 15
     for item in INVENTORY:
         assert len(item.false_claim) > 20 and len(item.root_cause) > 20, item.ident
         module, _, node = item.owner.partition("::")
@@ -439,3 +487,272 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
             "that asserts nothing is the defect this inventory exists to find."
         )
     assert len({item.owner for item in INVENTORY}) >= 9, "self-attacks were merged"
+
+
+# --------------------------------------------------------------------------
+# FG10-FG15. The classes Task 14 found in the PROOF SYSTEM itself.
+#
+# Every one of these was a green result produced by machinery that had not
+# measured what it claimed. They are audited here the same way as FG01-FG09:
+# the real guard is executed against the real defect, and the refusal must be
+# the one the class names.
+# --------------------------------------------------------------------------
+
+
+
+def _counted_report(tmp_path: Path, counts: dict) -> Path:
+    """A JUnit report contributing `counts[module]` passing tests per module."""
+    cases = []
+    for module, number in counts.items():
+        classname = module.removesuffix(".py").replace("/", ".")
+        cases.extend(
+            f'<testcase classname="{classname}" name="test_{index}" '
+            f'file="{module}"></testcase>'
+            for index in range(number)
+        )
+    report = tmp_path / "counted.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        f'<testsuites><testsuite name="pytest" tests="{sum(counts.values())}">'
+        + "".join(cases)
+        + "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    return report
+
+
+def test_fg10_a_workspace_whose_baseline_already_fails_is_refused(tmp_path: Path):
+    """FG10. A kill credited for a workspace where the proof already failed.
+
+    Three classes -- H05, H07, H10 -- were credited kills in a copy that omitted
+    `docs/`, `README.md`, `BRD.md`, `.github/` and `.git`. Their named tests
+    failed there BEFORE any mutation, so `returncode != 0` was measuring the
+    workspace.
+
+    The guard runs the named test pristine and refuses the attempt if it does
+    not pass. Attacked here with a workspace deliberately broken in the same way
+    the old one was.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        Outcome,
+        faithful_copy,
+        require_pristine_baseline,
+    )
+
+    tree = faithful_copy(tmp_path)
+    node = "tests/test_scratch_containment.py::test_mkdtemp_is_contained_within_the_session_scratch"
+
+    # Pristine, the baseline passes -- the control, without which the refusal
+    # below could be "this guard refuses everything".
+    require_pristine_baseline(tree, node)
+
+    # Now break the workspace the way the old copy was broken: remove a file the
+    # proof depends on. Nothing is mutated; the control is untouched.
+    (tree / "tests" / "conftest.py").unlink()
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_pristine_baseline(tree, node)
+    assert refusal.value.outcome is Outcome.INVALID_BASELINE, refusal.value.outcome
+    assert "FAILS before any mutation" in str(refusal.value)
+
+
+def test_fg11_a_missing_test_node_is_not_a_kill(tmp_path: Path):
+    """FG11. `pytest module::gone` exits 4 and was read as a failing test.
+
+    H02 could report KILLED with its only proof deleted and the integrity gate
+    fully intact: the exit code was non-zero, and the guard of the day searched
+    stdout for "no tests ran", which that output does not contain.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        Outcome,
+        faithful_copy,
+        require_node_exists,
+    )
+
+    tree = faithful_copy(tmp_path)
+
+    # The control: a node that exists must be admitted.
+    require_node_exists(
+        tree,
+        "tests/test_scratch_containment.py::test_mkdtemp_is_contained_within_the_session_scratch",
+    )
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_node_exists(
+            tree, "tests/test_scratch_containment.py::test_a_node_that_was_deleted"
+        )
+    assert refusal.value.outcome is Outcome.INVALID_TEST_TARGET, refusal.value.outcome
+    assert "does not collect" in str(refusal.value)
+
+
+def test_fg12_an_undeclared_expected_failure_fails_the_census(tmp_path: Path):
+    """FG12. A security proof with an off switch.
+
+    The census skipped xfails outright, on the written ground that they were
+    strict here. `xfail_strict` was configured nowhere, so one decorator could
+    silence a failing integrity proof with the gate reporting PASS, zero
+    unexpected skips and an unchanged collection count.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    import check_test_coverage as census  # noqa: PLC0415
+
+    assert census.EXPECTED_XFAILS == {}, (
+        "the intended inventory is empty; an entry is a proof recorded as broken"
+    )
+
+    report = tmp_path / "report.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<testsuites><testsuite name="pytest" tests="1">'
+        '<testcase classname="tests.test_security" name="test_a_control" '
+        'file="tests/test_security.py">'
+        '<skipped type="pytest.xfail" message="switched off"/>'
+        "</testcase></testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    *_rest, unexpected_xfails, _errors = census.classify(report)
+
+    assert unexpected_xfails == ["tests/test_security.py::test_a_control"], (
+        f"an undeclared expected failure was not reported: {unexpected_xfails}"
+    )
+    assert census.evaluate(report, 0) != 0, "the gate accepted a silenced proof"
+
+    # And strictness itself is configured, parsed rather than asserted about.
+    import tomllib  # noqa: PLC0415
+
+    options = tomllib.loads(
+        (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )["tool"]["pytest"]["ini_options"]
+    assert options.get("xfail_strict") is True, options.get("xfail_strict")
+
+
+def test_fg13_a_text_search_is_not_proof_of_mutant_origin(tmp_path: Path):
+    """FG13. The origin proof matched an unrelated line.
+
+    `assert "sys.path.insert(0" in source` passed for a module that had no
+    production isolation code at all, because nearly every test module here
+    opens with `sys.path.insert(0, str(ROOT / "tests"))`.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        Outcome,
+        faithful_copy,
+        require_mutant_origin,
+    )
+
+    tree = faithful_copy(tmp_path)
+
+    # The text search the old guard performed still succeeds -- on a file that
+    # proves nothing about where production modules load from.
+    probe = tree / "tests" / "unrelated_probe.py"
+    probe.write_text(
+        "import sys\nsys.path.insert(0, 'somewhere/else')\n", encoding="utf-8"
+    )
+    assert "sys.path.insert(0" in probe.read_text(encoding="utf-8"), (
+        "the discredited check would pass here"
+    )
+
+    # The measurement does not. It asks the interpreter, in the workspace.
+    require_mutant_origin(tree, ("nornyx_forge.nornyx_runtime",))
+
+    # THE ESCAPE CLAUSE, which is the one this class is about.
+    #
+    # The first version of this self-attack deleted the module and asserted the
+    # refusal. That passes whether or not the escape check exists, because an
+    # absent module fails at the IMPORT step first -- so the test proved the
+    # import path and left the clause it names untested. Measured: removing
+    # `if not resolved or escaped` entirely, the old assertion still passed.
+    #
+    # Here the module imports perfectly well and simply resolves somewhere else,
+    # which is the actual historical defect: an editable `.pth` outranking a
+    # late `sys.path` insert, so the child ran production source while the
+    # harness reported a mutant.
+    elsewhere = tmp_path / "not_the_workspace"
+    elsewhere.mkdir()
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_mutant_origin(elsewhere, ("nornyx_forge.nornyx_runtime",))
+    assert refusal.value.outcome is Outcome.INVALID_MUTATION_ENVIRONMENT, (
+        refusal.value.outcome
+    )
+    assert "outside the mutant workspace" in str(refusal.value), str(refusal.value)
+
+
+def test_fg14_an_aggregate_floor_permits_deleting_critical_proofs(tmp_path: Path):
+    """FG14. 43 tests deleted across six modules, total unchanged.
+
+    Every module stayed PRESENT so `REQUIRED_MODULES` was satisfied, and the
+    surviving modules had grown enough to keep the aggregate above the floor.
+    A count cannot see which proofs went.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    import check_test_coverage as census  # noqa: PLC0415
+    import test_mutation_catalogue as catalogue  # noqa: PLC0415
+
+    # Census: a module gutted to one test, padded elsewhere so the total holds.
+    counts = dict(census.REQUIRED_MODULE_MINIMUMS)
+    victim = "tests/test_action_binding.py"
+    removed = counts[victim] - 1
+    counts[victim] = 1
+    counts["tests/test_filler.py"] = (
+        census.MINIMUM_COLLECTED - sum(counts.values()) + removed + 1
+    )
+    assert sum(counts.values()) >= census.MINIMUM_COLLECTED, (
+        "the aggregate floor must still pass, or this proves nothing"
+    )
+    assert census.evaluate(_counted_report(tmp_path, counts), 0) != 0, (
+        "the gate accepted a run whose security module lost all but one test"
+    )
+
+    # Catalogue: the same shape, one level up. Deleting six attacks leaves the
+    # floor satisfied and the identity check does not.
+    survivors = {
+        a.attack_id for a in catalogue.CATALOGUE
+        if a.attack_id not in {"M9", "M10", "M11", "M12", "M13", "M14"}
+    }
+    assert len(survivors) >= catalogue.MINIMUM_ATTACKS, "the floor must still pass"
+    assert sorted(catalogue.REQUIRED_ATTACK_IDS - survivors) == [
+        "M10", "M11", "M12", "M13", "M14", "M9",
+    ]
+
+
+def test_fg15_one_route_of_a_chain_is_not_the_property(tmp_path: Path):
+    """FG15. Removing one guard, seeing the property hold, and calling it either.
+
+    Distinct from every class above, and the reason it is retained separately:
+    the mutation APPLIED, the mutant LOADED, the semantic property CHANGED
+    locally, and the named test still passed. Nothing in FG01-FG14 catches that,
+    because nothing about the attempt was invalid -- the inventory was.
+
+    SURVIVED and KILLED are both wrong. The answer is DEFENCE_IN_DEPTH plus an
+    enumeration, and the compound attack over every route is what decides.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+    import test_mutation_catalogue as catalogue  # noqa: PLC0415
+
+    routes = historical.GOVERNANCE_SURFACE_CHAIN
+    assert len(routes) >= 2, "a chain with one route is not a chain"
+
+    # Each route is recorded as defence-in-depth, never as a survivor.
+    labels = {f"SURFACE-GUARD-{label}" for label, *_ in routes}
+    assert labels <= catalogue.DEFENCE_IN_DEPTH_ATTACKS, sorted(labels)
+
+    # The routes span more than one module, which is what a chain that only
+    # named anchors in one file would have missed.
+    assert len({relative for _label, relative, *_ in routes}) >= 2, (
+        "every route is in one module, so a single-module chain would suffice "
+        "and this class would be indistinguishable from FG07"
+    )
+
+    # And exactly one compound attack removes all of them together.
+    compound = [a for a in catalogue.CATALOGUE if a.compound]
+    assert len(compound) == 1, [a.attack_id for a in compound]
+    assert not compound[0].defence_in_depth, (
+        "the compound attack is the KILL; marking it defence-in-depth would "
+        "leave the property with no kill at all"
+    )
