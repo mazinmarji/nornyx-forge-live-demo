@@ -412,7 +412,23 @@ INVENTORY = (
         ident="H18 evidence recomputation removed",
         defect="a recorded verdict was read back instead of recomputed",
         prop="assurance is recomputed over what is on disk",
-        control="recompute_binding_claims derives from artifacts, never the binding",
+        control="verify_review_binding refuses a derived field that disagrees",
+        # MEASURED, and it overturned the earlier verdict. This was recorded as
+        # defence-in-depth with an incomplete inventory after attacking
+        # `recompute_binding_claims`. Cumulative suppression showed why that
+        # failed: for a forged-approval binding that route is INERT. It decides
+        # nothing, so removing it changed nothing, and the conclusion drawn from
+        # its survival was about the wrong control entirely.
+        #
+        # Suppressing this clause ALONE takes a binding claiming
+        # `production_approval: granted` and `human_review: performed` to
+        # status pass, integrity intact, zero problems -- the defined unsafe
+        # state, reached in one route.
+        #
+        # `recompute_binding_claims`, the manifest-digest check and the
+        # governed-input check were each measured and add nothing here. They are
+        # left out: a compound whose components are not independently relevant
+        # is a padded inventory, not stronger evidence.
         # AIMED BY MEASUREMENT. The obvious node --
         # test_recomputation_reads_artifacts_not_the_binding -- is STRUCTURAL: it
         # parses the source with `ast` and never executes the function, so
@@ -428,32 +444,10 @@ INVENTORY = (
         # its recorded values win. A forged binding then agrees with itself,
         # which is exactly what "recomputing a claim by reading the claim" means.
         mutation=(REFRESH,
-                  "    claims = {",
-                  "    import json as _circular\n"
-                  "    _self = _circular.loads(\n"
-                  '        (EVIDENCE_DIR / "review_binding.json").read_text(encoding="utf-8")\n'
-                  "    )\n"
-                  "    claims = {", 1),
-        extra_mutations=((REFRESH,
-                          "    return claims",
-                          "    claims.update(\n"
-                          "        {k: v for k, v in _self.items() if k in claims}\n"
-                          "    )\n"
-                          "    return claims", 1),),
-        # RE-AIMED AFTER AN FG15 ENUMERATION. Pointed at
-        # test_forging_the_binding_itself_is_refused, this SURVIVED -- and the
-        # reason was enumerated, not guessed: that test forges
-        # `production_approval` and `approvals.human_review`, which
-        # `_approval_state()` derives independently of recompute_binding_claims.
-        # Two routes; the mutation made one circular and the test exercised the
-        # other.
-        #
-        # This node tampers a BOUND ARTIFACT, so the verdict turns on a digest
-        # recomputation actually produces. Circular recomputation reads the
-        # binding's recorded digest instead, which agrees with itself, and the
-        # tamper stops being visible.
-        test="tests/test_evidence_integrity_verifier.py::test_tampering_a_bound_artifact_is_refused",
-        expect="a tampered bound artifact verifies because the binding vouches for itself",
+                  "        if claimed != derived:",
+                  "        if False:", 1),
+        test="tests/test_evidence_integrity_verifier.py::test_forging_the_binding_itself_is_refused",
+        expect="a forged binding verifies using the assertions it supplies about itself",
         severity="P1",
     ),
     SecurityClass(
@@ -516,23 +510,6 @@ NOT_YET_KILLED = {
         "the same measured inventory, reached from the empty-directory surface "
         "instead of the absent one. Suppressing the empty-directory guard alone "
         "leaves the surface unavailable via the routes behind it."
-    ),
-    "H18": (
-        "REDUNDANT BY MEASUREMENT, with the routes enumerated rather than "
-        "assumed. Making recompute_binding_claims circular -- reading the "
-        "binding and letting its recorded values win -- was aimed at two nodes "
-        "in turn and survived both. "
-        "test_forging_the_binding_itself_is_refused forges production_approval "
-        "and approvals.human_review, which _approval_state() derives "
-        "INDEPENDENTLY of recompute_binding_claims. "
-        "test_tampering_a_bound_artifact_is_refused survived as well, so at "
-        "least one further route detects a tampered bound artifact without "
-        "consulting the recomputed claim under attack. "
-        "Clause reachability was PROVEN for both -- the probe fires inside "
-        "recompute_binding_claims -- so this is not a bad aim, it is defence in "
-        "depth. A valid kill needs a compound mutation removing every "
-        "anti-circularity route at once, and that inventory is not yet "
-        "complete. Recorded as a debt, not an exemption."
     ),
 }
 
