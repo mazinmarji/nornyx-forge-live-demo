@@ -257,3 +257,74 @@ def require_mutant_origin(tree: Path, modules: tuple[str, ...]) -> None:
             Outcome.INVALID_MUTATION_ENVIRONMENT,
             f"production modules resolved outside the mutant workspace: {escaped}",
         )
+
+
+#: Raised by the probe below, and searched for in the run's output.
+CLAUSE_MARKER = "NORNYX_CLAUSE_REACHED"
+
+
+def require_baseline_clause_reached(
+    tree: Path, node: str, relative: str, anchor: str, *, timeout: int = 1800
+) -> None:
+    """Step 3. The pristine test must EXECUTE the clause the attack targets.
+
+    THE STEP H14 SHOWED WAS MISSING. `require_pristine_baseline` proves the
+    named test passes; it says nothing about whether the test ever reaches the
+    control being removed. H14 removed the discard of unauthenticated
+    attestations and its named test kept passing -- because that test runs with
+    no reviewer trust store, so the function returns at an earlier guard and the
+    discard is never executed. A passing baseline and an unreachable clause look
+    identical, and the difference is the whole result.
+
+    Machine-verified rather than argued. A probe raise is inserted at the clause
+    and the named test is re-run: if the clause executes, the test fails carrying
+    the marker; if it passes, the clause was never reached and no conclusion
+    about removing it is admissible.
+
+    The probe is applied to a THROWAWAY copy of the file and reverted, so the
+    baseline the attack then measures is byte-identical to pristine.
+    """
+    target = tree / relative
+    original = target.read_bytes()
+    before = original.decode("utf-8")
+    if before.count(anchor) != 1:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION,
+            f"the clause probe needs exactly one occurrence of the anchor in "
+            f"{relative}; found {before.count(anchor)}",
+        )
+
+    stripped = anchor.lstrip("\n")
+    indent = stripped[: len(stripped) - len(stripped.lstrip())]
+    probe = f'{indent}raise RuntimeError("{CLAUSE_MARKER}")\n{anchor}'
+    try:
+        target.write_text(before.replace(anchor, probe, 1), encoding="utf-8", newline="")
+        # `--tb=long`, not the usual `--tb=line`. The marker travels inside the
+        # failure message, and a test that asserts on a SUBPROCESS's output
+        # carries the whole traceback as its assertion text -- which `--tb=line`
+        # truncates to one line, hiding exactly the evidence this step needs.
+        # Measured: the clause ran, the test failed, and the marker was invisible.
+        completed = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
+             "-q", "-p", "no:warnings", "--tb=long"],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=isolated_env(tree), timeout=timeout,
+        )
+    finally:
+        target.write_bytes(original)
+    assert target.read_bytes() == original, "the clause probe was not reverted"
+
+    output = completed.stdout + completed.stderr
+    if completed.returncode == 0:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_BASELINE,
+            f"{node} PASSES with a raise planted at {relative}'s clause, so it "
+            "never executes the control this attack removes. A conclusion drawn "
+            "from removing it would be about a clause the test does not reach.",
+        )
+    if CLAUSE_MARKER not in output:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_BASELINE,
+            f"{node} failed under the clause probe but not because the clause "
+            f"ran -- the marker is absent:\n{output[-400:]}",
+        )

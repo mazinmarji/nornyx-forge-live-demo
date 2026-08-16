@@ -299,10 +299,18 @@ INVENTORY = (
                   "        if False:", 1),
         # RE-AIMED, and the first aim is the finding. Pointed at
         # test_an_inspection_nobody_can_authenticate_establishes_nothing, this
-        # mutation SURVIVED: that test runs with no reviewer trust store, so
-        # _authenticated_inspections returns at the store-availability guard and
-        # never reaches the discard. Two routes, one attacked, and the harness
-        # correctly refused to call it a kill -- FG15 exactly.
+        # mutation SURVIVED.
+        #
+        # The reason was NOT unreachability, which is what it looked like and
+        # what was first written here. `require_baseline_clause_reached` plants
+        # a raise at this clause and both nodes fail carrying the marker, so the
+        # clause EXECUTES under either test. The first aim survived because the
+        # discard is REDUNDANT there -- another route rejects the same
+        # attestation -- which is FG15 proper: defence in depth, not a test that
+        # never arrives.
+        #
+        # Worth stating plainly because the two look identical from a green
+        # baseline and a surviving mutant, and only the probe tells them apart.
         #
         # This node genuinely reaches the clause: the store vouches for the
         # builder, every earlier check passes, and only the discard stands
