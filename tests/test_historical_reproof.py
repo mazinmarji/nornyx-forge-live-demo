@@ -358,11 +358,23 @@ INVENTORY = (
         ident="H17 missing review_binding read as verified",
         defect="a missing binding passed verification silently",
         prop="nothing to verify against is not a passing verification",
-        control="the refresher reports a missing review_binding as a problem",
-        mutation=None,
-        delegated_to="tests/test_absence_is_not_success.py",
-        test="tests/test_absence_is_not_success.py::test_a_missing_review_binding_is_not_a_passing_verification",
-        expect="a missing binding is a problem, not a pass",
+        control="the verifier consumes verify_review_binding's problems",
+        # AIMED BY MEASUREMENT, not by name. The obvious node --
+        # test_a_missing_review_binding_is_not_a_passing_verification -- DELETES
+        # the binding, so `verify_review_binding` is never called there and the
+        # absent-binding refusal comes from a different path entirely.
+        # `require_baseline_clause_reached` reported INVALID_TEST_AIM for it,
+        # which is exactly what that outcome exists to say: the node is real, it
+        # passes, and it is looking somewhere else.
+        #
+        # This node keeps the binding and removes one claim from it, so the
+        # function runs, detects the defect, and the enclosing verifier consumes
+        # the result. That is the chain the attack has to break.
+        mutation=(REFRESH,
+                  "        binding_problems = verify_review_binding(binding)",
+                  "        binding_problems = []", 1),
+        test="tests/test_evidence_integrity_verifier.py::test_a_binding_missing_a_claim_is_refused",
+        expect="a binding missing an integrity claim passes verification",
         severity="P1",
     ),
     SecurityClass(
@@ -1107,7 +1119,6 @@ ATTACKING_CATALOGUES = frozenset(
 COVERED_BUT_UNATTACKED = {
     "H13": "task-8 closure is asserted by its own suite; no mutation exists yet",
     "H15": "absence-is-not-success, asserted by its suite",
-    "H17": "absence-is-not-success, asserted by its suite",
     "H18": "evidence integrity is asserted, not attacked",
     "H19": "subject scope is asserted, not attacked",
 }
