@@ -544,36 +544,57 @@ KILLED_VALIDLY_COMPOUND = {
 #: GENUINELY OPEN: the terminal proof does not exist yet. An entry here is a
 #: debt, not an exemption, and `test_the_unproven_set_is_exactly_what_was_
 #: measured` fails if anything is added without a reason.
-NOT_YET_KILLED = {
+#: TERMINAL, and not a kill. The historical mutation applies, the branch runs,
+#: the semantic output changes -- and the historical CONSEQUENCE cannot occur,
+#: because its architectural precondition was removed by a later change.
+#:
+#: Stronger evidence is required here than for a survivor, because "we could not
+#: defeat it" and "it can no longer reach its consequence" are different claims.
+#: All six hold, each measured:
+#:
+#:   historical mutation applies cleanly          the anchor is unique and exact
+#:   target branch body executes                  probed, with a SIGNED stale
+#:                                                attestation so it authenticates
+#:   semantic output changes                      the diagnostic names S_current
+#:   historical unsafe consequence absent         two regenerations over an
+#:                                                unchanged tree still agree
+#:   derivation graph excludes the value          `verdict_basis` lives in
+#:                                                architecture_independent_review
+#:                                                .json, named in
+#:                                                INSPECTION_OUTCOME_ARTIFACTS,
+#:                                                which subject derivation
+#:                                                excludes
+#:   no live authority consumes it                nothing reads the sentence to
+#:                                                decide anything
+OBSOLETE_HISTORICAL_ATTACK = {
     "H13": (
-        "SURVIVES A FULLY ADMISSIBLE ATTACK, which is a different finding from "
-        "the earlier attempts and must not be read as one of them. Everything "
-        "that previously explained a survival has been eliminated by "
-        "measurement: the mutation is the historical defect exactly (the stale "
-        "diagnostic rebinds to the CURRENT subject rather than the attested "
-        "one); the attestation is genuinely signed through the provisioned "
-        "reviewer trust, so it authenticates and is not discarded at H14's "
-        "clause; and the mismatch BRANCH BODY is proven reached, not merely the "
-        "enclosing `if`. "
-        "Under those conditions two regenerations over an unchanged governed "
-        "tree still agree. The fixed point holds WITH the defect installed. "
-        "That points at the architecture rather than at the test: the subject "
-        "appears no longer to be derived from `verdict_basis` in a way this "
-        "sentence can perturb, so the historical feedback loop may have been "
-        "removed by a later change and this line is now belt-and-braces. "
-        "NOT CLAIMED AS DEFENCE IN DEPTH. That would be the third comfortable "
-        "explanation in this class, and the previous two were wrong. What is "
-        "required is an FG15 route inventory of subject derivation -- what "
-        "actually feeds the inspection subject today, and which of those inputs "
-        "the diagnostic reaches -- measured the way H03/H04 and H18 were. Until "
-        "that exists, H13 is open."
+        "The feedback loop this attack revives no longer exists. The stale "
+        "diagnostic lands in `verdict_basis`, written into "
+        "architecture_independent_review.json, and `current_inspection_subject` "
+        "digests the evidence manifest with exclude=INSPECTION_OUTCOME_ARTIFACTS "
+        "-- which names that artifact. The sentence can say anything without "
+        "moving the subject. "
+        "Retired rather than killed: killing it would mean manufacturing a "
+        "modern defect so a historical attack could keep its number. The "
+        "conjunction proof is KEPT, because the invariant it asserts is "
+        "valuable on its own terms -- a genuinely authenticated stale "
+        "attestation must not destabilise the subject across repeated "
+        "regeneration -- and tests/test_task8_closure.py pins the exclusion "
+        "that makes it true, so restoring the loop fails with an explanation "
+        "rather than as drift somewhere downstream."
     ),
 }
+
+NOT_YET_KILLED: dict[str, str] = {}
 
 #: Excluded from the single-mutation runner for either reason -- proved by
 #: compound, or not proved yet. The runner cares about MECHANISM; the catalogue
 #: cares about STATUS, and those are no longer the same set.
-SINGLE_MUTATION_EXEMPT = {**KILLED_VALIDLY_COMPOUND, **NOT_YET_KILLED}
+SINGLE_MUTATION_EXEMPT = {
+    **KILLED_VALIDLY_COMPOUND,
+    **OBSOLETE_HISTORICAL_ATTACK,
+    **NOT_YET_KILLED,
+}
 
 DIRECT = tuple(
     item for item in INVENTORY

@@ -357,3 +357,85 @@ def test_the_verifier_refuses_missing_governed_content_without_crashing(
     assert '"status": "fail"' in combined, (
         f"{label}: refused without a structured verdict an operator can read"
     )
+
+
+# --------------------------------------------------------------------------
+# H13's historical precondition, traced and pinned.
+# --------------------------------------------------------------------------
+
+
+def test_the_stale_diagnostic_cannot_reach_subject_derivation():
+    """WHY H13's historical mutation no longer reaches its consequence.
+
+    The historical defect was a feedback loop: the stale-attestation diagnostic
+    names the CURRENT subject, the sentence lands in `verdict_basis`, that field
+    is written into `architecture_independent_review.json`, and that artifact was
+    digested into the inspection subject. The subject became a function of
+    itself and no two regenerations agreed.
+
+    The loop is severed structurally. `current_inspection_subject` digests the
+    evidence manifest with `exclude=INSPECTION_OUTCOME_ARTIFACTS`, and the
+    artifact carrying `verdict_basis` is named in that set. The diagnostic can
+    say anything at all without moving the subject.
+
+    That is measured in `test_a_stale_attestation_does_not_perturb_the_next_
+    subject` -- a signed stale attestation, the branch body proven reached, two
+    regenerations, and a stable subject. This test records the REASON, so that
+    re-introducing the loop by removing the exclusion fails here with an
+    explanation rather than as a mysterious drift somewhere downstream.
+
+    H13's mutation is therefore OBSOLETE rather than defeated: its
+    architectural precondition no longer exists. Retiring it is honest; killing
+    it would require manufacturing a modern defect for a historical attack.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    import refresh_governance_evidence as refresher  # noqa: PLC0415
+
+    carrier = "architecture_independent_review.json"
+    assert carrier in refresher.INSPECTION_OUTCOME_ARTIFACTS, (
+        f"{carrier} carries `verdict_basis`, which holds the stale-attestation "
+        "diagnostic. It is no longer excluded from subject derivation, so that "
+        "sentence can move the subject again -- the H13 feedback loop, restored."
+    )
+
+    source = (ROOT / "scripts/refresh_governance_evidence.py").read_text(
+        encoding="utf-8"
+    )
+    subject_fn = source[source.index("def current_inspection_subject"):]
+    subject_fn = subject_fn[: subject_fn.index("\ndef ")]
+    assert "exclude=INSPECTION_OUTCOME_ARTIFACTS" in subject_fn, (
+        "subject derivation no longer excludes the inspection-outcome "
+        "artifacts, so evidence ABOUT the subject is inside it again"
+    )
+    assert "verdict_basis" not in subject_fn, (
+        "subject derivation now reads verdict_basis directly"
+    )
+
+
+def test_the_exclusion_set_still_covers_every_outcome_carrier():
+    """An exclusion that lists some carriers and not others achieves nothing.
+
+    Recorded because it already happened once: the approval artifacts were
+    excluded while the catalogues that enumerate their hashes were not, so the
+    values reached the subject anyway by a second path.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    _sys.path.insert(0, str(ROOT / "scripts"))
+    import refresh_governance_evidence as refresher  # noqa: PLC0415
+
+    required = {
+        "review_binding.json",
+        "architecture_independent_review.json",
+        "INDEX.json",
+        "architecture_evidence_manifest.json",
+        "runtime_evidence_manifest.json",
+    }
+    missing = sorted(required - set(refresher.INSPECTION_OUTCOME_ARTIFACTS))
+    assert missing == [], (
+        f"these artifacts carry inspection outcomes or enumerate the hashes of "
+        f"artifacts that do, and are no longer excluded from the subject: "
+        f"{missing}"
+    )
