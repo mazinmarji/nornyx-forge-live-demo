@@ -21,9 +21,10 @@ outcome named beside it; none of them may be reported as a kill:
     3  the target is PRODUCTION source               INVALID_MUTATION
     4  the named test REACHES the mutated clause     INVALID_TEST_AIM
     5  the mutation applies to an executable node    INVALID_MUTATION
-    4  the mutant is what loads                      INVALID_MUTATION_ENVIRONMENT
-    5  the intended semantic effect is present       INVALID_MUTATION
-    6  the SAME node runs, and fails                 KILLED_VALIDLY
+    6  the mutant is what loads                      INVALID_MUTATION_ENVIRONMENT
+    7  the intended semantic effect is present       INVALID_MUTATION
+    8  the EXACT node fails, in the call phase,      KILLED_VALIDLY
+       for the INTENDED property
 
 Step 2 is the one that was missing, and it is the one that matters: an attack
 cannot be classified until its proof is shown to work when nothing is broken.
@@ -142,8 +143,25 @@ def run_node(tree: Path, node: str, *, timeout: int = 1800, report: Path | None 
     )
 
 
-def require_caused_failure(report: Path, node: str, output: str) -> None:
-    """Step 5. The named test must have FAILED, not errored.
+def require_caused_failure(
+    report: Path, node: str, output: str, *, expected_property: str = ""
+) -> None:
+    """Step 5. The EXACT named node must have failed, in the call phase, for
+    the intended property.
+
+    Four distinct questions, and the old implementation answered only the
+    weakest of them by summing `<failure>` across the whole report:
+
+        did the named node run at all        -> INVALID_TEST_TARGET
+        did it error rather than fail        -> INVALID_MUTATION
+        is the evidence ambiguous            -> INVALID_MUTATION_ENVIRONMENT
+        did it fail for the intended reason  -> INVALID_MUTATION
+
+    "Same node failed" is still weaker than "same node failed BECAUSE the
+    intended security assertion was violated", which is why
+    `expected_property` exists. H05 is the worked example: the contradiction
+    between "the mutation kills" and "the recorded control is not decisive" was
+    resolved only by reading WHICH assertion failed.
 
     `returncode != 0` does not distinguish "the assertion this control is proven
     by did not hold" from "the mutant no longer imports". Lens B re-aimed H06 at
@@ -161,24 +179,86 @@ def require_caused_failure(report: Path, node: str, output: str) -> None:
             f"classified:\n{output[-400:]}",
         )
     root = ElementTree.parse(report).getroot()
-    cases = root.iter("testcase")
-    failures = errors = 0
-    for case in cases:
-        failures += len(list(case.iter("failure")))
-        errors += len(list(case.iter("error")))
 
+    # THE EXACT NODE, not the report. Summing failures across every testcase
+    # meant the named proof could PASS while an unrelated one broke, and the
+    # campaign recorded the control as removed. `node` was accepted as an
+    # argument and used only in messages.
+    module, _, name = node.partition("::")
+    stem = module.removesuffix(".py").replace("/", ".").replace("\\", ".")
+    module_stem = stem.rsplit(".", 1)[-1]
+    # A COLLECTION ERROR is written against the MODULE, not the node: pytest
+    # emits classname='' and name='<module>' with an <error> child, because the
+    # node never came into existence to be named. Measured, not assumed --
+    # matching only on node name reported that as "no result for this node",
+    # which is true but loses the more useful fact that the mutant did not
+    # import.
+    collection_errors = [
+        case for case in root.iter("testcase")
+        if (case.get("name") or "") == module_stem and list(case.iter("error"))
+    ]
+    matched = collection_errors + [
+        case for case in root.iter("testcase")
+        # pytest writes the parametrised id as `name[param]`, and the classname
+        # carries the module path. Matching the stem keeps parametrised cases
+        # attributable to the node that owns them.
+        if (case.get("name") or "").split("[")[0] == name
+        and (case.get("classname") or "").endswith(stem.rsplit(".", 1)[-1])
+    ]
+    if not matched:
+        present = sorted({
+            f"{c.get('classname')}::{c.get('name')}" for c in root.iter("testcase")
+        })
+        raise AttackNotAdmissible(
+            Outcome.INVALID_TEST_TARGET,
+            f"the report contains no result for {node}. Whatever else ran, this "
+            f"proof did not, so nothing can be credited to it. Present: "
+            f"{present[:6]}",
+        )
+
+    failures = [f for case in matched for f in case.iter("failure")]
+    errors = [e for case in matched for e in case.iter("error")]
+
+    if errors and failures:
+        # AMBIGUOUS. "There exists a failure for this node" is the aggregate
+        # shortcut one level down: with an error alongside it, the run cannot
+        # show that the intended call-phase assertion is what decided the
+        # outcome.
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION_ENVIRONMENT,
+            f"{node} reported BOTH a failure and an error, so which one decided "
+            "the result cannot be established. A kill needs the call-phase "
+            "assertion to be the reason, not one of two candidate reasons.",
+        )
     if errors:
         raise AttackNotAdmissible(
             Outcome.INVALID_MUTATION,
-            f"{node} ERRORED under the mutant rather than failing ({errors} "
-            "error(s)). An import or collection failure means the control was "
-            f"never reached, so nothing was proven about it:\n{output[-400:]}",
+            f"{node} ERRORED under the mutant rather than failing. Setup, "
+            "teardown and collection failures mean the control was never "
+            f"reached, so nothing was proven about it:\n{output[-400:]}",
         )
     if not failures:
         raise AttackNotAdmissible(
             Outcome.SURVIVED,
             f"{node} reported no failing assertion under the mutant.",
         )
+
+    if expected_property:
+        # THE INTENDED PROPERTY, not merely a failure. Correct node, wrong
+        # reason is still a false kill: the node can fail in the call phase,
+        # with a genuine assertion, about something the attack never touched.
+        # This is what stops `<failure>` becoming the next label standing in for
+        # semantics.
+        evidence = " ".join(
+            (f.get("message") or "") + " " + (f.text or "") for f in failures
+        )
+        if expected_property.lower() not in evidence.lower():
+            raise AttackNotAdmissible(
+                Outcome.INVALID_MUTATION,
+                f"{node} failed, but not attributable to the intended property. "
+                f"Expected the failure to concern {expected_property!r}; the "
+                f"assertion was: {evidence.strip()[:220]}",
+            )
 
 
 def require_node_exists(tree: Path, node: str) -> None:

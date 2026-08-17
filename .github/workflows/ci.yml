@@ -26,6 +26,19 @@ concurrency:
 permissions:
   contents: read
 
+# EVERY `run:` STEP GETS `bash -eo pipefail`.
+#
+# GitHub's IMPLICIT shell is `bash -e`, which does not set pipefail: in
+# `pytest ... | tail -3` the step observes `tail`, so a failing pytest can leave
+# a step green. That is not hypothetical here -- a commit in this repository was
+# made over a red suite by exactly that pipeline, and the displayed output
+# looked fine because the displayed output was never the measured exit state.
+#
+# Declaring `shell: bash` explicitly is what turns pipefail on.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   test:
     runs-on: ubuntu-latest

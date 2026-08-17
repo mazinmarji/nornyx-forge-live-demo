@@ -1188,7 +1188,7 @@ def test_an_erroring_mutant_is_not_a_kill(tmp_path: Path):
     )
 
     with pytest.raises(AttackNotAdmissible) as refusal:
-        require_caused_failure(report, "test_broken.py", completed.stdout)
+        require_caused_failure(report, "test_broken.py::test_the_control", completed.stdout)
     assert refusal.value.outcome is Outcome.INVALID_MUTATION, refusal.value.outcome
     assert "ERRORED" in str(refusal.value)
 
@@ -1211,7 +1211,7 @@ def test_a_genuinely_failing_assertion_is_admitted(tmp_path: Path):
     )
 
     assert completed.returncode != 0
-    require_caused_failure(report, "test_failing.py", completed.stdout)
+    require_caused_failure(report, "test_failing.py::test_the_control", completed.stdout)
 
 
 def test_a_passing_run_is_reported_as_survived(tmp_path: Path):
@@ -1229,7 +1229,7 @@ def test_a_passing_run_is_reported_as_survived(tmp_path: Path):
     )
 
     with pytest.raises(AttackNotAdmissible) as refusal:
-        require_caused_failure(report, "test_passing.py", "")
+        require_caused_failure(report, "test_passing.py::test_ok", "")
     assert refusal.value.outcome is Outcome.SURVIVED
 
 

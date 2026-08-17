@@ -290,3 +290,30 @@ def test_the_request_digest_covers_exactly_what_the_comment_says():
         "subject_revision is what actually binds a grant to a subject, and it "
         "no longer moves the digest"
     )
+
+
+def test_ci_shell_propagates_pipeline_failure():
+    """A piped assurance command must not be able to report a false green.
+
+    GitHub's IMPLICIT shell for `run:` is `bash -e`, which does NOT set
+    pipefail. `pytest ... | tail -3` therefore reports `tail`'s status, and a
+    failing suite leaves the step green.
+
+    Measured in this repository, not imagined: a commit was made over a red
+    suite because `pytest ... | tail -3 && git commit` saw success. The
+    displayed output looked correct; the displayed output was never the measured
+    exit state -- which is the whole Task-14 finding, in a shell.
+
+    Declaring `shell: bash` explicitly is what enables `-eo pipefail`.
+    """
+    import yaml  # noqa: PLC0415
+
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    shell = (workflow.get("defaults") or {}).get("run", {}).get("shell")
+    assert shell == "bash", (
+        "CI does not declare `defaults.run.shell: bash`, so steps run under "
+        "`bash -e` without pipefail and a piped assurance command can mask the "
+        f"failure of the command that matters (found shell={shell!r})"
+    )

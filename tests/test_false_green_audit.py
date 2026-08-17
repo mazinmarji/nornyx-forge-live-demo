@@ -749,10 +749,17 @@ def test_fg15_one_route_of_a_chain_is_not_the_property(tmp_path: Path):
         "and this class would be indistinguishable from FG07"
     )
 
-    # And exactly one compound attack removes all of them together.
-    compound = [a for a in catalogue.CATALOGUE if a.compound]
-    assert len(compound) == 1, [a.attack_id for a in compound]
-    assert not compound[0].defence_in_depth, (
+    # The governance-surface family's compound must exist and must be the KILL.
+    # Asserted BY NAME, not by counting: `len(compound) == 1` was true only
+    # while H05 was mislabelled non-compound, so this passed for a reason that
+    # had nothing to do with the surface chain -- a count agreeing with an
+    # expectation by way of an unrelated error.
+    compound = {a.attack_id for a in catalogue.CATALOGUE if a.compound}
+    assert "SURFACE-WHOLE-CHAIN" in compound, sorted(compound)
+    whole_chain = next(
+        a for a in catalogue.CATALOGUE if a.attack_id == "SURFACE-WHOLE-CHAIN"
+    )
+    assert not whole_chain.defence_in_depth, (
         "the compound attack is the KILL; marking it defence-in-depth would "
         "leave the property with no kill at all"
     )
