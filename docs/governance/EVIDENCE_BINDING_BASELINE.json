@@ -1,0 +1,789 @@
+{
+  "checker": "scripts/check_evidence_binding.py",
+  "checker_schema": "nornyx.forge.evidence_binding.v1",
+  "commits_carrying_evidence": 168,
+  "established_at_head": "062ed8be1402a5b252f8545011544516fde55848",
+  "excluded_from_baseline": {
+    "062ed8be1402a5b252f8545011544516fde55848": "Committed AFTER the defect was identified and described, so it is NEW WORK and must not be grandfathered. Generating the baseline at this head swept it in automatically -- the exact failure mode the exact-SHA design was chosen to avoid, reproduced while implementing it. Fixed by regenerating the binding, not by excusing the commit."
+  },
+  "known_violations": [
+    {
+      "actual_governed_input_digest": "sha256:e393bd445ea650aeef09589a1abc5d7ad69076f9ccc1121f449ee0457a3ce603",
+      "commit": "01c5de57f9509bd918fe0eef7add887348659c07",
+      "recorded_governed_input_digest": "sha256:a671ccbbf0c6e2f00acc54b12d6b5e1d60f14ad67097595c65b31894db41dd83",
+      "subject": "Isolate the mutant so Task-10 re-proofs measure the mutant, not the original"
+    },
+    {
+      "actual_governed_input_digest": "sha256:d4ff7d9439652b8304a7d3a22498ed268cdef4d1d6f3e3434a76813b79da1ef3",
+      "commit": "0569bb398e3d85d9a9e18b113dbd3717f4aaa3ae",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Recompute the catalogue accounting: 39 = 35 + 4"
+    },
+    {
+      "actual_governed_input_digest": "sha256:66ce224748a816aa523bdf200402cb5ec6a53583502a239db776e63838f5fd6a",
+      "commit": "0dd77cc3289d9e1f6bd9e6e7b1f0eaed1d9baabd",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Enumerate the fourth governance-surface enforcement route"
+    },
+    {
+      "actual_governed_input_digest": "sha256:5cd533ebbbc1f7b90697f6e391c08b2f7e55a9947865e7cda1b72b64fa9a0f8a",
+      "commit": "0e6caf1f5c81755b29b6bcc4340042cd982e498f",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Perform the refusal the docstring promised, and make canonicalization injective"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6ebef985e1f37ba9d0385076b36c5758cdbb060a16eb4297308a2d61b19c30fa",
+      "commit": "0f37917052b8f8bd3018c8d308b9b7cebb4730f8",
+      "recorded_governed_input_digest": "sha256:7ca49be8b11840e311532355e9e82ecfbc12513d2f78cdb486838eb1ab1cd686",
+      "subject": "Raise the collection floor to 895 against 924"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6c12585c7ff75d0fd5424a3681803bfbc021fad2d9382b2ca275bb72782f8b50",
+      "commit": "101518eba49b32e3a0d0381f0a37cca99d546291",
+      "recorded_governed_input_digest": "sha256:61cf168f3c7a8334723e54b0d189ccb8c4f6e82f85b46719684b7c56c7d94b8f",
+      "subject": "Move the remaining governance fixtures onto the trusted clock"
+    },
+    {
+      "actual_governed_input_digest": "sha256:96e83eb1bae26009516b66d331433cce37e6adc0212e0cde25ee37096b590efb",
+      "commit": "1311dbd53774dbbcf24fa48f6ffd0cc0154d542f",
+      "recorded_governed_input_digest": "sha256:33b82c57bb12868e6fae1495fd270bf6986ec2f50371c3cfbfde15878ac7b71c",
+      "subject": "Keep the inspection subject and the runtime authority subject apart"
+    },
+    {
+      "actual_governed_input_digest": "sha256:cfa87028d414819cc97bb2f9fdfa4a28f5b38404a054c6a6df6f19b0344d8ab4",
+      "commit": "13844c71b69d24e2d5f64b0f2d2fc4acf07fdcfc",
+      "recorded_governed_input_digest": "sha256:65885f73101ef28c8b86e304d02d0bf9744df654b629fa7ab10697309a459314",
+      "subject": "Stop the documentation asserting things the system stopped doing"
+    },
+    {
+      "actual_governed_input_digest": "sha256:dfd6719d4993e28d555eeafcf9f48ec71a17ee4b5c3399c8c93fdd28444ec120",
+      "commit": "139812098df0366602b75050278e378f71dfe668",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Make BASELINE_CLAUSE_REACHED machine-verifiable, and correct the H14 record"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e2988ae108099aec78c8309418857f70b5a9fc3f431856e5d2de454b766d4b31",
+      "commit": "142d90441bb460032242f4f0d4cc5376481b67fb",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "H18: clause reached, mutation valid, and it survived two enumerated aims"
+    },
+    {
+      "actual_governed_input_digest": "sha256:b53e899a43ebb702327a9b2e016d03658ee3415063417c9ae0c93f8979c1ed0d",
+      "commit": "16aed3e731615e678f9da650203ed0537577df71",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Classify D1 and D2 as HUMAN_BLOCKED, not INVALID_BASELINE"
+    },
+    {
+      "actual_governed_input_digest": "sha256:c1afe2025f54800690fb872c3c385be0de270657c6502158d5bb1e1fa3d6a3da",
+      "commit": "16edc5576af6e2c7e0379fe1072be477beec8b5c",
+      "recorded_governed_input_digest": "sha256:56954849a30dae4d863340da8ac3ba58a2ced10db13eb2bcfa5046878d93409b",
+      "subject": "Make the characterization alarm strict and the negatives reach their clause"
+    },
+    {
+      "actual_governed_input_digest": "sha256:33b82c57bb12868e6fae1495fd270bf6986ec2f50371c3cfbfde15878ac7b71c",
+      "commit": "1771555f4acd285336304fe4320030a1c1f09172",
+      "recorded_governed_input_digest": "sha256:42327a0e42a1c470d2faa2b7bfed32cdf44702f8ab353c955fd21995d2a34683",
+      "subject": "Put the evidence set back byte for byte, not by re-running the pipeline"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e7b89e35ffc607bf39c2b49a61d6859f6f48a1bca3b533bf610f22c1c8dc5280",
+      "commit": "18e3597ce363f0ec48195bca3933de8f33ecccab",
+      "recorded_governed_input_digest": "sha256:49f40d9df330fd41f20b3921503b1204fc22572d074f9e2c8f8101face358e7e",
+      "subject": "Prove the domain split is load-bearing by collapsing it fourteen ways"
+    },
+    {
+      "actual_governed_input_digest": "sha256:370b7d4f783fc33980a5a8257d8279e2e4806ac070c08ecf723931600156b707",
+      "commit": "19f3bfb81a37df5f25c1ac05e8f39951abed606d",
+      "recorded_governed_input_digest": "sha256:d5d37c54f91680d4c64cf168f5505415e0b7ba502f77f30a3e74481b0a1e6c19",
+      "subject": "Make the image ship only what the subject describes"
+    },
+    {
+      "actual_governed_input_digest": "sha256:cca651e753d0844aa724e80a7b1c487143e7b29fd2a3100d26a750a5e1529ec9",
+      "commit": "1a8240417ce67022e94acd9b19149cd7bbbcad49",
+      "recorded_governed_input_digest": "sha256:53bf854fd44ac0f596fc5f3cd346ed7b3a92606a1e419394976ead97de6a1995",
+      "subject": "Make the architecture vocabulary and the mode claims describe what runs"
+    },
+    {
+      "actual_governed_input_digest": "sha256:084c2dbc41bf5032feb70eb961d678922e9838248b095e643cc6b3cffca64f4e",
+      "commit": "1ef359a08d697c2deb305b8a7c84580eb6079b0a",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Stop counting collection errors as coverage"
+    },
+    {
+      "actual_governed_input_digest": "sha256:53bf854fd44ac0f596fc5f3cd346ed7b3a92606a1e419394976ead97de6a1995",
+      "commit": "2209f056d9b9a10664e2df590cd361b6ec1ab2c2",
+      "recorded_governed_input_digest": "sha256:e04371542163941a781ee6c962a7f4570e3e37bbaff890aec48ef78ff5324cdf",
+      "subject": "Stop requiring the presence of a key that controlled nothing"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a82b388e06172c531969e7c046d61dd613fb55f031b6aad012012eca80ed2bb0",
+      "commit": "22cb262f17ce136785563620ad8fa175a72c0f40",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Require each false-green self-attack to actually assert something"
+    },
+    {
+      "actual_governed_input_digest": "sha256:ebbce58eea58575ffa53cdb57897bc56fe0427d7413b4857d3978f51c7f5bfb3",
+      "commit": "28c5d2fba39f061e89d0b4fb4592214abfc46ce2",
+      "recorded_governed_input_digest": "sha256:9c24e64f25e79dc205e0e3d881a322b3fcbe9c875c07438a0f662a7a1dd53243",
+      "subject": "Bind consequential authority to content identity, not to a commit hash"
+    },
+    {
+      "actual_governed_input_digest": "sha256:bc00cffbbe725eb821374cb2c7ec705ef28215f3cc8a70fba7e201b718a0fbb2",
+      "commit": "2c8fc92d06e5d6fcc855267ba93293e16c9a0123",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Rebuild the mutation campaign report from measurement"
+    },
+    {
+      "actual_governed_input_digest": "sha256:bd7b9220c0230b2c79a5bdfdf6b5d0a7ebe1eb9f231307d4f09c23dd9ab522c3",
+      "commit": "2ed7dea8fa361631f37082c0c88af632796cfaae",
+      "recorded_governed_input_digest": "sha256:05a535f12baa2cd600ffb900237ee34f8602045395077e75a7f92a3cceffe8c1",
+      "subject": "Reach the human-approval authentication the tests were named for"
+    },
+    {
+      "actual_governed_input_digest": "sha256:30e53a7107f4a347d21beb7074598a73299dd12afb19a8a8584f9846206d3541",
+      "commit": "3455287529b42413567e13947c2f9b7327cf037e",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "A kill must be a failed assertion, not an error"
+    },
+    {
+      "actual_governed_input_digest": "sha256:05a535f12baa2cd600ffb900237ee34f8602045395077e75a7f92a3cceffe8c1",
+      "commit": "34d60f38d0271d1c7808cde1186b76b337ee81ef",
+      "recorded_governed_input_digest": "sha256:45c37b8023e2798df039773ec25491180825a3115bc1f5fc692296ec377de5aa",
+      "subject": "Sync a record's verdict from the index instead of writing it by hand"
+    },
+    {
+      "actual_governed_input_digest": "sha256:cc0ac50fa6c6764f30ea471fa35fef1ca0f80e8c8161a78ce0fff2e1d885f21d",
+      "commit": "3781c088912528b4f0d554ee475005b0f1495106",
+      "recorded_governed_input_digest": "sha256:e7b89e35ffc607bf39c2b49a61d6859f6f48a1bca3b533bf610f22c1c8dc5280",
+      "subject": "Tell a vanished Docker daemon apart from a failed image build"
+    },
+    {
+      "actual_governed_input_digest": "sha256:461d156dec0991306198db17356dc9eecc9564eea84a272a4cd0bb4992312afc",
+      "commit": "386824e6e15dfab8d27bc94411e244b10d52cc9d",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Remove forged attestation records and stop tests writing to the real tree"
+    },
+    {
+      "actual_governed_input_digest": "sha256:7a95b8aa4dc339e8576c97f3922290f68b53582b64305f4d5a95eaffcacc0efa",
+      "commit": "3968afaa5af33c81349e0ddd1d717a1f49aee3fd",
+      "recorded_governed_input_digest": "sha256:18b52eddc84d739ba8c4047528a9ceb9494b5a7bd038a515b6a8b6a15dd37a0e",
+      "subject": "Refuse a verification that has no binding to verify against"
+    },
+    {
+      "actual_governed_input_digest": "sha256:3110cd6cc2a254cb70178a163897d950a03d8f34efdc64ea394edcbe7c7839c4",
+      "commit": "3a2500029389dfefa259bbb90f466d9fafb081a3",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Record the failed internal review at 45f858c before touching production"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "commit": "3a2db9df3e52e2a2d1cee8c6794d9ff0b61404f1",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Separate deferred questions from the campaign's zero, and state what is unattacked"
+    },
+    {
+      "actual_governed_input_digest": "sha256:4ef54618ba98e9cdf939903f26de64f7a3236045070d6b77431352290ef083c7",
+      "commit": "3b11c63dbb7fda2973f608e985f777fadbe2d4ba",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Make the authority checks fail when they are removed"
+    },
+    {
+      "actual_governed_input_digest": "sha256:64db80fbe8136f794401d762c6a065934bd1c624fb60c41e5e1d2206b9b28f20",
+      "commit": "3b301129144ee4763d8456ab00fe280399d90c7f",
+      "recorded_governed_input_digest": "sha256:3c2941b6bd2765358e1644aa5b84c1ef00bc09681551915451da6368aaf89c95",
+      "subject": "Refuse a missing governed contract instead of crashing, and close Task 8"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a1b4f8d1b6ab3800e36acc83786fef172c7bd951cbf8b3c826cf50b12bc5efa6",
+      "commit": "3e0f1eb6fbdfa0a172d498762b3b9c42c6e7af7f",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Write governed text the way the observer requires it to be read"
+    },
+    {
+      "actual_governed_input_digest": "sha256:39808dea6c3e0fc7f1b59fae4d9db7d19d386465a923cca2086a58269f87caee",
+      "commit": "3e6ebbac21ba2725a9a20925db5e909c42c30e9c",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Name the classes this inventory covers but does not attack"
+    },
+    {
+      "actual_governed_input_digest": "sha256:8fea57f1c0909aa45831a833956ea3b224818888b6db1895251016754a283ac8",
+      "commit": "3e8470efad480527be71d1d3eabe76d2bbba0832",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Follow process capability through the module that re-exports it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:ba6f24a07cbfbb4050478129fd7e119383bd77012f56cb8eaf7a6525b0cdb525",
+      "commit": "412d75c0120ba57a8dfb02af1e8f262427999a4f",
+      "recorded_governed_input_digest": "sha256:70d231d6a85bae748c94d65b024c030d51d7a403c05ec32a139130f5aa3de67f",
+      "subject": "Close Task 10: H01 killed, and possession separated from consumption"
+    },
+    {
+      "actual_governed_input_digest": "sha256:2d7dfbd03c4916b1e0d63062f7106f3b926fa9ec74e252a12f075ea8b76a87b4",
+      "commit": "4408e74678634a31a2c431e1561e27aee5313f9e",
+      "recorded_governed_input_digest": "sha256:f400e32747877d1e55486a6814b1a5e2aad9313d13e0136f49c3816ed7f07314",
+      "subject": "Match the property, not something adjacent to it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:b418b3fc04d02fab42624ce960a59e94affde961bdad91bd06a363e801ea2bda",
+      "commit": "44fc0df69d348ac2dc7404e694a9e484cb72fcb3",
+      "recorded_governed_input_digest": "sha256:05a535f12baa2cd600ffb900237ee34f8602045395077e75a7f92a3cceffe8c1",
+      "subject": "Give the anti-shrink gate a floor and a list worth having"
+    },
+    {
+      "actual_governed_input_digest": "sha256:12f18c5127f719f318fc449bcc0eecdb81e70ec4195effc122b13a7e13113fd6",
+      "commit": "482a7b3dd761f8cadcbae2a8298491ccc2c5f22c",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Contain the suite's scratch directories"
+    },
+    {
+      "actual_governed_input_digest": "sha256:63ccec8d999668856ef387e7b08282563004c7b44b43415ba80365bc6957df63",
+      "commit": "4bb934d980c9a8d193671bcc742dc956096ac567",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Attack H17, aimed by measurement rather than by name"
+    },
+    {
+      "actual_governed_input_digest": "sha256:4feada0a301cc788b04276d993a4aa3ea58fdce9f9cf020b869f45a2ab201868",
+      "commit": "4ddae57372e5367790ea794640519dbcd85bd64d",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Refuse prose-only mutations and measure mutant origin"
+    },
+    {
+      "actual_governed_input_digest": "sha256:89e8ee7cac3404ce8a45cd0e2819e540001d059f147e8f0259bfbed6fd437652",
+      "commit": "4f62f81b60792b62c1a5ee3b1a53c47e74fa3512",
+      "recorded_governed_input_digest": "sha256:33b82c57bb12868e6fae1495fd270bf6986ec2f50371c3cfbfde15878ac7b71c",
+      "subject": "Refuse any mutation that cannot be shown to reach an executable node"
+    },
+    {
+      "actual_governed_input_digest": "sha256:f5b4f02373b5449cadbf5932439a24ab4cc6b49ecda3c6504a51f2824b681a43",
+      "commit": "5115dd8d3a3f5844c871e8a2b0864f87169bc5da",
+      "recorded_governed_input_digest": "sha256:45c37b8023e2798df039773ec25491180825a3115bc1f5fc692296ec377de5aa",
+      "subject": "Hand the established subject to the boundary that judges requests"
+    },
+    {
+      "actual_governed_input_digest": "sha256:505b3d7c8d1fd9a38591f63ad61cc59bdf19bb4697a5b1f89ad4c2ea08654a9f",
+      "commit": "512fa3cead7870b6772f4134e606d77d1358b61f",
+      "recorded_governed_input_digest": "sha256:05a535f12baa2cd600ffb900237ee34f8602045395077e75a7f92a3cceffe8c1",
+      "subject": "Let an inspection bind to a subject that survives being inspected"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e9d50331b4725b9a4e1e44eb750bb2e6672c92e2ca39540580a85cdd3cda4e95",
+      "commit": "516fc08a1984e281dd1f7278c0c78ea7d0b343f9",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Record five more closed P3 dispositions"
+    },
+    {
+      "actual_governed_input_digest": "sha256:b78cc1727964aab4bb6ae3438de81681f99f176189fb9003303b105f6cc071df",
+      "commit": "52e98fac5156fb2a9841f58d821a1136a02ae8f4",
+      "recorded_governed_input_digest": "sha256:65885f73101ef28c8b86e304d02d0bf9744df654b629fa7ab10697309a459314",
+      "subject": "Detect process execution by what it does, not by how it is spelled"
+    },
+    {
+      "actual_governed_input_digest": "sha256:635cbfbfa74cd45f7c2cce9b2a05228447e21825d05701ba1648d9d19c0f8d21",
+      "commit": "52fafd3ec5686b8621c6fcd96b24048b982aacba",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Record the compromised-governance refusal, and catch tests that dirty the tree"
+    },
+    {
+      "actual_governed_input_digest": "sha256:c64c8f31b478724b4bd8a1a901af384640d14545362277c9cc2871886c7b266a",
+      "commit": "54fb8435f10487aaffabed93024365deffd744da",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Attack H14 and H16, the two highest-scrutiny unattacked classes"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a0d823e0347861a3bef807bf684f5bb4e23bade91687524e959ee2a8380c264c",
+      "commit": "561281ba168cb8cef2d3f0dae7ec7fbd0f161958",
+      "recorded_governed_input_digest": "sha256:6a6f01764672e53cf206ead2d52f635e66e02b39afc8d2565e98fd970508529b",
+      "subject": "Declare what kind of authority every evidence artifact carries"
+    },
+    {
+      "actual_governed_input_digest": "sha256:56954849a30dae4d863340da8ac3ba58a2ced10db13eb2bcfa5046878d93409b",
+      "commit": "5725c42c96a569ef1128221b79cb62334ad3b998",
+      "recorded_governed_input_digest": "sha256:459878f945c9a9eedcc8003eb04630b11db2ae46da1a30a85980c3917876e288",
+      "subject": "Pin where each trust domain is actually consumed"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e47024f6933e2586cd3c703b0367c2f1ae00f11b5a2752603272732280dd957c",
+      "commit": "5738e0d5e2078232cc1a9587828578c2ad2b0ec2",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Compare the recorded inventory metadata to something"
+    },
+    {
+      "actual_governed_input_digest": "sha256:d3aea11f85df978a33ccaad7c91b4ed6d60cb537b14d72c276cec363463236cc",
+      "commit": "57638fd9a624cd874a101e67955f8bedbabf25f9",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Harden the reachability probe with a per-run nonce and provenance"
+    },
+    {
+      "actual_governed_input_digest": "sha256:b2a8c1ed5522be1e14719d513f5031d37fb7bb53400109f04ad90a3660fca57a",
+      "commit": "594b892b47f74da007f6a1fdb3856a4b8781b249",
+      "recorded_governed_input_digest": "sha256:f2463937b08c30094d9df01edda11866b90130509864e77c54877f28d791f9bb",
+      "subject": "Name the governance backend at every command boundary"
+    },
+    {
+      "actual_governed_input_digest": "sha256:475b8e76defa018b42dcc1fd6fba777e448e8401024b036a6ba9cbe39155abc4",
+      "commit": "59eb71d4196a2533bdbea107eaa83d15dbd9600e",
+      "recorded_governed_input_digest": "sha256:505b3d7c8d1fd9a38591f63ad61cc59bdf19bb4697a5b1f89ad4c2ea08654a9f",
+      "subject": "Measure that the semantic subject still catches every decision-changing edit"
+    },
+    {
+      "actual_governed_input_digest": "sha256:b3d802d9ffdcad5c4f4b6dc40255036516529c7ed083da0397f959622bc20608",
+      "commit": "5baf050ce39056a6f25c1ef31a686548059ac40c",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Scope the CR-byte scan to what the repository carries"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a27da778437fcacfdcfbfab4b2c467ae2f9fab3df375c264315b4df84fe289c5",
+      "commit": "5fa3fe4005297c17a7026aa92cf96f19eac28597",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Make reported authority a view of the snapshot"
+    },
+    {
+      "actual_governed_input_digest": "sha256:35f26f49a8fe35a5ce73a1bd41b0443beb63abd5c8f31d63f322def62b659698",
+      "commit": "603b486ac777b1dd2a6228f0d0efef70d77130df",
+      "recorded_governed_input_digest": "sha256:5bc0ce532ab93713f24b6008a85b7ad3db15fbd6d7be8deb1ee2babb9faa9664",
+      "subject": "Check the ledger's constraints, not the name of its table"
+    },
+    {
+      "actual_governed_input_digest": "sha256:799cc6bb30ecca704fe70f8b36a4ca96475fb9011073b06a7716b67e73100ea1",
+      "commit": "6084eda734b4c7bfb21ac829d7c302109146f409",
+      "recorded_governed_input_digest": "sha256:49f40d9df330fd41f20b3921503b1204fc22572d074f9e2c8f8101face358e7e",
+      "subject": "Make authentication-versus-authority a type, not a call-site convention"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6874b7161b6c651870eb2e9e1a4c81325e064ffb720dfa93bb6fa0804abf41c4",
+      "commit": "61dfd54194427bfa5d7095bf26b63b58929c2fff",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "H18 killed validly by ONE measured route; the earlier verdict is overturned"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6f26a596388d94a3996eede57ae2b11e9c1a41477f7ab865f22dd256f0f21ee0",
+      "commit": "6382cca3d0eebfd607d69c34ecf026ec8ea2b652",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Name what may not shrink, and report the authority in force"
+    },
+    {
+      "actual_governed_input_digest": "sha256:3d118cbe379327e3556dc4b24c29a242fbedc8c8b80b5a43de6b1c102fb118f0",
+      "commit": "6ccbfc4007ee10d92234941bbb980536a9b4df64",
+      "recorded_governed_input_digest": "sha256:a75bbbff3c18c1ec653ae15e1949a18f6b73056174dbfd725f7c90e42a25c21a",
+      "subject": "Close Task 9: reversibility, and eight projection attacks with zero survivors"
+    },
+    {
+      "actual_governed_input_digest": "sha256:98c350a229ec5c9e2729b5214513ebe4ed95dace8026d9f7690a22d87ac02d7b",
+      "commit": "6ee528d74d978d683ed5eeb9aa701a1089a5f792",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Refuse a boundary whose contract tree is not its subject's"
+    },
+    {
+      "actual_governed_input_digest": "sha256:01c59ff8584f77e38635ec4a3c938e2122df0737a497d54cd8aca2acb779eea0",
+      "commit": "6f2de93677fb83e5a6c465486475634028195506",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Write out the projection-attack inventory instead of deriving it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:f75e6f41e4b41128008d727159a895e5c40efe11d0a6b8c99229b8c1b7eb2d91",
+      "commit": "702f317871bfbd1a42528ef2c43231516ef2805d",
+      "recorded_governed_input_digest": "sha256:49f40d9df330fd41f20b3921503b1204fc22572d074f9e2c8f8101face358e7e",
+      "subject": "Provision governance and action approval as independent trust domains"
+    },
+    {
+      "actual_governed_input_digest": "sha256:2a2389d782879ae24c52b66a0f544fd599115f545f44139e18ffb069b50f0a6d",
+      "commit": "71cb94bfa8d13b5b531705f627ac76676c0c969f",
+      "recorded_governed_input_digest": "sha256:6c80c3acbb41d066735bd72e8e2652f4794f74b676192a9ff9518706ee9ec300",
+      "subject": "Make \"absence is not success\" an invariant rather than a fourth fix"
+    },
+    {
+      "actual_governed_input_digest": "sha256:351c221db854d17ff23f65fb213dc0e3611c86339447929198a09a7629c085ab",
+      "commit": "72595d41dded460bab03589418edb0eef2475779",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Reclaim scratch per module, so the peak cannot exhaust the disk"
+    },
+    {
+      "actual_governed_input_digest": "sha256:4a459b7c50356cfa2fab308acbd44704e2f683a4d7ab8b32fec4bd4109594c5a",
+      "commit": "729a90047446a24ddbdfc2d4d2c118c26292a228",
+      "recorded_governed_input_digest": "sha256:25d53eeb2e567c7fd73694703733069aa7569b722f4c24ae82719e34ab348038",
+      "subject": "Task 11 CLOSED: recomputed catalogue, regenerated evidence, full 3.12.10 gate"
+    },
+    {
+      "actual_governed_input_digest": "sha256:42327a0e42a1c470d2faa2b7bfed32cdf44702f8ab353c955fd21995d2a34683",
+      "commit": "7364b9a4ea368a6c205250bf0c3809d414fac76b",
+      "recorded_governed_input_digest": "sha256:cca651e753d0844aa724e80a7b1c487143e7b29fd2a3100d26a750a5e1529ec9",
+      "subject": "Hold the inspection subject still, and follow tamper to the effect"
+    },
+    {
+      "actual_governed_input_digest": "sha256:c0a8f4f8c9e587dc7cf48aa405ca1e1dbf6a28e1019d1bb842cb75010ec8f5e5",
+      "commit": "7449d288ebb62e17719f9571ae4850aa926ddae3",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Recompute every claim the evidence binding records, not two of them"
+    },
+    {
+      "actual_governed_input_digest": "sha256:acbe5cc5d35052797beff80f8d1019ee7572b56c6c8f13dd85b2e3f34b810ffc",
+      "commit": "7c422fb3004c94778692da2fd64d7803ddfb263e",
+      "recorded_governed_input_digest": "sha256:61cf168f3c7a8334723e54b0d189ccb8c4f6e82f85b46719684b7c56c7d94b8f",
+      "subject": "Report a missing governed module instead of dying on the import"
+    },
+    {
+      "actual_governed_input_digest": "sha256:775952884f74f97a55787fa506798940838a020bbb42d522a02e81b443a9fcdf",
+      "commit": "7ea9414cd31b7b649f6c4619f935d01e39d275e9",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Close the ledger schema over what may be present"
+    },
+    {
+      "actual_governed_input_digest": "sha256:459878f945c9a9eedcc8003eb04630b11db2ae46da1a30a85980c3917876e288",
+      "commit": "859e180fd5bc6e01144cb2cdff54f60a4189c457",
+      "recorded_governed_input_digest": "sha256:6c80c3acbb41d066735bd72e8e2652f4794f74b676192a9ff9518706ee9ec300",
+      "subject": "Freeze the trusted approvers at bootstrap instead of per request"
+    },
+    {
+      "actual_governed_input_digest": "sha256:f18ddc1ca72c818977302da2e0047c87ff0b72446ebaf9e2773069ddc096e05a",
+      "commit": "88a773df2ee4e1e9c338974f59cff689dbb1bccb",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "H13 measured, not killed: the detecting combination is untested"
+    },
+    {
+      "actual_governed_input_digest": "sha256:fd24d7cc25dde55c688d04921c5a4d9848e35f05de2d7e02f8d1a09ee76dce0f",
+      "commit": "89c539e781f32aa97f052c02e7128f1e076e8c51",
+      "recorded_governed_input_digest": "sha256:8139a014065b6b034dcffc1a3addbc4823a5c0d69d7cdf453c1116c8cfe42c0e",
+      "subject": "Make an independent inspection something a reviewer signs, not something a file claims"
+    },
+    {
+      "actual_governed_input_digest": "sha256:89dd2c52beebbe82a05f496724c318accfac452704440274aebed3687e66a249",
+      "commit": "89ca7a1c0c3ccd666121d7e29c0a1fd5e547b064",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Correct the digest-source claim and pin it with a test"
+    },
+    {
+      "actual_governed_input_digest": "sha256:61cf168f3c7a8334723e54b0d189ccb8c4f6e82f85b46719684b7c56c7d94b8f",
+      "commit": "8bb54d2bb8ad38b83cc7aac49e3b36856997e181",
+      "recorded_governed_input_digest": "sha256:6a6f01764672e53cf206ead2d52f635e66e02b39afc8d2565e98fd970508529b",
+      "subject": "Put each approval fixture on the clock its production path actually uses"
+    },
+    {
+      "actual_governed_input_digest": "sha256:70d231d6a85bae748c94d65b024c030d51d7a403c05ec32a139130f5aa3de67f",
+      "commit": "9428056d334349d1da26d83a4e88d4da8c3cbd2b",
+      "recorded_governed_input_digest": "sha256:e393bd445ea650aeef09589a1abc5d7ad69076f9ccc1121f449ee0457a3ce603",
+      "subject": "Make mutant origin an invariant, and kill H03/H04 by attacking the property"
+    },
+    {
+      "actual_governed_input_digest": "sha256:bd698dd9164765d4b302b7209fcf91961390e4711d697ddc24278489af72d33f",
+      "commit": "94fe40b8f0ccf974f918181f87d67a95dc9c766e",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Regenerate evidence in causal order; the deferred measurements stay deferred"
+    },
+    {
+      "actual_governed_input_digest": "sha256:0232002fc102977e1cd350526d449d66f552f57b728442ca867b9fb979ce1041",
+      "commit": "9568085f4a9371c93193fea3754137e4ded08e7b",
+      "recorded_governed_input_digest": "sha256:4a2d1d9ef0dace2ada4535f48b7e41d239c5873976bb79c92ec84d5d09406d0f",
+      "subject": "Require a signature before a file counts as a human approval"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e04371542163941a781ee6c962a7f4570e3e37bbaff890aec48ef78ff5324cdf",
+      "commit": "95f20c30093989070b358600861398aade8ecbd5",
+      "recorded_governed_input_digest": "sha256:cc0ac50fa6c6764f30ea471fa35fef1ca0f80e8c8161a78ce0fff2e1d885f21d",
+      "subject": "Stop the deployment claiming a governance posture nothing implements"
+    },
+    {
+      "actual_governed_input_digest": "sha256:99d6ddd8018455869523759e86af46917416f3a8d618a7cd5074fd84978e9ffe",
+      "commit": "962983040ef7c628261795bac81feff52851f59a",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Bound the domain-guard affordance instead of removing it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:7201d121dc098eaf4acc1dac1846ad569e1d3db40d61d47ca7b61bcc51b9d5a5",
+      "commit": "96523d120f061b435373e50ccbac5fef62319c35",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "H13 survives a fully admissible attack: the finding moved from test to architecture"
+    },
+    {
+      "actual_governed_input_digest": "sha256:3c2941b6bd2765358e1644aa5b84c1ef00bc09681551915451da6368aaf89c95",
+      "commit": "9a3bf3526aeb987716ebb2796a241ec0ed3c8466",
+      "recorded_governed_input_digest": "sha256:96e83eb1bae26009516b66d331433cce37e6adc0212e0cde25ee37096b590efb",
+      "subject": "Require an authority classification for everything the projection strips"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6a6f01764672e53cf206ead2d52f635e66e02b39afc8d2565e98fd970508529b",
+      "commit": "9a4f626bf1370471f9ad16d7822c04c556f9b0af",
+      "recorded_governed_input_digest": "sha256:505b3d7c8d1fd9a38591f63ad61cc59bdf19bb4697a5b1f89ad4c2ea08654a9f",
+      "subject": "Make \"nobody looked\" a different answer from \"it is sound\""
+    },
+    {
+      "actual_governed_input_digest": "sha256:9a59d19fe19b463122e89e49715236abbb875e19b407814fdaff2cf74aa7dab8",
+      "commit": "9b8f00a6c2c48e7933345337ae2184b9272359c4",
+      "recorded_governed_input_digest": "sha256:08340d34205c5fe5324702887f656eee64fa6873f38c5f73e54047c749cc4b5d",
+      "subject": "Parse the Dockerfile instead of guessing at its first word"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a754640ef110926d0f6e5ecb40d5a72a68932254a948d5be203152219b3a0a74",
+      "commit": "a25700f89afe5bdd1906b4f2c2cb9c5d19f63bc3",
+      "recorded_governed_input_digest": "sha256:bbb4ec8e8aa5f522c9975f90ee9f507ee661cd478a3d724e360a0db36c846fe1",
+      "subject": "Stop derived artifacts telling the system what to believe"
+    },
+    {
+      "actual_governed_input_digest": "sha256:486afe83d01081a48ca3fe1954d6d983f48488d80c6a7e4d54a349025f66b3b8",
+      "commit": "a3db9324f4d035307706770fb21fd8498242e272",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Record the seven closed P3 dispositions"
+    },
+    {
+      "actual_governed_input_digest": "sha256:adece54a18efc28b9d9647541a8fc7f62fea561b26835389d64abc80075d3e0a",
+      "commit": "a402e7a31fd573d52d7c22a6d418f2560640355d",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Make the trust closure total across both bootstrap branches"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a93b231c3b48f72e3eb3f5fdbf5ae1986619808771b6e7ebe83b9727802fcc57",
+      "commit": "a5836bd966019fd8053073143ce319f84e96e3a8",
+      "recorded_governed_input_digest": "sha256:6a6f01764672e53cf206ead2d52f635e66e02b39afc8d2565e98fd970508529b",
+      "subject": "Evaluate the governance approval window that was only ever signed"
+    },
+    {
+      "actual_governed_input_digest": "sha256:4f25cc71db5cbec6354752ffaf4835c7195f87d77f0869623c44d865fda2b930",
+      "commit": "a60917330612d040534433dbc2312ef730c12060",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Give the mutation harness a pristine baseline, and expose a real survivor"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e8d5759a8fe5ecce802b2e25e73e3f71c7ee7a8efb6b26e7fb99842c82e2381e",
+      "commit": "a88e1558ec1f408cbd6e5b457255cddde7317301",
+      "recorded_governed_input_digest": "sha256:f79578c8e6f14db33f85c4757436b99d9d0276b2ddd0dd56f134fdb14d61d869",
+      "subject": "Close the canonical-text hole CI found, and fix three tests of my own"
+    },
+    {
+      "actual_governed_input_digest": "sha256:43dd12d4b9bb0cbd6c1107d84fec53dc23cb40caed7961522867bde959fccb39",
+      "commit": "a89036e5c58a4639ee9f1bc992e4107fbda9b83f",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "H19 killed validly; H15 recorded with an incomplete route inventory"
+    },
+    {
+      "actual_governed_input_digest": "sha256:048d2b9815309b3bf804853606f1850e019fa3cbdaad9436c4eafef12d7516bd",
+      "commit": "acd371e4c544a147f1ff49bb9b70403ce763737b",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Harden the reachability probe; withdraw the H15 verdict it produced"
+    },
+    {
+      "actual_governed_input_digest": "sha256:dc77358b39ee638f23665e83fbdafef95711b8afc2dff69a85e9ff79e256d30a",
+      "commit": "ad4d68d8e2b8991f26d0fdc7d6192ebeba3a2e00",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "H13 is OBSOLETE_HISTORICAL_ATTACK: the loop it revives no longer exists"
+    },
+    {
+      "actual_governed_input_digest": "sha256:4431fffa2a8b75dac5147c0029b0993f8b2e36c0c7da071df4c4321860a18ef6",
+      "commit": "afa4d24aa683114b191adc6f591ec3cd25893e39",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Make the catalogue's self-attacks and anti-shrink control real"
+    },
+    {
+      "actual_governed_input_digest": "sha256:dd4b3ddc280304439f9f462736a1584741f824248d12074646ada89f44ca4191",
+      "commit": "b0cf2ba94a92aa2d2a86661da774817342849739",
+      "recorded_governed_input_digest": "sha256:cc0ac50fa6c6764f30ea471fa35fef1ca0f80e8c8161a78ce0fff2e1d885f21d",
+      "subject": "Close the dynamic-import bypass of the process-capability gate"
+    },
+    {
+      "actual_governed_input_digest": "sha256:af5844b913f27415ac7cc811b6a142e24348157d1eb2af1d023a4932cce25f0a",
+      "commit": "b1d62c2a513e48330e42b8a697bb60d013a133d8",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Establish the security context where the application actually runs"
+    },
+    {
+      "actual_governed_input_digest": "sha256:18b52eddc84d739ba8c4047528a9ceb9494b5a7bd038a515b6a8b6a15dd37a0e",
+      "commit": "b5ea84b9fa9208a5927d9de3fc2dd3beace11704",
+      "recorded_governed_input_digest": "sha256:61cf168f3c7a8334723e54b0d189ccb8c4f6e82f85b46719684b7c56c7d94b8f",
+      "subject": "Compare the matrix against captured bytes, not git cleanliness"
+    },
+    {
+      "actual_governed_input_digest": "sha256:3e40581db130b9f329bac77039a632ae2dad7726c6cbb4f784fb74f8a8cfe094",
+      "commit": "b988ddc48eebdd71595b59024660c6c33a57405f",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Evaluate the zone crossing wherever it is claimed"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6c80c3acbb41d066735bd72e8e2652f4794f74b676192a9ff9518706ee9ec300",
+      "commit": "bc937fdd99571ffd2e8acbeeb067a9a46c158690",
+      "recorded_governed_input_digest": "sha256:18b52eddc84d739ba8c4047528a9ceb9494b5a7bd038a515b6a8b6a15dd37a0e",
+      "subject": "Prove every authority collection detects a missing member"
+    },
+    {
+      "actual_governed_input_digest": "sha256:241fd6cecf08244bade825d9f3da0b3ab522ae683b32c9576a1277be90a07a8a",
+      "commit": "bca9dc8331fdca0c6f4cc2ab0a2e3fb43fd74795",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Task 12: extend the false-green audit to the proof system itself"
+    },
+    {
+      "actual_governed_input_digest": "sha256:c8659fb2404b18697400df2d504b79997c2b28aaa770ed901ef8ee3f305f2386",
+      "commit": "bdb7aaf3728bea199d0b1d83dbd25702308c2eba",
+      "recorded_governed_input_digest": "sha256:e57f8b5523e93a7d26e347cdaa94c2110f18439357155391bd01a642e8aacd61",
+      "subject": "Check every first-party module, and repair the gates that were not checking"
+    },
+    {
+      "actual_governed_input_digest": "sha256:49f40d9df330fd41f20b3921503b1204fc22572d074f9e2c8f8101face358e7e",
+      "commit": "beb8663a69f2b2059cb69aa246254cb8519b933e",
+      "recorded_governed_input_digest": "sha256:c1afe2025f54800690fb872c3c385be0de270657c6502158d5bb1e1fa3d6a3da",
+      "subject": "Stop counting an expected failure as a skipped test"
+    },
+    {
+      "actual_governed_input_digest": "sha256:254f4a78c678ffc2b278df1396c9fa059061bfb8e9d790fa367d63c455ecd10b",
+      "commit": "c28939541d02075bc4237ef06b8cc39bd56fac5b",
+      "recorded_governed_input_digest": "sha256:d08f836ebba4ff607a4b170e9ee667f4aaae36c7aac1df67942d4f808ea6e8ac",
+      "subject": "Refuse a backend name we cannot honour, and survive the console we print to"
+    },
+    {
+      "actual_governed_input_digest": "sha256:d39b55ce9078aea7d9c9a50d58c9ba09f8c8a1869401584fa8b334adf2b402b6",
+      "commit": "c501a96b40ed19166bd4fa231ffd0f1a680d348b",
+      "recorded_governed_input_digest": "sha256:1e7b0f5206ad0c7d6d1e364dc2e26a8ae092e7d826dcb0051a371118c8f7267b",
+      "subject": "Stop untrusted text acquiring meaning it never earned"
+    },
+    {
+      "actual_governed_input_digest": "sha256:3bdda239073a46c54e1043f0f8965b874dfb982e4a2b0fd0ac6e094385001181",
+      "commit": "c509638d4c6228fa5b95c561790808d851a7c235",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "H15 killed validly, after tracing it from the observable"
+    },
+    {
+      "actual_governed_input_digest": "sha256:aef857fa76527d76b37c66d5a734e57ce517b1b19aafe9056986994af3115724",
+      "commit": "c588a10b769b00333037e38d66ca85a0b4d733f1",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Make an expected failure something the census refuses, not something it skips"
+    },
+    {
+      "actual_governed_input_digest": "sha256:ab0eeda157c60c5e6881266c1ab70831e258c2654288bb331679632165b0036c",
+      "commit": "c79383f9e9e026df0335682c02ef32224757d1e9",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "Separate terminal status from mechanism; add the H13 conjunction proof"
+    },
+    {
+      "actual_governed_input_digest": "sha256:45c37b8023e2798df039773ec25491180825a3115bc1f5fc692296ec377de5aa",
+      "commit": "c918e6da20974a2797f67c7e3d272ebb4c5877ec",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Follow classify() reporting which identities it skipped"
+    },
+    {
+      "actual_governed_input_digest": "sha256:25d53eeb2e567c7fd73694703733069aa7569b722f4c24ae82719e34ab348038",
+      "commit": "ca3a6873e925a5214ec7198ee12646f0a7f0bb44",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "Pin terminal-disposition coverage across the historical catalogue"
+    },
+    {
+      "actual_governed_input_digest": "sha256:d8422a524c34d5bd69a6953f9721cbe776828883d62c88dc517763b3aa46df01",
+      "commit": "cfeb8003605930025777553eb8facaddaf28a6d7",
+      "recorded_governed_input_digest": "sha256:5c015413526bb8ba5a4becb16c9cf2fad39897807cc6bbb63348984c1b743443",
+      "subject": "Refuse a grant older than the history being asked to vouch for it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:6780d7d4b08a4c87906442c38edcfc23cc3ed4192cdff1b8acf1cb9135466567",
+      "commit": "d0b04c89cc529ed4f3021b8a238f64a083f55779",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Add INVALID_TEST_AIM, and regress the subprocess-marker detection"
+    },
+    {
+      "actual_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "commit": "d518878120611caf4e7a88695ad7934b7f35132f",
+      "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
+      "subject": "Sort the import block ruff flagged in the dirty-tree gate test"
+    },
+    {
+      "actual_governed_input_digest": "sha256:f168461c891a9f97164fc61534e185d7d828cb03ed0456eedf7ca26255b02cff",
+      "commit": "d81bad2dc6e2506367f2eb59d612a8042a5077b4",
+      "recorded_governed_input_digest": "sha256:a0a5465941ef312d188153c7a0b88d49ca26a08429f7a35d0638b0aafffc3b7b",
+      "subject": "Stop a deleted file from being an authorization decision"
+    },
+    {
+      "actual_governed_input_digest": "sha256:cb3138fb439b4e7c43271968c669c8ba47da31793e7da4d09f8f1ee91c1f411a",
+      "commit": "da4eabedd8a3f759c603254bfb571e3304cfa8b0",
+      "recorded_governed_input_digest": "sha256:56954849a30dae4d863340da8ac3ba58a2ced10db13eb2bcfa5046878d93409b",
+      "subject": "Lock the authority-domain behaviour before separating the domains"
+    },
+    {
+      "actual_governed_input_digest": "sha256:c03474a860254fe04a5a8fb228af72e37fd6df31668cc950a9cc2baf6257860d",
+      "commit": "dde5100fc9fc31cebc96f3fe04facedab87a7094",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Write evidence when a released effect fails"
+    },
+    {
+      "actual_governed_input_digest": "sha256:f0c2d7fb8ddfb17aefb46ab0e61b5ac5c6e31bd489af071a021c6446ab39da09",
+      "commit": "e23021bea6618e4da137d301231e3072acd87b46",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Ask how a module arrives, not how it is spelled"
+    },
+    {
+      "actual_governed_input_digest": "sha256:878e18cea5e763fabb7133981cf78fa9dd146fd3889bcc9c6fef0405fdd26809",
+      "commit": "e2ba5180355dadf862fd652b08a840e1187841a2",
+      "recorded_governed_input_digest": "sha256:505b3d7c8d1fd9a38591f63ad61cc59bdf19bb4697a5b1f89ad4c2ea08654a9f",
+      "subject": "Refuse a consequential effect when the governance evidence was tampered with"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a75bbbff3c18c1ec653ae15e1949a18f6b73056174dbfd725f7c90e42a25c21a",
+      "commit": "e30e4fa63657af221785e6b7703cd9c5cfb5a05d",
+      "recorded_governed_input_digest": "sha256:a5bcbdab8065306f7f2685be907be845b67bda40ada9ff7685d414f0f245e6d5",
+      "subject": "Prove the semantic-binding theorem over the enumerated authored classes"
+    },
+    {
+      "actual_governed_input_digest": "sha256:7ca49be8b11840e311532355e9e82ecfbc12513d2f78cdb486838eb1ab1cd686",
+      "commit": "ea6d0351fd30bfbdbd48d0b64a9ba68f16a49f11",
+      "recorded_governed_input_digest": "sha256:ba6f24a07cbfbb4050478129fd7e119383bd77012f56cb8eaf7a6525b0cdb525",
+      "subject": "Build one authoritative, auditable mutation catalogue"
+    },
+    {
+      "actual_governed_input_digest": "sha256:26d0a5e0a426912c1026d3b4c76f54ff3b10a77c5dbe5ccccc7251182fbe8f27",
+      "commit": "eacbe37c5f6f9b50299fcd0ce1bf5ed17095bc65",
+      "recorded_governed_input_digest": "sha256:37f8a4bf087d775aa93ea295e191d88743cd9031cc13e070d7adae93aa629af9",
+      "subject": "Make a shrinking suite fail instead of looking like a passing one"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a5bcbdab8065306f7f2685be907be845b67bda40ada9ff7685d414f0f245e6d5",
+      "commit": "eb1cc0a528d80ffd34b930d4b6804aa53e390cf0",
+      "recorded_governed_input_digest": "sha256:64db80fbe8136f794401d762c6a065934bd1c624fb60c41e5e1d2206b9b28f20",
+      "subject": "Raise the collection floor to 830 against 857"
+    },
+    {
+      "actual_governed_input_digest": "sha256:911daa028b6ec8c44232c9ba0981f40e66ad0dd95d15fe86a2cf2b5d88cbedd9",
+      "commit": "ec095ce546d074e3b076c74c06ed21718c9ed5a9",
+      "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "subject": "Resolve the H05 survivor: a mis-specified attack, not an unproven control"
+    },
+    {
+      "actual_governed_input_digest": "sha256:7b3b7cd8626012d6aa2a8673d1eff0ffff46eb725f21c202ce877554f28fd181",
+      "commit": "ec7cacb6141e8e94232bd61c2f34cec7f5f96414",
+      "recorded_governed_input_digest": "sha256:269e135f39065411332de37c7e942200788539e4cba7a1ab6bdab479adde5fd2",
+      "subject": "Digest the content git holds, and support the Python versions we claim"
+    },
+    {
+      "actual_governed_input_digest": "sha256:85e7de2c0ed5053e7537eb7ea41bbf0f761c5015b306ab286ce4852d78cac847",
+      "commit": "f03101511beae9e991cbd41e6aae46f991fed788",
+      "recorded_governed_input_digest": "sha256:1e7b0f5206ad0c7d6d1e364dc2e26a8ae092e7d826dcb0051a371118c8f7267b",
+      "subject": "Never replay a consequential stage after an ambiguous failure"
+    },
+    {
+      "actual_governed_input_digest": "sha256:d24bdf9318567d0ee4fb0467483e8921f7eff755022440f185210d13ffae5bab",
+      "commit": "f64276ee00c507bd24facbfaed3a2e1e3b0640f7",
+      "recorded_governed_input_digest": "sha256:6ebef985e1f37ba9d0385076b36c5758cdbb060a16eb4297308a2d61b19c30fa",
+      "subject": "Anchor the anti-shrink re-proof on the floor the census actually holds"
+    },
+    {
+      "actual_governed_input_digest": "sha256:5dbb5346f13c54d80c996041b3730e0c6e200d2290a4f735bccd720708378b8b",
+      "commit": "f8405bf75374a391f93f47ee1781a13dc5759598",
+      "recorded_governed_input_digest": "sha256:e669faa359d9b59d6f3b0dbb75e4f77e917917767d894132eb4d477c2fbba09b",
+      "subject": "Task 11R: measure the governance-surface route inventory instead of asserting it"
+    },
+    {
+      "actual_governed_input_digest": "sha256:a671ccbbf0c6e2f00acc54b12d6b5e1d60f14ad67097595c65b31894db41dd83",
+      "commit": "f847d27521914d83a4168d279e85e3a68a94c59a",
+      "recorded_governed_input_digest": "sha256:3d118cbe379327e3556dc4b24c29a242fbedc8c8b80b5a43de6b1c102fb118f0",
+      "subject": "Build the historical security inventory, and refuse to fake its re-proofs"
+    },
+    {
+      "actual_governed_input_digest": "sha256:be7b52c801c61f1ca57c419e24b46a09852eb64eb1677c745ed0681e68ac6bae",
+      "commit": "fac580b7f8913768a238f1c5281348c2df848a87",
+      "recorded_governed_input_digest": "sha256:1e7b0f5206ad0c7d6d1e364dc2e26a8ae092e7d826dcb0051a371118c8f7267b",
+      "subject": "Model the assurance chain by causality, and bind inspection to its subject"
+    },
+    {
+      "actual_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
+      "commit": "fb3a279d03fa473937e3c52c82d06cc2b674ddda",
+      "recorded_governed_input_digest": "sha256:d24bdf9318567d0ee4fb0467483e8921f7eff755022440f185210d13ffae5bab",
+      "subject": "Make every false-green class trip its own guard"
+    }
+  ],
+  "purpose": "An exact record of commits that predate enforcement of evidence-binding freshness. NOT an exemption asserting they were valid: they ship a review_binding.json whose governed_input_digest describes a different tree than the commit contains. Recorded by full SHA rather than by a cutoff, so rebased or rewritten history produces different SHAs and loses grandfathering automatically.",
+  "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
+  "schema": "nornyx.forge.evidence_binding_baseline.v1",
+  "violating_commits": 129
+}
