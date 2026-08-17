@@ -49,6 +49,40 @@ class InvalidMutation(AssertionError):
     """
 
 
+class IndiscriminateBaseline(AssertionError):
+    """The baseline already exhibits the outcome the attack is looking for.
+
+    Sibling of `InvalidMutation`, and refused for the same reason. There the
+    mutation could not have caused an effect; here the effect was present
+    before the mutation ran. Both produce a green tick that means nothing, and
+    neither is a kill or a survivor.
+    """
+
+
+def require_discriminating_baseline(
+    label: str, *, baseline: object, expected: object, what: str
+) -> None:
+    """Refuse an experiment that cannot tell the attack from the starting state.
+
+    Lens C found two live assertions where `baseline == expected` on the
+    unmutated tree, so the attack was credited with an outcome it did not
+    produce. Enforced here rather than remembered, because both of them read
+    as perfectly ordinary proofs right up until the value was measured.
+    """
+    if baseline != expected:
+        return
+    raise IndiscriminateBaseline(
+        f"{label}: {what} is already {baseline!r} BEFORE the attack is applied, "
+        f"so asserting it becomes {expected!r} afterwards proves nothing -- the "
+        "value was there either way.\n"
+        "This is normally a stale evidence set rather than a broken test. "
+        "Regenerate evidence in the same commit as the governed change:\n"
+        "  python scripts/refresh_governance_evidence.py "
+        "--sync-contracts --review-binding\n"
+        "then re-run. Do not weaken the assertion to make this pass."
+    )
+
+
 def _line_starts(source: str) -> list[int]:
     offsets = [0]
     for line in source.splitlines(keepends=True):

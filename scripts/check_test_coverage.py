@@ -104,6 +104,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_approval_authentication.py": 34,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 8,
+    "tests/test_baseline_discrimination.py": 6,
+    "tests/test_recorded_measurements.py": 8,
     "tests/test_approval_ledger.py": 38,
     # Protected because Lens B measured 103 tests of slack in the aggregate
     # floor, and named these two: the evidence-binding proofs and the sole
@@ -172,6 +174,8 @@ REQUIRED_MODULES = (
     "tests/test_approval_authentication.py",
     "tests/test_killed_by_validation.py",
     "tests/test_failure_attribution.py",
+    "tests/test_baseline_discrimination.py",
+    "tests/test_recorded_measurements.py",
     "tests/test_approval_ledger.py",
     "tests/test_evidence_binding.py",
     "tests/test_clause_reachability.py",

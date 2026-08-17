@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from mutation_validity import require_discriminating_baseline
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCH = ".nornyx/contracts/architecture_governance.nyx"
@@ -114,10 +115,17 @@ MUTATIONS = [
 
 @pytest.fixture(scope="module")
 def baseline():
+    """Subject, verdicts, bytes -- AND integrity on the unmutated tree.
+
+    The integrity baseline was the missing one. Without it nothing could
+    notice that `integrity == "compromised"` was already true before any
+    mutation ran, which is precisely the state Lens C found the matrix in.
+    """
     return (
         _subject(),
         {ARCH: _verdict(ARCH), RUNTIME: _verdict(RUNTIME)},
         {name: (ROOT / name).read_bytes() for name in (ARCH, RUNTIME)},
+        _integrity(),
     )
 
 
@@ -156,7 +164,15 @@ def test_a_decision_changing_mutation_is_always_caught(
     Mutates the real tree and restores it from the original bytes, because a
     copied tree could not reproduce Nornyx's own evaluation.
     """
-    base_subject, base_verdicts, _bytes = baseline
+    base_subject, base_verdicts, _bytes, base_integrity = baseline
+    # The second escape hatch below credits "integrity refused" for the whole
+    # case. That is only evidence if integrity was NOT already refusing, and
+    # this mutates the real tree, so the baseline cannot be settled the way a
+    # copy can -- the honest move is to refuse the measurement and say why.
+    require_discriminating_baseline(
+        label, baseline=base_integrity, expected="compromised",
+        what="--verify integrity_state on the unmutated repository",
+    )
     target = ROOT / relative
     original = target.read_bytes()
     text = original.decode("utf-8")
@@ -194,7 +210,7 @@ def test_the_tree_is_restored_after_the_matrix(baseline):
     would fail on an unrelated uncommitted change -- reporting that the matrix
     leaked when it had not, which is a false accusation in either direction.
     """
-    _base_subject, _base_verdicts, original = baseline
+    _base_subject, _base_verdicts, original, _base_integrity = baseline
     for name, blob in original.items():
         assert (ROOT / name).read_bytes() == blob, (
             f"the completeness matrix left {name} modified"

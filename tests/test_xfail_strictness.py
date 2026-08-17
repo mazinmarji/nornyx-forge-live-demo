@@ -22,10 +22,12 @@ that prose asserted a setting that did not exist.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,15 +222,84 @@ def test_the_gate_refuses_a_run_carrying_an_undeclared_xfail(tmp_path: Path):
     )
 
 
+def _marks_xfail(source: str) -> bool:
+    """Does this module actually MARK anything xfail, as opposed to mentioning it?
+
+    AST, not substring. The textual version read `"pytest.mark.xfail" in source`
+    and so could not tell a decorator from prose -- it failed on
+    `mutation_workspace.py`, whose docstring explains how a node marked
+    `@pytest.mark.xfail(strict=True)` shows up in a JUnit report. There is no
+    marker in that file; there is a sentence about markers.
+
+    That is this repository's FG16 class: a source-text marker mistaken for the
+    thing it names. Parsing fixes it structurally, because a docstring is a
+    `Constant` and can never be an `Attribute` -- prose becomes unreadable to
+    the check by construction rather than by exemption.
+
+    The fix is deliberately NOT "add the file to an allow-list". An allow-list
+    would have silenced a true positive in that file forever, and teaches the
+    next author that the way past this gate is an entry rather than a fix.
+    """
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == "xfail"
+        for node in ast.walk(ast.parse(source))
+    )
+
+
 def test_the_suite_currently_carries_no_expected_failures():
     """The intended state, asserted so a first xfail has to be deliberate."""
     marked = [
         path.name
         for path in (ROOT / "tests").glob("*.py")
-        if "pytest.mark.xfail" in path.read_text(encoding="utf-8")
-        and path.name != Path(__file__).name
+        if _marks_xfail(path.read_text(encoding="utf-8"))
     ]
     assert marked == [], (
         f"these modules now carry xfail markers: {marked}. Each must be fixed "
         "or added to EXPECTED_XFAILS with a checkable reason."
+    )
+
+
+#: Prose that must NOT register, and markers that must. The first three are the
+#: false positive that forced this change; the last is one the OLD substring
+#: check missed outright -- `pytest.xfail(...)` is not the string
+#: `pytest.mark.xfail`, so an imperative skip was invisible to the gate.
+XFAIL_SPECIMENS = [
+    ("prose in a docstring",
+     'def f():\n    """Explains @pytest.mark.xfail(strict=True) behaviour."""\n', False),
+    ("prose in a comment",
+     "# pytest.mark.xfail would be wrong here\ndef f(): pass\n", False),
+    ("the marker name inside a string literal",
+     "X = \"<skipped type='pytest.xfail'/>\"\n", False),
+    ("a real decorator",
+     "import pytest\n@pytest.mark.xfail(strict=True)\ndef test_a(): pass\n", True),
+    ("a real bare decorator",
+     "import pytest\n@pytest.mark.xfail\ndef test_a(): pass\n", True),
+    ("module-level pytestmark",
+     "import pytest\npytestmark = pytest.mark.xfail\n", True),
+    ("hidden inside a parametrize mark",
+     'import pytest\n@pytest.mark.parametrize("n",[pytest.param(1,marks=pytest.mark.xfail)])\n'
+     "def test_a(n): pass\n", True),
+    ("imperative call mid-test",
+     'import pytest\ndef test_a():\n    pytest.xfail("switched off")\n', True),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "expected"),
+    XFAIL_SPECIMENS,
+    ids=[case[0] for case in XFAIL_SPECIMENS],
+)
+def test_the_marker_detector_reads_code_and_not_prose(
+    label: str, source: str, expected: bool
+):
+    """Both directions, because a detector that never fires also never fails.
+
+    The textual predecessor flagged `mutation_workspace.py` for a docstring
+    sentence about xfail semantics. Exempting that file would have passed the
+    gate while blinding it to any real marker later added there -- so the
+    detector was made structural instead, and these specimens pin that it still
+    sees every way pytest can actually mark an expected failure.
+    """
+    assert _marks_xfail(source) is expected, (
+        f"{label}: detector returned {_marks_xfail(source)}, expected {expected}"
     )

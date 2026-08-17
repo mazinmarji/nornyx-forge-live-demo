@@ -317,3 +317,55 @@ def test_ci_shell_propagates_pipeline_failure():
         "`bash -e` without pipefail and a piped assurance command can mask the "
         f"failure of the command that matters (found shell={shell!r})"
     )
+
+
+#: Every way a Python process can start another process. `os.system` and the
+#: `spawn` family are included even though nothing uses them today: the claim
+#: this pins is "these are ALL the places", so the detector has to look for
+#: routes the code does not currently take.
+PROCESS_STARTERS = (
+    "subprocess.run", "subprocess.Popen", "subprocess.call",
+    "subprocess.check_call", "subprocess.check_output",
+    "os.system", "os.popen", "os.exec", "os.spawn", "os.posix_spawn",
+)
+
+
+def test_the_process_start_sites_match_the_documented_list():
+    """`docs/ARCHITECTURE.md` stakes a security claim on an enumeration.
+
+    "the list of places this system can start a process short enough to read"
+    is only worth reading if it is complete. It was not: it named five modules
+    and the code had seven, omitting `nornyx_cli_adapter` (which invokes the
+    governance authority) and `subject_observer` (which invokes `git`, behind
+    revision binding). A reader auditing process execution would have checked
+    five call sites and missed the two nearest the trust boundary.
+
+    Asserted in BOTH directions. A list that is merely a superset can be padded
+    with modules that start nothing, which reads as thoroughness while making
+    the claim weaker.
+    """
+    measured = {
+        path.stem
+        for path in (ROOT / "src").rglob("*.py")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("#")
+        and any(starter in line for starter in PROCESS_STARTERS)
+    }
+
+    text = (ROOT / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
+    sentence = re.search(
+        r"the list\s*\n?of places this system can start a process[^:]*:(.*?)\.\s*\n",
+        text, re.S,
+    )
+    assert sentence, (
+        "the sentence enumerating process-start sites is gone from "
+        "docs/ARCHITECTURE.md -- if the claim was withdrawn, delete this test "
+        "deliberately rather than letting it pass by finding nothing"
+    )
+    documented = set(re.findall(r"`([a-z_]+)`", sentence.group(1)))
+
+    assert documented == measured, (
+        "docs/ARCHITECTURE.md and the code disagree about where a process can "
+        f"start.\n  documented but starts nothing: {sorted(documented - measured)}"
+        f"\n  starts a process, undocumented: {sorted(measured - documented)}"
+    )

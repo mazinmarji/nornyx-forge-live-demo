@@ -41,9 +41,14 @@ CHECKER = ROOT / "scripts/check_evidence_binding.py"
 #: Pinned. The counts are a claim about history, so a change to either is a
 #: change to what this repository says happened -- not a config tweak.
 PRE_ENFORCEMENT_VIOLATIONS = 129
-POST_KNOWLEDGE_VIOLATIONS = 1
+POST_KNOWLEDGE_VIOLATIONS = 6
 
 #: The commit committed AFTER the defect was described, kept separate on purpose.
+#: Six, not one. The second batch is five commits made while remediating
+#: Lens C -- recorded because the alternative is rewriting history to hide an
+#: evidence defect. Pinned so the culpable count cannot grow quietly: a rising
+#: number here means the commit discipline is not being followed, and that is
+#: exactly what it should be loud about.
 #: "130 legacy violations" and "129 legacy violations plus one made after
 #: describing the defect" are different statements and only the second is true.
 POST_KNOWLEDGE_CATEGORY = "committed_after_the_defect_was_known"

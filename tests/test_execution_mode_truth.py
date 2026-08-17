@@ -24,8 +24,12 @@ behaviour rather than against intent.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
+import os
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -189,4 +193,189 @@ def test_the_validation_record_does_not_claim_a_posture_the_container_lacks():
         "the validation record claims the Docker path requests strict "
         "Nornyx/CrewAI execution; demo_app.main runs deterministic_demo and "
         "sequential"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lens C P2-2. `README.md` claimed the documented workflow "requires strict
+# Nornyx/CrewAI execution in the installed path, launches the application, and
+# prints" three URLs. Both halves were false, and the guard written when the
+# same claim was corrected in `docs/VALIDATION.md` read ONLY that file -- so the
+# claim survived in the README. These three pin it against the code and against
+# an executed run, and are kept separate on purpose: a static inference must
+# never be recorded later as something that was observed.
+# ---------------------------------------------------------------------------
+
+
+def test_static_the_bootstrap_launch_is_unreachable_once_the_demo_refuses():
+    """STATICALLY PROVEN -- control flow only.
+
+    Establishes three facts about `scripts/bootstrap.py` and stops there:
+    `run()` defaults to `check=True`, it raises on a nonzero return, and the
+    URL prints come after the demo call. Together they mean a nonzero demo ends
+    the process before anything launches. WHETHER the demo is nonzero is a
+    different question, answered by execution in the next test.
+    """
+    tree = ast.parse((ROOT / "scripts/bootstrap.py").read_text(encoding="utf-8"))
+
+    run_fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "run")
+    check_default = next(
+        (d for a, d in zip(run_fn.args.kwonlyargs, run_fn.args.kw_defaults)
+         if a.arg == "check"), None)
+    assert isinstance(check_default, ast.Constant) and check_default.value is True, (
+        "bootstrap.run no longer defaults to check=True, so a refusing demo "
+        "would no longer stop the bootstrap"
+    )
+    assert any(isinstance(n, ast.Raise) for n in ast.walk(run_fn)), (
+        "bootstrap.run no longer raises on a nonzero return"
+    )
+
+    main_fn = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "main")
+    demo_call = next(n.lineno for n in ast.walk(main_fn)
+                     if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "run"
+                     and "demo_command" in ast.dump(n))
+    url_prints = [n.lineno for n in ast.walk(main_fn)
+                  if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "print"
+                  and "localhost:8000" in ast.dump(n)]
+    assert url_prints, "the URL prints are gone; this test pins nothing"
+    assert min(url_prints) > demo_call, (
+        "the URL prints no longer follow the demo call, so the unreachability "
+        "argument in the README is stale"
+    )
+
+
+def test_executed_the_strict_demo_exit_status_agrees_with_the_readme():
+    """EXECUTED -- run it, do not infer it. Bidirectional.
+
+    Measured on this branch: exit 2, `status: blocked`,
+    `reason: nornyx_runtime_unavailable`, because no human approval exists.
+
+    Asserted as an equivalence rather than a one-way ban. If strict execution
+    legitimately starts succeeding later, this fails and forces the launch
+    sentence back INTO the README, instead of fossilising today's refusal as
+    permanent prose.
+    """
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "nornyx_forge.cli", "demo", "--offline",
+         "--strict-nornyx"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        timeout=900,
+    )
+    launched = completed.returncode == 0
+    claims_launch = "launches the application, and prints" in (
+        ROOT / "README.md"
+    ).read_text(encoding="utf-8")
+
+    assert launched == claims_launch, (
+        f"README claims the documented workflow launches the application: "
+        f"{claims_launch}; the strict demo it documents exited "
+        f"{completed.returncode}. Correct the document to the behaviour. "
+        f"Output tail: {completed.stdout[-300:]!r}"
+    )
+
+
+
+#: Quoted and code-span text, which a document MENTIONS rather than ASSERTS.
+_QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"|'[^']*'")
+
+
+def _unquoted(line: str) -> str:
+    """Strip quoted spans, so use can be told from mention.
+
+    The first version of the check below flagged three lines that were all
+    CORRECTIONS: README quoting the retired wording to say it was wrong,
+    `RUNTIME_INPUT_AUDIT.md` recording `FORGE_STRICT_CREWAI` as a finding, and
+    `VALIDATION.md` quoting the sentence it had already fixed. A document that
+    repeats a false claim in order to retract it must not be read as making it.
+
+    Piling up negation keywords ("not", "never", "no longer") would have been
+    whack-a-mole against prose. Quoting is a real convention and a structural
+    one: if you are repeating a retired claim, quote it. Everything outside
+    quotes is what the document asserts in its own voice, and that is what gets
+    checked.
+    """
+    return _QUOTED.sub(" ", line)
+
+
+def test_no_document_claims_crewai_where_the_cli_requests_sequential():
+    """STATIC over the CODE, quantified over EVERY shipped document.
+
+    `cli.py` sets `execution_backend` unconditionally; only `policy_backend`
+    depends on `--strict-nornyx`. So "strict Nornyx/CrewAI execution" was never
+    true on any path.
+
+    Quantified over every `.md` rather than a remembered list, because the
+    predecessor guard named `docs/VALIDATION.md` explicitly and the identical
+    claim then survived in `README.md` -- a list of documents to check is a list
+    an author must remember to extend.
+    """
+    cli = ast.parse((ROOT / "src/nornyx_forge/cli.py").read_text(encoding="utf-8"))
+    requested = {
+        kw.value.value
+        for node in ast.walk(cli)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "RuntimeAuthorityConfig"
+        for kw in node.keywords
+        if kw.arg == "execution_backend" and isinstance(kw.value, ast.Constant)
+    }
+    assert requested, "execution_backend is no longer a literal; re-measure it"
+    if any("crew" in value.lower() for value in requested):
+        return  # the claim would be true; nothing to forbid
+
+    offenders = []
+    for path in [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]:
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            asserted = _unquoted(line).lower()
+            if "crewai" in asserted and "strict" in asserted:
+                offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+    assert offenders == [], (
+        f"cli.py requests execution_backend={sorted(requested)}, so CrewAI is "
+        f"never asked for, but these lines claim strict CrewAI execution: {offenders}"
+    )
+
+
+#: Assertions that must be caught, and corrections that must not. The last
+#: three are real lines from this repository that the first version of the
+#: check flagged -- all of them documents retracting the claim, not making it.
+USE_MENTION_SPECIMENS = [
+    ("bare assertion",
+     "The workflow requires strict Nornyx/CrewAI execution in the installed path.",
+     True),
+    ("assertion wrapped in markdown emphasis",
+     "It **requires strict Nornyx/CrewAI execution** and fails closed.", True),
+    ("README correction quoting the retired claim",
+     'the previous wording "strict Nornyx/CrewAI execution" said otherwise.', False),
+    ("audit row naming the env var in backticks",
+     "`FORGE_USE_CREWAI_KICKOFF` / `FORGE_STRICT_CREWAI` select a degraded backend.",
+     False),
+    ("VALIDATION quoting the sentence it already fixed",
+     'said the Docker path "request strict Nornyx/CrewAI execution and fail closed".',
+     False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "line", "should_flag"),
+    USE_MENTION_SPECIMENS,
+    ids=[case[0] for case in USE_MENTION_SPECIMENS],
+)
+def test_a_retracted_claim_is_not_read_as_a_claim(
+    label: str, line: str, should_flag: bool
+):
+    """Both directions. A check that stops firing is not the same as a fix.
+
+    Loosening the CrewAI check until it went quiet would have removed the only
+    thing standing between this repository and the claim coming back. These
+    pin that an UNQUOTED assertion is still caught while a quoted retraction is
+    not.
+    """
+    asserted = _unquoted(line).lower()
+    flagged = "crewai" in asserted and "strict" in asserted
+    assert flagged is should_flag, (
+        f"{label}: flagged={flagged}, expected={should_flag}"
     )

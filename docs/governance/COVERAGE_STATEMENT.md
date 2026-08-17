@@ -1,5 +1,14 @@
 # Task 11A — what has ordinary-test coverage and no mutation representation
 
+> **SUPERSEDED IN PART.** This document states that seven historical classes
+> (H13-H19) are attacked by nothing and that Task 11 remains open for them.
+> That was true when written and is no longer: `tests/test_mutation_catalogue.py`
+> now carries direct attacks for H14 through H19, and H13 is recorded as
+> `OBSOLETE_HISTORICAL_ATTACK`. The catalogue is the authority.
+>
+> The reasoning below -- why ordinary-test coverage is not mutation coverage --
+> stands unchanged and is why the attacks were built. Only the inventory is stale.
+
 Ordinary-test coverage is not hostile-mutation coverage. An ordinary test shows
 the system behaves correctly on a hostile INPUT. A mutation shows the named
 CONTROL is what produces that behaviour — that removing it revives the defect.

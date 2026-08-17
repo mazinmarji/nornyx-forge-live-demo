@@ -80,11 +80,41 @@ against a trust store outside this repository. Without one the evidence set
 reports `assurance_state: not_independently_inspected`, which is its current
 state.
 
-The workflow generates `.nornyx/generated/brd_contract.nyx`, creates evidence under `.nornyx/runs/`, requires strict Nornyx/CrewAI execution in the installed path, launches the application, and prints:
+The workflow generates `.nornyx/generated/brd_contract.nyx` and creates evidence
+under `.nornyx/runs/`.
+
+**On a fresh clone it then stops, and that is correct.** `scripts/bootstrap.py`
+appends `--strict-nornyx` whenever `--skip-install` is absent, and on this
+branch strict mode refuses, because no human approval record exists. Measured:
+
+```
+$ python -m nornyx_forge.cli demo --offline --strict-nornyx
+{"status": "blocked", "reason": "nornyx_runtime_unavailable",
+ "detail": "AuthorizerLoadError: CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING,
+            APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING"}
+exit 2
+```
+
+`bootstrap.run()` raises `SystemExit` on a nonzero return, so the launch step
+below is **not reached** on the path this section documents. Declining to
+execute governed actions without an approval is the system working; the earlier
+version of this paragraph claimed the workflow "launches the application, and
+prints" the URLs, and that was false.
+
+Where the launch does happen -- with `--skip-install`, so no `--strict-nornyx`,
+and with Docker present and `--no-launch` absent -- `bootstrap.py` runs
+`docker compose up --build -d` and prints:
 
 - Application: `http://localhost:8000`
 - Governance dashboard: `http://localhost:8000/dashboard`
 - API documentation: `http://localhost:8000/docs`
+
+The execution backend is `sequential` on both paths. `cli.py` requests it
+unconditionally, and a run reports `configured_execution_backend: sequential`
+alongside `observed_execution_backend: sequential`. **CrewAI is not requested by
+this workflow**, and the previous wording "strict Nornyx/CrewAI execution" said
+otherwise. `tests/test_execution_mode_truth.py` pins all three claims against
+the code and against an executed run.
 
 ## Public repository modes
 

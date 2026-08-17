@@ -26,8 +26,36 @@ README offers for verification -- cannot.
 
 Second-order consequence, measured: because the real tree reports `compromised`,
 `tests/test_subject_completeness.py:176` and `:185` became TAUTOLOGIES. All
-eight parametrisations pass while measuring nothing. That is this repository's
-own FG10 class, unenforced on the one test that reads the real tree.
+SEVEN parametrisations passed while measuring nothing -- seven, counted from
+`MUTATIONS`; the review said eight and the correction is recorded here rather
+than left to match the prose. That is this repository's own FG10 class,
+unenforced on the one test that reads the real tree.
+
+CLOSED. `mutation_validity.require_discriminating_baseline` now refuses a
+measurement whose baseline already shows the outcome it asserts, and both live
+sites consult it: the matrix refuses outright (it mutates the real tree, so its
+baseline cannot be settled), and the forgery proof settles its copy first and
+was measured transitioning `intact -> compromised`.
+
+With evidence regenerated and the baseline back to `intact`, the matrix was
+measured case by case to find out what it actually exercises:
+
+```
+case                        verdict moved  subject moved  carried by
+evidence record status      True           False          INTEGRITY GATE
+separation of duties role   True           True           subject moved
+capability declaration      True           True           subject moved
+required evidence list      False          True           nothing required
+architecture constraint     False          True           nothing required
+declared name               False          True           nothing required
+comment only                False          False          nothing required
+```
+
+Three of seven exercise the property; the other four mutate something that
+changes no Nornyx verdict, so the invariant imposes nothing on them. That is a
+weak probe, not a false green -- and `evidence record status` is the one case
+that rests on the integrity gate, so the branch Lens C found tautological is
+now carried by a real measurement rather than by a standing value.
 
 The numbers below are retained as the record of what was measured, with the
 false lines marked. Task 11 is OPEN.

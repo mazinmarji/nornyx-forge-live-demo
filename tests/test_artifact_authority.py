@@ -168,9 +168,39 @@ def test_forging_a_derived_authenticated_artifact_cannot_mint_assurance(tmp_path
     """
     import subprocess  # noqa: PLC0415
 
-    from mutation_workspace import faithful_copy  # noqa: PLC0415
+    from mutation_validity import require_discriminating_baseline  # noqa: PLC0415
+    from mutation_workspace import faithful_copy, isolated_env  # noqa: PLC0415
+
+    def integrity_of(where: Path) -> str:
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+            cwd=where, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=isolated_env(where), timeout=900,
+        )
+        return json.loads(done.stdout[done.stdout.find("{"):])["verification"][
+            "integrity_state"
+        ]
 
     tree = faithful_copy(tmp_path)
+    # SETTLE THE COPY FIRST. `faithful_copy` reproduces tracked files verbatim
+    # and does not regenerate evidence, so it inherits whatever staleness the
+    # repository has -- and a copy that already reports `compromised` cannot
+    # show that the forgery below is what compromised it. Lens C found this
+    # assertion in exactly that state.
+    for step in (["--as-of", "2026-08-11T00:00:00Z"], ["--sync-contracts"],
+                 ["--review-binding"]):
+        settle = subprocess.run(  # noqa: S603
+            [sys.executable, "scripts/refresh_governance_evidence.py", *step],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", env=isolated_env(tree), timeout=900,
+        )
+        assert settle.returncode == 0, settle.stderr[-400:]
+    require_discriminating_baseline(
+        "forging a derived authenticated artifact",
+        baseline=integrity_of(tree), expected="compromised",
+        what="--verify integrity_state in the workspace before the forgery",
+    )
+
     target = tree / ".nornyx/contracts/evidence/architecture_independent_review.json"
     payload = json.loads(target.read_bytes().decode("utf-8"))
     payload["authenticated_inspections"] = {

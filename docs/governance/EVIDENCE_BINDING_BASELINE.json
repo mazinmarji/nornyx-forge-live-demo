@@ -155,6 +155,12 @@
       "subject": "Sync a record's verdict from the index instead of writing it by hand"
     },
     {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "3515427dda5ebecc2f4e15a106c1af494eb942d3",
+      "note": "NOT pre-enforcement history. Second batch, and the repeat is the point: after 062ed8b was recorded as culpable I went on to commit five more governed changes without regenerating evidence in the same commit, because nothing in my own workflow ran the check before the commit rather than after it. Lens C found the consequence -- with the evidence set stale, two live integrity proofs became tautologies. Recorded rather than excused; the commits are immutable and rewriting history to hide an evidence defect would be worse than the defect. The corrective practice is in EVIDENCE_FRESHNESS.md: stage, regenerate, stage, --verify, then commit. Grandfathered for gate purposes only, and --no-baseline still shows every one of them.",
+      "subject": "Attribute kills to the exact node, phase and property; stop pipes hiding failure"
+    },
+    {
       "actual_governed_input_digest": "sha256:cc0ac50fa6c6764f30ea471fa35fef1ca0f80e8c8161a78ce0fff2e1d885f21d",
       "commit": "3781c088912528b4f0d554ee475005b0f1495106",
       "recorded_governed_input_digest": "sha256:e7b89e35ffc607bf39c2b49a61d6859f6f48a1bca3b533bf610f22c1c8dc5280",
@@ -419,6 +425,12 @@
       "subject": "Recompute every claim the evidence binding records, not two of them"
     },
     {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "760e1be6b557eb282a36fa10b594298256e4d3b3",
+      "note": "NOT pre-enforcement history. Second batch, and the repeat is the point: after 062ed8b was recorded as culpable I went on to commit five more governed changes without regenerating evidence in the same commit, because nothing in my own workflow ran the check before the commit rather than after it. Lens C found the consequence -- with the evidence set stale, two live integrity proofs became tautologies. Recorded rather than excused; the commits are immutable and rewriting history to hide an evidence defect would be worse than the defect. The corrective practice is in EVIDENCE_FRESHNESS.md: stage, regenerate, stage, --verify, then commit. Grandfathered for gate purposes only, and --no-baseline still shows every one of them.",
+      "subject": "Close Lens B P1-1; record H05's compound honestly and prove it minimal"
+    },
+    {
       "actual_governed_input_digest": "sha256:acbe5cc5d35052797beff80f8d1019ee7572b56c6c8f13dd85b2e3f34b810ffc",
       "commit": "7c422fb3004c94778692da2fd64d7803ddfb263e",
       "recorded_governed_input_digest": "sha256:61cf168f3c7a8334723e54b0d189ccb8c4f6e82f85b46719684b7c56c7d94b8f",
@@ -429,6 +441,12 @@
       "commit": "7ea9414cd31b7b649f6c4619f935d01e39d275e9",
       "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
       "subject": "Close the ledger schema over what may be present"
+    },
+    {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "815f305b5178764045baf7b10e2c9473b2536e6c",
+      "note": "NOT pre-enforcement history. Second batch, and the repeat is the point: after 062ed8b was recorded as culpable I went on to commit five more governed changes without regenerating evidence in the same commit, because nothing in my own workflow ran the check before the commit rather than after it. Lens C found the consequence -- with the evidence set stale, two live integrity proofs became tautologies. Recorded rather than excused; the commits are immutable and rewriting history to hide an evidence defect would be worse than the defect. The corrective practice is in EVIDENCE_FRESHNESS.md: stage, regenerate, stage, --verify, then commit. Grandfathered for gate purposes only, and --no-baseline still shows every one of them.",
+      "subject": "Validate killed_by bodies: a name is not a proof"
     },
     {
       "actual_governed_input_digest": "sha256:459878f945c9a9eedcc8003eb04630b11db2ae46da1a30a85980c3917876e288",
@@ -569,6 +587,12 @@
       "subject": "H13 is OBSOLETE_HISTORICAL_ATTACK: the loop it revives no longer exists"
     },
     {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "af32433cf64323e9cdb1835cc9a2c7e4c9a09c70",
+      "note": "NOT pre-enforcement history. Second batch, and the repeat is the point: after 062ed8b was recorded as culpable I went on to commit five more governed changes without regenerating evidence in the same commit, because nothing in my own workflow ran the check before the commit rather than after it. Lens C found the consequence -- with the evidence set stale, two live integrity proofs became tautologies. Recorded rather than excused; the commits are immutable and rewriting history to hide an evidence defect would be worse than the defect. The corrective practice is in EVIDENCE_FRESHNESS.md: stage, regenerate, stage, --verify, then commit. Grandfathered for gate purposes only, and --no-baseline still shows every one of them.",
+      "subject": "Name the compound set, and stop masking pytest's exit code behind a pipe"
+    },
+    {
       "actual_governed_input_digest": "sha256:4431fffa2a8b75dac5147c0029b0993f8b2e36c0c7da071df4c4321860a18ef6",
       "commit": "afa4d24aa683114b191adc6f591ec3cd25893e39",
       "recorded_governed_input_digest": "sha256:2b6cad9e74e9a09341a92d95128ecc1141dbc21bc6208eab64adba01e8361996",
@@ -621,6 +645,12 @@
       "commit": "beb8663a69f2b2059cb69aa246254cb8519b933e",
       "recorded_governed_input_digest": "sha256:c1afe2025f54800690fb872c3c385be0de270657c6502158d5bb1e1fa3d6a3da",
       "subject": "Stop counting an expected failure as a skipped test"
+    },
+    {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "c05d87fa18337362739d215c1e119e617e972569",
+      "note": "NOT pre-enforcement history. Second batch, and the repeat is the point: after 062ed8b was recorded as culpable I went on to commit five more governed changes without regenerating evidence in the same commit, because nothing in my own workflow ran the check before the commit rather than after it. Lens C found the consequence -- with the evidence set stale, two live integrity proofs became tautologies. Recorded rather than excused; the commits are immutable and rewriting history to hide an evidence defect would be worse than the defect. The corrective practice is in EVIDENCE_FRESHNESS.md: stage, regenerate, stage, --verify, then commit. Grandfathered for gate purposes only, and --no-baseline still shows every one of them.",
+      "subject": "Enforce production scope, exact-node targeting and reachability in the runner"
     },
     {
       "actual_governed_input_digest": "sha256:254f4a78c678ffc2b278df1396c9fa059061bfb8e9d790fa367d63c455ecd10b",
@@ -788,6 +818,6 @@
   "purpose": "An exact record of commits that predate enforcement of evidence-binding freshness. NOT an exemption asserting they were valid: they ship a review_binding.json whose governed_input_digest describes a different tree than the commit contains. Recorded by full SHA rather than by a cutoff, so rebased or rewritten history produces different SHAs and loses grandfathering automatically.",
   "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
   "schema": "nornyx.forge.evidence_binding_baseline.v1",
-  "violating_commits": 130,
-  "violations_committed_after_enforcement_was_known": 1
+  "violating_commits": 135,
+  "violations_committed_after_enforcement_was_known": 6
 }

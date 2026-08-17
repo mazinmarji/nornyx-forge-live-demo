@@ -23,7 +23,12 @@ until a human makes it. Manufacturing the precondition would not produce the
 evidence the measurement is for — it would produce a number with nothing behind
 it, which is the exact failure this whole programme has been correcting.
 
-Current evidence state, which is valid and honest as it stands:
+Evidence state AS MEASURED AT THE COMMIT NAMED BELOW. It is not a claim about
+the current head, and the phrasing it replaced — "current evidence state, which
+is valid and honest as it stands" — was a standing assertion that no later
+commit could keep true. Run `--verify` to learn the state of this head.
+
+<!-- verify-measured-at: 341e177 -->
 
 ```
 status                 pass
@@ -54,8 +59,9 @@ AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING
 clear those codes — `--wire-approvals` and `--adopt-approval` — put an ADOPTED
 HUMAN APPROVAL into the contracts. There is none to adopt, and creating one is
 forbidden by the rule above. Evidence regeneration was run in full and is
-necessary but not sufficient: it produced `status: pass`, `integrity: intact`,
-`problems: []`, and the authorizer still does not load.
+necessary but not sufficient: at `341e177` it produced `status: pass`,
+`integrity: intact`, `problems: []`, and the authorizer still did not load.
+The blocker is the absent human approval, which no regeneration can supply.
 
 **Exact commands once a genuine approval exists.**
 

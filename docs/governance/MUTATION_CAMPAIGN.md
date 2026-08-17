@@ -1,5 +1,23 @@
 # Mutation campaign — rebuilt under the admission protocol
 
+> **SUPERSEDED — the totals in this document are WITHDRAWN.**
+>
+> Three documents at this head reported the campaign differently and none said
+> so: this one, `COVERAGE_STATEMENT.md`, and `TASK11_CLOSURE.md` (itself now
+> withdrawn). An operator reading `docs/governance/` could not tell whether
+> Task 11 was open or closed.
+>
+> The executable catalogue in `tests/test_mutation_catalogue.py` is the only
+> authority on attacks, kills and dispositions. Where this document and the
+> catalogue disagree, the catalogue is right and this document is stale.
+>
+> The numbers here are NOT being replaced with corrected numbers. Defects found
+> after they were computed -- kills credited without exact-node, exact-phase or
+> intended-property attribution, and `killed_by` names with no executable body
+> -- mean every total predating the corrected proof kernel is unsound. New
+> totals may be published only after the whole catalogue is replayed through
+> that kernel. Until then this section is history, not a claim.
+
 Task 11, re-run from zero after the Task-14 review found that three of the
 previous campaign's kills were invalid. The numbers below are read out of the
 catalogue and the suite, not restated from the earlier report.
@@ -145,7 +163,24 @@ then does a contract exist that a mutation could move.
 ### Resolution attempted. They are HUMAN_BLOCKED, not INVALID_BASELINE.
 
 The evidence set was regenerated in causal order — build, `--sync-contracts`,
-`--review-binding` — and `--verify` reports exactly what was required:
+`--review-binding`. What `--verify` returned is recorded below as a MEASUREMENT
+AT A NAMED COMMIT, never as a standing claim about the current head.
+
+That distinction is the whole of Lens C's P1-1. This paragraph used to read
+"`--verify` **reports**" — present tense, unanchored — and it was already false
+when it was committed. `docs/` is inside `GOVERNED_INPUT_PATHS`, so writing the
+paragraph that describes a regeneration moves the digest that regeneration
+produced. Regenerate, then document, and the document invalidates itself. The
+commit that introduced these lines (`94fe40b`) does not describe its own
+governed inputs; measured, not inferred.
+
+To learn what THIS head does, run it — do not read it here:
+
+```
+python scripts/refresh_governance_evidence.py --verify
+```
+
+<!-- verify-measured-at: 341e177 -->
 
 ```
 status                 pass

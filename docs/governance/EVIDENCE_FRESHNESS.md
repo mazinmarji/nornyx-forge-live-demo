@@ -73,6 +73,43 @@ python scripts/check_pre_approval_baseline.py --regenerate --as-of 2200-01-01T00
 regeneration the only remaining diagnostics are the three that say a human has
 not approved the contracts, identical to the set produced today.
 
+## The commit discipline, and why it is written down
+
+Evidence describes governed content. `docs/`, `tests/`, `scripts/` and `src/`
+are all inside `GOVERNED_INPUT_PATHS`, so ANY commit that touches them moves the
+digest the evidence claims. A commit may change governed inputs, or finalize
+evidence about them, but the tree it leaves behind must be self-consistent.
+
+The order matters, and one step is easy to miss:
+
+```bash
+git add -A                                                   # 1. stage first
+python scripts/refresh_governance_evidence.py                # 2. build
+python scripts/refresh_governance_evidence.py --sync-contracts
+python scripts/refresh_governance_evidence.py --review-binding
+git add -A                                                   # 3. stage evidence
+python scripts/refresh_governance_evidence.py --verify        # 4. must pass
+git commit
+```
+
+Step 1 is the one that catches people. The digest is computed over COMMITTED
+content, so an unstaged edit is invisible to it: regenerating before staging
+produces evidence that describes the previous tree, `--verify` then reports
+`the working tree does not hold the governed content the evidence describes`,
+and the commit ships a mismatch.
+
+The failure this prevents is not cosmetic. When the evidence set is stale the
+real tree reports `integrity_state: compromised`, and any test that treats
+`compromised` as the SIGNATURE OF AN ATTACK is then satisfied by the starting
+state. Two live proofs were disabled that way for as long as the staleness
+lasted, and the suite stayed green throughout -- see
+`tests/test_baseline_discrimination.py`.
+
+Recording a violation afterwards is the fallback, not the plan.
+`docs/governance/EVIDENCE_BINDING_BASELINE.json` carries six commits made after
+the defect was understood, and a rising count there means this discipline is
+not being followed.
+
 ## What is deliberately not regenerated
 
 Human approval records. They are never generated, refreshed, extended, or
