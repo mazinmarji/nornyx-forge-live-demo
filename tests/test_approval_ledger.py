@@ -24,8 +24,10 @@ from nornyx_forge.nornyx_runtime import (
     ActionRequest,
     ApprovalLedger,
     NornyxActionBoundary,
+    NornyxRuntimeUnavailable,
     approval_fingerprint,
     approval_ledger_path,
+    canonical_action_request,
     canonical_attempt_id,
     canonical_request_id,
 )
@@ -811,6 +813,23 @@ HOSTILE_LEDGER_OBJECTS = [
     ("a trigger that discards the insert",
      "CREATE TRIGGER t BEFORE INSERT ON consumed_approvals "
      "BEGIN SELECT RAISE(IGNORE); END"),
+    # NAMED LIKE THE TABLE IT ATTACKS. Every hostile object here was called `t`,
+    # and the guard filtered on NAME while discarding the KIND it had just
+    # unpacked -- so SQLite happily let a TRIGGER share the TABLE's name and the
+    # attack the guard was written to stop was the one spelling it admitted.
+    # Measured before the repair: one grant, five released effects, zero
+    # consumption rows, `established_at` untouched. 42 tests passed.
+    ("a trigger wearing the consumption table's name",
+     "CREATE TRIGGER consumed_approvals BEFORE INSERT ON consumed_approvals "
+     "BEGIN SELECT RAISE(IGNORE); END"),
+    ("a trigger wearing the identity table's name",
+     "CREATE TRIGGER ledger_identity BEFORE INSERT ON consumed_approvals "
+     "BEGIN SELECT RAISE(IGNORE); END"),
+    ("a trigger wearing a permitted name that deletes the claim",
+     "CREATE TRIGGER ledger_identity AFTER INSERT ON consumed_approvals "
+     "BEGIN DELETE FROM consumed_approvals; END"),
+    ("a view wearing the consumption table's name",
+     "CREATE VIEW ledger_identity_view AS SELECT * FROM consumed_approvals"),
     ("a trigger that deletes the claim it just wrote",
      "CREATE TRIGGER t AFTER INSERT ON consumed_approvals "
      "BEGIN DELETE FROM consumed_approvals; END"),
@@ -950,3 +969,138 @@ def test_a_missing_identity_table_denies_rather_than_reporting_an_outage(tmp_pat
     )
     assert consumed is False
     assert "LEDGER_CONTINUITY_UNKNOWN" in reason, reason
+
+
+# --------------------------------------------------------------------------
+# The closed-object guard, proved at the BOUNDARY rather than on the schema.
+#
+# The schema-level tests above assert a refusal. These assert what the refusal
+# is FOR: that no consequential effect is released and no approval is respent.
+# The distinction matters because the guard was bypassable for months while
+# every schema test passed -- they all named their trigger `t`, and the guard
+# filtered on name while discarding kind.
+# --------------------------------------------------------------------------
+
+HOSTILE_TRIGGER = (
+    "CREATE TRIGGER consumed_approvals BEFORE INSERT ON consumed_approvals "
+    "BEGIN SELECT RAISE(IGNORE); END"
+)
+
+
+def _release_three_times(root: Path, *, install_after_establish: str = ""):
+    """Present ONE valid grant three times. Returns (effects, callbacks, rows)."""
+    from signing import signed_grant  # noqa: PLC0415
+    from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: PLC0415
+
+    descriptor = ActionDescriptor(
+        operation="wire transfer", resource="customer:omar",
+        destination="zone.external_customer", parameters={"amount": 10_000_000},
+    )
+    request = canonical_action_request(
+        mission_id="CASE-REPLAY", risk="high", subject_revision=TEST_REVISION,
+        descriptor=descriptor, attempt=1,
+    )
+    grant = signed_grant(request, approval_id="ACT-ONCE", role="operations_owner")
+
+    boundary = _permissive_boundary(root, as_of="2026-08-03T00:00:00Z")
+    if install_after_establish:
+        # AFTER the boundary is built, which is the whole point: the ledger file
+        # is writable by the governed process on every request.
+        conn = sqlite3.connect(approval_ledger_path(root), isolation_level=None)
+        conn.execute(install_after_establish)
+        conn.close()
+
+    calls: list[int] = []
+    effects: list[str] = []
+    for _ in range(3):
+        decision, _result = boundary.evaluate_and_execute(
+            mission_id="CASE-REPLAY", risk="high",
+            action=lambda: (calls.append(1), "wired")[1],
+            action_approval=grant, action_descriptor=descriptor, attempt=1,
+        )
+        effects.append(decision.effect)
+
+    conn = sqlite3.connect(approval_ledger_path(root))
+    rows = list(conn.execute("SELECT fingerprint FROM consumed_approvals"))
+    conn.close()
+    return effects, len(calls), len(rows)
+
+
+def test_an_ordinary_ledger_still_releases_exactly_once(tmp_path: Path):
+    """The control. Without it every refusal below could be 'refuses always'."""
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    effects, callbacks, rows = _release_three_times(tmp_path)
+
+    assert effects == ["ALLOW", "DENY", "DENY"], effects
+    assert callbacks == 1, "at-most-once was not honoured on an ordinary ledger"
+    assert rows == 1
+
+
+def test_a_legitimate_unique_index_still_releases_exactly_once(tmp_path: Path):
+    """A UNIQUE INDEX is a real way to enforce the property, not an attack.
+
+    The guard refused these by NAME, so a correctly-built ledger was rejected as
+    hostile -- the same defect as the trigger bypass, in the safe direction.
+    Indexes are now permitted by KIND: an index cannot discard, rewrite or
+    shadow a row, which is exactly what triggers and views can do.
+    """
+    ledger = approval_ledger_path(tmp_path)
+    ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
+    conn = sqlite3.connect(ledger, isolation_level=None)
+    conn.execute("CREATE UNIQUE INDEX ux_fingerprint ON consumed_approvals(fingerprint)")
+    conn.close()
+
+    effects, callbacks, rows = _release_three_times(tmp_path)
+
+    assert effects == ["ALLOW", "DENY", "DENY"], effects
+    assert callbacks == 1
+    assert rows == 1
+
+
+def test_a_trigger_wearing_a_permitted_name_releases_nothing(tmp_path: Path):
+    """THE BYPASS, at the boundary.
+
+    Measured before the repair: `effects=['ALLOW']*5, callbacks=5, rows=0` with
+    `established_at` intact, so the continuity anchor never fired either. The
+    ledger is bind-mounted read-write and gitignored, so the process that must
+    not replay an approval owns the state that prevents it.
+    """
+    ledger = approval_ledger_path(tmp_path)
+    ApprovalLedger.provision(ledger, established_at=LEDGER_ESTABLISHED)
+    conn = sqlite3.connect(ledger, isolation_level=None)
+    conn.execute(HOSTILE_TRIGGER)
+    conn.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        _release_three_times(tmp_path)
+    assert "consumed_approvals" in str(refusal.value)
+
+
+def test_a_trigger_installed_after_establishment_is_caught_at_the_claim(
+    tmp_path: Path,
+):
+    """Establishment-time validation proves the ledger at t0 and nothing after.
+
+    THIS IS THE PATH THAT MATTERED. The three cases above all refuse during
+    construction, which masked two real defects in the repair itself: an
+    invented constant and a wrong call signature, both on the consume path,
+    both invisible until a case got past construction.
+
+    Nothing is released, and no row is written, because the structure is
+    re-validated immediately before the insert that IS the claim.
+    """
+    ApprovalLedger.provision(
+        approval_ledger_path(tmp_path), established_at=LEDGER_ESTABLISHED
+    )
+    effects, callbacks, rows = _release_three_times(
+        tmp_path, install_after_establish=HOSTILE_TRIGGER
+    )
+
+    assert callbacks == 0, (
+        f"a governed effect ran against a ledger whose structure changed after "
+        f"establishment: effects={effects}"
+    )
+    assert effects == ["DENY", "DENY", "DENY"], effects
+    assert rows == 0

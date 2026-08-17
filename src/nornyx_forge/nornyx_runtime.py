@@ -6,7 +6,7 @@ import os
 import re
 import sqlite3
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -635,7 +635,25 @@ def _instant(value: str | None) -> datetime | None:
 #: table a later read consults. Both are engine metadata and both leave every
 #: uniqueness check passing, so the question asked here is "what is in this
 #: database" rather than "is what I expected present".
-PERMITTED_LEDGER_OBJECTS = frozenset({"consumed_approvals", "ledger_identity"})
+#: BY (KIND, NAME), not by name. Filtering on the name alone discarded the kind
+#: it had just unpacked, and SQLite lets a TRIGGER share a TABLE's name -- so
+#: `CREATE TRIGGER consumed_approvals BEFORE INSERT ON consumed_approvals BEGIN
+#: SELECT RAISE(IGNORE); END` passed the guard whose docstring above names that
+#: exact attack. Measured: one grant released five effects, wrote zero
+#: consumption rows, and left `established_at` intact, so the continuity anchor
+#: never fired either. The four hostile tests all named their trigger `t`, so
+#: the control was never reached and 42 tests passed with it fully bypassed.
+#:
+#: Indexes are permitted BY KIND with any name, because a UNIQUE index is a
+#: legitimate way to enforce the property and refusing it by name rejected
+#: correctly-built ledgers -- the same defect in the safe direction.
+PERMITTED_LEDGER_OBJECTS = frozenset(
+    {("table", "consumed_approvals"), ("table", "ledger_identity")}
+)
+
+#: Object kinds that may appear under any name. An index cannot discard, rewrite
+#: or shadow a row; a trigger and a view can, so neither is here.
+PERMITTED_LEDGER_KINDS = frozenset({"index"})
 
 #: Columns the consumption record must carry. Names, because `consume` writes by
 #: name: a table missing one accepts the INSERT nowhere or silently drops it.
@@ -728,7 +746,10 @@ def _assert_ledger_structure(
         )
     }
     unexpected = sorted(
-        f"{kind} {name!r}" for kind, name in present if name not in PERMITTED_LEDGER_OBJECTS
+        f"{kind} {name!r}"
+        for kind, name in present
+        if kind not in PERMITTED_LEDGER_KINDS
+        and (kind, name) not in PERMITTED_LEDGER_OBJECTS
     )
     if unexpected:
         raise NornyxRuntimeUnavailable(
@@ -978,6 +999,39 @@ class ApprovalLedger:
         """
         if not self.available:
             return False, self.unavailable_reason
+
+        # RE-VALIDATED HERE, not only at construction. The structure check ran
+        # once in __init__, and the ledger file lives in the directory the
+        # governed process writes to on every request -- bind-mounted read-write
+        # in docker-compose.yml, and excluded from review by .gitignore. A
+        # hostile object installed after establishment was never seen again.
+        #
+        # This is the last moment before the claim, so it is the moment that
+        # matters: everything after this line assumes the insert is the claim.
+        # `closing`, not `with sqlite3.connect(...)`: the connection context
+        # manager commits or rolls back the TRANSACTION and leaves the handle
+        # open. On Windows that open handle makes the file undeletable, and four
+        # tests that delete a ledger to prove a spent grant stays spent failed
+        # with PermissionError -- the repair breaking the proofs around it.
+        try:
+            with closing(sqlite3.connect(self.path)) as conn:
+                _assert_ledger_structure(conn, self.path, self.UNREADABLE)
+        except NornyxRuntimeUnavailable as exc:
+            return (
+                False,
+                f"{self.UNREADABLE}: the ledger structure changed after it was "
+                f"established, so a claim cannot be trusted: {exc}",
+            )
+        except sqlite3.Error as exc:
+            # "unusable" is the established vocabulary for this refusal, and a
+            # test asserts on it. Inventing a second phrase for the same state
+            # would leave two ways to say one thing and one of them unchecked.
+            return (
+                False,
+                f"{self.UNREADABLE}: the ledger at {self.path} is unusable — it "
+                f"could not be re-read before the claim ({exc}), and an "
+                "unanswerable question is not a free one",
+            )
 
         # Continuity. A ledger cannot say whether a grant older than itself was
         # already spent, so it must not pretend the grant is fresh.
