@@ -1,4 +1,40 @@
-# Task 11 — CLOSED
+# Task 11 — CLOSURE WITHDRAWN
+
+**This document previously declared Task 11 CLOSED. That declaration is withdrawn.**
+Three independent Task-14 lenses against head 729a900 returned P1=7, P2=15.
+
+The sharpest finding is about this file. `docs` is inside
+`GOVERNED_INPUT_PATHS`, so committing this document moved the governed input
+digest -- and it was committed WITHOUT re-running the causal regeneration chain
+it claims to report. The document asserting `--verify` passes was the sole
+reason `--verify` failed:
+
+```
+status                  fail          (claimed: pass)
+integrity_state         compromised   (claimed: intact)
+problems                12            (claimed: [])
+governed_input_match    False         (claimed: True)
+evidence_manifest_match False         (claimed: True)
+```
+
+Nine of the fourteen gate claims below were true when measured; the five false
+ones are exactly the `--verify` block. That is what made it dangerous: an
+operator spot-checking architecture, security, the baseline, the tree and the
+1048-test census gets five confirmations, and `--verify` is the only local
+control that sees the problem. `scripts/check_test_coverage.py` -- the gate the
+README offers for verification -- cannot.
+
+Second-order consequence, measured: because the real tree reports `compromised`,
+`tests/test_subject_completeness.py:176` and `:185` became TAUTOLOGIES. All
+eight parametrisations pass while measuring nothing. That is this repository's
+own FG10 class, unenforced on the one test that reads the real tree.
+
+The numbers below are retained as the record of what was measured, with the
+false lines marked. Task 11 is OPEN.
+
+---
+
+## Original closure record (numbers as measured; --verify block FALSE)
 
 Every value below is recomputed from the authoritative catalogue at closure, not
 carried forward from an earlier report. Environment: CPython 3.12.10 on
@@ -62,7 +98,7 @@ recorded in [HUMAN\_BLOCKED\_MEASUREMENTS.md](HUMAN_BLOCKED_MEASUREMENTS.md).
 ## Closure evidence
 
 ```
-pytest                      rc=0, collected 1048
+pytest                      rc=0, collected 1048    [true]
 expected skips              9
 unexpected skips            0
 unexpected xfails           0
@@ -75,11 +111,11 @@ pre-approval baseline       clean
 working tree                clean
 
 --verify
-  status                    pass
-  integrity_state           intact
-  problems                  []
-  governed_input_match      True
-  evidence_manifest_match   True
+  status                    pass   [FALSE]
+  integrity_state           intact   [FALSE]
+  problems                  []   [FALSE]
+  governed_input_match      True   [FALSE]
+  evidence_manifest_match   True   [FALSE]
   assurance_state           not_independently_inspected
   independent               False
   authenticated_reviewers   []
