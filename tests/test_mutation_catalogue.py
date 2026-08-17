@@ -99,6 +99,14 @@ def _historical_attacks() -> list[Attack]:
             attack_id=f"{item.ident.split()[0]}-DIRECT",
             owner="tests/test_historical_reproof.py",
             killed_by="test_removing_the_control_revives_the_defect",
+            # COMPOUND when the proof needs cumulative removal of more than one
+            # enforcement route. H05 recorded `compound=False` while carrying two
+            # edits and genuinely needing both: measured, R1 alone SURVIVES and
+            # R1+R2 kills. The label disagreed with the semantics, which is the
+            # mismatch this whole cycle exists to remove -- benign here, because
+            # the kill itself is valid, but the same shape as the defects that
+            # were not benign.
+            compound=bool(item.extra_mutations),
         )
         for item in historical.DIRECT
     ]
@@ -772,3 +780,77 @@ def test_a_module_level_target_is_refused():
         assert refusal.value.outcome is Outcome.INVALID_TEST_TARGET, bad
 
     require_exact_node("tests/test_approval_ledger.py::test_something")
+
+
+def test_a_cumulative_attack_cannot_be_recorded_as_non_compound():
+    """`compound` must mean what the catalogue says it means.
+
+    H05 carried two edits, genuinely needed both, and was recorded
+    `compound=False`. The kill was valid, so nothing unsafe followed -- but a
+    label disagreeing with the semantics it describes is the exact shape of
+    every defect this cycle found, and it is cheaper to refuse here than to
+    rediscover it in a review.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+
+    cumulative = {
+        f"{item.ident.split()[0]}-DIRECT"
+        for item in historical.DIRECT
+        if item.extra_mutations
+    }
+    recorded = {attack.attack_id for attack in CATALOGUE if attack.compound}
+    missing = sorted(cumulative - recorded)
+    assert missing == [], (
+        f"these attacks need more than one edit but are recorded as "
+        f"non-compound: {missing}"
+    )
+
+
+def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
+    """MINIMALITY MEASURED, not inferred from the edit count.
+
+    An extra edit could be scaffolding rather than a second enforcement route,
+    so `len(extra_mutations) > 0` is a reason to CHECK minimality, never a
+    proof of it. A compound whose components are not each necessary is a padded
+    inventory: it looks like defence in depth and is really one route plus
+    decoration.
+
+    Measured for H05: removing the FileNotFoundError handler alone leaves the
+    named proof PASSING, because FileNotFoundError IS an OSError and the second
+    handler still catches it. Both are required before the verifier crashes
+    instead of refusing.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+    from mutation_validity import check_mutation  # noqa: PLC0415
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        faithful_copy,
+        require_caused_failure,
+        run_node,
+    )
+
+    for item in historical.DIRECT:
+        if not item.extra_mutations:
+            continue
+        # Drop the LAST edit. If the attack still kills, that edit was not
+        # necessary and the compound is padded.
+        edits = [item.mutation, *item.extra_mutations][:-1]
+        tree = faithful_copy(tmp_path / item.ident.split()[0])
+        for relative, anchor, replacement, count in edits:
+            target = tree / relative
+            before = target.read_text(encoding="utf-8")
+            after = before.replace(anchor, replacement)
+            check_mutation(relative, before, after, anchor, count)
+            target.write_text(after, encoding="utf-8", newline="")
+
+        report = tmp_path / f"{item.ident.split()[0]}.xml"
+        completed = run_node(tree, item.test, report=report)
+        try:
+            require_caused_failure(report, item.test, completed.stdout + completed.stderr)
+        except AttackNotAdmissible:
+            continue  # did not kill without the final edit: the edit is required
+        raise AssertionError(
+            f"{item.ident}: the attack still kills without its last edit, so "
+            "that edit is not an independently required route and this compound "
+            "is padded rather than minimal"
+        )
