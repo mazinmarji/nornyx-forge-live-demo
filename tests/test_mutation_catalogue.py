@@ -700,3 +700,34 @@ def test_the_identity_control_survives_a_floor_that_is_far_too_low():
     assert len(survivors) >= absurd_floor, "the floor cannot catch this"
     missing = sorted(REQUIRED_ATTACK_IDS - {a.attack_id for a in survivors})
     assert missing == ["M10", "M11", "M12", "M13", "M14", "M9"], missing
+
+def test_every_historical_class_has_exactly_one_terminal_disposition():
+    """Task 11 closure is a statement about the SET, not about any one class.
+
+    Every H-class must land in exactly one terminal bucket -- a direct kill, a
+    compound kill, an obsolete historical attack, or delegation to a dedicated
+    catalogue -- and none may be in two. A class that fell out of every bucket
+    would silently stop being accounted for, which is how "NOT_YET_KILLED = 0"
+    could be true while a property went unrepresented.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+
+    every = {item.ident.split()[0] for item in historical.INVENTORY}
+    buckets = {
+        "direct": {i.ident.split()[0] for i in historical.DIRECT},
+        "compound": set(historical.KILLED_VALIDLY_COMPOUND),
+        "obsolete": set(historical.OBSOLETE_HISTORICAL_ATTACK),
+        "delegated": {i.ident.split()[0] for i in historical.DELEGATED},
+        "open": set(historical.NOT_YET_KILLED),
+    }
+    covered = set().union(*buckets.values())
+    assert every == covered, (
+        f"these classes have no terminal disposition: {sorted(every - covered)}"
+    )
+
+    overlaps = []
+    for name, members in buckets.items():
+        for other, rest in buckets.items():
+            if name < other and (members & rest):
+                overlaps.append(f"{name}/{other}: {sorted(members & rest)}")
+    assert overlaps == [], f"classes in two terminal buckets at once: {overlaps}"
