@@ -376,6 +376,25 @@ def delegation_problems(attacks) -> list[str]:
                 f"{attack.attack_id}: {attack.owner} no longer defines "
                 f"{attack.killed_by}"
             )
+            continue
+        # A NAME IS NOT A PROOF. This checked only that a FunctionDef with the
+        # right name existed, and Lens B exhibited it accepting private helpers
+        # with zero assertions as the thing that kills an attack. Gutting the
+        # five functions that carry all 41 kills left every count, the identity
+        # set and GATE: PASS intact, because all five are parametrised so the
+        # collected total does not move either.
+        #
+        # Static only, and deliberately so: this defends the catalogue against
+        # shrinkage and substitution. Whether the RIGHT assertion runs on the
+        # hostile path is the runner's question, answered by exact-node,
+        # exact-phase, intended-property attribution.
+        from test_killed_by_validation import _defensive_evidence  # noqa: PLC0415
+
+        if _defensive_evidence(module.read_text(encoding="utf-8"), attack.killed_by) == 0:
+            problems.append(
+                f"{attack.attack_id}: {attack.owner} defines {attack.killed_by} "
+                "but its body contains nothing that can fail"
+            )
     return problems
 
 
