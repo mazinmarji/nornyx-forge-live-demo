@@ -125,6 +125,18 @@ jobs:
       - name: Governance evidence artifacts match their declared digests
         run: python scripts/refresh_governance_evidence.py --verify
 
+      # EVIDENCE-BINDING. The evidence a commit ships must describe the tree that
+      # commit contains. Measured on the hardening branch: 130 of 168
+      # evidence-bearing commits shipped a binding describing a different tree.
+      #
+      # PR-scoped with an exact-SHA historical baseline. `origin/main..HEAD`
+      # would be permanently red over immutable history, and a permanently red
+      # security control is one that gets switched off.
+      - name: evidence-binding
+        run: |
+          git fetch --no-tags --depth=200 origin "${{ github.base_ref || 'main' }}"
+          python scripts/check_evidence_binding.py "origin/${{ github.base_ref || 'main' }}...HEAD"
+
       - name: Architecture and security gates
         run: |
           python scripts/check_architecture.py

@@ -103,6 +103,11 @@ NEWLINE = chr(10)
 REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_approval_authentication.py": 34,
     "tests/test_approval_ledger.py": 38,
+    # Protected because Lens B measured 103 tests of slack in the aggregate
+    # floor, and named these two: the evidence-binding proofs and the sole
+    # regression for the reachability probe were both deletable.
+    "tests/test_evidence_binding.py": 7,
+    "tests/test_clause_reachability.py": 7,
     "tests/test_reviewer_authentication.py": 23,
     "tests/test_independent_inspection.py": 14,
     "tests/test_trust_directionality.py": 8,
@@ -150,7 +155,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_xfail_strictness.py": 9,
 }
 
-MINIMUM_COLLECTED = 945
+# Raised from 945. Lens B measured 118 tests of slack against 1063 collected --
+# enough to delete whole modules with this gate still green, and it named the
+# dirty-tree gate and the reachability regressions as deletable. 1000 keeps the
+# floor inside the 10% band the suite's own guard requires.
+MINIMUM_COLLECTED = 1000
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -160,6 +169,8 @@ MINIMUM_COLLECTED = 945
 REQUIRED_MODULES = (
     "tests/test_approval_authentication.py",
     "tests/test_approval_ledger.py",
+    "tests/test_evidence_binding.py",
+    "tests/test_clause_reachability.py",
     "tests/test_reviewer_authentication.py",
     "tests/test_independent_inspection.py",
     "tests/test_trust_directionality.py",
