@@ -159,11 +159,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_xfail_strictness.py": 9,
 }
 
-# Raised from 945. Lens B measured 118 tests of slack against 1063 collected --
-# enough to delete whole modules with this gate still green, and it named the
-# dirty-tree gate and the reachability regressions as deletable. 1000 keeps the
-# floor inside the 10% band the suite's own guard requires.
-MINIMUM_COLLECTED = 1000
+# Raised from 945, then from 1000. Lens B measured 118 tests of slack against
+# 1063 collected -- enough to delete whole modules with this gate still green,
+# and it named the dirty-tree gate and the reachability regressions as
+# deletable. 1000 fixed that, and then the Lens C work added ~30 tests and
+# reopened the gap: 1000 against 1115 collected is 115 of slack, and
+# `test_skip_gate` failed exactly as designed.
+#
+# THIS NUMBER IS MEANT TO NEED UPDATING. A floor computed from the current
+# count could never detect shrinkage -- it would move down with the deletion it
+# is supposed to catch. So it stays a constant, and the guard requiring it to
+# sit within 10% of the real suite is the thing that forces a deliberate raise
+# whenever the suite grows. Twice now that guard has been the one to notice.
+MINIMUM_COLLECTED = 1050
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
