@@ -319,8 +319,16 @@ INVENTORY = (
         # test reports INVALID_TEST_AIM because its attestations are never
         # stale, and this node reports BODY REACHED because it deliberately
         # moves the subject out from under one.
-        test="tests/test_independent_inspection.py::test_moving_the_subject_makes_the_inspection_stale",
-        expect="a stale attestation is described as belonging to the current subject",
+        # AIMED BY BRANCH-BODY REACHABILITY WITH A SIGNED ATTESTATION.
+        #
+        # test_moving_the_subject_makes_the_inspection_stale reaches the branch
+        # but asserts the VERDICT, not the subject's stability, so rebinding the
+        # wording does not move it. This node adds the missing conjunction: a
+        # signed stale attestation present AND two regenerations compared. The
+        # earlier unsigned version of that proof was discarded at authentication
+        # -- H14's clause -- and probed INVALID_TEST_AIM, correctly.
+        test="tests/test_independent_inspection.py::test_a_stale_attestation_does_not_perturb_the_next_subject",
+        expect="two regenerations over an unchanged tree disagree, so the subject drifts",
         severity="P1",
     ),
     SecurityClass(
@@ -538,25 +546,27 @@ KILLED_VALIDLY_COMPOUND = {
 #: measured` fails if anything is added without a reason.
 NOT_YET_KILLED = {
     "H13": (
-        "MEASURED, NOT KILLED, and the gap is now one step narrower and exactly "
-        "named. The conjunction the two existing tests never covered -- a stale "
-        "attestation present AND two regenerations compared -- is now written "
-        "and passing in tests/test_task8_closure.py: "
-        "test_a_stale_attestation_does_not_perturb_the_next_subject asserts the "
-        "fixed point over an unchanged governed tree, and its partner asserts "
-        "the mismatch stays observable rather than being rewritten. Both are "
-        "real properties and both hold. "
-        "They are NOT yet H13's proof. Branch-body probing reports "
-        "INVALID_TEST_AIM: the attestation those tests attach is UNSIGNED, so "
-        "it is discarded at the authentication step -- H14's clause -- before "
-        "control ever reaches the subject-mismatch branch this attack mutates. "
-        "Reaching that branch requires a provisioned reviewer trust store and a "
-        "genuinely signed attestation, which tests/test_independent_inspection."
-        "py already builds and which this proof should borrow rather than "
-        "reinvent. "
-        "Three mutation attempts and two test-aim attempts have each been "
-        "rejected by measurement rather than argued away, and the remaining "
-        "work is a fixture change, not a question about the control."
+        "SURVIVES A FULLY ADMISSIBLE ATTACK, which is a different finding from "
+        "the earlier attempts and must not be read as one of them. Everything "
+        "that previously explained a survival has been eliminated by "
+        "measurement: the mutation is the historical defect exactly (the stale "
+        "diagnostic rebinds to the CURRENT subject rather than the attested "
+        "one); the attestation is genuinely signed through the provisioned "
+        "reviewer trust, so it authenticates and is not discarded at H14's "
+        "clause; and the mismatch BRANCH BODY is proven reached, not merely the "
+        "enclosing `if`. "
+        "Under those conditions two regenerations over an unchanged governed "
+        "tree still agree. The fixed point holds WITH the defect installed. "
+        "That points at the architecture rather than at the test: the subject "
+        "appears no longer to be derived from `verdict_basis` in a way this "
+        "sentence can perturb, so the historical feedback loop may have been "
+        "removed by a later change and this line is now belt-and-braces. "
+        "NOT CLAIMED AS DEFENCE IN DEPTH. That would be the third comfortable "
+        "explanation in this class, and the previous two were wrong. What is "
+        "required is an FG15 route inventory of subject derivation -- what "
+        "actually feeds the inspection subject today, and which of those inputs "
+        "the diagnostic reaches -- measured the way H03/H04 and H18 were. Until "
+        "that exists, H13 is open."
     ),
 }
 

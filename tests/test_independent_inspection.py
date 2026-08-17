@@ -543,3 +543,117 @@ def test_the_full_causal_chain_restores_assurance(settled):
     state = _assurance(work, reviewers)
     assert state["assurance_state"] == "independently_inspected", state["problems"]
     assert state["integrity_state"] == "intact"
+
+
+def test_a_stale_attestation_does_not_perturb_the_next_subject(settled):
+    """H13. Evidence ABOUT a subject must never become part of it.
+
+    THE CONJUNCTION NEITHER EXISTING TEST COVERED. The fixed-point tests
+    regenerate twice with attestations that are never stale, so the
+    stale-diagnostic branch never executes. `test_moving_the_subject_makes_the_
+    inspection_stale` has a genuinely stale attestation but regenerates once, so
+    a subject that moves BETWEEN passes cannot be observed. Only both together
+    reach the defect, which is why the historical mutation survived three
+    correct-looking attempts.
+
+    The stale diagnostic lands in `verdict_basis`, inside the evidence set the
+    subject is computed from. If it names the CURRENT subject, the subject
+    becomes a function of itself: every regeneration moves it, and no
+    attestation can ever name the one the next run will present.
+
+    Asserted as STATE STABILITY, not as wording. Checking the sentence for a
+    digest would be a string-format test wearing a security proof's name, and
+    would pass for a system whose subject drifted anyway.
+
+    Reuses the provisioned reviewer trust and real signing from `settled` and
+    `_attest`. An earlier version of this proof attached an UNSIGNED
+    attestation, which is discarded at authentication -- H14's clause -- before
+    control reaches the mismatch branch at all. Branch-body probing reported
+    INVALID_TEST_AIM for it, correctly.
+    """
+    work, reviewers = settled
+    _attest(work, reviewers)
+    assert _inspected(work, reviewers) is True, "the baseline inspection is not complete"
+
+    subject_before = _current_subject(work)
+
+    # Move the subject, so the signed attestation above becomes stale. A
+    # DECLARED value, matching what test_moving_the_subject_makes_the_inspection
+    # _stale changes, so this exercises the same staleness the suite already
+    # recognises rather than inventing a new one.
+    contract = work / ".nornyx/contracts/runtime_network.nyx"
+    contract.write_bytes(
+        contract.read_bytes().replace(
+            b"name: GovernedCustomerOperationsRuntime",
+            b"name: GovernedCustomerOperationsRuntimeX",
+            1,
+        )
+    )
+
+    _settle(work)
+    subject_after = _current_subject(work)
+    assert subject_after != subject_before, (
+        "the governed subject did not move, so the attestation never became "
+        "stale and this test cannot reach the property"
+    )
+
+    # The attestation is now stale AND authenticated, so the mismatch branch
+    # runs on every pass from here.
+    state = _assurance(work, reviewers)
+    assert any(
+        "not the subject this tree now presents" in problem
+        for problem in state["assurance_problems"]
+    ), state["assurance_problems"]
+
+    # THE FIXED POINT, with the stale diagnostic being written each time.
+    # Nothing governed changes between these two regenerations.
+    _settle(work)
+    first = _current_subject(work)
+    _settle(work)
+    second = _current_subject(work)
+
+    assert first == second, (
+        "two consecutive regenerations over an unchanged governed tree produced "
+        f"different subjects ({first} then {second}) while a stale attestation "
+        "was present, so evidence ABOUT the subject has become part of it and "
+        "no attestation can name the subject the next run will present"
+    )
+
+
+def test_the_stale_attestation_keeps_naming_the_subject_it_reviewed(settled):
+    """Identity preservation, paired with the stability proof above.
+
+    Stability alone could be satisfied by a system that stopped reporting
+    staleness at all. This requires the mismatch to stay OBSERVABLE and to be
+    described against the subject that was actually reviewed.
+    """
+    work, reviewers = settled
+    _attest(work, reviewers)
+    reviewed = _current_subject(work)
+
+    contract = work / ".nornyx/contracts/runtime_network.nyx"
+    contract.write_bytes(
+        contract.read_bytes().replace(
+            b"name: GovernedCustomerOperationsRuntime",
+            b"name: GovernedCustomerOperationsRuntimeX",
+            1,
+        )
+    )
+    _settle(work)
+    current = _current_subject(work)
+    assert reviewed != current
+
+    state = _assurance(work, reviewers)
+    stale = [p for p in state["assurance_problems"]
+             if "not the subject this tree now presents" in p]
+    assert stale, state["assurance_problems"]
+    assert any(reviewed in problem for problem in stale), (
+        "the stale diagnostic no longer names the subject that was reviewed, so "
+        "the mismatch has been rewritten as though the attestation belonged to "
+        f"the current subject. reviewed={reviewed} current={current}"
+    )
+    assert not any(current in problem for problem in stale), (
+        "the stale diagnostic names the CURRENT subject, which puts the subject "
+        "inside the evidence it is derived from"
+    )
+    assert _inspected(work, reviewers) is False
