@@ -240,6 +240,12 @@ def test_a_root_property_may_hold_several_attacks_without_being_deduplicated():
 #: enforcement routes. It is therefore a fact about NAMED attacks, and it is
 #: written here so that reclassifying one has to change this line, in the diff,
 #: where a reviewer can see it.
+#: Attacks whose proof needs CUMULATIVE removal of more than one enforcement
+#: route. Named rather than counted, and each one's minimality is measured by
+#: `test_every_compound_attack_is_proven_minimal` -- an extra edit could be
+#: scaffolding, so needing two edits is a reason to check, never a proof.
+COMPOUND_ATTACKS = frozenset({"H05-DIRECT", "SURFACE-WHOLE-CHAIN"})
+
 DEFENCE_IN_DEPTH_ATTACKS = frozenset(
     {
         "SURFACE-GUARD-A",
@@ -287,10 +293,18 @@ def test_the_accounting_is_kills_plus_defence_in_depth():
         f"it is named, not counted.\n  expected {sorted(DEFENCE_IN_DEPTH_ATTACKS)}"
         f"\n  found    {sorted(defence)}"
     )
-    assert len(compound) == 1, [a.attack_id for a in compound]
-    assert not compound[0].defence_in_depth, (
-        "the compound attack is marked defence-in-depth, which would take it "
-        "out of the kill count and make the arithmetic 31 + 3 + 1"
+    # NAMED, not counted -- for the same reason the defence-in-depth set above
+    # is. `len(compound) == 1` was true only while H05 was mislabelled: it
+    # needs two cumulative edits and was recorded non-compound, so the count
+    # agreed with the expectation by way of an error.
+    assert {a.attack_id for a in compound} == COMPOUND_ATTACKS, (
+        "the set of attacks needing cumulative removal has changed.\n"
+        f"  expected {sorted(COMPOUND_ATTACKS)}\n"
+        f"  found    {sorted(a.attack_id for a in compound)}"
+    )
+    assert not any(a.defence_in_depth for a in compound), (
+        "a compound attack is marked defence-in-depth, which would take it out "
+        "of the kill count and double-count the arithmetic"
     )
 
 
