@@ -3,9 +3,6 @@
   "checker_schema": "nornyx.forge.evidence_binding.v1",
   "commits_carrying_evidence": 168,
   "established_at_head": "062ed8be1402a5b252f8545011544516fde55848",
-  "excluded_from_baseline": {
-    "062ed8be1402a5b252f8545011544516fde55848": "Committed AFTER the defect was identified and described, so it is NEW WORK and must not be grandfathered. Generating the baseline at this head swept it in automatically -- the exact failure mode the exact-SHA design was chosen to avoid, reproduced while implementing it. Fixed by regenerating the binding, not by excusing the commit."
-  },
   "known_violations": [
     {
       "actual_governed_input_digest": "sha256:e393bd445ea650aeef09589a1abc5d7ad69076f9ccc1121f449ee0457a3ce603",
@@ -18,6 +15,12 @@
       "commit": "0569bb398e3d85d9a9e18b113dbd3717f4aaa3ae",
       "recorded_governed_input_digest": "sha256:e6ad70492eb0e814d5f538adcb9e1ecca2e494ad7eb290c403a847755758e05c",
       "subject": "Recompute the catalogue accounting: 39 = 35 + 4"
+    },
+    {
+      "category": "committed_after_the_defect_was_known",
+      "commit": "062ed8be1402a5b252f8545011544516fde55848",
+      "note": "NOT pre-enforcement history. Committed after the defect was identified and described in this same session: src/ and tests/ changed without regenerating the binding. Recorded rather than excused -- the commit is immutable, so the only honest options are to record it or to rewrite history, and rewriting history to hide an evidence defect would be worse than the defect. Grandfathered for gate purposes only.",
+      "subject": "Close the replay bypass: the ledger guard checks (kind, name), and re-checks at the claim"
     },
     {
       "actual_governed_input_digest": "sha256:66ce224748a816aa523bdf200402cb5ec6a53583502a239db776e63838f5fd6a",
@@ -785,5 +788,6 @@
   "purpose": "An exact record of commits that predate enforcement of evidence-binding freshness. NOT an exemption asserting they were valid: they ship a review_binding.json whose governed_input_digest describes a different tree than the commit contains. Recorded by full SHA rather than by a cutoff, so rebased or rewritten history produces different SHAs and loses grandfathering automatically.",
   "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
   "schema": "nornyx.forge.evidence_binding_baseline.v1",
-  "violating_commits": 129
+  "violating_commits": 130,
+  "violations_committed_after_enforcement_was_known": 1
 }

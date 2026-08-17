@@ -118,11 +118,16 @@ def actual_digest(commit: str) -> str:
         return digest_of(observe_input_manifest(tree, REPOSITORY_SCOPE))
 
 
-def evaluate(spec: str) -> int:
+def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
     problems: list[str] = []
     checked = 0
 
-    grandfathered = known_violations()
+    # `apply_baseline=False` is how the regression proves this checker still
+    # detects the original incident. With the baseline applied, 729a900 is
+    # grandfathered and the control that demonstrates the checker works reports
+    # PASS -- so the evidence for the checker would be excused by the checker's
+    # own exemption list.
+    grandfathered = known_violations() if apply_baseline else set()
     excused: list[str] = []
 
     for commit in commits_in(spec):
@@ -173,8 +178,9 @@ def main() -> int:
     # recorded historical violations, and a permanently red security control is
     # one that gets switched off. The merge-base range asks the only question
     # enforcement can act on: is anything NEW introducing the defect.
-    spec = sys.argv[1] if len(sys.argv) > 1 else "origin/main...HEAD"
-    return evaluate(spec)
+    args = [a for a in sys.argv[1:] if a != "--no-baseline"]
+    spec = args[0] if args else "origin/main...HEAD"
+    return evaluate(spec, apply_baseline="--no-baseline" not in sys.argv)
 
 
 if __name__ == "__main__":
