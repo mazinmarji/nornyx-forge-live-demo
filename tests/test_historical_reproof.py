@@ -40,10 +40,13 @@ from mutation_workspace import (  # noqa: E402
     Outcome,
     faithful_copy,
     isolated_env,
+    require_baseline_clause_reached,
     require_caused_failure,
+    require_exact_node,
     require_mutant_origin,
     require_node_exists,
     require_pristine_baseline,
+    require_production_mutation_scope,
     run_node,
 )
 
@@ -94,6 +97,12 @@ class SecurityClass:
     extra_mutations: tuple = ()
     #: Set when AST inequality is not enough to show the control is gone.
     semantic_effect: str = ""
+    #: Where the reachability probe is planted, when that cannot be the mutation
+    #: anchor itself. A keyword argument or a multi-line expression is not a
+    #: statement boundary, so planting a raise there does not parse. Sound ONLY
+    #: where the mutated construct is unconditionally evaluated by the statement
+    #: named here -- never across a branch, which is what H13 established.
+    probe_anchor: str = ""
 
 
 INVENTORY = (
@@ -109,6 +118,18 @@ INVENTORY = (
         # resolving trust for itself and stops answering from the object the
         # application froze. Measured by object identity: it holds in the
         # baseline and does not under the mutant.
+        # RE-ANCHORED for reachability, with the mutation semantics UNCHANGED.
+        # The probe could not be planted at the keyword argument -- it sits
+        # inside a call's parentheses, so the instrumented file did not parse and
+        # the runner correctly reported INVALID_MUTATION_ENVIRONMENT.
+        #
+        # `probe_anchor` is the enclosing STATEMENT, and that is sound rather
+        # than convenient for this construct class: `frozen_action_trust=` is an
+        # UNCONDITIONAL keyword argument, so it is evaluated whenever the call
+        # statement executes. Statement reachability IS argument reachability
+        # here. That is exactly NOT true of a conditional branch body, which is
+        # the H13 lesson -- reaching an `if` proves nothing about its body -- so
+        # this relaxation is available only where no branch intervenes.
         mutation=("src/demo_app/agentic.py",
                   "            frozen_action_trust=(\n"
                   "                security_context.action_approval_trust\n"
@@ -116,6 +137,7 @@ INVENTORY = (
                   "                else None\n"
                   "            ),",
                   "            frozen_action_trust=None,", 1),
+        probe_anchor="        self.boundary = NornyxActionBoundary(",
         semantic_effect=(
             "demo_app.agentic must stop handing the boundary the frozen store"
         ),
@@ -175,9 +197,16 @@ INVENTORY = (
         # SURVIVOR under the new baseline. It was a mis-specified attack, not an
         # unproven control. Both routes are removed together, and the historical
         # traceback returns (rc=1, FileNotFoundError propagating out of verify).
+        # RE-ANCHORED INTO THE HANDLER BODY. `except FileNotFoundError:` is a
+        # compound-statement header, so probing it is the same error as probing
+        # an `if`: it proves control reached the try/except, never that the
+        # handler ran. The probe now sits on the first executable statement
+        # INSIDE the handler, which is what the mutation disables.
         mutation=(REFRESH,
                   "        except FileNotFoundError:",
                   "        except (FileNotFoundError,) if False else ():", 1),
+        probe_anchor=('            problems.append(\n'
+                      '                f"{name} is required by the approval wiring and is not present "'),
         extra_mutations=((REFRESH,
                           "        except OSError as exc:",
                           "        except (OSError,) if False else () as exc:", 1),),
@@ -244,10 +273,23 @@ INVENTORY = (
         defect="a reset ledger forgot spent grants without saying so",
         prop="a grant issued before the ledger existed cannot be proven unspent",
         control="ApprovalLedger.consume refuses with GRANT_PREDATES_LEDGER",
+        # RE-ANCHORED IN-BODY, not at the branch header. The mutated string
+        # lives inside `if issued < established:` -> `return (...)`, so the H01
+        # relaxation is NOT available: a conditional separates the statement from
+        # the mutated expression, and reaching the `if` proves only arrival.
+        # The probe is planted inside the branch body, which is what has to run.
         mutation=(RUNTIME,
                   '                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "',
                   '                f"OK: the approval was issued at "', 1),
-        test="tests/test_approval_ledger.py",
+        probe_anchor=('            return (\n'
+                      '                False,\n'
+                      '                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "'),
+        # A NAMED NODE, not the module. `test="tests/test_approval_ledger.py"`
+        # meant any one of 38 tests failing credited this kill, and nothing in
+        # the accounting could say which -- Lens B P1-3. Measured: all three
+        # candidate nodes enter the branch; this one is chosen because its whole
+        # subject is a grant outliving the ledger that would have recorded it.
+        test="tests/test_approval_ledger.py::test_deleting_the_ledger_makes_outstanding_grants_unusable",
         expect="the continuity refusal no longer names its code",
         severity="P1",
     ),
@@ -723,6 +765,8 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
 
         1 the named node EXISTS                 INVALID_TEST_TARGET
         2 it PASSES pristine                    INVALID_BASELINE
+        2a the target is PRODUCTION source      INVALID_MUTATION
+        2b the node REACHES the mutated clause  INVALID_TEST_AIM
         3 the mutation reaches executable code  INVALID_MUTATION
         4 the mutant is what loads              INVALID_MUTATION_ENVIRONMENT
         5 the semantic effect is present        INVALID_MUTATION
@@ -734,8 +778,24 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
     """
     pristine = faithful_copy(tmp_path / "pristine")
     try:
+        # SHAPE FIRST. A module-level target can never be attributed, so it is
+        # refused before anything is executed against it.
+        require_exact_node(item.test)
         require_node_exists(pristine, item.test)
         require_pristine_baseline(pristine, item.test)
+        # SCOPE BEFORE REACHABILITY. There is no reason to instrument and
+        # execute a mutation that is categorically inadmissible, and nothing
+        # previously constrained the target at all: `mutation[0]` was an
+        # arbitrary path, so an attack could be "proved" by mutating the test
+        # that judges it while the control stayed byte-identical.
+        require_production_mutation_scope(item.mutation[0])
+        # REACHABILITY, ENFORCED HERE. This helper existed and the authoritative
+        # runner never called it, so every per-class claim of "branch body
+        # reached" was a comment and INVALID_TEST_AIM = 0 was not a measurement.
+        require_baseline_clause_reached(
+            pristine, item.test, item.mutation[0],
+            item.probe_anchor or item.mutation[1],
+        )
     except AttackNotAdmissible as exc:
         pytest.fail(item.ident + ": " + str(exc))
 

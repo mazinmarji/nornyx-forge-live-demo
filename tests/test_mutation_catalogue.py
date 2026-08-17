@@ -731,3 +731,44 @@ def test_every_historical_class_has_exactly_one_terminal_disposition():
             if name < other and (members & rest):
                 overlaps.append(f"{name}/{other}: {sorted(members & rest)}")
     assert overlaps == [], f"classes in two terminal buckets at once: {overlaps}"
+
+def test_every_attack_names_exactly_one_pytest_node():
+    """Lens B P1-3, enforced globally rather than repaired specimen by specimen.
+
+    H10 named a whole module -- 38 tests -- so any one of them failing credited
+    its kill. Fixing H10 removed the instance; this removes the possibility.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+    from mutation_workspace import AttackNotAdmissible, require_exact_node  # noqa: PLC0415
+
+    problems = []
+    for item in historical.INVENTORY:
+        if not item.test:
+            continue
+        try:
+            require_exact_node(item.test)
+        except AttackNotAdmissible as refusal:
+            problems.append(f"{item.ident.split()[0]}: {refusal}")
+    assert problems == [], problems
+
+
+def test_a_module_level_target_is_refused():
+    """The negative case, against the real guard.
+
+    Without this, the invariant above passes vacuously the day someone writes a
+    module target -- it would simply report the new violation rather than
+    proving the guard can reject one.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        Outcome,
+        require_exact_node,
+    )
+
+    for bad in ("tests/test_approval_ledger.py", "tests/test_x.py::", "tests/x.py::a::b",
+                "not_a_module::test_x"):
+        with pytest.raises(AttackNotAdmissible) as refusal:
+            require_exact_node(bad)
+        assert refusal.value.outcome is Outcome.INVALID_TEST_TARGET, bad
+
+    require_exact_node("tests/test_approval_ledger.py::test_something")

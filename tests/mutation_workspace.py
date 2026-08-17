@@ -18,7 +18,9 @@ outcome named beside it; none of them may be reported as a kill:
 
     1  the named test node EXISTS                    INVALID_TEST_TARGET
     2  the named test PASSES pristine                INVALID_BASELINE
-    3  the mutation applies to an executable node    INVALID_MUTATION
+    3  the target is PRODUCTION source               INVALID_MUTATION
+    4  the named test REACHES the mutated clause     INVALID_TEST_AIM
+    5  the mutation applies to an executable node    INVALID_MUTATION
     4  the mutant is what loads                      INVALID_MUTATION_ENVIRONMENT
     5  the intended semantic effect is present       INVALID_MUTATION
     6  the SAME node runs, and fails                 KILLED_VALIDLY
@@ -29,11 +31,12 @@ cannot be classified until its proof is shown to work when nothing is broken.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -308,7 +311,25 @@ def require_baseline_clause_reached(
     token = f"{CLAUSE_MARKER}-{uuid.uuid4().hex[:12]}"
     stripped = anchor.lstrip("\n")
     indent = stripped[: len(stripped) - len(stripped.lstrip())]
-    probe = f'{indent}raise RuntimeError("{token}")\n{anchor}'
+    # A SIDE-CHANNEL SENTINEL, not only a raise.
+    #
+    # Reading the marker out of pytest's output makes reachability depend on the
+    # named test's own diagnostic formatting. H07 proved that concretely: its
+    # branch body DOES execute -- sentinel written, `RuntimeError: <nonce>` on
+    # the child's stderr -- but that test asserts `returncode == 2` first and
+    # prints `completed.stdout`, so the marker was never shown and the probe
+    # reported the attack inadmissible for a reason that was not true.
+    #
+    # The sentinel is independent of which stream anything lands on, of which
+    # assertion fires first, and of any `except` between the clause and the top:
+    # a swallowed exception still leaves the file behind. Written only inside
+    # the disposable workspace, never by production code.
+    sentinel = tree / ".clause-probe-reached"
+    sentinel.unlink(missing_ok=True)
+    probe = (
+        f'{indent}__import__("pathlib").Path(r"{sentinel}").write_text("{token}")\n'
+        f'{indent}raise RuntimeError("{token}")\n{anchor}'
+    )
     try:
         target.write_text(before.replace(anchor, probe, 1), encoding="utf-8", newline="")
         # THE PROBE MUST PRODUCE RUNNABLE CODE. Planted inside an import's
@@ -340,6 +361,11 @@ def require_baseline_clause_reached(
     finally:
         target.write_bytes(original)
     assert target.read_bytes() == original, "the clause probe was not reverted"
+    # Read and remove before judging, so the workspace is left as found whatever
+    # the verdict is.
+    sentinel_present = sentinel.is_file()
+    sentinel_token = sentinel.read_text(encoding="utf-8") if sentinel_present else ""
+    sentinel.unlink(missing_ok=True)
 
     output = completed.stdout + completed.stderr
     if completed.returncode == 0:
@@ -358,9 +384,14 @@ def require_baseline_clause_reached(
     # nonce, and the traceback names the file the probe was planted in. Matching
     # the bare marker found it in echoed source for a file that never ran, and
     # a fixed marker would also match stale output from an earlier probe.
+    # The sentinel is AUTHORITATIVE; the raised marker is corroboration. Either
+    # suffices, and requiring both would reinstate the dependency on the
+    # harness's formatting that the sentinel exists to remove.
+    reached = sentinel_present and sentinel_token == token
     raised = f"RuntimeError: {token}"
     named_file = Path(relative).name
-    if raised not in output or named_file not in output:
+    corroborated = raised in output and named_file in output
+    if not reached and not corroborated:
         # The clause may well have run; what failed is the harness's ability to
         # SEE that it did. Reporting this as a test-aim problem would blame the
         # attack for an instrumentation gap.
@@ -368,4 +399,81 @@ def require_baseline_clause_reached(
             Outcome.INVALID_MUTATION_ENVIRONMENT,
             f"{node} failed under the clause probe but not because the clause "
             f"ran -- the marker is absent:\n{output[-400:]}",
+        )
+
+
+#: Directories whose contents may be the SEMANTIC TARGET of a security mutation.
+#: Production and governed source only. A campaign that mutates its own proofs
+#: proves nothing about the system it claims to defend.
+PRODUCTION_MUTATION_ROOTS = ("src", "scripts", ".nornyx")
+
+
+def require_production_mutation_scope(relative: str) -> None:
+    """Step 3. The mutation must target production or governed source.
+
+    NOTHING CONSTRAINED THIS. `SecurityClass.mutation[0]` was an arbitrary
+    relative path and `check_mutation` dispatched on file extension alone, so an
+    attack could be "proved" by mutating the test that judges it: insert
+    `@pytest.mark.xfail(strict=True)` above the named node, and with
+    `xfail_strict` on the run reports `<failure>` and the protocol credits
+    KILLED_VALIDLY -- while the control it claims to have removed is
+    byte-identical to pristine.
+
+    Decided on a CANONICAL RESOLVED path, not a string prefix. `./tests/x.py`,
+    `tests/../tests/x.py` and `src/../tests/x.py` all name the same file and
+    none of them starts with `tests/`, so a prefix test answers a question about
+    spelling rather than about which file is being changed.
+    """
+    candidate = PurePosixPath(Path(relative).as_posix())
+    if candidate.is_absolute() or ".." in candidate.parts:
+        # Normalise before judging, so the decision is about the file.
+        candidate = PurePosixPath(os.path.normpath(str(candidate)).replace("\\", "/"))
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION,
+            f"the mutation target {relative!r} escapes the repository, so which "
+            "file it names cannot be decided",
+        )
+    root = candidate.parts[0] if candidate.parts else ""
+    if root not in PRODUCTION_MUTATION_ROOTS:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_MUTATION,
+            f"the mutation targets {candidate}, which is not production or "
+            f"governed source ({', '.join(PRODUCTION_MUTATION_ROOTS)}). A "
+            "campaign that mutates its own proofs proves nothing about the "
+            "system: a kill would be credited with the control untouched.",
+        )
+
+
+def require_exact_node(node: str) -> None:
+    """The attack must name ONE pytest node, never a module.
+
+    H10 named `tests/test_approval_ledger.py` -- 38 collected tests -- so any
+    one of them failing credited its kill, and nothing in the accounting could
+    say which. `require_caused_failure` sums failures across the whole report,
+    so a module target means "something in here broke" is recorded as "this
+    control was removed".
+
+    Shape only. That the node EXISTS is `require_node_exists`, and that the
+    failure belongs to it is `require_caused_failure`; this refuses a target
+    that could never be attributed in the first place.
+    """
+    module, separator, name = node.partition("::")
+    if not separator or not name.strip():
+        raise AttackNotAdmissible(
+            Outcome.INVALID_TEST_TARGET,
+            f"the attack names {node!r}, which is a module rather than one "
+            "pytest node. A kill credited against a whole module says only that "
+            "something in it failed, and nothing can say which control that was.",
+        )
+    if "::" in name:
+        raise AttackNotAdmissible(
+            Outcome.INVALID_TEST_TARGET,
+            f"the attack names {node!r}, which addresses more than one level. "
+            "Exactly one node, so the failure has exactly one owner.",
+        )
+    if not module.endswith(".py"):
+        raise AttackNotAdmissible(
+            Outcome.INVALID_TEST_TARGET,
+            f"the attack names {node!r}, whose module part is not a Python file",
         )
