@@ -23,13 +23,28 @@ The task is complete only when:
 
 - all BRD acceptance criteria are represented by tests;
 - architecture checks pass;
-- Nornyx contracts validate, except for the diagnostics that record an
-  absent human approval. Two of the three contracts fail today for exactly
-  that reason, and no autonomous run may clear it: doing so would mean
-  manufacturing an approval. Treat the criterion as met when the only
-  remaining diagnostics are the approval-absence set that
-  `scripts/check_pre_approval_baseline.py` accepts, and unmet if any other
-  diagnostic appears;
+- Nornyx contract structure and governed-content integrity validate:
+  `--verify` reports `integrity_state: intact` with zero problems, and no
+  structural or integrity diagnostic remains;
+- production-approval readiness is NOT satisfied, and is not expected to be.
+  This is a separate criterion on purpose. Folding it into the one above
+  required reading "contracts validate" as "validation may still return
+  approval-absence diagnostics", which redefines a failing approval gate as
+  successful validation -- the exact substitution of a label for the thing
+  that this repository keeps finding. Two of the three contracts fail today,
+  for this reason and only this reason.
+
+  The sole diagnostics an autonomous run may leave outstanding are those
+  `scripts/check_pre_approval_baseline.py` accepts:
+
+      AN_APPROVAL_RECORD_MISSING
+      APPROVAL_EVIDENCE_MISSING
+      EVIDENCE_REQUIRED_MISSING
+
+  Any other validation or integrity diagnostic fails the criterion above.
+  Clearing these three requires a genuine human approval record. Creating,
+  adopting, inferring, or backdating one is forbidden, so no autonomous run
+  may close this criterion, and none may report it closed;
 - the live application starts;
 - its CrewAI Flow runs;
 - Nornyx evidence is emitted;
