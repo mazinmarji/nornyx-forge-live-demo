@@ -1549,3 +1549,53 @@ def test_no_route_in_the_inventory_is_inert(tmp_path: Path):
         f"these routes changed nothing when suppressed, so they are not "
         f"independently effective and do not belong in the inventory: {inert}"
     )
+
+
+# --------------------------------------------------------------------------
+# FG16 / FG17 -- the two target-substitution classes. Distinct defects with
+# distinct guards: FG16 is a mutation that landed on executable code that was
+# not PRODUCTION code, FG17 is a whole MODULE standing in for one exact node.
+# A specimen for either proves nothing about the other.
+# --------------------------------------------------------------------------
+
+
+def test_fg16_a_mutation_outside_production_scope_is_refused():
+    """Negative: mutating a test fixture is the suite reacting to itself.
+
+    The naive rule is "the mutation applied and something failed". It is
+    satisfied by editing `tests/`, which proves only that the suite notices
+    its own fixtures -- not that any production control exists.
+    """
+    for outside in ("tests/test_historical_reproof.py", "docs/ARCHITECTURE.md",
+                    "README.md"):
+        with pytest.raises(AttackNotAdmissible):
+            require_production_mutation_scope(outside)
+
+
+def test_fg16_a_production_target_is_admitted():
+    """Positive. Without it the refusal above could be 'refuses everything'."""
+    for inside in ("src/nornyx_forge/nornyx_runtime.py",
+                   "scripts/check_architecture.py"):
+        require_production_mutation_scope(inside)
+
+
+def test_fg17_a_module_target_cannot_stand_in_for_an_exact_node():
+    """Negative: `tests/test_x.py` accepted where one node was required.
+
+    Running a whole module and reading its aggregate result is how an unrelated
+    proof's failure becomes another attack's kill -- but the substitution
+    happens earlier, when the TARGET is accepted. FG18 covers the attribution;
+    this covers the target.
+    """
+    for module_level in ("tests/test_historical_reproof.py",
+                         "tests/test_historical_reproof.py::",
+                         "tests/test_historical_reproof.py::a::b"):
+        with pytest.raises(AttackNotAdmissible):
+            require_exact_node(module_level)
+
+
+def test_fg17_an_exact_node_is_admitted():
+    """Positive: one file, one `::`, one named node."""
+    require_exact_node(
+        "tests/test_historical_reproof.py::test_removing_the_control_revives_the_defect"
+    )

@@ -801,3 +801,85 @@ def test_removing_an_inventory_row_is_visible():
     )
     labels = {f.label for f in DECISION_BEARING}
     assert {a.field_label for a in PROJECTION_ATTACKS} <= labels
+
+
+# --------------------------------------------------------------------------
+# FG24 -- a degenerate projection credited as a targeted attack.
+#
+# `attacked_b == attacked_a` proves the attack hid THIS difference. It holds
+# just as well if the mutation collapsed the projection into a constant, which
+# hides EVERY difference and proves nothing about the field under attack. The
+# honest-projection guard (`honest_b != honest_a`) cannot see this: it measures
+# the UNMUTATED projection, so a degenerate mutant passes it untouched.
+# --------------------------------------------------------------------------
+
+
+def _distinguishes_any_other_pair(src, attack) -> bool:
+    """Does the mutated projection still tell some other field pair apart?
+
+    A constant function cannot. Every field except the attacked one is applied
+    in turn, restoring between each, and the projection must move for at least
+    one of them.
+    """
+    before = {p: p.read_bytes() for p in CONTRACTS.rglob("*") if p.is_file()}
+
+    def restore() -> None:
+        for path, data in before.items():
+            if path.read_bytes() != data:
+                path.write_bytes(data)
+
+    try:
+        base = _semantics_under(src)
+        for field in (f for f in INVENTORY if f.label != attack.field_label):
+            restore()
+            _apply(field)
+            if _semantics_under(src) != base:
+                return True
+        return False
+    finally:
+        restore()
+
+
+def test_fg24_a_projection_that_hides_everything_is_not_a_targeted_attack(
+    restored_contracts,
+):
+    """Negative specimen: a constant projection satisfies the naive check.
+
+    Modelled rather than installed as a source mutation, because the point is
+    the LOGIC of the acceptance rule: if the projection returns one value for
+    every governed state, then `attacked_b == attacked_a` is true for every
+    attack, and the naive rule credits all of them.
+    """
+    constant = "SEMANTICS-CONSTANT"
+    attacked_a = attacked_b = constant
+    assert attacked_b == attacked_a, "the naive acceptance rule is satisfied"
+
+    pairs_hidden = [constant == constant for _ in INVENTORY]
+    assert all(pairs_hidden), (
+        "a constant projection is supposed to hide every pair -- if it does "
+        "not, this specimen no longer reproduces the defect it pins"
+    )
+    assert len(pairs_hidden) > 1, (
+        "the inventory must contain more than one field for 'hides everything' "
+        "to be distinguishable from 'hides this one'"
+    )
+
+
+@pytest.mark.parametrize(
+    "attack", PROJECTION_ATTACKS, ids=lambda a: a.ident
+)
+def test_fg24_every_projection_attack_is_targeted_not_degenerate(
+    attack, restored_contracts
+):
+    """Positive specimen, measured per attack.
+
+    Each mutated projection must still distinguish some OTHER field pair. That
+    is what separates "this attack removed the binding for THIS field" from
+    "this mutation destroyed the projection".
+    """
+    src = _mutated_src(attack)
+    assert _distinguishes_any_other_pair(src, attack), (
+        f"{attack.ident}: the mutated projection distinguishes no other field "
+        "pair either, so it has degenerated into a constant. Hiding every "
+        "difference is not evidence that it hid the one under attack."
+    )

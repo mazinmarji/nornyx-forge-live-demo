@@ -370,3 +370,84 @@ def test_a_docstring_mutation_is_refused_even_though_the_tree_changes(tmp_path: 
                 ),
             ),
         )
+
+
+# --------------------------------------------------------------------------
+# FG23 -- an unhealthy mutant credited as a kill.
+#
+# The direct-observable shape has no exact-node/phase attribution, because
+# there is no victim test whose failure could be misread. Its analogue is
+# this: an observable can reach the value the attack expects because the
+# mutant BROKE THE RUN, not because the control was removed. FG10 covers the
+# BASELINE already failing; this is the MUTANT failing, and nothing checked it
+# until Task 11 measured it by hand.
+# --------------------------------------------------------------------------
+
+
+def healthy_against(base: dict, mutant: dict) -> list[str]:
+    """Why this mutant is not a well-formed run, or [] if it is.
+
+    Deliberately NOT "only the target observable moved". A domain collapse is
+    supposed to move `calls` and `spent` -- an unauthorised effect actually
+    executing IS the consequence being demonstrated, and a check that forbade
+    it would be demanding the collapse be inconsequential. That mistake was
+    made once and produced a "10 of 14 non-surgical" false alarm.
+
+    What disqualifies a mutant is failing to RUN: observable keys going
+    missing, or a decision reason that is a crash rather than a decision.
+    """
+    problems = []
+    missing = sorted(set(base) - set(mutant))
+    if missing:
+        problems.append(f"observables vanished: {missing}")
+    crash = ("Traceback", "ImportError", "SyntaxError", "AttributeError",
+             "NameError")
+    for key, value in mutant.items():
+        if key.endswith("_reason") and any(t in str(value) for t in crash):
+            problems.append(f"{key} carries a crash, not a decision: {str(value)[:60]}")
+    return problems
+
+
+def test_fg23_a_mutant_that_broke_the_run_is_not_a_kill(tmp_path: Path):
+    """The negative specimen: expected value reached for the wrong reason.
+
+    The naive check is `after == expected`. A mutant that cannot complete can
+    satisfy it while proving nothing about the control, so the health check has
+    to be what distinguishes them.
+    """
+    base = probe(tmp_path / "base", "action_only")
+    broken = dict(base)
+    broken["governance_reason"] = "Traceback (most recent call last): ImportError"
+
+    assert healthy_against(base, broken), (
+        "a run whose reason is a traceback was accepted as a well-formed "
+        "mutant, so a crash could be credited as a kill"
+    )
+    lost = {k: v for k, v in base.items() if not k.endswith("_reason")}
+    assert healthy_against(base, lost), (
+        "a run missing observables was accepted as well-formed"
+    )
+
+
+def test_fg23_the_real_collapse_mutants_are_all_healthy(tmp_path: Path):
+    """The positive specimen. Without it the check above could refuse everything.
+
+    Measured across the whole collapse catalogue rather than asserted: every
+    attack must produce a mutant that RAN, so that its observable change is
+    attributable to the control it removed.
+    """
+    unhealthy = []
+    # Indexed, not name-derived: `M1` and `M10` both truncate to the same
+    # prefix, and two attacks sharing one workspace is FG05.
+    for index, mutation in enumerate(CATALOGUE):
+        base = probe(tmp_path / f"b{index}", mutation.scenario,
+                     flags=mutation.flags)
+        mutant = probe(tmp_path / f"m{index}", mutation.scenario,
+                       edits=mutation.edits, flags=mutation.flags)
+        problems = healthy_against(base, mutant)
+        if problems:
+            unhealthy.append(f"{mutation.name}: {problems}")
+    assert unhealthy == [], (
+        "these attacks are credited on a mutant that did not run properly, so "
+        f"the observable change is not attributable to the control: {unhealthy}"
+    )

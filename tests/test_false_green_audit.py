@@ -134,21 +134,130 @@ INVENTORY = (
         "enumerate every route, record each as defence-in-depth, kill with a compound",
         "tests/test_false_green_audit.py::test_fg15_one_route_of_a_chain_is_not_the_property",
     ),
+    FalseGreen(
+        "FG16", "a control was attacked, when only a TEST fixture was mutated",
+        "the mutation applied to executable code that was not production code",
+        "resolve the target and require it under src/, scripts/ or .nornyx/",
+        "tests/test_historical_reproof.py::test_fg16_a_mutation_outside_production_scope_is_refused",
+    ),
+    FalseGreen(
+        "FG17", "an exact proof node, when a whole module stood in for one",
+        "`tests/test_x.py` was accepted where `tests/test_x.py::test_node` was required",
+        "reject any target without exactly one `::` and a real node name",
+        "tests/test_historical_reproof.py::test_fg17_a_module_target_cannot_stand_in_for_an_exact_node",
+    ),
+    FalseGreen(
+        "FG18", "a kill, when the named node passed and a different node failed",
+        "`<failure>` elements were summed across the whole JUnit report",
+        "match the exact node, handling parametrised ids, before crediting anything",
+        "tests/test_failure_attribution.py::test_case1_an_unrelated_node_failing_is_not_a_kill",
+    ),
+    FalseGreen(
+        "FG19", "a kill, when the right node failed for an unrelated reason",
+        "exact-node attribution alone permits a genuine failure about something else",
+        "require the failure text to carry the intended root property",
+        "tests/test_failure_attribution.py::test_case6_the_named_node_failing_for_the_wrong_reason_is_not_a_kill",
+    ),
+    FalseGreen(
+        "FG20", "a green gate, when the shell reported the last pipeline stage",
+        "`pytest ... | tail` returns tail's exit status, not pytest's",
+        "declare `shell: bash` so `-o pipefail` applies, and assert it",
+        "tests/test_documented_claims.py::test_ci_shell_propagates_pipeline_failure",
+    ),
+    FalseGreen(
+        "FG21", "a marker or claim is present, when only prose mentions it",
+        "a substring scan cannot tell executable code from a docstring or quotation",
+        "parse with AST, or treat quoted spans as mention rather than assertion",
+        "tests/test_xfail_strictness.py::test_the_marker_detector_reads_code_and_not_prose",
+    ),
+    FalseGreen(
+        "FG22", "a clean gate, when the violation was added to the baseline excusing it",
+        "a grandfather list that the author may extend absolves the author's own commit",
+        "record culpable entries separately, pin the count, and keep --no-baseline",
+        "tests/test_evidence_binding.py::test_the_baseline_can_be_defeated_for_adversarial_runs",
+    ),
+    FalseGreen(
+        "FG23", "a kill, when the observable collapsed because the mutant broke the run",
+        "the direct-observable shape has no phase attribution to catch a crashed mutant",
+        "require the mutant to RUN: observables intact, reasons not tracebacks",
+        "tests/test_domain_collapse_mutations.py::test_fg23_a_mutant_that_broke_the_run_is_not_a_kill",
+    ),
+    FalseGreen(
+        "FG24", "a targeted attack, when the projection degenerated into a constant",
+        "hiding every difference satisfies the same equality as hiding the one attacked",
+        "require the mutated projection to still distinguish some other pair",
+        "tests/test_semantic_binding_theorem.py::test_fg24_a_projection_that_hides_everything_is_not_a_targeted_attack",
+    ),
+    FalseGreen(
+        "FG25", "a minimal compound, when an edit could be dropped and it still killed",
+        "compound membership was recorded from intent rather than re-measured",
+        "re-run each compound without its last edit and require it to survive",
+        "tests/test_mutation_catalogue.py::test_a_cumulative_attack_cannot_be_recorded_as_non_compound",
+    ),
+    FalseGreen(
+        "FG26", "a measurement, when the probe itself mutated the real governed tree",
+        "an ad-hoc script ran outside the session fixture that restores the tree",
+        "snapshot and restore around every step, in a finally, inside the suite",
+        "tests/conftest.py::_governed_tree_is_left_as_found",
+    ),
 )
 
 
-def test_the_inventory_is_exactly_the_fifteen_known_classes():
+
+#: Pinned by IDENTITY, never by count. "16 classes" is satisfied by any sixteen
+#: strings; this is satisfied only by these. FG14 is the class about exactly
+#: that substitution, so expressing its own inventory as a count would be the
+#: defect naming itself.
+EXPECTED_FALSE_GREEN_CLASSES = frozenset(
+    f"FG{n:02d}" for n in range(1, 27)
+)
+
+#: Mechanisms learned across the whole remediation, mapped to the class that
+#: expresses them. Three map onto existing classes; eleven needed new ones. The
+#: test is whether an existing specimen could actually CATCH the defect -- not
+#: whether the words sound similar.
+MECHANISM_TO_CLASS = {
+    "subprocess_provenance_loss": "FG08",
+    "exact_set_identity_vs_count": "FG14",
+    "branch_body_reachability": "FG13",
+    "production_scope_substitution": "FG16",
+    "exact_node_substitution": "FG17",
+    "wrong_node_failure_attribution": "FG18",
+    "wrong_property_failure_attribution": "FG19",
+    "pipe_exit_code_masking": "FG20",
+    "use_versus_mention_scanning": "FG21",
+    "exception_baseline_self_enlargement": "FG22",
+    "unhealthy_mutant_credited": "FG23",
+    "degenerate_projection_credited": "FG24",
+    "compound_minimality_drift": "FG25",
+    "adhoc_probe_governed_contamination": "FG26",
+}
+
+
+def test_the_inventory_is_exactly_the_known_classes():
     """Set equality, so a class cannot be dropped to make the audit smaller.
 
-    Nine became fifteen when Task 14 audited the proof system itself. FG10-FG15
-    are not new hazards someone imagined -- every one is a green result this
-    repository actually produced from machinery that had not measured what it
-    claimed, and three of them invalidated kills in the previous campaign.
+    Nine became fifteen when Task 14 audited the proof system itself. Fifteen
+    became twenty-six when the Lens A/B/C remediation was mined for every
+    mechanism it had actually produced. None of these is a hazard someone
+    imagined -- every one is a green result this repository really produced from
+    machinery that had not measured what it claimed.
+
+    Eleven of the fourteen newly-catalogued mechanisms needed new classes; three
+    mapped onto FG08, FG13 and FG14. The test for "does this need its own ID"
+    was never whether the words sounded similar, but whether an existing
+    specimen could actually CATCH the defect. FG17 and FG18 are the sharpest
+    example: a module standing in for a node, and a node's credit going to a
+    different node, fail different guards, and neither specimen proves the other.
+
+    Compared against EXPECTED_FALSE_GREEN_CLASSES rather than a literal range,
+    so the inventory and the pin cannot drift apart -- and by SET, never by
+    count, because "twenty-six classes" is satisfied by any twenty-six strings.
+    That substitution is FG14, so expressing this inventory as a count would be
+    the defect naming itself.
     """
-    assert {item.ident for item in INVENTORY} == {
-        f"FG{n:02d}" for n in range(1, 16)
-    }
-    assert len(INVENTORY) == 15
+    assert {item.ident for item in INVENTORY} == EXPECTED_FALSE_GREEN_CLASSES
+    assert len(INVENTORY) == len(EXPECTED_FALSE_GREEN_CLASSES)
     for item in INVENTORY:
         assert len(item.false_claim) > 20 and len(item.root_cause) > 20, item.ident
         module, _, node = item.owner.partition("::")
