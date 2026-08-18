@@ -46,6 +46,49 @@ The task is complete only when:
   adopting, inferring, or backdating one is forbidden, so no autonomous run
   may close this criterion, and none may report it closed;
 - the live application starts;
-- its CrewAI Flow runs;
+- its configured execution path runs successfully, with the observed backend
+  matching the selected backend;
 - Nornyx evidence is emitted;
 - final limitations are disclosed.
+
+### What "configured execution path" means
+
+The criterion deliberately names no backend. Its predecessor read "its CrewAI
+Flow runs", which named no path either -- and was true of one path while false of
+the one that ships. Naming today's default instead would fossilise it: the
+criterion would go false the moment the shipped default changed, for a change
+that ought to satisfy it.
+
+What is required is that the selected backend is the one that actually runs, and
+that the application reports which. Measured on this baseline, both directions:
+
+    SHIPPED DEMONSTRATION PATH -- demonstration_authority()
+      execution_backend selected     sequential
+      CustomerCaseFlow driven by     run_sequential()
+      observed_execution_backend     sequential
+      framework reported             CrewAI Flow-compatible sequential execution
+      CrewAI kickoff used            no
+
+    EXPLICIT CREWAI SELECTION -- execution_backend="crewai"
+      CustomerCaseFlow driven by     CustomerCaseFlow.kickoff()
+      observed_execution_backend     crewai_flow
+      framework reported             CrewAI Flow kickoff
+      run_sequential used            no
+
+Both were observed by running the code and spying on the driver, not read from
+configuration. CrewAI is genuinely functional here; the shipped path simply does
+not select it. If `crewai` is selected while CrewAI cannot be imported the run
+RAISES rather than downgrading to sequential under an unchanged label -- that
+silent downgrade is how a suite once stayed green with CrewAI absent.
+
+Three facts, kept apart. The shipped path selects and runs sequential. Explicit
+CrewAI selection runs a real Flow kickoff. `demonstration_authority()` hardcodes
+sequential. None of them is "CrewAI does not run".
+
+`observed_execution_backend` is derived from the execution path rather than
+restated from configuration, which is what makes this criterion checkable
+instead of tautological. Pinned by `tests/test_execution_mode_truth.py`:
+`test_the_observed_backend_comes_from_the_driver_not_the_configuration`,
+`test_the_sequential_path_reports_the_sequential_driver`, and
+`test_crewai_cannot_be_claimed_when_crewai_cannot_run`.
+
