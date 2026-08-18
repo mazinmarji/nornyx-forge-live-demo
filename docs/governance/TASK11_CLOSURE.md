@@ -1,5 +1,14 @@
 # Task 11 — CLOSURE WITHDRAWN
 
+**SUPERSEDED.** The catalogue has since been re-derived from zero through the
+corrected proof kernel. The live record is
+[`TASK11_REPLAY.md`](TASK11_REPLAY.md), measured at `6d1f3b2`.
+
+This file is retained as the withdrawal record -- what was claimed, why it was
+false, and what the failure looked like. Nothing in it is a current claim. An
+operator reading `docs/governance/` should treat the replay record as
+authoritative and this one as history.
+
 **This document previously declared Task 11 CLOSED. That declaration is withdrawn.**
 Three independent Task-14 lenses against head 729a900 returned P1=7, P2=15.
 
