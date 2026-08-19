@@ -172,7 +172,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_governance_failure.py": 14,
     "tests/test_in_session_reviews.py": 2,
     "tests/test_mission_binding.py": 11,
-    "tests/test_probe_containment.py": 6,
+    "tests/test_probe_containment.py": 14,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 1,
     "tests/test_requirements.py": 1,

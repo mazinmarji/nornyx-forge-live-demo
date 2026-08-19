@@ -200,6 +200,48 @@ INVENTORY = (
         "snapshot and restore around every step, in a finally, inside the suite",
         "tests/test_probe_containment.py::test_fg26_contamination_is_detected_and_clean_runs_are_not",
     ),
+    FalseGreen(
+        "FG27", "a closed set, when the enumeration excluded members before checking",
+        "the query filtered candidates out before the closure check could see them",
+        "enumerate the complete candidate set first; never exclude on the way in",
+        "tests/test_approval_ledger.py::test_r1_a_hostile_ledger_object_cannot_enable_replay",
+    ),
+    FalseGreen(
+        "FG28", "a protocol step, when the authoritative path never invoked it",
+        "the step existed, had passing unit tests, and was not called at the verdict",
+        "prove the production caller invokes it and the verdict moves when it fails",
+        "tests/test_historical_reproof.py::test_r2_a_green_helper_cannot_stand_in_for_the_runner",
+    ),
+    FalseGreen(
+        "FG29", "a violated property, when the mutant crashed instead of deciding",
+        "an absent diagnostic reads the same whether it refused wrongly or never ran",
+        "an unmeasurable mutant terminates the measurement rather than answering it",
+        "tests/test_probe_containment.py::test_fg29_a_crash_is_distinguishable_from_a_decision",
+    ),
+    FalseGreen(
+        "FG30", "a verified transcript, when only one displayed field was checked",
+        "a fence made every line look verified while one digest was recomputed",
+        "verify every displayed field by re-execution, or move it outside the fence",
+        "tests/test_recorded_measurements.py::test_r4_a_fabricated_field_inside_an_anchored_block_is_refused",
+    ),
+    FalseGreen(
+        "FG31", "a repository-wide sweep, when it scanned README and docs only",
+        "the docstring claimed totality while the loop named a subset",
+        "one canonical discovery helper, used by every claim sweep, UI included",
+        "tests/test_execution_mode_truth.py::test_the_ui_surface_sweep_finds_the_dashboard",
+    ),
+    FalseGreen(
+        "FG32", "a control, when no production path can reach it",
+        "the apparatus was complete and no shipped caller could supply its input",
+        "trace the shipped path to the control and pin the call site structurally",
+        "tests/test_approval_reachability.py::test_the_flow_passes_the_grant_to_the_boundary",
+    ),
+    FalseGreen(
+        "FG33", "a result, when the run did not finish",
+        "a timeout exits non-zero, which is what a refusal also looks like",
+        "carry completion alongside the exit code; an unfinished run yields no verdict",
+        "tests/test_probe_containment.py::test_fg33_an_unfinished_run_is_not_a_result",
+    ),
 )
 
 
@@ -209,7 +251,7 @@ INVENTORY = (
 #: that substitution, so expressing its own inventory as a count would be the
 #: defect naming itself.
 EXPECTED_FALSE_GREEN_CLASSES = frozenset(
-    f"FG{n:02d}" for n in range(1, 27)
+    f"FG{n:02d}" for n in range(1, 34)
 )
 
 #: Mechanisms learned across the whole remediation, mapped to the class that
@@ -231,6 +273,18 @@ MECHANISM_TO_CLASS = {
     "degenerate_projection_credited": "FG24",
     "compound_minimality_drift": "FG25",
     "adhoc_probe_governed_contamination": "FG26",
+    "pre_closure_exclusion": "FG27",
+    "declared_step_never_invoked": "FG28",
+    "crash_credited_as_violation": "FG29",
+    "displayed_exceeds_verified": "FG30",
+    "partial_sweep_claiming_totality": "FG31",
+    "control_unreachable_from_production": "FG32",
+    "unfinished_run_read_as_result": "FG33",
+    # Mapped, not minted: a separator class that misses the machine
+    # spelling, and a detector recognising only one form of failure,
+    # are both "the pattern does not match the thing" -- FG21.
+    "separator_class_misses_machine_spelling": "FG21",
+    "evidence_counter_misses_a_failure_form": "FG21",
 }
 
 

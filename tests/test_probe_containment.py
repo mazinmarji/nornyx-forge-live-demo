@@ -82,3 +82,82 @@ def test_fg26_an_unanswerable_git_is_not_an_answer_of_unchanged():
     )
     # The bound itself: emptiness is indistinguishable from cleanliness here.
     assert _introduced("", "") == _introduced("", ""), "comparison is unstable"
+
+
+# --------------------------------------------------------------------------
+# FG29 -- a mutant that CRASHED credited as one that violated the property.
+#
+# H19's criterion asked "is the refusal diagnostic present?" and a crash reason
+# contains no diagnostic either, so `did not refuse properly` and `did not run`
+# produced the same answer. Measured, H19's mutation raises FileNotFoundError
+# rather than shrinking the subject -- so the recorded unsafe state was never
+# reached and the kill was credited on an exception.
+# --------------------------------------------------------------------------
+
+CRASH_SPECIMENS = [
+    ("the control decided, refusing", {"verified": False, "digest": "",
+     "reason": "SUBJECT_SCOPE_INCOMPLETE: scope requires x"}, "decided"),
+    ("the control decided, allowing", {"verified": True, "digest": "sha256:aa",
+     "reason": ""}, "decided"),
+    ("the mutant could not run at all", {"verified": False, "digest": "",
+     "reason": "RAISED FileNotFoundError"}, "unmeasurable"),
+    ("the mutant died importing", {"verified": False, "digest": "",
+     "reason": "RAISED ModuleNotFoundError"}, "unmeasurable"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "measured", "kind"),
+    CRASH_SPECIMENS,
+    ids=[case[0] for case in CRASH_SPECIMENS],
+)
+def test_fg29_a_crash_is_distinguishable_from_a_decision(
+    label: str, measured: dict, kind: str
+):
+    """The distinction the criterion has to be able to draw.
+
+    A criterion that reads only "the expected diagnostic is absent" cannot tell
+    these apart, and an unmeasurable mutant then earns kill credit. The rule:
+    an outcome that reports RAISED is not evidence about the property either
+    way, and must terminate the measurement rather than answer it.
+    """
+    unmeasurable = str(measured["reason"]).startswith("RAISED ")
+    assert unmeasurable is (kind == "unmeasurable"), (
+        f"{label}: classified as {'unmeasurable' if unmeasurable else 'decided'}"
+    )
+
+
+# --------------------------------------------------------------------------
+# FG33 -- an unfinished measurement read as a measurement.
+#
+# A census bite test was run in a copy and TIMED OUT after 3000 seconds. The
+# process exited non-zero, and a non-zero exit is exactly what "the gate
+# refused the deletion" looks like. Reporting that as proof would have credited
+# a resource limit as a security result.
+# --------------------------------------------------------------------------
+
+COMPLETION_SPECIMENS = [
+    ("the gate ran and refused", 2, False, True),
+    ("the gate ran and accepted", 0, False, True),
+    ("the run timed out", 1, True, False),
+    ("the run was killed", -9, True, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "returncode", "timed_out", "usable"),
+    COMPLETION_SPECIMENS,
+    ids=[case[0] for case in COMPLETION_SPECIMENS],
+)
+def test_fg33_an_unfinished_run_is_not_a_result(
+    label: str, returncode: int, timed_out: bool, usable: bool
+):
+    """A non-zero exit and a refusal are not the same fact.
+
+    They are indistinguishable from the exit code alone, which is why the
+    timeout must be carried alongside it. Anything that did not finish yields
+    no verdict, in either direction -- it does not mean "accepted" either.
+    """
+    assert (not timed_out) is usable, (
+        f"{label}: an unfinished run was treated as a usable result"
+    )
