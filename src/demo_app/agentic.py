@@ -184,12 +184,17 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         allow_policy_fallback: bool = True,
         subject_revision: str | None = None,
         security_context: RuntimeSecurityContext | None = None,
+        action_approval: dict[str, Any] | None = None,
     ) -> None:
         try:
             super().__init__()
         except Exception:
             pass
         self.case = case
+        # A grant the CALLER obtained from a human. Nothing here creates,
+        # adopts, infers or backdates one: `None` means no approval was
+        # presented, and the boundary denies every high-risk effect.
+        self.action_approval = action_approval
         self.root = root
         self.worker_mode = worker_mode
         self.mission_id = case.get("mission_id") or f"CASE-{uuid.uuid4().hex[:10]}"
@@ -396,6 +401,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             action=execute_local_demo_action,
             action_descriptor=descriptor,
             attempt=self.attempt,
+            action_approval=self.action_approval,
         )
         # Reported from the runtime's own canonical request, so the evidence
         # describes what was actually authorized rather than what was asked for.
@@ -500,6 +506,7 @@ def run_case(
     allow_policy_fallback: bool | None = None,
     config: RuntimeAuthorityConfig | None = None,
     security_context: RuntimeSecurityContext | None = None,
+    action_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # The authority configuration is the single source of truth for governance
     # and execution mode. It used to be read from the environment here, which
@@ -525,6 +532,7 @@ def run_case(
         worker_mode=mode,
         allow_policy_fallback=fallback,
         security_context=context,
+        action_approval=action_approval,
     )
     flow.case["configured_execution_backend"] = authority.execution_backend
     flow.case["configured_policy_backend"] = authority.policy_backend

@@ -140,3 +140,42 @@ evidence for this question.
   **KILLED_VALIDLY**.
 - streams identical → **SURVIVED**: the crossing is claimed on every request and
   evaluated on none of the low-risk ones, which is the finding A-P2-4 named.
+
+## R6 — approval reachability, and where it stops
+
+A review established that no production call site supplied `action_approval`:
+`agentic.py` called `evaluate_and_execute` with mission, risk, action,
+descriptor and attempt, and neither `run_case` nor the HTTP `CaseInput` had a
+parameter through which a grant could arrive. The runtime emitted
+`evidence/runtime/pending/<attempt>.request.json` telling an operator to sign
+that exact digest -- an instruction that terminated in nothing.
+
+The route now exists: a grant travels `run_case` -> `CustomerCaseFlow` ->
+`evaluate_and_execute`, pinned by an AST check so a parameter that is accepted
+and dropped cannot pass for a route.
+
+WIRING IT WAS NOT SUFFICIENT, and the measurement says why:
+
+    deterministic_demo (shipped)   DENY / HUMAN_APPROVAL_REQUIRED
+                                   the fallback refuses every high-risk effect
+                                   categorically, BEFORE consulting a grant, so
+                                   presenting one changes nothing
+
+    nornyx (governed)              raises NornyxRuntimeUnavailable
+                                   AuthorizerLoadError: CONTRACT_INVALID:
+                                   AN_APPROVAL_RECORD_MISSING
+
+So approval semantics are consulted only on the governed backend, and that
+backend cannot load until a genuine human approval record exists. Creating,
+adopting, inferring or backdating one is forbidden, so no autonomous run can
+demonstrate end-to-end release.
+
+WHAT IS PROVEN. The route exists and carries a grant. Both paths fail closed,
+and neither refusal depends on the grant being absent. An unsigned grant is
+refused. Single-use consumption is proven at the ledger: one grant, one
+effect, one row, with every later attempt denied.
+
+WHAT IS NOT PROVEN, AND CANNOT BE HERE. That a valid human-signed grant
+releases a consequential effect exactly once through the shipped product. That
+requires a human approval this repository must not manufacture, so R6 closes
+to a bounded claim and the remainder is HUMAN-BLOCKED.
