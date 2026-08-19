@@ -739,10 +739,29 @@ def _assert_ledger_structure(
     # to enumerate every object rather than to add "no triggers" to a list of
     # things checked. Anything not in the permitted set is refused, because the
     # next hostile object is the one nobody enumerated.
+    # THE CANDIDATE SET IS ESTABLISHED BEFORE CLOSURE IS EVALUATED, and nothing
+    # is excluded on the way in. That ordering is the property; the previous
+    # query inverted it --
+    #     SELECT ... WHERE name NOT LIKE 'sqlite_%'
+    # -- so objects were filtered out BEFORE the closure check could consider
+    # them, and a hostile member that fell in the excluded range was never a
+    # candidate to reject. A set that calls itself closed cannot be filtered on
+    # the way in.
+    #
+    # Two live bypasses came from that inversion, and they are different in
+    # kind, which is why fixing the pattern would not have been fixing the
+    # defect: `_` is a single-character LIKE wildcard, so `sqliteXshadow` was
+    # discarded by ordinary CREATE TRIGGER, while `PRAGMA writable_schema`
+    # reached the literal `sqlite_` prefix. Measured on both: one fingerprint
+    # granted five times, zero consumption rows persisted.
+    #
+    # Ordinary SQLite structure is still accepted, because it is judged rather
+    # than skipped: `sqlite_autoindex_*` arrives as kind `index`, which is in
+    # PERMITTED_LEDGER_KINDS. Anything else in that namespace is unexpected and
+    # must be refused -- which is what the excluding query made impossible.
     present = {
-        (kind, name)
-        for kind, name in conn.execute(
-            "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        (kind, name) for kind, name in conn.execute(
+            "SELECT type, name FROM sqlite_master"
         )
     }
     unexpected = sorted(

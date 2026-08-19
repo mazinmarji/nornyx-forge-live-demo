@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -1104,3 +1105,132 @@ def test_a_trigger_installed_after_establishment_is_caught_at_the_claim(
     )
     assert effects == ["DENY", "DENY", "DENY"], effects
     assert rows == 0
+
+
+# --------------------------------------------------------------------------
+# R1 -- candidate-set incompleteness before closure evaluation.
+#
+# The hostile catalogue above varies the KIND and the STATEMENT of the object
+# exhaustively. It never varies the NAME into the range the structural check's
+# own enumeration discards, so three live bypasses sat under a green suite.
+#
+# Measured on the defective head: one fingerprint consumed FIVE times, every
+# call granting, ZERO consumption rows persisted, ledger reporting `available`.
+# `plain_hostile` is refused by the same code, which is what proves these three
+# evade the check specifically rather than the check being absent.
+# --------------------------------------------------------------------------
+
+#: (label, object name, install via PRAGMA writable_schema, must be refused)
+R1_SPECIMENS = [
+    ("ordinary DDL, one wildcard char", "sqliteXshadow", False, True),
+    ("ordinary DDL, digit after prefix", "sqlite0shadow", False, True),
+    ("writable_schema, reserved prefix", "sqlite_shadow", True, True),
+    ("control: an ordinary hostile name", "plain_hostile", False, True),
+]
+
+
+def _ledger_carrying(tmp_path: Path, name: str, *, writable_schema: bool) -> Path:
+    """Provision a real ledger, then install one hostile trigger on it."""
+    path = tmp_path / f"{name}.sqlite3"
+    ApprovalLedger.provision(path, established_at="2026-08-01T00:00:00Z")
+    ddl = (f"CREATE TRIGGER {name} BEFORE INSERT ON consumed_approvals "
+           "BEGIN SELECT RAISE(IGNORE); END")
+    with closing(sqlite3.connect(path, isolation_level=None)) as conn:
+        if writable_schema:
+            conn.execute("PRAGMA writable_schema=ON")
+            conn.execute(
+                "INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) "
+                "VALUES('trigger',?,'consumed_approvals',0,?)", (name, ddl))
+            conn.execute("PRAGMA writable_schema=OFF")
+        else:
+            conn.execute(ddl)
+    return path
+
+
+@pytest.mark.parametrize(
+    ("label", "name", "writable_schema", "must_refuse"),
+    R1_SPECIMENS,
+    ids=[case[0] for case in R1_SPECIMENS],
+)
+def test_r1_a_hostile_ledger_object_cannot_enable_replay(
+    tmp_path: Path, label: str, name: str, writable_schema: bool, must_refuse: bool
+):
+    """Through the PRODUCTION path: `__init__` then `consume`, five times.
+
+    Deliberately NOT a direct call to `_assert_ledger_structure`. A helper test
+    proves the helper works; it cannot prove the production constructor invokes
+    it, and this whole class of defect is a declared step that never executes.
+
+    The assertion encodes the SEMANTIC unsafe state -- repeated consumes all
+    granted AND no consumption rows -- rather than "the constructor raised".
+    An unrelated exception must not be able to make this look green, and a
+    future refactor that throws for a different reason must not count as a fix.
+    """
+    path = _ledger_carrying(tmp_path, name, writable_schema=writable_schema)
+
+    try:
+        ledger = ApprovalLedger(path)
+    except NornyxRuntimeUnavailable:
+        return  # refused at construction: the property holds
+
+    granted = [
+        ledger.consume(
+            "FP-R1", "REQ-R1",
+            at="2026-08-15T00:00:00Z", grant_issued_at="2026-08-10T00:00:00Z",
+        )[0]
+        for _ in range(5)
+    ]
+    with closing(sqlite3.connect(path)) as conn:
+        rows = conn.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+
+    replayed = all(granted) and rows == 0
+    assert not replayed, (
+        f"{label}: a ledger carrying {name!r} granted one fingerprint five "
+        f"times and persisted {rows} consumption rows, so single-use replay "
+        "protection is defeated. The structural check did not see the object "
+        "because its enumeration excluded candidates before closure was "
+        "evaluated -- the object was never a candidate to reject."
+    )
+    assert not all(granted), (
+        f"{label}: every consume of one fingerprint was granted "
+        f"({granted}); at most the first may be"
+    )
+
+
+def test_r1_a_legitimate_unique_index_is_still_accepted(tmp_path: Path):
+    """Positive control. "Refuse every non-table object" would pass the hostile
+    cases above while breaking ordinary SQLite structure, so over-closing has
+    to be as visible as under-closing."""
+    path = tmp_path / "extra_index.sqlite3"
+    ApprovalLedger.provision(path, established_at="2026-08-01T00:00:00Z")
+    with closing(sqlite3.connect(path, isolation_level=None)) as conn:
+        conn.execute("CREATE UNIQUE INDEX extra_idx ON consumed_approvals(consumed_at)")
+
+    ledger = ApprovalLedger(path)
+    assert ledger.available, f"a legitimate UNIQUE index was refused: {ledger.unavailable_reason}"
+
+
+def test_r1_a_clean_ledger_still_consumes_exactly_once(tmp_path: Path):
+    """Positive control on the BEHAVIOUR, not just construction.
+
+    The hostile assertions are about replay; this proves the non-hostile path
+    still does the thing replay protection exists to allow -- one grant, one
+    effect, one row -- so the fix cannot be "deny everything".
+    """
+    path = tmp_path / "clean.sqlite3"
+    ApprovalLedger.provision(path, established_at="2026-08-01T00:00:00Z")
+    ledger = ApprovalLedger(path)
+
+    granted = [
+        ledger.consume(
+            "FP-CLEAN", "REQ-CLEAN",
+            at="2026-08-15T00:00:00Z", grant_issued_at="2026-08-10T00:00:00Z",
+        )[0]
+        for _ in range(5)
+    ]
+    with closing(sqlite3.connect(path)) as conn:
+        rows = conn.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+
+    assert granted[0] is True, "the first consume of a fresh grant must be allowed"
+    assert not any(granted[1:]), f"a spent grant was reusable: {granted}"
+    assert rows == 1, f"expected exactly one consumption row, found {rows}"
