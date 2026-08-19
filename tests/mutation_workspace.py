@@ -219,6 +219,21 @@ def require_caused_failure(
     failures = [f for case in matched for f in case.iter("failure")]
     errors = [e for case in matched for e in case.iter("error")]
 
+    # A PARAMETRISED NODE IS A FAMILY, and matching on the stem aggregates all
+    # of it. A review measured H07 under its mutant as 25 cases, 8 failed and
+    # 17 PASSED -- so the control was only partly removed, while the report
+    # said flatly that the node failed. The verdict no longer rests on this
+    # (the attack's executable property criterion decides), but the split must
+    # be visible rather than collapsed, because 'the node failed' and 'a third
+    # of its parameters failed' are different facts.
+    family = [case for case in matched if case not in collection_errors]
+    failed_cases = [c for c in family if list(c.iter("failure")) or list(c.iter("error"))]
+    partial = len(family) > 1 and 0 < len(failed_cases) < len(family)
+    breakdown = (
+        f" [parametrised family: {len(failed_cases)} of {len(family)} cases"
+        f" failed]" if partial else ""
+    )
+
     if errors and failures:
         # AMBIGUOUS. "There exists a failure for this node" is the aggregate
         # shortcut one level down: with an error alongside it, the run cannot
@@ -226,21 +241,21 @@ def require_caused_failure(
         # outcome.
         raise AttackNotAdmissible(
             Outcome.INVALID_MUTATION_ENVIRONMENT,
-            f"{node} reported BOTH a failure and an error, so which one decided "
+            f"{node}{breakdown} reported BOTH a failure and an error, so which one decided "
             "the result cannot be established. A kill needs the call-phase "
             "assertion to be the reason, not one of two candidate reasons.",
         )
     if errors:
         raise AttackNotAdmissible(
             Outcome.INVALID_MUTATION,
-            f"{node} ERRORED under the mutant rather than failing. Setup, "
+            f"{node}{breakdown} ERRORED under the mutant rather than failing. Setup, "
             "teardown and collection failures mean the control was never "
             f"reached, so nothing was proven about it:\n{output[-400:]}",
         )
     if not failures:
         raise AttackNotAdmissible(
             Outcome.SURVIVED,
-            f"{node} reported no failing assertion under the mutant.",
+            f"{node}{breakdown} reported no failing assertion under the mutant.",
         )
 
     if expected_property:
@@ -255,7 +270,7 @@ def require_caused_failure(
         if expected_property.lower() not in evidence.lower():
             raise AttackNotAdmissible(
                 Outcome.INVALID_MUTATION,
-                f"{node} failed, but not attributable to the intended property. "
+                f"{node}{breakdown} failed, but not attributable to the intended property. "
                 f"Expected the failure to concern {expected_property!r}; the "
                 f"assertion was: {evidence.strip()[:220]}",
             )

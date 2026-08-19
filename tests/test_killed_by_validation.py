@@ -98,6 +98,17 @@ def _defensive_evidence(source: str, name: str) -> int:
             and "raises" in ast.dump(child.context_expr)
         ):
             evidence += 1
+        elif isinstance(child, ast.Raise):
+            # An explicit `raise AssertionError(...)` is evidence just as much
+            # as `assert`. Counting only the statement form misses proofs that
+            # build a message before failing.
+            evidence += 1
+        elif (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "fail"
+        ):
+            evidence += 1
         elif isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
             # A call into the admission protocol is a refusal that can fire.
             if child.func.id.startswith("require_"):

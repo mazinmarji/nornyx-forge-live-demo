@@ -18,7 +18,12 @@ This repository is a public reference implementation for demonstrating three Nor
   `framework: "CrewAI Flow-compatible sequential execution"`. Selecting
   `crewai` refuses rather than downgrading if CrewAI cannot execute, so the
   label always describes what ran.
-- **Nornyx** validates the generated BRD contract, architecture contract, runtime network, and control/evidence boundary.
+- **Nornyx** checks the generated BRD contract, the architecture contract, the
+  runtime network, and the control/evidence boundary. Today `forge_control.nyx`
+  and the generated BRD contract PASS; `architecture_governance.nyx` and
+  `runtime_network.nyx` do NOT, because no human approval record exists. Reading
+  an approval-blocked result as "validates" is the substitution this repository
+  keeps finding, so the word is not used for it here.
 - **FastAPI** serves the live governed customer-operations application and dashboard.
 
 The default is an **autonomous demonstration**, not a production approval. Human review is not performed and the evidence says so explicitly.

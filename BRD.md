@@ -18,7 +18,12 @@ A user can submit a case with customer name, summary, risk level, and requested 
 
 ### BRD-F-002 Agentic workflow
 
-A CrewAI Flow processes each case through Intake, Knowledge, Resolution, Risk, Execution, and Audit stages.
+The customer-operations Flow processes each case through Intake, Knowledge,
+Resolution, Risk, Execution, and Audit stages. The shipped path drives those
+stages with `run_sequential()` and reports
+`observed_execution_backend: sequential`; selecting the CrewAI backend
+explicitly runs a real Flow kickoff. Naming CrewAI unconditionally here was
+true of one path and false of the one that ships.
 
 ### BRD-F-003 No mandatory model API key
 

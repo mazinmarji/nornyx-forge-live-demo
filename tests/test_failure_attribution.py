@@ -195,3 +195,50 @@ def test_case8_mixed_failure_and_error_evidence_cannot_be_credited(tmp_path: Pat
             report, NODE, "", expected_property="the verifier crashed instead of refusing"
         )
     assert refusal.value.outcome.value != "KILLED_VALIDLY"
+
+
+def test_case9_a_partly_failing_parametrised_family_is_reported_as_partial(
+    tmp_path: Path,
+):
+    """A family is not a node, and "the node failed" hides which parameters did.
+
+    A review measured H07 under its mutant as 25 cases with 8 failed and 17
+    PASSED -- the control only partly removed -- while the report said the node
+    failed. The verdict no longer rests on this (the attack's executable
+    property criterion decides), but collapsing a family into one word is how
+    "resolves every spelling" got credited from a third of its cases.
+    """
+    body = (
+        _case("tests.test_target", "test_the_named_proof[a]",
+              '<failure message="AssertionError: broke">assert 0</failure>')
+        + _case("tests.test_target", "test_the_named_proof[b]")
+        + _case("tests.test_target", "test_the_named_proof[c]")
+    )
+    report = _report(tmp_path, body)
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_caused_failure(
+            report, NODE, "", expected_property="a property nothing mentions"
+        )
+    message = str(refusal.value)
+    assert "parametrised family" in message, message
+    assert "1 of 3" in message, (
+        f"the split was not reported, so a partial family still reads as a "
+        f"whole-node failure: {message}"
+    )
+
+
+def test_case10_a_wholly_failing_family_is_not_reported_as_partial(tmp_path: Path):
+    """The control. Marking every family partial would make the signal useless."""
+    body = "".join(
+        _case("tests.test_target", f"test_the_named_proof[{p}]",
+              '<failure message="AssertionError: broke">assert 0</failure>')
+        for p in "abc"
+    )
+    report = _report(tmp_path, body)
+
+    with pytest.raises(AttackNotAdmissible) as refusal:
+        require_caused_failure(
+            report, NODE, "", expected_property="a property nothing mentions"
+        )
+    assert "parametrised family" not in str(refusal.value), str(refusal.value)

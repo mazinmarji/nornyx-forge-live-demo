@@ -239,7 +239,11 @@ def main() -> int:
         "status": "pass" if healthy else "fail",
         "statement": (
             "Governance contracts must fail only because a human approval record "
-            "is absent. Any other diagnostic is a defect."
+            "is absent, or the consequences of having no AUTHENTICATED "
+            "independent inspection. The accepted set is "
+            "EXPECTED_PRE_APPROVAL_DIAGNOSTICS; any diagnostic outside it "
+            "is a defect. The narrower wording this replaces named only "
+            "the approval record, while the accepted set is wider."
         ),
         "evaluated_at": args.as_of or "now",
         "human_approval_present": all(item["validates"] for item in results),

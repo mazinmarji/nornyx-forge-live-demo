@@ -48,7 +48,14 @@ The task is complete only when:
 - the live application starts;
 - its configured execution path runs successfully, with the observed backend
   matching the selected backend;
-- Nornyx evidence is emitted;
+- evidence is emitted, and named for what it is. Measured on the shipped
+  path what is produced is FORGE-schema evidence
+  (`nornyx.forge.demo_evidence_report.v1`) whose `nornyx_evidence` field reads
+  `{"status": "fallback", "load_error": "AuthorizerLoadError..."}` on every
+  case; no `nornyx.agentic` runtime evidence is produced, because the
+  authorizer never loads without a human approval. "Nornyx evidence is
+  emitted" read as the latter and was satisfied by the former -- the exact
+  substitution ASSURANCE_BOUNDARY.md forbids;
 - final limitations are disclosed.
 
 ### What "configured execution path" means

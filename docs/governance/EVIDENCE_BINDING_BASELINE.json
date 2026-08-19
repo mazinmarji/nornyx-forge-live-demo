@@ -815,7 +815,7 @@
       "subject": "Make every false-green class trip its own guard"
     }
   ],
-  "purpose": "An exact record of commits that predate enforcement of evidence-binding freshness. NOT an exemption asserting they were valid: they ship a review_binding.json whose governed_input_digest describes a different tree than the commit contains. Recorded by full SHA rather than by a cutoff, so rebased or rewritten history produces different SHAs and loses grandfathering automatically.",
+  "purpose": "An exact record of commits whose shipped evidence does not describe their own governed inputs. MOST predate enforcement; SIX DO NOT -- they carry category 'committed_after_the_defect_was_known' and were made after the check was wired into CI, recorded rather than hidden because the commits are immutable and rewriting history to conceal an evidence defect would be worse than the defect. Calling the whole file 'commits that predate enforcement' was false of those six. Grandfathering is for the gate only: --no-baseline still reports every entry.",
   "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
   "schema": "nornyx.forge.evidence_binding_baseline.v1",
   "violating_commits": 135,

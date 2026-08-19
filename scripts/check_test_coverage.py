@@ -158,6 +158,31 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_mutation_catalogue.py": 24,
     "tests/test_false_green_audit.py": 12,
     "tests/test_xfail_strictness.py": 9,
+    "tests/test_approval_lifecycle.py": 4,
+    "tests/test_architecture_coverage.py": 18,
+    "tests/test_architecture_security.py": 6,
+    "tests/test_authority_config.py": 12,
+    "tests/test_capability_binding.py": 2,
+    "tests/test_console_encoding.py": 2,
+    "tests/test_container_launch.py": 5,
+    "tests/test_contract_generator.py": 1,
+    "tests/test_demo_flow.py": 1,
+    "tests/test_dirty_tree_gate.py": 33,
+    "tests/test_evidence.py": 1,
+    "tests/test_governance_failure.py": 14,
+    "tests/test_in_session_reviews.py": 2,
+    "tests/test_mission_binding.py": 11,
+    "tests/test_probe_containment.py": 6,
+    "tests/test_policy.py": 1,
+    "tests/test_repository_structure.py": 1,
+    "tests/test_requirements.py": 1,
+    "tests/test_runtime_authority.py": 14,
+    "tests/test_runtime_image_subject.py": 7,
+    "tests/test_scratch_containment.py": 2,
+    "tests/test_special_files.py": 4,
+    "tests/test_subject_metamorphic.py": 7,
+    "tests/test_subject_provenance.py": 7,
+    "tests/test_validation_script.py": 1,
 }
 
 # Raised from 945, then from 1000. Lens B measured 118 tests of slack against
@@ -172,13 +197,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # is supposed to catch. So it stays a constant, and the guard requiring it to
 # sit within 10% of the real suite is the thing that forces a deliberate raise
 # whenever the suite grows. Twice now that guard has been the one to notice.
-MINIMUM_COLLECTED = 1050
+MINIMUM_COLLECTED = 1120
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
 #: so a report that does not mention one means the proof is gone. A floor alone
 #: would not catch this: deleting one file and adding tests elsewhere keeps the
 #: total up while the invariant goes unproven.
+#: EVERY test module is named here. A review deleted four whole modules -- 81
+#: tests including the dirty-tree gate and the runtime-authority proofs -- and
+#: the census still reported GATE: PASS, because 24 of 78 modules were named
+#: nowhere. `test_dirty_tree_gate.py` carried comments saying a floor raise had
+#: been made to protect it while the census could not see it at all.
+#: `test_every_test_module_is_named_in_the_census` keeps this exhaustive.
 REQUIRED_MODULES = (
     "tests/test_approval_authentication.py",
     "tests/test_killed_by_validation.py",
@@ -286,6 +317,31 @@ REQUIRED_MODULES = (
     # Strict xfail and a closed expected-failure inventory. Without this a
     # single decorator silences a security proof with the gate still green.
     "tests/test_xfail_strictness.py",
+    "tests/test_approval_lifecycle.py",
+    "tests/test_architecture_coverage.py",
+    "tests/test_architecture_security.py",
+    "tests/test_authority_config.py",
+    "tests/test_capability_binding.py",
+    "tests/test_console_encoding.py",
+    "tests/test_container_launch.py",
+    "tests/test_contract_generator.py",
+    "tests/test_demo_flow.py",
+    "tests/test_dirty_tree_gate.py",
+    "tests/test_evidence.py",
+    "tests/test_governance_failure.py",
+    "tests/test_in_session_reviews.py",
+    "tests/test_mission_binding.py",
+    "tests/test_probe_containment.py",
+    "tests/test_policy.py",
+    "tests/test_repository_structure.py",
+    "tests/test_requirements.py",
+    "tests/test_runtime_authority.py",
+    "tests/test_runtime_image_subject.py",
+    "tests/test_scratch_containment.py",
+    "tests/test_special_files.py",
+    "tests/test_subject_metamorphic.py",
+    "tests/test_subject_provenance.py",
+    "tests/test_validation_script.py",
 )
 
 

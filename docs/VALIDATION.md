@@ -11,7 +11,14 @@
 - Repository structure and secret-pattern validation.
 - Architecture dependency and command-isolation checks.
 - Security checks for embedded credentials, unsafe subprocess shell mode, `eval`, and `exec`.
-- Deterministic BRD-to-build flow: eleven requirements, certified foundation GO, five gates passed, zero repair attempts.
+- Deterministic BRD-to-build flow: eleven requirements, certified foundation GO,
+  zero repair attempts. The GATE COUNT IS DELIBERATELY NOT PINNED HERE:
+  `default_gates()` resolves tools on PATH, so the number depends on the
+  environment -- fewer in a bare shell, more with the venv's `pytest`, `ruff`
+  and `nornyx` available. Measured here: 11 with the venv's tooling on PATH,
+  and a review measured 4 in a bare shell. Never the 5 this line asserted.
+  Read the count from the build report, which is produced by the run it
+  describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.
 - Local demonstration evidence stream validated, with its event count and
@@ -42,6 +49,13 @@ permissive one, which is the dangerous direction to be wrong in.
 | --- | --- | --- | --- |
 | `demo_app.main` / Docker (`deterministic_demo`, `sequential`) | deterministic fallback | `sequential` | runs; high-risk effect prevented |
 | `RuntimeAuthorityConfig()` bare default (`nornyx`, `crewai`) | none — refused | none | `NornyxRuntimeUnavailable` |
+
+**Correction to the bare-default row.** That row reads as though nothing runs
+on `RuntimeAuthorityConfig()`. The BUILD path does: `cli.py` constructs
+`DevelopmentFlow(root, worker_mode=..., repo_mode=..., target_repo=...)` with
+no config at all, so the bare default is exactly what that path uses, and it
+is not refused there. The refusal the row describes belongs to the runtime
+authority path, not to every construction of the default.
 | `nornyx` + any executor | none — refused | none | `CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING` |
 | `deterministic_demo` + `crewai` | deterministic fallback | `crewai_flow` — CrewAI really executed | runs; high-risk effect prevented |
 | `deterministic_demo` + `crewai`, CrewAI absent | — | — | `ExecutionBackendUnavailable`; refuses rather than downgrading silently |
@@ -62,5 +76,10 @@ Reading the table:
   from the configuration, and requesting `crewai` where CrewAI cannot be
   imported raises rather than running the sequential driver under that name.
 
-`tests/test_execution_mode_truth.py` asserts every row, including that this file
+`tests/test_execution_mode_truth.py` asserts MOST rows, not every row. The
+`deterministic_demo` + `crewai` row is asserted in
+`tests/test_authority_config.py` instead, and the bare-default row is executed
+nowhere -- the closest test runs `("nornyx", "sequential")`, a different pair.
+Claiming one module covers the table left a reader one grep from believing a
+row was proven that is not. It does still assert that this file
 does not reacquire the claim it used to make.

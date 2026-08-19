@@ -70,7 +70,8 @@ python scripts/check_pre_approval_baseline.py --regenerate --as-of 2200-01-01T00
 ```
 
 `tests/test_expiry_semantics.py` proves this at 2100 and 2200: after
-regeneration the only remaining diagnostics are the three that say a human has
+regeneration the only remaining diagnostics are those in
+`EXPECTED_PRE_APPROVAL_DIAGNOSTICS` -- the set that says a human has
 not approved the contracts, identical to the set produced today.
 
 ## The commit discipline, and why it is written down

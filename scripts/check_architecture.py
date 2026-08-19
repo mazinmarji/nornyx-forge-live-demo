@@ -365,54 +365,19 @@ for relative, banned in forbidden.items():
 # modules here still legitimately open files and SQLite. What none of them may
 # do is start a process, and the previous set let one do so unremarked.
 DELEGATING_LAYERS = {"layer.interface", "layer.application", "layer.domain"}
-PROCESS_MODULES = {"subprocess", "pty", "multiprocessing"}
+# The PROCESS_MODULES / PROCESS_FUNCTIONS / PROCESS_CALL_OWNERS /
+# PROCESS_CALLS constants were REMOVED here. They were defined, carried
+# comments that read as live rules, and were loaded by nothing -- verified by
+# AST: zero Load references outside their own definitions, with
+# PROCESS_FUNCTIONS used only to build the dead PROCESS_CALLS. The live rules
+# are EXEC_ONLY_MODULES, DUAL_USE_MODULES and EXEC_FUNCTIONS.
+#
+# This file says of exactly this shape: a mutation removing such a branch
+# killed no test, which is the signature of dead code that reads as
+# load-bearing -- in a security control, the worst kind.
 
-#: Exec-family names that start a process. Tracked as bare names as well as
-#: attributes, because `from os import system` then `system(cmd)` produced no
-#: marker at all: the import filter only looked at PROCESS_MODULES (which does
-#: not contain `os`), and the call filter only matched ast.Attribute. An
-#: unauthenticated endpoint spelled that way passed both the architecture gate
-#: and the security gate with zero findings.
-PROCESS_FUNCTIONS = {
-    "system",
-    "popen",
-    "execl",
-    "execle",
-    "execlp",
-    "execv",
-    "execve",
-    "execvp",
-    "execvpe",
-    "spawnl",
-    "spawnle",
-    "spawnlp",
-    "spawnv",
-    "spawnve",
-    "spawnvp",
-    "posix_spawn",
-    "posix_spawnp",
-    "startfile",
-    "fork",
-    "forkpty",
-    "run",
-    "call",
-    "check_call",
-    "check_output",
-    "Popen",
-    "getoutput",
-    "getstatusoutput",
-    "create_subprocess_exec",
-    "create_subprocess_shell",
-}
 
-#: Modules whose exec-family members count. `os` belongs here and not in
-#: PROCESS_MODULES because importing `os` is ordinary; calling its exec family
-#: is not.
-PROCESS_CALL_OWNERS = {"os", "subprocess", "asyncio", "multiprocessing", "pty"}
 
-PROCESS_CALLS = {
-    f"{owner}.{name}" for owner in ("os",) for name in PROCESS_FUNCTIONS
-}
 
 
 #: Modules whose reason for existing is starting a process. Importing one in a
@@ -542,7 +507,7 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
       importing one at all, under any spelling or alias, is the marker. No call
       needs to be seen. This is capability acquisition.
 
-    - DUAL-USE MODULES (`os`, `asyncio`, `shutil`): importing is fine; binding
+    - DUAL-USE MODULES (`os`, `asyncio`): importing is fine; binding
       one of their exec-family NAMES is the marker. Tracked through aliases and
       assignment, so `_o = os` then `_o.system` is caught, as is
       `_RUN = os.system` with no call site at all.
@@ -955,13 +920,40 @@ if _api_markers:
         "API layer contains direct command execution: "
         + ", ".join(sorted(_api_markers))
     )
-agentic_text = (ROOT / "src/demo_app/agentic.py").read_text(encoding="utf-8")
-if "NornyxActionBoundary" not in agentic_text:
-    violations.append("runtime orchestration does not use the declared Nornyx action boundary")
-if "evaluate_and_execute" not in agentic_text:
-    violations.append("runtime orchestration does not route execution through the action boundary")
-if "action()" in main_text:
-    violations.append("API layer appears to invoke a consequential action directly")
+# STRUCTURAL, matching what this file says three rules above. These were
+# substring tests: `"action()" in main_text` never fired, because main.py
+# contains no such spelling, so any differently-named direct call passed it.
+# The property is actually held by the path-based import ban on nornyx_forge,
+# not by these -- but a rule that cannot fail should not sit in the report
+# under the name `governed_action_boundary`.
+_agentic_tree = ast.parse(
+    (ROOT / "src/demo_app/agentic.py").read_text(encoding="utf-8")
+)
+_agentic_names = {
+    node.id for node in ast.walk(_agentic_tree)
+    if isinstance(node, ast.Name)
+} | {
+    node.attr for node in ast.walk(_agentic_tree)
+    if isinstance(node, ast.Attribute)
+}
+if "NornyxActionBoundary" not in _agentic_names:
+    violations.append(
+        "runtime orchestration does not use the declared Nornyx action boundary"
+    )
+if "evaluate_and_execute" not in _agentic_names:
+    violations.append(
+        "runtime orchestration does not route execution through the action boundary"
+    )
+_main_tree = ast.parse(main_text)
+_main_calls = {
+    node.func.id for node in ast.walk(_main_tree)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+}
+if _main_calls & {"action", "execute_action", "run_action"}:
+    violations.append(
+        "API layer appears to invoke a consequential action directly: "
+        + ", ".join(sorted(_main_calls & {"action", "execute_action", "run_action"}))
+    )
 
 result = {
     "schema": "nornyx.forge.architecture_report.v1",

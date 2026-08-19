@@ -96,3 +96,25 @@ Closing the write-access case needs an epoch anchored outside the ledger. The
 operator's trust store is the natural home, since it is already an out-of-band
 artifact the runtime only reads. That is not implemented here and is not claimed
 to be.
+
+## Corrections from an independent review
+
+**The two rows without a Closed disposition read as live holes, and are not.**
+`FORGE_ALLOW_POLICY_FALLBACK`, `FORGE_USE_CREWAI_KICKOFF` and
+`FORGE_STRICT_CREWAI` have NO READER anywhere in `src/`: a repository-wide
+grep returns only retirement comments. The line numbers those rows cite are
+stale and point at unrelated code. Finding 2 in this same document already
+says neither has a reader, so the table contradicted its own body. Treat both
+rows as CLOSED -- retired vocabulary, not ambient authority.
+
+**`FORGE_MAX_REPAIR_ATTEMPTS` was missing from a table claiming to be**
+**exhaustive.** It is read at `src/nornyx_forge/development_flow.py:228` as
+`int(os.getenv("FORGE_MAX_REPAIR_ATTEMPTS", "3"))`, and it is ambient
+authority over a declared bound: BOOTSTRAP.md permits "at most three repair
+attempts per failed goal", with an exhausted budget as a hard stop. An
+environment variable that raises that ceiling changes a governed limit.
+
+Unlike the process-start enumeration in `docs/ARCHITECTURE.md`, nothing
+measures this table in either direction, so "every external input reachable
+from src/" remains an author's claim rather than a checked one. Recorded as a
+known bound rather than asserted as complete.

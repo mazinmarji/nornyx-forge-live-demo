@@ -204,3 +204,34 @@ def test_the_baseline_can_be_defeated_for_adversarial_runs(flag: str):
         f"{flag} is gone, so every adversarial range is silently excused by the "
         "historical baseline"
     )
+
+
+def test_the_escape_hatch_is_exercised_not_merely_present(tmp_path: Path):
+    """FG22's specimen read source text; removing the hatch left it green.
+
+    A review deleted the `--no-baseline` behaviour -- making `apply_baseline`
+    unconditionally True and leaving the token only in a comment -- and both
+    this class's specimen and the audit's self-attack still passed, because
+    both were looking at the file rather than running it.
+
+    This calls `evaluate` on a range containing a KNOWN grandfathered violation
+    twice, and requires the two answers to differ. A baseline that cannot be
+    defeated cannot be audited, and a check that greps for the flag cannot tell
+    the difference.
+    """
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    violation = sorted(binding.known_violations())[0]
+    spec = f"{violation}~1..{violation}"
+
+    with_baseline = binding.evaluate(spec, apply_baseline=True)
+    without_baseline = binding.evaluate(spec, apply_baseline=False)
+
+    assert with_baseline == 0, (
+        f"a grandfathered commit was reported as a violation with the baseline "
+        f"applied, so the range {spec} is not the specimen this test needs"
+    )
+    assert without_baseline != 0, (
+        "the same range passed with the baseline DEFEATED, so the escape hatch "
+        "does nothing and every grandfathered commit is unauditable"
+    )

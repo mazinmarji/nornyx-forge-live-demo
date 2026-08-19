@@ -273,8 +273,22 @@ except Exception as exc:
 
 
 def _h19_violated(tree: Path) -> bool:
-    """Shrinking is the violation: verified True, or a digest minted anyway."""
+    """Shrinking is the violation: verified True, or a digest minted anyway.
+
+    A CRASH IS NOT A VIOLATION. The probe reports `RAISED <Type>` when the
+    mutant cannot even be observed, and the first version of this criterion
+    returned True for that -- because a crash reason contains no
+    SUBJECT_SCOPE_INCOMPLETE, so "did not refuse properly" and "did not run"
+    were the same answer. That is the exact defect a review filed against H19
+    (credited on an uncaught FileNotFoundError), reproduced here while fixing
+    it. An unmeasurable mutant raises instead.
+    """
     measured = run_probe(tree, _H19_PROBE)
+    if measured["reason"].startswith("RAISED "):
+        raise PropertyNotViolated(
+            "the subject computation raised instead of deciding, so nothing "
+            f"about scope completeness was measured: {measured}"
+        )
     if measured["verified"]:
         return True
     if measured["digest"]:

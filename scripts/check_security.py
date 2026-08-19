@@ -38,7 +38,12 @@ for path in ROOT.rglob("*"):
     except UnicodeDecodeError:
         continue
     relative = path.relative_to(ROOT)
-    # The scanner source contains its own detection regexes; do not self-report them.
+    # KNOWN BOUND, stated rather than left implicit. This exempts the WHOLE
+    # scanner file, not merely its pattern literals, so a real secret added to
+    # this file would not be reported by it. `.nornyx` is also excluded from
+    # the scan entirely, and the Dockerfile copies that directory into the
+    # image -- so contract-embedded material is outside this gate's reach.
+    # Both are deliberate today; neither is claimed as covered.
     if relative == Path("scripts/check_security.py"):
         continue
     for name, pattern in patterns.items():

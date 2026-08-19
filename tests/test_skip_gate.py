@@ -550,3 +550,116 @@ def test_the_errored_module_is_not_marked_as_present(tmp_path):
     assert "tests/test_action_binding.py" not in modules, (
         "a module that failed to import was marked as seen"
     )
+
+
+def test_every_test_module_is_named_in_the_census():
+    """No module may be invisible to the anti-shrink gate.
+
+    A review deleted four whole modules -- 81 tests, including the dirty-tree
+    gate and the runtime-authority proofs -- and the census still returned
+    GATE: PASS, because 24 of 78 modules were named nowhere. The global floor
+    absorbed the loss.
+
+    `test_dirty_tree_gate.py` is the sharpest case: three comments in that file
+    say a floor raise was made to protect it, while the census could not see it
+    at all. A comment is not a check.
+
+    Exhaustive by construction, so adding a module without protecting it fails
+    here rather than being discovered by the next review.
+    """
+    modules = {f"tests/{path.name}" for path in (ROOT / "tests").glob("test_*.py")}
+    covered = set(census.REQUIRED_MODULES) | set(census.REQUIRED_MODULE_MINIMUMS)
+    unprotected = sorted(modules - covered)
+    assert unprotected == [], (
+        "these test modules are named nowhere in the census, so deleting them "
+        f"entirely would not trip it: {unprotected}"
+    )
+
+
+def test_the_census_names_no_module_that_does_not_exist():
+    """The other direction. A stale name is a check that can never fail.
+
+    Padding the list with modules that do not exist would make the sweep above
+    pass while protecting nothing, which is the count-versus-identity defect
+    one level along.
+    """
+    modules = {f"tests/{path.name}" for path in (ROOT / "tests").glob("test_*.py")}
+    named = set(census.REQUIRED_MODULES) | set(census.REQUIRED_MODULE_MINIMUMS)
+    phantom = sorted(named - modules)
+    assert phantom == [], (
+        f"the census names modules that do not exist: {phantom}"
+    )
+
+
+def _report_omitting(tmp_path: Path, omit: set[str]) -> Path:
+    """A JUnit report holding every module at its declared floor, minus `omit`.
+
+    Synthesised rather than produced by a real run: driving the census through
+    a full nested pytest takes over fifty minutes, and the property under test
+    is the VERDICT FUNCTION, not pytest. `evaluate` is the census's single
+    decision point, so exercising it directly measures the gate itself.
+    """
+    cases = []
+    for module, floor in census.REQUIRED_MODULE_MINIMUMS.items():
+        if module in omit:
+            continue
+        classname = module[len("tests/"):-len(".py")]
+        for index in range(floor):
+            cases.append(
+                f'<testcase classname="tests.{classname}" name="test_{index}" '
+                f'file="{module}"></testcase>'
+            )
+    # Pad to the global floor. Per-module floors sum to less than
+    # MINIMUM_COLLECTED, so an unpadded complete report would be refused for
+    # being too small -- a true refusal, but not the one under test, and it
+    # would make the positive control fail for the wrong reason.
+    if omit == set():
+        classname = "test_padding"
+        while len(cases) < census.MINIMUM_COLLECTED:
+            cases.append(
+                f'<testcase classname="tests.{classname}" '
+                f'name="test_pad_{len(cases)}" file="tests/test_padding.py">'
+                "</testcase>"
+            )
+    report = tmp_path / "synthetic.xml"
+    report.write_text(
+        '<?xml version="1.0" encoding="utf-8"?><testsuites>'
+        f'<testsuite name="pytest" tests="{len(cases)}">' + "".join(cases)
+        + "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    return report
+
+
+def test_deleting_whole_security_modules_is_refused_by_the_census(tmp_path: Path):
+    """The exact deletion a review performed, now refused.
+
+    Four modules -- 81 tests including the dirty-tree gate and the
+    runtime-authority proofs -- were deleted and the census still returned
+    GATE: PASS, because those modules were named nowhere and the global floor
+    absorbed the loss.
+    """
+    victims = {
+        "tests/test_dirty_tree_gate.py",
+        "tests/test_architecture_coverage.py",
+        "tests/test_runtime_authority.py",
+        "tests/test_authority_config.py",
+    }
+    verdict = census.evaluate(_report_omitting(tmp_path, victims), 0)
+    assert verdict != 0, (
+        "the census accepted a run missing four whole security modules, so "
+        "deleting them would still report GATE: PASS"
+    )
+
+
+def test_the_census_accepts_a_complete_report(tmp_path: Path):
+    """The positive control.
+
+    Without it the refusal above is satisfied by a census that refuses
+    everything, which would be a broken gate rather than a strict one.
+    """
+    verdict = census.evaluate(_report_omitting(tmp_path, set()), 0)
+    assert verdict == 0, (
+        "the census refused a report holding every declared module at its "
+        "declared floor, so it now refuses valid runs"
+    )

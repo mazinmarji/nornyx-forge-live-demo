@@ -21,6 +21,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 def governance_docs() -> list[Path]:
@@ -98,6 +100,17 @@ def test_no_governance_document_pins_a_commit_as_the_subject():
     )
 
 
+
+#: Backticked code spans and quoted text, which a document MENTIONS rather
+#: than ASSERTS. Blanked rather than removed so reported line numbers stay
+#: true -- a guard that misreports where it found something teaches people to
+#: distrust it.
+_MENTION = re.compile("`[^`]*`" + "|" + chr(34) + "[^" + chr(34) + "]*" + chr(34))
+
+
+def _mention_blanked(text: str) -> str:
+    return _MENTION.sub(lambda m: " " * len(m.group(0)), text)
+
 def test_no_document_claims_an_independent_inspection_this_repository_lacks():
     """`independently_inspected` is derived, and derives to false here.
 
@@ -108,15 +121,31 @@ def test_no_document_claims_an_independent_inspection_this_repository_lacks():
     # Patterns, not exact strings. The review defeated the previous list by
     # dropping a trailing word: "independently inspected by" was forbidden,
     # "independently inspected and fully assured" was not.
+    # SEPARATORS, not just whitespace. These used `\s`, which does not match
+    # `_` -- so `independently_inspected` and `human_review: performed`, the
+    # exact spellings this system EMITS in every transcript and report block,
+    # walked past a guard whose docstring claimed it had generalised beyond
+    # exact strings. It had generalised to prose and not to the machine form.
+    _SEP = "[ _-]+"
     forbidden = (
-        re.compile(r"writes\s+independent\s+review\s+evidence"),
-        re.compile(r"(?<!not )independently\s+inspected"),
-        re.compile(r"human\s+review\s*[:=]\s*performed"),
+        re.compile("writes" + _SEP + "independent" + _SEP + "review" + _SEP
+                   + "evidence"),
+        # The lookbehind takes the separator too: `not_independently_inspected`
+        # is the HONEST machine value this system emits, and widening the
+        # separator without widening the negation flagged ten truthful lines.
+        re.compile("(?<!not[ _-])independently" + _SEP + "inspected"),
+        re.compile("human" + _SEP + "review" + "[ ]*[:=][ ]*" + "performed"),
     )
     offenders: list[str] = []
     for document in governance_docs():
         name = document.relative_to(ROOT).as_posix()
-        text = document.read_text(encoding="utf-8").lower()
+        # USE, NOT MENTION. Code spans and quotations are blanked (length
+        # preserved, so line numbers stay true). ASSURANCE_BOUNDARY.md has a
+        # section DEFINING what `assurance_state: independently_inspected`
+        # requires -- that is the term being explained, not the repository
+        # claiming to hold it, and the same structural rule already separates
+        # a retracted CrewAI claim from a live one.
+        text = _mention_blanked(document.read_text(encoding="utf-8").lower())
         for pattern in forbidden:
             for match in pattern.finditer(text):
                 line = text[: match.start()].count(chr(10)) + 1
@@ -369,3 +398,43 @@ def test_the_process_start_sites_match_the_documented_list():
         f"start.\n  documented but starts nothing: {sorted(documented - measured)}"
         f"\n  starts a process, undocumented: {sorted(measured - documented)}"
     )
+
+
+#: (label, text, must be flagged). The machine spellings are the ones that
+#: matter: this system emits `independently_inspected`, never the prose form,
+#: and the guard used `\s` which does not match `_`.
+OVERCLAIM_SPECIMENS = [
+    ("machine spelling, bare claim", "assurance_state: independently_inspected", True),
+    ("prose spelling, bare claim", "this build was independently inspected", True),
+    ("machine spelling, honest negative", "not_independently_inspected", False),
+    ("prose spelling, honest negative", "not independently inspected", False),
+    ("definitional, inside a code span",
+     "`assurance_state: independently_inspected` is derived, never read", False),
+    ("human review, machine spelling", "human_review: performed", True),
+    ("human review, honest", "human_review: not_performed", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "text", "flagged"),
+    OVERCLAIM_SPECIMENS,
+    ids=[case[0] for case in OVERCLAIM_SPECIMENS],
+)
+def test_the_overclaim_guard_reads_machine_spellings_and_respects_mention(
+    label: str, text: str, flagged: bool
+):
+    """Both directions, including the two the guard used to miss entirely.
+
+    Widening the separator alone flagged ten TRUTHFUL lines, because the
+    negative lookbehind still expected a space -- so `not_independently_inspected`,
+    the honest value, read as a claim. Widening the negation without widening
+    the separator would have left the original hole. Both are pinned here.
+    """
+    _SEP = "[ _-]+"
+    patterns = (
+        re.compile("(?<!not[ _-])independently" + _SEP + "inspected"),
+        re.compile("human" + _SEP + "review" + "[ ]*[:=][ ]*" + "performed"),
+    )
+    scanned = _mention_blanked(text.lower())
+    hit = any(pattern.search(scanned) for pattern in patterns)
+    assert hit is flagged, f"{label}: flagged={hit}, expected {flagged}"

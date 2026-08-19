@@ -192,13 +192,13 @@ INVENTORY = (
         "FG25", "a minimal compound, when an edit could be dropped and it still killed",
         "compound membership was recorded from intent rather than re-measured",
         "re-run each compound without its last edit and require it to survive",
-        "tests/test_mutation_catalogue.py::test_a_cumulative_attack_cannot_be_recorded_as_non_compound",
+        "tests/test_mutation_catalogue.py::test_every_compound_attack_is_proven_minimal",
     ),
     FalseGreen(
         "FG26", "a measurement, when the probe itself mutated the real governed tree",
         "an ad-hoc script ran outside the session fixture that restores the tree",
         "snapshot and restore around every step, in a finally, inside the suite",
-        "tests/conftest.py::_governed_tree_is_left_as_found",
+        "tests/test_probe_containment.py::test_fg26_contamination_is_detected_and_clean_runs_are_not",
     ),
 )
 
@@ -580,14 +580,26 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
         ]
         assert len(found) == 1, f"{item.ident}: {node} is defined {len(found)} times"
 
+        # `raise AssertionError(...)` and `pytest.fail(...)` count too. This
+        # recognised only `assert` and `pytest.raises`, so
+        # `test_every_compound_attack_is_proven_minimal` -- which re-runs every
+        # compound without its last edit and raises AssertionError when one is
+        # not minimal -- read as having no evidence at all. A counter that
+        # misses a whole form of failure is the same defect as the bodies it
+        # was written to catch.
         exercised = sum(
             1
             for child in ast.walk(found[0])
-            if isinstance(child, ast.Assert)
+            if isinstance(child, (ast.Assert, ast.Raise))
             or (
                 isinstance(child, ast.withitem)
                 and isinstance(child.context_expr, ast.Call)
                 and "raises" in ast.dump(child.context_expr)
+            )
+            or (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "fail"
             )
         )
         assert exercised >= 1, (

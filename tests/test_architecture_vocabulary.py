@@ -255,3 +255,38 @@ def test_deleting_the_undeclared_dependency_control_changes_the_verdict(
         "the mutated build did not reach the control at all, so this proves "
         f"nothing about it:\n{without_control.stdout[-400:]}"
     )
+
+
+def test_every_declared_component_belongs_to_a_system():
+    """C2-P3-6. A component in no system is governed by nothing.
+
+    `component.reviewer_trust` is declared with a name, layer, context and
+    modules, and `docs/ARCHITECTURE.md` presents it as a first-class component
+    -- while `system.forge.components` omits it. Neither
+    `scripts/check_architecture.py` (which reads only `modules` and `layers`)
+    nor `nornyx check` reports it, so it looked declared and was structurally
+    invisible.
+
+    Asserted in both directions: a system may not list a component that was
+    never declared either, since padding the list would satisfy this check
+    while governing nothing.
+    """
+    import re  # noqa: PLC0415
+
+    raw = (ROOT / ".nornyx/contracts/architecture_governance.nyx").read_text(
+        encoding="utf-8"
+    )
+    declared = set(re.findall(r"- id: (component\.[a-z_]+)", raw))
+    inline = re.search(r"components: \[([^\]]+)\]", raw)
+    assert inline, "system.forge declares no component list"
+    listed = set(re.findall(r"component\.[a-z_]+", inline.group(1)))
+
+    assert declared, "no components were parsed, so this check proves nothing"
+    assert declared - listed == set(), (
+        "these components are declared but belong to no system, so nothing "
+        f"governs them: {sorted(declared - listed)}"
+    )
+    assert listed - declared == set(), (
+        "the system lists components that are never declared: "
+        f"{sorted(listed - declared)}"
+    )
