@@ -23,7 +23,10 @@ store" is not a simplification.
 
 from __future__ import annotations
 
+import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -400,11 +403,26 @@ def healthy_against(base: dict, mutant: dict) -> list[str]:
     missing = sorted(set(base) - set(mutant))
     if missing:
         problems.append(f"observables vanished: {missing}")
-    crash = ("Traceback", "ImportError", "SyntaxError", "AttributeError",
-             "NameError")
+
+    # NOT A TOKEN BLOCKLIST. The predecessor tested five hardcoded names, so a
+    # mutation that threw inside signature verification -- caught and returned
+    # as `APPROVAL_NOT_AUTHENTICATED: ValueError` -- carried none of them and
+    # read as a well-formed refusal. That mutant authenticates NOTHING in
+    # either domain, demonstrates nothing about domain separation, and was
+    # credited. A blocklist is a list someone must remember to extend; this
+    # asks whether an EXCEPTION TYPE is being reported where a decision belongs.
+    exception_shaped = re.compile("[A-Z][A-Za-z]*(?:Error|Exception)")
     for key, value in mutant.items():
-        if key.endswith("_reason") and any(t in str(value) for t in crash):
-            problems.append(f"{key} carries a crash, not a decision: {str(value)[:60]}")
+        if not key.endswith("_reason"):
+            continue
+        text = str(value)
+        if "Traceback" in text:
+            problems.append(f"{key} carries a traceback, not a decision: {text[:60]}")
+        elif exception_shaped.search(text):
+            problems.append(
+                f"{key} reports an exception type where a decision belongs, so "
+                f"the mutant failed rather than decided: {text[:70]}"
+            )
     return problems
 
 
@@ -416,12 +434,31 @@ def test_fg23_a_mutant_that_broke_the_run_is_not_a_kill(tmp_path: Path):
     to be what distinguishes them.
     """
     base = probe(tmp_path / "base", "action_only")
+
+    # The specimen a review defeated: it fed a string built from the SAME
+    # tokens the check listed, so shrinking that list to ("Traceback",) left it
+    # passing. This one uses the shape the blocklist could never have caught --
+    # an exception swallowed into what reads as an ordinary refusal, which is
+    # how a mutant that authenticates nothing in either domain got credited.
+    swallowed = dict(base)
+    swallowed["governance_reason"] = "APPROVAL_NOT_AUTHENTICATED: ValueError"
+    assert healthy_against(base, swallowed), (
+        "an exception type reported where a decision belongs was accepted as a "
+        "well-formed mutant, so a broken verifier could be credited as a kill"
+    )
+
     broken = dict(base)
     broken["governance_reason"] = "Traceback (most recent call last): ImportError"
-
     assert healthy_against(base, broken), (
         "a run whose reason is a traceback was accepted as a well-formed "
         "mutant, so a crash could be credited as a kill"
+    )
+
+    ordinary = dict(base)
+    ordinary["governance_reason"] = "DENY: the role is not trusted in this domain"
+    assert healthy_against(base, ordinary) == [], (
+        "an ordinary refusal was called unhealthy, so the check refuses "
+        "everything and proves nothing"
     )
     lost = {k: v for k, v in base.items() if not k.endswith("_reason")}
     assert healthy_against(base, lost), (
@@ -451,3 +488,87 @@ def test_fg23_the_real_collapse_mutants_are_all_healthy(tmp_path: Path):
         "these attacks are credited on a mutant that did not run properly, so "
         f"the observable change is not attributable to the control: {unhealthy}"
     )
+
+
+# --------------------------------------------------------------------------
+# R3 -- the direct-observable shape enforced NEITHER production scope NOR
+# mutant origin. `require_production_mutation_scope` and `require_mutant_origin`
+# are called only by the victim-test runner, and `apply_edits` dispatches on
+# file extension alone, so an "attack" could mutate a TEST FIXTURE, watch the
+# observable move, and be credited -- proving only that the suite reacts to
+# itself. A review credited two fabricated kills through exactly these holes.
+#
+# The catalogue's own claim ("production mutation scope: measured src/ only")
+# was an inspection of the data, not a check on the path.
+# --------------------------------------------------------------------------
+
+
+def test_r3_every_collapse_edit_targets_production_scope():
+    """Enforced over the live catalogue, in both directions.
+
+    Reading the paths and eyeballing them is what the superseded claim did.
+    This puts every edit through the same resolver the victim-test runner uses,
+    so `tests/`, `docs/`, `./tests/x` and `src/../tests/x` are all refused by
+    canonical resolution rather than by string prefix.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        require_production_mutation_scope,
+    )
+
+    outside = []
+    for mutation in CATALOGUE:
+        for edit in mutation.edits:
+            relative = edit[0]
+            try:
+                require_production_mutation_scope(relative)
+            except AttackNotAdmissible as refusal:
+                outside.append(f"{mutation.name}: {relative} -- {refusal}")
+    assert outside == [], (
+        "these collapse attacks mutate something outside production scope, so "
+        f"they measure the suite reacting to itself: {outside}"
+    )
+
+
+def test_r3_a_test_fixture_mutation_is_refused_as_an_attack():
+    """The negative specimen: the exact shape that got a fabricated kill.
+
+    An edit aimed at `tests/authority_probe.py` moves the observable -- the
+    probe is what produces it -- while `src/` stays byte-identical. Without the
+    scope check that is indistinguishable from a real control removal.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        require_production_mutation_scope,
+    )
+
+    for fabricated in ("tests/authority_probe.py", "./tests/authority_probe.py",
+                       "src/../tests/authority_probe.py", "docs/ARCHITECTURE.md"):
+        with pytest.raises(AttackNotAdmissible):
+            require_production_mutation_scope(fabricated)
+
+
+def test_r3_the_collapse_workspace_loads_the_mutant_not_the_repository():
+    """Mutant origin, measured for THIS shape rather than assumed.
+
+    `test_the_delegated_catalogues_prove_mutant_origin_where_they_mutate` writes
+    its own spy that hardcodes the same `sys.path` lines as the real probe, so
+    it would still pass if the probe lost them -- it measures a copy of the
+    mechanism. This asks the workspace itself.
+    """
+    from mutation_workspace import require_mutant_origin  # noqa: PLC0415
+
+    work = Path(tempfile.mkdtemp(prefix="r3-origin-"))
+    try:
+        tree = _materialized_tree(work)
+        require_mutant_origin(tree, ("nornyx_forge.nornyx_runtime",
+                                     "nornyx_forge.approval_trust"))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _materialized_tree(destination: Path) -> Path:
+    """The same workspace `probe` builds, without running the scenario."""
+    from mutation import _materialize  # noqa: PLC0415
+
+    return _materialize(destination)

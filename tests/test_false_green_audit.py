@@ -186,7 +186,7 @@ INVENTORY = (
         "FG24", "a targeted attack, when the projection degenerated into a constant",
         "hiding every difference satisfies the same equality as hiding the one attacked",
         "require the mutated projection to still distinguish some other pair",
-        "tests/test_semantic_binding_theorem.py::test_fg24_a_projection_that_hides_everything_is_not_a_targeted_attack",
+        "tests/test_semantic_binding_theorem.py::test_fg24_a_constant_projection_is_refused_by_the_guard",
     ),
     FalseGreen(
         "FG25", "a minimal compound, when an edit could be dropped and it still killed",

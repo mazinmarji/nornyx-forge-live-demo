@@ -840,29 +840,52 @@ def _distinguishes_any_other_pair(src, attack) -> bool:
         restore()
 
 
-def test_fg24_a_projection_that_hides_everything_is_not_a_targeted_attack(
-    restored_contracts,
-):
-    """Negative specimen: a constant projection satisfies the naive check.
+def test_fg24_a_constant_projection_is_refused_by_the_guard(monkeypatch, restored_contracts):
+    """The negative specimen, now INVOKING the guard it is about.
 
-    Modelled rather than installed as a source mutation, because the point is
-    the LOGIC of the acceptance rule: if the projection returns one value for
-    every governed state, then `attacked_b == attacked_a` is true for every
-    attack, and the naive rule credits all of them.
+    The predecessor asserted `"SEMANTICS-CONSTANT" == "SEMANTICS-CONSTANT"` and
+    called `all` and `len` -- it passed with `_distinguishes_any_other_pair`
+    deleted from the module entirely. A self-attack that never reaches its
+    guard is the exact defect this audit exists to catch, and it was written
+    while extending that audit.
+
+    Here the projection is forced to a constant, so it hides EVERY difference.
+    The guard must report that it distinguishes nothing.
     """
-    constant = "SEMANTICS-CONSTANT"
-    attacked_a = attacked_b = constant
-    assert attacked_b == attacked_a, "the naive acceptance rule is satisfied"
+    attack = PROJECTION_ATTACKS[0]
+    src = _mutated_src(attack)
 
-    pairs_hidden = [constant == constant for _ in INVENTORY]
-    assert all(pairs_hidden), (
-        "a constant projection is supposed to hide every pair -- if it does "
-        "not, this specimen no longer reproduces the defect it pins"
+    monkeypatch.setattr(
+        sys.modules[__name__], "_semantics_under", lambda _src: "CONSTANT")
+    assert not _distinguishes_any_other_pair(src, attack), (
+        "a projection returning one value for every governed state was "
+        "certified as a targeted attack; it hides every difference and "
+        "therefore proves nothing about the field under attack"
     )
-    assert len(pairs_hidden) > 1, (
-        "the inventory must contain more than one field for 'hides everything' "
-        "to be distinguishable from 'hides this one'"
+
+
+def test_fg24_a_live_projection_is_admitted_by_the_guard(restored_contracts):
+    """The positive control, also invoking the guard.
+
+    Without it the refusal above is satisfied by a guard that returns False
+    unconditionally.
+    """
+    attack = PROJECTION_ATTACKS[0]
+    assert _distinguishes_any_other_pair(_mutated_src(attack), attack), (
+        "the real mutated projection distinguishes no other pair, so the guard "
+        "cannot tell a targeted attack from a collapsed one"
     )
+
+
+# WHAT THIS GUARD DOES NOT CLAIM. A review read 9C-7 -- "omit one contract from
+# the aggregate" -- as degenerate because its mutated projection is blind to
+# every inventoried field of the contract it attacks. That is the attack
+# SUCCEEDING, not the projection collapsing: omitting a contract is supposed to
+# stop that contract's fields being distinguished, and the projection still
+# separates fields in the other contract, so it is not a constant function.
+# Narrowing the guard to "must still distinguish a pair inside the attacked
+# contract" would refuse the very attack it was written to admit. Degeneracy
+# means hiding EVERYTHING; that is what is checked here, and no more.
 
 
 @pytest.mark.parametrize(
@@ -883,3 +906,53 @@ def test_fg24_every_projection_attack_is_targeted_not_degenerate(
         "pair either, so it has degenerated into a constant. Hiding every "
         "difference is not evidence that it hid the one under attack."
     )
+
+
+# --------------------------------------------------------------------------
+# R3 -- production scope, enforced for this shape rather than inspected.
+#
+# `require_production_mutation_scope` was called only by the victim-test
+# runner, so nothing stopped a projection attack from mutating a test fixture
+# and watching the semantic identity move. The catalogue's claim that these
+# mutate production was a reading of the data, not a check on the path.
+# --------------------------------------------------------------------------
+
+
+def test_r3_every_projection_attack_mutates_production_scope():
+    """Both directions, through the same resolver the other shape uses.
+
+    `module` is a bare filename resolved under `src/nornyx_forge/`, so this
+    also pins that the resolution target really is production -- a filename
+    alone cannot say which tree it lands in.
+    """
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        require_production_mutation_scope,
+    )
+
+    outside = []
+    for attack in PROJECTION_ATTACKS:
+        relative = f"src/nornyx_forge/{attack.module}"
+        if not (ROOT / relative).is_file():
+            outside.append(f"{attack.ident}: {relative} does not exist")
+            continue
+        try:
+            require_production_mutation_scope(relative)
+        except AttackNotAdmissible as refusal:
+            outside.append(f"{attack.ident}: {relative} -- {refusal}")
+    assert outside == [], (
+        f"these projection attacks do not mutate production source: {outside}"
+    )
+
+
+def test_r3_a_fixture_target_would_be_refused():
+    """The negative specimen. Without it the check above could accept anything."""
+    from mutation_workspace import (  # noqa: PLC0415
+        AttackNotAdmissible,
+        require_production_mutation_scope,
+    )
+
+    for fabricated in ("tests/test_semantic_binding_theorem.py",
+                       "./tests/signing.py", "docs/ARCHITECTURE.md"):
+        with pytest.raises(AttackNotAdmissible):
+            require_production_mutation_scope(fabricated)
