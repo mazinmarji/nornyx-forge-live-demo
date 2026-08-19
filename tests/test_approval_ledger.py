@@ -1234,3 +1234,64 @@ def test_r1_a_clean_ledger_still_consumes_exactly_once(tmp_path: Path):
     assert granted[0] is True, "the first consume of a fresh grant must be allowed"
     assert not any(granted[1:]), f"a spent grant was reusable: {granted}"
     assert rows == 1, f"expected exactly one consumption row, found {rows}"
+
+
+def test_la01_a_surviving_ledger_object_re_reads_the_continuity_anchor(tmp_path: Path):
+    """The anchor must be read at the CLAIM, not cached at construction.
+
+    `_assert_ledger_structure` is deliberately re-run inside `consume` -- "a
+    hostile object installed after establishment was never seen again ... this
+    is the last moment before the claim". `established_at` lives in the same
+    file, in the same directory, with the same write exposure, and was read
+    ONCE in `__init__`.
+
+    So a boundary object that outlives the documented ledger restore keeps
+    vouching for a grant the restore was supposed to invalidate. No attacker is
+    needed: an operator running the documented recovery while a request is in
+    flight is enough.
+
+    Both existing tests construct the ledger AFTER the restore, which is the
+    one ordering where the property holds -- a running server produces the
+    other. Measured before the fix: the surviving object granted a second
+    consumption of the same fingerprint while a fresh object refused it.
+    """
+    path = tmp_path / "continuity.sqlite3"
+    first, restored, issued, now = (
+        "2026-08-01T00:00:00Z", "2026-08-02T12:00:00Z",
+        "2026-08-02T00:00:00Z", "2026-08-03T00:00:00Z",
+    )
+    ApprovalLedger.provision(path, established_at=first)
+    surviving = ApprovalLedger(path)
+    claimed, _ = surviving.consume(
+        "fp-la01", "rd-la01", at=now, grant_issued_at=issued, approval_id="LA01")
+    assert claimed is True, "the first spend must succeed or this proves nothing"
+
+    for sibling in tmp_path.glob("continuity.sqlite3*"):
+        sibling.unlink()
+    ApprovalLedger.provision(path, established_at=restored)
+
+    replayed, reason = surviving.consume(
+        "fp-la01", "rd-la01", at=now, grant_issued_at=issued, approval_id="LA01")
+    assert replayed is False, (
+        "a ledger object constructed before the restore released the same grant "
+        "again, because it answered from a continuity anchor cached at "
+        f"construction rather than read at the claim: {reason}"
+    )
+    assert "GRANT_PREDATES_LEDGER" in reason, reason
+
+
+def test_la01_a_grant_issued_after_the_restore_still_works(tmp_path: Path):
+    """Positive control: re-reading the anchor must not refuse legitimate use."""
+    path = tmp_path / "continuity_ok.sqlite3"
+    ApprovalLedger.provision(path, established_at="2026-08-01T00:00:00Z")
+    surviving = ApprovalLedger(path)
+    for sibling in tmp_path.glob("continuity_ok.sqlite3*"):
+        sibling.unlink()
+    ApprovalLedger.provision(path, established_at="2026-08-02T00:00:00Z")
+
+    claimed, reason = surviving.consume(
+        "fp-after", "rd-after", at="2026-08-03T00:00:00Z",
+        grant_issued_at="2026-08-02T06:00:00Z", approval_id="AFTER")
+    assert claimed is True, (
+        f"a grant issued AFTER the restored anchor was refused: {reason}"
+    )

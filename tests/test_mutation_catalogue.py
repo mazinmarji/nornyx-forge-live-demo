@@ -260,13 +260,13 @@ DEFENCE_IN_DEPTH_ATTACKS = frozenset(
 )
 
 #: What the campaign actually measured. Pinned, because a floor is not a count.
-EXPECTED_TOTAL_ATTACKS = 40
-EXPECTED_KILLS = 36
+EXPECTED_TOTAL_ATTACKS = 41
+EXPECTED_KILLS = 37
 EXPECTED_DEFENCE_IN_DEPTH = 4
 
 
 def test_the_accounting_is_kills_plus_defence_in_depth():
-    """40 = 36 + 4, with `compound` as METADATA on one of the kills.
+    """41 = 37 + 4, with `compound` as METADATA on one of the kills.
 
     Not 37 + 4 + 1: that reading counts the compound attack twice and implies a
     fourth category. A compound attack is a kill that had to remove an entire
@@ -282,8 +282,8 @@ def test_the_accounting_is_kills_plus_defence_in_depth():
     kills = [a for a in CATALOGUE if not a.defence_in_depth]
     compound = [a for a in CATALOGUE if a.compound]
 
-    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 40"
-    assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 36"
+    assert total == EXPECTED_TOTAL_ATTACKS, f"{total} attacks, expected 41"
+    assert len(kills) == EXPECTED_KILLS, f"{len(kills)} kills, expected 37"
     assert len(defence) == EXPECTED_DEFENCE_IN_DEPTH, sorted(defence)
     assert total == len(kills) + len(defence), f"{total} != {len(kills)} + {len(defence)}"
 
@@ -640,12 +640,14 @@ REQUIRED_ATTACK_IDS = frozenset(
         # by the floor, which is the discipline it was built for.
         "H14-DIRECT", "H15-DIRECT", "H16-DIRECT", "H17-DIRECT",
         "H18-DIRECT",
-        # H19-DIRECT IS NOT HERE. Its single mutation was measured to RAISE
-        # FileNotFoundError rather than shrink the subject, so the recorded
-        # unsafe state is unreachable by that edit and no kill is credited.
-        # Retired to NOT_YET_KILLED pending a measured compound. Removing the
-        # name is the POINT, not a convenience: a pinned identity that no
-        # longer holds must go, and the totals move with it. 
+        # H19-DIRECT WAS REMOVED FROM THIS SET AND IS BACK, because removing it
+        # was my error. I had measured its mutation raising FileNotFoundError
+        # and read that as "the unsafe state is unreachable"; the crash came
+        # from the member my probe deleted -- a contract, read eagerly -- not
+        # from the attack. Against a required ROOT the same registered mutation
+        # verifies a smaller subject and mints a digest, which is the recorded
+        # defect exactly. An independent review found this; I reproduced it.
+        "H19-DIRECT", 
     }
 )
 

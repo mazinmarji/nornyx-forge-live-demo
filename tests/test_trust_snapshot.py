@@ -736,3 +736,28 @@ def test_the_report_and_the_authenticator_use_one_rule():
         "a second spelling of the active rule has appeared, which is how the "
         "report and the authenticator drift onto different answers"
     )
+
+
+def test_la03_the_frozen_store_cannot_be_repointed_in_place():
+    """`frozen=True` freezes the reference, not what it points at.
+
+    A review inserted an attacker key directly into
+    `context.action_approval_trust.signers` and turned a DENY
+    (APPROVER_NOT_TRUSTED) into an ALLOW with the effect executed -- while
+    `store.digest` stayed unchanged, so the audit projection could not detect
+    it afterwards either. The docstring claimed "a variable changed after
+    startup cannot re-point the root of trust"; the mapping was a plain dict.
+    """
+    from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
+
+    store = ApprovalTrustStore.for_test(
+        [{"key_id": "k1", "public_key": "AAAA", "algorithm": "Ed25519",
+          "subject": "human.reviewer", "subject_type": "human",
+          "roles": ["operations_owner"], "status": "active"}],
+        domain="action",
+    )
+    with pytest.raises(TypeError):
+        store.signers["attacker-key"] = object()
+    with pytest.raises(TypeError):
+        del store.signers["k1"]
+    assert "attacker-key" not in store.signers

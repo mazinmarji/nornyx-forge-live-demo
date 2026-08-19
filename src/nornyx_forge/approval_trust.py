@@ -60,6 +60,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 #: Where the trusted signer keys are read from. A location, never authority:
@@ -384,7 +385,7 @@ def trust_store_path() -> Path:
     return Path(override) if override else DEFAULT_TRUST_STORE
 
 
-def _parse_signers(payload: Any, location: Path) -> dict[str, TrustedSigner]:
+def _parse_signers(payload: Any, location: Path) -> Mapping[str, TrustedSigner]:
     entries = payload.get("signers") if isinstance(payload, dict) else payload
     if not isinstance(entries, list):
         raise TrustStoreUnavailable(
@@ -413,7 +414,15 @@ def _parse_signers(payload: Any, location: Path) -> dict[str, TrustedSigner]:
             public_key=str(entry["public_key"]),
             status=str(entry.get("status", "active")),
         )
-    return signers
+    # READ-ONLY. `ApprovalTrustStore` is `frozen=True`, which freezes the
+    # REFERENCE and not what it points at -- a plain dict here meant the
+    # 'immutable startup snapshot' could be re-pointed in place after
+    # bootstrap. A review demonstrated it: inserting an attacker key into
+    # `context.action_approval_trust.signers` turned a DENY
+    # (APPROVER_NOT_TRUSTED) into an ALLOW with the effect executed, while
+    # `store.digest` stayed unchanged -- so the audit projection could not see
+    # it afterwards either.
+    return MappingProxyType(signers)
 
 
 @dataclass(frozen=True)

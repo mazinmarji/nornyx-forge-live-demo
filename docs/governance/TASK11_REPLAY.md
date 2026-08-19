@@ -15,9 +15,30 @@ total was carried forward, adjusted, or consulted while producing this one.
       defence in depth                4      SURFACE-GUARD-A/B/C/D
       compound                        2      H05-DIRECT, SURFACE-WHOLE-CHAIN
 
-    replay                           81 passed, 0 failed, 14m03s
-    working tree                     clean
+Re-derived a second time after an independent review found two defects in the
+criteria that produce it. The intermediate figure this document briefly should
+have carried -- 40 = 36 + 4 -- was wrong, and it was wrong because I retired a
+VALID kill:
 
+  H19 was moved to NOT_YET_KILLED on my measurement that its mutation raises
+  FileNotFoundError rather than shrinking the subject. That was true of the
+  member my probe deleted -- a CONTRACT, read eagerly, so the mutant died
+  before the scope check ran -- and false of the attack. Measured against a
+  required ROOT, the same registered mutation gives:
+
+      PRISTINE   verified False   SUBJECT_SCOPE_INCOMPLETE   digest ""
+      MUTANT     verified TRUE    reason None                digest sha256:c91fc64
+
+  A smaller governed set, verified, with a minted identity: the recorded
+  defect exactly. H19 is a valid single-mutation kill and is restored.
+
+Two criteria were also decided partly on DIAGNOSTIC STRINGS with inverted
+polarity -- absence of `REVIEWER_IS_THE_BUILDER` or of "performs process
+execution" read as the control being gone. A review drove a presentation-only
+rename to a full KILLED_VALIDLY with no control removed. H14 and H07 now
+decide on security state alone (`assurance_state`, and the gate's verdict).
+The recorded kills were sound either way -- their registered mutations do
+violate the properties -- but the kernel certifying them was not.
 ## The number is the same as the dead one, and that needs saying
 
 The withdrawn total was also `41 = 37 + 4`. It is reported here anyway, because

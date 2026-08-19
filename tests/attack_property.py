@@ -256,8 +256,12 @@ from nornyx_forge.subject_bootstrap import bootstrap_security_context
 # `subject_bootstrap` imports -- deleting one of those raises
 # ModuleNotFoundError before anything is measured, which is a broken
 # probe rather than a violation. Same target the victim test uses.
-victim = Path(".nornyx/contracts/runtime_network.nyx")
-victim.unlink()
+# A required ROOT. The contract member this used to delete is read EAGERLY,
+# so the mutant died on FileNotFoundError before the scope check could shrink
+# anything -- and that crash was misread as "the attack cannot recreate the
+# unsafe state", retiring a VALID kill. Measured against a root, the mutant
+# verifies a smaller subject and mints a digest: the recorded defect exactly.
+shutil.rmtree(Path(".github"), ignore_errors=True)
 try:
     ctx = bootstrap_security_context(Path("."))
     subject = ctx.runtime_subject
@@ -501,9 +505,17 @@ def _h14_violated(tree: Path) -> bool:
             "identity mismatch fired, so this measured the identity binding "
             f"rather than independence: {measured}"
         )
-    if measured["assurance_state"] != "not_independently_inspected":
-        return True
-    return not measured["builder_named"]
+    # STATE ONLY. This also required the refusal to NAME
+    # REVIEWER_IS_THE_BUILDER, so renaming that diagnostic -- with the
+    # `return (False, ...)` refusal untouched -- satisfied the criterion and
+    # earned a full KILLED_VALIDLY with no control removed. A review drove
+    # that end to end. The absence of a string was being read as the absence
+    # of the control, which is the exact substitution R2 exists to remove,
+    # committed inside R2's own replacement.
+    #
+    # `builder_named` is still measured, but only as an INVALIDITY guard
+    # below: it cannot make a mutant look violated, only unmeasurable.
+    return measured["assurance_state"] == "independently_inspected"
 
 
 H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR = AuthoritativeProperty(
@@ -592,9 +604,12 @@ print(json.dumps({
 def _h07_violated(tree: Path) -> bool:
     """A dynamic spelling that walks past the capability gate is the violation."""
     measured = run_probe(tree, _H07_PROBE)
-    # Refused for SOME reason is not enough: it must be refused AS a capability
-    # acquisition, or the gate caught something else and the property is untested.
-    return not (measured["gate_rc"] != 0 and measured["capability_named"])
+    # STATE ONLY: the violation is the gate ACCEPTING the module. Requiring
+    # the refusal to say "performs process execution" meant rewording that
+    # message -- gate still refusing, rc still 2 -- satisfied the criterion.
+    # Deciding on rc alone is also the conservative direction: a mutant that
+    # makes the gate fail for an unrelated reason is NOT credited.
+    return measured["gate_rc"] == 0
 
 
 H07_DYNAMIC_SPELLING_DOES_NOT_EVADE_CAPABILITY = AuthoritativeProperty(

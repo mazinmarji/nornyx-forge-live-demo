@@ -1032,9 +1032,24 @@ class ApprovalLedger:
         # open. On Windows that open handle makes the file undeletable, and four
         # tests that delete a ledger to prove a spent grant stays spent failed
         # with PermissionError -- the repair breaking the proofs around it.
+        # THE ANCHOR IS READ HERE TOO, on the same connection and at the same
+        # moment. It was read once in __init__ and cached, so a boundary object
+        # that outlived the documented ledger restore kept vouching for a grant
+        # the restore existed to invalidate: measured, a surviving object
+        # granted a second consumption of one fingerprint while a freshly
+        # constructed one refused it, the two differing only in WHEN the object
+        # was built. No attacker required -- an operator running the documented
+        # recovery while a request is in flight produces it.
+        #
+        # The structure check was already re-run here for exactly this reason
+        # ('a hostile object installed after establishment was never seen
+        # again'). The anchor lives in the same file, in the same directory,
+        # with the same write exposure, and was not.
+        established_now: str | None = self.established_at
         try:
             with closing(sqlite3.connect(self.path)) as conn:
                 _assert_ledger_structure(conn, self.path, self.UNREADABLE)
+                established_now = _read_established_at(conn)
         except NornyxRuntimeUnavailable as exc:
             return (
                 False,
@@ -1060,12 +1075,14 @@ class ApprovalLedger:
         # `str(approval.get("generated_at", "")) or None` — so an approval with
         # no issuance stamp produced None and skipped this check entirely. An
         # unanswered question was being read as a satisfied one.
-        established = _instant(self.established_at)
+        # `established_now`, not `self.established_at`: the cached value is the
+        # one that let a spent grant through.
+        established = _instant(established_now)
         if established is None:
             return (
                 False,
                 f"{LEDGER_CONTINUITY_UNKNOWN}: {self.path} carries no readable "
-                f"establishment record ({self.established_at!r}), so it cannot "
+                f"establishment record ({established_now!r}), so it cannot "
                 "say which grants it has seen. Re-provision it deliberately.",
             )
         issued = _instant(grant_issued_at)
@@ -1095,6 +1112,33 @@ class ApprovalLedger:
                     " VALUES (?, ?, ?, ?)",
                     (fingerprint, request_digest, approval_id, at),
                 )
+                # THE WRITE IS VERIFIED, not assumed. `INSERT` succeeding is
+                # not the same fact as a row existing: a BEFORE INSERT trigger
+                # running RAISE(IGNORE) discards it and reports success. The
+                # structure check above refuses such a trigger, but it runs on
+                # a different connection a moment earlier, and a review
+                # measured 943 claims granted with no row by flapping a trigger
+                # inside that window -- the original 'one grant, N effects,
+                # zero rows' defeat, relocated from WHAT the check looks at to
+                # WHEN it looks.
+                #
+                # Reading the row back on the same connection, inside the same
+                # transaction, closes the window regardless of timing: whatever
+                # discarded the write also fails this.
+                landed = conn.execute(
+                    "SELECT count(*) FROM consumed_approvals"
+                    " WHERE fingerprint = ? AND request_digest = ?",
+                    (fingerprint, request_digest),
+                ).fetchone()
+                if not landed or int(landed[0]) != 1:
+                    return (
+                        False,
+                        f"{self.UNREADABLE}: the consumption row for this grant "
+                        "was not written, so single use cannot be guaranteed. "
+                        "The insert reported success and the ledger holds "
+                        f"{0 if not landed else landed[0]} matching rows -- "
+                        "something is discarding writes.",
+                    )
         except sqlite3.IntegrityError:
             spent = self.lookup(fingerprint=fingerprint) or self.lookup(
                 request_digest=request_digest

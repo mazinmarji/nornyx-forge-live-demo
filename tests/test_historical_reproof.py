@@ -678,30 +678,28 @@ OBSOLETE_HISTORICAL_ATTACK = {
     ),
 }
 
-NOT_YET_KILLED: dict[str, str] = {
-    "H19": (
-        "The single mutation does not recreate the recorded unsafe state. "
-        "Disabling the completeness check (`if missing:` -> `if False and missing:`) does not make the subject SHRINK -- measured, the computation "
-        "then RAISES FileNotFoundError when it reads the absent member, so "
-        "there is no smaller subject and nothing verifies one. The recorded "
-        "defect, `a tree missing declared content computes a smaller subject "
-        "and verifies it`, is unreachable by this edit. "
-        "An independent review filed exactly this: H19 was credited on an "
-        "uncaught exception. It was invisible because the criterion treated "
-        "`did not refuse properly` and `did not run` as the same answer -- a "
-        "crash reason contains no SUBJECT_SCOPE_INCOMPLETE either. The "
-        "criterion now RAISES on an unmeasurable mutant instead of crediting "
-        "it, which is what surfaced this. "
-        "Two controls therefore stand between the tree and the unsafe state: "
-        "the completeness refusal and the read itself. Removing one leaves "
-        "the property protected, which is defence-in-depth, not a kill. "
-        "Retired from the single-mutation runner pending a COMPOUND that "
-        "disables completeness AND tolerates the absent read; until that is "
-        "built and measured, H19 has no kill credit. Manufacturing one by "
-        "loosening the criterion would be the defect this whole cycle exists "
-        "to remove."
-    ),
-}
+NOT_YET_KILLED: dict[str, str] = {}
+
+#: H19 WAS HERE, AND ITS RETIREMENT WAS MY ERROR, NOT A FINDING.
+#: I recorded as measured fact that its mutation "does not make the subject
+#: SHRINK -- the computation then RAISES FileNotFoundError". That held only
+#: for the member my probe happened to delete: a CONTRACT, which is read
+#: eagerly, so the mutant died before the scope check could shrink anything.
+#: An independent review measured the same registered mutation against a
+#: required ROOT and got the recorded defect verbatim -- I reproduced it:
+#:
+#:     PRISTINE  verified False  SUBJECT_SCOPE_INCOMPLETE  digest ""
+#:     MUTANT    verified TRUE   reason None               digest sha256:c91fc64
+#:
+#: A smaller governed set, verified, with a minted identity. H19 is a valid
+#: single-mutation kill. The criterion now deletes a required root.
+#:
+#: The lesson is the one this cycle keeps relearning: a probe that cannot
+#: measure is not evidence of absence. My FG29 fix made an unmeasurable
+#: mutant RAISE instead of counting as violated -- correct -- but I then read
+#: the raise as "the attack does not work" rather than "my probe is aimed
+#: wrong", and retired a real kill on that reading.
+
 
 #: Excluded from the single-mutation runner for either reason -- proved by
 #: compound, or not proved yet. The runner cares about MECHANISM; the catalogue
