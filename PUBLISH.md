@@ -21,4 +21,11 @@ git remote add origin https://github.com/mazinmarji/nornyx-forge-live-demo.git
 git push -u origin main
 ```
 
-After publication, confirm that GitHub Actions completes both `test` and `demo-contract` jobs before describing strict Nornyx/CrewAI execution as validated.
+After publication, confirm that GitHub Actions completes both `test` and
+`demo-contract`. Neither validates strict Nornyx execution and neither
+validates CrewAI: `demo-contract` runs the demo non-strict, the
+`strict-authorization` job reports that strict authorization stays inactive,
+and `cli.py` requests `execution_backend="sequential"` unconditionally. The
+wording this replaces -- describing "strict Nornyx/CrewAI execution" as
+validated by those jobs -- was retracted in README.md and survived here
+because the guard scanned only README and docs/.

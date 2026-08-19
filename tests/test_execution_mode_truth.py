@@ -326,12 +326,27 @@ def test_no_document_claims_crewai_where_the_cli_requests_sequential():
         return  # the claim would be true; nothing to forbid
 
     offenders = []
-    for path in [ROOT / "README.md", *sorted((ROOT / "docs").rglob("*.md"))]:
+    # THE CANONICAL DISCOVERY HELPER, not a hand-built list. This read
+    # [README.md, *docs/**] while its docstring claimed it quantified over
+    # every .md -- and a review found the retired claim alive in
+    # PUBLISH.md, outside the sweep. `governance_docs()` was written for
+    # exactly this failure and was not being used here.
+    from test_documented_claims import governance_docs  # noqa: PLC0415
+
+    for path in governance_docs():
         for number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
             asserted = _unquoted(line).lower()
-            if "crewai" in asserted and "strict" in asserted:
+            # WHOLE WORDS. A substring test matched "strict" inside
+            # "non-strict", so a sentence saying the job runs the demo
+            # NON-strict was read as claiming strict execution -- the negation
+            # flagged as the assertion it denies.
+            # Hyphens stay INSIDE tokens, so "non-strict" is one word and not
+            # the word "strict". Splitting on every non-letter turned the
+            # negation into the term it negates.
+            words = set(re.split("[^a-z-]+", asserted))
+            if "crewai" in words and "strict" in words:
                 offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
     assert offenders == [], (
         f"cli.py requests execution_backend={sorted(requested)}, so CrewAI is "
@@ -378,4 +393,58 @@ def test_a_retracted_claim_is_not_read_as_a_claim(
     flagged = "crewai" in asserted and "strict" in asserted
     assert flagged is should_flag, (
         f"{label}: flagged={flagged}, expected={should_flag}"
+    )
+
+
+#: Surfaces an operator actually looks at. A review found
+#: "Live CrewAI Flow · Nornyx policy decisions" hardcoded in the dashboard,
+#: served at both `/` and `/dashboard`, while every decision measured
+#: `deterministic_fallback` and `sequential`. Static markup reads identically
+#: whatever ran, so it cannot go false -- and no guard scanned `.html`.
+UI_SUFFIXES = (".html", ".htm", ".js", ".css")
+
+
+def _ui_surfaces() -> list[Path]:
+    """Authored UI files, discovered rather than listed."""
+    skip = {".venv", "node_modules", ".git", ".nornyx", "evidence", "site-packages"}
+    return sorted(
+        path
+        for suffix in UI_SUFFIXES
+        for path in ROOT.rglob(f"*{suffix}")
+        if not any(part in skip for part in path.relative_to(ROOT).parts)
+    )
+
+
+def test_the_ui_surface_sweep_finds_the_dashboard():
+    """Guard the guard: an empty sweep would pass the check below silently."""
+    names = {p.relative_to(ROOT).as_posix() for p in _ui_surfaces()}
+    assert "src/demo_app/static/index.html" in names, (
+        f"the dashboard is outside the UI sweep: {sorted(names)[:6]}"
+    )
+
+
+def test_no_ui_surface_claims_a_governance_mode_the_run_does_not_use():
+    """The operator-facing claim must match what a run reports.
+
+    Measured rather than assumed: the shipped path reports
+    `governance_mode: deterministic_fallback` and
+    `observed_execution_backend: sequential`, so a surface asserting Nornyx
+    governance or a CrewAI Flow is asserting something the run does not do.
+    """
+    offenders = []
+    for path in _ui_surfaces():
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            asserted = _unquoted(line).lower()
+            words = set(re.split("[^a-z-]+", asserted))
+            claims_crewai_flow = "crewai" in words and "flow" in words
+            compatible = "compatible" in words or "sequential" in words
+            if claims_crewai_flow and not compatible:
+                offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+            if "governance" in words and "nornyx" in words and "fallback" not in words:
+                offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+    assert offenders == [], (
+        "these operator-facing surfaces claim a governance or execution mode "
+        f"the shipped run does not use: {offenders}"
     )

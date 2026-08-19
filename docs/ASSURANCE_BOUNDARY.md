@@ -100,40 +100,18 @@ argument a caller must name at the construction site. A repository test fails if
 
 ## Governed revision
 
-Three facts are kept separate and never collapsed into one value:
+**THE REVISION MODEL DESCRIBED HERE NO LONGER EXISTS.** This section set out
+`actual_revision`, `declared_revision` and `revision_verified`, and two
+refusal codes, `GOVERNED_REVISION_MISMATCH` and
+`GOVERNED_REVISION_UNVERIFIED`. None of them is defined anywhere in `src/`
+or `scripts/` -- `nornyx_runtime.py` records that the model is "gone, not
+deprecated in place", and `tests/test_subject_provenance.py` BANS a
+re-introduction. Authority is content-digest bound: `governed_subject_digest`
+and `governed_revision_digest`. Git provenance is observed by
+`subject_observer.observe_source_commit` and reaches no decision.
 
-| | |
-|---|---|
-| `actual_revision` | what git says is checked out, or `None` if it cannot say |
-| `declared_revision` | what the contract claims to govern |
-| `revision_verified` | whether those were compared and agreed |
-
-`FORGE_RUNTIME_REVISION` also used to exist and was also removed: it re-aimed an
-approval issued for one revision onto another.
-
-Behaviour splits three ways, and the two refusals are deliberately distinct
-because their remedies are:
-
-| State | Consequential release |
-|---|---|
-| verified, revisions agree | may proceed |
-| verified, revisions disagree | `GOVERNED_REVISION_MISMATCH` |
-| revision cannot be derived (no git, as in a container) | `GOVERNED_REVISION_UNVERIFIED` |
-
-An unverifiable revision does **not** stop the application starting or a
-low-risk demonstration running; neither borrows authority from it. It blocks
-revision-bound consequential authority, and nothing wider. Nornyx still
-evaluates capability and trust-zone crossing independently and may refuse for
-its own reasons.
-
-Neither refusal consumes the approval — the tree being unconfirmable is not a
-reason to destroy a human's grant.
-
-**Known limitation.** Inside a built container there is no `.git`, so
-`revision_verified` is `false` and revision-bound consequential authority is
-unavailable there. Turning that into `true` requires image build provenance
-anchored on a canonical governed-content digest, with the git SHA as provenance
-rather than as the integrity primitive. That is not implemented.
+The container caveat that followed is retired with it: there is no
+`revision_verified` to be false inside an image.
 
 An approval is therefore judged against the moment it is actually exercised. The
 seven-day agentic-network approval window is real elapsed time: an approval

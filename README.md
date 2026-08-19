@@ -5,7 +5,7 @@
 This repository is a public reference implementation for demonstrating three Nornyx value claims:
 
 1. **Software-development governance** — requirements, goals, permissions, tests, repair budgets, evidence, and release gates are explicit and revision-bound.
-2. **Architecture governance** — target components, layers, interfaces, trust boundaries, and architecture evidence are checked before acceptance.
+2. **Architecture governance** — declared modules and layers, and the architecture evidence set, are checked before acceptance. Interfaces and trust boundaries are DECLARED but not checked: `architecture_governance.nyx` carries `interfaces: []` and empty boundary lists, and `scripts/check_architecture.py` reads only `modules` and `layers`. The previous wording named them as checked.
 3. **Delivery speed** — Repo Scout reuses a suitable foundation, deterministic gates catch defects early, and bounded repair loops reduce uncontrolled re-iteration.
 
 ## What runs

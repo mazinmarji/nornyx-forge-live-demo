@@ -29,41 +29,42 @@ did not undergo the cycle below, and no reader should treat it as if it had.
 
 ## The cycle, as measured at 990caea
 
+Split deliberately. Only `--verify` output sits inside the anchored block,
+because only those fields can be recomputed at that commit and compared.
+A review built an anchored block carrying `collected 999999` and
+`authenticated_reviewers ["alice","bob","carol"]` next to
+`integrity_state intact`, and both checks admitted it. Everything a machine
+cannot recheck at that SHA now lives OUTSIDE the fence.
+
 <!-- verify-measured-at: 990caea -->
 
 ```
-full pytest suite            RC=0, zero failures
-census                       RC=0, GATE: PASS
-  collected                  1115
-  expected skips             9
-  unexpected skips           0
-  unexpected xfails          0
-
-ruff (whole tree)            rc=0
-compileall                   rc=0
-architecture                 rc=0
-security                     rc=0
-pre-approval baseline        rc=0
-repository validation        rc=0
-evidence binding             rc=0
-
---verify
-  status                     pass
-  integrity_state            intact
-  governed_input_match       True
-  evidence_manifest_match    True
-  problems                   0
-
-evidence self-consistency    recorded digest == actual digest
-grandfather dependence       NONE -- 990caea is not in the baseline
-working tree                 clean, 0 porcelain lines
-
+status                       pass
+integrity_state              intact
+governed_input_match         True
+evidence_manifest_match      True
+problems                     0
 assurance_state              not_independently_inspected
 independent                  False
 authenticated_reviewers      []
 ```
 
-The last three lines are as important as the rest. Nothing here establishes
+REPORTED, NOT MACHINE-VERIFIED BY THE ANCHOR. Observed when the cycle ran,
+recorded on that basis alone. Re-run them to confirm; do not read them as
+bound to the SHA above.
+
+    full pytest suite            RC=0, zero failures
+    census                       RC=0, GATE PASS, 1115 collected
+    expected / unexpected skips  9 / 0, unexpected xfails 0
+    ruff, compileall             clean
+    architecture, security       clean
+    pre-approval, repo validation clean
+    evidence binding             clean
+    evidence self-consistency    recorded digest == actual digest
+    grandfather dependence       NONE -- 990caea is not in the baseline
+    working tree                 clean, 0 porcelain lines
+
+The assurance The last three lines are as important as the rest. Nothing here establishes
 independent inspection, human approval, or production authorization. The cycle
 proves the tree is internally consistent and its proofs discriminate; it does
 not confer assurance that only a human can confer.

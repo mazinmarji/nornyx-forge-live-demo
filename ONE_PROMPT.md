@@ -40,12 +40,23 @@ Then run:
 
   python scripts/bootstrap.py --autonomous --worker-mode in-session
 
-Continue until the application is implemented, all acceptance gates pass, the
-CrewAI customer-operations Flow completes its demonstration scenarios, and the
-application is running. Stop only on a declared hard stop, unavailable
+Continue until the application is implemented, all acceptance gates pass, and
+the customer-operations Flow completes its demonstration scenarios.
+
+On a fresh clone the run STOPS BEFORE LAUNCH, and that is correct.
+`bootstrap.py` appends `--strict-nornyx` when `--skip-install` is absent;
+measured, that demo exits 2 blocked on AN_APPROVAL_RECORD_MISSING, and
+`run()` raises SystemExit on a nonzero return, so the launch and the URL
+prints below are never reached. Declining to execute governed actions
+without an approval is the system working.
+
+The shipped flow runs `run_sequential()`; `observed_execution_backend` is
+`sequential`. It is not a CrewAI kickoff, and this section previously said
+it was. Stop only on a declared hard stop, unavailable
 prerequisite, exhausted budget, or unresolved security/legal ambiguity.
 
-At completion report the application URL, dashboard URL, API documentation URL,
+At completion report the URLs IF the launch was reached, otherwise the exact
+refusal and its diagnostics, plus
 build evidence verdict, runtime evidence verdict, repository foundation and
 revision, measured value report, and every limitation or unsupported assurance
 claim.

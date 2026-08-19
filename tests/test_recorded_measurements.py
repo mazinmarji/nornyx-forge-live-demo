@@ -59,8 +59,19 @@ def _blocks(text: str) -> list[tuple[int, str, str]]:
     return found
 
 
+def _governance_docs():
+    """Every authored markdown document, discovered not listed.
+
+    Was `docs/**` alone, so a transcript in README.md, CLAUDE.md or
+    ONE_PROMPT.md would have been outside the convention entirely.
+    """
+    from test_documented_claims import governance_docs  # noqa: PLC0415
+
+    return governance_docs()
+
+
 DOCUMENTS = sorted(
-    path for path in (ROOT / "docs").rglob("*.md")
+    path for path in _governance_docs()
     if TRANSCRIPT.search(path.read_text(encoding="utf-8"))
 )
 
