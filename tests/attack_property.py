@@ -1,0 +1,745 @@
+"""What a mutation proof is AUTHORIZED to claim was violated.
+
+The catalogue carried three prose fields -- `prop`, `control`, `expect` -- none
+of which had a documented contract, and all three meant different things. For
+H10: the security property, the mechanism enforcing it, and a presentation-level
+observation. Promoting any of them would have turned prose written as
+description into executable authority retroactively, and `expect` in particular
+("the continuity refusal no longer names its code") is satisfied by a renamed
+diagnostic while the property it is supposed to stand for is fully intact.
+
+So authority is NOT a fourth string. An authoritative property is:
+
+    ident       a stable identity, used in verdicts and records
+    violated_in an EXECUTABLE criterion, run inside the mutant tree, that
+                measures the security state directly
+    describe    prose, which explains the property and decides nothing
+
+Only `ident` and `violated_in` participate in a verdict. `describe` may be
+rewritten freely without changing what any attack is credited with -- which is
+the whole point: language explains a proof, it does not confer one.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+
+class PropertyNotViolated(AssertionError):
+    """The mutant broke something, but not the property the attack claims."""
+
+
+@dataclass(frozen=True)
+class AuthoritativeProperty:
+    """The one property whose violation earns kill credit for an attack."""
+
+    ident: str
+    describe: str
+    #: Runs in the mutant tree. True == the security property is violated.
+    violated_in: Callable[[Path], bool]
+
+
+def run_probe(tree: Path, source: str) -> dict:
+    """Execute a criterion probe inside the mutant workspace and read its JSON.
+
+    In the MUTANT tree, so the criterion measures the mutated code. A probe
+    that fails to run is not evidence of anything and must not be read as
+    "not violated" -- it raises.
+    """
+    from mutation_workspace import isolated_env  # noqa: PLC0415
+
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", source],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", env=isolated_env(tree), timeout=900,
+    )
+    start = completed.stdout.rfind("{")
+    if completed.returncode != 0 or start < 0:
+        raise PropertyNotViolated(
+            "the property criterion could not be measured in the mutant tree, "
+            "so nothing about the property is established: rc="
+            f"{completed.returncode} {completed.stdout[-300:]} "
+            f"{completed.stderr[-300:]}"
+        )
+    return json.loads(completed.stdout[start:])
+
+
+#: H10. The property is the continuity invariant itself, not the diagnostic
+#: that announces it: a grant issued BEFORE the ledger's recorded history began
+#: cannot be proven unspent, so deleting the ledger to replay a spent grant must
+#: leave it REFUSED. Violated exactly when the replay is granted.
+_H10_PROBE = """
+import json, tempfile
+from pathlib import Path
+from nornyx_forge.nornyx_runtime import ApprovalLedger
+
+p = Path(tempfile.mkdtemp()) / "ledger.sqlite3"
+ApprovalLedger.provision(p, established_at="2026-08-01T00:00:00Z")
+first, _ = ApprovalLedger(p).consume(
+    "FP-H10", "REQ-H10", at="2026-08-15T00:00:00Z",
+    grant_issued_at="2026-08-02T00:00:00Z")
+for suffix in ("", "-wal", "-shm"):
+    sibling = p.with_name(p.name + suffix)
+    if sibling.exists():
+        sibling.unlink()
+ApprovalLedger.provision(p, established_at="2026-08-09T00:00:00Z")
+replayed, reason = ApprovalLedger(p).consume(
+    "FP-H10", "REQ-H10", at="2026-08-15T00:00:00Z",
+    grant_issued_at="2026-08-02T00:00:00Z")
+print(json.dumps({"first": bool(first), "replayed": bool(replayed),
+                  "reason": str(reason)[:120]}))
+"""
+
+
+def _h10_violated(tree: Path) -> bool:
+    measured = run_probe(tree, _H10_PROBE)
+    if not measured["first"]:
+        raise PropertyNotViolated(
+            "the probe could not spend the grant even once, so the replay "
+            f"measurement means nothing: {measured}"
+        )
+    return bool(measured["replayed"])
+
+
+H10_PRE_LEDGER_GRANT_STAYS_UNCLAIMABLE = AuthoritativeProperty(
+    ident="H10_PRE_LEDGER_GRANT_STAYS_UNCLAIMABLE",
+    describe=(
+        "A grant issued before the ledger's recorded history began cannot be "
+        "proven unspent, so deleting the ledger makes an outstanding grant "
+        "UNUSABLE rather than reusable. Violated only when the replay is "
+        "granted -- never by a renamed diagnostic or a reworded refusal."
+    ),
+    violated_in=_h10_violated,
+)
+
+
+#: H16. The property is that an UNANSWERABLE question is not answered "clean":
+#: when git cannot be run, the governed-tree check must refuse rather than
+#: report no unstaged paths. Violated exactly when it returns a value instead
+#: of raising -- never by the wording of the refusal.
+_H16_PROBE = """
+import json, subprocess, sys
+sys.path.insert(0, "scripts")
+import refresh_governance_evidence as refresh
+
+real = subprocess.run
+def unreachable(args, **kwargs):
+    if args and args[0] == "git":
+        raise FileNotFoundError(2, "not found", "git")
+    return real(args, **kwargs)
+subprocess.run = unreachable
+
+try:
+    returned = refresh._unstaged_governed_paths()
+    print(json.dumps({"refused": False, "returned": repr(returned)[:80]}))
+except SystemExit as exc:
+    print(json.dumps({"refused": True, "returned": str(exc)[:80]}))
+except Exception as exc:
+    print(json.dumps({"refused": False, "returned": type(exc).__name__ + ": crashed"}))
+"""
+
+
+def _h16_violated(tree: Path) -> bool:
+    """An unrunnable git that yields an answer -- any answer -- is the violation."""
+    measured = run_probe(tree, _H16_PROBE)
+    return not measured["refused"]
+
+
+H16_UNRUNNABLE_GIT_IS_NOT_A_CLEAN_TREE = AuthoritativeProperty(
+    ident="H16_UNRUNNABLE_GIT_IS_NOT_A_CLEAN_TREE",
+    describe=(
+        "When git cannot be run, the governed-tree check cannot prove the tree "
+        "clean and must refuse. Violated when it returns instead of raising -- "
+        "a crash is also a violation, because an unanswerable question was "
+        "still not answered honestly."
+    ),
+    violated_in=_h16_violated,
+)
+
+
+#: H18. Assurance must be RECOMPUTED over what is on disk, so a derived field
+#: written into the binding by hand cannot survive verification. Violated when
+#: a forged `production_approval: granted` verifies as intact.
+_H18_PROBE = """
+import json, subprocess, sys
+from pathlib import Path
+BINDING = Path(".nornyx/contracts/evidence/review_binding.json")
+payload = json.loads(BINDING.read_text(encoding="utf-8"))
+payload["production_approval"] = "granted"
+payload.setdefault("approvals", {})["human_review"] = "performed"
+BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
+                   encoding="utf-8")
+done = subprocess.run(
+    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+raw = done.stdout[done.stdout.find("{"):]
+state = json.loads(raw)["verification"] if raw else {}
+print(json.dumps({
+    "integrity_state": state.get("integrity_state"),
+    "named": any("production_approval" in str(p) for p in state.get("problems", [])),
+}))
+"""
+
+
+def _h18_violated(tree: Path) -> bool:
+    """A forged derived field that verifies as intact is the violation."""
+    measured = run_probe(tree, _H18_PROBE)
+    return measured["integrity_state"] != "compromised" or not measured["named"]
+
+
+H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK = AuthoritativeProperty(
+    ident="H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK",
+    describe=(
+        "Derived assurance fields are recomputed from what is on disk, so a "
+        "hand-written `production_approval: granted` must make the evidence "
+        "set compromised and be named as a problem. Violated when the forgery "
+        "verifies, or verifies without being named."
+    ),
+    violated_in=_h18_violated,
+)
+
+
+#: H17. Deleting a claim must not be a way to stop it being checked. Violated
+#: when a binding with `contract_set_digest` removed still verifies.
+_H17_PROBE = """
+import json, subprocess, sys
+from pathlib import Path
+BINDING = Path(".nornyx/contracts/evidence/review_binding.json")
+payload = json.loads(BINDING.read_text(encoding="utf-8"))
+payload.pop("contract_set_digest", None)
+BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
+                   encoding="utf-8")
+done = subprocess.run(
+    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+raw = done.stdout[done.stdout.find("{"):]
+state = json.loads(raw)["verification"] if raw else {}
+print(json.dumps({
+    "integrity_state": state.get("integrity_state"),
+    "named": any("contract_set_digest" in str(p) for p in state.get("problems", [])),
+}))
+"""
+
+
+def _h17_violated(tree: Path) -> bool:
+    measured = run_probe(tree, _H17_PROBE)
+    return measured["integrity_state"] != "compromised" or not measured["named"]
+
+
+H17_A_DELETED_CLAIM_IS_STILL_CHECKED = AuthoritativeProperty(
+    ident="H17_A_DELETED_CLAIM_IS_STILL_CHECKED",
+    describe=(
+        "Removing a claim from the review binding must not remove the check "
+        "that consumes it: a binding with no contract_set_digest is refused "
+        "and the absence is named. Violated when verification passes, or "
+        "passes without naming the missing claim."
+    ),
+    violated_in=_h17_violated,
+)
+
+
+#: H19. A declared member that is ABSENT must refuse, never quietly shrink the
+#: subject. Violated when the subject is computed anyway -- measured by the
+#: verified flag and by a fabricated digest for content nobody could describe.
+_H19_PROBE = """
+import json, shutil, sys
+from pathlib import Path
+sys.path.insert(0, "src")
+from nornyx_forge.subject_bootstrap import bootstrap_security_context
+
+# A DECLARED member whose absence the scope must refuse. Not a module
+# `subject_bootstrap` imports -- deleting one of those raises
+# ModuleNotFoundError before anything is measured, which is a broken
+# probe rather than a violation. Same target the victim test uses.
+victim = Path(".nornyx/contracts/runtime_network.nyx")
+victim.unlink()
+try:
+    ctx = bootstrap_security_context(Path("."))
+    subject = ctx.runtime_subject
+    print(json.dumps({
+        "verified": bool(getattr(subject, "subject_verified", True)),
+        "reason": str(getattr(subject, "unavailable_reason", ""))[:90],
+        "digest": str(getattr(subject, "governed_subject_digest", ""))[:24],
+    }))
+except Exception as exc:
+    print(json.dumps({"verified": False, "reason": "RAISED " + type(exc).__name__,
+                      "digest": ""}))
+"""
+
+
+def _h19_violated(tree: Path) -> bool:
+    """Shrinking is the violation: verified True, or a digest minted anyway."""
+    measured = run_probe(tree, _H19_PROBE)
+    if measured["verified"]:
+        return True
+    if measured["digest"]:
+        return True
+    return "SUBJECT_SCOPE_INCOMPLETE" not in measured["reason"]
+
+
+H19_AN_ABSENT_DECLARED_MEMBER_REFUSES = AuthoritativeProperty(
+    ident="H19_AN_ABSENT_DECLARED_MEMBER_REFUSES",
+    describe=(
+        "A declared governed member that is missing makes the subject refuse "
+        "with SUBJECT_SCOPE_INCOMPLETE and mint no digest. Violated when the "
+        "subject verifies anyway, or fabricates an identity for content that "
+        "could not be described."
+    ),
+    violated_in=_h19_violated,
+)
+
+
+#: H09. A signed validity window that is never judged bounds nothing. Violated
+#: when an approval one second past `expires_at` is accepted -- measured by
+#: calling the real verifier with the module's own fixtures, so the signature
+#: is genuinely valid and only the temporal clause is under test.
+_H09_PROBE = """
+import json, sys
+sys.path.insert(0, "src")
+sys.path.insert(0, "tests")
+from test_governance_approval_verifier import _approval, _keypair, _store
+
+keypair = _keypair()
+from nornyx_forge.approval_trust import verify_governance_approval
+ok, reason, evidence = verify_governance_approval(
+    _approval(keypair), trust_store=_store(keypair),
+    as_of="2026-08-05T00:00:01Z")
+print(json.dumps({
+    "accepted": bool(ok),
+    "reason": str(reason)[:80],
+    "signature_verified": bool(evidence.get("signature_verified")),
+}))
+"""
+
+
+def _h09_violated(tree: Path) -> bool:
+    """Accepting the expired approval is the violation.
+
+    The signature must still verify, or the probe is measuring a broken
+    signature rather than the temporal clause -- that would be an invalid
+    experiment, so it raises instead of reporting a result.
+    """
+    measured = run_probe(tree, _H09_PROBE)
+    if not measured["signature_verified"]:
+        raise PropertyNotViolated(
+            "the fixture's signature did not verify, so this measured the "
+            f"wrong clause entirely: {measured}"
+        )
+    return measured["accepted"]
+
+
+H09_AN_EXPIRED_APPROVAL_IS_REFUSED = AuthoritativeProperty(
+    ident="H09_AN_EXPIRED_APPROVAL_IS_REFUSED",
+    describe=(
+        "The signed validity window is evaluated against a trusted clock, so "
+        "an approval one second past expiry is refused even though everything "
+        "else about it is impeccable. Violated only when it is ACCEPTED -- not "
+        "by the wording of the refusal or the diagnostic code."
+    ),
+    violated_in=_h09_violated,
+)
+
+
+#: H15. A missing governed module is a REFUSAL, not a crash. The distinction is
+#: semantic, not the exit code -- a traceback also exits non-zero. What makes it
+#: a refusal is that it is machine-readable, names the absent module, and
+#: reports integrity as unavailable rather than claiming anything about
+#: soundness. Violated when the verifier crashes instead.
+_H15_PROBE = """
+import json, subprocess, sys
+from pathlib import Path
+
+Path("src/nornyx_forge/reviewer_trust.py").unlink()
+done = subprocess.run(
+    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+combined = done.stdout + done.stderr
+start = done.stdout.find("{")
+structured = start >= 0
+names_it = "reviewer_trust" in combined
+print(json.dumps({
+    "traceback": "Traceback (most recent call last)" in combined,
+    "structured": structured,
+    "names_module": names_it,
+}))
+"""
+
+
+def _h15_violated(tree: Path) -> bool:
+    """A crash -- or a refusal that says nothing machine-readable -- is the violation."""
+    measured = run_probe(tree, _H15_PROBE)
+    if measured["traceback"]:
+        return True
+    return not (measured["structured"] and measured["names_module"])
+
+
+H15_A_MISSING_GOVERNED_MODULE_IS_REFUSED = AuthoritativeProperty(
+    ident="H15_A_MISSING_GOVERNED_MODULE_IS_REFUSED",
+    describe=(
+        "A ModuleNotFoundError for governed source becomes a governance "
+        "finding: machine-readable, naming the absent module, reporting "
+        "integrity unavailable rather than sound. Violated by a traceback, or "
+        "by a refusal that does not name what is missing."
+    ),
+    violated_in=_h15_violated,
+)
+
+
+#: H06. The suite cannot quietly get smaller. The floor is what makes shrinkage
+#: visible, so it must sit close enough to the real collection that deleting a
+#: module trips it. Measured as arithmetic over an actual collection in the
+#: mutant tree -- not by reading the constant and trusting it.
+_H06_PROBE = """
+import json, subprocess, sys
+
+done = subprocess.run(
+    [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+collected = sum(
+    int(line.rsplit(":", 1)[1])
+    for line in done.stdout.splitlines()
+    if line.startswith("tests/") and line.rsplit(":", 1)[-1].strip().isdigit()
+)
+sys.path.insert(0, "scripts")
+import check_test_coverage as census
+floor = census.MINIMUM_COLLECTED
+print(json.dumps({
+    "collected": collected,
+    "floor": floor,
+    "slack": collected - floor,
+    "within_band": floor >= collected * 9 // 10,
+}))
+"""
+
+
+def _h06_violated(tree: Path) -> bool:
+    """A floor that no longer tracks the suite is the violation."""
+    measured = run_probe(tree, _H06_PROBE)
+    if measured["collected"] <= 0:
+        raise PropertyNotViolated(
+            f"collection produced no counts, so nothing was measured: {measured}"
+        )
+    return not measured["within_band"]
+
+
+H06_THE_SUITE_CANNOT_QUIETLY_SHRINK = AuthoritativeProperty(
+    ident="H06_THE_SUITE_CANNOT_QUIETLY_SHRINK",
+    describe=(
+        "The anti-shrink floor sits within 10% of what the suite actually "
+        "collects, so deleting a module of any size trips it. Violated when "
+        "the floor falls outside that band, because whole security modules "
+        "could then be removed with the census still green."
+    ),
+    violated_in=_h06_violated,
+)
+
+
+#: H14. Independence is derived from AUTHENTICATED identities, so a reviewer who
+#: is the builder cannot satisfy an inspector role even holding a trusted key
+#: issued in their own name. Violated when the assurance derivation reports
+#: independent inspection anyway, or refuses for the wrong reason.
+_H14_PROBE = """
+import json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "src")
+sys.path.insert(0, "tests")
+from test_independent_inspection import (
+    BUILDER, Reviewers, _assurance, _attest, _settle, _workspace)
+
+scratch = Path(tempfile.mkdtemp())
+work = _workspace(scratch)
+_settle(work)
+reviewers = Reviewers(scratch)
+
+store = json.loads(reviewers.store.read_text(encoding="utf-8"))
+for entry in store["reviewers"]:
+    if "security-inspector" in entry["roles"]:
+        entry["reviewer"] = BUILDER
+reviewers.store.write_text(json.dumps(store, indent=2), encoding="utf-8")
+reviewers.names["security-inspector"] = BUILDER
+
+_attest(work, reviewers)
+state = _assurance(work, reviewers)
+problems = [str(p) for p in state.get("assurance_problems", [])]
+print(json.dumps({
+    "assurance_state": state.get("assurance_state"),
+    "builder_named": any("REVIEWER_IS_THE_BUILDER" in p for p in problems),
+    "identity_mismatch": any("REVIEWER_IDENTITY_MISMATCH" in p for p in problems),
+}))
+"""
+
+
+def _h14_violated(tree: Path) -> bool:
+    """Crediting independence to the builder is the violation.
+
+    An identity mismatch firing means the fixture broke and the probe measured
+    the identity binding instead of independence -- an invalid experiment, so
+    it raises rather than reporting a verdict.
+    """
+    measured = run_probe(tree, _H14_PROBE)
+    if measured["identity_mismatch"]:
+        raise PropertyNotViolated(
+            "identity mismatch fired, so this measured the identity binding "
+            f"rather than independence: {measured}"
+        )
+    if measured["assurance_state"] != "not_independently_inspected":
+        return True
+    return not measured["builder_named"]
+
+
+H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR = AuthoritativeProperty(
+    ident="H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR",
+    describe=(
+        "Independence is derived from authenticated identities, so a reviewer "
+        "who is the builder cannot satisfy an inspector role even with a "
+        "trusted key in their own name. Violated when assurance reports "
+        "independent inspection, or when the refusal does not come from the "
+        "independence derivation itself."
+    ),
+    violated_in=_h14_violated,
+)
+
+
+#: H05. Absence of required governed content is reported in the tool's own
+#: vocabulary, never as a crash. Same distinction as H15 and equally semantic:
+#: a traceback also exits non-zero.
+_H05_PROBE = """
+import json, subprocess, sys
+from pathlib import Path
+
+# A required governed CONTRACT. That is the asymmetric case the control
+# was written for: a missing FILE already refused cleanly, while a
+# missing CONTRACT produced a bare traceback from the approval-wiring
+# loop. Deleting attestations or an evidence JSON never reaches it.
+Path(".nornyx/contracts/runtime_network.nyx").unlink()
+done = subprocess.run(
+    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+combined = done.stdout + done.stderr
+print(json.dumps({
+    "traceback": "Traceback (most recent call last)" in combined,
+    "structured": done.stdout.find("{") >= 0,
+}))
+"""
+
+
+def _h05_violated(tree: Path) -> bool:
+    measured = run_probe(tree, _H05_PROBE)
+    return measured["traceback"] or not measured["structured"]
+
+
+H05_MISSING_GOVERNED_CONTENT_IS_REPORTED_NOT_CRASHED = AuthoritativeProperty(
+    ident="H05_MISSING_GOVERNED_CONTENT_IS_REPORTED_NOT_CRASHED",
+    describe=(
+        "Required governed content that is absent produces a machine-readable "
+        "refusal in the tool's vocabulary. Violated by a traceback, or by any "
+        "outcome that carries no structured report at all."
+    ),
+    violated_in=_h05_violated,
+)
+
+
+#: H07. Capability is what a module HOLDS, not how it spelled the import. A
+#: module that acquires the process capability through a dynamic spelling must
+#: be refused by the architecture gate. Violated when the gate passes it.
+_H07_PROBE = """
+import json, subprocess, sys
+from pathlib import Path
+
+# Appended to a module the architecture contract ALREADY declares. A NEW file
+# under src/ is refused for being undeclared -- rc=2 for a reason that has
+# nothing to do with capability, which is a broken probe, not a violation.
+TARGET = Path("src/demo_app/agentic.py")
+original = TARGET.read_bytes()
+TARGET.write_bytes(
+    original + (chr(10) * 2).encode("utf-8")
+    + ("def _h07_smuggle():" + chr(10)
+       + "    import importlib" + chr(10)
+       + "    mod = importlib.import_module('subprocess')" + chr(10)
+       + "    return mod.run(['echo'], capture_output=True)" + chr(10)
+       ).encode("utf-8"))
+done = subprocess.run(
+    [sys.executable, "scripts/check_architecture.py"],
+    capture_output=True, text=True, encoding="utf-8", errors="replace")
+TARGET.write_bytes(original)
+combined = done.stdout + done.stderr
+print(json.dumps({
+    "gate_rc": done.returncode,
+    "capability_named": "performs process execution" in combined,
+}))
+"""
+
+
+def _h07_violated(tree: Path) -> bool:
+    """A dynamic spelling that walks past the capability gate is the violation."""
+    measured = run_probe(tree, _H07_PROBE)
+    # Refused for SOME reason is not enough: it must be refused AS a capability
+    # acquisition, or the gate caught something else and the property is untested.
+    return not (measured["gate_rc"] != 0 and measured["capability_named"])
+
+
+H07_DYNAMIC_SPELLING_DOES_NOT_EVADE_CAPABILITY = AuthoritativeProperty(
+    ident="H07_DYNAMIC_SPELLING_DOES_NOT_EVADE_CAPABILITY",
+    describe=(
+        "Process capability is judged by what a module holds, not by how it "
+        "spelled the import, so a module reaching subprocess through "
+        "importlib is refused by the architecture gate. Violated when the gate "
+        "returns success for such a module."
+    ),
+    violated_in=_h07_violated,
+)
+
+
+#: H02. Integrity gates the EFFECT, not just the report. A compromised runtime
+#: must release nothing and must not spend the approval. Violated when the
+#: callback runs, or when the grant is consumed by a run that must not have
+#: started -- never by the wording of the refusal.
+_H02_PROBE = """
+import json, sys
+sys.path.insert(0, "src")
+sys.path.insert(0, "tests")
+from test_governance_integrity_authority import _release
+from nornyx_forge.governed_subject import (
+    INTEGRITY_COMPROMISED, GovernanceIntegrityState)
+import tempfile
+from pathlib import Path
+
+decision, calls, spent = _release(
+    Path(tempfile.mkdtemp()),
+    GovernanceIntegrityState(
+        status=INTEGRITY_COMPROMISED,
+        verified_claims=8,
+        problems=("architecture_governance.nyx records X",),
+    ),
+)
+print(json.dumps({
+    "effect": str(decision.effect),
+    "callbacks": len(calls),
+    "spent": bool(spent),
+}))
+"""
+
+
+def _h02_violated(tree: Path) -> bool:
+    """A released effect, or a spent grant, under compromised integrity."""
+    measured = run_probe(tree, _H02_PROBE)
+    return (measured["effect"] != "DENY"
+            or measured["callbacks"] != 0
+            or measured["spent"])
+
+
+H02_COMPROMISED_INTEGRITY_RELEASES_NOTHING = AuthoritativeProperty(
+    ident="H02_COMPROMISED_INTEGRITY_RELEASES_NOTHING",
+    describe=(
+        "Governance integrity gates the effect, not merely the report: under "
+        "compromised evidence the decision is DENY, no callback runs, and the "
+        "approval is not spent. Violated by any released effect or consumed "
+        "grant, regardless of what the refusal says."
+    ),
+    violated_in=_h02_violated,
+)
+
+
+#: H08. A long-lived authority consumer answers from an immutable snapshot, so
+#: replacing the trust file under a running context cannot change who it
+#: trusts. The file is genuinely replaced between the two requests, so this
+#: fails if anything downstream reopens it. Violated when the second request
+#: sees the attacker's key.
+_H08_PROBE = """
+import json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "src")
+sys.path.insert(0, "tests")
+from test_trust_snapshot import ATTACKER, _anchored, _signers
+from nornyx_forge.approval_trust import ApprovalTrustStore
+from nornyx_forge.nornyx_runtime import ACTION_TRUST_DOMAIN
+
+scratch = Path(tempfile.mkdtemp())
+store_path, trust = _anchored(scratch)
+frozen = ApprovalTrustStore.load(store_path, domain=ACTION_TRUST_DOMAIN)
+
+first = _signers(scratch, trust, frozen)
+store_path.write_text(json.dumps(ATTACKER), encoding="utf-8")
+second = _signers(scratch, trust, frozen)
+print(json.dumps({
+    "first": list(first),
+    "second": list(second),
+    "attacker_seen": "attacker-key" in second,
+}))
+"""
+
+
+def _h08_violated(tree: Path) -> bool:
+    """The running context changing its mind about trust is the violation."""
+    measured = run_probe(tree, _H08_PROBE)
+    if measured["first"] != ["test-approval-01"]:
+        raise PropertyNotViolated(
+            "the first request did not see the anchored signer, so the probe "
+            f"never established a baseline: {measured}"
+        )
+    return measured["second"] != measured["first"] or measured["attacker_seen"]
+
+
+H08_A_RUNNING_CONTEXT_ANSWERS_FROM_ITS_SNAPSHOT = AuthoritativeProperty(
+    ident="H08_A_RUNNING_CONTEXT_ANSWERS_FROM_ITS_SNAPSHOT",
+    describe=(
+        "Trust is answered from the snapshot the context froze, so replacing "
+        "the trust file mid-flight cannot change who a running context trusts. "
+        "Violated when the second request differs from the first, or when the "
+        "attacker's key becomes trusted."
+    ),
+    violated_in=_h08_violated,
+)
+
+
+#: H01. The boundary judges with the store the application FROZE, not one it
+#: reopened for itself. Scoped exactly as the victim test scopes it: this is
+#: possession travelling from context to boundary, and says nothing about the
+#: authority decision consulting it -- a control built and not connected is a
+#: defect this repository has produced more than once. Violated when the
+#: boundary answers from a different object.
+_H01_PROBE = """
+import json, sys
+sys.path.insert(0, "src")
+from pathlib import Path
+from demo_app.agentic import CustomerCaseFlow, application_security_context
+
+context = application_security_context()
+flow = CustomerCaseFlow(
+    {"id": "CASE-TRUST", "customer": "Omar",
+     "summary": "Issue a high-value external refund", "risk": "high",
+     "requested_action": "issue refund"},
+    root=Path("."), security_context=context)
+print(json.dumps({
+    "context_has_trust": context.action_approval_trust is not None,
+    "same_object": flow.boundary.action_trust_store is context.action_approval_trust,
+}))
+"""
+
+
+def _h01_violated(tree: Path) -> bool:
+    """The boundary answering from a store the application did not freeze."""
+    measured = run_probe(tree, _H01_PROBE)
+    if not measured["context_has_trust"]:
+        raise PropertyNotViolated(
+            "bootstrap parsed no action approval trust at all, so there was "
+            f"nothing to propagate and nothing was measured: {measured}"
+        )
+    return not measured["same_object"]
+
+
+H01_THE_BOUNDARY_USES_THE_ESTABLISHED_STORE = AuthoritativeProperty(
+    ident="H01_THE_BOUNDARY_USES_THE_ESTABLISHED_STORE",
+    describe=(
+        "The frozen action-approval trust the application established is the "
+        "very object the boundary holds -- identity, not equality. Violated "
+        "when the boundary answers from a store it resolved itself. Bounded to "
+        "propagation; it does not claim the authority decision consults it."
+    ),
+    violated_in=_h01_violated,
+)

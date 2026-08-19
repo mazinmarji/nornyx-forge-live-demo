@@ -34,6 +34,22 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 
+from attack_property import (  # noqa: E402
+    H01_THE_BOUNDARY_USES_THE_ESTABLISHED_STORE,
+    H02_COMPROMISED_INTEGRITY_RELEASES_NOTHING,
+    H05_MISSING_GOVERNED_CONTENT_IS_REPORTED_NOT_CRASHED,
+    H06_THE_SUITE_CANNOT_QUIETLY_SHRINK,
+    H07_DYNAMIC_SPELLING_DOES_NOT_EVADE_CAPABILITY,
+    H08_A_RUNNING_CONTEXT_ANSWERS_FROM_ITS_SNAPSHOT,
+    H09_AN_EXPIRED_APPROVAL_IS_REFUSED,
+    H10_PRE_LEDGER_GRANT_STAYS_UNCLAIMABLE,
+    H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR,
+    H15_A_MISSING_GOVERNED_MODULE_IS_REFUSED,
+    H16_UNRUNNABLE_GIT_IS_NOT_A_CLEAN_TREE,
+    H17_A_DELETED_CLAIM_IS_STILL_CHECKED,
+    H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK,
+    H19_AN_ABSENT_DECLARED_MEMBER_REFUSES,
+)
 from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
 from mutation_workspace import (  # noqa: E402
     AttackNotAdmissible,
@@ -97,6 +113,12 @@ class SecurityClass:
     extra_mutations: tuple = ()
     #: Set when AST inequality is not enough to show the control is gone.
     semantic_effect: str = ""
+    #: THE property whose violation earns kill credit. `prop`, `control` and
+    #: `expect` are descriptive and decide nothing; this is the only field the
+    #: verdict consults, and it carries an EXECUTABLE criterion rather than
+    #: prose. `None` means the attack has not been migrated yet -- it is never
+    #: filled by copying one of the prose fields.
+    authoritative_property: object = None
     #: Where the reachability probe is planted, when that cannot be the mutation
     #: anchor itself. A keyword argument or a multi-line expression is not a
     #: statement boundary, so planting a raise there does not parse. Sound ONLY
@@ -105,12 +127,30 @@ class SecurityClass:
     probe_anchor: str = ""
 
 
+#: H10's redesigned target. The historical mutation rewrote the f-string
+#: prefix (`{GRANT_PREDATES_LEDGER}:` -> `OK:`), changing the MESSAGE while
+#: leaving the refusal intact. Measured: the continuity property was NOT
+#: violated, the victim node failed only on its diagnostic assertion, and the
+#: campaign credited a kill anyway -- the R2 defect in one attack.
+#:
+#: This flips the refusal itself, inside the SAME branch body, so the probe
+#: anchor still names a statement the mutated construct is unconditionally
+#: part of and the H13 branch-reachability rule is preserved.
+_NL = chr(10)
+_H10_REFUSAL = (
+    "            return (" + _NL
+    + "                False," + _NL
+    + '                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "'
+)
+_H10_REFUSAL_REMOVED = _H10_REFUSAL.replace("False,", "True,", 1)
+
 INVENTORY = (
     SecurityClass(
         ident="H01 runtime security context never reaches the boundary",
         defect="flows ran unestablished; the boundary resolved its own anchors per use",
         prop="the boundary judges with the context the application established",
         control="demo_app.agentic passes frozen_action_trust from the context",
+        authoritative_property=H01_THE_BOUNDARY_USES_THE_ESTABLISHED_STORE,
         # `None or X` was the first attempt and is a SEMANTIC NO-OP: the parse
         # tree changes, the value does not. That is the blind spot of an
         # AST-difference check, and `semantic_effect` below is what closes it.
@@ -150,6 +190,7 @@ INVENTORY = (
         defect="a compromised governance surface still released consequential effects",
         prop="integrity gates the effect, not just the report",
         control="nornyx_runtime._official refuses when integrity does not authorize",
+        authoritative_property=H02_COMPROMISED_INTEGRITY_RELEASES_NOTHING,
         mutation=(RUNTIME,
                   "            if integrity is None or not integrity.authorizes_consequential_action:",
                   "            if False and (integrity is None or not integrity.authorizes_consequential_action):", 1),
@@ -190,6 +231,7 @@ INVENTORY = (
         defect="verify() raised FileNotFoundError while a missing FILE refused cleanly",
         prop="absence is reported in the tool's vocabulary, never as a crash",
         control="the approval-wiring loop records absence and continues",
+        authoritative_property=H05_MISSING_GOVERNED_CONTENT_IS_REPORTED_NOT_CRASHED,
         # TWO clauses, not one, and `FileNotFoundError` IS an `OSError` -- so
         # disabling the first leaves the second catching the same absence and
         # the refusal is unchanged. Measured: single-clause removal produced
@@ -219,6 +261,7 @@ INVENTORY = (
         defect="a green run executed 139 of 202 tests; the floor once allowed a third to vanish",
         prop="the suite cannot quietly get smaller",
         control="check_test_coverage.MINIMUM_COLLECTED, guarded at 90% of collected",
+        authoritative_property=H06_THE_SUITE_CANNOT_QUIETLY_SHRINK,
         # Anchored on the CURRENT floor, read from the census itself. A literal
         # went stale the moment the suite grew and the floor was raised, and the
         # harness then refused it as a stale anchor -- correctly, but it fails
@@ -234,6 +277,7 @@ INVENTORY = (
         defect="seven dynamic spellings acquired subprocess while the gate reported clean",
         prop="capability is what a module HOLDS, not how it spelled the import",
         control="check_architecture._dynamically_imported_module resolves every spelling",
+        authoritative_property=H07_DYNAMIC_SPELLING_DOES_NOT_EVADE_CAPABILITY,
         mutation=(ARCHGATE,
                   "    if not is_dynamic:\n        return None",
                   "    if True or not is_dynamic:\n        return None", 1),
@@ -246,6 +290,7 @@ INVENTORY = (
         defect="editing the trust file between two requests changed who the second trusted",
         prop="long-lived authority consumers answer from an immutable snapshot",
         control="NornyxActionBoundary prefers frozen_action_trust over any path",
+        authoritative_property=H08_A_RUNNING_CONTEXT_ANSWERS_FROM_ITS_SNAPSHOT,
         mutation=(RUNTIME,
                   "            self.action_trust_store = frozen_action_trust",
                   "            self.action_trust_store = ApprovalTrustStore.load(\n"
@@ -261,6 +306,7 @@ INVENTORY = (
         defect="a governance approval window was signed and never evaluated",
         prop="a signed window that is not judged bounds nothing",
         control="verify_governance_approval evaluates [generated, expires) against a trusted clock",
+        authoritative_property=H09_AN_EXPIRED_APPROVAL_IS_REFUSED,
         mutation=(TRUST,
                   "    if moment >= expires:",
                   "    if False and moment >= expires:", 1),
@@ -278,9 +324,7 @@ INVENTORY = (
         # relaxation is NOT available: a conditional separates the statement from
         # the mutated expression, and reaching the `if` proves only arrival.
         # The probe is planted inside the branch body, which is what has to run.
-        mutation=(RUNTIME,
-                  '                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "',
-                  '                f"OK: the approval was issued at "', 1),
+        mutation=(RUNTIME, _H10_REFUSAL, _H10_REFUSAL_REMOVED, 1),
         probe_anchor=('            return (\n'
                       '                False,\n'
                       '                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "'),
@@ -291,6 +335,7 @@ INVENTORY = (
         # subject is a grant outliving the ledger that would have recorded it.
         test="tests/test_approval_ledger.py::test_deleting_the_ledger_makes_outstanding_grants_unusable",
         expect="the continuity refusal no longer names its code",
+        authoritative_property=H10_PRE_LEDGER_GRANT_STAYS_UNCLAIMABLE,
         severity="P1",
     ),
     SecurityClass(
@@ -378,6 +423,7 @@ INVENTORY = (
         defect="independence was read off the artifact being judged",
         prop="independence is derived from authenticated identities",
         control="_authenticated_inspections discards what does not authenticate",
+        authoritative_property=H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR,
         # HIGHEST SCRUTINY. This is the class that put three forged
         # `"reviewer": "forged", "verdict": "pass"` records into a commit and
         # made the tree's own integrity verdict false. Removing the discard
@@ -415,6 +461,7 @@ INVENTORY = (
         defect="deleting a governed module the tool imports produced a traceback",
         prop="a missing governed module is a refusal, not a crash",
         control="_refuse_missing_governed_module",
+        authoritative_property=H15_A_MISSING_GOVERNED_MODULE_IS_REFUSED,
         # TRACED FROM THE OBSERVABLE, not from the helper's name -- which is how
         # the two earlier attempts went wrong.
         #
@@ -472,6 +519,7 @@ INVENTORY = (
                   'tree cannot be "', 1),
         test="tests/test_absence_is_not_success.py::test_an_unrunnable_git_is_not_a_clean_tree",
         expect="an unrunnable git reports a clean governed tree",
+        authoritative_property=H16_UNRUNNABLE_GIT_IS_NOT_A_CLEAN_TREE,
         severity="P1",
     ),
     SecurityClass(
@@ -479,6 +527,7 @@ INVENTORY = (
         defect="a missing binding passed verification silently",
         prop="nothing to verify against is not a passing verification",
         control="the verifier consumes verify_review_binding's problems",
+        authoritative_property=H17_A_DELETED_CLAIM_IS_STILL_CHECKED,
         # AIMED BY MEASUREMENT, not by name. The obvious node --
         # test_a_missing_review_binding_is_not_a_passing_verification -- DELETES
         # the binding, so `verify_review_binding` is never called there and the
@@ -502,6 +551,7 @@ INVENTORY = (
         defect="a recorded verdict was read back instead of recomputed",
         prop="assurance is recomputed over what is on disk",
         control="verify_review_binding refuses a derived field that disagrees",
+        authoritative_property=H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK,
         # MEASURED, and it overturned the earlier verdict. This was recorded as
         # defence-in-depth with an incomplete inventory after attacking
         # `recompute_binding_claims`. Cumulative suppression showed why that
@@ -544,6 +594,7 @@ INVENTORY = (
         defect="a smaller governed set computed a smaller subject and called it verified",
         prop="a declared member that is absent refuses, never shrinks",
         control="SubjectScope completeness, SUBJECT_SCOPE_INCOMPLETE",
+        authoritative_property=H19_AN_ABSENT_DECLARED_MEMBER_REFUSES,
         # Clause reachability MEASURED before registering, and both candidate
         # nodes reach it. This one is chosen because its own subject IS the
         # completeness refusal: a declared member is removed and the observer
@@ -840,6 +891,28 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
         require_caused_failure(report, item.test, output)
     except AttackNotAdmissible as refusal:
         pytest.fail(item.ident + ": " + str(refusal))
+
+    # SEMANTIC PROPERTY ATTRIBUTION. Everything above establishes that the
+    # registered node failed, in the call phase, under a valid mutant loaded
+    # from this tree. None of it asks WHICH property broke -- and a failure
+    # about a diagnostic NAME satisfies all of it while the security property
+    # stands untouched. That is how a presentation failure came to be credited
+    # as a kill.
+    #
+    # The criterion runs INSIDE the mutant tree and measures the security state
+    # directly, so no message text, code name, or assertion wording can satisfy
+    # it. A criterion that cannot be measured raises rather than reading as
+    # "not violated".
+    if item.authoritative_property is not None:
+        if not item.authoritative_property.violated_in(tree):
+            pytest.fail(
+                item.ident + ": INVALID_PROPERTY_ATTRIBUTION -- the node failed "
+                "and the mutant is valid, but the attack's authoritative "
+                "property (" + item.authoritative_property.ident + ") is NOT "
+                "violated in the mutant tree, measured by executing it. The "
+                "failure is about something else, so it is not evidence that "
+                "this control was removed."
+            )
 
 
 # --------------------------------------------------------------------------
@@ -1598,4 +1671,113 @@ def test_fg17_an_exact_node_is_admitted():
     """Positive: one file, one `::`, one named node."""
     require_exact_node(
         "tests/test_historical_reproof.py::test_removing_the_control_revives_the_defect"
+    )
+
+
+# --------------------------------------------------------------------------
+# R2 -- the authoritative runner decides the verdict without consulting the
+# attack's semantic property.
+#
+# The admission path above ends at
+#     require_caused_failure(report, item.test, output)
+# with no `expected_property`. Every upstream step is enforced -- exact node,
+# phase, mutant origin, semantic effect -- and the one step that asks WHICH
+# property broke stops at the door. So a failure about PRESENTATION is credited
+# as a kill of the SECURITY property.
+#
+# This runs the real mutant through the real node, not a synthetic report.
+# --------------------------------------------------------------------------
+
+#: The security assertion in H10's victim test, and the presentation assertion
+#: next to it. The mutant must leave the first passing and break the second.
+H10_SECURITY_ASSERTION = "a spent grant became usable again by deleting the ledger"
+H10_PRESENTATION_TOKEN = "GRANT_PREDATES_LEDGER"
+
+
+def _h10_presentation_only(item):
+    """H10 with its HISTORICAL mutation: renames the diagnostic, keeps the refusal.
+
+    Pinned here rather than read from the catalogue, because H10's live
+    mutation has since been redesigned to attack the refusal itself. The shape
+    this regression exists to refuse must stay measurable even though no live
+    attack uses it any more.
+    """
+    import dataclasses  # noqa: PLC0415
+
+    old = ('                f"{GRANT_PREDATES_LEDGER}: the approval was issued at "')
+    return dataclasses.replace(
+        item, mutation=(RUNTIME, old, '                f"OK: the approval was issued at "', 1)
+    )
+
+
+def test_r2_a_presentation_only_mutation_is_refused_by_the_runner(tmp_path: Path):
+    """Wrong-property control, through the campaign's own machinery.
+
+    The node fails, the mutant is valid, `require_caused_failure` is satisfied
+    -- exact node, call phase, real assertion -- and the security property is
+    untouched. Before the criterion was wired this was credited as a kill.
+    """
+    item = _h10_presentation_only(
+        next(i for i in DIRECT if i.ident.startswith("H10")))
+
+    tree = _mutated_tree(tmp_path / "mutant", item)
+    report = tmp_path / "r2.xml"
+    completed = run_node(tree, item.test, report=report)
+    output = completed.stdout + completed.stderr
+
+    assert completed.returncode != 0, "the presentation mutant did not fail the node"
+    assert H10_SECURITY_ASSERTION not in output, (
+        "the SECURITY assertion failed, so this is not the presentation-only shape"
+    )
+    assert H10_PRESENTATION_TOKEN in output, f"shape not reproduced: {output[-300:]}"
+
+    # The helper is satisfied. That is the defect, not a bug in the helper.
+    require_caused_failure(report, item.test, output)
+
+    # The authoritative criterion is not, and it decides the verdict.
+    assert not item.authoritative_property.violated_in(tree), (
+        "the criterion reports the continuity property violated by a mutation "
+        "that only renames a diagnostic"
+    )
+
+
+def test_r2_a_mutation_that_removes_the_refusal_is_accepted(tmp_path: Path):
+    """Right-property control. Without it the criterion could refuse everything.
+
+    H10's redesigned mutation flips the refusal inside the same branch body.
+    The criterion must report the property VIOLATED, which is what earns credit.
+    """
+    item = next(i for i in DIRECT if i.ident.startswith("H10"))
+    tree = _mutated_tree(tmp_path / "mutant", item)
+
+    assert item.authoritative_property.violated_in(tree), (
+        f"{item.ident}: removing the refusal did not register as a violation, "
+        "so the criterion cannot distinguish a real attack from a cosmetic one"
+    )
+
+
+def test_r2_a_green_helper_cannot_stand_in_for_the_runner(tmp_path: Path):
+    """The negative control the whole defect argues for.
+
+    `require_caused_failure` passed on the presentation-only report throughout
+    the period the campaign was crediting an invalid kill. This pins that its
+    passing says nothing about the verdict, so a green helper suite can never
+    again be read as evidence that the runner enforces the property.
+    """
+    item = _h10_presentation_only(
+        next(i for i in DIRECT if i.ident.startswith("H10")))
+    tree = _mutated_tree(tmp_path / "mutant", item)
+    report = tmp_path / "r2b.xml"
+    completed = run_node(tree, item.test, report=report)
+
+    helper_admits = True
+    try:
+        require_caused_failure(report, item.test, completed.stdout + completed.stderr)
+    except AttackNotAdmissible:
+        helper_admits = False
+    criterion_violated = item.authoritative_property.violated_in(tree)
+
+    assert helper_admits and not criterion_violated, (
+        "helper and criterion no longer disagree, so this control proves "
+        f"nothing: helper_admits={helper_admits} violated={criterion_violated}"
     )
