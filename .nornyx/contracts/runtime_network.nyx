@@ -104,7 +104,7 @@ approvals:
     accountable_authority: network_governance_owner
     revision_binding:
       kind: git
-      revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+      revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
     # Baseline placeholder, not a reviewer window. An authority declaration
@@ -136,7 +136,7 @@ approvals:
     accountable_authority: operations_owner
     revision_binding:
       kind: git
-      revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+      revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
     # Baseline placeholder, not a reviewer window. An authority declaration
@@ -148,18 +148,18 @@ approvals:
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+  subject_revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
   records:
     - id: agentic_network_contract_review
       type: network_contract_review
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_network_contract_review.json
-      content_hash: sha256:020ecee084f42362d0e1636d57e7c7b9bbc5e5ffb5f3ae8e7ac2523f4fd3ef39
-      subject_revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+      content_hash: sha256:dc159fdb5457f5c43e63e1240084224026803a479147bd80255569c32acc749c
+      subject_revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-08-20T20:37:21Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      generated_at: "2026-08-20T23:34:01Z"
+      expires_at: "2027-08-20T23:34:01Z"
       status: pass
       dependencies: []
     - id: evidence_manifest
@@ -167,11 +167,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/runtime_evidence_manifest.json
-      content_hash: sha256:8f180dbdf0e1715e9b887b6507365dee15970ddcb8edc7eade191c5bcebc81c7
-      subject_revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+      content_hash: sha256:27484b1777f409ab41a2235ca6960d1d59739d645cc34c1e1cb400cf6cb7a4c8
+      subject_revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-08-20T20:37:21Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      generated_at: "2026-08-20T23:34:01Z"
+      expires_at: "2027-08-20T23:34:01Z"
       status: pass
       dependencies: [agentic_network_contract_review]
 
@@ -248,7 +248,7 @@ agent_identities:
     capability_refs: [read_demo_case]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -262,7 +262,7 @@ agent_identities:
     capability_refs: [read_demo_case, analyze_demo_case]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -276,7 +276,7 @@ agent_identities:
     capability_refs: [read_demo_case, analyze_demo_case]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -290,7 +290,7 @@ agent_identities:
     capability_refs: [read_demo_case, analyze_demo_case]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -304,7 +304,7 @@ agent_identities:
     capability_refs: [execute_low_risk_action, request_high_risk_action, execute_high_risk_effect]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -318,7 +318,7 @@ agent_identities:
     capability_refs: [read_demo_case, validate_runtime_evidence]
     status: active
     valid_from: "2026-01-01T00:00:00Z"
-    expires_at: "2027-08-20T20:37:21Z"
+    expires_at: "2027-08-20T23:34:01Z"
     revocation_refs: []
     authority: non_human
     can_approve: false
@@ -326,7 +326,7 @@ agent_identities:
 agentic_network:
   schema: nornyx.agentic_network.v1
   id: network.forge_customer_operations
-  subject_revision: git:5ffec11d45cb7c97a1b8c0a0b2cf8dd2162159e0
+  subject_revision: git:3fb52d3029efeb190263d6da0d0d4b031927ee37
   trust_zones:
     - id: zone.local_demo
       classification: governed_local
@@ -349,7 +349,7 @@ agentic_network:
       capability_refs: [read_demo_case]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
     - id: membership.knowledge
       identity_ref: identity.knowledge
@@ -357,7 +357,7 @@ agentic_network:
       capability_refs: [read_demo_case, analyze_demo_case]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
     - id: membership.resolution
       identity_ref: identity.resolution
@@ -365,7 +365,7 @@ agentic_network:
       capability_refs: [read_demo_case, analyze_demo_case]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
     - id: membership.risk
       identity_ref: identity.risk
@@ -373,7 +373,7 @@ agentic_network:
       capability_refs: [read_demo_case, analyze_demo_case]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
     - id: membership.execution
       identity_ref: identity.execution
@@ -381,7 +381,7 @@ agentic_network:
       capability_refs: [execute_low_risk_action, request_high_risk_action, execute_high_risk_effect]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
     - id: membership.audit
       identity_ref: identity.audit
@@ -389,7 +389,7 @@ agentic_network:
       capability_refs: [read_demo_case, validate_runtime_evidence]
       status: authorized
       valid_from: "2026-01-01T00:00:00Z"
-      expires_at: "2027-08-20T20:37:21Z"
+      expires_at: "2027-08-20T23:34:01Z"
       revocation_refs: []
   protocol_targets:
     - id: protocol.external_customer_action

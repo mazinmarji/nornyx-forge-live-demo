@@ -165,6 +165,28 @@ def test_regeneration_restores_a_healthy_baseline_at_any_instant(as_of: str, tmp
         assert _codes(work, contract, as_of) <= APPROVAL_GAP_CODES
 
 
+_ISO = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T")
+
+
+def _timestamps(payload) -> list:
+    """Every ISO-8601-looking value in a nested structure, by shape.
+
+    By shape rather than by key name: a field called `valid_until` carries a
+    date just as much as one called `expires_at`, and enumerating key names
+    would be the same enumeration this repository keeps having to unwind.
+    """
+    found = []
+    if isinstance(payload, dict):
+        for value in payload.values():
+            found.extend(_timestamps(value))
+    elif isinstance(payload, list):
+        for value in payload:
+            found.extend(_timestamps(value))
+    elif isinstance(payload, str) and _ISO.match(payload):
+        found.append(payload)
+    return found
+
+
 @needs_nornyx
 def test_machine_evidence_carries_a_real_finite_window(tmp_path: Path):
     """No magic constant. The window is a genuine interval from the run."""
@@ -175,7 +197,29 @@ def test_machine_evidence_carries_a_real_finite_window(tmp_path: Path):
     index = json.loads((work / CONTRACTS / "evidence" / "INDEX.json").read_text(encoding="utf-8"))
     assert index["generated_at"] == "2026-08-03T00:00:00Z"
     assert index["expires_at"] == "2027-08-03T00:00:00Z"
-    assert "2099" not in json.dumps(index)
+    # THE FIELDS, NOT A SUBSTRING OF THE BLOB. This read
+    # `"2099" not in json.dumps(index)`, which searches every character of the
+    # serialised index -- INCLUDING the content hashes. A SHA-256 digest
+    # containing the digit run `2099` fails it, and one did: the clean-checkout
+    # census reported
+    #
+    #     '2099' is contained here: ad6552d2412099818"}, ...
+    #
+    # a hash, not a date. Whether it fires depends on the digests, so it
+    # differs between trees and between commits -- a flake that arrives with
+    # unrelated content changes and points at the wrong thing when it does.
+    #
+    # The property is that no DATE FIELD carries the retired far-future
+    # constant. That is what is asserted now, over the timestamp fields
+    # themselves, so a digest cannot trip it and a real 2099 date cannot hide
+    # in a field this does not read.
+    stamps = _timestamps(index)
+    assert stamps, "no timestamp fields found; this would assert nothing"
+    magic = sorted(value for value in stamps if value.startswith("2099"))
+    assert magic == [], (
+        "machine evidence carries the retired far-future constant in a date "
+        f"field: {magic}"
+    )
 
 
 @needs_nornyx
