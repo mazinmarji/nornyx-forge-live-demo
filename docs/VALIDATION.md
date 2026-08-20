@@ -34,6 +34,23 @@ The release workspace cannot reach public package indexes or GitHub from its she
 - Nornyx contract generation, lock creation, lock verification, and strict runtime evidence validation;
 - Docker image construction.
 
+## Verify from a CLONE, not from an archive
+
+A `git archive` extraction carries the content and no `.git`. Several proofs
+shell out to `git ls-files` to establish what a clean checkout contains, so in
+an archive they fail for a reason that has nothing to do with the control under
+test -- an independent review measured 62 failures and 10 errors across 16
+modules, including all nineteen `test_removing_the_control_revives_the_defect`
+cases, the mutation catalogue, and three false-green guards. Those are the
+central "every historical defect stays dead" evidence, and they pass in any git
+checkout.
+
+`tests/mutation_workspace.NotAGitCheckout` now says so at the point of failure
+rather than leaving a reviewer to work it out from sixty-two tracebacks. The
+requirement itself is real and is not being engineered away: these proofs
+compare against what git tracks, and without git there is nothing to compare
+against.
+
 ## Which mode actually runs, measured
 
 Every row below was produced by running the mode, not by reading configuration.
@@ -50,16 +67,18 @@ permissive one, which is the dangerous direction to be wrong in.
 | `demo_app.main` / Docker (`deterministic_demo`, `sequential`) | deterministic fallback | `sequential` | runs; high-risk effect prevented |
 | `RuntimeAuthorityConfig()` bare default (`nornyx`, `crewai`) | none — refused | none | `NornyxRuntimeUnavailable` |
 
+| `nornyx` + any executor | none — refused | none | `CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING` |
+| `deterministic_demo` + `crewai` | deterministic fallback | `crewai_flow` — CrewAI really executed | runs; high-risk effect prevented |
+| `deterministic_demo` + `crewai`, CrewAI absent | — | — | `ExecutionBackendUnavailable`; refuses rather than downgrading silently |
+| malformed policy or execution backend | — | — | `GovernedSubjectError` at construction |
+
+
 **Correction to the bare-default row.** That row reads as though nothing runs
 on `RuntimeAuthorityConfig()`. The BUILD path does: `cli.py` constructs
 `DevelopmentFlow(root, worker_mode=..., repo_mode=..., target_repo=...)` with
 no config at all, so the bare default is exactly what that path uses, and it
 is not refused there. The refusal the row describes belongs to the runtime
 authority path, not to every construction of the default.
-| `nornyx` + any executor | none — refused | none | `CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING` |
-| `deterministic_demo` + `crewai` | deterministic fallback | `crewai_flow` — CrewAI really executed | runs; high-risk effect prevented |
-| `deterministic_demo` + `crewai`, CrewAI absent | — | — | `ExecutionBackendUnavailable`; refuses rather than downgrading silently |
-| malformed policy or execution backend | — | — | `GovernedSubjectError` at construction |
 
 Reading the table:
 

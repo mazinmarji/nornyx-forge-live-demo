@@ -603,9 +603,21 @@ def _h14_violated(tree: Path) -> bool:
     # of the control, which is the exact substitution R2 exists to remove,
     # committed inside R2's own replacement.
     #
-    # `builder_named` is still measured, but only as an INVALIDITY guard
-    # below: it cannot make a mutant look violated, only unmeasurable.
-    return measured["assurance_state"] == "independently_inspected"
+    # `builder_named` is measured as an INVALIDITY guard: it cannot make a
+    # mutant look violated, only unmeasurable. That sentence used to stand here
+    # describing a guard that WAS NOT WRITTEN -- the value was computed and
+    # never read, and `describe` promised a clause ("when the refusal does not
+    # come from the independence derivation itself") that nothing evaluated. A
+    # comment claiming a check is the thing this module exists to refuse.
+    if measured["assurance_state"] == "independently_inspected":
+        return True
+    if not measured["builder_named"]:
+        raise PropertyNotViolated(
+            "assurance is not independent, but the refusal does not name "
+            "REVIEWER_IS_THE_BUILDER, so it cannot be attributed to the "
+            f"independence derivation and nothing was measured: {measured}"
+        )
+    return False
 
 
 H14_THE_BUILDER_CANNOT_BE_AN_INSPECTOR = AuthoritativeProperty(

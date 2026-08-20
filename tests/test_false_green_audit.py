@@ -1,6 +1,6 @@
 """Task 12. The proof system must not be able to succeed for the wrong reason.
 
-Fifteen false-green classes have actually occurred in this repository. Each
+Thirty-three false-green classes have actually occurred in this repository. Each
 one produced a green run that proved nothing, and each is now a named class with
 an executable guard and a self-attack that must trip it.
 
@@ -270,6 +270,15 @@ EXPECTED_FALSE_GREEN_CLASSES = frozenset(
 #: expresses them. Three map onto existing classes; eleven needed new ones. The
 #: test is whether an existing specimen could actually CATCH the defect -- not
 #: whether the words sound similar.
+#: MECHANISM -> CLASS, for the mechanisms found while remediating this
+#: repository. NOT an index of how every class arose: twelve of the classes
+#: predate this table and have no entry, and I briefly asserted otherwise --
+#: writing a test that demanded exhaustiveness the map never claimed, then
+#: watching it name twelve classes as "unexplained" when the map had simply
+#: never covered them. Inventing a requirement and calling its violation a
+#: defect is the same error as inventing a claim.
+#:
+#: What IS checked: every class this table names must exist.
 MECHANISM_TO_CLASS = {
     "subprocess_provenance_loss": "FG08",
     "exact_set_identity_vs_count": "FG14",
@@ -303,6 +312,14 @@ MECHANISM_TO_CLASS = {
     # classes this subject can actually raise -- `TrustStoreUnavailable` first
     # among them -- read as ordinary refusals. A blocklist of two suffixes is
     # still a blocklist.
+    #
+    # MAPPED, NOT MINTED, MEANS SOMETHING NARROWER THAN IT LOOKS. FG21's owner
+    # is about an xfail-marker detector reading code rather than prose; it
+    # could not catch THIS defect, and this entry does not claim it could. The
+    # mapping records which FAMILY a mechanism belongs to, so the audit's
+    # inventory stays a set of distinct hazards rather than growing an ID for
+    # every instance. The specimen that actually catches this one lives with
+    # the mechanism, in `test_domain_collapse_mutations.py`.
     "crash_detector_matches_only_named_suffixes": "FG21",
 }
 
@@ -956,4 +973,22 @@ def test_fg15_one_route_of_a_chain_is_not_the_property(tmp_path: Path):
     assert not whole_chain.defence_in_depth, (
         "the compound attack is the KILL; marking it defence-in-depth would "
         "leave the property with no kill at all"
+    )
+
+
+def test_the_mechanism_map_names_only_known_classes():
+    """B-P3-4: `MECHANISM_TO_CLASS` was defined and read by nothing.
+
+    A table nobody consults can name a class that does not exist, or map two
+    mechanisms onto a retired ID, and stay green forever. It is documentation
+    presented as data, and the difference between those is whether anything
+    checks it.
+    """
+    unknown = sorted(
+        f"{mechanism} -> {label}"
+        for mechanism, label in MECHANISM_TO_CLASS.items()
+        if label not in EXPECTED_FALSE_GREEN_CLASSES
+    )
+    assert unknown == [], (
+        f"the mechanism map points at classes that do not exist: {unknown}"
     )

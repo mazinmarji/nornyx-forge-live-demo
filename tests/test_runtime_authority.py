@@ -388,3 +388,30 @@ def test_a_backdated_lock_regeneration_cannot_revive_an_action_approval(tmp_path
     assert decision.effect == "DENY", "a backdated regeneration revived an approval"
     assert ran == 0
     assert rows == 0
+
+
+def test_medium_risk_exercises_the_low_risk_capability():
+    """A19: the risk vocabulary has four levels and the capability model two.
+
+    `medium` is accepted by the HTTP surface and maps to
+    `execute_low_risk_action`, which the runtime contract declares as
+    `risk: low` with no required gates and no required approvals. A reviewer
+    reading a four-level vocabulary could reasonably expect `medium` to sit
+    somewhere between; it does not.
+
+    This asserts the mapping rather than arguing about it. Moving `medium`
+    across the line would be a real authorization change, and it should be a
+    diff that fails here first.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        HIGH_RISK_LEVELS,
+        RISK_LEVELS,
+        exercised_capability,
+    )
+
+    assert RISK_LEVELS == {"low", "medium", "high", "critical"}
+    assert HIGH_RISK_LEVELS == {"high", "critical"}
+    assert exercised_capability("medium") == "execute_low_risk_action"
+    assert exercised_capability("low") == "execute_low_risk_action"
+    assert exercised_capability("high") == "execute_high_risk_effect"
+    assert exercised_capability("critical") == "execute_high_risk_effect"

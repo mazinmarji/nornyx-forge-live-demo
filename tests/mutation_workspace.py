@@ -78,13 +78,38 @@ class AttackNotAdmissible(AssertionError):
         self.outcome = outcome
 
 
+class NotAGitCheckout(RuntimeError):
+    """The suite is running somewhere `git ls-files` cannot answer.
+
+    A `git archive` tarball is a faithful copy of the CONTENT and carries no
+    `.git`, so every proof that asks git what is tracked fails -- 62 failures
+    and 10 errors across 16 modules when a review measured it, including all
+    nineteen `test_removing_the_control_revives_the_defect` cases, the mutation
+    catalogue, and three false-green guards.
+
+    Those are the repository's central "every historical defect stays dead"
+    evidence, and they pass in any git CHECKOUT. But a reviewer handed the
+    artifact form -- an archive -- cannot run them, and 62 unexplained failures
+    is the worst possible way to learn why.
+    """
+
+
 def tracked_files() -> list[str]:
     """Everything git tracks, which is what a clean checkout would contain."""
     completed = subprocess.run(  # noqa: S603
         ["git", "ls-files", "-z"],
-        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=False,
     )
-    return [name for name in completed.stdout.split("\0") if name]
+    if completed.returncode != 0:
+        raise NotAGitCheckout(
+            "`git ls-files` failed in " + str(ROOT) + ": "
+            + (completed.stderr or "").strip()[:200]
+            + ". These proofs need a git CHECKOUT, not a `git archive` "
+            "extraction -- an archive carries the content and no `.git`, so "
+            "every proof that asks git what is tracked fails for a reason "
+            "unrelated to the control under test. Clone the repository instead."
+        )
+    return [name for name in completed.stdout.split(chr(0)) if name]
 
 
 def faithful_copy(destination: Path) -> Path:
@@ -267,6 +292,20 @@ def require_caused_failure(
         evidence = " ".join(
             (f.get("message") or "") + " " + (f.text or "") for f in failures
         )
+        # SUBSTRING, AND THAT IS A STATED BOUND RATHER THAN ATTRIBUTION.
+        # Asking whether the failure text CONTAINS a phrase is the same shape
+        # this repository refuses elsewhere: a renamed assertion message
+        # changes the answer while the property is untouched. It is kept
+        # because it is strictly better than nothing at the one place it runs,
+        # and it is honest about what it is.
+        #
+        # It also runs NOWHERE IN THE CAMPAIGN. `grep` for callers passing
+        # `expected_property` returns only `tests/test_failure_attribution.py`;
+        # the historical re-proof runner does not pass it. So FG19's owner
+        # exercises a path the campaign does not take -- already recorded at
+        # `test_historical_reproof.py`'s note on FG19, and repeated here so a
+        # reader of THIS function is not left believing the campaign attributes
+        # failures this way.
         if expected_property.lower() not in evidence.lower():
             raise AttackNotAdmissible(
                 Outcome.INVALID_MUTATION,

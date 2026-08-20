@@ -280,6 +280,24 @@ def test_the_collapse_is_visible(mutation: Mutation, baselines, tmp_path: Path):
         tmp_path, mutation.scenario, edits=mutation.edits, flags=mutation.flags
     )
 
+    # THE MUTANT MUST HAVE RUN. This module's docstring says "A mutation counts
+    # as KILLED only when the mutant RUNS TO COMPLETION and the named authority
+    # property changes", and the verdict point asserted only the second half.
+    # `healthy_against` was exercised solely by
+    # `test_fg23_the_real_collapse_mutants_are_all_healthy`, over its OWN
+    # independently built probes -- so the health of the mutant that actually
+    # earns each kill here was never checked. A review named the gap.
+    #
+    # Asked before the observable, so a broken run cannot be read as a moved
+    # verdict: reaching the expected value because the mutant crashed is FG23,
+    # and this is where that credit would have been given.
+    unhealthy = healthy_against(baseline, mutant)
+    assert unhealthy == [], (
+        f"{mutation.name}: the mutant did not run properly, so any change in "
+        f"{mutation.observable} is not attributable to the removed control: "
+        f"{unhealthy}"
+    )
+
     before = baseline[mutation.observable]
     after = mutant[mutation.observable]
     assert before != mutation.expected, (

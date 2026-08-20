@@ -292,9 +292,25 @@ def test_action_approval_is_not_satisfied_by_a_contract_approval() -> None:
         )
         is False
     )
+    # AN ABSENT `approver_type` IS NOT A HUMAN ONE. This asserted True, because
+    # the presence check defaulted the field to "human" while the VERIFIER
+    # defaults it to "" and refuses an absent producer as
+    # APPROVAL_PRODUCER_NOT_HUMAN. Two defaults for one field, in opposite
+    # directions -- so the evidence record reported an approval present for an
+    # artifact the boundary was refusing. Measured on the issuer's own output
+    # before it emitted the field.
     assert (
         _action_approval_present(
             {"granted": True, "approver": "human:operations_owner"}
+        )
+        is False
+    )
+    # Declared human, which is what the verifier requires and what the issuer
+    # now emits.
+    assert (
+        _action_approval_present(
+            {"granted": True, "approver": "human:operations_owner",
+             "approver_type": "human"}
         )
         is True
     )

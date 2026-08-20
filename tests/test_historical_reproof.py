@@ -728,7 +728,9 @@ PENDING = tuple(
 )
 DELEGATED = tuple(item for item in INVENTORY if item.mutation is None)
 
-#: Independently written, so shrinking INVENTORY fails rather than passing.
+#: Independently written, so shrinking INVENTORY fails rather than passing --
+#: which was true of the intent and false of the code until it was actually
+#: consulted. See `test_the_inventory_covers_every_independently_listed_attack_id`.
 EXPECTED_IDS = frozenset(
     f"H{n:02d}" for n in range(1, 20)
 )
@@ -780,11 +782,6 @@ def _mutated_tree(destination: Path, item: SecurityClass) -> Path:
         check_mutation(relative, before, after, anchor, count)
         target.write_text(after, encoding="utf-8", newline="")
     return tree
-
-
-def _plain_copy(destination: Path) -> Path:
-    """An unmutated faithful workspace, for callers that want one."""
-    return faithful_copy(destination)
 
 
 def _isolated_env(tree: Path) -> dict:
@@ -1449,6 +1446,13 @@ ATTACKING_CATALOGUES = frozenset(
 #: unified catalogue's 35 attacks contain none for them.
 #:
 #: Being covered by tests is not nothing. It is just not the same claim.
+#:
+#: PAST TENSE, and now empty. The paragraph above describes the state that
+#: made this dict necessary; measured at this head the unattacked set is
+#: EMPTY, every class carries a hostile specimen, and the dict is retained
+#: only so that reintroducing a delegated-without-attack entry has somewhere
+#: to be declared and something to fail against. A review read the narrative
+#: as a live claim, which is fair -- it did not say it had been closed.
 COVERED_BUT_UNATTACKED = {
 }
 
@@ -1871,4 +1875,43 @@ def test_no_criterion_reports_an_unmutated_tree_violated(item, tmp_path: Path):
         f"{item.ident}: the criterion reports its property VIOLATED on a tree "
         "where nothing was mutated, so it cannot distinguish a removed control "
         "from an intact one and every kill it certifies is unearned"
+    )
+
+
+def test_the_inventory_covers_every_independently_listed_attack_id():
+    """B-P3-1: `EXPECTED_IDS` said it existed to catch shrinkage and was read
+    by nothing.
+
+    Its comment -- "Independently written, so shrinking INVENTORY fails rather
+    than passing" -- attributed protection to a mechanism that was not wired
+    up. A review deleted H09 from `INVENTORY` and all fifteen of this module's
+    own metadata tests passed. The property IS held, by
+    `test_mutation_catalogue.py::test_every_named_attack_is_still_present`, so
+    nothing was actually unprotected; the comment simply credited the wrong
+    thing, which is its own kind of false green.
+
+    The list is worth keeping rather than deleting: it is a SECOND inventory,
+    written from the numbering rather than from the catalogue, so the two
+    cannot drift together the way one list and its own restatement can. Now it
+    is consulted.
+    """
+    present = {item.ident.split()[0] for item in INVENTORY}
+    missing = sorted(EXPECTED_IDS - present)
+    assert missing == [], (
+        "these attack ids are named in the independently written list and are "
+        f"absent from INVENTORY, so the catalogue has shrunk: {missing}"
+    )
+
+
+def test_the_independent_id_list_names_nothing_that_does_not_exist():
+    """The other direction, so the second inventory cannot itself go stale.
+
+    A list that names a retired attack would fail the test above forever and
+    be edited to match -- which is how a cross-check becomes a copy.
+    """
+    present = {item.ident.split()[0] for item in INVENTORY}
+    phantom = sorted(present - EXPECTED_IDS)
+    assert phantom == [], (
+        "INVENTORY carries attack ids the independent list does not name, so "
+        f"the two inventories have drifted apart: {phantom}"
     )

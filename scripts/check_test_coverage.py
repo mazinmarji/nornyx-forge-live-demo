@@ -154,9 +154,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_collection_completeness.py": 9,
     "tests/test_absence_is_not_success.py": 9,
     "tests/test_trust_snapshot.py": 18,
-    "tests/test_historical_reproof.py": 53,
+    "tests/test_historical_reproof.py": 54,
     "tests/test_mutation_catalogue.py": 29,
-    "tests/test_false_green_audit.py": 17,
+    "tests/test_false_green_audit.py": 18,
     "tests/test_xfail_strictness.py": 16,
     "tests/test_approval_lifecycle.py": 4,
     "tests/test_architecture_coverage.py": 17,
@@ -177,7 +177,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 1,
     "tests/test_requirements.py": 1,
-    "tests/test_runtime_authority.py": 13,
+    "tests/test_runtime_authority.py": 14,
     "tests/test_runtime_image_subject.py": 7,
     "tests/test_scratch_containment.py": 2,
     "tests/test_special_files.py": 4,
@@ -201,7 +201,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # is supposed to catch. So it stays a constant, and the guard requiring it to
 # sit within 10% of the real suite is the thing that forces a deliberate raise
 # whenever the suite grows. Twice now that guard has been the one to notice.
-MINIMUM_COLLECTED = 1190
+MINIMUM_COLLECTED = 1225
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -394,6 +394,19 @@ def classify(
         if case.find("error") is not None:
             errors.append(node_id(case))
             continue
+        # DECLARED SKIPS COUNT HERE, and that is a bound worth naming rather
+        # than a property. This module's premise is that a skipped test proves
+        # nothing, yet a skip increments both the aggregate total and its
+        # module's floor -- so a module could in principle replace real tests
+        # with declared skips and keep satisfying both.
+        #
+        # Not silently corrected, because excluding them would drop the
+        # collected total by the whole declared-skip count and require every
+        # floor to move at once, which is a change that should be argued for in
+        # its own diff rather than smuggled into a P3 sweep. What closes the
+        # hole meanwhile is that EVERY skip must be DECLARED in EXPECTED_SKIPS
+        # and the declaration list is pinned: converting a test into a skip
+        # requires an entry, and an entry is a diff.
         total += 1
         seen_modules[node_id(case).split("::", 1)[0]] += 1
         skipped = case.find("skipped")

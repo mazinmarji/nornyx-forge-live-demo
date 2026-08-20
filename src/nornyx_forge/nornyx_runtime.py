@@ -396,6 +396,22 @@ def exercised_capability(risk: str) -> str:
     The single derivation, over a validated level. Proposing an action and
     releasing its effect are different capabilities, and which one is in play
     follows from the risk of the act — never from a label a caller supplies.
+
+    TWO CAPABILITIES, FOUR RISK LEVELS, and the gap is stated rather than
+    implied. `RISK_LEVELS` accepts low, medium, high and critical; the HTTP
+    surface accepts all four; `HIGH_RISK_LEVELS` is {high, critical}. So a
+    request declaring `medium` exercises `execute_low_risk_action`, which the
+    contract declares as `risk: low` with no required gates and no required
+    approvals — the same treatment as `low`, despite a vocabulary that reads
+    like three tiers.
+
+    That is a deliberate two-tier authorization model, not an oversight in the
+    mapping: the boundary distinguishes acts that need a human from acts that
+    do not, and `medium` is on the "does not" side. What was misleading is a
+    four-level vocabulary implying otherwise. Pinned by
+    `test_medium_risk_exercises_the_low_risk_capability` so the mapping is a
+    measured fact rather than something a reader has to infer, and so moving
+    `medium` across the line is a deliberate diff.
     """
     return (
         "execute_high_risk_effect"
@@ -688,6 +704,21 @@ PERMITTED_LEDGER_OBJECTS = frozenset(
 #: or shadow a row; a trigger and a view can, so neither is here.
 PERMITTED_LEDGER_KINDS = frozenset({"index"})
 
+#: SQLite's own statistics tables, which `ANALYZE` and `PRAGMA optimize` create.
+#: They are DATA ABOUT the index, consulted by the query planner; they cannot
+#: discard, rewrite or shadow a consumption row, which is the property this
+#: closed set exists to protect.
+#:
+#: Refusing them made an ordinary maintenance command permanently fatal:
+#: measured, one `PRAGMA optimize` left `ApprovalLedger(path)` raising forever,
+#: so no effect could ever be released again -- and the refusal blamed "a
+#: trigger or view", naming a hazard that was not present. Failing closed is
+#: right; failing closed FOREVER for a statistics table, while misdescribing
+#: what it found, is not.
+PERMITTED_LEDGER_STATISTICS = frozenset(
+    {"sqlite_stat1", "sqlite_stat2", "sqlite_stat3", "sqlite_stat4"}
+)
+
 #: Columns the consumption record must carry. Names, because `consume` writes by
 #: name: a table missing one accepts the INSERT nowhere or silently drops it.
 REQUIRED_LEDGER_COLUMNS = frozenset(
@@ -802,6 +833,7 @@ def _assert_ledger_structure(
         for kind, name in present
         if kind not in PERMITTED_LEDGER_KINDS
         and (kind, name) not in PERMITTED_LEDGER_OBJECTS
+        and not (kind == "table" and name in PERMITTED_LEDGER_STATISTICS)
     )
     if unexpected:
         raise NornyxRuntimeUnavailable(
@@ -809,6 +841,14 @@ def _assert_ledger_structure(
             f"objects the replay model does not permit: {unexpected}. A trigger "
             "or view can silently discard, rewrite or shadow a consumption "
             "record while every uniqueness check still passes."
+            + (
+                ""
+                if any(kind.startswith("trigger") or kind.startswith("view")
+                       for kind in unexpected)
+                else " Note that none of the objects listed is a trigger or a "
+                "view; the refusal is that the set is CLOSED, not that this "
+                "particular object was recognised as dangerous."
+            )
         )
     # Deliberately NOT the mirror image. A ledger MISSING `ledger_identity` is
     # not an outage: `_read_established_at` returns None by design and `consume`
@@ -1236,9 +1276,17 @@ class ApprovalLedger:
                 # zero rows' defeat, relocated from WHAT the check looks at to
                 # WHEN it looks.
                 #
-                # Reading the row back on the same connection, inside the same
-                # transaction, closes the window regardless of timing: whatever
-                # discarded the write also fails this.
+                # Reading the row back ON THE SAME CONNECTION, immediately
+                # after the INSERT, catches whatever discarded it.
+                #
+                # NOT "inside the same transaction", which is what this said and
+                # is false: `_connect` sets `isolation_level=None`, so the
+                # connection is in autocommit and the row is COMMITTED before
+                # this SELECT runs -- a separate connection can already see it.
+                # The enumerated attack is still caught, because a trigger fires
+                # within the INSERT statement itself and its effect is visible
+                # here; but "closes the window regardless of timing" claimed a
+                # transactional guarantee that no transaction provides.
                 landed = conn.execute(
                     "SELECT count(*) FROM consumed_approvals"
                     " WHERE fingerprint = ? AND request_digest = ?",
@@ -1522,7 +1570,15 @@ def _action_approval_present(approval: Mapping[str, Any] | None) -> bool:
         granted is True
         and isinstance(approver, str)
         and approver.strip() != ""
-        and str(approval.get("approver_type", "human")).lower() == "human"
+        # DEFAULTS TO ABSENT, not to "human". This read
+        # `approval.get("approver_type", "human")` while the VERIFIER reads
+        # `approval.get("approver_type", "")` and refuses an absent producer as
+        # APPROVAL_PRODUCER_NOT_HUMAN. Measured on the issuer's own output
+        # before the producer field was emitted: this reported
+        # `action_approval_present: True` into the evidence record while the
+        # verifier refused the same artifact. Two defaults for one field, in
+        # opposite directions, so the report and the decision disagreed.
+        and str(approval.get("approver_type", "")).lower() == "human"
     )
 
 
@@ -2005,6 +2061,28 @@ class NornyxActionBoundary:
                     # that means "do not check".
                     grant_issued_at=str(action_approval.get("generated_at", "")),
                 )
+                # THE LEDGER'S OWN CODE SURVIVES TO THE DECISION. Every
+                # high-risk non-release used to report `HUMAN_APPROVAL_REQUIRED`
+                # -- no approval, an expired one, and a REPLAYED grant were
+                # indistinguishable in `RuntimeDecision.code`, while
+                # GRANT_PREDATES_LEDGER, LEDGER_CONTINUITY_UNKNOWN,
+                # GRANT_ISSUANCE_UNKNOWN and LEDGER_ROLLED_BACK were defined
+                # three hundred lines above with a comment saying they are
+                # distinct "because the operator response differs".
+                #
+                # They differ a great deal: obtain a fresh approval, versus
+                # re-provision a ledger, versus stop and investigate a rollback.
+                # An operator reading the evidence could not tell which.
+                if not released:
+                    for ledger_code in (
+                        LEDGER_ROLLED_BACK,
+                        GRANT_PREDATES_LEDGER,
+                        LEDGER_CONTINUITY_UNKNOWN,
+                        GRANT_ISSUANCE_UNKNOWN,
+                    ):
+                        if release_reason.startswith(ledger_code):
+                            withheld_code = ledger_code
+                            break
             withheld = not released
         else:
             withheld = False
