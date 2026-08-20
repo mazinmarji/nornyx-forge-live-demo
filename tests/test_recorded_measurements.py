@@ -47,6 +47,48 @@ TRANSCRIPT = re.compile(r"^\s*integrity_state\s+(\S+)", re.M)
 ANCHOR = re.compile(r"<!--\s*verify-measured-at:\s*([0-9a-f]{7,40})\s*-->")
 
 
+VERIFIABLE_FIELDS = frozenset({
+    "status", "integrity_state", "governed_input_match", "evidence_manifest_match",
+    "governed_input_digest", "inspection_subject_digest", "inspection_subject_match",
+    "assurance_state", "independent", "authenticated_reviewers",
+    "required_inspectors_complete", "problems", "stale_artifacts",
+})
+
+#: A `key   value` line, whatever the key is. The predecessor keyed on
+#: `integrity_state` alone, so dropping that one line hid the block entirely.
+#: One or more spaces or tabs, any key case. Requiring TWO spaces and a
+#: lowercase key missed four lines shipping at the time -- among them
+#: `evidence_manifest_match True` and `authenticated_reviewers []`, both
+#: single-spaced inside an anchored fence, displayed as measured and checked
+#:
+#: WIDENED AGAIN, and the second widening is the one that mattered. Whitespace
+#: and case were fixed; the KEY CLASS was not. `[A-Za-z_][A-Za-z_ ]*?` admits
+#: no digits, hyphens or dots, and the pattern required whitespace as the only
+#: separator -- so `collected: 1115`, `mutants-killed 41 of 41`,
+#: `reviewers3 alice, bob, carol`, `production_approval: granted` and
+#: `signed-attestations 3` were all invisible. A review injected six such lines
+#: into the REAL anchored fence in LENS_C_CLOSURE.md and BOTH R4 tests stayed
+#: green while zero of the six were extracted. Digits, dots and hyphens are now
+#: part of a key, and `:` or `=` is accepted as a separator.
+#: by nothing.
+_KEY = "[A-Za-z_][A-Za-z0-9_. -]*?"
+_GAP = "[ " + chr(9) + "]"
+_FIELD_LINE = re.compile(
+    "^" + _GAP + "*(" + _KEY + ")" + _GAP + "*[:=]?" + _GAP + "+("
+    + "[^ " + chr(9) + "].*)$"
+)
+
+
+def _transcript_fields(body: str) -> dict:
+    """Every `key   value` line in a fenced block."""
+    found = {}
+    for line in body.splitlines():
+        match = _FIELD_LINE.match(line)
+        if match:
+            found[match.group(1)] = match.group(2).strip()
+    return found
+
+
 def _blocks(text: str) -> list[tuple[int, str, str]]:
     """Fenced blocks containing a `--verify` transcript, with the text above."""
     found = []
@@ -83,9 +125,28 @@ def _governance_docs():
     return governance_docs()
 
 
+def _carries_a_measurement_claim(text: str) -> bool:
+    """Selection uses the SAME recogniser as the checks, deliberately.
+
+    RECOGNITION was widened to "any verifiable field, or an anchor at all", and
+    SELECTION was left gating on `integrity_state`. So a document omitting that
+    one line was never opened, and every widened check below ran on a corpus
+    that excluded it. A review added a new governance document carrying a real
+    anchor, `authenticated_reviewers alice, bob, carol`, `independent True`,
+    `collected 999999`, `human approval GRANTED` and `production authorization
+    GRANTED` -- and measured `selected? False`, 39 tests passing, and
+    `validate_repository` reporting `status: pass`.
+
+    The hole had not been closed. It had moved up one level, to the place
+    nothing was looking, which is the same defect wearing the repair as a
+    disguise. One recogniser now serves both, so the two cannot drift again.
+    """
+    return bool(ANCHOR.search(text) or _blocks(text))
+
+
 DOCUMENTS = sorted(
     path for path in _governance_docs()
-    if TRANSCRIPT.search(path.read_text(encoding="utf-8"))
+    if _carries_a_measurement_claim(path.read_text(encoding="utf-8"))
 )
 
 
@@ -204,33 +265,6 @@ def test_an_unanchored_pass_is_refused_by_this_check():
 # --------------------------------------------------------------------------
 
 #: Exactly what `--verify` emits, top level plus `verification`.
-VERIFIABLE_FIELDS = frozenset({
-    "status", "integrity_state", "governed_input_match", "evidence_manifest_match",
-    "governed_input_digest", "inspection_subject_digest", "inspection_subject_match",
-    "assurance_state", "independent", "authenticated_reviewers",
-    "required_inspectors_complete", "problems", "stale_artifacts",
-})
-
-#: A `key   value` line, whatever the key is. The predecessor keyed on
-#: `integrity_state` alone, so dropping that one line hid the block entirely.
-#: One or more spaces or tabs, any key case. Requiring TWO spaces and a
-#: lowercase key missed four lines shipping at the time -- among them
-#: `evidence_manifest_match True` and `authenticated_reviewers []`, both
-#: single-spaced inside an anchored fence, displayed as measured and checked
-#: by nothing.
-_FIELD_LINE = re.compile("^[ 	]*([A-Za-z_][A-Za-z_ ]*?)[ 	]+([^ 	].*)$")
-
-
-def _transcript_fields(body: str) -> dict:
-    """Every `key   value` line in a fenced block."""
-    found = {}
-    for line in body.splitlines():
-        match = _FIELD_LINE.match(line)
-        if match:
-            found[match.group(1)] = match.group(2).strip()
-    return found
-
-
 #: A real anchor, a real commit, fabricated payload.
 _SPECIMEN_FORGED = (
     "<!-- verify-measured-at: 990caea -->" + chr(10) * 2

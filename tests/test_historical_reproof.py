@@ -49,6 +49,7 @@ from attack_property import (  # noqa: E402
     H17_A_DELETED_CLAIM_IS_STILL_CHECKED,
     H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK,
     H19_AN_ABSENT_DECLARED_MEMBER_REFUSES,
+    PropertyNotViolated,
 )
 from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
 from mutation_workspace import (  # noqa: E402
@@ -1801,4 +1802,66 @@ def test_r2_a_green_helper_cannot_stand_in_for_the_runner(tmp_path: Path):
     assert helper_admits and not criterion_violated, (
         "helper and criterion no longer disagree, so this control proves "
         f"nothing: helper_admits={helper_admits} violated={criterion_violated}"
+    )
+
+
+# --------------------------------------------------------------------------
+# B-P2-2 -- the control that would have caught B-P1-1 with no reviewer.
+#
+# `test_removing_the_control_revives_the_defect` requires only
+# `violated_in(mutant) is True`. A criterion that returned True unconditionally
+# satisfies it for every attack in the catalogue, and the campaign would report
+# a full sweep of valid kills while measuring nothing at all.
+#
+# Exactly one attack had a control against that shape -- H10, above -- and
+# three criteria were meanwhile decidable by a rename. One specimen was read as
+# a property of the mechanism. This asserts it of EVERY criterion instead, so
+# the next one cannot be added without it.
+# --------------------------------------------------------------------------
+
+
+CRITERIA = [item for item in DIRECT if item.authoritative_property is not None]
+
+
+def test_every_direct_attack_carries_an_authoritative_property():
+    """B-P2-3: the attribution gate is opt-in, and must not be.
+
+    The runner guards on `if item.authoritative_property is not None`, and the
+    field defaults to None for "not migrated yet". A new SecurityClass
+    registered without it silently skips the strongest step in the protocol and
+    is still credited KILLED_VALIDLY. All of them carry one today; nothing made
+    that true tomorrow.
+    """
+    missing = sorted(item.ident for item in DIRECT
+                     if item.authoritative_property is None)
+    assert missing == [], (
+        "these attacks would be credited without their property ever being "
+        f"consulted, because the verdict point skips a None: {missing}"
+    )
+
+
+@pytest.mark.parametrize("item", CRITERIA, ids=[i.ident for i in CRITERIA])
+def test_no_criterion_reports_an_unmutated_tree_violated(item, tmp_path: Path):
+    """The pristine control, for every criterion rather than for one.
+
+    A criterion is a claim about what the ABSENCE of a control looks like. If
+    it fires on a tree where nothing was removed, it is not measuring the
+    control -- it is measuring something that is true anyway, and every kill it
+    certifies is unearned.
+
+    `PropertyNotViolated` is an acceptable outcome here and a passing one: it
+    means the criterion refused to answer rather than asserting a violation,
+    which is the withdrawal these criteria are supposed to make when they
+    cannot attribute what they measured. The failure this catches is the
+    criterion that says VIOLATED about a tree with every control intact.
+    """
+    tree = faithful_copy(tmp_path)
+    try:
+        violated = item.authoritative_property.violated_in(tree)
+    except PropertyNotViolated:
+        return
+    assert violated is False, (
+        f"{item.ident}: the criterion reports its property VIOLATED on a tree "
+        "where nothing was mutated, so it cannot distinguish a removed control "
+        "from an intact one and every kill it certifies is unearned"
     )

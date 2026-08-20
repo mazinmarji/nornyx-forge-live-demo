@@ -53,7 +53,22 @@ REPORTED, NOT MACHINE-VERIFIED BY THE ANCHOR. Observed when the cycle ran,
 recorded on that basis alone. Re-run them to confirm; do not read them as
 bound to the SHA above.
 
-    full pytest suite            RC=0, zero failures
+WITHDRAWN, AND THE LABEL ABOVE WAS NOT ENOUGH. "Not machine-verified" discloses
+that nothing re-checks these numbers. It does not disclose that the first one
+is FALSE for any reader who checks the commit out, which is a different and
+worse thing. An independent review archived 990caea into a clean directory and
+measured `1 failed`: `test_the_strict_backend_actually_fails_closed_in_this_
+repository` asserted `CONTRACT_INVALID`, which appears only once a runtime lock
+exists, and the lock is gitignored and unobtainable without a human approval.
+The RC=0 recorded here was true in the author's working tree and nowhere else.
+
+That defect is fixed at a later head -- both the assertion and its twin in
+`tests/test_approval_reachability.py` now establish the CAUSE of the refusal
+rather than matching a diagnostic string -- but it was present at the commit
+this block names, so the row below is struck rather than restated.
+
+    full pytest suite            WITHDRAWN -- 1 failed on a clean checkout of
+                                 this SHA; RC=0 held only in the author's tree
     census                       RC=0, GATE PASS, 1115 collected
     expected / unexpected skips  9 / 0, unexpected xfails 0
     ruff, compileall             clean
@@ -64,7 +79,7 @@ bound to the SHA above.
     grandfather dependence       NONE -- 990caea is not in the baseline
     working tree                 clean, 0 porcelain lines
 
-The assurance The last three lines are as important as the rest. Nothing here establishes
+The last three lines are as important as the rest. Nothing here establishes
 independent inspection, human approval, or production authorization. The cycle
 proves the tree is internally consistent and its proofs discriminate; it does
 not confer assurance that only a human can confer.

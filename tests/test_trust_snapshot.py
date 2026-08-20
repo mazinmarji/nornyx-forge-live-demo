@@ -50,11 +50,32 @@ from nornyx_forge.nornyx_runtime import (  # noqa: E402
     approval_ledger_path,
 )
 
+
 #: A hostile replacement, in the domained shape. Written into the ACTION
 #: domain only: an attacker who could add a key to the action store is the
 #: threat this file reproduces, and provisioning both domains would prove
 #: something weaker -- that a totally replaced document is observed -- while
 #: hiding whether one domain can be attacked without the other.
+def _loadable_public_key() -> str:
+    """Real Ed25519 material.
+
+    These fixtures carried `"public_key": "AAAA"`, which is well-formed base64
+    and not a key. That was harmless while the store parsed key material
+    lazily; it is not now. A store whose every key is unusable used to report
+    `available=True` and `consequential_authority: available` -- so the parser
+    loads each key at parse time, and a placeholder makes the whole store
+    unusable, which is the point.
+
+    Nothing here is ABOUT key validity: one test watches a snapshot observe a
+    changed file, the other watches a frozen mapping refuse mutation. They need
+    a key that loads, not a parser that accepts anything.
+    """
+    from signing import _keypair  # noqa: PLC0415
+
+    _, public = _keypair()
+    return public
+
+
 ATTACKER = {
     "domains": {
         "governance": {"signers": []},
@@ -65,7 +86,7 @@ ATTACKER = {
             "subject": "human.attacker",
             "subject_type": "human",
             "roles": ["operations_owner"],
-            "public_key": "AAAA",
+            "public_key": _loadable_public_key(),
             "status": "active",
         }
     ]},
@@ -751,7 +772,8 @@ def test_la03_the_frozen_store_cannot_be_repointed_in_place():
     from nornyx_forge.approval_trust import ApprovalTrustStore  # noqa: PLC0415
 
     store = ApprovalTrustStore.for_test(
-        [{"key_id": "k1", "public_key": "AAAA", "algorithm": "Ed25519",
+        [{"key_id": "k1", "public_key": _loadable_public_key(),
+          "algorithm": "Ed25519",
           "subject": "human.reviewer", "subject_type": "human",
           "roles": ["operations_owner"], "status": "active"}],
         domain="action",

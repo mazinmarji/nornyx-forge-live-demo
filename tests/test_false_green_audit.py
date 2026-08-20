@@ -239,8 +239,20 @@ INVENTORY = (
     FalseGreen(
         "FG33", "a result, when the run did not finish",
         "a timeout exits non-zero, which is what a refusal also looks like",
-        "carry completion alongside the exit code; an unfinished run yields no verdict",
-        "tests/test_probe_containment.py::test_fg33_an_unfinished_run_is_not_a_result",
+        # THE GUARD IS RESTATED, because the one recorded here did not exist.
+        # It said "carry completion alongside the exit code", and nothing in
+        # this repository ever did: `timed_out` appeared in no file outside the
+        # owner's own parametrize table, and the owner asserted
+        # `(not timed_out) is usable` over rows that DEFINED usable as
+        # `not timed_out` -- an identity between two hand-written columns.
+        #
+        # What actually protects the campaign is that both harness entry points
+        # pass `timeout=` to `subprocess.run`, which RAISES rather than
+        # returning a CompletedProcess whose exit code could be misread. That
+        # is a real guard; it was simply not the one written down.
+        "bound every child run, so a timeout RAISES and yields no result to misread",
+        "tests/test_probe_containment.py"
+        "::test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning",
     ),
 )
 

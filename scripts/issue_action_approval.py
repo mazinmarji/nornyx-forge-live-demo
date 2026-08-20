@@ -114,6 +114,7 @@ def main() -> int:
 
     request_digest = args.request_digest
     attempt_id = None
+    bound: dict = {}
     if args.request is not None:
         pending = json.loads(args.request.read_text(encoding="utf-8"))
         artifact_digest = pending.get("request_digest")
@@ -124,6 +125,31 @@ def main() -> int:
             )
         request_digest = artifact_digest
         attempt_id = pending.get("attempt_id")
+        # THE BINDING FIELDS, lifted from the request this grant is for.
+        # Without them the shipped verifier refuses at six clauses in sequence
+        # -- producer, request_id, subject_revision, capability, destination,
+        # payload_digest -- so the only documented way to obtain an action
+        # approval produced an artifact that could not release anything. The
+        # runtime writes "Sign this exact request_digest with
+        # scripts/issue_action_approval.py" into every pending artifact, and
+        # following that instruction terminated in a refusal.
+        #
+        # It went unnoticed because the one test claiming to prove otherwise
+        # supplied these six itself with `signed.update({...})`, then asserted
+        # only `signer_authenticated` -- it never called `verify_action_approval`
+        # at all. FG32, on the producer side of the boundary.
+        binding = pending.get("request") or {}
+        for field in ("request_id", "subject_revision", "capability",
+                      "payload_digest"):
+            if field in binding:
+                bound[field] = binding[field]
+        # `destination` sits one level down, inside the action, because
+        # `ActionRequest.canonical()` nests it there while exposing it as a
+        # top-level property. The boundary compares the grant's TOP-LEVEL
+        # field, so lifting it is part of producing a usable grant.
+        action = binding.get("action")
+        if isinstance(action, dict) and "destination" in action:
+            bound["destination"] = action["destination"]
         print(
             "Signing this exact request:\n"
             + json.dumps(pending.get("request"), indent=2, sort_keys=True),
@@ -151,6 +177,18 @@ def main() -> int:
     }
     grant = dict(payload)
     grant["signature"] = sign_grant(payload, b64decode(args.private_key.read_text().strip()))
+    # OUTSIDE THE SIGNED SET, and that is safe for a reason worth stating
+    # rather than assuming. `request_digest` IS signed, and it is the digest of
+    # the canonical request these five fields are copied from -- so rewriting
+    # any of them makes the grant disagree with the request the boundary is
+    # actually evaluating, and it refuses. The signature binds them
+    # transitively; restating them here is what lets the verifier say WHICH
+    # clause failed instead of only that a digest did not match.
+    grant.update(bound)
+    # Declared, and cross-checked: `approval_trust` decides humanness from the
+    # TRUST STORE's `subject_type` for this key, not from this line. A grant
+    # claiming `human` for a machine key is refused as APPROVER_NOT_HUMAN.
+    grant.setdefault("approver_type", "human")
     if attempt_id:
         # Provenance for the operator, outside the signed set: the signature
         # already binds the attempt transitively through request_digest.

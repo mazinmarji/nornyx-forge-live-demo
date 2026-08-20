@@ -503,11 +503,17 @@ def run_case(
     *,
     root: Path,
     worker_mode: str | None = None,
-    allow_policy_fallback: bool | None = None,
     config: RuntimeAuthorityConfig | None = None,
     security_context: RuntimeSecurityContext | None = None,
     action_approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # NO `allow_policy_fallback` PARAMETER. It used to be accepted here and
+    # discarded: `fallback` below is computed from the authority configuration
+    # regardless, so a caller asking for `False` got `True` and no error. A
+    # review measured exactly that. Deleting it is the fix rather than
+    # honouring it -- see `run_demo_scenarios`, which explains why a second
+    # resolution path for the governance mode is the hazard the subject
+    # binding exists to remove.
     # The authority configuration is the single source of truth for governance
     # and execution mode. It used to be read from the environment here, which
     # would now be strictly worse than before: the subject digest binds the
@@ -590,7 +596,6 @@ def run_demo_scenarios(
     root: Path,
     *,
     worker_mode: str | None = None,
-    allow_policy_fallback: bool | None = None,
     config: RuntimeAuthorityConfig | None = None,
     security_context: RuntimeSecurityContext | None = None,
 ) -> dict[str, Any]:
@@ -604,8 +609,6 @@ def run_demo_scenarios(
     """
     authority = config if config is not None else RuntimeAuthorityConfig()
     worker_mode = worker_mode or "deterministic"
-    if allow_policy_fallback is None:
-        allow_policy_fallback = authority.policy_backend == "deterministic_demo"
     runtime_dir = root / "evidence/runtime"
     for file in (runtime_dir / "events.jsonl", runtime_dir / "report.json"):
         if file.exists():
@@ -621,7 +624,6 @@ def run_demo_scenarios(
         root=root,
         worker_mode=worker_mode,
         config=authority,
-        allow_policy_fallback=allow_policy_fallback,
         security_context=security_context,
     )
     high = run_case(
@@ -635,7 +637,6 @@ def run_demo_scenarios(
         root=root,
         worker_mode=worker_mode,
         config=authority,
-        allow_policy_fallback=allow_policy_fallback,
         security_context=security_context,
     )
     final_report = EvidenceLedger(

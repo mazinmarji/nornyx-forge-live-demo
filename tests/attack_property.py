@@ -169,27 +169,73 @@ _H18_PROBE = """
 import json, subprocess, sys
 from pathlib import Path
 BINDING = Path(".nornyx/contracts/evidence/review_binding.json")
-payload = json.loads(BINDING.read_text(encoding="utf-8"))
-payload["production_approval"] = "granted"
-payload.setdefault("approvals", {})["human_review"] = "performed"
-BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
-                   encoding="utf-8")
-done = subprocess.run(
-    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
-    capture_output=True, text=True, encoding="utf-8", errors="replace")
-raw = done.stdout[done.stdout.find("{"):]
-state = json.loads(raw)["verification"] if raw else {}
+ORIGINAL = BINDING.read_bytes()
+
+
+def measure(mutate):
+    payload = json.loads(ORIGINAL.decode("utf-8"))
+    mutate(payload)
+    BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
+                       encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    raw = done.stdout[done.stdout.find("{"):]
+    state = json.loads(raw)["verification"] if raw else {}
+    return state.get("integrity_state"), len(state.get("problems", []))
+
+
+def inert(payload):
+    payload["probe_note"] = "a byte change carrying no assurance meaning"
+
+
+def attack(payload):
+    payload["production_approval"] = "granted"
+    payload.setdefault("approvals", {})["human_review"] = "performed"
+
+
+inert_state, inert_problems = measure(inert)
+attack_state, attack_problems = measure(attack)
+BINDING.write_bytes(ORIGINAL)
 print(json.dumps({
-    "integrity_state": state.get("integrity_state"),
-    "named": any("production_approval" in str(p) for p in state.get("problems", [])),
+    "inert_state": inert_state,
+    "inert_problems": inert_problems,
+    "attack_state": attack_state,
+    "attack_problems": attack_problems,
 }))
 """
 
 
 def _h18_violated(tree: Path) -> bool:
-    """A forged derived field that verifies as intact is the violation."""
+    """A forged derived field that verifies as intact is the violation.
+
+    STATE DECIDES; THE NAME MAY ONLY REFUSE TO ANSWER. This read
+    `... or not measured["named"]`, so a mutant that changed only the WORDING
+    of the problem -- forgery still caught, integrity still compromised, every
+    control intact -- was certified KILLED_VALIDLY. A review drove exactly that
+    through the real runner, every step, to a full verdict.
+
+    That is the defect this module exists to remove, inside the module itself,
+    and it is the third time it has been found here: `expect` was rejected for
+    it, H14 and H07 were repaired for it, and I then read one passing specimen
+    as a property of the whole mechanism instead of checking the other twelve.
+
+    `named` is still load-bearing, but as ATTRIBUTION, not as a verdict. A tree
+    can be `compromised` for reasons that have nothing to do with the field
+    this probe forged -- a stale baseline, an unrelated breakage -- and reading
+    that as "the control held" would be FG10 wearing different clothes. So when
+    the compromise cannot be attributed to this forgery, the measurement did
+    not answer the question and refuses rather than asserting anything.
+    """
     measured = run_probe(tree, _H18_PROBE)
-    return measured["integrity_state"] != "compromised" or not measured["named"]
+    if measured["attack_state"] != "compromised":
+        return True
+    if measured["attack_problems"] <= measured["inert_problems"]:
+        # Forging the ASSURANCE FIELD produced nothing that an arbitrary byte
+        # change does not also produce, so the derived value is no longer
+        # recomputed from disk -- only the file digest is being checked.
+        return True
+    return False
 
 
 H18_ASSURANCE_IS_RECOMPUTED_FROM_DISK = AuthoritativeProperty(
@@ -210,25 +256,56 @@ _H17_PROBE = """
 import json, subprocess, sys
 from pathlib import Path
 BINDING = Path(".nornyx/contracts/evidence/review_binding.json")
-payload = json.loads(BINDING.read_text(encoding="utf-8"))
-payload.pop("contract_set_digest", None)
-BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
-                   encoding="utf-8")
-done = subprocess.run(
-    [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
-    capture_output=True, text=True, encoding="utf-8", errors="replace")
-raw = done.stdout[done.stdout.find("{"):]
-state = json.loads(raw)["verification"] if raw else {}
+ORIGINAL = BINDING.read_bytes()
+
+
+def measure(mutate):
+    payload = json.loads(ORIGINAL.decode("utf-8"))
+    mutate(payload)
+    BINDING.write_text(json.dumps(payload, indent=2, sort_keys=True) + chr(10),
+                       encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    raw = done.stdout[done.stdout.find("{"):]
+    state = json.loads(raw)["verification"] if raw else {}
+    return state.get("integrity_state"), len(state.get("problems", []))
+
+
+def inert(payload):
+    payload["probe_note"] = "a byte change carrying no assurance meaning"
+
+
+def attack(payload):
+    payload.pop("contract_set_digest", None)
+
+
+inert_state, inert_problems = measure(inert)
+attack_state, attack_problems = measure(attack)
+BINDING.write_bytes(ORIGINAL)
 print(json.dumps({
-    "integrity_state": state.get("integrity_state"),
-    "named": any("contract_set_digest" in str(p) for p in state.get("problems", [])),
+    "inert_state": inert_state,
+    "inert_problems": inert_problems,
+    "attack_state": attack_state,
+    "attack_problems": attack_problems,
 }))
 """
 
 
 def _h17_violated(tree: Path) -> bool:
+    """The twin of H18, and it carried the twin defect.
+
+    See `_h18_violated`: the state decides, and the absence of the claim name
+    can only withdraw the measurement, never supply a violation.
+    """
     measured = run_probe(tree, _H17_PROBE)
-    return measured["integrity_state"] != "compromised" or not measured["named"]
+    if measured["attack_state"] != "compromised":
+        return True
+    if measured["attack_problems"] <= measured["inert_problems"]:
+        # Deleting the claim cost nothing beyond what any byte change costs,
+        # so the check that consumes it is gone with it.
+        return True
+    return False
 
 
 H17_A_DELETED_CLAIM_IS_STILL_CHECKED = AuthoritativeProperty(
@@ -293,11 +370,24 @@ def _h19_violated(tree: Path) -> bool:
             "the subject computation raised instead of deciding, so nothing "
             f"about scope completeness was measured: {measured}"
         )
+    # Both of these are SECURITY STATE and either is a violation on its own:
+    # a subject that verifies despite a declared member being absent, or one
+    # that mints an identity for content it could not describe.
     if measured["verified"]:
         return True
     if measured["digest"]:
         return True
-    return "SUBJECT_SCOPE_INCOMPLETE" not in measured["reason"]
+    # The subject refused. Whether it refused FOR THIS REASON is attribution,
+    # not a verdict -- and it used to be one: `return "SUBJECT_SCOPE_INCOMPLETE"
+    # not in reason` made a renamed diagnostic a violation while scope checking
+    # was fully intact. A refusal for some other cause means this attack
+    # measured nothing about scope completeness, so it withdraws.
+    if "SUBJECT_SCOPE_INCOMPLETE" not in measured["reason"]:
+        raise PropertyNotViolated(
+            "the subject refused, but not for scope incompleteness, so whether "
+            f"the declared-member check survives is unmeasured: {measured}"
+        )
+    return False
 
 
 H19_AN_ABSENT_DECLARED_MEMBER_REFUSES = AuthoritativeProperty(

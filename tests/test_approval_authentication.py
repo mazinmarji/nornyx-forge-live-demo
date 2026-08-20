@@ -17,6 +17,7 @@ real approval; a refusal that ran the effect would not be a refusal.
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 import subprocess
@@ -36,7 +37,6 @@ from nornyx_forge.approval_trust import (  # noqa: E402
     GOVERNANCE_TRUST_DOMAIN,
     ApprovalTrustStore,
     TrustStoreUnavailable,
-    authenticate_action_grant,
 )
 from nornyx_forge.nornyx_runtime import (
     APPROVAL_NOT_AUTHENTICATED,
@@ -44,10 +44,12 @@ from nornyx_forge.nornyx_runtime import (
     ApprovalLedger,
     RuntimeContext,
     canonical_action_request,
+    verify_action_approval,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from signing import LEDGER_ESTABLISHED  # noqa: E402
+from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
+from test_approval_ledger import _fingerprint  # noqa: E402
 from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
 
 NOW = "2026-08-03T00:00:00Z"
@@ -532,9 +534,31 @@ def test_an_operator_issued_approval_verifies_through_the_production_verifier(
 
     End to end across the trust boundary: the CLI generates a keypair, Forge
     emits a pending request, the issuer signs that exact request with the
-    private key, and the production verifier releases it — once.
+    private key, and the production verifier releases it -- once.
+
+    THIS TEST USED TO PROVE NONE OF THAT, and its failure is what hid A01. It
+    did three things its own docstring denies:
+
+      1. `signed.update({...})` supplied the six binding fields the issuer did
+         not emit -- approver_type, request_id, subject_revision, capability,
+         destination, payload_digest -- so the artifact under test was not the
+         artifact the issuer produces. Every one is outside SIGNED_FIELDS, so
+         the signature was unaffected and the substitution left no trace.
+      2. It asserted only `signer.signer_authenticated`, which is layer one.
+         It never called `verify_action_approval`, never touched the ledger,
+         and so never executed "releases it -- once".
+      3. It signed with `--expires 2099-01-01T00:00:00Z`. Had it called the
+         verifier its docstring names, the seven-day cap would have refused it.
+
+    Measured, following the instruction the runtime itself writes into every
+    pending artifact, the issuer's real output was refused at six clauses in
+    sequence. The only documented route to a human approval could not release
+    anything.
+
+    So: no patching, a realistic window, and the real entry point.
     """
-    import subprocess as sp
+    import subprocess as sp  # noqa: PLC0415
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
 
     root = Path(__file__).resolve().parents[1]
     issuer = root / "scripts/issue_action_approval.py"
@@ -560,29 +584,31 @@ def test_an_operator_issued_approval_verifies_through_the_production_verifier(
         encoding="utf-8",
     )
 
+    # A window the seven-day cap actually admits, anchored to the instant the
+    # decision is judged at. A far-future expiry is not a stronger test; it is
+    # a grant the verifier is supposed to refuse.
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    expires = (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     signed = json.loads(
         sp.run(
             [sys.executable, str(issuer), "--request", str(pending),
              "--approver", SUBJECT, "--role", "operations_owner",
              "--key-id", KEY_ID, "--private-key", str(key_file),
-             "--expires", "2099-01-01T00:00:00Z"],
+             "--expires", expires],
             capture_output=True, text=True, check=True,
         ).stdout
     )
-    # The bindings _bind_action_approval checks, carried alongside.
-    signed.update(
-        {
-            "approver_type": "human",
-            "request_id": request.request_id,
-            "attempt_id": request.attempt_id,
-            "subject_revision": request.subject_revision,
-            "capability": request.capability,
-            "destination": request.destination,
-            "payload_digest": request.payload_digest,
-            "generated_at": signed["generated_at"],
-            "expires_at": signed["expires_at"],
-        }
-    )
+
+    # EXACTLY WHAT THE ISSUER PRINTED. If a later change stops emitting a
+    # binding field, this test must go red rather than quietly repairing it.
+    for field in ("approver_type", "request_id", "subject_revision",
+                  "capability", "destination", "payload_digest"):
+        assert field in signed, (
+            f"the issuer does not emit {field!r}, so an operator following the "
+            "instruction the runtime writes into every pending artifact cannot "
+            "produce a grant the boundary will accept"
+        )
 
     store = load_trust_store_from_entries(
         [{"key_id": KEY_ID, "algorithm": "Ed25519", "subject": SUBJECT,
@@ -590,9 +616,85 @@ def test_an_operator_issued_approval_verifies_through_the_production_verifier(
           "public_key": generated["public_key"], "status": "active"}],
         tmp_path,
     )
-    signer = authenticate_action_grant(signed, trust_store=store)
-    assert signer.signer_authenticated, signer.reason
-    assert signer.as_evidence()["signature_verified"] is True
+
+    # JUDGED AT THE GRANT'S OWN ISSUANCE INSTANT, taken from the artifact
+    # rather than from this process. My first version computed `as_of` before
+    # launching the issuer, so the grant was stamped a second or two later and
+    # the verifier correctly refused it as "not yet valid" -- an artifact of
+    # the test's clock, not a property of the system. Reading the instant back
+    # out of what was actually signed removes the race without weakening the
+    # window check, which the expiry assertion below still exercises.
+    as_of = signed["generated_at"]
+
+    # THE ONLY ENTRY POINT A CONSEQUENTIAL BOUNDARY MAY USE, not layer one.
+    decision = verify_action_approval(
+        signed, request, trust_store=store, as_of=as_of
+    )
+    assert decision.granted, decision.reason
+
+    # The window is still load-bearing: the same grant judged after it expires
+    # must be refused, or "granted" above would hold for any instant at all.
+    beyond = (datetime.now(timezone.utc).replace(microsecond=0)
+              + timedelta(days=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lapsed = verify_action_approval(signed, request, trust_store=store, as_of=beyond)
+    assert not lapsed.granted, (
+        "an expired grant was still released, so the temporal clause decides "
+        f"nothing: {lapsed.reason}"
+    )
+
+
+def test_an_operator_issued_approval_releases_exactly_once(tmp_path: Path):
+    """The other half of "releases it -- once", which nothing used to execute.
+
+    Authentication is not release. A grant can verify and still be replayable
+    if nothing consumes it, and the sibling test above asserted only the first
+    of those for as long as it existed.
+    """
+    import subprocess as sp  # noqa: PLC0415
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[1]
+    issuer = root / "scripts/issue_action_approval.py"
+    generated = json.loads(
+        sp.run([sys.executable, str(issuer), "--generate-keypair"],
+               capture_output=True, text=True, check=True).stdout
+    )
+    key_file = tmp_path / "operator.key"
+    key_file.write_text(generated["private_key"], encoding="utf-8")
+
+    request = _request()
+    pending = tmp_path / "pending.json"
+    pending.write_text(json.dumps({
+        "schema": "nornyx.forge.pending_action_request.v1",
+        "request": request.canonical(), "request_digest": request.digest,
+        "attempt_id": request.attempt_id,
+    }), encoding="utf-8")
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    expires = (now + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signed = json.loads(sp.run(
+        [sys.executable, str(issuer), "--request", str(pending),
+         "--approver", SUBJECT, "--role", "operations_owner",
+         "--key-id", KEY_ID, "--private-key", str(key_file),
+         "--expires", expires],
+        capture_output=True, text=True, check=True).stdout)
+
+    ledger_path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
+    fingerprint = _fingerprint(signed["approval_id"], request)
+
+    first = ApprovalLedger(ledger_path).consume(
+        fingerprint, request.digest, at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id=signed["approval_id"])
+    assert first[0] is True, f"the issuer's own grant could not be claimed: {first[1]}"
+
+    second = ApprovalLedger(ledger_path).consume(
+        fingerprint, request.digest, at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id=signed["approval_id"])
+    assert second[0] is False, (
+        "the issuer's grant released the effect twice, so 'once' is not what "
+        "the documented route delivers"
+    )
 
 
 def test_the_verifier_process_cannot_mint_what_it_accepts():
@@ -764,3 +866,139 @@ def test_the_authentic_grant_helper_actually_produces_a_valid_signature(
         "refusals above cannot be attributed to the authority checks"
     )
     assert ran == 1 and rows == 1
+
+
+# --------------------------------------------------------------------------
+# A06 / A07 -- the approver store accepted material the REVIEWER store refuses.
+#
+# Reviewers cannot release an effect. Approvers can. The asymmetry was the
+# wrong way round: `reviewer_trust._parse_reviewers` refuses a duplicate
+# `key_id` by name, and the store that authorises consequential acts assigned
+# into a dict and resolved last-wins.
+# --------------------------------------------------------------------------
+
+
+def _signer(key_id: str, subject: str, status: str, public_key: str) -> dict:
+    return {
+        "key_id": key_id, "algorithm": "Ed25519", "subject": subject,
+        "subject_type": "human", "roles": ["operations_owner"],
+        "public_key": public_key, "status": status,
+    }
+
+
+def _write_store(where: Path, entries: list) -> Path:
+    location = where / "approver_trust.json"
+    location.write_bytes(
+        json.dumps({"domains": {"action": {"signers": entries},
+                                "governance": {"signers": []}}},
+                   indent=2, sort_keys=True).encode("utf-8")
+    )
+    return location
+
+
+def _real_public_key() -> str:
+    from cryptography.hazmat.primitives import serialization  # noqa: PLC0415
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: PLC0415
+        Ed25519PrivateKey,
+    )
+
+    raw = Ed25519PrivateKey.generate().public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def test_a06_a_duplicate_key_id_is_refused(tmp_path: Path):
+    """One key_id, two subjects, two statuses -- resolved by list order.
+
+    Measured before the fix: the store loaded without complaint and resolved
+    `K1` to `mallory`, `active`, with the earlier `revoked` entry for `mazin`
+    silently overridden. A revocation that a later duplicate can cancel is not
+    a revocation.
+    """
+    public_key = _real_public_key()
+    location = _write_store(tmp_path, [
+        _signer("K1", "mazin", "revoked", public_key),
+        _signer("K1", "mallory", "active", public_key),
+    ])
+    with pytest.raises(TrustStoreUnavailable, match="twice"):
+        ApprovalTrustStore.load(location, domain=ACTION_TRUST_DOMAIN)
+
+
+def test_a06_distinct_key_ids_still_load(tmp_path: Path):
+    """The positive control: refusing duplicates must not refuse a real store."""
+    public_key = _real_public_key()
+    location = _write_store(tmp_path, [
+        _signer("K1", "mazin", "active", public_key),
+        _signer("K2", "sam", "active", public_key),
+    ])
+    store = ApprovalTrustStore.load(location, domain=ACTION_TRUST_DOMAIN)
+    assert store.available is True
+    assert sorted(store.signers) == ["K1", "K2"]
+
+
+@pytest.mark.parametrize("material", [
+    pytest.param(base64.b64encode(b"x" * 36).decode("ascii"), id="wrong length"),
+    pytest.param("!!!not-base64!!!", id="not base64 at all"),
+    pytest.param("", id="empty"),
+])
+def test_a07_key_material_that_cannot_be_loaded_makes_the_store_unusable(
+    material: str, tmp_path: Path
+):
+    """A store whose keys are unusable must not report itself available.
+
+    Measured before the fix: `available=True`, `active_signers=['K']`, and
+    `assurance_state()` publishing `consequential_authority: available` for a
+    store that can authenticate nothing. Every grant then refused as
+    `APPROVAL_NOT_AUTHENTICATED: ValueError` -- which sends an operator to
+    reissue the ARTIFACT when the STORE is what is broken.
+
+    This is the defect `active_signers` already records as closed for revoked
+    keys, recurring through a cause the `status == "active"` rule cannot see.
+    """
+    location = _write_store(tmp_path, [_signer("K", "mazin", "active", material)])
+    with pytest.raises(TrustStoreUnavailable, match="cannot"):
+        ApprovalTrustStore.load(location, domain=ACTION_TRUST_DOMAIN)
+
+
+def test_a07_a_loadable_key_is_not_refused(tmp_path: Path):
+    """The positive control. Without it the parametrised test above could be
+    satisfied by a store that refuses every key it is given."""
+    location = _write_store(tmp_path, [_signer("K", "mazin", "active",
+                                               _real_public_key())])
+    store = ApprovalTrustStore.load(location, domain=ACTION_TRUST_DOMAIN)
+    assert store.available is True
+    assert sorted(store.active_signers) == ["K"]
+
+
+def test_a06_the_two_stores_now_refuse_the_same_shape(tmp_path: Path):
+    """The asymmetry itself, asserted so it cannot reopen.
+
+    The point is not that each store happens to refuse duplicates today. It is
+    that the HIGHER-authority store must not be the more permissive of the two.
+    """
+    from nornyx_forge.reviewer_trust import (  # noqa: PLC0415
+        ReviewerStoreUnavailable,
+        ReviewerTrustStore,
+    )
+
+    reviewers = tmp_path / "reviewers.json"
+    reviewers.write_bytes(json.dumps({
+        "schema": "nornyx.forge.reviewer_trust_store.v1", "reviewers": [
+        {"key_id": "R1", "reviewer": "a", "roles": ["test-inspector"],
+         "algorithm": "Ed25519", "public_key": _real_public_key()},
+        {"key_id": "R1", "reviewer": "b", "roles": ["test-inspector"],
+         "algorithm": "Ed25519", "public_key": _real_public_key()},
+    ]}, indent=2).encode("utf-8"))
+
+    with pytest.raises(ReviewerStoreUnavailable, match="twice"):
+        ReviewerTrustStore.load(reviewers)
+
+    public_key = _real_public_key()
+    approvers = _write_store(tmp_path, [
+        _signer("K1", "mazin", "revoked", public_key),
+        _signer("K1", "mallory", "active", public_key),
+    ])
+    with pytest.raises(TrustStoreUnavailable, match="twice"):
+        ApprovalTrustStore.load(approvers, domain=ACTION_TRUST_DOMAIN)

@@ -19,6 +19,8 @@ answer of "unchanged".
 
 from __future__ import annotations
 
+import ast
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +28,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
+
+import attack_property  # noqa: E402
+from attack_property import PropertyNotViolated  # noqa: E402
 
 
 def _introduced(before: str, after: str) -> list[str]:
@@ -112,18 +117,66 @@ CRASH_SPECIMENS = [
     ids=[case[0] for case in CRASH_SPECIMENS],
 )
 def test_fg29_a_crash_is_distinguishable_from_a_decision(
-    label: str, measured: dict, kind: str
+    label: str, measured: dict, kind: str, monkeypatch
 ):
-    """The distinction the criterion has to be able to draw.
+    """The distinction the criterion has to draw, drawn BY THE CRITERION.
 
-    A criterion that reads only "the expected diagnostic is absent" cannot tell
-    these apart, and an unmeasurable mutant then earns kill credit. The rule:
-    an outcome that reports RAISED is not evidence about the property either
-    way, and must terminate the measurement rather than answer it.
+    This used to compute `str(measured["reason"]).startswith("RAISED ")` in the
+    test body and assert it matched a hand-written label in the table beside
+    it. That is a re-implementation checking itself: a review deleted the guard
+    from `attack_property._h19_violated` and this owner stayed green at 14/14,
+    with the FG29 defect -- a crash credited as a property violation -- fully
+    restored. Nothing anywhere exercised the real guard.
+
+    So the specimen is fed to the real criterion instead. An outcome reporting
+    RAISED must terminate the measurement; anything else must be answered.
     """
-    unmeasurable = str(measured["reason"]).startswith("RAISED ")
-    assert unmeasurable is (kind == "unmeasurable"), (
-        f"{label}: classified as {'unmeasurable' if unmeasurable else 'decided'}"
+    monkeypatch.setattr(attack_property, "run_probe", lambda tree, source: measured)
+
+    if kind == "unmeasurable":
+        with pytest.raises(PropertyNotViolated):
+            attack_property._h19_violated(Path("."))
+        return
+
+    # The positive control, in the same test: a decided outcome must produce a
+    # verdict rather than withdrawing, or the guard refuses everything and FG29
+    # would be "closed" by measuring nothing at all.
+    verdict = attack_property._h19_violated(Path("."))
+    assert isinstance(verdict, bool), (
+        f"{label}: a decided outcome did not yield a verdict"
+    )
+
+
+def test_fg29_a_crash_yields_no_verdict_by_any_route(monkeypatch):
+    """A crash must produce NO ANSWER -- not a wrong one, and not a quiet one.
+
+    Measured, by deleting guards from a copy of the criterion rather than by
+    reasoning about them:
+
+        both guards present   -> PropertyNotViolated   (withdraws, visibly)
+        RAISED guard removed  -> PropertyNotViolated   (attribution catches it)
+        both guards removed   -> False                 (no credit, silently)
+
+    So this criterion no longer has a path on which a crash reports VIOLATED.
+    That is worth stating precisely, because the historical FG29 shape was the
+    last line reading `return "SUBJECT_SCOPE_INCOMPLETE" not in reason`, which
+    made a crash message -- carrying no diagnostic, because it carries no
+    decision -- report True and earn a kill. Restructuring the criterion to
+    decide on state removed that path; the guards make the outcome an explicit
+    withdrawal instead of a silent False.
+
+    The distinction matters: a silent False says "the control held", which a
+    crash did not establish either. Only a withdrawal says nothing was
+    measured, and only a withdrawal is visible in the runner.
+    """
+    crashed = {"verified": False, "digest": "", "reason": "RAISED FileNotFoundError"}
+    monkeypatch.setattr(attack_property, "run_probe", lambda tree, source: crashed)
+    with pytest.raises(PropertyNotViolated):
+        attack_property._h19_violated(Path("."))
+
+    assert "SUBJECT_SCOPE_INCOMPLETE" not in crashed["reason"], (
+        "the specimen no longer reproduces FG29: a crash whose text happens to "
+        "carry the expected diagnostic would be answered correctly by accident"
     )
 
 
@@ -134,30 +187,75 @@ def test_fg29_a_crash_is_distinguishable_from_a_decision(
 # process exited non-zero, and a non-zero exit is exactly what "the gate
 # refused the deletion" looks like. Reporting that as proof would have credited
 # a resource limit as a security result.
+#
+# The owner that used to sit here asserted `(not timed_out) is usable` over a
+# table in which every row set `usable = not timed_out`. That is an identity
+# between two hand-written columns -- unfalsifiable over its own data -- and
+# the guard it named existed NOWHERE: `timed_out` appeared in no other file in
+# tests/ or scripts/, and no harness carried a completion flag.
+#
+# What actually protects the campaign is that both harness call sites pass
+# `timeout=` to `subprocess.run`, which RAISES `TimeoutExpired` rather than
+# returning a CompletedProcess with a non-zero code. That is a real guard and
+# it is worth pinning; it was simply not the one the test described.
 # --------------------------------------------------------------------------
 
-COMPLETION_SPECIMENS = [
-    ("the gate ran and refused", 2, False, True),
-    ("the gate ran and accepted", 0, False, True),
-    ("the run timed out", 1, True, False),
-    ("the run was killed", -9, True, False),
-]
 
+def test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning(tmp_path: Path):
+    """The real property: an unfinished run yields no result to misread.
 
-@pytest.mark.parametrize(
-    ("label", "returncode", "timed_out", "usable"),
-    COMPLETION_SPECIMENS,
-    ids=[case[0] for case in COMPLETION_SPECIMENS],
-)
-def test_fg33_an_unfinished_run_is_not_a_result(
-    label: str, returncode: int, timed_out: bool, usable: bool
-):
-    """A non-zero exit and a refusal are not the same fact.
-
-    They are indistinguishable from the exit code alone, which is why the
-    timeout must be carried alongside it. Anything that did not finish yields
-    no verdict, in either direction -- it does not mean "accepted" either.
+    If `subprocess.run` ever returned on timeout -- or a call site swallowed
+    `TimeoutExpired` and handed back the CompletedProcess -- an exhausted
+    resource limit would be indistinguishable from a refusal, which is the
+    whole class.
     """
-    assert (not timed_out) is usable, (
-        f"{label}: an unfinished run was treated as a usable result"
+    with pytest.raises(subprocess.TimeoutExpired):
+        subprocess.run(  # noqa: S603
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=1,
+        )
+
+
+def test_fg33_a_run_that_finishes_returns_its_code(tmp_path: Path):
+    """The control. Without it the test above passes on a harness that raises always."""
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", "raise SystemExit(2)"],
+        cwd=tmp_path, capture_output=True, text=True, timeout=60,
+    )
+    assert done.returncode == 2, (
+        "a run that finished did not report its own exit code, so a refusal "
+        "could not be told from anything else either"
+    )
+
+
+def test_fg33_both_harness_entry_points_bound_their_runs():
+    """Structural, over the real call sites rather than over a table.
+
+    A timeout that is not passed cannot raise, so the property above would hold
+    while the campaign ran unbounded. AST, not text: the word `timeout` in a
+    comment is what let the previous owner look correct.
+    """
+    sites = {
+        "tests/mutation_workspace.py": "run_node",
+        "tests/attack_property.py": "run_probe",
+    }
+    unbounded = []
+    for relative, function in sorted(sites.items()):
+        tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+        found = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function
+        )
+        bounded = any(
+            keyword.arg == "timeout"
+            for call in ast.walk(found)
+            if isinstance(call, ast.Call)
+            for keyword in call.keywords
+        )
+        if not bounded:
+            unbounded.append(f"{relative}::{function}")
+    assert unbounded == [], (
+        "these harness entry points run a child process with no timeout, so a "
+        f"hung run never terminates and never yields a result either: {unbounded}"
     )

@@ -190,9 +190,40 @@ def main() -> None:
         except TypeError:  # a module object without a namespace
             continue
         for binding, value in list(members.items()):
-            if isinstance(value, type) and issubclass(value, BaseException):
+            if not (isinstance(value, type) and issubclass(value, BaseException)):
+                continue
+            # PLAIN LOWERCASE NAMES ARE DROPPED, and that is a stated bound
+            # rather than an oversight. `re.error`, `struct.error`, `gaierror`
+            # and `herror` are real exception classes whose names are ordinary
+            # words, and no token test can tell `a signature error was
+            # reported` -- a perfectly good refusal -- from a crash rendered as
+            # `error`. Keeping them disqualified genuine mutants; a review
+            # measured it, and so did the widened control below.
+            #
+            # A capital or an underscore is what distinguishes a rendered class
+            # name from prose. `com_error` and `internal_error` are kept.
+            # A crash whose entire rendering is a bare lowercase word is
+            # OUTSIDE what this can see, and is not claimed to be inside it.
+            if value.__name__[:1].isupper() or "_" in value.__name__:
                 named.add(value.__name__)
-                named.add(binding)  # aliases: IOError is OSError
+            # ALIASES ONLY WHEN THEY LOOK LIKE CLASS NAMES. `named.add(binding)`
+            # took the MODULE ATTRIBUTE name, and the standard library binds
+            # exception classes to ordinary English words: `socket.error is
+            # OSError` and `socket.timeout is TimeoutError`, so the vocabulary
+            # contained the bare words "error" and "timeout" (and "gaierror",
+            # "herror", "_ShouldStop"). A perfectly ordinary refusal --
+            # "APPROVAL_REFUSED: a signature error was reported" -- was then
+            # disqualified as a crash.
+            #
+            # It fails CLOSED, so no bad kill could be credited; it disqualified
+            # genuine mutants instead. The control written to catch exactly this
+            # had one sample, which happened to avoid the collision. A review
+            # measured it.
+            #
+            # `IOError`/`OSError` still matter, so aliases are kept -- filtered
+            # to bindings spelled as a class is spelled.
+            if binding[:1].isupper() and binding.isidentifier():
+                named.add(binding)
     result["exception_names"] = sorted(named)
 
     print(json.dumps(result))

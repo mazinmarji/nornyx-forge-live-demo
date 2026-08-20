@@ -256,7 +256,21 @@ def observe_governance_integrity(contracts_dir: Path) -> GovernanceIntegrityStat
         for record in _evidence_records(document):
             artifact = record.get("artifact")
             recorded = record.get("content_hash")
-            if not isinstance(artifact, str) or not isinstance(recorded, str):
+            if not isinstance(artifact, str):
+                # No artifact named: there is nothing to check and nothing is
+                # claimed. Skipping is right here.
+                continue
+            if not isinstance(recorded, str):
+                # AN ARTIFACT NAMED WITH NO DIGEST IS A HOLE, NOT A NON-ENTRY.
+                # This used to `continue`, so deleting one `content_hash` value
+                # dropped that artifact out of the check entirely while the
+                # state stayed `intact` with zero problems. Measured: 8
+                # verified claims became 7, silently.
+                problems.append(
+                    f"{contract.name} records evidence {artifact} with no "
+                    "readable content_hash, so nothing verifies it and its "
+                    "absence from the check cannot be told from a match"
+                )
                 continue
             location = contracts_dir / artifact
             if not location.is_file():

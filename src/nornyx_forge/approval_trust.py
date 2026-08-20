@@ -385,6 +385,32 @@ def trust_store_path() -> Path:
     return Path(override) if override else DEFAULT_TRUST_STORE
 
 
+def _assert_loadable_public_key(key_id: str, material: str) -> None:
+    """A key that cannot be loaded is not a key, and the store is not usable.
+
+    Refused at PARSE time so the failure names the store. Deferring it to the
+    first signature check produced a refusal that named the ARTIFACT instead --
+    `APPROVAL_NOT_AUTHENTICATED` -- for a fault that is entirely in the trust
+    store, which is precisely the misdirection coded refusals exist to prevent.
+    """
+    try:
+        from base64 import b64decode  # noqa: PLC0415
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: PLC0415
+            Ed25519PublicKey,
+        )
+    except ImportError:  # pragma: no cover - cryptography is a hard dependency
+        return
+    try:
+        Ed25519PublicKey.from_public_bytes(b64decode(material, validate=True))
+    except Exception as exc:  # noqa: BLE001 - any failure means unusable
+        raise TrustStoreUnavailable(
+            f"trusted signer {key_id!r} carries public key material that cannot "
+            f"be loaded ({type(exc).__name__}), so this store cannot "
+            "authenticate anything and must not report itself available"
+        ) from exc
+
+
 def _parse_signers(payload: Any, location: Path) -> Mapping[str, TrustedSigner]:
     entries = payload.get("signers") if isinstance(payload, dict) else payload
     if not isinstance(entries, list):
@@ -406,6 +432,34 @@ def _parse_signers(payload: Any, location: Path) -> Mapping[str, TrustedSigner]:
             )
         if not isinstance(entry["roles"], list) or not entry["roles"]:
             raise TrustStoreUnavailable("a trusted signer must list at least one role")
+        # DUPLICATES ARE REFUSED, as `reviewer_trust._parse_reviewers` already
+        # refuses them by name. This assigned into a dict, so a repeated key_id
+        # resolved LAST-WINS: one file could list `K1` as
+        # `subject: mazin, status: revoked` and again as
+        # `subject: mallory, status: active`, and the store loaded without
+        # complaint resolving K1 to mallory, active. A revocation earlier in the
+        # list was silently overridden by a later duplicate.
+        #
+        # The lower-authority store -- reviewers, who cannot release an effect
+        # -- refused exactly this shape while the store that authorises
+        # consequential acts did not. That asymmetry is the wrong way round.
+        if str(entry["key_id"]) in signers:
+            raise TrustStoreUnavailable(
+                f"the approver trust store lists key_id {entry['key_id']!r} "
+                "twice; which signer it means, and which status applies, would "
+                "depend on ordering"
+            )
+        # THE KEY MATERIAL IS LOADED HERE, not first used at a signature check.
+        # `public_key` was carried as an opaque string, so a store whose every
+        # key was unusable -- wrong length, not base64, empty -- reported
+        # `available=True` with `active_signers=['K']`, and
+        # `assurance_state()` published `consequential_authority: available`.
+        # Every grant then refused as APPROVAL_NOT_AUTHENTICATED: ValueError,
+        # which sends an operator to reissue the artifact when the STORE is
+        # what needs fixing. This is the same defect the `active_signers`
+        # docstring records as closed for revoked keys, recurring through a
+        # second cause the `status == "active"` rule cannot see.
+        _assert_loadable_public_key(str(entry["key_id"]), str(entry["public_key"]))
         signers[str(entry["key_id"])] = TrustedSigner(
             key_id=str(entry["key_id"]),
             subject=str(entry["subject"]),

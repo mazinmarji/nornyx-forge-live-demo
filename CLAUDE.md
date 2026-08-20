@@ -47,7 +47,11 @@ The task is complete only when:
   SOD_EVIDENCE_PRODUCER_UNKNOWN. Those two are not the absent APPROVAL: they
   are the consequences of having no AUTHENTICATED INDEPENDENT INSPECTION, a
   different external authority. This list is a copy of one the script owns,
-  so EXPECTED_PRE_APPROVAL_DIAGNOSTICS is authoritative and this is
+  so EXPECTED_PRE_APPROVAL_DIAGNOSTICS is authoritative and this is a
+  restatement for readers. If the two ever disagree the script is right, and
+  they cannot disagree silently:
+  `test_the_success_criteria_name_exactly_the_accepted_diagnostics` compares
+  this list against that constant in both directions.
 
   Any other validation or integrity diagnostic fails the criterion above.
   Clearing the approval codes requires a genuine human approval record;
@@ -61,10 +65,11 @@ The task is complete only when:
   path what is produced is FORGE-schema evidence
   (`nornyx.forge.demo_evidence_report.v1`) whose `nornyx_evidence` field reads
   `{"status": "fallback", "load_error": "AuthorizerLoadError..."}` on every
-  case. On a clean checkout the load_error is RUNTIME_LOCK_MISSING
-  instead -- the same absence one step earlier, because the runtime lock
-  is gitignored and cannot be prepared without an approval --
-  case; no `nornyx.agentic` runtime evidence is produced, because the
+  case. On a clean checkout the load_error is RUNTIME_LOCK_MISSING instead --
+  the same absence one step earlier, because the runtime lock is gitignored and
+  cannot be prepared without an approval. Measured: `prepare_runtime.py` exits
+  2, names the absent approval, and writes only `preparation-report.json`.
+  Either way no `nornyx.agentic` runtime evidence is produced, because the
   authorizer never loads without a human approval. "Nornyx evidence is
   emitted" read as the latter and was satisfied by the former -- the exact
   substitution ASSURANCE_BOUNDARY.md forbids;

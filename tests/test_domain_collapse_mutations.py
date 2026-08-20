@@ -534,15 +534,40 @@ def test_fg23_a_crash_is_recognised_by_the_builds_own_exception_names(tmp_path: 
         f"still be credited as a well-formed mutant: {escaped[:12]}"
     )
 
-    # The control, in the same measurement: an ordinary refusal that merely
-    # MENTIONS the domain must stay healthy, or the check refuses everything.
-    ordinary = dict(base)
-    ordinary["governance_reason"] = (
-        "APPROVER_ROLE_UNAUTHORIZED: 'refund-approver' is not a governance role"
+    # THE CONTROL, WITH MORE THAN ONE SAMPLE. The previous version had exactly
+    # one, and it happened to avoid the collision that mattered: the vocabulary
+    # was built from MODULE ATTRIBUTE names, so `socket.error is OSError` and
+    # `socket.timeout is TimeoutError` put the bare words "error" and "timeout"
+    # into it, and any refusal using either as ordinary English was disqualified.
+    # A single sample is not a control; it is one measurement that agreed.
+    ordinary = [
+        "APPROVER_ROLE_UNAUTHORIZED: 'refund-approver' is not a governance role",
+        "APPROVAL_REFUSED: a signature error was reported by the verifier",
+        "APPROVAL_EXPIRED: the request timeout window has already elapsed",
+        "DENY: the role is not trusted in this domain",
+        "APPROVAL_NOT_AUTHENTICATED: signature invalid. Any change to the "
+        "decision, approver, role, window or bound subject invalidates it.",
+    ]
+    disqualified = []
+    for refusal in ordinary:
+        candidate = dict(base)
+        candidate["governance_reason"] = refusal
+        if healthy_against(base, candidate):
+            disqualified.append(refusal)
+    assert disqualified == [], (
+        "these ordinary refusals were disqualified as crashes, so the "
+        f"vocabulary is matching prose rather than exception names: {disqualified}"
     )
-    assert healthy_against(base, ordinary) == [], (
-        "an ordinary refusal was disqualified, so the vocabulary is matching "
-        "prose rather than exception names"
+
+    # And the vocabulary itself must not contain bare English words, which is
+    # the property rather than a sample of it.
+    english = sorted(
+        name for name in vocabulary
+        if name in {"error", "timeout", "warning", "exception", "failure"}
+    )
+    assert english == [], (
+        "the exception vocabulary contains ordinary English words, so any "
+        f"refusal using one as prose will be read as a crash: {english}"
     )
 
 

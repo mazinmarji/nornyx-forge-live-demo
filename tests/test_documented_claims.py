@@ -111,12 +111,79 @@ def test_no_governance_document_pins_a_commit_as_the_subject():
 #: see the claims that matter most: `assurance_state: independently_inspected`
 #: inside a fence was invisible while the identical line outside one was
 #: flagged. A review demonstrated it.
+#: BACKTICK SPANS ONLY. The double-quote arm blanked every quoted string in
+#: every document -- which is precisely the form this system EMITS:
+#: {"assurance_state": "independently_inspected"} and "human_review":
+#: "performed" are the spellings in all five evidence artifacts, and both
+#: walked straight past the guard. A review put ten forged documents through
+#: the real test and measured seven admitted, including those two, a
+#: bold-emphasised claim, a YAML value and an ordinary quoted sentence.
+#:
+#: The arm was also NOT LOAD-BEARING: scanning every authored document with it
+#: and without it both yield `offenders == []`. It was costing the guard its
+#: reach and protecting nothing, so it is gone rather than narrowed.
 _NEWLINE = chr(10)
-_MENTION = re.compile(
-    "[`][^`" + _NEWLINE + "]*[`]"
-    + "|"
-    + '["][^"' + _NEWLINE + ']*["]'
-)
+_MENTION = re.compile("[`][^`" + _NEWLINE + "]*[`]")
+
+#: THE SEPARATOR CROSSES A LINE BREAK. Every document here is hard-wrapped at
+#: about 78 columns, so a claim landing on a wrap boundary was not matched by
+#: a separator class of `[ _-]+` -- a review measured a wrapped prose claim
+#: ADMITTED while the identical sentence on one line was caught. Wrapping is a
+#: typesetting accident and must not decide whether a claim is visible.
+_SEP = "[ _" + _NEWLINE + "-]+"
+
+#: THE NEGATION IS NOT A LOOKBEHIND. Python lookbehinds are FIXED WIDTH, so
+#: `(?<!not[ _-])` can see exactly one separator character. That was adequate
+#: while a separator was one space; once the class crosses line breaks, a claim
+#: hard-wrapped as "not" + newline + four spaces of indent puts FIVE characters
+#: between the negation and the claim, the lookbehind sees only the indent, and
+#: the HONEST sentence is reported as an overclaim.
+#:
+#: My own specimen caught this: adding the wrapped negation to the table turned
+#: it red immediately. It is the same mistake the docstring below already
+#: records -- widening the separator without widening the negation -- committed
+#: a second time in a form the fixed-width construct cannot express at all.
+#:
+#: So the negation is a variable-width scan done in Python, over the text
+#: immediately preceding a candidate. Same question, asked where the answer can
+#: actually be computed.
+_NEGATED_BEFORE = re.compile("not[ _" + _NEWLINE + "-]+$")
+
+
+def find_overclaims(text: str) -> list:
+    """Every claim in `text` that is not negated. ONE implementation.
+
+    Both the live sweep and the specimen table call this. The specimen test
+    used to re-declare the patterns in its own body -- a test that
+    re-implements the thing it tests measures its own copy, which can stay
+    correct while the live guard rots, green either way. That is the defect an
+    independent review found in the false-green audit's own owners, so it is
+    removed here rather than left to be found again.
+    """
+    scanned = _mention_blanked(text.lower())
+    return [
+        match
+        for pattern in forbidden_claim_patterns()
+        for match in pattern.finditer(scanned)
+        if not _NEGATED_BEFORE.search(scanned[: match.start()])
+    ]
+
+
+def forbidden_claim_patterns() -> tuple:
+    """The claim shapes themselves. Negation is applied by `find_overclaims`."""
+    return (
+        re.compile("writes" + _SEP + "independent" + _SEP + "review" + _SEP
+                   + "evidence"),
+        re.compile("independently" + _SEP + "inspected"),
+        # THE SEPARATOR TOLERATES QUOTE CHARACTERS. In the form this system
+        # actually emits -- {"human_review": "performed"} -- the key and value
+        # are separated by quote, colon, space, quote. A class of `[ ]*[:=][ ]*`
+        # matches none of that, so the exact JSON spelling in all five evidence
+        # artifacts walked past while the prose form was caught.
+        re.compile("human" + _SEP + "review"
+                   + "[ " + chr(34) + chr(39) + "]*[:=][ " + chr(34) + chr(39) + "]*"
+                   + "performed"),
+    )
 
 
 def _mention_blanked(text: str) -> str:
@@ -137,16 +204,6 @@ def test_no_document_claims_an_independent_inspection_this_repository_lacks():
     # exact spellings this system EMITS in every transcript and report block,
     # walked past a guard whose docstring claimed it had generalised beyond
     # exact strings. It had generalised to prose and not to the machine form.
-    _SEP = "[ _-]+"
-    forbidden = (
-        re.compile("writes" + _SEP + "independent" + _SEP + "review" + _SEP
-                   + "evidence"),
-        # The lookbehind takes the separator too: `not_independently_inspected`
-        # is the HONEST machine value this system emits, and widening the
-        # separator without widening the negation flagged ten truthful lines.
-        re.compile("(?<!not[ _-])independently" + _SEP + "inspected"),
-        re.compile("human" + _SEP + "review" + "[ ]*[:=][ ]*" + "performed"),
-    )
     offenders: list[str] = []
     for document in governance_docs():
         name = document.relative_to(ROOT).as_posix()
@@ -156,11 +213,10 @@ def test_no_document_claims_an_independent_inspection_this_repository_lacks():
         # requires -- that is the term being explained, not the repository
         # claiming to hold it, and the same structural rule already separates
         # a retracted CrewAI claim from a live one.
-        text = _mention_blanked(document.read_text(encoding="utf-8").lower())
-        for pattern in forbidden:
-            for match in pattern.finditer(text):
-                line = text[: match.start()].count(chr(10)) + 1
-                offenders.append(f"{name}:{line} {match.group(0)!r}")
+        raw = document.read_text(encoding="utf-8")
+        for match in find_overclaims(raw):
+            line = raw[: match.start()].lower().count(chr(10)) + 1
+            offenders.append(f"{name}:{line} {match.group(0)!r}")
 
     assert offenders == [], (
         "documentation claims an independent inspection that no authenticated "
@@ -423,6 +479,24 @@ OVERCLAIM_SPECIMENS = [
      "`assurance_state: independently_inspected` is derived, never read", False),
     ("human review, machine spelling", "human_review: performed", True),
     ("human review, honest", "human_review: not_performed", False),
+    # THE FORMS A REVIEW GOT PAST THIS GUARD. Each was measured admitted by the
+    # real test, decided by exit code rather than by reading the pattern. The
+    # first two are the spelling every evidence artifact in this repository
+    # uses, and the third is how every document here is typeset.
+    ("json object, the form all five evidence files use",
+     '{"assurance_state": "independently_inspected"}', True),
+    ("json human_review: quote, colon, space, quote",
+     '{"human_review": "performed"}', True),
+    ("hard-wrapped across a line break, as every document here is",
+     "the build is independently" + chr(10) + "    inspected by three parties", True),
+    ("bold emphasis around the claim", "**independently inspected**", True),
+    ("an ordinary quoted sentence, which used to be blanked wholesale",
+     'the report says "this build is independently inspected" today', True),
+    # And the negations in the same widened forms, so extending the reach did
+    # not cost the guard its honesty about the values this system really emits.
+    ("hard-wrapped honest negative",
+     "the state is not" + chr(10) + "    independently inspected", False),
+    ("json honest negative", '{"human_review": "not_performed"}', False),
 ]
 
 
@@ -441,11 +515,76 @@ def test_the_overclaim_guard_reads_machine_spellings_and_respects_mention(
     the honest value, read as a claim. Widening the negation without widening
     the separator would have left the original hole. Both are pinned here.
     """
-    _SEP = "[ _-]+"
-    patterns = (
-        re.compile("(?<!not[ _-])independently" + _SEP + "inspected"),
-        re.compile("human" + _SEP + "review" + "[ ]*[:=][ ]*" + "performed"),
-    )
-    scanned = _mention_blanked(text.lower())
-    hit = any(pattern.search(scanned) for pattern in patterns)
+    # THE REAL IMPLEMENTATION, not a copy of it. This re-declared its own pair
+    # of patterns, so it could have gone on passing while the live sweep used
+    # something else entirely -- a specimen that measures itself.
+    hit = bool(find_overclaims(text))
     assert hit is flagged, f"{label}: flagged={hit}, expected {flagged}"
+
+
+def test_the_success_criteria_name_exactly_the_accepted_diagnostics():
+    """C3-P3-6: CLAUDE.md restates a set the gate owns, and nothing bound them.
+
+    The criterion in CLAUDE.md lists the diagnostics an autonomous run may
+    leave outstanding. That list is a COPY of
+    `check_pre_approval_baseline.EXPECTED_PRE_APPROVAL_DIAGNOSTICS`, and a copy
+    with no test is a copy that drifts -- which has already happened once here,
+    when the document listed three codes against a gate that accepts five and
+    the criterion was, read literally, false at every head.
+
+    The document says the script is authoritative. This makes that true rather
+    than merely asserted: the codes the gate accepts and the codes the document
+    names must be the same set, in both directions. A code added to the gate
+    and not to the document silently widens what a run may leave behind; a code
+    in the document and not in the gate promises tolerance the gate will not
+    give.
+
+    Codes only. The gate matches `(code, path, source_id)` triples, and the
+    document deliberately names just the code -- a reader is being told which
+    absences are expected, not where each one surfaces. That narrowing is the
+    document's business; drifting apart is not.
+    """
+    import sys  # noqa: PLC0415
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from check_pre_approval_baseline import (  # noqa: PLC0415
+        EXPECTED_PRE_APPROVAL_DIAGNOSTICS,
+    )
+
+    accepted = {code for code, _path, _source in EXPECTED_PRE_APPROVAL_DIAGNOSTICS}
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+
+    # BOTH DIRECTIONS READ THE ENUMERATION, not the document. Scanning the
+    # whole file made the first direction unfalsifiable: every one of these
+    # codes is also DISCUSSED in the prose below the list, so deleting one from
+    # the list left the prose mention behind and the check still passed. I
+    # measured exactly that -- struck a code from the enumeration and the
+    # comparison reported nothing missing. A mention is not an entry.
+    marker = "`scripts/check_pre_approval_baseline.py` accepts:"
+    assert marker in text, (
+        "the success criteria no longer enumerate the accepted diagnostics "
+        "under the sentence this test locates them by"
+    )
+    after = text[text.index(marker) + len(marker):]
+    enumeration = after[: after.index(chr(10) * 2, after.index("A"))]
+    listed = set(re.findall("[A-Z][A-Z_]{6,}", enumeration))
+
+    missing = sorted(accepted - listed)
+    assert missing == [], (
+        "the success criteria do not name these diagnostics the gate accepts, "
+        f"so a run could leave one behind and still read as compliant: {missing}"
+    )
+
+    # The other direction, scoped to THE ENUMERATION rather than to the whole
+    # document. My first attempt scanned every uppercase token in CLAUDE.md and
+    # flagged RUNTIME_LOCK_MISSING -- which the document mentions in a
+    # different criterion, describing the `load_error` a clean checkout shows,
+    # and does not offer as an accepted outstanding diagnostic at all. A guard
+    # that reads a mention as a claim is the defect two modules here already
+    # exist to prevent; it does not get a pass for being mine.
+    overpromised = sorted(listed - accepted)
+    assert overpromised == [], (
+        "the success criteria name diagnostics the pre-approval gate does NOT "
+        f"accept, so the criterion promises tolerance that does not exist: "
+        f"{overpromised}"
+    )

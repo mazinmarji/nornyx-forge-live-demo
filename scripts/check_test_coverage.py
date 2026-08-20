@@ -185,6 +185,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_validation_script.py": 1,
 }
 
+# Raised again, from 1120, when round-3 remediation took the suite to 1255 and
+# `test_the_floor_sits_below_the_current_suite_and_above_nothing` went red at
+# 135 of slack -- the band guard doing exactly its job. 1190 leaves 65.
 # Raised from 945, then from 1000. Lens B measured 118 tests of slack against
 # 1063 collected -- enough to delete whole modules with this gate still green,
 # and it named the dirty-tree gate and the reachability regressions as
@@ -197,7 +200,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # is supposed to catch. So it stays a constant, and the guard requiring it to
 # sit within 10% of the real suite is the thing that forces a deliberate raise
 # whenever the suite grows. Twice now that guard has been the one to notice.
-MINIMUM_COLLECTED = 1120
+MINIMUM_COLLECTED = 1190
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,

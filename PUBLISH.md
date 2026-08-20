@@ -22,10 +22,28 @@ git push -u origin main
 ```
 
 After publication, confirm that GitHub Actions completes both `test` and
-`demo-contract`. Neither validates strict Nornyx execution and neither
-validates CrewAI: `demo-contract` runs the demo non-strict, the
-`strict-authorization` job reports that strict authorization stays inactive,
-and `cli.py` requests `execution_backend="sequential"` unconditionally. The
-wording this replaces -- describing "strict Nornyx/CrewAI execution" as
-validated by those jobs -- was retracted in README.md and survived here
-because the guard scanned only README and docs/.
+`demo-contract`.
+
+Neither validates STRICT NORNYX execution: `demo-contract` runs the demo
+non-strict, and the `strict-authorization` job reports that strict
+authorization stays inactive. That much has always been true.
+
+CrewAI is a different matter, and the two sentences that used to stand here
+were both false. `cli.py` names `execution_backend` exactly once, at line 164,
+inside the `demo` command -- not unconditionally. `build_app` passes NO config,
+so `RuntimeAuthorityConfig()` applies with its defaults (`policy_backend
+"nornyx"`, `execution_backend "crewai"`), and `cli build` runs a real kickoff:
+`build-summary.json` records `execution_backend: crewai_flow`. And the `test`
+job runs the full suite through `check_test_coverage.py`, which includes
+`test_authority_config.py`'s `("crewai", "crewai_flow")` case asserting the
+backend DERIVED from the driver -- measured `4 passed, 9 deselected`, not
+skipped, because CI installs `.[demo,dev]` and so installs CrewAI.
+
+So: the `test` job does validate that CrewAI really executes. What no job
+validates is strict Nornyx authorization, which needs a human approval that
+does not exist here.
+
+The wording this replaces -- describing "strict Nornyx/CrewAI execution" as
+validated by those jobs -- was retracted in README.md and survived here because
+the guard scanned only README and docs/. The replacement then over-corrected
+into the opposite falsehood, which is what an independent review measured.
