@@ -7,7 +7,10 @@ These drive the durable store directly and through the boundary.
 
 from __future__ import annotations
 
+import os
+import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +24,7 @@ from nornyx_forge.approval_trust import APPROVAL_SCHEMA
 from nornyx_forge.nornyx_runtime import (
     GRANT_PREDATES_LEDGER,
     LEDGER_METADATA_TABLE,
+    LEDGER_ROLLED_BACK,
     ActionDescriptor,
     ActionRequest,
     ApprovalLedger,
@@ -1295,3 +1299,289 @@ def test_la01_a_grant_issued_after_the_restore_still_works(tmp_path: Path):
     assert claimed is True, (
         f"a grant issued AFTER the restored anchor was refused: {reason}"
     )
+
+
+# --------------------------------------------------------------------------
+# A02 -- a RESTORED ledger, which the continuity anchor cannot see.
+#
+# The anchor makes DELETION self-defeating: an absent file is re-provisioned at
+# a later epoch, so every outstanding grant predates it. Restoration is the
+# other half, and the module comment claimed that one too -- an operator
+# restoring a lost ledger with the documented command "now fails closed". It
+# did not. `established_at` lives inside the file being rolled back, so the old
+# epoch returns with the emptied rows and the pair is indistinguishable from a
+# ledger set up early and not yet used. Measured before the fix: ONE human
+# approval, FIVE releases, no adversary anywhere.
+# --------------------------------------------------------------------------
+
+
+def test_a02_a_restored_ledger_refuses_the_grant_it_forgot(tmp_path: Path):
+    """The counterexample, exactly as reproduced, driven through `consume`."""
+    path = tmp_path / "restore.sqlite3"
+    backup = tmp_path / "restore.backup"
+    request = _request()
+    fingerprint = _fingerprint("ACT-RESTORE", request)
+    issued = "2026-08-02T00:00:00Z"
+
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    # The ordinary operator backup: taken after setup, before any effect ran.
+    shutil.copy2(path, backup)
+
+    claimed, reason = ApprovalLedger(path).consume(
+        fingerprint, request.digest, at=NOW, grant_issued_at=issued)
+    assert claimed is True, f"first spend must succeed or this proves nothing: {reason}"
+
+    released = 1
+    for _ in range(4):
+        shutil.copy2(backup, path)          # nothing adversarial: a restore
+        again, reason = ApprovalLedger(path).consume(
+            fingerprint, request.digest, at=NOW, grant_issued_at=issued)
+        released += bool(again)
+    assert released == 1, (
+        f"one human approval released {released} effects across ordinary "
+        "backup restores, so single use is guaranteed by nothing a restore "
+        "cannot undo"
+    )
+    assert LEDGER_ROLLED_BACK in reason, reason
+
+
+def test_a02_the_anchor_alone_cannot_see_a_restore(tmp_path: Path):
+    """WHY the count is needed, as a measurement rather than a claim.
+
+    If continuity could see a restore the sidecar would be redundant. It
+    cannot: after the restore the anchor is the ORIGINAL instant and the grant
+    was issued after it, so the continuity comparison says the grant is fresh.
+    This pins the gap the new check fills -- if it ever closes by another
+    route, this says so rather than leaving a duplicate control in place.
+    """
+    path = tmp_path / "gap.sqlite3"
+    backup = tmp_path / "gap.backup"
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    shutil.copy2(path, backup)
+    request = _request()
+    ApprovalLedger(path).consume(
+        _fingerprint("ACT-GAP", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+
+    shutil.copy2(backup, path)
+    restored = ApprovalLedger(path)
+    assert restored.established_at == "2026-08-01T00:00:00Z", (
+        "the restore was supposed to bring the ORIGINAL anchor back; if it "
+        "does not, this specimen no longer reproduces the defect"
+    )
+    assert restored.established_at < "2026-08-02T00:00:00Z", (
+        "the grant is issued AFTER the restored anchor, which is exactly why "
+        "continuity passes it and something else has to catch it"
+    )
+
+
+def test_a02_a_ledger_that_never_recorded_a_mark_is_not_refused(tmp_path: Path):
+    """Bootstrapping. `None` is not zero and must not be read as one.
+
+    A ledger written before this check existed, or one whose sidecar an
+    operator removed while tidying, has nothing to compare against. Refusing it
+    would turn a missing file into an outage for every legitimate grant.
+    """
+    path = tmp_path / "boot.sqlite3"
+    request = _request()
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    ledger = ApprovalLedger(path)
+    ledger.consume(_fingerprint("ACT-1", request), request.digest,
+                   at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    ledger.watermark_path.unlink()
+
+    second = _request(mission_id="CASE-BOOT-2")
+    claimed, reason = ApprovalLedger(path).consume(
+        _fingerprint("ACT-2", second), second.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    assert claimed is True, f"a ledger with no recorded mark was refused: {reason}"
+
+
+def test_a02_ordinary_use_advances_the_mark_and_is_never_refused(tmp_path: Path):
+    """The positive control. Without it the check above could refuse everything.
+
+    Twenty-five distinct grants, the shape of normal operation. If the mark
+    were compared wrongly -- or read AFTER the row count rather than before it
+    -- this is where that shows up.
+    """
+    path = tmp_path / "normal.sqlite3"
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    released = 0
+    for index in range(25):
+        request = _request(mission_id=f"CASE-N{index}")
+        claimed, _ = ApprovalLedger(path).consume(
+            _fingerprint(f"ACT-{index}", request), request.digest,
+            at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+        released += bool(claimed)
+    assert released == 25, f"legitimate grants were refused: {released} of 25"
+
+
+def test_a02_the_mark_is_never_lowered(tmp_path: Path):
+    """Concurrency, arithmetically rather than by locking.
+
+    Two processes can consume at once; whichever writes the mark second must
+    not undo the advance made by the first. A lowered mark silently weakens the
+    check, which is the failure mode that leaves no trace.
+    """
+    path = tmp_path / "mono.sqlite3"
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    ledger = ApprovalLedger(path)
+    ledger._record_consumptions(9)
+    ledger._record_consumptions(3)
+    assert ledger._recorded_consumptions() == 9
+
+
+def test_a03_the_predates_refusal_names_the_anchor_the_decision_used(tmp_path: Path):
+    """The message must not contradict the decision that produced it.
+
+    `consume` re-reads the anchor at the claim -- that repair is what stopped a
+    surviving boundary object replaying a spent grant. The refusal STRING went
+    on interpolating the cached value, so the artifact written into runtime
+    evidence named the stale instant and asserted an inequality that is false:
+    "issued at 2026-08-02, before this replay history began at 2026-08-01".
+    The regression asserted only that the CODE appeared, so the value it
+    printed was measured by nothing.
+    """
+    path = tmp_path / "a03.sqlite3"
+    request = _request()
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    surviving = ApprovalLedger(path)
+    assert surviving.established_at == "2026-08-01T00:00:00Z"
+
+    for suffix in ("", "-wal", "-shm", ".highwater"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+    _established_ledger(path, "2026-08-09T00:00:00Z")
+
+    claimed, reason = surviving.consume(
+        _fingerprint("ACT-A03", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    assert claimed is False, reason
+    assert GRANT_PREDATES_LEDGER in reason, reason
+    assert "2026-08-09T00:00:00Z" in reason, (
+        "the refusal names an anchor the decision did not use: it must report "
+        f"the instant re-read at the claim, not the cached one -- {reason}"
+    )
+    assert "2026-08-01T00:00:00Z" not in reason, (
+        f"the stale cached anchor is still being published: {reason}"
+    )
+
+
+# --------------------------------------------------------------------------
+# A05 -- opening a ledger must not CREATE one, in any spelling.
+#
+# This class removed `CREATE TABLE IF NOT EXISTS` from the point of use, and
+# the docstring still says "Open an existing ledger. Creates nothing." The
+# creation came back one layer down: `sqlite3.connect(path)` makes the file. So
+# `consume` on a deleted ledger left a 0-byte residue, and the next
+# NornyxActionBoundary raised on it -- turning "a missing ledger refuses
+# consequential acts" into "the application serves nothing at all, including
+# low-risk read-only work".
+# --------------------------------------------------------------------------
+
+
+def test_a05_consuming_against_a_deleted_ledger_creates_nothing(tmp_path: Path):
+    """The refusal must leave the directory as it found it."""
+    path = tmp_path / "gone.sqlite3"
+    request = _request()
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    surviving = ApprovalLedger(path)
+    for suffix in ("", "-wal", "-shm", ".highwater"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+    assert path.exists() is False, "the specimen must start with the ledger gone"
+
+    claimed, reason = surviving.consume(
+        _fingerprint("ACT-GONE", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    assert claimed is False, reason
+    assert path.exists() is False, (
+        "consuming against an absent ledger created it. An empty ledger is one "
+        "in which nothing has been spent, which is the exact state this class "
+        f"exists to refuse: {reason}"
+    )
+
+
+def test_a05_a_missing_ledger_still_leaves_the_boundary_constructable(tmp_path: Path):
+    """The documented behaviour, which the residue silently replaced.
+
+    A-014: a missing ledger DENIES consequential acts. It does not take the
+    process down -- the residue made construction raise, so no case could be
+    served at all.
+    """
+    path = tmp_path / "absent.sqlite3"
+    request = _request()
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    ApprovalLedger(path).consume(
+        _fingerprint("ACT-A", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    for suffix in ("", "-wal", "-shm", ".highwater"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+    ApprovalLedger(path).consume(
+        _fingerprint("ACT-B", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+
+    reopened = ApprovalLedger(path)
+    assert reopened.available is False, (
+        "a missing ledger must report itself unavailable rather than usable"
+    )
+    assert ApprovalLedger.MISSING in (reopened.unavailable_reason or ""), (
+        reopened.unavailable_reason
+    )
+
+
+# --------------------------------------------------------------------------
+# A04 -- the read-only pre-flight could not fire for the state it names.
+#
+# `BEGIN IMMEDIATE` SUCCEEDS on a read-only SQLite database. So did
+# `PRAGMA journal_mode=WAL` and `ROLLBACK`. Only the INSERT failed -- at the
+# worst moment, which is precisely what the pre-flight existed to avoid -- and
+# the refusal it produced carried no code at all, while `UNWRITABLE` was
+# emitted by nothing anywhere in the repository.
+# --------------------------------------------------------------------------
+
+
+def test_a04_a_read_only_ledger_is_refused_at_construction(tmp_path: Path):
+    """Named, and named as UNWRITABLE rather than as some other failure."""
+    path = tmp_path / "readonly.sqlite3"
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+    os.chmod(path, stat.S_IREAD)
+    try:
+        with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+            ApprovalLedger(path)
+        assert ApprovalLedger.UNWRITABLE in str(refusal.value), (
+            "a read-only ledger was refused without saying it is read-only, so "
+            f"an operator cannot tell it from a corrupt one: {refusal.value}"
+        )
+    finally:
+        os.chmod(path, stat.S_IWRITE)
+
+
+def test_a04_a_writable_ledger_is_not_refused(tmp_path: Path):
+    """The positive control: the probe write must roll back and change nothing.
+
+    A pre-flight that recorded its own probe row would be a ledger that lies
+    about what it has spent, so this asserts the row count as well as the
+    absence of a refusal.
+    """
+    path = tmp_path / "writable.sqlite3"
+    _established_ledger(path, "2026-08-01T00:00:00Z")
+    ledger = ApprovalLedger(path)
+    assert ledger.available is True, ledger.unavailable_reason
+    with closing(sqlite3.connect(path)) as conn:
+        rows = conn.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+    assert rows == 0, f"the pre-flight left {rows} probe rows in the history"
+
+    request = _request()
+    claimed, reason = ledger.consume(
+        _fingerprint("ACT-W", request), request.digest,
+        at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
+    assert claimed is True, reason

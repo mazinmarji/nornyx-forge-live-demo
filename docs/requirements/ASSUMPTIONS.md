@@ -237,8 +237,17 @@ that "at most once" is absent.
 **Resolution.** Absence is a refusal, not an empty answer. The ledger is created
 by an explicit operator command (`nornyx-forge provision-ledger`); the boundary
 opens it and never creates it. A missing ledger denies consequential acts, a
-corrupt or unwritable one raises as unavailable, and re-provisioning leaves an
-existing ledger untouched.
+corrupt one raises as unavailable, and re-provisioning leaves an existing
+ledger untouched. A ledger whose consumption history has gone BACKWARDS -- a
+restored backup -- is refused as `LEDGER_ROLLED_BACK`, because at-most-once
+cannot be promised by state that a restore can undo.
+
+Two clauses that used to stand here were measured false and are corrected. An
+UNWRITABLE ledger does not raise as unavailable: `BEGIN IMMEDIATE` succeeds on
+a read-only SQLite database, so the pre-flight passes and the refusal arrives
+at the INSERT instead, carrying no code. And "the boundary opens it and never
+creates it" is true of intent but not of effect, because `sqlite3.connect`
+creates an empty file. Both are recorded here rather than described as closed.
 
 Previously `CREATE TABLE IF NOT EXISTS` ran at every construction, so deleting
 the file produced an empty ledger in which nothing had been spent — every grant

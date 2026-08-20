@@ -23,10 +23,18 @@ That instruction terminated in nothing: the signed artifact had no return path.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 import pytest
+from human_authority import (  # noqa: E402
+    APPROVAL_NAMED_DIRECTLY,
+    LOCK_ABSENT,
+    RefusalNotFromAbsentApproval,
+    assert_absent_human_authority,
+    human_approval_granted,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -34,18 +42,13 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 
 
-#: The refusal codes that all mean ONE thing: no human approval exists.
-#: Which one surfaces depends on how far the run gets before the absence
-#: stops it -- on a clean checkout the runtime lock cannot be prepared, so
-#: RUNTIME_LOCK_MISSING arrives first; in a tree where a lock was prepared
-#: earlier, the authorizer loads far enough to report the approval directly.
-#: Both are the same fact. Anything outside this set is a different failure.
-HUMAN_AUTHORITY_ABSENT = frozenset({
-    "AN_APPROVAL_RECORD_MISSING",
-    "APPROVAL_EVIDENCE_MISSING",
-    "EVIDENCE_REQUIRED_MISSING",
-    "RUNTIME_LOCK_MISSING",
-})
+#: Kept as the published name; the membership test now lives in
+#: tests/human_authority.py because set membership alone was too weak. A
+#: review measured two trees with identical contracts and identical (absent)
+#: approval state reporting different codes purely because one had a lock
+#: file -- so "RUNTIME_LOCK_MISSING is in the set" is satisfied by someone
+#: deleting the lock, which says nothing about human authority.
+HUMAN_AUTHORITY_ABSENT = APPROVAL_NAMED_DIRECTLY | {LOCK_ABSENT}
 
 def _accepts_a_grant(function) -> bool:
     import inspect  # noqa: PLC0415
@@ -166,20 +169,15 @@ def test_the_grant_route_stops_where_human_authority_begins(tmp_path: Path):
     # THE DIAGNOSTIC DEPENDS ON THE ENVIRONMENT; THE PROPERTY DOES NOT.
     # This asserted AN_APPROVAL_RECORD_MISSING alone and so passed only in a
     # tree that already holds `.nornyx/runtime/nornyx.agentic_network.lock`.
-    # That path is gitignored and a reader CANNOT create it -- prepare_runtime
-    # exits 2 without a human approval -- so on every clean checkout the
-    # proximate refusal is RUNTIME_LOCK_MISSING and this test failed. An
-    # independent review found it; I reproduced it by archiving HEAD.
+    # That path is gitignored and a reader cannot produce it: prepare_runtime
+    # exits 2 without a human approval, and the only file it leaves behind is
+    # `preparation-report.json` -- measured, not assumed. So on every clean
+    # checkout the proximate refusal is RUNTIME_LOCK_MISSING.
     #
-    # Both diagnostics are the same absence at different depths: no human
-    # approval exists, so the runtime lock cannot be prepared, so the
-    # authorizer cannot load. Naming the set makes the property hold in both
-    # environments without weakening it -- a generic crash still fails.
-    reason = str(refusal.value)
-    assert any(code in reason for code in HUMAN_AUTHORITY_ABSENT), (
-        "the governed path failed for a reason outside the human-authority "
-        f"absence set {sorted(HUMAN_AUTHORITY_ABSENT)}: {reason}"
-    )
+    # Widening this to a SET of codes was the first repair, and a second review
+    # showed the set admits a lock that someone simply deleted. The depth is
+    # not the property; the CAUSE is. The helper establishes it from the tree.
+    assert_absent_human_authority(str(refusal.value), ROOT)
 
 def test_an_unsigned_grant_is_refused(tmp_path: Path):
     """The route must not become a way in. An unauthenticated grant is refused."""
@@ -194,3 +192,125 @@ def test_an_unsigned_grant_is_refused(tmp_path: Path):
     assert effect != "ALLOW", (
         f"an unsigned, unauthenticated grant released a high-risk effect: {decision}"
     )
+
+
+# --------------------------------------------------------------------------
+# Controls for the cause check itself.
+#
+# The first repair of this property widened an assertion to a SET of codes and
+# was accepted because the suite went green. A review then measured that the
+# set admits a deleted lock. So the replacement gets hostile and positive
+# controls of its own, in both directions, rather than a green suite.
+# --------------------------------------------------------------------------
+
+
+def _tree_with_approval(root: Path, **record) -> Path:
+    where = root / ".nornyx/contracts/evidence"
+    where.mkdir(parents=True, exist_ok=True)
+    (where / "architecture_approval_record.json").write_bytes(
+        (json.dumps(record, indent=2, sort_keys=True) + chr(10)).encode("utf-8")
+    )
+    return root
+
+
+def test_a_refusal_naming_the_approval_is_accepted(tmp_path: Path):
+    """The positive control at the deeper depth."""
+    tree = _tree_with_approval(tmp_path, approval="not_granted",
+                               production_approval="not_granted")
+    assert assert_absent_human_authority(
+        "AuthorizerLoadError: CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING",
+        tree,
+    ) == "AN_APPROVAL_RECORD_MISSING"
+
+
+def test_a_missing_lock_is_accepted_only_with_no_granted_approval(tmp_path: Path):
+    """The positive control at the shallower depth -- the clean-checkout state."""
+    tree = _tree_with_approval(tmp_path, approval="not_granted",
+                               production_approval="not_granted")
+    assert assert_absent_human_authority(
+        "RuntimeError: RUNTIME_LOCK_MISSING: ...lock does not exist", tree
+    ) == LOCK_ABSENT
+
+
+def test_a_missing_lock_is_refused_when_an_approval_stands(tmp_path: Path):
+    """THE CONTROL THAT MAKES THE SET-MEMBERSHIP VERSION WRONG.
+
+    A review measured two trees with identical contracts and identical absent
+    approval state reporting different codes purely because one had a lock
+    file. The mirror of that is this: a tree where a human approval EXISTS and
+    the lock was deleted also reports RUNTIME_LOCK_MISSING, and the previous
+    assertion accepted it as proof that human authority is absent.
+
+    It is not. It is proof that a file is missing.
+    """
+    tree = _tree_with_approval(tmp_path, approval="granted",
+                               production_approval="not_granted")
+    with pytest.raises(RefusalNotFromAbsentApproval, match="GRANTED"):
+        assert_absent_human_authority(
+            "RuntimeError: RUNTIME_LOCK_MISSING: ...lock does not exist", tree
+        )
+
+
+def test_a_missing_lock_is_refused_when_the_lock_is_actually_present(tmp_path: Path):
+    """Diagnostic and tree must agree, or the diagnostic is describing something else."""
+    tree = _tree_with_approval(tmp_path, approval="not_granted",
+                               production_approval="not_granted")
+    lock = tree / ".nornyx/runtime/nornyx.agentic_network.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_bytes(b"{}")
+    with pytest.raises(RefusalNotFromAbsentApproval, match="present on disk"):
+        assert_absent_human_authority(
+            "RuntimeError: RUNTIME_LOCK_MISSING: ...lock does not exist", tree
+        )
+
+
+@pytest.mark.parametrize("reason", [
+    "ImportError: No module named 'nornyx'",
+    "RuntimeError: CONTRACT_INVALID: SYNTAX_ERROR at line 4",
+    "",
+])
+def test_a_refusal_for_any_other_reason_is_refused(reason: str, tmp_path: Path):
+    """The hostile control: a broken install must not read as the honest state.
+
+    This is the whole point of naming the cause. A generic unavailability would
+    otherwise certify that the strict path fails closed for want of a human
+    approval, when it actually fails closed for want of a dependency.
+    """
+    tree = _tree_with_approval(tmp_path, approval="not_granted",
+                               production_approval="not_granted")
+    with pytest.raises(RefusalNotFromAbsentApproval):
+        assert_absent_human_authority(reason, tree)
+
+
+@pytest.mark.parametrize(("record", "granted"), [
+    ({"approval": "granted", "production_approval": "not_granted"}, True),
+    ({"approval": "not_granted", "production_approval": "granted"}, True),
+    ({"approval": "not_granted", "production_approval": "not_granted"}, False),
+    ({}, False),
+])
+def test_the_approval_record_is_read_for_either_kind_of_grant(
+    record: dict, granted: bool, tmp_path: Path
+):
+    assert human_approval_granted(_tree_with_approval(tmp_path, **record)) is granted
+
+
+def test_an_unreadable_approval_record_is_not_authority(tmp_path: Path):
+    """Absence of the record is absence of authority, never a grant.
+
+    Reading a missing or corrupt record as `granted` would make the hostile
+    control above pass on a tree that proves nothing.
+    """
+    assert human_approval_granted(tmp_path) is False
+    where = tmp_path / ".nornyx/contracts/evidence"
+    where.mkdir(parents=True, exist_ok=True)
+    (where / "architecture_approval_record.json").write_bytes(b"{not json")
+    assert human_approval_granted(tmp_path) is False
+
+
+def test_this_repository_records_no_granted_human_approval():
+    """The premise the two governed-path tests rest on, asserted rather than assumed.
+
+    If this ever goes true, those tests stop measuring what they claim and must
+    be revisited -- so it fails here rather than passing quietly there.
+    """
+    assert human_approval_granted(ROOT) is False

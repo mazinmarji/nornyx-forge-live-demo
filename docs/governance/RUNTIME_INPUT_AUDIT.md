@@ -69,33 +69,56 @@ that vanishes teaches nothing.
 5. **Deleting the replay ledger restored spent grants.** A recreated table is
    correct in every respect except that it has forgotten, so schema checking
    could not see it. Closed by recording `established_at` when the history
-   begins and refusing any grant issued before it: losing the history now makes
-   outstanding grants *unusable* rather than reusable. See the residual below.
+   begins and refusing any grant issued before it: DELETING the history now
+   makes outstanding grants *unusable* rather than reusable. Restoring a backup
+   is a different case that the anchor cannot see -- it is caught by the
+   consumption high-water mark instead. See the residual below.
 
 ## Residual exposure — replay continuity under ledger write access
 
-Stated rather than implied, because the control's limit is part of what it is.
+Stated rather than implied, because the limit of a control is part of what it is.
 
-`established_at` is stored in the ledger it anchors. An attacker who can WRITE
-that file can set the anchor back and delete the consumption rows together, and
-the ledger will then vouch for a grant it never saw. No local anchor survives an
-adversary with write access to the thing being anchored, and adding a second
-local file would move the same weakness rather than remove it.
+`established_at` is stored in the ledger it anchors, so it defeats DELETION and
+cannot defeat RESTORATION. A file that is gone is re-provisioned at a later
+epoch and every outstanding grant then predates it. A file restored from a
+backup brings the old epoch back alongside the emptied rows, and that pair is
+indistinguishable from a ledger set up early and not yet used — so the anchor
+agrees the grant is fresh and releases it again.
 
-What the control does close is the realistic path the finding described, and it
-closes it fail-shut:
+This section previously claimed the opposite. An independent review measured
+one human approval releasing **five** effects across ordinary backup restores,
+and I reproduced it: no adversary, no write access beyond copying a file back,
+and the documented recovery command (`nornyx-forge provision-ledger`) does not
+detect it, because preserving the original instant on re-provision is
+deliberate and separately tested.
+
+What catches restoration is a consumption **high-water mark** kept beside the
+ledger rather than in it (`<ledger>.highwater`). Consumption rows only ever
+accumulate, so a ledger holding fewer rows than were recorded against it has
+lost history, and `consume` refuses with `LEDGER_ROLLED_BACK`. The mark is read
+before the row count, never after, so a concurrent consumption cannot make a
+legitimate grant look like a rollback.
+
+What remains open, named precisely:
+
+- Restoring the **whole runtime directory** carries the sidecar back with the
+  ledger, and both agree again.
+- Anyone who can **delete the sidecar** disables the check, because a ledger
+  with no recorded mark has to bootstrap — reading absence as zero would refuse
+  every ledger that has ever been used.
+
+Both need write access to the runtime directory, which is the exposure this
+section already described. What changed is that the ordinary operator action —
+restore the ledger file from a backup — now fails closed.
 
 | Scenario | Before | Now |
 | --- | --- | --- |
 | Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `GRANT_PREDATES_LEDGER`, a fresh human approval required |
+| Ledger **restored from a backup**, spent grant presented | released it again, once per restore | `LEDGER_ROLLED_BACK` |
 | Redeploy onto ephemeral storage | silently empty history | outstanding grants refused until reissued |
 | Approval carrying no issuance instant | continuity check skipped entirely | `GRANT_ISSUANCE_UNKNOWN` |
 | Ledger with no, or more than one, establishment row | first row silently chosen | `LEDGER_CONTINUITY_UNKNOWN` |
-
-Closing the write-access case needs an epoch anchored outside the ledger. The
-operator's trust store is the natural home, since it is already an out-of-band
-artifact the runtime only reads. That is not implemented here and is not claimed
-to be.
+| Whole runtime directory rolled back | released it again | **still released** — stated bound, not covered |
 
 ## Corrections from an independent review
 

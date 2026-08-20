@@ -39,6 +39,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from human_authority import (  # noqa: E402
+    APPROVAL_NAMED_DIRECTLY,
+    LOCK_ABSENT,
+    assert_absent_human_authority,
+)
+
 from nornyx_forge.governed_subject import (  # noqa: E402
     GovernedSubjectError,
     RuntimeAuthorityConfig,
@@ -108,11 +114,20 @@ def test_the_strict_backend_actually_fails_closed_in_this_repository():
     with pytest.raises(NornyxRuntimeUnavailable) as refusal:
         _run(RuntimeAuthorityConfig("nornyx", "sequential"))
 
-    reason = str(refusal.value)
-    assert "CONTRACT_INVALID" in reason, reason
-    # The refusal names WHY, and the why is the absent approval -- not a
-    # generic unavailability that could equally mean a broken install.
-    assert "APPROVAL" in reason, reason
+    # THE DIAGNOSTIC DEPENDS ON THE ENVIRONMENT; THE PROPERTY DOES NOT.
+    # This asserted `"CONTRACT_INVALID" in reason`, which only appears once a
+    # runtime lock exists -- so it passed in its author's tree and failed on
+    # every clean checkout, taking the CI `test` job with it. Its identical
+    # twin in tests/test_approval_reachability.py was repaired and this one,
+    # one grep away, was not; an independent review found it and I reproduced
+    # it in a fresh clone.
+    #
+    # The helper refuses anything that is not absent human authority, and when
+    # the refusal names only the absent lock it establishes the CAUSE from the
+    # tree -- a lock someone deleted while an approval stands is not evidence
+    # about human authority, and would fail here.
+    depth = assert_absent_human_authority(str(refusal.value), ROOT)
+    assert depth in (LOCK_ABSENT, *APPROVAL_NAMED_DIRECTLY), depth
 
 
 def test_a_malformed_backend_refuses_before_anything_runs():

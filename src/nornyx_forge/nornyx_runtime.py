@@ -584,9 +584,14 @@ def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) ->
 #:
 #: What this does and does not defend, stated plainly rather than implied:
 #:
-#: - Operational loss — a redeploy on ephemeral storage, an operator "restoring"
-#:   a lost ledger with the documented command — now fails closed. That is the
-#:   realistic path and the one the finding described.
+#: - Operational loss — a redeploy on ephemeral storage, or an operator running
+#:   the documented recovery on an ABSENT ledger — fails closed here, because a
+#:   file that is gone is re-provisioned at a later epoch.
+#: - A ledger RESTORED from a backup is NOT covered by this anchor, and the
+#:   sentence that used to stand here said it was. `established_at` rides back
+#:   in with the emptied rows, so the pair looks exactly like an unused ledger.
+#:   Measured: one grant, five releases, zero refusals. That case is caught by
+#:   the consumption high-water mark below, not by this anchor.
 #: - An attacker who can WRITE the ledger can also set `established_at` back and
 #:   delete rows. No local anchor survives an adversary with write access to the
 #:   thing being anchored, and inventing a second local file would only move the
@@ -596,12 +601,40 @@ def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) ->
 #:   than papered over here.
 LEDGER_METADATA_TABLE = "ledger_identity"
 
+#: The high-water mark of consumptions, held BESIDE the ledger rather than in
+#: it. The paragraph above claimed that "an operator 'restoring' a lost ledger
+#: with the documented command now fails closed". A review measured otherwise,
+#: and so did I when I reproduced it: ONE human approval released FIVE effects.
+#:
+#: The anchor defeats DELETION, because re-provisioning an absent file mints a
+#: later epoch and every outstanding grant then predates it. It cannot defeat
+#: RESTORATION, because `established_at` lives inside the file being rolled
+#: back -- the old epoch returns alongside the emptied rows, and the pair is
+#: indistinguishable from a ledger that was simply set up early and has not
+#: been used yet. No adversary is required and the anchor is never set back.
+#:
+#: A count is the one fact a restore cannot carry back, PROVIDED it is not
+#: stored in the thing being restored. Consumption rows only ever accumulate,
+#: so a ledger holding fewer rows than were recorded here has lost history.
+#:
+#: WHAT THIS DOES NOT DEFEND, stated rather than implied: restoring the whole
+#: directory carries the sidecar back too, and anyone who can delete the
+#: sidecar disables the check. Both need write access to the runtime directory,
+#: which is the exposure RUNTIME_INPUT_AUDIT.md already records. What changes
+#: is that the ORDINARY operator action -- restore the ledger file from a
+#: backup -- now fails closed, which is what the paragraph above claimed.
+LEDGER_WATERMARK_SUFFIX = ".highwater"
+
 #: Refusal codes for continuity, distinct because the operator response differs:
 #: a grant older than the ledger needs a fresh approval, while a ledger with no
 #: identity row at all needs re-provisioning.
 GRANT_PREDATES_LEDGER = "GRANT_PREDATES_LEDGER"
 LEDGER_CONTINUITY_UNKNOWN = "LEDGER_CONTINUITY_UNKNOWN"
 GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
+#: Distinct from the three above because the operator response differs again:
+#: a rolled-back ledger is not a stale grant and not an unreadable anchor. The
+#: history is gone and cannot be recovered by re-reading anything.
+LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
 
 
 def _instant(value: str | None) -> datetime | None:
@@ -954,15 +987,36 @@ class ApprovalLedger:
 
                 # An INSERT that fails *after* the boundary has decided to
                 # release an effect is the worst moment to discover the ledger is
-                # read-only, so take the write lock now and give it straight back.
+                # read-only, so find out now.
+                #
+                # `BEGIN IMMEDIATE` was the whole pre-flight and it SUCCEEDS on a
+                # read-only SQLite database -- measured, along with
+                # `PRAGMA journal_mode=WAL` and `ROLLBACK`, all three fine. Only
+                # the INSERT fails. So the check was a no-op for exactly the
+                # state it names, `UNWRITABLE` was emitted by nothing anywhere in
+                # the repository, and the refusal that did arrive carried no code
+                # at all. A write is the only thing that proves writability.
                 conn.execute("BEGIN IMMEDIATE")
-                conn.execute("ROLLBACK")
+                try:
+                    conn.execute(
+                        "INSERT INTO consumed_approvals"
+                        " (fingerprint, request_digest, approval_id, consumed_at)"
+                        " VALUES (?, ?, ?, ?)",
+                        ("__preflight__", "__preflight__", "", ""),
+                    )
+                finally:
+                    # ALWAYS, so the probe row can never survive into the
+                    # history it is checking. A ledger that recorded its own
+                    # pre-flight would be a ledger that lies about what it spent.
+                    conn.execute("ROLLBACK")
         except (sqlite3.Error, OSError) as exc:
             # A ledger we cannot read is a ledger we cannot trust to say whether
             # a grant was already spent, so refuse in the governed way the rest
             # of this boundary uses rather than crashing out as a raw 500.
+            readonly = "readonly" in str(exc).lower() or "attempt to write" in str(exc).lower()
             raise NornyxRuntimeUnavailable(
-                f"action approval ledger at {self.path} is unusable: "
+                f"{self.UNWRITABLE if readonly else self.UNREADABLE}: action "
+                f"approval ledger at {self.path} is unusable: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
@@ -971,7 +1025,18 @@ class ApprovalLedger:
         return not self.unavailable_reason
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        # `mode=rw`, NOT the default. `sqlite3.connect(path)` CREATES the file,
+        # so the point-of-use creation this class removed came back in a second
+        # spelling: `consume` on a deleted ledger left a 0-byte file behind, and
+        # the next NornyxActionBoundary raised on it -- so a missing ledger
+        # stopped meaning "refuse consequential acts" and started meaning "serve
+        # nothing at all, including low-risk read-only work". Two written claims
+        # said otherwise: "Open an existing ledger. Creates nothing." and
+        # A-014's "the boundary opens it and never creates it".
+        connection = sqlite3.connect(
+            f"file:{self.path.as_posix()}?mode=rw", uri=True,
+            timeout=30, isolation_level=None,
+        )
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
@@ -1046,10 +1111,28 @@ class ApprovalLedger:
         # again'). The anchor lives in the same file, in the same directory,
         # with the same write exposure, and was not.
         established_now: str | None = self.established_at
+        # THE MARK IS READ FIRST, THEN THE ROW COUNT, AND THE ORDER IS THE
+        # WHOLE CORRECTNESS ARGUMENT. Rows only accumulate and the mark trails
+        # them, so a mark read at T1 can never exceed rows read at T2 > T1 --
+        # unless history was actually rolled back. Reading them the other way
+        # round would let a concurrent consumption advance the mark between the
+        # two reads and refuse a legitimate grant. Eight-process races are
+        # already measured here; this must not regress them.
+        recorded = self._recorded_consumptions()
+        held = 0
         try:
-            with closing(sqlite3.connect(self.path)) as conn:
+            # `_connect()`, not a bare `sqlite3.connect`: the bare form CREATES
+            # the file, and this line is reached precisely when the ledger may
+            # be gone. It left a 0-byte residue that every later boundary then
+            # raised on.
+            with closing(self._connect()) as conn:
                 _assert_ledger_structure(conn, self.path, self.UNREADABLE)
                 established_now = _read_established_at(conn)
+                held = int(
+                    conn.execute(
+                        "SELECT count(*) FROM consumed_approvals"
+                    ).fetchone()[0]
+                )
         except NornyxRuntimeUnavailable as exc:
             return (
                 False,
@@ -1099,10 +1182,41 @@ class ApprovalLedger:
                 False,
                 f"{GRANT_PREDATES_LEDGER}: the approval was issued at "
                 f"{grant_issued_at}, before this replay history began at "
-                f"{self.established_at}. Replay state was lost or replaced, so "
+                # `established_now`, NOT `self.established_at`. The decision two
+                # lines up uses the anchor re-read at the claim; this message
+                # used the cached one, so a refusal artifact written into
+                # runtime evidence named the stale instant and asserted an
+                # inequality that is false -- "2026-08-02 is before
+                # 2026-08-01" -- while the decision itself was right. The
+                # regression test asserted only that the CODE appeared, so the
+                # value went unmeasured. A governance record that states a
+                # falsehood is worse than one that says less.
+                f"{established_now}. Replay state was lost or replaced, so "
                 "whether this grant was already spent is unknown. A fresh human "
                 "approval is required; the old one cannot regain usability.",
             )
+
+        # ROLLBACK, checked AFTER continuity so the established diagnostic wins
+        # wherever it applies. A DELETED ledger is re-provisioned at a later
+        # epoch, so continuity already refuses it as GRANT_PREDATES_LEDGER and
+        # two tests assert exactly that; firing here first would have renamed a
+        # refusal that was already correct. This case is the one continuity
+        # CANNOT see: the anchor rode back in with the restore, so it agrees
+        # the grant is fresh, and only the count disagrees.
+        #
+        # `recorded is None` is not zero. A ledger from before this check, or
+        # one whose sidecar was removed, has nothing to compare against, and
+        # reading that as zero would refuse every ledger that has ever been
+        # used. It bootstraps on the next successful consumption instead.
+        if recorded is not None and held < recorded:
+            return False, (
+                f"{LEDGER_ROLLED_BACK}: this ledger holds {held} consumption "
+                f"records but {recorded} were recorded against it. Replay "
+                "history was rolled back, so a grant already spent would be "
+                "released again. Re-provision the ledger and obtain a fresh "
+                "approval; restoring a backup cannot restore what it forgot."
+            )
+
 
         try:
             with self._session() as conn:
@@ -1159,7 +1273,47 @@ class ApprovalLedger:
                 f"action approval ledger is unusable, so single use cannot be "
                 f"guaranteed: {type(exc).__name__}: {exc}"
             )
+        # AFTER the row is confirmed, never before: a mark advanced ahead of a
+        # write that then failed would refuse the next legitimate grant.
+        self._record_consumptions(held + 1)
         return True, f"approval {approval_id or fingerprint} consumed"
+
+    @property
+    def watermark_path(self) -> Path:
+        """Beside the ledger, deliberately not inside it."""
+        return Path(str(self.path) + LEDGER_WATERMARK_SUFFIX)
+
+    def _recorded_consumptions(self) -> int | None:
+        """The high-water mark, or None if this ledger has never written one.
+
+        None is NOT zero. A ledger predating this check, or one whose sidecar
+        was removed, has no mark to compare against; treating that as zero
+        would refuse every legitimate ledger with rows in it.
+        """
+        try:
+            text = self.watermark_path.read_bytes().decode("utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
+    def _record_consumptions(self, count: int) -> None:
+        """Advance the mark, never lower it.
+
+        `max` because two processes can consume concurrently: whichever writes
+        second must not undo the other's advance. Lowering the mark would only
+        ever weaken the check, so it is refused arithmetically rather than by
+        locking.
+        """
+        standing = self._recorded_consumptions() or 0
+        try:
+            self.watermark_path.write_bytes(str(max(standing, count)).encode("utf-8"))
+        except OSError:
+            # A mark we cannot write is a weaker future check, not a reason to
+            # refuse an effect whose row is already committed.
+            pass
 
     def lookup(
         self, *, fingerprint: str | None = None, request_digest: str | None = None
