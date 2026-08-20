@@ -107,7 +107,7 @@ approvals:
       revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
       exact: true
     invalidation_conditions: [revision_change, identity_change, capability_change, trust_zone_change, membership_change, scope_change]
-    expires_at: "2026-08-08T00:00:00Z"
+    expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
