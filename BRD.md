@@ -37,6 +37,33 @@ Low-risk actions may execute automatically. High-risk external actions must be r
 
 Every stage and policy decision is recorded with mission ID, timestamp, actor, capability, decision, reason, and subject revision.
 
+**PARTIALLY MET, and the requirement is NOT being reworded to match the code.**
+An independent review measured the shipped `demo --offline` path and I
+reproduced it in a clean checkout with its own environment. Of 14 events:
+
+| field | present | note |
+| --- | --- | --- |
+| `mission_id` | 14/14 | |
+| `timestamp` | 14/14 | |
+| `actor` | 14/14 | |
+| `capability` | 2/14 | carried by the two POLICY DECISIONS, not by stage events |
+| `decision` | 2/14 | as above |
+| `reason` | 2/14 | as above |
+| `subject_revision` | 0/14 | never populated on this path |
+
+Two different gaps, and they are not equally excusable. A stage event has no
+capability to name and no decision to report, so `2/14` reflects a requirement
+written as if every event were a policy decision; the wording is broader than
+the thing it describes. `subject_revision` is different: the field exists on
+every event and is null on all of them, so the evidence stream cannot say which
+revision of the governed subject produced it. That is a real hole, not a
+category error.
+
+Nothing verified this before. `parse_brd` reads headings only, and no test
+referenced a real BRD id -- the requirements suite runs on synthetic fixtures.
+`tests/test_brd_evidence_shape.py` now pins the measured shape, so the gap
+cannot widen silently and closing it shows up as a diff.
+
 ### BRD-F-006 Dashboard
 
 The application displays current cases, agent stages, decisions, prevented actions, evidence status, and declared assurance limitations.

@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -44,6 +45,7 @@ from human_authority import (  # noqa: E402
     LOCK_ABSENT,
     assert_absent_human_authority,
 )
+from test_documented_claims import forbidden_claim_patterns  # noqa: E402
 
 from nornyx_forge.governed_subject import (  # noqa: E402
     GovernedSubjectError,
@@ -492,4 +494,107 @@ def test_no_ui_surface_claims_a_governance_mode_the_run_does_not_use():
     assert offenders == [], (
         "these operator-facing surfaces claim a governance or execution mode "
         f"the shipped run does not use: {offenders}"
+    )
+
+
+# --------------------------------------------------------------------------
+# C3-P2-4 -- the dashboard's ASSURANCE metrics were covered by nothing.
+#
+# The sweep above checks two keyword pairs -- CrewAI/Flow and Nornyx/governance
+# -- and reads no run at all. A review substituted each of the four metric
+# values in turn and measured which the module would catch:
+#
+#     'Live CrewAI Flow'                  -> caught
+#     'Nornyx governance active'          -> caught
+#     'Nornyx runtime authorization'      -> ADMITTED
+#     'Independently inspected'           -> ADMITTED
+#     'Production approval granted'       -> ADMITTED
+#     'Human review: Performed'           -> ADMITTED
+#
+# The markdown overclaim guard does not reach here either: it scans `*.md`, and
+# its patterns are tuned for prose and JSON, where a separator sits between key
+# and value. In markup the two are separated by TAGS, so
+# `<span>Human review</span><strong>Performed</strong>` matches nothing.
+#
+# So this does not add more keywords. The four metrics are STATIC LITERALS that
+# `app.js` never touches, and each restates a value this repository already
+# records in an artifact. The check is that they AGREE with it -- which is what
+# the sibling docstring above claims for itself and does not do.
+# --------------------------------------------------------------------------
+
+#: Dashboard label -> (artifact field, the value that field holds today, the
+#: text the dashboard must show while it holds it).
+ASSURANCE_METRICS = {
+    "Human review": ("human_review", "not_performed", "not performed"),
+    "Production approval": ("production_approval", "not_granted", "not granted"),
+}
+
+
+def _dashboard_metrics() -> dict:
+    """Every `<span>LABEL</span><strong>VALUE</strong>` pair, tags stripped."""
+    html = (ROOT / "src/demo_app/static/index.html").read_text(encoding="utf-8")
+    found = {}
+    for label, value in re.findall(
+        r"<span>([^<]+)</span>\s*<strong>([^<]+)</strong>", html
+    ):
+        found[label.strip()] = value.strip()
+    return found
+
+
+def test_the_metric_scrape_finds_the_dashboard_values():
+    """Guard the guard. A scrape that returns nothing passes everything below."""
+    metrics = _dashboard_metrics()
+    missing = sorted(set(ASSURANCE_METRICS) - set(metrics))
+    assert missing == [], (
+        f"the dashboard no longer presents these metrics in the shape this "
+        f"check reads, so it is measuring nothing: {missing} (found "
+        f"{sorted(metrics)})"
+    )
+
+
+@pytest.mark.parametrize("label", sorted(ASSURANCE_METRICS))
+def test_the_dashboard_assurance_metrics_match_the_recorded_state(label: str):
+    """The operator sees what the artifacts say, or this fails.
+
+    Not a keyword list. The approval record is regenerated on every commit and
+    is the repository's own statement about whether a human approved anything;
+    if the dashboard ever disagrees with it, one of the two is lying to an
+    operator and this says which.
+    """
+    field, expected_value, expected_text = ASSURANCE_METRICS[label]
+    record = json.loads(
+        (ROOT / ".nornyx/contracts/evidence/architecture_approval_record.json")
+        .read_text(encoding="utf-8")
+    )
+    assert record[field] == expected_value, (
+        f"the recorded {field} is now {record[field]!r}. If a human really has "
+        "approved, this table and the dashboard both need updating together -- "
+        "which is the point of failing here rather than letting them drift."
+    )
+    shown = _dashboard_metrics()[label].lower()
+    assert shown == expected_text, (
+        f"the dashboard shows {label!r} as {shown!r} while the repository "
+        f"records {field}={record[field]!r}. An operator reading the dashboard "
+        "would believe something the evidence does not support."
+    )
+
+
+def test_the_dashboard_claims_no_independent_inspection():
+    """The one assurance claim with no metric row, checked directly.
+
+    `independently_inspected` is derived and derives to false here. The markdown
+    guard refuses it in documents; nothing refused it in the UI, and a review
+    measured `Independently inspected` admitted when substituted in.
+    """
+    html = (ROOT / "src/demo_app/static/index.html").read_text(encoding="utf-8")
+    stripped = re.sub(r"<[^>]+>", " ", html).lower()
+    offences = [
+        match.group(0)
+        for pattern in forbidden_claim_patterns()
+        for match in pattern.finditer(stripped)
+        if not re.search("not[ _-]+$", stripped[: match.start()])
+    ]
+    assert offences == [], (
+        "the operator dashboard asserts assurance this repository does not "
+        f"hold: {offences}"
     )

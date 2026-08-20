@@ -13,6 +13,7 @@ guess about what it would do.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -662,4 +663,68 @@ def test_the_census_accepts_a_complete_report(tmp_path: Path):
     assert verdict == 0, (
         "the census refused a report holding every declared module at its "
         "declared floor, so it now refuses valid runs"
+    )
+
+
+def test_no_module_floor_drifts_far_below_its_module():
+    """B-P2-4: the aggregate floor has a band guard; the per-module ones had none.
+
+    `test_no_floor_is_zero` required `floor >= 1`, and that was the whole
+    protection. Measured before this test existed: 48 of 79 modules sat below
+    90% of what they collect, several between 25% and 38%, for a total of 317
+    tests deletable while the census still reported GATE: PASS -- including
+    both R2 regressions and the Task 11R route-inventory proofs, none of which
+    is named by any other inventory.
+
+    The aggregate floor cannot see this. Other modules grow, the total stays
+    above `MINIMUM_COLLECTED`, and a module can be hollowed out underneath it.
+    That is the same argument the aggregate band guard already makes for the
+    suite as a whole, applied one level down where the deletions actually land.
+
+    The band is 90%, matching the aggregate. A module that grows past its floor
+    trips this rather than drifting: raising the number is a diff someone can
+    argue with, which is the point.
+    """
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:cacheprovider", "-p", "no:warnings"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=1800,
+    )
+    collected = {}
+    for line in completed.stdout.splitlines():
+        match = re.match(r"^(tests/[^:]+):\s*(\d+)$", line.strip())
+        if match:
+            collected[match.group(1)] = int(match.group(2))
+    assert collected, f"collection produced no counts:\n{completed.stdout[-500:]}"
+
+    drifted = sorted(
+        f"{name}: floor {floor} against {collected[name]} collected "
+        f"({floor * 100 // collected[name]}%)"
+        for name, floor in census.REQUIRED_MODULE_MINIMUMS.items()
+        if collected.get(name) and floor < collected[name] * 9 // 10
+    )
+    assert drifted == [], (
+        "these module floors have drifted far below the modules they protect, "
+        "so tests can be deleted from them without the census noticing -- the "
+        "aggregate floor cannot see a module being hollowed out while other "
+        f"modules grow: {drifted}"
+    )
+
+
+def test_the_module_band_guard_would_notice_a_drifted_floor():
+    """The guard's own discrimination, since a band test that never fires is
+    indistinguishable from one that cannot.
+
+    Arithmetic rather than a mutated file: the comparison is the whole check,
+    so exercising it directly is exercising the thing.
+    """
+    collected, floor = 40, 12
+    assert floor < collected * 9 // 10, (
+        "a floor at 30% of its module no longer counts as drifted, so the band "
+        "has been widened past the point of noticing anything"
+    )
+    assert not (36 < collected * 9 // 10), (
+        "a floor at 90% is being reported as drifted, so the guard would refuse "
+        "every honest floor and would be turned off"
     )
