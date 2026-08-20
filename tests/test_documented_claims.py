@@ -180,6 +180,15 @@ def forbidden_claim_patterns() -> tuple:
         # are separated by quote, colon, space, quote. A class of `[ ]*[:=][ ]*`
         # matches none of that, so the exact JSON spelling in all five evidence
         # artifacts walked past while the prose form was caught.
+        # CLAIMING TO PERFORM IT, which the three patterns above did not
+        # cover. A document read "Claude Code performs requirements,
+        # architecture, implementation, repair, and independent inspection" --
+        # inside governance_docs(), matched by nothing. The verb is what makes
+        # this a claim rather than a definition: ASSURANCE_BOUNDARY.md says
+        # what independent inspection REQUIRES, which must stay sayable.
+        re.compile("(?:performs|provides|carries" + _SEP + "out|delivers)"
+                   + _SEP + "(?:[a-z,]+" + _SEP + "){0,8}independent"
+                   + _SEP + "inspection"),
         re.compile("human" + _SEP + "review"
                    + "[ " + chr(34) + chr(39) + "]*[:=][ " + chr(34) + chr(39) + "]*"
                    + "performed"),

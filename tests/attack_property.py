@@ -410,13 +410,13 @@ _H09_PROBE = """
 import json, sys
 sys.path.insert(0, "src")
 sys.path.insert(0, "tests")
-from test_governance_approval_verifier import _approval, _keypair, _store
+from test_governance_approval_verifier import REVISION, _approval, _keypair, _store
 
 keypair = _keypair()
 from nornyx_forge.approval_trust import verify_governance_approval
 ok, reason, evidence = verify_governance_approval(
     _approval(keypair), trust_store=_store(keypair),
-    as_of="2026-08-05T00:00:01Z")
+    as_of="2026-08-05T00:00:01Z", expected_subject_revision=REVISION)
 print(json.dumps({
     "accepted": bool(ok),
     "reason": str(reason)[:80],

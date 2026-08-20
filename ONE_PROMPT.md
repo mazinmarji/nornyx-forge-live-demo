@@ -45,11 +45,18 @@ the customer-operations Flow completes its demonstration scenarios.
 
 On a fresh clone the run STOPS BEFORE LAUNCH, and that is correct.
 `bootstrap.py` appends `--strict-nornyx` when `--skip-install` is absent;
-measured, that demo exits 2 blocked on AN_APPROVAL_RECORD_MISSING, and
+measured on a fresh clone, that demo exits 2 with
 
-> **What a reader actually sees.** The diagnostic above is what a tree with a
-> prepared runtime lock reports. `.nornyx/runtime/` is gitignored and the lock
-> CANNOT be produced without a human approval (`prepare_runtime.py` exits 2),
+    "detail": "RuntimeError: RUNTIME_LOCK_MISSING: ...nornyx.agentic_network.lock
+               does not exist"
+
+This sentence used to name AN_APPROVAL_RECORD_MISSING and to stop mid-clause.
+A review measured a fresh clone and found that code appears zero times: it is
+what a tree with a PREPARED RUNTIME LOCK reports, and no reader has one.
+
+> **What a reader actually sees.** `.nornyx/runtime/` is gitignored and the
+> lock CANNOT be produced without a human approval (`prepare_runtime.py` exits
+> 2, names the absent approval, and writes only `preparation-report.json`),
 > so on a clean checkout the proximate refusal is
 > `RuntimeError: RUNTIME_LOCK_MISSING`. Same absence, reported at a different
 > depth: no approval exists, so the lock cannot be prepared, so the authorizer

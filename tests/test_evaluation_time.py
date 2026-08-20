@@ -24,6 +24,7 @@ do nothing — they are set, not cleared.
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -199,3 +200,89 @@ def test_no_first_party_module_reads_a_retired_time_or_revision_override():
         "environment, so time or revision may be aimed from outside: "
         + ", ".join(offenders)
     )
+
+
+# --------------------------------------------------------------------------
+# A09 -- the boundary read the trusted clock ONCE, at construction.
+#
+# `self.as_of = self.runtime_context.now()` in `__init__` meant every approval
+# window the boundary ever judged was judged at the instant the object was
+# built. A grant that expired during the run was still evaluated against a
+# stale clock.
+#
+# The reason it went unnoticed is the ordering an independent review named:
+# the only test of this instant constructed the boundary with
+# `RuntimeContext.for_test(at=...)` -- the DECLARED pin -- so it could not
+# observe that the production path pinned itself as well. A test that builds
+# the object the one way the property holds proves nothing about the other way.
+# --------------------------------------------------------------------------
+
+
+def test_a09_a_production_boundary_reads_the_clock_at_each_decision(tmp_path: Path):
+    """No `for_test`, no pinned instant: the real construction path.
+
+    Sleeping is the measurement. A monotonic assertion would pass on a pinned
+    value too, because a constant is trivially not-decreasing.
+    """
+    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+
+    boundary = _permissive_boundary(tmp_path)
+    first = boundary.as_of
+    time.sleep(2)
+    second = boundary.as_of
+
+    assert second != first, (
+        "the boundary answered with the same instant two seconds apart, so it "
+        "is judging approval windows against the moment it was constructed "
+        f"rather than the moment of the decision: {first}"
+    )
+    assert second > first, f"the trusted clock went backwards: {first} -> {second}"
+
+
+def test_a09_a_pinned_context_is_still_deterministic(tmp_path: Path):
+    """The positive control, and the reason the fix is safe.
+
+    `RuntimeContext.for_test(at=...)` pins `now()`, so reading it per decision
+    changes nothing for deterministic tests. If this ever fails, the repair has
+    made the boundary non-reproducible and every temporal proof around it is
+    measuring wall-clock noise.
+    """
+    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+
+    pinned = "2026-08-03T00:00:00Z"
+    boundary = _permissive_boundary(tmp_path, as_of=pinned)
+    first = boundary.as_of
+    time.sleep(1)
+    assert first == pinned, first
+    assert boundary.as_of == pinned, "a pinned context stopped being pinned"
+
+
+def test_a09_the_instant_is_not_a_stored_attribute():
+    """Structural, so the assignment cannot quietly come back.
+
+    A `self.as_of = ...` in `__init__` restores the defect exactly, and the
+    behavioural test above would then need two seconds of sleep to notice. This
+    notices immediately.
+    """
+    import inspect  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    # THE ASSIGNMENT, not any mention. `__init__` legitimately READS `as_of`
+    # when it loads the authorizer -- `validation_as_of=self.as_of` -- and that
+    # read now goes through the property. Forbidding the identifier outright
+    # flagged those two lines, which is the use/mention confusion this
+    # repository has two modules dedicated to refusing. It does not get a pass
+    # for being in my own test.
+    source = inspect.getsource(nornyx_runtime.NornyxActionBoundary.__init__)
+    stored = [
+        line.strip() for line in source.splitlines()
+        if re.match(r"\s*self\.as_of\s*=", line)
+    ]
+    assert stored == [], (
+        "the boundary stores its evaluation instant at construction again, so "
+        f"every decision it makes is judged at the moment it was built: {stored}"
+    )
+    assert isinstance(
+        inspect.getattr_static(nornyx_runtime.NornyxActionBoundary, "as_of"), property
+    ), "as_of is no longer a property, so it is not read at the decision"

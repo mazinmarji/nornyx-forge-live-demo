@@ -515,3 +515,88 @@ def test_a_successful_release_still_records_the_invocation(tmp_path: Path):
         "a clean run recorded a release failure, so the field does not "
         "distinguish the two states"
     )
+
+
+# --------------------------------------------------------------------------
+# A11 -- decision evidence was keyed on the MISSION, so retries overwrote it.
+#
+# `evidence_storage_key`'s docstring says the digest exists because "one
+# mission could silently replace another mission's decision evidence,
+# including the record of a refused high-risk effect". The hazard survived one
+# level down: the same mission's ATTEMPTS collided, and the retry model this
+# design mandates is what produced them. Measured across three attempts:
+# one events file, one report, and attempts 1 and 2 left no record of their
+# own -- while the pending artifacts beside them were already per-attempt.
+# --------------------------------------------------------------------------
+
+
+def test_a11_each_attempt_leaves_its_own_decision_evidence(tmp_path: Path):
+    """Three attempts, three records, in every stream that carries a decision."""
+    from nornyx_forge.nornyx_runtime import ActionDescriptor  # noqa: PLC0415
+
+    boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+    descriptor = ActionDescriptor(
+        operation="issue refund", resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 100, "currency": "USD"},
+    )
+    for attempt in (1, 2, 3):
+        boundary.evaluate_and_execute(
+            mission_id="CASE-RETRY", risk="high", action=lambda: "done",
+            action_approval=None, action_descriptor=descriptor, attempt=attempt,
+        )
+
+    written = tmp_path / "evidence/runtime/nornyx"
+    reports = sorted(p.name for p in written.glob("*.report.json"))
+    events = sorted(p.name for p in written.glob("*.events.json"))
+
+    assert len(reports) == 3, (
+        "attempts at one mission overwrote each other's report, so the record "
+        f"of every attempt but the last is gone: {reports}"
+    )
+    assert len(events) == 3, events
+    # The keys must differ BY ATTEMPT, not merely be three files.
+    assert len({name.split("--")[0] for name in reports}) == 3, reports
+
+
+def test_a11_one_attempt_still_writes_exactly_one_record(tmp_path: Path):
+    """The positive control: keying on the attempt must not multiply evidence
+    for a single decision, which would be its own audit problem."""
+    from nornyx_forge.nornyx_runtime import ActionDescriptor  # noqa: PLC0415
+
+    boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+    boundary.evaluate_and_execute(
+        mission_id="CASE-ONCE", risk="high", action=lambda: "done",
+        action_approval=None,
+        action_descriptor=ActionDescriptor(
+            operation="issue refund", resource="customer:omar",
+            destination="zone.external_customer",
+            parameters={"amount": 100, "currency": "USD"},
+        ),
+        attempt=1,
+    )
+    written = tmp_path / "evidence/runtime/nornyx"
+    assert len(list(written.glob("*.report.json"))) == 1
+    assert len(list(written.glob("*.events.json"))) == 1
+
+
+def test_a11_two_missions_still_do_not_collide(tmp_path: Path):
+    """The property the key already had, kept. Adding the attempt to the key
+    must not weaken separation between missions."""
+    from nornyx_forge.nornyx_runtime import ActionDescriptor  # noqa: PLC0415
+
+    boundary = _permissive_boundary(tmp_path, as_of="2026-08-03T00:00:00Z")
+    descriptor = ActionDescriptor(
+        operation="issue refund", resource="customer:omar",
+        destination="zone.external_customer",
+        parameters={"amount": 100, "currency": "USD"},
+    )
+    for mission in ("CASE-A/B", "CASE-A_B"):
+        boundary.evaluate_and_execute(
+            mission_id=mission, risk="high", action=lambda: "done",
+            action_approval=None, action_descriptor=descriptor, attempt=1,
+        )
+    written = tmp_path / "evidence/runtime/nornyx"
+    assert len(list(written.glob("*.report.json"))) == 2, (
+        "two missions whose ids differ only by a separator collided again"
+    )

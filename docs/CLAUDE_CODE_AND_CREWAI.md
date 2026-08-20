@@ -3,7 +3,12 @@
 Nornyx Forge separates orchestration from reasoning and governance:
 
 - **CrewAI Flow** defines the development and application state machines.
-- **Claude Code** performs requirements, architecture, implementation, repair, and independent inspection.
+- **Claude Code** performs requirements, architecture, implementation, repair,
+  and SELF-REPORTED review. It does NOT perform independent inspection: that
+  requires three Ed25519 attestations against `FORGE_REVIEWER_TRUST_STORE`
+  (`docs/ASSURANCE_BOUNDARY.md`), and none exists here. README.md retracts the
+  same claim; this line kept it, and the overclaim guard's patterns did not
+  match this phrasing.
 - **Nornyx** supplies contracts, authorization, architecture rules, gates, and evidence binding.
 
 ## Recommended: interactive in-session mode

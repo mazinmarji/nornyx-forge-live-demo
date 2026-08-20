@@ -178,6 +178,29 @@ GOVERNANCE_APPROVER_ROLES = frozenset(
 APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
 APPROVAL_NOT_YET_VALID = "APPROVAL_NOT_YET_VALID"
 APPROVAL_TIME_UNREADABLE = "APPROVAL_TIME_UNREADABLE"
+#: Distinct codes because the operator response differs: an approval for
+#: another revision needs a fresh approval, while an unbound call is a
+#: PROGRAMMING fault in whatever asked the question.
+GOVERNANCE_APPROVAL_SUBJECT_MISMATCH = "GOVERNANCE_APPROVAL_SUBJECT_MISMATCH"
+GOVERNANCE_APPROVAL_SUBJECT_UNBOUND = "GOVERNANCE_APPROVAL_SUBJECT_UNBOUND"
+
+#: The ONE admissible way to ask this verifier a question that is not about a
+#: particular subject: "is this artifact an authentic human approval at all".
+#:
+#: `scripts/refresh_governance_evidence.py` must be able to LOAD an approval
+#: that covers an older revision, because detecting exactly that is
+#: `require_approval_matches_head()`'s entire job -- it stops before writing
+#: anything and tells a human to re-approve. Requiring the subject to equal
+#: HEAD at load time would make a stale approval fail AUTHENTICATION instead,
+#: which is both the wrong diagnostic and, worse, would render the drift
+#: detector unreachable: `_approved_revision()` could never return a revision
+#: other than HEAD, so the comparison could never fail.
+#:
+#: A sentinel is a hole, so it is a NAMED and TESTED hole:
+#: `test_the_subject_opt_out_is_used_in_exactly_one_place` pins its single
+#: production use, and `test_a_stale_approval_still_reaches_the_drift_detector`
+#: proves the control it exists to preserve is still reachable.
+SUBJECT_BOUND_ELSEWHERE = "<subject bound by require_approval_matches_head>"
 APPROVAL_WINDOW_INVALID = "APPROVAL_WINDOW_INVALID"
 
 #: The same seven-day cap the agentic-network module applies to action approvals.
@@ -209,6 +232,7 @@ def verify_governance_approval(
     *,
     trust_store: "ApprovalTrustStore | None" = None,
     as_of: str,
+    expected_subject_revision: str,
 ) -> "AuthorityDecision":
     """Decide whether GOVERNANCE authority was granted over the named subject.
 
@@ -220,6 +244,25 @@ def verify_governance_approval(
         AND that domain trusting this key to claim that role
         AND subject binding
         AND temporal validity
+
+    `expected_subject_revision` IS REQUIRED, and it is required because this
+    equation used to list "AND subject binding" while the function had no
+    subject to bind to. `subject_revision` was signed and never compared:
+    measured, an approval naming the real subject, a different subject, an
+    obvious nonsense value and the empty string were ALL granted. Signing a
+    field does not evaluate it -- the same shape this docstring already records
+    as fixed for the temporal window, where "signing the bounds stops them
+    being re-dated; it does not bound anything".
+
+    The binding did exist, as `require_approval_matches_head()` composed at
+    seven separate call sites in `scripts/refresh_governance_evidence.py`. That
+    is precisely the architecture `verify_action_approval` exists to forbid:
+    "a call site that composes them is a call site that can stop composing
+    them." The clause is evaluated here now, so no call site can drop it.
+
+    No default. A caller with nothing to bind to must say so by passing an
+    empty string, which REFUSES -- an approval over an unnamed subject is an
+    approval over anything.
 
     Authentication is delegated to `_authenticate_signed_human_artifact`, which
     cannot answer any of the remaining clauses -- its result type refuses to be
@@ -305,6 +348,26 @@ def verify_governance_approval(
     # `role_verified` and `subject_type_verified` all true with nothing about
     # time -- the same "a flag can be true while its check was skipped" defect
     # this function's docstring says it removed.
+    # SUBJECT BINDING, the clause the equation names. Evaluated here rather
+    # than composed by a caller.
+    declared_subject = str(approval.get("subject_revision") or "")
+    if expected_subject_revision == SUBJECT_BOUND_ELSEWHERE:
+        # Authentication only. See the sentinel's definition for why this hole
+        # exists and what keeps it one hole rather than a habit.
+        pass
+    elif not expected_subject_revision:
+        return refuse(
+            f"{GOVERNANCE_APPROVAL_SUBJECT_UNBOUND}: no subject revision was supplied to "
+            "bind this approval against, so it would authorise any content. An "
+            "approval over an unnamed subject is an approval over anything."
+        )
+    elif declared_subject != expected_subject_revision:
+        return refuse(
+            f"{GOVERNANCE_APPROVAL_SUBJECT_MISMATCH}: the approval covers subject "
+            f"{declared_subject!r}, not {expected_subject_revision!r}. An "
+            "approval of different content is a different approval."
+        )
+
     moment = _aware_instant(as_of)
     generated = _aware_instant(approval.get("generated_at"))
     expires = _aware_instant(approval.get("expires_at"))

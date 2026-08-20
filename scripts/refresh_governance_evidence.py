@@ -315,6 +315,7 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
     """
     from nornyx_forge.approval_trust import (
         GOVERNANCE_TRUST_DOMAIN,
+        SUBJECT_BOUND_ELSEWHERE,
         ApprovalTrustStore,
         TrustStoreUnavailable,
         verify_governance_approval,
@@ -333,8 +334,24 @@ def _authenticate_approval(payload: dict, filename: str) -> tuple[bool, str, dic
         )
     # The trusted clock, not a value from the artifact. An approval supplying
     # the instant it is judged against would be marking its own homework.
+    # THE SUBJECT IS PASSED, not composed afterwards. `subject_revision` was
+    # signed and never evaluated: an approval naming a different revision, or
+    # nonsense, or nothing at all was granted. The binding lived in
+    # `require_approval_matches_head()` at seven separate call sites, which is
+    # the architecture `verify_action_approval` exists to forbid -- a call site
+    # that composes a clause is a call site that can stop composing it.
+    # AUTHENTICATION, NOT SUBJECT BINDING, and the distinction is load-bearing.
+    # This path must be able to load an approval that covers an OLDER revision,
+    # because noticing that is `require_approval_matches_head()`'s whole job --
+    # it stops before writing anything and asks a human to re-approve. Passing
+    # `_revision()` here made a stale approval fail authentication instead: the
+    # wrong diagnostic, and it made the drift detector unreachable, because
+    # `_approved_revision()` could then never return anything but HEAD.
+    #
+    # I wrote that version first and the suite caught it.
     return verify_governance_approval(
-        payload, trust_store=store, as_of=runtime_as_of()
+        payload, trust_store=store, as_of=runtime_as_of(),
+        expected_subject_revision=SUBJECT_BOUND_ELSEWHERE,
     )
 
 

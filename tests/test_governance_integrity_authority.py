@@ -483,3 +483,131 @@ def test_an_intact_runtime_writes_no_refusal_record(tmp_path: Path):
     assert not refused.exists() or not list(refused.glob("*.refused.json")), (
         "an intact runtime wrote a compromised-governance refusal record"
     )
+
+
+# --------------------------------------------------------------------------
+# A10 -- the integrity gate ran AFTER the authorizer it protects, and was
+# skipped when the compromised contract's own verdict was DENY.
+#
+# The block carried the comment "before the authorizer is consulted, because a
+# compromised contract is what the authorizer would be reading" while sitting
+# inside `if high_risk and decision.allowed:`, three `authorizer.evaluate`
+# calls later. Measured: 3 calls made first, and with the contract denying, the
+# `refused_action_attempt.v1` record was never written -- so whether an
+# operator learned the governance state was compromised was decided BY the
+# compromised material.
+# --------------------------------------------------------------------------
+
+
+NOW = "2026-08-03T00:00:00Z"
+
+
+def _compromised(boundary):
+    from nornyx_forge.governed_subject import (  # noqa: PLC0415
+        INTEGRITY_COMPROMISED,
+        GovernanceIntegrityState,
+    )
+
+    boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_COMPROMISED,
+        verified_claims=3,
+        problems=("architecture_governance.nyx records X, but it digests to Y",),
+    )
+    return boundary
+
+
+def _counting_authorizer(boundary, *, allow: bool = True):
+    """Count evaluations, and optionally make every one of them DENY."""
+    calls: list[str] = []
+    real = boundary.authorizer.evaluate
+
+    def counted(*args, **kwargs):
+        calls.append("evaluate")
+        outcome = real(*args, **kwargs)
+        if not allow:
+            # The compromised contract denying is the case that used to write
+            # no refusal record at all.
+            try:
+                object.__setattr__(outcome, "allowed", False)
+            except (AttributeError, TypeError):  # pragma: no cover - shape guard
+                pass
+        return outcome
+
+    boundary.authorizer.evaluate = counted
+    return calls
+
+
+@pytest.mark.parametrize("contract_allows", [True, False],
+                         ids=["contract allows", "contract denies"])
+def test_a10_integrity_is_decided_before_the_authorizer_reads_the_contract(
+    tmp_path: Path, contract_allows: bool
+):
+    """No evaluation may precede the refusal, in either direction.
+
+    The parametrisation is the finding: the refusal used to exist only in the
+    first case, because the branch guarding it required the contract to have
+    ALLOWED. A control that a compromised contract can switch off is not a
+    control over that contract.
+    """
+    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+
+    boundary = _compromised(_permissive_boundary(tmp_path, as_of=NOW))
+    calls = _counting_authorizer(boundary, allow=contract_allows)
+
+    released: list[str] = []
+    verdict, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-A10", risk="high",
+        action=lambda: released.append("released"),
+        action_approval=None,
+        action_descriptor=ActionDescriptor(
+            operation="issue refund", resource="customer:omar",
+            destination="zone.external_customer",
+            parameters={"amount": 100, "currency": "USD"},
+        ),
+        attempt=1,
+    )
+
+    assert verdict.code == "GOVERNANCE_INTEGRITY_COMPROMISED", verdict.reason
+    assert released == [], "a compromised runtime released the effect"
+    assert calls == [], (
+        "the authorizer read the contract before the integrity of that "
+        f"contract was decided, {len(calls)} times: the comment on this gate "
+        "says it runs first precisely because a compromised contract is what "
+        "the authorizer would be reading"
+    )
+
+    written = sorted((tmp_path / "evidence/runtime/refused").glob("*.refused.json"))
+    assert len(written) == 1, (
+        "no refusal record was written, so an operator cannot see that a "
+        "consequential act was attempted against a compromised runtime -- and "
+        "this is the case that used to write nothing at all"
+    )
+    record = json.loads(written[0].read_text(encoding="utf-8"))
+    assert record["code"] == "GOVERNANCE_INTEGRITY_COMPROMISED"
+    assert record["effect_released"] is False
+    assert record["approval_consumed"] is False
+
+
+def test_a10_a_sound_runtime_still_reaches_the_authorizer(tmp_path: Path):
+    """The positive control. Without it, hoisting the gate could refuse
+    everything and every test above would still pass."""
+    from test_governance_failure import _permissive_boundary  # noqa: PLC0415
+
+    boundary = _permissive_boundary(tmp_path, as_of=NOW)
+    calls = _counting_authorizer(boundary)
+
+    boundary.evaluate_and_execute(
+        mission_id="CASE-A10-OK", risk="high",
+        action=lambda: None,
+        action_approval=None,
+        action_descriptor=ActionDescriptor(
+            operation="issue refund", resource="customer:omar",
+            destination="zone.external_customer",
+            parameters={"amount": 100, "currency": "USD"},
+        ),
+        attempt=1,
+    )
+    assert calls, (
+        "the authorizer was never consulted on a runtime whose governance "
+        "state is sound, so the gate now refuses everything"
+    )

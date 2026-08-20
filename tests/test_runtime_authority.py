@@ -292,12 +292,30 @@ def test_no_production_source_constructs_a_test_context():
     actually matters: no shipped code path constructs one. A reviewer should not
     have to take that on trust.
     """
+    # AST, NOT SUBSTRING. `"RuntimeContext.for_test(" in source` cannot tell a
+    # CALL from a docstring that names the seam while explaining why production
+    # must not use it -- and the moment such a docstring was written, this went
+    # red on prose. That is the use/mention confusion two other modules here
+    # exist to refuse, and a guard is not exempt from it.
+    #
+    # Strictly stronger, not weaker: an actual call node is found however it is
+    # spaced or line-broken, and a mention in a comment, docstring or string
+    # literal is correctly ignored.
+    import ast  # noqa: PLC0415
+
     root = Path(__file__).resolve().parents[1]
-    offenders = [
-        str(path.relative_to(root))
-        for path in sorted((root / "src").rglob("*.py"))
-        if "RuntimeContext.for_test(" in path.read_text(encoding="utf-8")
-    ]
+    offenders = []
+    for path in sorted((root / "src").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "for_test"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "RuntimeContext"
+            ):
+                offenders.append(f"{path.relative_to(root)}:{node.lineno}")
     assert offenders == [], (
         "RuntimeContext.for_test is a test seam and must not appear in shipped "
         f"code: {offenders}"

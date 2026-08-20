@@ -1626,7 +1626,6 @@ class NornyxActionBoundary:
         # which a caller must name at the construction site. There is no ambient
         # route to either value.
         self.runtime_context = runtime_context or RuntimeContext.trusted(root)
-        self.as_of = self.runtime_context.now()
         #: Trusted approver keys, resolved once here rather than per decision.
         #: Looking the location up on every authorization would make the
         #: environment an ambient selector of the root of trust: set a variable
@@ -1713,6 +1712,28 @@ class NornyxActionBoundary:
                 raise NornyxRuntimeUnavailable(self.load_error) from exc
 
     @property
+    def as_of(self) -> str:
+        """The trusted instant, read WHEN A DECISION IS MADE.
+
+        This was `self.as_of = self.runtime_context.now()` in `__init__`, so a
+        boundary judged every approval window it ever saw at the instant it was
+        CONSTRUCTED. The magnitude is bounded -- the boundary is per
+        `CustomerCaseFlow`, and the one worker call between construction and
+        the execution stage caps at `timeout_seconds=180` -- but the direction
+        is wrong in principle: a grant that expired during the run was still
+        judged against a stale clock.
+
+        `RuntimeContext.now()` is a per-call method precisely so this can be
+        asked repeatedly, and `RuntimeContext.for_test(at=...)` pins it, so
+        deterministic tests are unaffected. The only test of the boundary's
+        instant constructed it with `for_test` -- the declared pin -- so it
+        could not observe that the production path pinned itself too. That is
+        the ordering an independent review named: the object built the one way
+        the property holds.
+        """
+        return self.runtime_context.now()
+
+    @property
     def mode(self) -> str:
         return "nornyx.agentic" if self.authorizer is not None else "deterministic_fallback"
 
@@ -1744,6 +1765,103 @@ class NornyxActionBoundary:
             producer_version=__version__,
             producer_type="external_runtime",
         )
+        # INTEGRITY IS ASKED FIRST, WHICH IS WHAT THIS COMMENT ALWAYS SAID.
+        # The block below used to sit inside `if high_risk and
+        # decision.allowed:`, AFTER three `authorizer.evaluate` calls, while
+        # stating it ran "before the authorizer is consulted, because a
+        # compromised contract is what the authorizer would be reading". A
+        # review measured the authorizer reading it three times first.
+        #
+        # Worse, the guard made the refusal conditional on the compromised
+        # material's own verdict. When tampering made the contract DENY, the
+        # branch was never entered and the `refused_action_attempt.v1` record
+        # -- added precisely so an operator could see a consequential act
+        # attempted against a compromised runtime -- was never written.
+        # Measured: contract allows -> 1 refusal record; contract denies -> 0.
+        # Whether the operator learned of the compromise was decided BY the
+        # compromised material.
+        #
+        # Now unconditional and first. `high_risk` is not a precondition
+        # either: a compromised governance state is not more acceptable for a
+        # low-risk act, it simply has less to release.
+        # Integrity, immediately after subject and before any decision.
+        #
+        # Derived governance state -- an evidence record's `status`, a
+        # recorded `content_hash` -- is deliberately outside the inspection
+        # subject, because binding an inspection to values the tooling
+        # rewrites made authenticated inspection unreachable. That exclusion
+        # is only admissible while compromise of those values withdraws
+        # every authority depending on them, and runtime authority did not:
+        # mutating either changed the Nornyx verdict, left the subject
+        # untouched, and this boundary released the effect and spent the
+        # approval regardless.
+        #
+        #     derived status mutated   effect=ALLOW callbacks=1 spent=True
+        #     content_hash mutated     effect=ALLOW callbacks=1 spent=True
+        #
+        # Asked before the request is built, so no grant is spent finding
+        # out, and before the authorizer is consulted, because a compromised
+        # contract is what the authorizer would be reading.
+        integrity = self.governance_integrity
+        if integrity is None or not integrity.authorizes_consequential_action:
+            reason = (
+                "the governance evidence this runtime would be judged "
+                "under does not match what the contracts record: "
+                + (
+                    "; ".join(integrity.problems[:3])
+                    if integrity is not None
+                    else "no integrity observation was established"
+                )
+                + ". Consequential authority is unavailable until the "
+                "evidence set is regenerated and re-approved."
+            )
+            # Recorded, not just returned. This refusal wrote nothing at
+            # all: no event stream, no report, no case record -- so an
+            # operator could not see that a consequential act had been
+            # attempted against a runtime whose own governance state was
+            # compromised. That is the attempt most worth being able to
+            # find afterwards.
+            #
+            # A Nornyx event stream is not available here and is not
+            # invented: this runs before the authorizer is consulted,
+            # deliberately, because a compromised contract is what the
+            # authorizer would be reading. What is written is a refusal
+            # record in its own schema, which claims nothing about a
+            # governance decision that was never made.
+            record = {
+                "schema": "nornyx.forge.refused_action_attempt.v1",
+                "mission_id": mission_id,
+                "risk": normalize_risk(risk),
+                "attempt": attempt,
+                "code": GOVERNANCE_INTEGRITY_COMPROMISED,
+                "reason": reason,
+                "integrity_status": (
+                    integrity.status if integrity is not None else "unobserved"
+                ),
+                "integrity_problems": list(
+                    integrity.problems if integrity is not None else ()
+                ),
+                "action_approval_present": _action_approval_present(action_approval),
+                "approval_consumed": False,
+                "effect_released": False,
+                "refused_at": self.as_of,
+            }
+            refusals = self.root / "evidence/runtime/refused"
+            refusals.mkdir(parents=True, exist_ok=True)
+            write_json(
+                refusals
+                / (evidence_storage_key(mission_id + "#attempt-" + str(attempt))
+                   + ".refused.json"),
+                record,
+            )
+            return RuntimeDecision(
+                effect="DENY",
+                code=GOVERNANCE_INTEGRITY_COMPROMISED,
+                reason=reason,
+                source=self.mode,
+                evidence=record,
+            )
+
         if high_risk:
             # Recorded so the stream distinguishes "may propose" from "may act".
             request = self.authorizer.evaluate(
@@ -1803,81 +1921,6 @@ class NornyxActionBoundary:
             # First: is the subject established? A runtime that cannot say what
             # it is cannot release a consequential effect. Asked before anything
             # else, so no grant is spent discovering it.
-            # Integrity, immediately after subject and before any decision.
-            #
-            # Derived governance state -- an evidence record's `status`, a
-            # recorded `content_hash` -- is deliberately outside the inspection
-            # subject, because binding an inspection to values the tooling
-            # rewrites made authenticated inspection unreachable. That exclusion
-            # is only admissible while compromise of those values withdraws
-            # every authority depending on them, and runtime authority did not:
-            # mutating either changed the Nornyx verdict, left the subject
-            # untouched, and this boundary released the effect and spent the
-            # approval regardless.
-            #
-            #     derived status mutated   effect=ALLOW callbacks=1 spent=True
-            #     content_hash mutated     effect=ALLOW callbacks=1 spent=True
-            #
-            # Asked before the request is built, so no grant is spent finding
-            # out, and before the authorizer is consulted, because a compromised
-            # contract is what the authorizer would be reading.
-            integrity = self.governance_integrity
-            if integrity is None or not integrity.authorizes_consequential_action:
-                reason = (
-                    "the governance evidence this runtime would be judged "
-                    "under does not match what the contracts record: "
-                    + (
-                        "; ".join(integrity.problems[:3])
-                        if integrity is not None
-                        else "no integrity observation was established"
-                    )
-                    + ". Consequential authority is unavailable until the "
-                    "evidence set is regenerated and re-approved."
-                )
-                # Recorded, not just returned. This refusal wrote nothing at
-                # all: no event stream, no report, no case record -- so an
-                # operator could not see that a consequential act had been
-                # attempted against a runtime whose own governance state was
-                # compromised. That is the attempt most worth being able to
-                # find afterwards.
-                #
-                # A Nornyx event stream is not available here and is not
-                # invented: this runs before the authorizer is consulted,
-                # deliberately, because a compromised contract is what the
-                # authorizer would be reading. What is written is a refusal
-                # record in its own schema, which claims nothing about a
-                # governance decision that was never made.
-                record = {
-                    "schema": "nornyx.forge.refused_action_attempt.v1",
-                    "mission_id": mission_id,
-                    "risk": normalize_risk(risk),
-                    "attempt": attempt,
-                    "code": GOVERNANCE_INTEGRITY_COMPROMISED,
-                    "reason": reason,
-                    "integrity_status": (
-                        integrity.status if integrity is not None else "unobserved"
-                    ),
-                    "integrity_problems": list(
-                        integrity.problems if integrity is not None else ()
-                    ),
-                    "action_approval_present": _action_approval_present(action_approval),
-                    "approval_consumed": False,
-                    "effect_released": False,
-                    "refused_at": self.as_of,
-                }
-                refusals = self.root / "evidence/runtime/refused"
-                refusals.mkdir(parents=True, exist_ok=True)
-                write_json(
-                    refusals / f"{evidence_storage_key(mission_id)}.refused.json",
-                    record,
-                )
-                return RuntimeDecision(
-                    effect="DENY",
-                    code=GOVERNANCE_INTEGRITY_COMPROMISED,
-                    reason=reason,
-                    source=self.mode,
-                    evidence=record,
-                )
 
             subject = self.runtime_subject
             if subject is None or not subject.subject_verified:
@@ -2000,6 +2043,7 @@ class NornyxActionBoundary:
                 release_failure = f"{type(exc).__name__}: {exc}"
                 self._emit_evidence(
                     mission_id=mission_id,
+                    attempt=attempt,
                     recorder=recorder,
                     nornyx_effect=nornyx_effect,
                     nornyx_code=nornyx_code,
@@ -2041,6 +2085,7 @@ class NornyxActionBoundary:
 
         report = self._emit_evidence(
             mission_id=mission_id,
+            attempt=attempt,
             recorder=recorder,
             nornyx_effect=nornyx_effect,
             nornyx_code=nornyx_code,
@@ -2073,6 +2118,7 @@ class NornyxActionBoundary:
         self,
         *,
         mission_id: str,
+        attempt: int,
         recorder,
         nornyx_effect: str,
         nornyx_code: str,
@@ -2123,7 +2169,17 @@ class NornyxActionBoundary:
         evidence_dir = self.root / "evidence/runtime/nornyx"
         evidence_dir.mkdir(parents=True, exist_ok=True)
         # The identifier is data in the payload, never a path component.
-        storage_key = evidence_storage_key(mission_id)
+        #
+        # KEYED ON THE ATTEMPT, not the mission. `evidence_storage_key`'s own
+        # docstring says the digest exists because "one mission could silently
+        # replace another mission's decision evidence, including the record of
+        # a refused high-risk effect". The hazard survived one level down: the
+        # same mission's ATTEMPTS collided, and the retry model this design
+        # mandates is what produced them. Measured across three attempts at one
+        # mission: one events file, one report, and attempts 1 and 2 left no
+        # record of their own -- while the pending artifacts beside them were
+        # already per-attempt.
+        storage_key = evidence_storage_key(mission_id + "#attempt-" + str(attempt))
         write_json(evidence_dir / f"{storage_key}.events.json", stream)
         write_json(evidence_dir / f"{storage_key}.report.json", report)
         return report

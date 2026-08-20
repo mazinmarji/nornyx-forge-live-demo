@@ -115,10 +115,14 @@ def main() -> None:
     from governance_artifacts import governance_approval, now_window
 
     generated, expires, as_of = now_window()
+    artifact = governance_approval(scenario["claim"], generated, expires)
     decision = verify_governance_approval(
-        governance_approval(scenario["claim"], generated, expires),
+        artifact,
         trust_store=loaded["governance_approval_trust"],
         as_of=as_of,
+        # The subject this fixture actually names. The clause is evaluated in
+        # the verifier now, so the probe has to answer it like any caller.
+        expected_subject_revision=str(artifact.get("subject_revision") or ""),
     )
     result["governance_granted"] = bool(decision.granted)
     result["governance_reason"] = decision.reason

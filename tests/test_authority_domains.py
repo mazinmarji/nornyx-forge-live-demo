@@ -223,6 +223,8 @@ def test_a_governance_role_cannot_release_a_consequential_effect(tmp_path: Path)
     assert spent is False, "the grant was consumed by a run that must not start"
 
 
+#: The subject the governance fixture in this module actually names.
+GOVERNANCE_SUBJECT = "sha256:" + "a" * 64
 def test_a_governance_role_is_authoritative_in_the_governance_domain():
     """The positive half, without which the matrix is only "one side denied".
 
@@ -237,6 +239,7 @@ def test_a_governance_role_is_authoritative_in_the_governance_domain():
             roles=("architecture_reviewer",), domain=GOVERNANCE_TRUST_DOMAIN
         ),
         as_of=AS_OF,
+        expected_subject_revision=GOVERNANCE_SUBJECT,
     )
     assert ok is True, reason
     assert evidence["signature_verified"] is True
@@ -258,6 +261,7 @@ def test_an_action_role_cannot_approve_governed_content():
             roles=("operations_owner",), domain=GOVERNANCE_TRUST_DOMAIN
         ),
         as_of=AS_OF,
+        expected_subject_revision=GOVERNANCE_SUBJECT,
     )
     assert ok is False
     # PREREQUISITES reached, then the role clause failed -- proven by the
@@ -425,9 +429,12 @@ def _prerequisites_met(grant, store) -> None:
     assert signer.subject_type_verified is True
 
 
+
+
 def _governance(domains, role: str, as_of: str = AS_OF):
     return verify_governance_approval(
-        _governance_approval(role), trust_store=domains.governance, as_of=as_of
+        _governance_approval(role), trust_store=domains.governance, as_of=as_of,
+        expected_subject_revision=GOVERNANCE_SUBJECT,
     )
 
 
@@ -642,7 +649,8 @@ def test_the_action_store_is_refused_by_the_governance_authority(tmp_path: Path)
     domains = _provision(tmp_path, governance=(SHARED_ROLE,), action=(SHARED_ROLE,))
 
     refused = verify_governance_approval(
-        _governance_approval(SHARED_ROLE), trust_store=domains.action, as_of=AS_OF
+        _governance_approval(SHARED_ROLE), trust_store=domains.action, as_of=AS_OF,
+        expected_subject_revision=GOVERNANCE_SUBJECT,
     )
     assert refused.granted is False
     assert "TRUST_DOMAIN_MISMATCH" in refused.reason, refused.reason

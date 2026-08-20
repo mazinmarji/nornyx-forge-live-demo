@@ -123,10 +123,18 @@ and with Docker present and `--no-launch` absent -- `bootstrap.py` runs
 - Governance dashboard: `http://localhost:8000/dashboard`
 - API documentation: `http://localhost:8000/docs`
 
-The execution backend is `sequential` on both paths. `cli.py` requests it
-unconditionally, and a run reports `configured_execution_backend: sequential`
-alongside `observed_execution_backend: sequential`. **CrewAI is not requested by the `demo` command**, and the previous wording
-"strict Nornyx/CrewAI execution" said otherwise.
+The **`demo` command** runs `sequential`, and reports
+`configured_execution_backend: sequential` alongside
+`observed_execution_backend: sequential`. **CrewAI is not requested by the
+`demo` command**, and the previous wording "strict Nornyx/CrewAI execution"
+said otherwise.
+
+That sentence used to read "sequential on both paths ... `cli.py` requests it
+unconditionally", which is false in two ways a review measured. `cli.py` names
+`execution_backend` exactly once, inside `demo`; and `bootstrap.py` runs
+`cli build` on BOTH paths before the demo, so under either reading of "both
+paths" one of them is `crewai_flow`. The paragraph below says so, and the two
+could not both be true.
 
 The `build` step is different, and this section used to be wrong about it.
 `bootstrap.py` runs `python -m nornyx_forge.cli build` on both paths, and

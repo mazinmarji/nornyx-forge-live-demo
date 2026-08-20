@@ -193,8 +193,15 @@ INVENTORY = (
         control="nornyx_runtime._official refuses when integrity does not authorize",
         authoritative_property=H02_COMPROMISED_INTEGRITY_RELEASES_NOTHING,
         mutation=(RUNTIME,
-                  "            if integrity is None or not integrity.authorizes_consequential_action:",
-                  "            if False and (integrity is None or not integrity.authorizes_consequential_action):", 1),
+                  # DEDENTED BY FOUR. The integrity gate was hoisted out of
+                  # `if high_risk and decision.allowed:` when a review found it
+                  # running AFTER the authorizer it protects, so this anchor
+                  # lost its old indentation. The kernel refused the attack --
+                  # "found 0" -- rather than crediting a mutation that applied
+                  # to nothing, which is the whole point of anchoring on exact
+                  # text.
+                  "        if integrity is None or not integrity.authorizes_consequential_action:",
+                  "        if False and (integrity is None or not integrity.authorizes_consequential_action):", 1),
         test="tests/test_governance_integrity_authority.py::test_a_compromised_runtime_releases_nothing",
         expect="a compromised runtime released the effect",
         severity="P1",
