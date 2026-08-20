@@ -105,7 +105,18 @@ def test_no_governance_document_pins_a_commit_as_the_subject():
 #: than ASSERTS. Blanked rather than removed so reported line numbers stay
 #: true -- a guard that misreports where it found something teaches people to
 #: distrust it.
-_MENTION = re.compile("`[^`]*`" + "|" + chr(34) + "[^" + chr(34) + "]*" + chr(34))
+#: INLINE spans only -- nothing spanning a newline. This paired the three
+#: backticks of a ``` fence with the next fence's and blanked the ENTIRE BODY
+#: of every fenced block. Transcripts live in fences, so the guard could not
+#: see the claims that matter most: `assurance_state: independently_inspected`
+#: inside a fence was invisible while the identical line outside one was
+#: flagged. A review demonstrated it.
+_NEWLINE = chr(10)
+_MENTION = re.compile(
+    "[`][^`" + _NEWLINE + "]*[`]"
+    + "|"
+    + '["][^"' + _NEWLINE + ']*["]'
+)
 
 
 def _mention_blanked(text: str) -> str:

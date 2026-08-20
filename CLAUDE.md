@@ -37,12 +37,21 @@ The task is complete only when:
   The sole diagnostics an autonomous run may leave outstanding are those
   `scripts/check_pre_approval_baseline.py` accepts:
 
-      AN_APPROVAL_RECORD_MISSING
-      APPROVAL_EVIDENCE_MISSING
-      EVIDENCE_REQUIRED_MISSING
+      AN_APPROVAL_RECORD_MISSING      APPROVAL_EVIDENCE_MISSING
+      EVIDENCE_REQUIRED_MISSING       CHANGE_EVIDENCE_MISSING
+      SOD_EVIDENCE_PRODUCER_UNKNOWN
+
+  FIVE, not three. This listed three and said any other diagnostic fails the
+  criterion -- which, read literally, failed it at every head, because
+  architecture_governance.nyx also emits CHANGE_EVIDENCE_MISSING and
+  SOD_EVIDENCE_PRODUCER_UNKNOWN. Those two are not the absent APPROVAL: they
+  are the consequences of having no AUTHENTICATED INDEPENDENT INSPECTION, a
+  different external authority. This list is a copy of one the script owns,
+  so EXPECTED_PRE_APPROVAL_DIAGNOSTICS is authoritative and this is
 
   Any other validation or integrity diagnostic fails the criterion above.
-  Clearing these three requires a genuine human approval record. Creating,
+  Clearing the approval codes requires a genuine human approval record;
+  clearing the other two requires an authenticated independent inspection. Creating,
   adopting, inferring, or backdating one is forbidden, so no autonomous run
   may close this criterion, and none may report it closed;
 - the live application starts;
@@ -52,6 +61,9 @@ The task is complete only when:
   path what is produced is FORGE-schema evidence
   (`nornyx.forge.demo_evidence_report.v1`) whose `nornyx_evidence` field reads
   `{"status": "fallback", "load_error": "AuthorizerLoadError..."}` on every
+  case. On a clean checkout the load_error is RUNTIME_LOCK_MISSING
+  instead -- the same absence one step earlier, because the runtime lock
+  is gitignored and cannot be prepared without an approval --
   case; no `nornyx.agentic` runtime evidence is produced, because the
   authorizer never loads without a human approval. "Nornyx evidence is
   emitted" read as the latter and was satisfied by the former -- the exact

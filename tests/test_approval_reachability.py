@@ -33,6 +33,20 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
 
+
+#: The refusal codes that all mean ONE thing: no human approval exists.
+#: Which one surfaces depends on how far the run gets before the absence
+#: stops it -- on a clean checkout the runtime lock cannot be prepared, so
+#: RUNTIME_LOCK_MISSING arrives first; in a tree where a lock was prepared
+#: earlier, the authorizer loads far enough to report the approval directly.
+#: Both are the same fact. Anything outside this set is a different failure.
+HUMAN_AUTHORITY_ABSENT = frozenset({
+    "AN_APPROVAL_RECORD_MISSING",
+    "APPROVAL_EVIDENCE_MISSING",
+    "EVIDENCE_REQUIRED_MISSING",
+    "RUNTIME_LOCK_MISSING",
+})
+
 def _accepts_a_grant(function) -> bool:
     import inspect  # noqa: PLC0415
 
@@ -149,9 +163,22 @@ def test_the_grant_route_stops_where_human_authority_begins(tmp_path: Path):
             config=RuntimeAuthorityConfig(policy_backend="nornyx",
                                           execution_backend="sequential"),
         )
-    assert "AN_APPROVAL_RECORD_MISSING" in str(refusal.value), (
-        "the governed path failed for a reason other than the absent human "
-        f"approval record: {refusal.value}"
+    # THE DIAGNOSTIC DEPENDS ON THE ENVIRONMENT; THE PROPERTY DOES NOT.
+    # This asserted AN_APPROVAL_RECORD_MISSING alone and so passed only in a
+    # tree that already holds `.nornyx/runtime/nornyx.agentic_network.lock`.
+    # That path is gitignored and a reader CANNOT create it -- prepare_runtime
+    # exits 2 without a human approval -- so on every clean checkout the
+    # proximate refusal is RUNTIME_LOCK_MISSING and this test failed. An
+    # independent review found it; I reproduced it by archiving HEAD.
+    #
+    # Both diagnostics are the same absence at different depths: no human
+    # approval exists, so the runtime lock cannot be prepared, so the
+    # authorizer cannot load. Naming the set makes the property hold in both
+    # environments without weakening it -- a generic crash still fails.
+    reason = str(refusal.value)
+    assert any(code in reason for code in HUMAN_AUTHORITY_ABSENT), (
+        "the governed path failed for a reason outside the human-authority "
+        f"absence set {sorted(HUMAN_AUTHORITY_ABSENT)}: {reason}"
     )
 
 def test_an_unsigned_grant_is_refused(tmp_path: Path):

@@ -52,10 +52,23 @@ def _blocks(text: str) -> list[tuple[int, str, str]]:
     found = []
     for match in re.finditer(r"```[^\n]*\n(.*?)```", text, re.S):
         body = match.group(1)
-        if not TRANSCRIPT.search(body):
+        preceding = text[max(0, match.start() - 400):match.start()]
+        # RECOGNITION NO LONGER HINGES ON ONE FIELD. This gated on
+        # `integrity_state`, so a block omitting that single line was invisible
+        # to every check -- and the test that claimed to close it called
+        # `_transcript_fields` DIRECTLY and never `_blocks`, so it passed while
+        # the hole stayed open. A review forged an anchored block carrying
+        # `assurance_state independently_inspected` and fabricated reviewers,
+        # and both R4 tests admitted it.
+        #
+        # A block counts if it carries ANY verifiable field, or if it sits
+        # under an anchor at all -- an anchor is a claim of measurement
+        # whatever the block happens to say.
+        if not (_transcript_fields(body).keys() & VERIFIABLE_FIELDS
+                or ANCHOR.search(preceding)):
             continue
         line = text.count("\n", 0, match.start()) + 1
-        found.append((line, text[max(0, match.start() - 400):match.start()], body))
+        found.append((line, preceding, body))
     return found
 
 
@@ -200,7 +213,12 @@ VERIFIABLE_FIELDS = frozenset({
 
 #: A `key   value` line, whatever the key is. The predecessor keyed on
 #: `integrity_state` alone, so dropping that one line hid the block entirely.
-_FIELD_LINE = re.compile("^[ ]*([a-z_]+)[ ]{2,}([^ ].*)$")
+#: One or more spaces or tabs, any key case. Requiring TWO spaces and a
+#: lowercase key missed four lines shipping at the time -- among them
+#: `evidence_manifest_match True` and `authenticated_reviewers []`, both
+#: single-spaced inside an anchored fence, displayed as measured and checked
+#: by nothing.
+_FIELD_LINE = re.compile("^[ 	]*([A-Za-z_][A-Za-z_ ]*?)[ 	]+([^ 	].*)$")
 
 
 def _transcript_fields(body: str) -> dict:

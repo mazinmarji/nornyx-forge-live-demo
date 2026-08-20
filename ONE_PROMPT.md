@@ -46,6 +46,15 @@ the customer-operations Flow completes its demonstration scenarios.
 On a fresh clone the run STOPS BEFORE LAUNCH, and that is correct.
 `bootstrap.py` appends `--strict-nornyx` when `--skip-install` is absent;
 measured, that demo exits 2 blocked on AN_APPROVAL_RECORD_MISSING, and
+
+> **What a reader actually sees.** The diagnostic above is what a tree with a
+> prepared runtime lock reports. `.nornyx/runtime/` is gitignored and the lock
+> CANNOT be produced without a human approval (`prepare_runtime.py` exits 2),
+> so on a clean checkout the proximate refusal is
+> `RuntimeError: RUNTIME_LOCK_MISSING`. Same absence, reported at a different
+> depth: no approval exists, so the lock cannot be prepared, so the authorizer
+> cannot load. The exit code (2), `status: blocked` and
+> `reason: nornyx_runtime_unavailable` are identical either way.
 `run()` raises SystemExit on a nonzero return, so the launch and the URL
 prints below are never reached. Declining to execute governed actions
 without an approval is the system working.

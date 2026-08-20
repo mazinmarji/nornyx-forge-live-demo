@@ -300,6 +300,22 @@ def _unquoted(line: str) -> str:
     return _QUOTED.sub(" ", line)
 
 
+
+def _constructs_without_config(module: Path) -> bool:
+    """Does this module build a governed flow without passing a config?
+
+    If so, the dataclass default is what actually runs there, and the default
+    is part of what the repository REQUESTS -- however few literals appear.
+    """
+    tree = ast.parse(module.read_text(encoding='utf-8'))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call)
+                and getattr(node.func, 'id', '') in {'DevelopmentFlow',
+                                                     'CustomerCaseFlow'}
+                and not any(kw.arg == 'config' for kw in node.keywords)):
+            return True
+    return False
+
 def test_no_document_claims_crewai_where_the_cli_requests_sequential():
     """STATIC over the CODE, quantified over EVERY shipped document.
 
@@ -322,6 +338,20 @@ def test_no_document_claims_crewai_where_the_cli_requests_sequential():
         if kw.arg == "execution_backend" and isinstance(kw.value, ast.Constant)
     }
     assert requested, "execution_backend is no longer a literal; re-measure it"
+
+    # THE BARE DEFAULT COUNTS AS REQUESTED. This scanned only explicit
+    # `RuntimeAuthorityConfig(execution_backend=...)` literals, so it could not
+    # see that `cli.py` builds `DevelopmentFlow` with NO config -- where the
+    # dataclass default `crewai` applies and a real Flow kickoff runs
+    # (build-summary.json: execution_backend crewai_flow). The guard therefore
+    # rested on a false premise and would have FAILED THE SUITE on a truthful
+    # sentence about the build path.
+    from nornyx_forge.governed_subject import (  # noqa: PLC0415
+        RuntimeAuthorityConfig,
+    )
+
+    if _constructs_without_config(ROOT / 'src/nornyx_forge/cli.py'):
+        requested.add(RuntimeAuthorityConfig().execution_backend)
     if any("crew" in value.lower() for value in requested):
         return  # the claim would be true; nothing to forbid
 

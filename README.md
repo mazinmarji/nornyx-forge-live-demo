@@ -100,6 +100,15 @@ $ python -m nornyx_forge.cli demo --offline --strict-nornyx
 exit 2
 ```
 
+> **What a reader actually sees.** The diagnostic above is what a tree with a
+> prepared runtime lock reports. `.nornyx/runtime/` is gitignored and the lock
+> CANNOT be produced without a human approval (`prepare_runtime.py` exits 2),
+> so on a clean checkout the proximate refusal is
+> `RuntimeError: RUNTIME_LOCK_MISSING`. Same absence, reported at a different
+> depth: no approval exists, so the lock cannot be prepared, so the authorizer
+> cannot load. The exit code (2), `status: blocked` and
+> `reason: nornyx_runtime_unavailable` are identical either way.
+
 `bootstrap.run()` raises `SystemExit` on a nonzero return, so the launch step
 below is **not reached** on the path this section documents. Declining to
 execute governed actions without an approval is the system working; the earlier
@@ -116,10 +125,17 @@ and with Docker present and `--no-launch` absent -- `bootstrap.py` runs
 
 The execution backend is `sequential` on both paths. `cli.py` requests it
 unconditionally, and a run reports `configured_execution_backend: sequential`
-alongside `observed_execution_backend: sequential`. **CrewAI is not requested by
-this workflow**, and the previous wording "strict Nornyx/CrewAI execution" said
-otherwise. `tests/test_execution_mode_truth.py` pins all three claims against
-the code and against an executed run.
+alongside `observed_execution_backend: sequential`. **CrewAI is not requested by the `demo` command**, and the previous wording
+"strict Nornyx/CrewAI execution" said otherwise.
+
+The `build` step is different, and this section used to be wrong about it.
+`bootstrap.py` runs `python -m nornyx_forge.cli build` on both paths, and
+`cli.py` constructs `DevelopmentFlow` with NO config -- so
+`RuntimeAuthorityConfig()` applies, whose defaults are
+`execution_backend='crewai'` and `policy_backend='nornyx'`. Measured, that
+path runs a real kickoff: `build-summary.json` records
+`execution_backend: crewai_flow`. A review found this; the AST guard was
+blind to it because it only reads explicit literals.
 
 ## Public repository modes
 

@@ -36,9 +36,13 @@ integrity_state        intact
 problems               []
 governed_input_match   true
 assurance_state        not_independently_inspected
-human approval         absent
-production authorization absent
 ```
+
+Outside the fence because `--verify` does not emit them, so nothing can
+recheck them at the anchored commit: human approval ABSENT, production
+authorization ABSENT. They were displayed inside the block as though
+measured, and the field extractor missed them because it required two spaces
+-- a review found both.
 
 ---
 
@@ -162,6 +166,12 @@ WIRING IT WAS NOT SUFFICIENT, and the measurement says why:
                                    presenting one changes nothing
 
     nornyx (governed)              raises NornyxRuntimeUnavailable
+                                   ON A CLEAN CHECKOUT the proximate code
+                                   is RUNTIME_LOCK_MISSING: the lock is
+                                   gitignored and prepare_runtime exits 2
+                                   without an approval, so it can never be
+                                   made. In a tree where one was prepared
+                                   earlier the load reaches:
                                    AuthorizerLoadError: CONTRACT_INVALID:
                                    AN_APPROVAL_RECORD_MISSING
 
