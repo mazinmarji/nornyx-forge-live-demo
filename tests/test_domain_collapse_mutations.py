@@ -579,13 +579,25 @@ def test_fg23_a_crash_is_recognised_by_the_builds_own_exception_names(tmp_path: 
 
     # And the vocabulary itself must not contain bare English words, which is
     # the property rather than a sample of it.
-    english = sorted(
+    # THE PROPERTY, NOT A LIST OF FIVE WORDS. This checked membership in
+    # {"error", "timeout", "warning", "exception", "failure"} and called itself
+    # a property; a review measured 270 kept names including `Clamped`,
+    # `Failed`, `Interrupted`, `Rounded`, `Skipped` and `Warning`, none of which
+    # that set would have caught.
+    #
+    # What actually distinguishes a rendered class name from prose is SHAPE: a
+    # capital, or an underscore. A name that is entirely lowercase letters is
+    # indistinguishable from an English word by any token test, which is why the
+    # probe drops those -- so asserting the shape asserts the whole class,
+    # including words nobody has thought of.
+    word_shaped = sorted(
         name for name in vocabulary
-        if name in {"error", "timeout", "warning", "exception", "failure"}
+        if name.isalpha() and name.islower()
     )
-    assert english == [], (
-        "the exception vocabulary contains ordinary English words, so any "
-        f"refusal using one as prose will be read as a crash: {english}"
+    assert word_shaped == [], (
+        "the exception vocabulary contains names indistinguishable from "
+        "ordinary English words, so any refusal using one as prose will be "
+        f"read as a crash: {word_shaped[:12]}"
     )
 
 

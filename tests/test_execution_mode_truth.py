@@ -516,10 +516,14 @@ def test_no_ui_surface_claims_a_governance_mode_the_run_does_not_use():
 # and value. In markup the two are separated by TAGS, so
 # `<span>Human review</span><strong>Performed</strong>` matches nothing.
 #
-# So this does not add more keywords. The four metrics are STATIC LITERALS that
-# `app.js` never touches, and each restates a value this repository already
-# records in an artifact. The check is that they AGREE with it -- which is what
-# the sibling docstring above claims for itself and does not do.
+# So this does not add more keywords. All four metrics are STATIC LITERALS that
+# `app.js` never touches. TWO of them -- Human review and Production approval --
+# restate a value this repository records in an artifact, and the check is that
+# they AGREE with it. The other two, Framework and Governance, are value-checked
+# by the keyword sweep above, not here; a review measured this comment implying
+# all four were bound to artifacts when `ASSURANCE_METRICS` holds two.
+# `NON_ASSURANCE_METRICS` names the other two so the set of rows is CLOSED and a
+# fifth row cannot arrive unclassified.
 # --------------------------------------------------------------------------
 
 #: Dashboard label -> (artifact field, the value that field holds today, the

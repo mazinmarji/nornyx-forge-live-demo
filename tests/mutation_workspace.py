@@ -99,6 +99,7 @@ def tracked_files() -> list[str]:
     completed = subprocess.run(  # noqa: S603
         ["git", "ls-files", "-z"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=False,
+        timeout=600,
     )
     if completed.returncode != 0:
         raise NotAGitCheckout(
@@ -139,12 +140,18 @@ def faithful_copy(destination: Path) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
 
-    subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True)  # noqa: S603
-    subprocess.run(["git", "add", "-A"], cwd=tree, check=True, capture_output=True)  # noqa: S603
+    # BOUNDED. A review measured 110 of 144 `subprocess` call sites in this
+    # repository passing no timeout, these among them, while FG33's recorded
+    # guard is "bound every child run". An unbounded child cannot time out; it
+    # hangs, and a hung run yields no verdict in either direction.
+    subprocess.run(["git", "init", "-q"], cwd=tree, check=True,  # noqa: S603
+                   capture_output=True, timeout=600)
+    subprocess.run(["git", "add", "-A"], cwd=tree, check=True,  # noqa: S603
+                   capture_output=True, timeout=600)
     subprocess.run(  # noqa: S603
         ["git", "-c", "user.email=harness@example.invalid", "-c", "user.name=harness",
          "commit", "-q", "-m", "mutation workspace"],
-        cwd=tree, check=True, capture_output=True,
+        cwd=tree, check=True, capture_output=True, timeout=600,
     )
     return tree
 

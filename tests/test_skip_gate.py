@@ -666,6 +666,31 @@ def test_the_census_accepts_a_complete_report(tmp_path: Path):
     )
 
 
+def _band(collected: int) -> int:
+    """The lowest floor that still counts as 90% of `collected`.
+
+    CEILING, not floor division. `collected * 9 // 10` TRUNCATES, so a
+    two-test module passed with a floor of 1 (50%) and a three-test module with
+    2 (67%) -- a review measured five modules sitting in that vacuous band. The
+    smaller the module, the further the truncation let it drift, which is
+    backwards: a small module is the one a single deletion guts.
+    """
+    return -(-collected * 9 // 10)
+
+
+def test_the_band_is_not_vacuous_for_small_modules():
+    """The arithmetic itself, since it decides every other floor.
+
+    Truncation is invisible in the assertion that uses it; it shows up only as
+    a module quietly passing at half its size.
+    """
+    assert _band(2) == 2, "a two-test module can still pass at 50%"
+    assert _band(3) == 3
+    assert _band(10) == 9
+    assert _band(70) == 63
+    assert _band(1) == 1
+
+
 def test_no_module_floor_drifts_far_below_its_module():
     """B-P2-4: the aggregate floor has a band guard; the per-module ones had none.
 
@@ -700,9 +725,9 @@ def test_no_module_floor_drifts_far_below_its_module():
 
     drifted = sorted(
         f"{name}: floor {floor} against {collected[name]} collected "
-        f"({floor * 100 // collected[name]}%)"
+        f"({floor * 100 // collected[name]}%, needs {_band(collected[name])})"
         for name, floor in census.REQUIRED_MODULE_MINIMUMS.items()
-        if collected.get(name) and floor < collected[name] * 9 // 10
+        if collected.get(name) and floor < _band(collected[name])
     )
     assert drifted == [], (
         "these module floors have drifted far below the modules they protect, "
@@ -720,11 +745,11 @@ def test_the_module_band_guard_would_notice_a_drifted_floor():
     so exercising it directly is exercising the thing.
     """
     collected, floor = 40, 12
-    assert floor < collected * 9 // 10, (
+    assert floor < _band(collected), (
         "a floor at 30% of its module no longer counts as drifted, so the band "
         "has been widened past the point of noticing anything"
     )
-    assert not (36 < collected * 9 // 10), (
+    assert not (36 < _band(collected)), (
         "a floor at 90% is being reported as drifted, so the guard would refuse "
         "every honest floor and would be turned off"
     )

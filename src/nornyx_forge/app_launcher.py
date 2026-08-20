@@ -29,7 +29,15 @@ def launch_application(*, port: int, worker_mode: str) -> None:
     # mode deliberately does not: it is bound into the subject, so passing it
     # ambiently would let the child process run a governance backend the
     # subject never attested to.
-    os.environ["FORGE_WORKER_MODE"] = worker_mode
+    # FORGE_WORKER_MODE IS NOT WRITTEN. Nothing reads it: a repository-wide
+    # search finds writes here, in `scripts/smoke_http.py`, in `.env.example`
+    # and in `docker-compose.yml`, and no reader anywhere. It appeared in
+    # neither table of a document that opens "Every external input reachable
+    # from `src/`", and that document's own FORGE_ROOT row states the rule --
+    # a variable nothing reads still tells a reader it matters.
+    #
+    # The worker mode travels as an argument, which is why nothing needed to
+    # read it.
     command = [
         sys.executable,
         "-m",

@@ -77,7 +77,7 @@ EXPECTED_PRE_APPROVAL_DIAGNOSTICS = frozenset(
             "approvals[0].required_evidence",
             "human_approval.v1",
         ),
-        # The three below are the consequences of having no AUTHENTICATED
+        # The two below are the consequences of having no AUTHENTICATED
         # independent inspection. They appeared the moment the contract stopped
         # claiming `pass` for an inspection nothing had signed, so they are not
         # a regression -- they are the state that stamp was concealing.

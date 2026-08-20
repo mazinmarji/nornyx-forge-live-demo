@@ -231,28 +231,36 @@ def test_fg33_both_harness_entry_points_bound_their_runs():
     while the campaign ran unbounded. AST, not text: the word `timeout` in a
     comment is what let the previous owner look correct.
     """
-    sites = {
-        "tests/mutation_workspace.py": "run_node",
-        "tests/attack_property.py": "run_probe",
-    }
+    # EVERY child run in the harness, not two named functions. The previous
+    # version checked a hand-written two-entry dict, and a review measured 110
+    # of 144 `subprocess` call sites in this repository passing no timeout --
+    # including `tracked_files`, `faithful_copy`'s three git calls, and the
+    # census's own pytest run, which spawns the entire suite.
+    #
+    # SCOPE, stated rather than implied: this covers the modules that spawn
+    # children ON BEHALF OF a proof, where a hang produces no verdict and no
+    # signal. Ad-hoc `subprocess.run` calls inside individual tests are not
+    # covered; those hang a single test that pytest reports, which is a
+    # different and much louder failure.
+    harness = (
+        "tests/mutation_workspace.py",
+        "tests/mutation.py",
+        "tests/attack_property.py",
+        "scripts/check_test_coverage.py",
+    )
     unbounded = []
-    for relative, function in sorted(sites.items()):
+    for relative in harness:
         tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-        found = next(
-            node for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == function
-        )
-        bounded = any(
-            keyword.arg == "timeout"
-            for call in ast.walk(found)
-            if isinstance(call, ast.Call)
-            for keyword in call.keywords
-        )
-        if not bounded:
-            unbounded.append(f"{relative}::{function}")
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "run"
+                    and getattr(node.func.value, "id", "") == "subprocess"):
+                continue
+            if not any(keyword.arg == "timeout" for keyword in node.keywords):
+                unbounded.append(f"{relative}:{node.lineno}")
     assert unbounded == [], (
-        "these harness entry points run a child process with no timeout, so a "
+        "these harness call sites run a child process with no timeout, so a "
         f"hung run never terminates and never yields a result either: {unbounded}"
     )
 

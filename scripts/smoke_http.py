@@ -41,7 +41,8 @@ def main() -> int:
     # Strict governance IS exercised, by `nornyx-forge demo --offline
     # --strict-nornyx` and by scripts/prepare_runtime.py -- neither of which is
     # this script.
-    env = {**os.environ, "FORGE_WORKER_MODE": "deterministic"}
+    # No FORGE_WORKER_MODE: nothing reads it. See app_launcher.
+    env = {**os.environ}
     # The server's output must go to a file, not an unread PIPE. CrewAI prints a
     # large flow trace per case; with subprocess.PIPE and no reader the OS pipe
     # buffer fills, the server blocks on write, and every request then times out.

@@ -42,8 +42,20 @@ def introduced_paths(before: str, after: str) -> list:
     return sorted(set(after.splitlines()) - set(before.splitlines()))
 
 
-def _worktree_state() -> str:
-    """What git says about the working tree, or "" when git cannot answer."""
+#: Returned when git could not answer at all. NOT the same value as a clean
+#: tree, which is `""`. A review measured the two being indistinguishable while
+#: the call site's comment said "absence of an answer is not a pass here" -- and
+#: the line it annotated returned without asserting anything, which is a pass.
+UNANSWERED = None
+
+
+def _worktree_state() -> "str | None":
+    """What git says about the working tree, or `UNANSWERED` when it cannot say.
+
+    A clean tree is `""`. git being unavailable is `None`. Collapsing them made
+    a suite that dirties the tree pass silently whenever git could not run,
+    which is precisely the environment where nobody would notice.
+    """
     try:
         completed = subprocess.run(  # noqa: S603
             ["git", "status", "--porcelain"],
@@ -51,8 +63,8 @@ def _worktree_state() -> str:
             errors="replace", timeout=120, check=False,
         )
     except OSError:
-        return ""
-    return completed.stdout if completed.returncode == 0 else ""
+        return UNANSWERED
+    return completed.stdout if completed.returncode == 0 else UNANSWERED
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -132,8 +144,17 @@ def _governed_tree_is_left_as_found():
     before = _worktree_state()
     yield
     after = _worktree_state()
-    if not before and not after:
-        return  # git could not answer; absence of an answer is not a pass here
+    if before is UNANSWERED or after is UNANSWERED:
+        # ABSENCE OF AN ANSWER IS NOT A PASS -- which is what the comment here
+        # always said, above a line that returned without asserting anything.
+        # Both states were `""`, so a clean tree and an unusable git were the
+        # same value and the guard was silent in exactly the environment where
+        # a dirtied tree would go unnoticed.
+        raise AssertionError(
+            "git could not report the working tree, so this run cannot show "
+            "that the suite left the governed tree as it found it. That is an "
+            "unanswered question, not a clean result."
+        )
 
     # ONE implementation, shared with the owner. The comparison used to live
     # here and be RE-IMPLEMENTED in `test_probe_containment._introduced`, so a

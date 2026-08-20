@@ -19,6 +19,7 @@ raised directly in the test process would be wrong about most of this suite.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -173,17 +174,11 @@ def _probe_project(tmp_path: Path, body: str, *, tool: str | None = None):
     return tree, "tests/test_probe.py::test_case"
 
 
-FG16_PARAMETRIC_CASES_WITHDRAWN = (
-    "The five decoy cases written for FG16 were MISCONSTRUCTED and are "
-    "withdrawn rather than left passing. They planted the probe at a line "
-    "that genuinely executes, so CLAUSE REACHED was the correct verdict and "
-    "the decoy marker was irrelevant -- the cases proved nothing about the "
-    "hazard they named. A correct case plants the probe on a branch the test "
-    "never takes WHILE the marker floods the output by another route, and "
-    "requires INVALID_TEST_AIM. FG16 is therefore NOT yet guarded "
-    "parametrically; the three cases below cover raised-probe, unreached-"
-    "probe and the per-run nonce, and the decoy matrix must be re-derived."
-)
+#: FG16_PARAMETRIC_CASES_WITHDRAWN was defined here and referenced
+#: nowhere. A table nobody reads is documentation wearing the shape of
+#: data, and this module's whole subject is the difference between the
+#: two. Removed rather than wired up: the cases it named are covered by
+#: the live parametrisation above.
 
 
 def test_fg16_a_genuinely_raised_probe_is_reachability(tmp_path: Path):
@@ -227,17 +222,30 @@ def test_fg16_a_stale_marker_from_an_earlier_run_cannot_be_reused(tmp_path: Path
         "import tool\n\n\ndef test_case():\n    assert tool.run() == 'ok'\n",
         tool="def run():\n    value = 'ok'\n    return value\n",
     )
-    seen: set[str] = set()
     for _ in range(2):
         source = (tree / "tool.py").read_text(encoding="utf-8")
         require_baseline_clause_reached(tree, node, "tool.py", "    value = 'ok'",
                                         timeout=600)
         assert (tree / "tool.py").read_text(encoding="utf-8") == source
-    # Two invocations, two distinct tokens: asserted on the helper's own source
-    # because the tokens are internal to the run.
-    helper = (ROOT / "tests" / "mutation_workspace.py").read_text(encoding="utf-8")
-    assert "uuid.uuid4()" in helper, (
+    # THE NONCE, CHECKED AS CODE. This declared `seen: set[str]`, never
+    # populated it, and ended `assert seen == set()` -- an empty set asserted
+    # empty, which is the tautology shape this repository catalogues as FG33.
+    # The real claim was carried by `"uuid.uuid4()" in helper`, a text search
+    # over the helper's source: FG13.
+    #
+    # AST instead, so a comment mentioning the call cannot satisfy it and a
+    # rename to `uuid4()` cannot defeat it.
+    helper = ast.parse((ROOT / "tests" / "mutation_workspace.py").read_text(
+        encoding="utf-8"))
+    nonce_calls = [
+        node for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr == "uuid4")
+            or (isinstance(node.func, ast.Name) and node.func.id == "uuid4")
+        )
+    ]
+    assert nonce_calls, (
         "the probe no longer generates a per-run nonce, so a fixed marker could "
         "be matched against stale output"
     )
-    assert seen == set()

@@ -242,12 +242,23 @@ ledger untouched. A ledger whose consumption history has gone BACKWARDS -- a
 restored backup -- is refused as `LEDGER_ROLLED_BACK`, because at-most-once
 cannot be promised by state that a restore can undo.
 
-Two clauses that used to stand here were measured false and are corrected. An
-UNWRITABLE ledger does not raise as unavailable: `BEGIN IMMEDIATE` succeeds on
-a read-only SQLite database, so the pre-flight passes and the refusal arrives
-at the INSERT instead, carrying no code. And "the boundary opens it and never
-creates it" is true of intent but not of effect, because `sqlite3.connect`
-creates an empty file. Both are recorded here rather than described as closed.
+Two clauses that used to stand here were measured false, and BOTH ARE NOW
+CLOSED. They are kept as history because the paragraph was written in the
+present tense and a review measured it still describing repaired defects as
+live -- a disclosure that outlives its defect misleads in the opposite
+direction to a claim that outruns its evidence, and neither is acceptable.
+
+*Was:* an UNWRITABLE ledger did not raise as unavailable, because
+`BEGIN IMMEDIATE` succeeds on a read-only SQLite database, so the pre-flight
+passed and the refusal arrived at the INSERT carrying no code. **Closed:** the
+pre-flight now performs a real INSERT with an unconditional ROLLBACK, and the
+refusal carries `APPROVAL_LEDGER_UNWRITABLE`. Measured: construction raises,
+coded.
+
+*Was:* "the boundary opens it and never creates it" was true of intent and not
+of effect, because `sqlite3.connect` creates an empty file. **Closed:**
+`_connect` opens with `mode=rw` via a URI, in both places, so consuming against
+a deleted ledger creates nothing. Measured: nothing was created.
 
 Previously `CREATE TABLE IF NOT EXISTS` ran at every construction, so deleting
 the file produced an empty ledger in which nothing had been spent — every grant

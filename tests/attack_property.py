@@ -256,7 +256,17 @@ def _h18_violated(tree: Path) -> bool:
     if measured["attack_problems"] <= measured["inert_problems"]:
         # Forging the ASSURANCE FIELD produced nothing that an arbitrary byte
         # change does not also produce, so the derived value is no longer
-        # recomputed from disk -- only the file digest is being checked.
+        # recomputed from disk.
+        #
+        # THE RATIONALE HERE USED TO SAY "only the file digest is being
+        # checked", and a review measured that to be false: no digest covers
+        # `review_binding.json`'s own bytes, so the inert forgery yields
+        # `integrity_state intact, problems 0` and `inert_problems` is always
+        # zero. The comparison is therefore "did the semantic forgery add a
+        # problem at all", with the inert arm as a control that the FILE EDIT
+        # itself contributes nothing -- which is what makes a rename
+        # indistinguishable from a no-op here, and is the property that
+        # matters. The arithmetic is right; the explanation was not.
         return True
     return False
 
@@ -348,8 +358,10 @@ def _h17_violated(tree: Path) -> bool:
     if measured["attack_state"] != "compromised":
         return True
     if measured["attack_problems"] <= measured["inert_problems"]:
-        # Deleting the claim cost nothing beyond what any byte change costs,
-        # so the check that consumes it is gone with it.
+        # Deleting the claim cost nothing beyond what any byte change costs, so
+        # the check that consumes it is gone with it. See `_h18_violated` for
+        # why the inert arm measures zero rather than "the digest check": no
+        # digest covers this artifact's own bytes.
         return True
     return False
 

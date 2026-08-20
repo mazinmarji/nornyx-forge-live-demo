@@ -12,16 +12,16 @@ Scanned for: `read_text` / `read_bytes` / `open(` / `json.load` / `yaml.safe_loa
 
 | Input | Site | Disposition |
 | --- | --- | --- |
-| `.nyx` contract read | `nornyx_runtime.py:77` | Covered by `SubjectScope.required_contracts`. The reader itself (`runtime_revision`) is removed in R1 step 2. |
+| `.nyx` contract read | `nornyx_runtime.py` | Covered by `SubjectScope.required_contracts`. The reader itself (`runtime_revision`) is removed in R1 step 2. |
 | Approval ledger path from env | `nornyx_runtime.py` (`FORGE_APPROVAL_LEDGER`) | **Closed (R3).** Resolved once into `TrustConfiguration` at `bootstrap_security_context`, frozen, and injected. |
 | Approval ledger SQLite | `nornyx_runtime.py` (`ApprovalLedger`) | **Closed (R3).** `CREATE TABLE IF NOT EXISTS` on every construction meant deleting the file emptied the ledger and made every spent grant replayable. Provisioning is now a separate operator command (`nornyx-forge provision-ledger`); a missing ledger denies, a corrupt one raises as unavailable. |
 | Trust store path from env | `approval_trust.py` (`FORGE_APPROVER_TRUST_STORE`) | **Closed (R3).** Resolved once into `TrustConfiguration` and injected into the boundary. |
-| Trust store contents | `approval_trust.py:181` | Deliberately outside the tree, so not subject content. Its *resolution* must be immutable (R3); its contents are the trust anchor. |
+| Trust store contents | `approval_trust.py` | Deliberately outside the tree, so not subject content. Its *resolution* must be immutable (R3); its contents are the trust anchor. |
 | Reviewer trust store path from env | `reviewer_trust.py` (`FORGE_REVIEWER_TRUST_STORE`) | **Closed (R3).** Resolved once into `TrustConfiguration`. The evidence tool still loads by path directly — it is a build-time utility outside the runtime trust boundary, not a request-serving surface. |
-| Reviewer trust store contents | `reviewer_trust.py:175` | Outside the tree by design, so not subject content — editing the repository cannot add a trusted reviewer. Absence is an ordinary state (nothing authenticates); malformation raises, so the two cannot be confused. |
+| Reviewer trust store contents | `reviewer_trust.py` | Outside the tree by design, so not subject content — editing the repository cannot add a trusted reviewer. Absence is an ordinary state (nothing authenticates); malformation raises, so the two cannot be confused. |
 | Builder identity from env | `reviewer_trust.py` (`FORGE_BUILDER_IDENTITY`) | **Closed (R2/R3).** It replaced the identity independence was measured against, so naming another builder excused the real one. It is a union now — ambient input adds an excluded identity and can never remove one — and the resolved set is frozen into `TrustConfiguration`. |
 | Application root from env | removed (`FORGE_ROOT`) | **Closed (R1).** The application derives its root structurally through `resolve_packaged_root()`. No reader remains under `src/`; the vestigial setters in `scripts/smoke_http.py` are removed too, since a variable nothing reads still tells a reader it matters. |
-| Policy fallback toggle | no reader under `src/` | **Closed (R1/R5).** `FORGE_ALLOW_POLICY_FALLBACK` has NO READER: a repository-wide grep returns retirement comments only, and the line numbers this row used to cite (`agentic.py:319,377`) do not contain the name. Retired vocabulary, not ambient authority. The `allow_policy_fallback` ARGUMENT that remained on `run_case` was accepted and discarded, and is deleted. |
+| Policy fallback toggle | no reader under `src/` | **Closed (R1/R5).** `FORGE_ALLOW_POLICY_FALLBACK` has NO READER: a repository-wide grep returns retirement comments only, and the line numbers this row used to cite (`agentic.py`) do not contain the name. Retired vocabulary, not ambient authority. The `allow_policy_fallback` ARGUMENT that remained on `run_case` was accepted and discarded, and is deleted. |
 | `reviews.json` | `development_flow.py` | **Closed (R4).** Two claims came off a gitignored, builder-written file: acceptance was gated on `builder_self_approval is False` (the builder certifying their own independence), and `independent_ai_review` was `bool(reviews)` (a non-empty list of subprocesses standing in for a verdict). Neither is read now. The gate checks completeness and outcome only, and reports `independent_ai_review: not_established`. |
 | CrewAI backend toggles | no reader under `src/` | **Closed (R5).** `FORGE_USE_CREWAI_KICKOFF` / `FORGE_STRICT_CREWAI` have NO READER either, and the cited lines do not contain them. The backend is selected from `RuntimeAuthorityConfig.execution_backend`, and selecting `crewai` where CrewAI cannot be imported RAISES rather than downgrading under an unchanged label. |
 
@@ -29,12 +29,12 @@ Scanned for: `read_text` / `read_bytes` / `open(` / `json.load` / `yaml.safe_loa
 
 | Input | Site | Why non-authoritative |
 | --- | --- | --- |
-| Case store JSON | `store.py:19` | Application data. Cannot reach an authorization decision: the boundary derives risk from the canonical request, not from stored cases. Negative test owed. |
-| Build summary JSON | `main.py:41` | Presentation only, served at `/api/build`. **R4** must prove forging it changes no authorization or assurance result. |
-| Evidence ledger | `evidence.py:41,71` | Append-only output, downstream of decisions. Note: lens 2 found `validate()` does not detect truncation — R7. |
-| `GITHUB_TOKEN`, network | `repo_qualifier.py:35`, `repo_scout.py:20` | Build-time repository qualification. Not reachable from the consequential runtime path. Negative test owed. |
-| BRD / requirements text | `requirements.py:44`, `util.py:26` | Build-time authoring inputs; BRD.md is covered by both scopes as subject content. |
-| Telemetry env defaults | `agentic.py:29-32`, `development_flow.py:19-22` | `setdefault` on CrewAI/OTel telemetry switches. No authorization path. |
+| Case store JSON | `store.py` | Application data. Cannot reach an authorization decision: the boundary derives risk from the canonical request, not from stored cases. Negative test owed. |
+| Build summary JSON | `main.py` | Presentation only, served at `/api/build`. **R4** must prove forging it changes no authorization or assurance result. |
+| Evidence ledger | `evidence.py` | Append-only output, downstream of decisions. Note: lens 2 found `validate()` does not detect truncation — R7. |
+| `GITHUB_TOKEN`, network | `repo_qualifier.py`, `repo_scout.py` | Build-time repository qualification. Not reachable from the consequential runtime path. Negative test owed. |
+| BRD / requirements text | `requirements.py`, `util.py` | Build-time authoring inputs; BRD.md is covered by both scopes as subject content. |
+| Telemetry env defaults | `agentic.py`, `development_flow.py` | `setdefault` on CrewAI/OTel telemetry switches. No authorization path. |
 
 ## Findings that change R1 scope
 
@@ -119,6 +119,17 @@ restore the ledger file from a backup — now fails closed.
 | Approval carrying no issuance instant | continuity check skipped entirely | `GRANT_ISSUANCE_UNKNOWN` |
 | Ledger with no, or more than one, establishment row | first row silently chosen | `LEDGER_CONTINUITY_UNKNOWN` |
 | Whole runtime directory rolled back | released it again | **still released** — stated bound, not covered |
+
+**Line numbers removed from every citation.** A review measured 8 of 12
+`file:line` references pointing at something other than what they cited --
+`nornyx_runtime.py` at a docstring, `approval_trust.py` at a constant while the
+env read was 266 lines away, `reviewer_trust.py` at `return reviewers`. This
+document's own Corrections section already called stale citations a defect for
+two other rows, so it was doing the thing it names.
+
+Line numbers in prose go stale on the next edit and nothing checks them, which
+makes them a claim the repository cannot keep. The file is cited instead: a
+reviewer greps for the symbol, and a grep does not drift.
 
 ## Corrections from an independent review
 
