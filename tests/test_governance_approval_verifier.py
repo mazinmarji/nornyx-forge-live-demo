@@ -749,3 +749,53 @@ def test_the_opt_out_does_not_leak_into_ordinary_calls(keypair):
         )
         assert ok is False, f"{expected!r} was granted: {reason}"
         assert "SUBJECT" in reason, reason
+
+
+def test_the_subject_opt_out_cannot_hide_in_another_spelling():
+    """A26: the enumeration matched one syntactic shape out of six.
+
+    The guard above requires `keyword.value` to be an `ast.Name` whose id is
+    literally `SUBJECT_BOUND_ELSEWHERE`. A review measured five ordinary
+    spellings invisible to it -- module-qualified, aliased on import, bound to a
+    local first, the literal string, and passed through `**kwargs` -- and it is
+    the only guard on the sentinel, so a second opt-out in any of them would
+    leave the count at 1 and the guard silent.
+
+    So this asks the opposite question, the same inversion the document guards
+    needed: every `expected_subject_revision=` in production must be a value
+    this test can SEE and judge -- a literal, a locally-defined name, or the
+    declared sentinel. Anything opaque fails, whatever it is called.
+    """
+    import ast  # noqa: PLC0415
+
+    opaque = []
+    for area in ("src", "scripts"):
+        for path in sorted((ROOT / area).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = getattr(func, "attr", None) or getattr(func, "id", None)
+                if name != "verify_governance_approval":
+                    continue
+                if any(keyword.arg is None for keyword in node.keywords):
+                    opaque.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} **kwargs"
+                    )
+                    continue
+                supplied = {keyword.arg: keyword.value for keyword in node.keywords}
+                value = supplied.get("expected_subject_revision")
+                if value is None:
+                    opaque.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} no subject"
+                    )
+                elif not isinstance(value, (ast.Constant, ast.Name, ast.Call)):
+                    opaque.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} "
+                        f"{type(value).__name__}"
+                    )
+    assert opaque == [], (
+        "these calls pass a subject this guard cannot judge, so an opt-out "
+        f"could hide in one of them: {opaque}"
+    )

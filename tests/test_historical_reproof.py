@@ -994,10 +994,22 @@ def test_an_unisolated_child_loads_the_real_repository_source(tmp_path: Path):
     resolved = _origins(tree, isolate=False)
 
     assert resolved, "the probe printed nothing"
-    assert all(str(ROOT) in path for path in resolved), (
-        f"expected the REAL source without isolation, got {resolved}"
+    # THE PROPERTY IS "NOT THE COPY", NOT "THIS PARTICULAR CHECKOUT".
+    #
+    # This asserted `str(ROOT) in path`, where ROOT is the tree this test file
+    # lives in. That holds only when the checkout under test is the one the
+    # active editable install points at, so the node was RED in every clone --
+    # a reviewer measured 60 passed, 1 failed, and the one failure was this,
+    # with the stated property confirmed more sharply than here. It measured
+    # the install rather than the repository.
+    #
+    # What matters is that an unisolated child does NOT pick up the copy: that
+    # is the condition under which a mutation would silently measure the
+    # original. Where it does resolve is the install's business.
+    assert not any(str(tree) in path for path in resolved), (
+        "an unisolated child loaded the COPY, so a mutation there could be "
+        f"measured without isolation: {resolved}"
     )
-    assert not any(str(tree) in path for path in resolved)
 
 
 def test_an_isolated_child_loads_the_mutant_workspace(tmp_path: Path):

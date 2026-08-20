@@ -61,6 +61,24 @@ EXPECTED_SKIPS = {
         "The in-image subject proof needs a live Docker daemon, which a workstation may not have. Not optional: the container-launch job runs these with its own skip census, so a skip there fails that job rather than passing quietly.",
     # The live container build downloads packages, which BRD-004 forbids for the
     # default offline run. CI exercises it in the container-launch job.
+    # BRD-F-005's measured disclosure. Declared here because a review measured
+    # the census returning 2 on every clean checkout on account of these nine,
+    # while this repository's own commit message said 'All gates rc=0'. The
+    # module and its skip were introduced together and EXPECTED_SKIPS was edited
+    # twice without an entry.
+    #
+    # These are NOT like the four above. Docker and POSIX skips are covered by
+    # another CI job; this one is covered by nothing, because the lock needs a
+    # human approval that does not exist. Saying 'CI runs it' here would be
+    # false, so it does not say that.
+    "tests/test_brd_evidence_shape.py::test_the_stream_is_not_empty":
+        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
+    "tests/test_brd_evidence_shape.py::test_the_universally_recorded_fields_stay_universal":
+        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
+    "tests/test_brd_evidence_shape.py::test_the_partially_recorded_fields_do_not_get_worse":
+        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
+    "tests/test_brd_evidence_shape.py::test_the_disclosure_in_the_brd_matches_what_is_measured":
+        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
     "tests/test_container_launch.py::test_compose_up_build_starts_the_application":
         "The live container build downloads packages, which BRD-004 forbids for the default offline run. CI exercises it in the container-launch job instead, so it is covered — just not here.",
 }
@@ -105,9 +123,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 7,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 5,
-    "tests/test_recorded_measurements.py": 20,
+    "tests/test_recorded_measurements.py": 25,
     "tests/test_approval_reachability.py": 16,
-    "tests/test_approval_ledger.py": 61,
+    "tests/test_approval_ledger.py": 63,
     # Protected because Lens B measured 103 tests of slack in the aggregate
     # floor, and named these two: the evidence-binding proofs and the sole
     # regression for the reachability probe were both deletable.
@@ -125,14 +143,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_documented_claims.py": 21,
     "tests/test_process_execution_spellings.py": 21,
     "tests/test_approval_artifact_authentication.py": 8,
-    "tests/test_governance_approval_verifier.py": 43,
+    "tests/test_governance_approval_verifier.py": 44,
     "tests/test_process_capability.py": 51,
     "tests/test_evidence_integrity_verifier.py": 8,
     "tests/test_dockerfile_surface.py": 15,
     "tests/test_authority_domains.py": 17,
     "tests/test_domain_immutability.py": 8,
     "tests/test_domain_collapse_mutations.py": 23,
-    "tests/test_execution_mode_truth.py": 19,
+    "tests/test_execution_mode_truth.py": 20,
     "tests/test_architecture_vocabulary.py": 9,
     "tests/test_inspection_subject_matrix.py": 4,
     "tests/test_subject_layer_matrix.py": 14,
@@ -162,7 +180,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_architecture_coverage.py": 17,
     "tests/test_architecture_security.py": 6,
     "tests/test_authority_config.py": 11,
-    "tests/test_brd_evidence_shape.py": 8,
+    "tests/test_brd_evidence_shape.py": 9,
     "tests/test_capability_binding.py": 2,
     "tests/test_console_encoding.py": 2,
     "tests/test_container_launch.py": 5,
@@ -173,7 +191,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_governance_failure.py": 16,
     "tests/test_in_session_reviews.py": 2,
     "tests/test_mission_binding.py": 10,
-    "tests/test_probe_containment.py": 12,
+    "tests/test_probe_containment.py": 15,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 1,
     "tests/test_requirements.py": 1,

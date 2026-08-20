@@ -1,13 +1,17 @@
 # Lens C — closure record
 
     Verified tree           990caea
-    Verification status     exact-tree assurance cycle PASS
+    Verification status     cycle PASS WITH ONE ROW WITHDRAWN -- see below
     Recorded by             a LATER commit than the one verified
 
 ## What this document does and does not say
 
-It says that the tree at `990caea` passed a complete assurance cycle. It says
-nothing whatever about the commit that contains this file.
+It says that the tree at `990caea` passed an assurance cycle WITH ONE ROW
+WITHDRAWN: the full-pytest row below is struck, because a review archived this
+SHA into a clean directory and measured `1 failed`. The header said "complete"
+while the body withdrew its central row, and the header is unfenced so nothing
+in the suite ever read it. It says nothing whatever about the commit that
+contains this file.
 
 That distinction is not pedantry, it is the finding this record exists because
 of. `docs/` is inside `GOVERNED_INPUT_PATHS`, so writing a document that

@@ -672,7 +672,14 @@ def test_a_provisioned_snapshot_is_reported_available(monkeypatch):
     )
     reported = agentic.assurance_state()
 
-    assert reported["consequential_authority"] == "available", reported
+    # THE FIELD NAMES WHAT IT MEASURES. This asserted
+    # `consequential_authority == "available"`, and a review measured
+    # `/api/health` publishing exactly that while the boundary in the same
+    # process refused every consequential act with SUBJECT_UNVERIFIED. The
+    # boundary consults five inputs; this function reads one, so the field now
+    # names the trust store and declines to answer the wider question.
+    assert reported["approver_trust_authentication"] == "available", reported
+    assert reported["consequential_authority"] == "not_derived_here", reported
     assert reported["trusted_approvers_loaded"] is True, reported
 
 
@@ -734,7 +741,7 @@ def test_an_active_store_is_still_reported_as_available(monkeypatch):
         agentic, "application_security_context",
         lambda: _context_with(action, governance),
     )
-    assert agentic.assurance_state()["consequential_authority"] == "available"
+    assert agentic.assurance_state()["approver_trust_authentication"] == "available"
 
 
 def test_the_report_and_the_authenticator_use_one_rule():

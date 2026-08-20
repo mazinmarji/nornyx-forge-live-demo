@@ -89,11 +89,34 @@ def _transcript_fields(body: str) -> dict:
     return found
 
 
+#: A fenced block, OR an indented one. Markdown has two code-block forms and
+#: this convention only ever saw the first. A review presented the same
+#: fabricated transcript as a 4-space indented block and `_blocks` returned
+#: nothing at all -- the document was never selected, never scanned, and every
+#: R4 test passed. Not hypothetical: `LENS_C_CLOSURE.md` carries its own
+#: headline verification status in exactly that form, and the convention had
+#: never seen it.
+_BLOCK = (
+    "```[^" + chr(10) + "]*" + chr(10) + "(.*?)```"
+    + "|"
+    + "(?:^|" + chr(10) + ")((?:[ ]{4}[^" + chr(10) + "]*" + chr(10) + "){2,})"
+)
+
+
+#: The values `--verify` really emits for `integrity_state`. A transcript
+#: showing one of these is asserting a PASS and needs an anchor; one showing a
+#: failure state is admitting breakage and does not. Anything else is neither,
+#: and must not be silently treated as an admission -- which is exactly what
+#: `state != "intact"` did.
+_PASS_STATES = frozenset({"intact"})
+_FAILURE_STATES = frozenset({"compromised", "unavailable", "unverifiable"})
+
+
 def _blocks(text: str) -> list[tuple[int, str, str]]:
     """Fenced blocks containing a `--verify` transcript, with the text above."""
     found = []
-    for match in re.finditer(r"```[^\n]*\n(.*?)```", text, re.S):
-        body = match.group(1)
+    for match in re.finditer(_BLOCK, text, re.S):
+        body = match.group(1) if match.group(1) is not None else match.group(2)
         preceding = text[max(0, match.start() - 400):match.start()]
         # RECOGNITION NO LONGER HINGES ON ONE FIELD. This gated on
         # `integrity_state`, so a block omitting that single line was invisible
@@ -171,8 +194,24 @@ def test_every_recorded_verify_transcript_is_anchored_or_withdrawn(relative: str
     """
     text = (ROOT / relative).read_text(encoding="utf-8")
     for line, above, body in _blocks(text):
-        state = TRANSCRIPT.search(body).group(1)
-        withdrawn = "[FALSE]" in body or state != "intact"
+        found_state = TRANSCRIPT.search(body)
+        state = found_state.group(1) if found_state else "(none)"
+        # WITHDRAWAL IS AN EXPLICIT MARKER, NEVER AN ABSENCE. This read
+        # `state != "intact"`, so ANY value that was not that exact lowercase
+        # word counted as an admission of breakage -- and a review capitalised
+        # one word. `integrity_state INTACT`, beside fabricated reviewers and a
+        # granted production approval, was read as WITHDRAWN and skipped
+        # entirely. The loudest possible assertion was the one that escaped.
+        #
+        # `_FIELD_LINE` had been widened to accept any key case in the same
+        # commit; the value comparison stayed case-sensitive, which is how the
+        # two ended up disagreeing.
+        withdrawn = "[FALSE]" in body or "[WITHDRAWN]" in body
+        if not withdrawn and state.lower() not in _PASS_STATES:
+            # A genuine failure transcript still needs no anchor -- but it has
+            # to SAY it failed, in a value this convention knows, rather than
+            # in any string that merely differs from "intact".
+            withdrawn = state.lower() in _FAILURE_STATES
         if withdrawn:
             continue
         assert ANCHOR.search(above), (
@@ -282,6 +321,49 @@ _SPECIMEN_EVASIVE = (
     + "assurance_state              independently_inspected" + chr(10)
     + "```" + chr(10)
 )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [path.relative_to(ROOT).as_posix() for path in DOCUMENTS],
+)
+def test_r4_an_anchored_block_has_no_line_that_is_not_a_verifiable_field(
+    relative: str,
+):
+    """INVERTED, because enumerating shapes has failed three rounds running.
+
+    The sibling below extracts lines that parse as `key value` and checks the
+    keys. That is a blacklist: a line the parser cannot read is simply absent
+    from the result, so every unreadable spelling is admitted. Reviews walked
+    six new spellings past it in one round -- leading `-`, `*`, `>`, `[`, a
+    digit, and `key:value` with no space -- after the previous round had
+    already widened it twice.
+
+    So this asks the opposite question. Inside an anchored fence, every
+    non-blank line must BE a verifiable field. Anything the parser cannot read
+    is a defect by construction, whatever spelling it uses, including spellings
+    nobody has thought of yet. That is what closing a class means, as opposed
+    to adding shapes to an enumeration.
+    """
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    for line, above, body in _blocks(text):
+        if not ANCHOR.search(above):
+            continue
+        parsed = _transcript_fields(body)
+        unreadable = [
+            raw.strip() for raw in body.splitlines()
+            if raw.strip() and _FIELD_LINE.match(raw) is None
+        ]
+        assert unreadable == [], (
+            f"{relative}:{line} is under a `verify-measured-at` anchor and "
+            "carries lines that are not verifiable fields. Inside an anchored "
+            "block every line is presented as measured, so a line a machine "
+            f"cannot even parse cannot be one: {unreadable[:6]}"
+        )
+        assert parsed, (
+            f"{relative}:{line} is anchored but carries no readable field at "
+            "all, so the anchor vouches for nothing"
+        )
 
 
 @pytest.mark.parametrize(

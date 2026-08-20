@@ -180,8 +180,31 @@ def measure(mutate):
     done = subprocess.run(
         [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
-    raw = done.stdout[done.stdout.find("{"):]
-    state = json.loads(raw)["verification"] if raw else {}
+    # AN UNMEASURABLE VERIFICATION MUST NOT BE AN ANSWER.
+    #
+    # This read `json.loads(raw)["verification"] if raw else {}`. With no JSON
+    # on stdout the state became {}, `integrity_state` became None, and
+    # `None != "compromised"` returned VIOLATED. The probe swallowed the
+    # child's failure itself, so `run_probe`'s `returncode != 0` guard never
+    # saw it.
+    #
+    # A review printed the report to STDERR instead of stdout -- three lines,
+    # leaving verify(), verify_review_binding() and derive_assurance_state()
+    # byte-identical -- and drove BOTH H17 and H18 to KILLED_VALIDLY through
+    # this repository's own admission protocol, while the control still ran and
+    # still caught the forgery. A crash did the same. That is FG29 at the
+    # verdict point the whole R2/FG29 rebuild exists to make sound.
+    start = done.stdout.find("{")
+    if start < 0:
+        raise SystemExit(
+            "--verify produced no JSON on stdout (rc=" + str(done.returncode)
+            + "), so nothing about the property was measured: "
+            + (done.stderr or "")[-300:]
+        )
+    payload = json.loads(done.stdout[start:])
+    if "verification" not in payload:
+        raise SystemExit("--verify produced no verification block: " + str(payload)[:200])
+    state = payload["verification"]
     return state.get("integrity_state"), len(state.get("problems", []))
 
 
@@ -267,8 +290,31 @@ def measure(mutate):
     done = subprocess.run(
         [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
         capture_output=True, text=True, encoding="utf-8", errors="replace")
-    raw = done.stdout[done.stdout.find("{"):]
-    state = json.loads(raw)["verification"] if raw else {}
+    # AN UNMEASURABLE VERIFICATION MUST NOT BE AN ANSWER.
+    #
+    # This read `json.loads(raw)["verification"] if raw else {}`. With no JSON
+    # on stdout the state became {}, `integrity_state` became None, and
+    # `None != "compromised"` returned VIOLATED. The probe swallowed the
+    # child's failure itself, so `run_probe`'s `returncode != 0` guard never
+    # saw it.
+    #
+    # A review printed the report to STDERR instead of stdout -- three lines,
+    # leaving verify(), verify_review_binding() and derive_assurance_state()
+    # byte-identical -- and drove BOTH H17 and H18 to KILLED_VALIDLY through
+    # this repository's own admission protocol, while the control still ran and
+    # still caught the forgery. A crash did the same. That is FG29 at the
+    # verdict point the whole R2/FG29 rebuild exists to make sound.
+    start = done.stdout.find("{")
+    if start < 0:
+        raise SystemExit(
+            "--verify produced no JSON on stdout (rc=" + str(done.returncode)
+            + "), so nothing about the property was measured: "
+            + (done.stderr or "")[-300:]
+        )
+    payload = json.loads(done.stdout[start:])
+    if "verification" not in payload:
+        raise SystemExit("--verify produced no verification block: " + str(payload)[:200])
+    state = payload["verification"]
     return state.get("integrity_state"), len(state.get("problems", []))
 
 
@@ -481,9 +527,28 @@ print(json.dumps({
 def _h15_violated(tree: Path) -> bool:
     """A crash -- or a refusal that says nothing machine-readable -- is the violation."""
     measured = run_probe(tree, _H15_PROBE)
+    # STATE DECIDES. A crash, or a refusal with no machine-readable structure,
+    # is the violation: those are the two ways "reported, not crashed" fails.
     if measured["traceback"]:
         return True
-    return not (measured["structured"] and measured["names_module"])
+    if not measured["structured"]:
+        return True
+    # THE NAME MAY ONLY WITHDRAW. This read
+    # `not (structured and names_module)`, so changing ONLY the wording of the
+    # refusal -- `f"{exc.name!r}"` to "a governed module", rc still 2, no
+    # traceback, structure intact, integrity_state still `unavailable` --
+    # satisfied the criterion and earned a full KILLED_VALIDLY with no control
+    # removed. A review measured it.
+    #
+    # That is the shape already removed from H07, H10, H14, H17 and H18. It
+    # survived here because H15 was never re-derived when they were.
+    if not measured["names_module"]:
+        raise PropertyNotViolated(
+            "the tool refused in its own vocabulary, but the refusal does not "
+            "name the missing module, so the refusal cannot be attributed to "
+            f"this attack: {measured}"
+        )
+    return False
 
 
 H15_A_MISSING_GOVERNED_MODULE_IS_REFUSED = AuthoritativeProperty(

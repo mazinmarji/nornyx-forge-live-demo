@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
@@ -1416,21 +1417,6 @@ def test_a02_ordinary_use_advances_the_mark_and_is_never_refused(tmp_path: Path)
     assert released == 25, f"legitimate grants were refused: {released} of 25"
 
 
-def test_a02_the_mark_is_never_lowered(tmp_path: Path):
-    """Concurrency, arithmetically rather than by locking.
-
-    Two processes can consume at once; whichever writes the mark second must
-    not undo the advance made by the first. A lowered mark silently weakens the
-    check, which is the failure mode that leaves no trace.
-    """
-    path = tmp_path / "mono.sqlite3"
-    _established_ledger(path, "2026-08-01T00:00:00Z")
-    ledger = ApprovalLedger(path)
-    ledger._record_consumptions(9)
-    ledger._record_consumptions(3)
-    assert ledger._recorded_consumptions() == 9
-
-
 def test_a03_the_predates_refusal_names_the_anchor_the_decision_used(tmp_path: Path):
     """The message must not contradict the decision that produced it.
 
@@ -1585,3 +1571,157 @@ def test_a04_a_writable_ledger_is_not_refused(tmp_path: Path):
         _fingerprint("ACT-W", request), request.digest,
         at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
     assert claimed is True, reason
+
+
+# --------------------------------------------------------------------------
+# A21 -- the high-water mark did not hold when consumptions OVERLAP.
+#
+# `_record_consumptions(held + 1)` used the row count read BEFORE the insert,
+# on a different connection, so concurrent consumers all observed the same
+# `held` and all recorded the same value. The mark then sat below the true row
+# count and a backup holding any intermediate count restored undetected.
+#
+# Measured by a review on unmodified code: four barrier-pinned threads gave
+# rows 4 / mark 1; the real method violated "never lower it" in 111 of 400
+# trials; and end to end an already-spent grant was RELEASED AGAIN in 6 of 20
+# trials at 12 consumers.
+#
+# WHY IT SURVIVED, which is the part worth keeping: every proof drove the one
+# ordering where the property holds. The 25-grant test ran sequentially. The
+# "never lowered" test called `_record_consumptions` DIRECTLY, twice, in order,
+# never through `consume`. The restore test restored a 0-row backup after ONE
+# sequential spend. And the module's only concurrency test raced eight
+# consumers on the SAME fingerprint, where exactly one insert lands and the
+# mark advances by one correctly.
+#
+# These drive `consume` concurrently with DISTINCT fingerprints, which is the
+# case that was never exercised.
+# --------------------------------------------------------------------------
+
+
+def _race_consumers(path: Path, count: int) -> list:
+    """`count` consumers, each its own ledger object, released together."""
+    barrier = threading.Barrier(count)
+    granted: list = []
+    lock = threading.Lock()
+
+    def consume(index: int) -> None:
+        ledger = ApprovalLedger(path)
+        barrier.wait()
+        claimed, _reason = ledger.consume(
+            f"fp-race-{index}", f"rd-race-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-RACE-{index}")
+        with lock:
+            granted.append(claimed)
+
+    threads = [threading.Thread(target=consume, args=(i,)) for i in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return granted
+
+
+def _rows(path: Path) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        return int(
+            connection.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+
+def test_a21_the_mark_keeps_up_with_overlapping_consumptions(tmp_path: Path):
+    """The invariant the rollback check depends on: mark == rows.
+
+    Distinct fingerprints, so every insert lands. If the mark is computed from
+    a pre-insert count, the threads collide and it falls behind -- which is
+    exactly what a review measured, and what the module's existing
+    same-fingerprint race could never show, because there only one insert
+    succeeds.
+    """
+    path = tmp_path / "race.sqlite3"
+    _established_ledger(path, LEDGER_ESTABLISHED)
+
+    granted = _race_consumers(path, 6)
+    assert all(granted), "distinct grants were refused; this measures nothing"
+
+    rows = _rows(path)
+    mark = ApprovalLedger(path)._recorded_consumptions()
+    assert rows == 6, rows
+    assert mark == rows, (
+        f"the high-water mark is {mark} against {rows} committed rows. The "
+        "rollback check compares a restored ledger's row count against this "
+        f"number, so a backup holding any of {list(range(mark, rows))} rows "
+        "would restore undetected and replay every grant it forgot."
+    )
+
+
+def test_a21_a_restore_after_overlapping_consumptions_is_still_refused(tmp_path: Path):
+    """End to end, through the file-level restore an operator actually performs.
+
+    The backup is taken BEFORE the concurrent burst, so the restored ledger has
+    genuinely lost history. The WAL is checkpointed and removed, because
+    copying the main database back while a `-wal` still holds the commits is
+    not a restore -- SQLite simply replays it, and the test would pass without
+    measuring anything.
+    """
+    path = tmp_path / "restore-race.sqlite3"
+    backup = tmp_path / "restore-race.backup"
+    _established_ledger(path, LEDGER_ESTABLISHED)
+    source = sqlite3.connect(path)
+    try:
+        destination = sqlite3.connect(backup)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+    finally:
+        source.close()
+
+    _race_consumers(path, 6)
+    assert _rows(path) == 6
+
+    checkpoint = sqlite3.connect(path)
+    try:
+        checkpoint.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        checkpoint.close()
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+    shutil.copy2(backup, path)
+    assert _rows(path) == 0, "the restore did not actually lose history"
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-race-0", "rd-race-0", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-RACE-0")
+    assert claimed is False, (
+        "an already-spent grant was released again after a restore that "
+        "followed overlapping consumptions"
+    )
+    assert LEDGER_ROLLED_BACK in reason, reason
+
+
+def test_a21_the_mark_is_never_lowered_through_the_real_path(tmp_path: Path):
+    """The property, exercised through `consume` rather than by calling the
+    setter twice in order.
+
+    The previous version of this test called `_record_consumptions(9)` then
+    `(3)` directly. That is the setter agreeing with itself: it never observed
+    two callers interleaving a read and a write, which is where the real method
+    lost advances in 111 of 400 trials.
+    """
+    path = tmp_path / "monotonic.sqlite3"
+    _established_ledger(path, LEDGER_ESTABLISHED)
+    seen = []
+    for burst in range(3):
+        _race_consumers(path, 4)
+        mark = ApprovalLedger(path)._recorded_consumptions()
+        seen.append(mark)
+        assert mark == _rows(path), (
+            f"burst {burst}: mark {mark} against {_rows(path)} rows"
+        )
+    assert seen == sorted(seen), f"the mark went backwards across bursts: {seen}"

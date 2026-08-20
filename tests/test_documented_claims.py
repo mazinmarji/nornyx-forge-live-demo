@@ -150,42 +150,22 @@ _SEP = "[ _" + _NEWLINE + "-]+"
 _NEGATED_BEFORE = re.compile("not[ _" + _NEWLINE + "-]+$")
 
 
-def find_overclaims(text: str) -> list:
-    """Every claim in `text` that is not negated. ONE implementation.
-
-    Both the live sweep and the specimen table call this. The specimen test
-    used to re-declare the patterns in its own body -- a test that
-    re-implements the thing it tests measures its own copy, which can stay
-    correct while the live guard rots, green either way. That is the defect an
-    independent review found in the false-green audit's own owners, so it is
-    removed here rather than left to be found again.
-    """
-    scanned = _mention_blanked(text.lower())
-    return [
-        match
-        for pattern in forbidden_claim_patterns()
-        for match in pattern.finditer(scanned)
-        if not _NEGATED_BEFORE.search(scanned[: match.start()])
-    ]
+def _mention_blanked(text: str) -> str:
+    return _MENTION.sub(lambda m: " " * len(m.group(0)), text)
 
 
 def forbidden_claim_patterns() -> tuple:
-    """The claim shapes themselves. Negation is applied by `find_overclaims`."""
+    """Retained for the specimen table; the live decision is `find_overclaims`.
+
+    These four shapes are what the guard used to BE. A review measured them
+    admitting 9 of 14 assertion spellings -- passive voice, past tense, other
+    verbs, the noun-plus-colon form, and the space-aligned `human_review
+    performed` layout that every `--verify` fence in this repository emits.
+    """
     return (
         re.compile("writes" + _SEP + "independent" + _SEP + "review" + _SEP
                    + "evidence"),
         re.compile("independently" + _SEP + "inspected"),
-        # THE SEPARATOR TOLERATES QUOTE CHARACTERS. In the form this system
-        # actually emits -- {"human_review": "performed"} -- the key and value
-        # are separated by quote, colon, space, quote. A class of `[ ]*[:=][ ]*`
-        # matches none of that, so the exact JSON spelling in all five evidence
-        # artifacts walked past while the prose form was caught.
-        # CLAIMING TO PERFORM IT, which the three patterns above did not
-        # cover. A document read "Claude Code performs requirements,
-        # architecture, implementation, repair, and independent inspection" --
-        # inside governance_docs(), matched by nothing. The verb is what makes
-        # this a claim rather than a definition: ASSURANCE_BOUNDARY.md says
-        # what independent inspection REQUIRES, which must stay sayable.
         re.compile("(?:performs|provides|carries" + _SEP + "out|delivers)"
                    + _SEP + "(?:[a-z,]+" + _SEP + "){0,8}independent"
                    + _SEP + "inspection"),
@@ -195,8 +175,146 @@ def forbidden_claim_patterns() -> tuple:
     )
 
 
-def _mention_blanked(text: str) -> str:
-    return _MENTION.sub(lambda m: " " * len(m.group(0)), text)
+#: The MACHINE fields whose affirmative value is an assurance claim on its own.
+_SUBJECT_WORDS = frozenset({
+    "human_review", "production_approval", "assurance_state",
+})
+
+#: "INDEPENDENT REVIEW" IS NOT THE CLAIM; "INDEPENDENT INSPECTION" IS.
+#:
+#: My first concept-matching version treated any `independent*` as a subject
+#: and flagged six real documents. One was a genuine finding; five were
+#: sentences like "an independent review found two defects in the criteria" --
+#: narrative about a REVIEWER, which is true, must stay sayable, and is not a
+#: claim about this repository's assurance state.
+#:
+#: The formal term `docs/ASSURANCE_BOUNDARY.md` defines is independent
+#: INSPECTION, and the derived field is `independently_inspected`. So the claim
+#: is `independent*` qualified by `inspect*` -- which still catches "has been
+#: independently reviewed and inspected", and still admits "an independent
+#: review measured X".
+#:
+#: Widening a guard until it flags truthful sentences is not a stronger guard.
+#: It is the same defect pointing the other way, and the pressure it creates on
+#: an author is to delete the disclosure.
+_QUALIFIER = ("inspect",)
+
+#: Words that make a nearby assurance word a CLAIM rather than a description.
+_AFFIRMATIVE = frozenset({
+    "performed", "completed", "complete", "granted", "authorized", "authorised",
+    "done", "passed", "satisfied", "obtained", "achieved", "true", "yes",
+    "conducted", "conducts", "conduct", "carried", "provided", "delivered",
+    "established", "assured",
+    "holds", "have", "has", "is", "was", "were", "are",
+})
+
+#: Words that make it NOT a claim: a negation, an unmet condition, or a
+#: definition of what the thing WOULD require.
+_DISCLAIMING = frozenset({
+    "no", "not", "never", "without", "cannot", "lacks", "lacking", "absent",
+    "absence", "missing", "unavailable", "would", "requires", "require",
+    "required", "needs", "need", "means", "if", "unless", "until", "yet",
+    "false", "none", "nothing", "neither", "nor", "non", "pending", "blocked",
+    "outstanding", "must", "should", "before", "not_performed", "not_granted",
+    "not_independently_inspected", "unverified", "claims", "claim", "claimed",
+    "forbids", "refuses", "refused", "retracted", "withdrawn", "cannot",
+})
+
+#: How far apart the two halves of a claim may sit and still be one claim.
+_WINDOW = 10
+
+
+def _words(text: str) -> list:
+    return [(m.group(0), m.start()) for m in re.finditer("[a-z_]+", text)]
+
+
+class _Overclaim:
+    """The shape callers already expect from `re.Match`: `.start()`, `.group()`.
+
+    A plain namespace with an int attribute looked right and broke the live
+    sweep with `'int' object is not callable`, because the caller does
+    `raw[: match.start()]`.
+    """
+
+    __slots__ = ("_offset", "_word")
+
+    def __init__(self, offset: int, word: str):
+        self._offset = offset
+        self._word = word
+
+    def start(self) -> int:
+        return self._offset
+
+    def group(self, _index: int = 0) -> str:
+        return self._word
+
+
+def find_overclaims(text: str) -> list:
+    """Every assurance CLAIM in `text`, matched by concept rather than spelling.
+
+    THE ENUMERATION WAS THE DEFECT. Three consecutive review rounds walked new
+    spellings past four hand-written patterns, and each round the repair added
+    another shape. A reviewer named it exactly: "these guards are enumerations
+    of the shapes an earlier reviewer used, and each round adds shapes rather
+    than closing the class."
+
+    So this asks a question instead of matching a list. An assurance word --
+    `independent*`, `inspection`, `attested`, `human_review`,
+    `production_approval` -- is a CLAIM when an affirmative word sits within a
+    short window and no disclaiming word does. Passive voice, past tense, any
+    verb, the noun-plus-colon form and the space-aligned machine layout are all
+    caught without being enumerated, because none of them changes the concept.
+
+    BOUNDED WINDOW, NOT ADJACENCY. The previous negation test looked only at
+    the characters immediately before a match, so `**not** independently
+    inspected` -- two asterisks in the way -- read as a claim. A review measured
+    10 of 12 honest sentences flagged, which is worse than a missed claim: the
+    only escape it left an author was to delete the disclosure, and the sibling
+    docstring says that pressure must be avoided.
+
+    Definitions stay sayable because `requires`, `would`, `means`, `if` and
+    `until` are disclaiming: "an independent inspection REQUIRES three
+    attestations" describes the bar rather than clearing it.
+    """
+    lowered = _mention_blanked(text.lower())
+    tokens = _words(lowered)
+    words = [word for word, _offset in tokens]
+    hits = []
+    for index, (word, offset) in enumerate(tokens):
+        independent = word.startswith("independent")
+        if not (independent or word in _SUBJECT_WORDS):
+            continue
+        if independent:
+            near = words[max(0, index - 3): index + 4]
+            if not any(
+                token.startswith(_QUALIFIER) or "inspect" in token
+                for token in near
+            ):
+                # "an independent review found ..." -- a reviewer, not a state.
+                continue
+        low = max(0, index - _WINDOW)
+        window = words[low: index + _WINDOW + 1]
+        if any(token in _DISCLAIMING for token in window):
+            continue
+        # SELF-AFFIRMATIVE. `independently inspected` and
+        # `independently_inspected` carry the completed state in the participle
+        # itself -- there is no separate verb to find nearby, so requiring one
+        # missed the machine spelling this system emits and the bold-emphasised
+        # prose form alike. The disclaiming window above still applies, which is
+        # why `not_independently_inspected` and "never independently inspected"
+        # are unaffected.
+        following = words[index: index + 3]
+        self_affirming = independent and (
+            "inspect" in word or "review" in word
+            or any(token.startswith(("inspect", "review")) for token in following)
+        )
+        if not self_affirming and not any(
+            token in _AFFIRMATIVE for token in window
+        ):
+            continue
+        hits.append(_Overclaim(offset, word))
+    return hits
+
 
 def test_no_document_claims_an_independent_inspection_this_repository_lacks():
     """`independently_inspected` is derived, and derives to false here.

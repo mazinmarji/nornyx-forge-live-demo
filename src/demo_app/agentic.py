@@ -163,7 +163,24 @@ def assurance_state() -> dict[str, Any]:
     return {
         "action_approval_authentication": state,
         "trusted_approvers_loaded": loaded,
-        "consequential_authority": "available" if loaded else "unavailable",
+        # RENAMED TO WHAT IT MEASURES. This was `consequential_authority`, and
+        # a review measured `/api/health` publishing it as `available` while
+        # the boundary IN THE SAME PROCESS refused every consequential act with
+        # SUBJECT_UNVERIFIED -- against a document asserting that what the
+        # interface says and what the boundary enforces "cannot disagree".
+        #
+        # The boundary consults five things for a high-risk release: the
+        # integrity verdict, the runtime subject, the action trust store, the
+        # approval ledger and the authorizer. This function reads ONE. Rather
+        # than have the name promise the other four, it now names the trust
+        # store, which is what it actually establishes.
+        #
+        # `consequential_authority` is retained as an explicit refusal to
+        # answer, so a reader is not left to infer it from a field that never
+        # meant it. Deriving it honestly would mean threading all five inputs
+        # here, which is a design change and belongs in its own diff.
+        "approver_trust_authentication": "available" if loaded else "unavailable",
+        "consequential_authority": "not_derived_here",
     }
 
 

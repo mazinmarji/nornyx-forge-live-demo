@@ -11,7 +11,7 @@ gh repo create mazinmarji/nornyx-forge-live-demo \
   --source . \
   --remote origin \
   --push \
-  --description "One-prompt Nornyx-governed BRD-to-running CrewAI application demonstration"
+  --description "One-prompt Nornyx-governed BRD-to-running application demonstration"
 ```
 
 ## Existing empty repository
@@ -20,6 +20,12 @@ gh repo create mazinmarji/nornyx-forge-live-demo \
 git remote add origin https://github.com/mazinmarji/nornyx-forge-live-demo.git
 git push -u origin main
 ```
+
+The description deliberately does not say "CrewAI application". This text is
+copied into the public repository metadata, and the shipped `demo` path runs
+`sequential`: `observed_execution_backend: sequential`, framework reported as
+"CrewAI Flow-compatible sequential execution". CrewAI genuinely executes on the
+`build` path, which is a different claim and is made where it is true.
 
 After publication, confirm that GitHub Actions completes both `test` and
 `demo-contract`.

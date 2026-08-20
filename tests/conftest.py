@@ -33,6 +33,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def introduced_paths(before: str, after: str) -> list:
+    """Paths present in `after` and not in `before`.
+
+    Module-level and public so `tests/test_probe_containment.py` can drive THIS
+    function rather than a copy of it. See the note at the call site.
+    """
+    return sorted(set(after.splitlines()) - set(before.splitlines()))
+
+
 def _worktree_state() -> str:
     """What git says about the working tree, or "" when git cannot answer."""
     try:
@@ -126,7 +135,12 @@ def _governed_tree_is_left_as_found():
     if not before and not after:
         return  # git could not answer; absence of an answer is not a pass here
 
-    introduced = sorted(set(after.splitlines()) - set(before.splitlines()))
+    # ONE implementation, shared with the owner. The comparison used to live
+    # here and be RE-IMPLEMENTED in `test_probe_containment._introduced`, so a
+    # review replaced this line with `introduced = []` and FG26's named owner
+    # stayed green at 14 passed. A guard whose owner tests a copy of it is a
+    # guard nobody has fired -- the defect this file already repaired for FG29.
+    introduced = introduced_paths(before, after)
     assert introduced == [], (
         "the test suite left the governed tree modified:\n  "
         + "\n  ".join(introduced)

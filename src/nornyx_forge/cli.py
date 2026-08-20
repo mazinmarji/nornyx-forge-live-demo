@@ -197,6 +197,15 @@ def demo(
 @app.command("provision-ledger")
 def provision_ledger(
     root: Path = typer.Option(Path("."), help="Repository root the ledger serves."),
+    reset_replay_history: bool = typer.Option(
+        False,
+        "--reset-replay-history",
+        help=(
+            "Discard the replay history AND its high-water mark, and establish "
+            "a fresh epoch. Every outstanding grant then predates the new epoch "
+            "and is refused; a NEW human approval is required."
+        ),
+    ),
 ) -> None:
     """Create the action-approval ledger. A deliberate operator step.
 
@@ -213,13 +222,37 @@ def provision_ledger(
 
     location = approval_ledger_path(root.resolve())
     existed = location.is_file()
+    if reset_replay_history:
+        # THE REMEDY THE REFUSAL NAMES, made real. `LEDGER_ROLLED_BACK` used to
+        # say "re-provision the ledger and obtain a fresh approval", and a
+        # review measured that doing exactly that left the refusal standing --
+        # `provision` never touched the mark, so the ledger stayed bricked. The
+        # only action that cleared it was deleting the mark by hand, which
+        # DISABLES the check and makes every forgotten grant replayable.
+        #
+        # A refusal that names an ineffective remedy is a governance record
+        # stating a falsehood, which this runtime already refuses elsewhere. So
+        # the remedy exists, it is explicit, and it is destructive on purpose:
+        # it discards the history AND the mark together, then mints a later
+        # epoch so nothing outstanding survives it.
+        for path in (location, ApprovalLedger(location).watermark_path
+                     if location.is_file() else location.with_name(
+                         location.name + ".highwater")):
+            for suffix in ("", "-wal", "-shm"):
+                sibling = path.with_name(path.name + suffix)
+                if sibling.exists():
+                    sibling.unlink()
+        existed = False
     ledger = ApprovalLedger.provision(location)
     console.print_json(
         json.dumps(
             {
                 "status": "pass",
                 "ledger": str(ledger.path),
-                "action": "left_unchanged" if existed else "created",
+                "action": (
+                    "reset" if reset_replay_history
+                    else ("left_unchanged" if existed else "created")
+                ),
                 "available": ledger.available,
             }
         )

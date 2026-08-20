@@ -1,6 +1,6 @@
 ---
 name: security-inspector
-description: Independently reviews secret handling, command safety, dependency risk, input boundaries, and runtime permissions.
+description: In a separate context, read-only, reviews secret handling, command safety, dependency risk, input boundaries, and runtime permissions. Produces a SELF-REPORTED observation, not an independent inspection: that requires three Ed25519 attestations against FORGE_REVIEWER_TRUST_STORE, and none exists here.
 model: sonnet
 effort: high
 maxTurns: 30

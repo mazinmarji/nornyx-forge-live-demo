@@ -67,7 +67,7 @@ permissive one, which is the dangerous direction to be wrong in.
 | `demo_app.main` / Docker (`deterministic_demo`, `sequential`) | deterministic fallback | `sequential` | runs; high-risk effect prevented |
 | `RuntimeAuthorityConfig()` bare default (`nornyx`, `crewai`) | none — refused | none | `NornyxRuntimeUnavailable` |
 
-| `nornyx` + any executor | none — refused | none | `CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING` |
+| `nornyx` + any executor | none — refused | none | with a runtime lock: `CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING, APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING`; **on a clean checkout: `RUNTIME_LOCK_MISSING`** |
 | `deterministic_demo` + `crewai` | deterministic fallback | `crewai_flow` — CrewAI really executed | runs; high-risk effect prevented |
 | `deterministic_demo` + `crewai`, CrewAI absent | — | — | `ExecutionBackendUnavailable`; refuses rather than downgrading silently |
 | malformed policy or execution backend | — | — | `GovernedSubjectError` at construction |
@@ -79,6 +79,19 @@ on `RuntimeAuthorityConfig()`. The BUILD path does: `cli.py` constructs
 no config at all, so the bare default is exactly what that path uses, and it
 is not refused there. The refusal the row describes belongs to the runtime
 authority path, not to every construction of the default.
+
+> **What a reader actually sees.** The `nornyx` row's diagnostic is what a
+> tree with a PREPARED RUNTIME LOCK reports. `.nornyx/runtime/` is gitignored
+> and the lock cannot be produced without a human approval
+> (`prepare_runtime.py` exits 2 and writes only `preparation-report.json`), so
+> on a clean checkout the refusal arrives one step earlier as
+> `RuntimeError: RUNTIME_LOCK_MISSING`. Both are the same absence at different
+> depths.
+>
+> README.md and ONE_PROMPT.md have carried this caveat for the identical
+> string; this document was measured as the one of the four that did not, while
+> asserting that every row "was produced by running the mode". It was --- in a
+> tree the reader does not have.
 
 Reading the table:
 

@@ -1253,8 +1253,19 @@ class ApprovalLedger:
                 f"{LEDGER_ROLLED_BACK}: this ledger holds {held} consumption "
                 f"records but {recorded} were recorded against it. Replay "
                 "history was rolled back, so a grant already spent would be "
-                "released again. Re-provision the ledger and obtain a fresh "
-                "approval; restoring a backup cannot restore what it forgot."
+                "released again. Restoring a backup cannot restore what it "
+                "forgot.\n\nTO RECOVER: run `nornyx-forge provision-ledger "
+                "--reset-replay-history`, which clears BOTH this ledger and "
+                "the high-water mark beside it and establishes a fresh epoch, "
+                "then obtain a NEW human approval -- every outstanding grant "
+                "predates the new epoch and is refused.\n\nThe previous "
+                "wording said only 'Re-provision the ledger and obtain a fresh "
+                "approval'. Measured, that does not work: `provision` never "
+                "touched the mark, so re-provisioning left this refusal "
+                "standing, and deleting the ledger entirely left it standing "
+                "too. The only action that cleared it was deleting the mark by "
+                "hand -- which DISABLES this check and makes every forgotten "
+                "grant replayable at once."
             )
 
 
@@ -1292,6 +1303,11 @@ class ApprovalLedger:
                     " WHERE fingerprint = ? AND request_digest = ?",
                     (fingerprint, request_digest),
                 ).fetchone()
+                landed_total = int(
+                    conn.execute(
+                        "SELECT count(*) FROM consumed_approvals"
+                    ).fetchone()[0]
+                )
                 if not landed or int(landed[0]) != 1:
                     return (
                         False,
@@ -1321,9 +1337,25 @@ class ApprovalLedger:
                 f"action approval ledger is unusable, so single use cannot be "
                 f"guaranteed: {type(exc).__name__}: {exc}"
             )
-        # AFTER the row is confirmed, never before: a mark advanced ahead of a
-        # write that then failed would refuse the next legitimate grant.
-        self._record_consumptions(held + 1)
+        # THE COUNT COMES FROM THE INSERT, NOT FROM BEFORE IT.
+        #
+        # This was `self._record_consumptions(held + 1)`, and `held` is the row
+        # count read BEFORE the insert on a DIFFERENT connection. Concurrent
+        # consumers therefore all observe the same `held` and all record the
+        # same `held + 1`, so the mark lands far below the true row count and a
+        # backup holding any intermediate count restores undetected.
+        #
+        # Measured by a review on unmodified code: four barrier-pinned threads
+        # gave rows 4, mark 1; the real method violated "never lower it" in 111
+        # of 400 trials; and end to end through SQLite's own Connection.backup()
+        # an already-spent grant was RELEASED AGAIN in 6 of 20 trials at 12
+        # consumers. One human approval, two effects -- the exact defect the
+        # mark exists to prevent, behind a claim I had published in three
+        # places as closed.
+        #
+        # `landed_total` is read inside the same transaction as the INSERT, so
+        # each consumer sees its own committed row and they cannot collide.
+        self._record_consumptions(landed_total)
         return True, f"approval {approval_id or fingerprint} consumed"
 
     @property
@@ -1339,26 +1371,50 @@ class ApprovalLedger:
         would refuse every legitimate ledger with rows in it.
         """
         try:
-            text = self.watermark_path.read_bytes().decode("utf-8").strip()
-        except (OSError, UnicodeDecodeError):
+            with closing(sqlite3.connect(self.watermark_path)) as conn:
+                row = conn.execute("SELECT value FROM high_water").fetchone()
+        except sqlite3.Error:
+            # A plain-text mark from before this was a database. Read it so an
+            # existing deployment keeps its protection across the upgrade.
+            try:
+                return int(self.watermark_path.read_bytes().decode("utf-8").strip())
+            except (OSError, UnicodeDecodeError, ValueError):
+                return None
+        except OSError:
             return None
-        try:
-            return int(text)
-        except ValueError:
-            return None
+        return int(row[0]) if row else None
 
     def _record_consumptions(self, count: int) -> None:
-        """Advance the mark, never lower it.
+        """Advance the mark, never lower it -- ATOMICALLY.
 
-        `max` because two processes can consume concurrently: whichever writes
-        second must not undo the other's advance. Lowering the mark would only
-        ever weaken the check, so it is refused arithmetically rather than by
-        locking.
+        `standing = read(); write(max(standing, count))` is a read-modify-write,
+        and two processes interleaving it lose an advance: both read 2, one
+        writes 4, the other then writes 3 over it. A review measured the real
+        method violating "never lower it" in 111 of 400 trials, and the comment
+        here claimed the property was "refused arithmetically rather than by
+        locking". Arithmetic does not make a read and a later write one step.
+
+        So the comparison and the write are ONE statement, and SQLite provides
+        the atomicity: `UPDATE ... WHERE value < ?` cannot interleave with
+        another connection's update of the same row.
         """
-        standing = self._recorded_consumptions() or 0
         try:
-            self.watermark_path.write_bytes(str(max(standing, count)).encode("utf-8"))
-        except OSError:
+            with closing(sqlite3.connect(self.watermark_path, timeout=30)) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS high_water"
+                    " (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO high_water (id, value) VALUES (1, ?)",
+                    (count,),
+                )
+                conn.execute(
+                    "UPDATE high_water SET value = ? WHERE id = 1 AND value < ?",
+                    (count, count),
+                )
+                conn.commit()
+        except (sqlite3.Error, OSError):
             # A mark we cannot write is a weaker future check, not a reason to
             # refuse an effect whose row is already committed.
             pass
@@ -1980,6 +2036,13 @@ class NornyxActionBoundary:
 
             subject = self.runtime_subject
             if subject is None or not subject.subject_verified:
+                # THE CODE, not only the prose. A15's repair enumerated the four
+                # ledger codes and stopped, so this state -- the runtime cannot
+                # say WHAT IT IS GOVERNING -- still reported
+                # HUMAN_APPROVAL_REQUIRED, sending an operator to obtain an
+                # approval that would not help. This boundary's own comment
+                # forbids exactly that collapse.
+                withheld_code = SUBJECT_UNVERIFIED
                 release_reason = (
                     f"{SUBJECT_UNVERIFIED}: the governed subject is not "
                     "established, so consequential authority is unavailable. "

@@ -529,6 +529,10 @@ ASSURANCE_METRICS = {
     "Production approval": ("production_approval", "not_granted", "not granted"),
 }
 
+#: Metrics that are NOT assurance state, and are value-checked by the keyword
+#: sweep above instead. Listed so the set of dashboard rows is CLOSED.
+NON_ASSURANCE_METRICS = frozenset({"Framework", "Governance"})
+
 
 def _dashboard_metrics() -> dict:
     """Every `<span>LABEL</span><strong>VALUE</strong>` pair, tags stripped."""
@@ -597,4 +601,33 @@ def test_the_dashboard_claims_no_independent_inspection():
     assert offences == [], (
         "the operator dashboard asserts assurance this repository does not "
         f"hold: {offences}"
+    )
+
+
+def test_the_dashboard_presents_no_metric_outside_the_closed_set():
+    """C4-P2-2: the metric table was open, so a new row was covered by nothing.
+
+    `ASSURANCE_METRICS` binds two labels and the keyword sweep binds two more.
+    A review added four fabricated rows -- `Nornyx runtime authorization`,
+    `Fully assured, three attestations`, `Independent inspection performed`,
+    `Production release authorized` -- and every guard passed. One of them was
+    caught only incidentally, because the word *governance* happened to sit in
+    that row's label.
+
+    So the set is closed. A row nobody has classified fails here rather than
+    defaulting to unchecked, which is the same rule `artifact_authority`已
+    applies to evidence files: absence of a classification is a refusal, never
+    a default.
+    """
+    shown = set(_dashboard_metrics())
+    known = set(ASSURANCE_METRICS) | NON_ASSURANCE_METRICS
+    unclassified = sorted(shown - known)
+    assert unclassified == [], (
+        "the operator dashboard presents metrics that no guard classifies, so "
+        "their values are checked by nothing: " + str(unclassified)
+    )
+    missing = sorted(known - shown)
+    assert missing == [], (
+        f"a classified metric is no longer on the dashboard: {missing}. The "
+        "guard would then be checking a row that does not exist."
     )

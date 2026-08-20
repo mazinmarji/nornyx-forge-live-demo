@@ -61,8 +61,25 @@ category error.
 
 Nothing verified this before. `parse_brd` reads headings only, and no test
 referenced a real BRD id -- the requirements suite runs on synthetic fixtures.
-`tests/test_brd_evidence_shape.py` now pins the measured shape, so the gap
-cannot widen silently and closing it shows up as a diff.
+`tests/test_brd_evidence_shape.py` pins the measured shape.
+
+**What that test can and cannot do for YOU, stated because the first version of
+this paragraph overstated it.** Nine of its ten cases run the shipped
+demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock` --
+gitignored, and `prepare_runtime.py` exits 2 without a human approval. So those
+nine SKIP for every reader and for CI, and a review measured the consequence:
+nine undeclared skips turned the census red on every clean checkout while this
+repository was claiming all gates green. The skips are now declared as
+human-blocked, and "the gap cannot widen silently" was true only in a tree that
+already holds the lock.
+
+What runs everywhere is the tenth:
+`test_the_disclosed_table_is_well_formed_without_a_runtime_lock` checks that
+this table exists, names exactly the seven fields the requirement lists, agrees
+with the module's pinned floors, and states one consistent event total. That
+catches the table being edited, truncated or drifted from the floors. It cannot
+catch the numbers diverging from a real run -- only the lock-bound cases do
+that, and only where a human approval exists.
 
 ### BRD-F-006 Dashboard
 

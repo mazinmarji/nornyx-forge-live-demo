@@ -31,12 +31,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import attack_property  # noqa: E402
 from attack_property import PropertyNotViolated  # noqa: E402
-
-
-def _introduced(before: str, after: str) -> list[str]:
-    """The fixture's own comparison, isolated so it can be attacked directly."""
-    return sorted(set(after.splitlines()) - set(before.splitlines()))
-
+from conftest import introduced_paths  # noqa: E402
 
 CONTAMINATION_SPECIMENS = [
     ("a probe modified a governed contract",
@@ -45,7 +40,8 @@ CONTAMINATION_SPECIMENS = [
      "", "?? evidence/probe-scratch.json", True),
     ("a probe modified one file among pre-existing edits",
      " M docs/ARCHITECTURE.md",
-     " M docs/ARCHITECTURE.md\n M src/nornyx_forge/approval_trust.py", True),
+     " M docs/ARCHITECTURE.md" + chr(10) + " M src/nornyx_forge/approval_trust.py",
+     True),
     ("nothing changed",
      " M docs/ARCHITECTURE.md", " M docs/ARCHITECTURE.md", False),
     ("a pre-existing edit was REVERTED, not introduced",
@@ -67,8 +63,8 @@ def test_fg26_contamination_is_detected_and_clean_runs_are_not(
     has not contaminated anything, and flagging it would teach people to ignore
     the guard.
     """
-    assert bool(_introduced(before, after)) is contaminated, (
-        f"{label}: introduced={_introduced(before, after)}"
+    assert bool(introduced_paths(before, after)) is contaminated, (
+        f"{label}: introduced={introduced_paths(before, after)}"
     )
 
 
@@ -81,12 +77,12 @@ def test_fg26_an_unanswerable_git_is_not_an_answer_of_unchanged():
     vacuous, so the guard must not be read as evidence the tree was clean. This
     is the same shape as H16, one layer out.
     """
-    assert _introduced("", "") == [], (
+    assert introduced_paths("", "") == [], (
         "two empty states must compare equal; if not, the vacuous case is "
         "producing spurious findings"
     )
     # The bound itself: emptiness is indistinguishable from cleanliness here.
-    assert _introduced("", "") == _introduced("", ""), "comparison is unstable"
+    assert introduced_paths("", "") == introduced_paths("", ""), "comparison is unstable"
 
 
 # --------------------------------------------------------------------------
@@ -259,3 +255,79 @@ def test_fg33_both_harness_entry_points_bound_their_runs():
         "these harness entry points run a child process with no timeout, so a "
         f"hung run never terminates and never yields a result either: {unbounded}"
     )
+
+
+def test_fg29_a_probe_whose_inner_measurement_fails_withdraws(tmp_path: Path):
+    """B4-P1-1: the FG29 hole reopened one level down, inside the probes.
+
+    `run_probe` refuses a child that exits non-zero or prints no JSON. The H17
+    and H18 probes defeated that by swallowing their GRANDCHILD's failure
+    themselves -- `state = json.loads(raw)["verification"] if raw else {}` --
+    and then printing perfectly valid JSON of their own. `integrity_state`
+    became None, `None != "compromised"` returned VIOLATED, and a review drove
+    both attacks to KILLED_VALIDLY by moving a report from stdout to stderr,
+    while the control still ran and still caught the forgery.
+
+    The outer guard was never wrong; it was never reached. So the probes raise
+    now, and this exercises that shape end to end rather than trusting it.
+    """
+    swallowed = (
+        "import json, subprocess, sys" + chr(10)
+        + "done = subprocess.run("
+        "[sys.executable, '-c', \"import sys; print('x', file=sys.stderr)\"],"
+        " capture_output=True, text=True)" + chr(10)
+        + "start = done.stdout.find('{')" + chr(10)
+        + "if start < 0:" + chr(10)
+        + "    raise SystemExit('no JSON on stdout')" + chr(10)
+        + "print(json.dumps({'attack_state': None}))" + chr(10)
+    )
+    with pytest.raises(PropertyNotViolated):
+        attack_property.run_probe(tmp_path, swallowed)
+
+
+def test_fg29_a_probe_that_measures_cleanly_still_answers(tmp_path: Path):
+    """The positive control. Without it the test above passes on a `run_probe`
+    that refuses every probe ever written."""
+    measured = (
+        "import json" + chr(10)
+        + "print(json.dumps({'attack_state': 'compromised', 'attack_problems': 2}))"
+        + chr(10)
+    )
+    assert attack_property.run_probe(tmp_path, measured)["attack_state"] == "compromised"
+
+
+def test_fg29_neither_h17_nor_h18_defaults_a_missing_verification():
+    """Structural, over the probe sources themselves.
+
+    The defect was one expression, and it is the kind that comes back when
+    someone tidies a probe. `if raw else {}` -- or any other default for an
+    absent verification block -- turns an unmeasurable run into an answer.
+    """
+    # AST, NOT TEXT. My first version forbade the string `else {}` and went red
+    # on its own explanatory comment, which QUOTES the defective expression.
+    # That is the use/mention confusion this repository has three modules
+    # dedicated to refusing, committed inside the test written to close it.
+    for name in ("_H17_PROBE", "_H18_PROBE"):
+        source = getattr(attack_property, name)
+        tree = ast.parse(source)
+        defaults = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.IfExp)
+            and isinstance(node.orelse, ast.Dict)
+            and not node.orelse.keys
+        ]
+        assert defaults == [], (
+            f"{name} defaults its verification block to an empty dict when the "
+            "child produced none, so a crashed or silenced --verify reads as a "
+            f"measurement (line {defaults[0].lineno if defaults else '-'})"
+        )
+        raises = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Raise)
+            and isinstance(node.exc, ast.Call)
+            and isinstance(node.exc.func, ast.Name)
+            and node.exc.func.id == "SystemExit"
+        ]
+        assert raises, (
+            f"{name} does not fail closed when --verify yields no JSON"
+        )

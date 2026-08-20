@@ -25,6 +25,7 @@ here and the table in BRD.md move together or the suite says so.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -155,3 +156,50 @@ def test_the_disclosure_in_the_brd_matches_what_is_measured(tmp_path: Path):
         "BRD-F-005's disclosed table does not match the run it describes: "
         + "; ".join(disagreements)
     )
+
+
+def test_the_disclosed_table_is_well_formed_without_a_runtime_lock():
+    """The part of BRD-F-005's claim a READER can check, with no lock at all.
+
+    Every other test in this module needs the shipped demonstration to run,
+    which needs a runtime lock, which needs a human approval. A review measured
+    the consequence: nine undeclared skips turning the census red on every
+    clean checkout while this repository claimed all gates green.
+
+    Declaring the skips is honest but not sufficient -- BRD.md said the module
+    "pins the measured shape, so the gap cannot widen silently", and a test
+    that skips for every reader pins nothing for them. So this one runs
+    everywhere and checks what can be checked statically: that the disclosure
+    exists, that it names EXACTLY the seven fields BRD-F-005 requires, and that
+    each row's count is a fraction of one consistent total.
+
+    It cannot tell whether the numbers match a real run -- that is what the
+    lock-bound sibling does, and its limits are stated rather than implied.
+    """
+    text = (ROOT / "BRD.md").read_text(encoding="utf-8")
+    assert "PARTIALLY MET" in text, (
+        "BRD-F-005's disclosure is gone; the requirement is unmet and the "
+        "document no longer says so"
+    )
+
+    rows = dict(re.findall(r"\|\s*`([a-z_]+)`\s*\|\s*(\d+)/(\d+)\s*\|", text)
+                and [(m[0], (int(m[1]), int(m[2])))
+                     for m in re.findall(
+                         r"\|\s*`([a-z_]+)`\s*\|\s*(\d+)/(\d+)\s*\|", text)])
+    assert set(rows) == set(MEASURED_PRESENCE), (
+        "the disclosed table does not name exactly the fields BRD-F-005 "
+        f"requires: table={sorted(rows)} requirement={sorted(MEASURED_PRESENCE)}"
+    )
+
+    totals = {total for _present, total in rows.values()}
+    assert len(totals) == 1, (
+        f"the rows disagree about how many events were measured: {totals}"
+    )
+    total = totals.pop()
+    for field, (present, _t) in sorted(rows.items()):
+        assert 0 <= present <= total, f"{field}: {present}/{total} is not a fraction"
+        assert present == MEASURED_PRESENCE[field], (
+            f"{field}: the table says {present} and this module's pinned floor "
+            f"says {MEASURED_PRESENCE[field]}. The two move together or one of "
+            "them is stale."
+        )

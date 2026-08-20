@@ -88,7 +88,22 @@ action-release bypass. It is not reported as one.
 2. Every consumer of an authority question reads *that object*. No runtime path
    re-derives an authority value from its source.
 3. Reporting is a *view of the snapshot*, so what the interface says and what
-   the boundary enforces cannot disagree.
+   the boundary enforces cannot disagree **about the values the report
+   actually reads**.
+
+   That qualifier is not decoration. A review measured `/api/health`
+   publishing `consequential_authority: available` while the boundary, in the
+   same process and on the same context, refused every consequential act with
+   `SUBJECT_UNVERIFIED`. The property above was stated of the model as a whole
+   and held for ONE of the five inputs a high-risk release consults: the
+   integrity verdict, the runtime subject, the action trust store, the approval
+   ledger and the authorizer. `assurance_state()` reads the trust store.
+
+   The field is now named `approver_trust_authentication`, which is what it
+   establishes, and `consequential_authority` reports `not_derived_here` rather
+   than a value it cannot support. Deriving it honestly means threading all five
+   inputs into the report; that is a design change and is NOT done here, so the
+   report declines the question instead of answering it wrongly.
 4. The snapshot keeps three distinct states per domain — provisioned, absent,
    unusable — because collapsing them would trade this defect for a different
    one: "nobody is trusted" and "the trust material is broken" authorize the
