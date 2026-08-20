@@ -170,6 +170,31 @@ def main() -> None:
     result["spent"] = (
         boundary.approval_ledger.lookup(request_digest=request.digest) is not None
     )
+
+    # Every exception class THIS BUILD can name, derived from the build rather
+    # than written down. The subject's catch-alls render `type(exc).__name__`
+    # into the reason, so the class name is what surfaces when a mutant crashes
+    # instead of deciding -- and the reader of this field, `healthy_against`,
+    # used to recognise that only by suffix. `Error`/`Exception` misses ten of
+    # the classes reachable here, `TrustStoreUnavailable` among them, which is
+    # raised in ten places inside the module whose catch-all does the printing.
+    #
+    # Collected after the measurement, so it reflects what the run actually
+    # imported, and from every loaded module rather than a chosen few: a
+    # third-party class (`InvalidSignature`, `OperationalError`) crashes the
+    # run just as effectively as one of ours.
+    named: set[str] = set()
+    for module in list(sys.modules.values()):
+        try:
+            members = vars(module)
+        except TypeError:  # a module object without a namespace
+            continue
+        for binding, value in list(members.items()):
+            if isinstance(value, type) and issubclass(value, BaseException):
+                named.add(value.__name__)
+                named.add(binding)  # aliases: IOError is OSError
+    result["exception_names"] = sorted(named)
+
     print(json.dumps(result))
 
 

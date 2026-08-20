@@ -404,13 +404,35 @@ def healthy_against(base: dict, mutant: dict) -> list[str]:
     if missing:
         problems.append(f"observables vanished: {missing}")
 
-    # NOT A TOKEN BLOCKLIST. The predecessor tested five hardcoded names, so a
-    # mutation that threw inside signature verification -- caught and returned
-    # as `APPROVAL_NOT_AUTHENTICATED: ValueError` -- carried none of them and
-    # read as a well-formed refusal. That mutant authenticates NOTHING in
-    # either domain, demonstrates nothing about domain separation, and was
-    # credited. A blocklist is a list someone must remember to extend; this
-    # asks whether an EXCEPTION TYPE is being reported where a decision belongs.
+    # NOT A TOKEN BLOCKLIST -- and the first attempt at that sentence was one
+    # anyway. It replaced five hardcoded names with `[A-Z][A-Za-z]*(?:Error|
+    # Exception)`, which is a blocklist of two SUFFIXES: measured against the
+    # classes this subject defines, ten of eleven renderings escaped it, so
+    # `APPROVAL_NOT_AUTHENTICATED: TrustStoreUnavailable` -- from the catch-all
+    # in the very module that raises it in ten places -- read as an ordinary
+    # refusal and would have been credited as a kill.
+    #
+    # So the vocabulary is DERIVED, not authored: the probe reports every
+    # exception class its own process can name (`exception_names`), and a name
+    # from that set appearing where a decision belongs disqualifies the mutant.
+    # Renaming, adding or removing a class needs no edit here.
+    vocabulary = mutant.get("exception_names")
+    if not isinstance(vocabulary, list) or not vocabulary:
+        # Fail closed. An absent vocabulary matches nothing, which would accept
+        # every crashed mutant while staying green -- the defect restored, and
+        # invisible. Refuse the mutant instead of skipping the check.
+        problems.append(
+            "the mutant reported no exception vocabulary, so a crash rendered "
+            "as a decision cannot be told from a decision"
+        )
+        vocabulary = []
+    names = set(vocabulary)
+
+    # Retained alongside the derived set, for a class the probe's process never
+    # imported and so cannot name. Neither is sufficient; the union is what is
+    # claimed. A crash whose rendering carries no class name at all -- a bare
+    # `str(exc)` -- is outside both, and is a STATED BOUND rather than a gap
+    # this pretends to cover.
     exception_shaped = re.compile("[A-Z][A-Za-z]*(?:Error|Exception)")
     for key, value in mutant.items():
         if not key.endswith("_reason"):
@@ -418,10 +440,15 @@ def healthy_against(base: dict, mutant: dict) -> list[str]:
         text = str(value)
         if "Traceback" in text:
             problems.append(f"{key} carries a traceback, not a decision: {text[:60]}")
-        elif exception_shaped.search(text):
+            continue
+        # Identifier tokens, so a class name is matched as a name and not as a
+        # substring of some longer word.
+        reported = sorted(set(re.findall("[A-Za-z_][A-Za-z0-9_]*", text)) & names)
+        if reported or exception_shaped.search(text):
             problems.append(
                 f"{key} reports an exception type where a decision belongs, so "
                 f"the mutant failed rather than decided: {text[:70]}"
+                + (f" (named: {reported})" if reported else "")
             )
     return problems
 
@@ -464,6 +491,78 @@ def test_fg23_a_mutant_that_broke_the_run_is_not_a_kill(tmp_path: Path):
     assert healthy_against(base, lost), (
         "a run missing observables was accepted as well-formed"
     )
+
+
+def test_fg23_a_crash_is_recognised_by_the_builds_own_exception_names(tmp_path: Path):
+    """The suffix pattern was a five-name blocklist wearing two suffixes.
+
+    `[A-Z][A-Za-z]*(?:Error|Exception)` recognises a crash only when the class
+    happens to be NAMED for one. Measured against the classes this subject
+    actually defines, ten of eleven renderings read as ordinary refusals --
+    `TrustStoreUnavailable` (raised in ten places in the module whose catch-all
+    prints `type(exc).__name__`), `SubjectScopeEscape`, `UnknownRiskLevel`,
+    `NornyxRuntimeUnavailable`, and the builtins `StopIteration`,
+    `KeyboardInterrupt`, `SystemExit`. Any of them would have been credited as
+    a killed mutation.
+
+    So the vocabulary is DERIVED FROM THE BUILD rather than written down: the
+    probe reports every exception class its own process can name, and a name
+    appearing where a decision belongs is what disqualifies the mutant. A
+    class added, renamed or removed tomorrow is covered without editing this.
+    """
+    base = probe(tmp_path / "base", "action_only")
+    vocabulary = set(base["exception_names"])
+
+    # The derivation has to REACH THE SUBJECT. A vocabulary of builtins alone
+    # would leave every class above escaping while looking like a fix, and an
+    # empty one would accept everything -- so both are refused, here and in
+    # `healthy_against` itself.
+    assert "TrustStoreUnavailable" in vocabulary, (
+        "the probe did not report the subject's own exception classes, so the "
+        "check has quietly narrowed to whatever builtins are named"
+    )
+    assert {"UnknownRiskLevel", "SubjectScopeEscape", "StopIteration"} <= vocabulary
+
+    escaped = []
+    for name in sorted(vocabulary):
+        crashed = dict(base)
+        crashed["governance_reason"] = "APPROVAL_NOT_AUTHENTICATED: " + name
+        if healthy_against(base, crashed) == []:
+            escaped.append(name)
+    assert escaped == [], (
+        "these exception classes can be reported where a decision belongs and "
+        f"still be credited as a well-formed mutant: {escaped[:12]}"
+    )
+
+    # The control, in the same measurement: an ordinary refusal that merely
+    # MENTIONS the domain must stay healthy, or the check refuses everything.
+    ordinary = dict(base)
+    ordinary["governance_reason"] = (
+        "APPROVER_ROLE_UNAUTHORIZED: 'refund-approver' is not a governance role"
+    )
+    assert healthy_against(base, ordinary) == [], (
+        "an ordinary refusal was disqualified, so the vocabulary is matching "
+        "prose rather than exception names"
+    )
+
+
+def test_fg23_a_mutant_reporting_no_vocabulary_is_refused(tmp_path: Path):
+    """Absence of the vocabulary must fail closed, not skip the check.
+
+    A missing key is the failure mode that would restore the whole defect
+    silently: no names to match, so no crash ever recognised, so every broken
+    mutant credited -- and nothing red.
+    """
+    base = probe(tmp_path / "base", "action_only")
+    for absent in ({}, {"exception_names": []}):
+        blind = dict(base)
+        blind.pop("exception_names")
+        blind.update(absent)
+        problems = healthy_against(base, blind)
+        assert any("exception vocabulary" in problem for problem in problems), (
+            "a mutant that reported no exception vocabulary was accepted, so "
+            f"the crash check silently did nothing: {problems}"
+        )
 
 
 def test_fg23_the_real_collapse_mutants_are_all_healthy(tmp_path: Path):

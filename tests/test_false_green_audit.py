@@ -285,6 +285,13 @@ MECHANISM_TO_CLASS = {
     # are both "the pattern does not match the thing" -- FG21.
     "separator_class_misses_machine_spelling": "FG21",
     "evidence_counter_misses_a_failure_form": "FG21",
+    # And a third of the same family, found in the health check that decides
+    # whether a mutant RAN: it recognised a crash only when the exception class
+    # was named for one (`...Error`, `...Exception`), so ten of the eleven
+    # classes this subject can actually raise -- `TrustStoreUnavailable` first
+    # among them -- read as ordinary refusals. A blocklist of two suffixes is
+    # still a blocklist.
+    "crash_detector_matches_only_named_suffixes": "FG21",
 }
 
 
