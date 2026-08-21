@@ -780,15 +780,49 @@ def _verify_at(sha: str) -> dict:
 
 def _anchored_blocks() -> list[tuple[str, int, str, str]]:
     """(document, line, sha, body) for every anchored transcript in docs/."""
+    # CONTAINER-INDEPENDENT, like selection already is.
+    #
+    # This used `_blocks`, which knows backtick, four-backtick, tilde and
+    # 4-space-indent. Measured: an anchored transcript claiming
+    # `assurance_state independently_inspected` and `independent True` -- both
+    # false at the anchored commit -- was NEVER FIELD-CHECKED when rendered as
+    # tab-indented, blockquoted or bulleted. Only the fenced form was.
+    #
+    # `_transcript_runs` recognises all four, including the fenced one, so the
+    # narrower recogniser is not needed here at all. This is the same defect as
+    # the selection gate one level along: recognition was widened in one place
+    # and the anchored path kept the old recogniser.
     found = []
     for path in DOCUMENTS:
         text = path.read_text(encoding="utf-8")
-        for line, above, body in _blocks(text):
+        lines = text.splitlines()
+        for run in _transcript_runs(text):
+            first = run[0][0]
+            above = chr(10).join(lines[max(0, first - 12):first])
             anchor = ANCHOR.search(above)
-            if anchor:
-                found.append(
-                    (path.relative_to(ROOT).as_posix(), line, anchor.group(1), body)
-                )
+            if not anchor:
+                continue
+            # A RECORD'S KEY IS AN IDENTIFIER, NOT A PHRASE.
+            #
+            # Without the fence to bound it, a run absorbs the prose that
+            # follows: "...so nothing can recheck them at the anchored commit:
+            # human approval ABSENT" parses as a key/value pair on the colon,
+            # and was then compared against `--verify` output that of course
+            # does not emit it. Two real documents failed that way.
+            #
+            # Requiring a single-token key restores the boundary WITHOUT
+            # reintroducing a whitelist of known field names -- the shape that
+            # let an invented key pass unseen elsewhere in this module. Every
+            # field `--verify` emits is one token; no English clause is.
+            records = [
+                (key, value) for _n, key, value in run if not key.strip().count(" ")
+            ]
+            if len(records) < 2:
+                continue
+            body = chr(10).join(f"{key}  {value}" for key, value in records)
+            found.append(
+                (path.relative_to(ROOT).as_posix(), first, anchor.group(1), body)
+            )
     return found
 
 
@@ -1087,3 +1121,50 @@ def test_the_anchored_re_execution_does_not_depend_on_the_readers_machine(
     assert len(planted_result.get("assurance_problems", [])) == len(
         baseline.get("assurance_problems", [])
     ), "the planted store changed how many assurance problems were reported"
+
+
+@pytest.mark.parametrize(
+    ("rendering", "prefix"),
+    [("fenced", None), ("tab-indented", chr(9)), ("blockquoted", "> "),
+     ("bulleted", "- ")],
+    ids=lambda v: v if isinstance(v, str) else "fence",
+)
+def test_r4_an_anchor_is_recognised_in_every_rendering(rendering, prefix):
+    """R4: an anchored claim must be field-checked whatever encloses it.
+
+    MEASURED before this was fixed: `_anchored_blocks` used `_blocks`, which
+    knows backtick, four-backtick, tilde and 4-space indent. An anchored
+    transcript claiming `assurance_state independently_inspected` and
+    `independent True` -- both FALSE at the anchored commit -- was never
+    field-checked at all when rendered tab-indented, blockquoted or bulleted.
+    Only the fenced form was.
+
+    That is the selection defect one level along: recognition was widened in one
+    place and the anchored path kept the narrow recogniser. The document a
+    reader trusts most is the one carrying a commit SHA, and three of its four
+    renderings were unchecked.
+    """
+    rows = [
+        "status                 pass",
+        "integrity_state        intact",
+        "assurance_state        independently_inspected",
+        "independent            True",
+    ]
+    if prefix is None:
+        block = "```" + chr(10) + chr(10).join(rows) + chr(10) + "```"
+    else:
+        block = chr(10).join(prefix + row for row in rows)
+    text = ("<!-- verify-measured-at: 341e177 -->" + chr(10) + chr(10) + block)
+
+    runs = [run for run in _transcript_runs(text)
+            if len([1 for _n, key, _v in run if not key.strip().count(" ")]) >= 2]
+    assert runs, (
+        f"{rendering}: an anchored transcript in this rendering produces no "
+        "recognised run, so nothing about it is ever checked against the "
+        "commit it names"
+    )
+    keys = {key for run in runs for _n, key, _v in run}
+    assert "assurance_state" in keys and "independent" in keys, (
+        f"{rendering}: the run was recognised but the claim rows were not "
+        f"extracted from it: {sorted(keys)}"
+    )

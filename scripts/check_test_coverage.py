@@ -123,7 +123,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 130,
+    "tests/test_recorded_measurements.py": 138,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
