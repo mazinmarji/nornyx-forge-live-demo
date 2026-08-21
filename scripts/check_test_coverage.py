@@ -214,6 +214,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # R3: every structural refusal in verify_action_approval, and WHICH
     # control catches each -- so a shadowing change is visible.
     "tests/test_approval_structure_refusals.py": 10,
+    # R6: the four consequential-authority properties composed on the
+    # real boundary, with the EFFECT counted rather than the decision read.
+    "tests/test_consequential_authority_path.py": 5,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -438,6 +441,7 @@ REQUIRED_MODULES = (
     "tests/test_ledger_atomicity.py",
     "tests/test_attack_attribution_contract.py",
     "tests/test_approval_structure_refusals.py",
+    "tests/test_consequential_authority_path.py",
     "tests/test_trust_store_parity.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
