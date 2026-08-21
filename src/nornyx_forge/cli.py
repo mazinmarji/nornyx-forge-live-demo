@@ -256,13 +256,42 @@ def provision_ledger(
         # `.migrating` is the staging file `_adopt_plaintext_mark` moves into
         # place; a crash mid-migration can leave one, and a reset that left it
         # behind would hand the fresh epoch a stale artifact.
+        # BY SHAPE, AND NEVER HALF-DONE.
+        #
+        # This called `unlink()` on each artifact in turn. A review left
+        # `<ledger>.highwater.migrating` as a DIRECTORY -- a state that by
+        # itself bricks the ledger, because `_adopt_plaintext_mark`'s
+        # `staging.unlink()` then raises and every release refuses -- and
+        # measured: exit 1, PermissionError, ledger GONE, mark GONE, nothing
+        # re-provisioned. The old defect was "exit 1, nothing deleted"; the
+        # repair turned it into "exit 1, everything deleted".
+        #
+        # A directory is a shape `unlink` cannot remove, and it is precisely
+        # the shape that made the repair necessary. So removal handles both,
+        # and provisioning happens in a `finally` -- a destructive recovery
+        # that can leave the ledger absent is not a recovery.
         watermark = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
-        for path in (location, watermark,
-                     watermark.with_name(watermark.name + ".migrating")):
-            for suffix in ("", "-wal", "-shm"):
-                sibling = path.with_name(path.name + suffix)
-                if sibling.exists():
-                    sibling.unlink()
+        failures: list[str] = []
+        try:
+            for path in (location, watermark,
+                         watermark.with_name(watermark.name + ".migrating")):
+                for suffix in ("", "-wal", "-shm"):
+                    sibling = path.with_name(path.name + suffix)
+                    try:
+                        if sibling.is_dir():
+                            shutil.rmtree(sibling)
+                        elif sibling.exists():
+                            sibling.unlink()
+                    except OSError as exc:
+                        failures.append(f"{sibling}: {exc}")
+        finally:
+            ApprovalLedger.provision(location)
+        if failures:
+            raise typer.BadParameter(
+                "the replay history was reset and the ledger re-provisioned, "
+                "but these artifacts could not be removed and may still hold "
+                "stale state: " + "; ".join(failures)
+            )
         existed = False
     ledger = ApprovalLedger.provision(location)
     console.print_json(

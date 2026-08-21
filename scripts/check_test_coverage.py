@@ -123,7 +123,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 30,
+    "tests/test_recorded_measurements.py": 36,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -140,7 +140,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 28,
-    "tests/test_documented_claims.py": 55,
+    "tests/test_documented_claims.py": 71,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
     "tests/test_governance_approval_verifier.py": 45,
@@ -197,6 +197,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # WITHDRAW. It found two probes -- H07 and H15 -- that three review
     # rounds and an AST sweep had all missed.
     "tests/test_probe_withdrawal.py": 14,
+    # The sidecar state space driven through `consume`, plus the
+    # controls. A review found the previous repair to this area
+    # shipped with ZERO executing tests -- the handler, both raise
+    # sites and the whole migration path unreached under a green
+    # suite -- which is why the P1 it was meant to close survived it.
+    "tests/test_ledger_continuity.py": 23,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -234,7 +240,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # past this repository's guards, plus 15 in the new `test_probe_withdrawal.py`
 # driving every attack criterion against a tree with no symbols in it. 1290
 # leaves 80 of slack, the same deliberate margin as the last two raises.
-MINIMUM_COLLECTED = 1290
+# Raised again, from 1290, by round-6 remediation: 1423 collected. The growth
+# is the executing proof two reviews said was missing -- 25 nodes driving the
+# high-water sidecar's whole state space through `consume`, and the round-6
+# additions to the two claim corpora. 1340 leaves 83 of slack, the same
+# deliberate margin as the last three raises.
+MINIMUM_COLLECTED = 1340
 
 
 def band(collected: int) -> int:
@@ -388,6 +399,7 @@ REQUIRED_MODULES = (
     "tests/test_mission_binding.py",
     "tests/test_probe_containment.py",
     "tests/test_probe_withdrawal.py",
+    "tests/test_ledger_continuity.py",
     "tests/test_trust_store_parity.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",

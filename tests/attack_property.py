@@ -34,6 +34,46 @@ class PropertyNotViolated(AssertionError):
     """The mutant broke something, but not the property the attack claims."""
 
 
+class ProbeReport(dict):
+    """A probe's report, which will not answer for a key the probe never sent.
+
+    THE CLASS, closed at the one place every criterion passes through.
+
+    A criterion reads a report and returns a verdict. Two spellings of the same
+    mistake have now been measured here: `getattr(subject, "field", True)`,
+    where an absent attribute defaulted to the value that scores a kill, and
+    `state.get("integrity_state")`, where an absent key defaulted to None and
+    `None != "compromised"` IS the violated branch. Both turned an unreachable
+    production symbol into a KILL through this repository's own protocol.
+
+    The first was closed by repairing the probe. The second was closed by
+    repairing the probe. A third spelling would need a third repair, which is
+    the pattern three reviewers have now named: the instances close, the class
+    does not.
+
+    So a missing key WITHDRAWS, here, for everyone -- including criteria nobody
+    has written yet. An EXPLICIT default still works, because that is an author
+    deciding on purpose rather than a language default deciding for them.
+    """
+
+    def __missing__(self, key):
+        raise PropertyNotViolated(
+            f"the probe's report carries no {key!r}, so the criterion reading "
+            f"it measured nothing about the property: keys were {sorted(self)}"
+        )
+
+    def get(self, key, *default):
+        if key in self:
+            return self[key]
+        if default:
+            return default[0]
+        raise PropertyNotViolated(
+            f"the probe's report carries no {key!r} and this read supplies no "
+            "default, so `None` would decide the verdict: keys were "
+            f"{sorted(self)}"
+        )
+
+
 @dataclass(frozen=True)
 class AuthoritativeProperty:
     """The one property whose violation earns kill credit for an attack."""
@@ -89,7 +129,8 @@ def run_probe(tree: Path, source: str) -> dict:
             "the probe reported that it could not measure the property, so "
             f"nothing about it is established: {measured['unmeasurable']}"
         )
-    return measured
+    # See `ProbeReport`: a key the probe did not send must not be answered for.
+    return ProbeReport(measured) if isinstance(measured, dict) else measured
 
 
 def require_the_tool_answered(measured: dict, tool: str) -> None:
@@ -270,7 +311,22 @@ def measure(mutate):
     if "verification" not in payload:
         raise SystemExit("--verify produced no verification block: " + str(payload)[:200])
     state = payload["verification"]
-    return state.get("integrity_state"), len(state.get("problems", []))
+    # THE KEYS THIS CRITERION READS MUST BE PRESENT.
+    #
+    # This was `state.get("integrity_state")`, whose implicit None default fed
+    # `None != "compromised"` -- the branch that returns VIOLATED. So renaming
+    # the reported key in the production script, with the forgery still caught
+    # and still named, scored a KILL for both H17 and H18. An absent field is
+    # an unmeasurable probe, not a compromised tree.
+    missing = [key for key in ("integrity_state", "problems") if key not in state]
+    if missing:
+        raise SystemExit(
+            "--verify's verification block reports no "
+            + ", ".join(missing)
+            + "; this criterion reads those keys and cannot measure without "
+            "them: " + str(sorted(state))[:200]
+        )
+    return state["integrity_state"], len(state["problems"])
 
 
 def inert(payload):
@@ -390,7 +446,22 @@ def measure(mutate):
     if "verification" not in payload:
         raise SystemExit("--verify produced no verification block: " + str(payload)[:200])
     state = payload["verification"]
-    return state.get("integrity_state"), len(state.get("problems", []))
+    # THE KEYS THIS CRITERION READS MUST BE PRESENT.
+    #
+    # This was `state.get("integrity_state")`, whose implicit None default fed
+    # `None != "compromised"` -- the branch that returns VIOLATED. So renaming
+    # the reported key in the production script, with the forgery still caught
+    # and still named, scored a KILL for both H17 and H18. An absent field is
+    # an unmeasurable probe, not a compromised tree.
+    missing = [key for key in ("integrity_state", "problems") if key not in state]
+    if missing:
+        raise SystemExit(
+            "--verify's verification block reports no "
+            + ", ".join(missing)
+            + "; this criterion reads those keys and cannot measure without "
+            "them: " + str(sorted(state))[:200]
+        )
+    return state["integrity_state"], len(state["problems"])
 
 
 def inert(payload):

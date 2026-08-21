@@ -454,7 +454,23 @@ def test_a_retracted_claim_is_not_read_as_a_claim(
 #: served at both `/` and `/dashboard`, while every decision measured
 #: `deterministic_fallback` and `sequential`. Static markup reads identically
 #: whatever ran, so it cannot go false -- and no guard scanned `.html`.
-UI_SUFFIXES = (".html", ".htm", ".js", ".css")
+#: EVERY SURFACE A READER MEETS, not only the ones that render.
+#:
+#: A review planted the same claim three ways and measured all three
+#: admitted: a `::after{content:"..."}` rule in `styles.css`, an
+#: `insertAdjacentHTML` banner in `app.js`, and package metadata. The
+#: first two were in this sweep and survived `_unquoted`, which erases
+#: exactly the part carrying the payload. The third was in NO sweep --
+#: and `.claude-plugin/plugin.json` and `pyproject.toml` are the text
+#: that becomes the PUBLIC description, the first thing an external
+#: reader sees.
+UI_SUFFIXES = (".html", ".htm", ".js", ".css", ".json", ".toml")
+
+#: Formats whose payload LIVES INSIDE QUOTES, so stripping quoted spans
+#: erases the claim before any rule runs. `_unquoted` is a PROSE
+#: convention -- "if you are repeating a retired claim, quote it" -- and
+#: it is meaningless where the payload is a quoted string by definition.
+STRUCTURED_SUFFIXES = (".json", ".toml", ".css", ".js")
 
 
 def _ui_surfaces() -> list[Path]:
@@ -489,7 +505,9 @@ def test_no_ui_surface_claims_a_governance_mode_the_run_does_not_use():
         for number, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            asserted = _unquoted(line).lower()
+            asserted = (
+                line if path.suffix in STRUCTURED_SUFFIXES else _unquoted(line)
+            ).lower()
             words = set(re.split("[^a-z-]+", asserted))
             claims_crewai_flow = "crewai" in words and "flow" in words
             compatible = "compatible" in words or "sequential" in words

@@ -236,6 +236,45 @@ def forbidden_claim_patterns() -> tuple:
 
 
 #: The MACHINE fields whose affirmative value is an assurance claim on its own.
+from claim_vocabulary import (  # noqa: E402
+    ABSENT_SHAPES as _ABSENT_SHAPES,
+)
+from claim_vocabulary import (  # noqa: E402
+    ASSURANCE_FIELDS,
+    is_a_claim,
+)
+from claim_vocabulary import (  # noqa: E402
+    ASSURANCE_ROOTS as _ASSURANCE_ROOTS,
+)
+from claim_vocabulary import (  # noqa: E402
+    VERDICT_VALUES as _VERDICT_VALUES,
+)
+
+
+def _clause_text(lowered: str, tokens: list, clauses: list, index: int) -> str:
+    """The raw text of the clause a token sits in, for punctuation questions."""
+    same = [position for position, clause in enumerate(clauses)
+            if clause == clauses[index]]
+    if not same:
+        return ""
+    start = tokens[same[0]][1]
+    last = tokens[same[-1]]
+    return lowered[start: last[1] + len(last[0]) + 2]
+
+#: THE SUBJECT VOCABULARY IS DERIVED. It used to be the four literals below and
+#: nothing else, and a review measured ELEVEN of the thirteen field names this
+#: system actually emits walking through at their affirmative value --
+#: including `production_approval: approved`, the field's own root, admitted
+#: because `approved` was in the participle list while the participle test was
+#: applied to the SUBJECT token and never to the VALUE.
+#:
+#: `CLAIM_FIELDS` is NOT folded in here, and that is deliberate. It is consumed
+#: by the MACHINE-ROW branch in `find_overclaims`, which requires an identifier
+#: or a recognisable value after the field name. Adding the bare field names to
+#: this set instead made ordinary prose a claim -- "The status of the review is
+#: recorded elsewhere" was flagged, because `status` became a subject and `is`
+#: an affirmative. A field name in a sentence is a word; a field name in a row
+#: is a measurement.
 _SUBJECT_WORDS = frozenset({
     "human_review", "production_approval", "assurance_state",
     # `attested` was named in the docstring below as a subject word and was
@@ -297,6 +336,14 @@ _DISCLAIMING = frozenset({
     "outstanding", "must", "should", "before", "not_performed", "not_granted",
     "not_independently_inspected", "unverified", "claims", "claim", "claimed",
     "forbids", "refuses", "refused", "retracted", "withdrawn", "cannot",
+    # CONDITIONAL, TEMPORAL AND FUTURE FRAMES. A review measured eight of nine
+    # truthful or harmless sentences refused for want of these -- "Once
+    # production_approval is granted, the dashboard row changes", "A
+    # human_review will be performed before any production release". An author
+    # documenting the bar had one narrow permitted vocabulary, which this
+    # module's own docstring calls worse than a missed claim.
+    "when", "once", "after", "where", "will", "whether", "becomes", "become",
+    "shall", "may", "might", "could", "upon",
 })
 
 #: Past participles that carry a COMPLETED state in themselves, so
@@ -342,15 +389,39 @@ def _words(text: str) -> list:
 _FIELD_LINE = re.compile("^[ " + chr(9) + "]*[a-z_][a-z0-9_.]*(:| {2,})", re.I)
 
 
+#: A markdown table row. Each one is a separate claim, for the same reason a
+#: machine-record line is.
+_TABLE_ROW = re.compile("^[ " + chr(9) + "]*[|]")
+
+
 def _field_newlines(text: str) -> list:
-    """Offsets of newlines that separate machine records rather than wrap prose."""
+    """Offsets of newlines that separate RECORDS rather than wrap prose.
+
+    TABLE ROWS ARE RECORDS. `|` is deliberately not a boundary WITHIN a row --
+    that is what keeps `| Human review | not performed |` pairing a subject
+    with its own negation, and it is why the exception was written. But no
+    boundary BETWEEN rows meant an entire table body was one clause, and
+    English negation scopes leftward, so an honest row shielded every claim
+    below it.
+
+    Measured on this repository's own `BRD.md`: appending a forged assurance
+    row to the real BRD-F-005 table produced no overclaim at all, while the
+    identical row standing alone was flagged. Twelve real tables here were
+    already working as shields -- including the findings-closed table in a
+    governance closure record.
+
+    Cutting between rows keeps the within-row pairing and removes the shield.
+    """
     cuts = []
     offset = 0
     lines = text.split(chr(10))
     for index, line in enumerate(lines[:-1]):
         offset += len(line)
         nxt = lines[index + 1]
-        if _FIELD_LINE.match(line) or _FIELD_LINE.match(nxt):
+        if (
+            _FIELD_LINE.match(line) or _FIELD_LINE.match(nxt)
+            or _TABLE_ROW.match(line) or _TABLE_ROW.match(nxt)
+        ):
             cuts.append(offset)
         offset += 1
     return cuts
@@ -428,9 +499,41 @@ def find_overclaims(text: str) -> list:
     hits = []
     for index, (word, offset) in enumerate(tokens):
         independent = word.startswith("independent")
-        if not (independent or word in _SUBJECT_WORDS):
+        # A FIELD NAME, OR AN INVENTED NAME CARRYING AN ASSURANCE MORPHEME.
+        # `independent` is itself a field, so the narrative check below -- which
+        # exists to keep "an independent review found two defects" sayable --
+        # must not run first and bail on `independent: True`.
+        # IS THIS A MACHINE ROW, or prose that happens to contain a field name?
+        #
+        # `independent: True` is a row; "an independent review found two
+        # defects" is narrative about a reviewer, which must stay sayable --
+        # this module already carries a finding about flagging five such
+        # sentences. The distinction that separates them without a word list:
+        # an UNDERSCORED token is a machine identifier and never ordinary
+        # English, and a bare field name is a row only when what follows it is
+        # a recognisable VALUE rather than a noun.
+        machine_name = "_" in word
+        after = words[index + 1] if index + 1 < len(words) else ""
+        # THE HEAD NOUN CARRIES THE CONCEPT. An English compound is named by
+        # its LAST element: `human_approval` is an approval, `independent_ai_review`
+        # is a review. `assurance_moved` and `trusted_approvers_loaded` are not
+        # -- they are mechanism, named by `moved` and `loaded`, and matching the
+        # root anywhere in the identifier flagged both of them in this
+        # repository's own value-flow document.
+        #
+        # A machine row whose head noun is not an assurance concept is still
+        # reached by the TRANSCRIPT rule, which judges aligned runs; this guard
+        # is about what a document says in prose.
+        head_noun = word.rsplit("_", 1)[-1]
+        names_a_field = word in ASSURANCE_FIELDS or (
+            machine_name and any(root in head_noun for root in _ASSURANCE_ROOTS)
+        )
+        field_like = names_a_field and (
+            machine_name or after in _VERDICT_VALUES or after in _ABSENT_SHAPES
+        )
+        if not (independent or field_like or word in _SUBJECT_WORDS):
             continue
-        if independent:
+        if independent and not field_like:
             near = words[max(0, index - 3): index + 4]
             if not any(
                 (token.startswith(_QUALIFIER) or "inspect" in token)
@@ -470,7 +573,66 @@ def find_overclaims(text: str) -> list:
             or (independent and len(following) > 1
                 and following[1].startswith(_PARTICIPLES))
         )
-        if self_affirming:
+        # A question is not an assertion. "Has an independent inspection been
+        # performed here?" was refused, which leaves an author no way to ask.
+        if "?" in _clause_text(lowered, tokens, clauses, index):
+            continue
+        if field_like:
+            # THE VALUE DECIDES, NOT A LIST OF WAYS TO SAY YES.
+            #
+            # For a field this system emits, the honest values are enumerable
+            # and the affirmative ones are not. So the question is inverted:
+            # does the value that follows mean the property is ABSENT? Anything
+            # else is a claim -- including spellings nobody wrote down.
+            # `approved`, `accepted`, `cleared`, `signed_off` and
+            # `fully_assured` were all admitted by the affirmative list.
+            # THE VALUE IS READ FROM THE TEXT, NOT FROM THE TOKEN STREAM.
+            # `_words` matches `[a-z_]+`, so `[]`, `0` and `3` produce NO
+            # token at all -- and `authenticated_reviewers      []` then took
+            # its "value" from the next line. Measured: four real documents
+            # flagged, three of them for rows whose actual value was `[]`.
+            tail = lowered[offset + len(word): offset + len(word) + 64]
+            decided = ""
+            for candidate in re.findall(r"[a-z_]+|\[\]|\{\}|[0-9]+", tail):
+                if candidate in _VERDICT_VALUES or candidate in _ABSENT_SHAPES:
+                    decided = candidate
+                    break
+            if decided:
+                if not is_a_claim(word, decided, fields=ASSURANCE_FIELDS):
+                    continue
+            else:
+                # NO RECOGNISABLE VALUE. `authenticated_reviewers: alice, bob,
+                # carol` names three people, and a name is in no value
+                # vocabulary -- but the honest value for that field is EMPTY,
+                # so a non-empty one is a claim however it is spelled.
+                #
+                # Only when this is a MACHINE ROW, though: the key must be
+                # followed by a colon or by aligned spacing. "with human_review
+                # set to ..." is a sentence about a field, and a sentence is
+                # not a row. That separator is the same one `_FIELD_LINE` uses.
+                separator = lowered[offset + len(word): offset + len(word) + 3]
+                if not (separator.startswith(":") or separator.startswith("=")
+                        or separator.startswith("   ")
+                        or separator.startswith("  ")):
+                    continue
+                if word not in ASSURANCE_FIELDS:
+                    continue
+                decided = "(unrecognised)"
+            # THE CLAIM COMPLETES AT THE VALUE TOKEN, wherever that is.
+            #
+            # A fixed offset was measured wrong on 51 of 336 generated
+            # placements, all in one column: a disclaimer sitting BETWEEN the
+            # field and its value -- "human_review was NOT performed" -- landed
+            # exactly on the offset and `position < settled` excluded it. The
+            # value's real position is what the disclaimer has to precede.
+            completes_at = index
+            for offset_index in range(index + 1, min(len(words), index + 12)):
+                if words[offset_index] == decided:
+                    completes_at = offset_index
+                    break
+            else:
+                completes_at = min(index + 1, len(words) - 1)
+        elif self_affirming:
             # The claim is complete at the subject itself; nothing after it is
             # part of the assertion.
             completes_at = index
@@ -975,6 +1137,21 @@ _EVASIONS = (
     # A quoted CLAIM is not a mention. The mention rule blanks a quoted TERM;
     # blanking a quoted sentence is an arm this module already removed once,
     # after a review measured a forgery riding through it.
+    # Round 6, Lens C: ELEVEN of the thirteen field names this system emits,
+    # at their affirmative value, all ADMITTED by the affirmative word list.
+    # `approved` is the root of the field's own name.
+    ("the field's own root as its value", "production_approval: approved"),
+    ("another way to say performed", "human_review: accepted"),
+    ("and another", "human_review: cleared"),
+    ("and another still", "human_review: signed_off"),
+    ("an invented assurance state", "assurance_state: fully_assured"),
+    ("an invented field name, verdict value",
+     "independent_ai_review: established"),
+    ("a boolean field at True", "required_inspectors_complete: True"),
+    ("the independence field itself", "independent: True"),
+    ("named reviewers", "authenticated_reviewers: alice, bob, carol"),
+    ("an invented approval field", "human_approval: adopted"),
+    ("the JSON spelling", '{"production_approval": "approved"}'),
     ("a whole claim inside quotation marks",
      _Q + "This repository has been independently inspected and every finding "
      "closed" + _Q),
@@ -1011,6 +1188,26 @@ _TRUTHFUL = (
      "an independent review found two defects in the criteria"),
     ("negated participle", "This repository is not attested."),
     ("negated noun", "No attestation has been performed."),
+    # Round 6, Lens C: EIGHT of nine truthful or harmless sentences REFUSED,
+    # for want of a conditional, temporal or interrogative frame. An author
+    # documenting the bar had one narrow permitted vocabulary and no way to ask
+    # a question -- the direction this module's docstring calls worse than a
+    # missed claim.
+    ("a conditional frame",
+     "Once production_approval is granted, the dashboard row changes."),
+    ("a temporal frame",
+     "After an independent inspection has been completed, the state changes."),
+    ("a locative frame",
+     "Where human_review is performed, the operator records the date."),
+    ("a future frame",
+     "A human_review will be performed before any production release."),
+    ("a question", "Has an independent inspection been performed here?"),
+    ("a field name in ordinary prose",
+     "The status of the review is recorded elsewhere."),
+    # Round 6: mechanism identifiers that merely CONTAIN an assurance morpheme.
+    ("mechanism, not assurance", "ASSURANCE_MOVED   true"),
+    ("a store that loaded", "trusted_approvers_loaded=true"),
+    ("an empty reviewer list", "authenticated_reviewers      []"),
     # Round 5, Lens C: the transcript block this repository actually publishes.
     # The `true` on the preceding line supplied an affirmative for the line
     # below it, and the honest value beside it could not withdraw the claim.

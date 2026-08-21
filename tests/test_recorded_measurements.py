@@ -31,6 +31,7 @@ the one that admits the anchor.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -216,6 +217,103 @@ _BLOCK = (
 #: `state != "intact"` did.
 _PASS_STATES = frozenset({"intact"})
 _FAILURE_STATES = frozenset({"compromised", "unavailable", "unverifiable"})
+
+
+#: Values that mean "this property is ABSENT", read from the tool rather than
+#: listed. See `honest_values`.
+# The vocabulary lives in `tests/claim_vocabulary.py` and every guard
+# imports it. It used to be defined here AND in `test_documented_claims`
+# with different contents, which is how eleven of the thirteen field names
+# this system emits walked through one of them at their affirmative value.
+from claim_vocabulary import (  # noqa: E402
+    is_a_claim,
+)
+
+_HTML_TAG = re.compile("<[^>]+>")
+_BLOCKQUOTE = re.compile("^[ " + chr(9) + "]*>+[ ]?", re.M)
+
+
+def _normalised(text: str) -> list:
+    """The document with its CONTAINERS removed, one entry per original line.
+
+    Fences, indentation, blockquote markers, HTML tags and table pipes are all
+    ways of PRESENTING a transcript; none of them changes what it says. A
+    review measured seven renderings of the same three rows, of which the
+    guards saw four -- and the three they missed included a tab-indented block,
+    which CommonMark renders identically to the 4-space form the guards do see.
+
+    Returns (line_number, normalised_text) so a finding can still name the line
+    a reader would look at.
+    """
+    lines = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.expandtabs(4)
+        line = _BLOCKQUOTE.sub("", line)
+        line = _HTML_TAG.sub(" ", line)
+        if line.lstrip().startswith("|"):
+            # A markdown table row is a key/value pair written with pipes.
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            cells = [cell for cell in cells if cell and set(cell) != {"-"}]
+            line = "  ".join(cells) if len(cells) >= 2 else ""
+        lines.append((number, line))
+    return lines
+
+
+def _transcript_runs(text: str) -> list:
+    """Runs of two or more consecutive field lines, wherever they appear.
+
+    TWO, because a single `key   value` line occurs in ordinary prose and in
+    tables that are not transcripts; a run of them is the shape a machine
+    report has and a sentence does not.
+    """
+    runs = []
+    current = []
+    for number, line in _normalised(text):
+        match = _FIELD_LINE.match(line)
+        if match:
+            current.append((number, match.group(1).strip(), match.group(2).strip()))
+            continue
+        if len(current) >= 2:
+            runs.append(current)
+        current = []
+    if len(current) >= 2:
+        runs.append(current)
+    return runs
+
+
+def _dishonest_rows(run: list) -> list:
+    """Rows in a run that assert something this repository cannot support.
+
+    TWO RULES, and the second exists because the first cannot reach an invented
+    field name:
+
+      a KNOWN key carrying anything other than an ABSENT shape is a positive
+      measurement. It may well be true today -- `status pass` is -- but a
+      present-tense measurement decays the moment any governed file moves,
+      which is exactly what an anchor is for. The negatives
+      (`not_independently_inspected`, `False`, `[]`) are the standing truth of
+      this repository and need no anchor, which is why the comparator is the
+      ABSENT set and not "whatever --verify says right now": comparing against
+      the current run would make a decaying claim look honest for as long as it
+      happened to hold, and would make this guard depend on the machine it runs
+      on -- a dependence a review has already had to file twice;
+
+      an UNKNOWN key whose NAME carries an assurance morpheme and whose value
+      is a verdict is a claim under a name the tool does not use. `human_approval GRANTED` and
+      `production_authorization GRANTED` are the two things this repository
+      exists to say it does not have, and neither is a key `--verify` emits.
+
+    BOUND, stated rather than implied: an invented field carrying an invented
+    value -- `signed_attestations 3` -- is caught by neither rule. Reaching it
+    would need a model of what any key could mean, which is the unbounded
+    problem this design exists to avoid. It is recorded here so the gap is
+    known rather than assumed closed.
+    """
+    return [
+        (number, key, value)
+        for number, key, value in run
+        if is_a_claim(key, value)
+    ]
 
 
 def _blocks(text: str) -> list[tuple[int, str, str]]:
@@ -587,11 +685,41 @@ def _verify_at(sha: str) -> dict:
         # The variables are dropped rather than pinned to a fixture: a store
         # supplied here would be this machine's answer too, just a tidier one.
         # Absent, the answer is the one the commit's own content produces.
+        # AND THE HOME DIRECTORY, which is the half that was left in.
+        #
+        # Dropping `FORGE_*` and stopping there was measured to leave the
+        # verdict a property of the reader's machine: `reviewer_store_path()`
+        # falls back to `Path.home()/".nornyx"/...`, so a review signed three
+        # attestations with its own keys, put the trust store in a home
+        # directory it controlled, and got a document displaying
+        # `independent True` and three named reviewers to pass -- while the
+        # same document, same commit, failed for any other reader.
+        #
+        # A home-directory default is STRICTLY MORE AMBIENT than a variable:
+        # at least a variable is visible in the process environment. The
+        # comment here claimed that with `FORGE_*` gone "the answer is the one
+        # the commit's own content produces". That is only true once every
+        # ambient store resolution is severed, not one of them.
+        # REDIRECTED, NOT REMOVED. Deleting `HOME`/`USERPROFILE` outright makes
+        # `Path.home()` raise `RuntimeError: Could not determine home
+        # directory`, so `--verify` produced no report at all and the anchored
+        # checks failed for want of output rather than for want of truth.
+        # Pointing them at an EMPTY directory severs the same authority and
+        # leaves the tool able to run: both stores resolve, both find nothing,
+        # and nothing about the answer depends on whose machine it is.
+        empty_home = work / "no-home"
+        empty_home.mkdir(exist_ok=True)
         environment = {
             key: value for key, value in os.environ.items()
             if not key.startswith("FORGE_")
         }
-        environment["PYTHONIOENCODING"] = "utf-8"
+        environment.update({
+            "HOME": str(empty_home),
+            "USERPROFILE": str(empty_home),
+            "HOMEDRIVE": empty_home.drive or "",
+            "HOMEPATH": str(empty_home)[len(empty_home.drive):] or "\\",
+            "PYTHONIOENCODING": "utf-8",
+        })
         done = subprocess.run(  # noqa: S603
             [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
             cwd=tree, capture_output=True, text=True, encoding="utf-8",
@@ -812,3 +940,110 @@ def test_prose_inside_an_anchored_block_is_not_a_verifiable_field():
         assert _FIELD_LINE.match(line) is not None, (
             f"a real transcript row no longer parses: {line!r}"
         )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [path.relative_to(ROOT).as_posix() for path in DOCUMENTS],
+)
+def test_no_transcript_row_asserts_a_measurement_without_an_anchor(relative: str):
+    """The rule, applied to every rendering and every field.
+
+    The convention this module enforces is one sentence: a document may RECORD
+    what `--verify` returned; it may not ASSERT what `--verify` returns. Until
+    now that was enforced fence-by-fence over two of the thirteen fields, and a
+    review built a document that satisfied every guard while publishing a
+    fabricated PASS block, a human approval and three named reviewers.
+
+    So the question is asked of CONTENT rather than of containers, and answered
+    by INVERSION rather than by a vocabulary of ways to say yes. A row showing a
+    field at anything other than an absent shape is a positive measurement, and
+    it needs one of three things: an anchor naming the commit where it was
+    measured, a withdrawal marker on that line, or a value that is the standing
+    truth here.
+    """
+    text = (ROOT / relative).read_text(encoding="utf-8")
+    offences = []
+    for run in _transcript_runs(text):
+        dishonest = _dishonest_rows(run)
+        if not dishonest:
+            continue
+        first = run[0][0]
+        above = chr(10).join(text.splitlines()[max(0, first - 12):first])
+        if ANCHOR.search(above):
+            continue
+        for number, key, value in dishonest:
+            line = text.splitlines()[number - 1]
+            if "[FALSE]" in line or "[WITHDRAWN]" in line:
+                continue
+            offences.append(f"{relative}:{number} {key} = {value!r}")
+
+    assert offences == [], (
+        "these rows assert a measurement with no anchor above them and no "
+        "withdrawal marker on them. Anchor the block to the commit you "
+        "measured, mark the line [FALSE], or state the standing value: "
+        + repr(offences[:8])
+    )
+
+
+def test_the_anchored_re_execution_does_not_depend_on_the_readers_machine(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The property C6-C6 is about, driven rather than argued.
+
+    `reviewer_store_path()` falls back to `Path.home()/".nornyx"/...`, so a
+    review signed three attestations with keys it generated, put the store in a
+    home directory it controlled, and made a document displaying
+    `independent True` and three named reviewers PASS on its machine and FAIL
+    for every other reader. The repair severs both routes; this is what shows
+    it worked.
+
+    A HOME that carries a store is planted, and the re-execution must return
+    the same fields it returns without one. If it does not, the anchored
+    verdict is a property of whoever runs it.
+    """
+    import subprocess as _sp
+    sha = _sp.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT,
+                  capture_output=True, text=True, timeout=600,
+                  check=True).stdout.strip()
+    baseline = _verify_at(sha)
+
+    planted = tmp_path / "planted-home"
+    (planted / ".nornyx").mkdir(parents=True)
+    (planted / ".nornyx" / "forge_reviewer_trust.json").write_text(
+        json.dumps({
+            "schema": "nornyx.forge.reviewer_trust_store.v1",
+            "reviewers": [{
+                "key_id": "planted", "reviewer": "planted reviewer",
+                "roles": ["security"], "public_key": "not a key", "status": "active",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(planted))
+    monkeypatch.setenv("FORGE_REVIEWER_TRUST_STORE",
+                       str(planted / ".nornyx" / "forge_reviewer_trust.json"))
+
+    planted_result = _verify_at(sha)
+
+    # THE FIELDS THE EXPLOIT MOVED, compared exactly. `assurance_problems` is
+    # deliberately not among them: its text embeds the resolved store path,
+    # which is a fresh temp directory on every call, so comparing it would fail
+    # for a reason that has nothing to do with authority. What matters is that
+    # a planted store cannot make an inspection authenticate.
+    decided_by_the_store = (
+        "assurance_state", "independent", "authenticated_reviewers",
+        "required_inspectors_complete",
+    )
+    for field in decided_by_the_store:
+        assert planted_result.get(field) == baseline.get(field), (
+            f"{field} changed from {baseline.get(field)!r} to "
+            f"{planted_result.get(field)!r} when a reviewer trust store was "
+            "planted in the environment and the home directory. An anchored "
+            "document's verdict is then a property of the machine reading it "
+            "rather than of the commit it names."
+        )
+    assert len(planted_result.get("assurance_problems", [])) == len(
+        baseline.get("assurance_problems", [])
+    ), "the planted store changed how many assurance problems were reported"

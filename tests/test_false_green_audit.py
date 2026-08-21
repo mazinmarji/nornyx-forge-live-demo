@@ -262,9 +262,48 @@ INVENTORY = (
 #: strings; this is satisfied only by these. FG14 is the class about exactly
 #: that substitution, so expressing its own inventory as a count would be the
 #: defect naming itself.
-EXPECTED_FALSE_GREEN_CLASSES = frozenset(
-    f"FG{n:02d}" for n in range(1, 34)
-)
+#: SPELLED OUT. This was a generator over `range(1, 34)` while the
+#: docstring below said the inventory is compared "rather than a literal
+#: range... and by SET, never by count". A range IS a count in disguise:
+#: dropping the highest class is a one-character edit to the bound, which
+#: is exactly the same-size diff the named set was supposed to make
+#: larger. Verdict-neutral when a review found it, and that is the point
+#: -- it would not have stayed neutral.
+EXPECTED_FALSE_GREEN_CLASSES = frozenset({
+    "FG01",
+    "FG02",
+    "FG03",
+    "FG04",
+    "FG05",
+    "FG06",
+    "FG07",
+    "FG08",
+    "FG09",
+    "FG10",
+    "FG11",
+    "FG12",
+    "FG13",
+    "FG14",
+    "FG15",
+    "FG16",
+    "FG17",
+    "FG18",
+    "FG19",
+    "FG20",
+    "FG21",
+    "FG22",
+    "FG23",
+    "FG24",
+    "FG25",
+    "FG26",
+    "FG27",
+    "FG28",
+    "FG29",
+    "FG30",
+    "FG31",
+    "FG32",
+    "FG33",
+})
 
 #: Mechanisms learned across the whole remediation, mapped to the class that
 #: expresses them. Three map onto existing classes; eleven needed new ones. The
@@ -697,7 +736,11 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
             "refusal, so it would pass with its body deleted. A self-attack "
             "that asserts nothing is the defect this inventory exists to find."
         )
-    assert len({item.owner for item in INVENTORY}) >= 9, "self-attacks were merged"
+    assert len({item.owner for item in INVENTORY}) == len(INVENTORY), (
+        "two catalogue entries share an owner, so one of them is proven by a "
+        "test written for the other. The previous bound was `>= 9`, which 33 "
+        "classes satisfy while sharing as few as nine owners between them."
+    )
 
 
 # --------------------------------------------------------------------------

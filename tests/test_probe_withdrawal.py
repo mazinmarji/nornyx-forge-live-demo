@@ -39,7 +39,6 @@ narrower control over a smaller domain and is labelled as one.
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import attack_property
@@ -114,43 +113,52 @@ def test_a_criterion_withdraws_when_its_symbols_are_gone(
     )
 
 
-def test_a_probe_reports_absence_rather_than_inventing_a_value() -> None:
-    """The narrower control, over the domain the hollow sweep cannot reach.
+def test_renaming_a_reported_key_makes_h17_and_h18_withdraw_not_kill(
+    hollow_tree: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The attack itself, executed. This replaces two weaker guards in turn.
 
-    Labelled for what it is: this reads probe SOURCE, which is the weaker shape
-    the module docstring criticises. It is here because the defect it guards --
-    a three-argument `getattr` whose default decides the verdict -- happens on
-    an object the hollow tree can never produce, and a weak guard over a real
-    gap is worth more than no guard plus a claim of completeness.
+    FIRST there was a scan for three-argument `getattr`, written to close a
+    defect where an absent field defaulted to the value that scores a kill. A
+    review walked a second spelling through it: `state.get("integrity_state")`,
+    whose implicit `None` feeds `None != "compromised"` -- the branch that
+    returns VIOLATED.
 
-    The convention it enforces is the repaired one: a probe that cannot observe
-    what it needs prints an `unmeasurable` report, and `run_probe` withdraws
-    centrally.
+    THEN I replaced that scan with a control that handed each criterion an
+    EMPTY report and required a withdrawal. Measured before shipping it: with a
+    plain dict, ZERO of the fourteen criteria returned a verdict -- they all
+    raise `KeyError` on an empty report. The control passed identically with
+    and without the repair, so it discriminated nothing. A test measured to be
+    vacuous is worse than no test, because it is counted.
+
+    So this drives the mutation the review actually used. Renaming the reported
+    key in the production script leaves the forgery caught, named, and adding
+    problems over the inert control -- the property is INTACT -- so both
+    criteria must WITHDRAW. If either returns True it has credited a kill for a
+    rename.
     """
-    source = Path(attack_property.__file__).read_text(encoding="utf-8")
-    offenders: list[str] = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Assign):
-            continue
-        for target in node.targets:
-            name = getattr(target, "id", "")
-            if not (name.startswith("_H") and name.endswith("_PROBE")):
-                continue
-            if not isinstance(node.value, ast.Constant):
-                continue
-            for inner in ast.walk(ast.parse(str(node.value.value))):
-                if (
-                    isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Name)
-                    and inner.func.id == "getattr"
-                    and len(inner.args) == 3
-                ):
-                    offenders.append(name + ":" + str(inner.lineno))
+    from mutation_workspace import faithful_copy  # noqa: PLC0415
 
-    assert offenders == [], (
-        "these probes read a field with a fallback value, so an ABSENT field "
-        "produces a verdict instead of a withdrawal. A review measured exactly "
-        "this: an absent `subject_verified` defaulted to True and was reported "
-        "as a VERIFIED subject, which this repository's protocol scores as a "
-        "kill. Report an `unmeasurable` result instead: " + repr(offenders)
+    tree = faithful_copy(tmp_path_factory.mktemp("keyrename"))
+    target = tree / "scripts" / "refresh_governance_evidence.py"
+    source = target.read_text(encoding="utf-8")
+    renamed = source.replace('state["integrity_state"]', 'state["integrity_verdict"]')
+    assert renamed != source, (
+        "the production script no longer spells the reported key this way, so "
+        "this control is aimed at nothing and must be re-derived"
     )
+    target.write_text(renamed, encoding="utf-8")
+
+    for criterion in _criteria():
+        if criterion.ident.split("_")[0] not in {"H17", "H18"}:
+            continue
+        try:
+            verdict = criterion.violated_in(tree)
+        except PropertyNotViolated:
+            continue
+        pytest.fail(
+            f"{criterion.ident} returned {verdict!r} for a mutant that only "
+            "RENAMED a reported key. The forgery is still caught and still "
+            "named; nothing about the property changed. A kill credited here "
+            "is a kill credited for a rename."
+        )

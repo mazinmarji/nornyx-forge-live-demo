@@ -955,6 +955,37 @@ class ApprovalLedger:
         """
         location = Path(path)
         location.parent.mkdir(parents=True, exist_ok=True)
+        # THE MARK IS PART OF BEING PROVISIONED.
+        #
+        # It used to appear on the first successful consumption, which left a
+        # window -- between the first insert committing and its mark write --
+        # where a used ledger legitimately had no mark. Six concurrent
+        # first-time consumers measured five refusals through it.
+        #
+        # Created here at zero, the mark exists whenever the ledger does, so
+        # "absent" and "unmarked" stop being ambiguous states that have to be
+        # disambiguated by counting rows, and start being what they look like:
+        # somebody removed it.
+        ledger_mark = Path(str(location) + LEDGER_WATERMARK_SUFFIX)
+        if not ledger_mark.exists():
+            try:
+                with closing(sqlite3.connect(ledger_mark, timeout=30)) as mark:
+                    mark.execute(
+                        "CREATE TABLE IF NOT EXISTS high_water"
+                        " (id INTEGER PRIMARY KEY CHECK (id = 1),"
+                        " value INTEGER NOT NULL)"
+                    )
+                    mark.execute(
+                        "INSERT OR IGNORE INTO high_water (id, value)"
+                        " VALUES (1, 0)"
+                    )
+                    mark.commit()
+            except (sqlite3.Error, OSError) as exc:
+                raise NornyxRuntimeUnavailable(
+                    f"{cls.UNWRITABLE}: the replay high-water mark beside "
+                    f"{location} could not be created, so this ledger cannot "
+                    f"record how much history it holds: {exc}"
+                ) from exc
         connection = sqlite3.connect(location, timeout=30, isolation_level=None)
         try:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -1387,6 +1418,11 @@ class ApprovalLedger:
         """Beside the ledger, deliberately not inside it."""
         return Path(str(self.path) + LEDGER_WATERMARK_SUFFIX)
 
+    # `_consumption_rows` was defined here to tell a bootstrap from a lost
+    # mark by counting rows. `provision` writing the mark removes the
+    # ambiguity it existed to resolve, and a helper that decides a security
+    # question from a count nobody needs is worth deleting rather than
+    # keeping in case.
     def _adopt_plaintext_mark(self) -> int | None:
         """Migrate a pre-database mark ONCE, atomically, or return None.
 
@@ -1448,7 +1484,33 @@ class ApprovalLedger:
         turns that into a coded refusal.
         """
         if not self.watermark_path.exists():
-            return None
+            # ABSENCE IS REMOVAL. `provision` writes this file, so a ledger
+            # that exists has one; if it is gone, it was deleted.
+            #
+            # The same invariant as the unmarked case below: `_record_consumptions`
+            # runs on every successful consume, so a ledger holding rows had a
+            # mark written. If it is gone, it was removed.
+            #
+            # This used to be a DISCLOSED RESIDUAL -- "anyone who can delete the
+            # sidecar" was listed as out of scope on the grounds that it needs
+            # write access to the runtime directory. Measured, that residual is
+            # a working replay: delete the file, restore an older ledger, and a
+            # spent grant releases the effect a second time. Disclosing a hole
+            # is not the same as being unable to close it, and this one closes
+            # with the argument already used one branch down.
+            #
+            # THE COST, stated: a ledger created before the sidecar existed has
+            # rows and no mark, and now refuses until
+            # `provision-ledger --reset-replay-history` is run. That is a
+            # recoverable operator step which the refusal names, and it is the
+            # safe direction -- the alternative is to keep treating a removed
+            # mark as "nothing to compare".
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} is absent. It is created when the "
+                "ledger is provisioned, so a ledger without one has had its "
+                "replay high-water mark removed, and how much history it "
+                "recorded cannot be recovered."
+            )
         try:
             with closing(sqlite3.connect(self.watermark_path)) as conn:
                 tables = {
@@ -1457,13 +1519,38 @@ class ApprovalLedger:
                     )
                 }
                 if "high_water" not in tables:
-                    # A USABLE database that has not been marked yet: the
-                    # bootstrap state, and deliberately distinct from a file
-                    # that is not a database at all. A zero-length sidecar is a
-                    # valid empty SQLite database and lands here, which is why
-                    # it still self-heals on the next write rather than
-                    # refusing.
-                    return None
+                    # UNMARKED IS ONLY A BOOTSTRAP OVER AN EMPTY LEDGER.
+                    #
+                    # This returned None unconditionally, and None means
+                    # "compare nothing" -- so the rollback check was disabled
+                    # for exactly one state: a valid, empty SQLite file.
+                    # `sqlite3.connect()` CREATES a zero-byte file before
+                    # writing a single page (measured: 0 bytes after connect,
+                    # 8192 after CREATE TABLE), so a crash during the sidecar's
+                    # own first write produces it -- the scenario the docstring
+                    # above names as needing no adversary landed on the one
+                    # branch that did not refuse.
+                    #
+                    # A review drove it end to end: one human approval, the
+                    # ledger restored from a backup, the sidecar truncated to
+                    # zero, and the spent grant RELEASED THE EFFECT AGAIN. Not
+                    # once -- the mark re-bootstraps at the rolled-back count,
+                    # so every forgotten grant replays in turn.
+                    #
+                    # The invariant that settles it: `_record_consumptions`
+                    # runs on every successful consume, so a ledger holding
+                    # rows NECESSARILY had a mark written. Unmarked-over-
+                    # non-empty is a contradiction; unmarked-over-empty is the
+                    # genuine bootstrap.
+                    raise LedgerContinuityUnknown(
+                        f"{self.watermark_path} exists and carries no "
+                        "high-water table. `provision` creates one, so an "
+                        "empty or table-less file here is a truncated mark, "
+                        "not a ledger waiting to be used -- and a zero-byte "
+                        "file is exactly what `sqlite3.connect()` leaves "
+                        "before it writes a page, so a crash during the "
+                        "mark's own first write produces this shape."
+                    )
                 row = conn.execute("SELECT value FROM high_water").fetchone()
         except sqlite3.Error as exc:
             migrated = self._adopt_plaintext_mark()
@@ -1477,7 +1564,30 @@ class ApprovalLedger:
             raise LedgerContinuityUnknown(
                 f"{self.watermark_path} exists and cannot be opened: {exc}"
             ) from exc
-        return int(row[0]) if row else None
+        if row is None:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} holds a high-water table with no row. "
+                "`provision` inserts one, so an empty table is a mark that was "
+                "deleted out of a file somebody kept."
+            )
+        try:
+            return int(row[0])
+        except (TypeError, ValueError) as exc:
+            # SQLite affinity permits TEXT in an INTEGER NOT NULL column, and
+            # `CREATE TABLE IF NOT EXISTS` cannot repair a table an adversary
+            # created without the constraint. This escaped `consume` as an
+            # uncaught ValueError/TypeError -- and `consume` returns
+            # tuple[bool, str] by contract, so the boundary has no handler.
+            # The effect did not run (the exception precedes it), but no
+            # DECISION RECORD was produced at all, and on the orchestrated path
+            # the nearest handler would have recorded it as an orchestration
+            # failure: a governance record naming the wrong subsystem for a
+            # replay-ledger fault.
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} holds a high-water value that is not a "
+                f"number ({row[0]!r}), so the recorded consumption count cannot "
+                "be read."
+            ) from exc
 
     def _record_consumptions(self, count: int) -> None:
         """Advance the mark, never lower it -- ATOMICALLY.

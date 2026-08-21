@@ -1376,12 +1376,31 @@ def test_a02_the_anchor_alone_cannot_see_a_restore(tmp_path: Path):
     )
 
 
-def test_a02_a_ledger_that_never_recorded_a_mark_is_not_refused(tmp_path: Path):
-    """Bootstrapping. `None` is not zero and must not be read as one.
+def test_a02_a_removed_mark_is_refused_and_the_reversal_is_deliberate(tmp_path: Path):
+    """THIS TEST ASSERTED THE OPPOSITE, AND THE OPPOSITE WAS MEASURABLY WRONG.
 
-    A ledger written before this check existed, or one whose sidecar an
-    operator removed while tidying, has nothing to compare against. Refusing it
-    would turn a missing file into an outage for every legitimate grant.
+    It read: "A ledger written before this check existed, or one whose sidecar
+    an operator removed while tidying, has nothing to compare against. Refusing
+    it would turn a missing file into an outage for every legitimate grant." So
+    it required a removed mark to release.
+
+    A review then measured what that permits: delete the sidecar, restore an
+    older ledger, and a grant that was already spent RELEASES THE EFFECT AGAIN
+    -- and then every other forgotten grant in turn. One human approval, many
+    effects. "Anyone who can delete the sidecar" had been written down as a
+    disclosed residual; disclosing a hole is not the same as being unable to
+    close it.
+
+    So the policy is reversed on purpose. `provision` now writes the mark, so
+    the mark exists whenever the ledger does, and its absence is removal rather
+    than an unused ledger. The availability concern the old wording protected
+    is real and is kept -- as the property it actually was:
+    `test_a02_ordinary_use_advances_the_mark_and_is_never_refused` and
+    `tests/test_ledger_continuity.py` both drive legitimate grants and require
+    them to release, including six concurrent first-time consumers.
+
+    THE COST: a ledger provisioned before this change refuses until
+    `provision-ledger --reset-replay-history` is run, and the refusal says so.
     """
     path = tmp_path / "boot.sqlite3"
     request = _request()
@@ -1395,7 +1414,14 @@ def test_a02_a_ledger_that_never_recorded_a_mark_is_not_refused(tmp_path: Path):
     claimed, reason = ApprovalLedger(path).consume(
         _fingerprint("ACT-2", second), second.digest,
         at=NOW, grant_issued_at="2026-08-02T00:00:00Z")
-    assert claimed is True, f"a ledger with no recorded mark was refused: {reason}"
+    assert claimed is False, (
+        "the replay high-water mark was deleted and the ledger released "
+        "anyway, so removing one file disables replay detection entirely"
+    )
+    assert "LEDGER_CONTINUITY_UNKNOWN" in reason, reason
+    assert "--reset-replay-history" in reason, (
+        f"the refusal does not name the remedy an operator needs: {reason}"
+    )
 
 
 def test_a02_ordinary_use_advances_the_mark_and_is_never_refused(tmp_path: Path):
@@ -1808,7 +1834,9 @@ def test_a35_the_reset_clears_the_mark_beside_the_ledger(tmp_path: Path):
     assert ApprovalLedger(location)._recorded_consumptions() == 3
 
     assert _run_reset(root).exit_code == 0
-    assert ApprovalLedger(location)._recorded_consumptions() is None, (
-        "the high-water mark survived the reset, so the rollback check still "
-        "compares the fresh ledger against a count from the discarded history"
+    assert ApprovalLedger(location)._recorded_consumptions() == 0, (
+        "after the reset the mark must be a freshly PROVISIONED zero, not the "
+        "count from the discarded history and not absent. `None` was the right "
+        "answer while the mark appeared on first use; `provision` writes it "
+        "now, so absence would mean the reset left the ledger unprovisioned"
     )

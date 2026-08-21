@@ -1,0 +1,393 @@
+"""A spent grant is never released again, whatever the sidecar holds.
+
+WHY THIS MODULE EXISTS, and it is not a pleasant reason.
+
+The high-water sidecar was repaired twice. After the second repair a review
+measured:
+
+    grep -rn "LedgerContinuityUnknown" tests/ scripts/   ->  0
+    grep -rn "LedgerContinuityUnknown" src/              ->  4
+
+and coverage showed the `except LedgerContinuityUnknown` handler, BOTH `raise`
+sites, the whole of `_adopt_plaintext_mark`, and the writer's failure path all
+unexecuted -- under a fully green suite, with 123 tests covering this exact
+subject passing. The remediation for a P1 shipped with no proof it worked and
+no proof it would keep working.
+
+Which is why the P1 survived it. A zero-byte sidecar -- the state
+`sqlite3.connect()` leaves before writing a single page, i.e. what a crash
+during the sidecar's own first write produces -- took the "unmarked, therefore
+bootstrap" branch and returned None. None means compare nothing. Measured end
+to end through the real boundary: one human approval, the ledger restored from
+a backup, and the spent grant RELEASED THE EFFECT AGAIN -- then every other
+forgotten grant in turn, because the mark re-bootstraps at the rolled-back
+count.
+
+So this module drives the SIDECAR STATE SPACE through `consume`, which is the
+production path, and asserts the property rather than the diagnostic: after
+history is lost, a grant that was already spent must not release, whatever the
+sidecar happens to contain. The states are enumerated because the file system
+offers finitely many shapes here; the CONTROLS are the load-bearing part,
+because every assertion below is satisfiable by a ledger that refuses
+everything.
+"""
+
+from __future__ import annotations
+
+import shutil
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
+
+from nornyx_forge.nornyx_runtime import (
+    LEDGER_CONTINUITY_UNKNOWN,
+    LEDGER_ROLLED_BACK,
+    ApprovalLedger,
+)
+
+NOW = "2026-08-03T00:00:00Z"
+
+
+def _spend(ledger: ApprovalLedger, index: int) -> bool:
+    claimed, _reason = ledger.consume(
+        f"fp-{index}", f"rd-{index}", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+    )
+    return claimed
+
+
+def _rows(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as conn:
+        return int(
+            conn.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+        )
+
+
+def _checkpoint(path: Path) -> None:
+    """Fold the WAL in, so copying the main file really is a restore.
+
+    Without this, SQLite replays the `-wal` and the backup silently keeps the
+    history it was supposed to have lost -- the test would then pass while
+    measuring nothing at all.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+
+
+def _rolled_back_ledger(tmp_path: Path) -> tuple[Path, Path]:
+    """Six grants spent, history restored to one. Returns (ledger, sidecar)."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "the first grant did not release; setup is broken"
+
+    _checkpoint(path)
+    backup = tmp_path / "backup.sqlite3"
+    shutil.copy2(path, backup)
+
+    for index in range(1, 6):
+        assert _spend(ledger, index), f"grant {index} did not release"
+    assert _rows(path) == 6
+
+    _checkpoint(path)
+    shutil.copy2(backup, path)
+    assert _rows(path) == 1, "the restore did not actually lose history"
+    return path, path.with_name(path.name + ".highwater")
+
+
+# --------------------------------------------------------------------------
+# The sidecar state space. Each entry installs one on-disk shape.
+# --------------------------------------------------------------------------
+
+def _absent(side: Path) -> None:
+    if side.exists():
+        side.unlink()
+
+
+def _zero_length(side: Path) -> None:
+    side.write_bytes(b"")
+
+
+def _valid_db_no_table(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    sqlite3.connect(side).close()
+
+
+def _valid_db_no_row(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute(
+            "CREATE TABLE high_water (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"
+        )
+
+
+def _text_value(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("CREATE TABLE high_water (id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, 'lots')")
+        conn.commit()
+
+
+def _null_value(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("CREATE TABLE high_water (id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, NULL)")
+        conn.commit()
+
+
+def _plaintext(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"6")
+
+
+def _plaintext_garbage(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"not a number at all")
+
+
+def _torn_bytes(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"SQLite format 3\x00" + b"\x00" * 4)
+
+
+def _directory(side: Path) -> None:
+    if side.exists() and side.is_file():
+        side.unlink()
+    side.mkdir(exist_ok=True)
+
+
+SIDECAR_STATES = [
+    ("absent", _absent),
+    ("zero length", _zero_length),
+    ("valid db, no high_water table", _valid_db_no_table),
+    ("valid db, table but no row", _valid_db_no_row),
+    ("value is TEXT", _text_value),
+    ("value is NULL", _null_value),
+    ("legacy plain-text mark", _plaintext),
+    ("plain text that is not a number", _plaintext_garbage),
+    ("torn SQLite header", _torn_bytes),
+    ("sidecar is a directory", _directory),
+]
+
+
+@pytest.mark.parametrize(("label", "install"), SIDECAR_STATES, ids=lambda v: v)
+def test_a_spent_grant_is_never_released_again_whatever_the_sidecar_holds(
+    label: str, install, tmp_path: Path
+) -> None:
+    """The property, not the diagnostic.
+
+    WHICH refusal arrives is an operator-facing detail and differs by state:
+    a readable mark above the row count gives LEDGER_ROLLED_BACK, an unreadable
+    one gives LEDGER_CONTINUITY_UNKNOWN, and a grant older than a re-anchored
+    ledger gives GRANT_PREDATES_LEDGER. Asserting a particular code here would
+    make this a test of wording. What may never happen is a release.
+    """
+    path, side = _rolled_back_ledger(tmp_path)
+    install(side)
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-3",
+    )
+    assert claimed is False, (
+        f"sidecar state {label!r}: a grant that was already spent RELEASED THE "
+        "EFFECT AGAIN after replay history was rolled back. One human approval, "
+        f"two effects. Reason given: {reason!r}"
+    )
+
+
+@pytest.mark.parametrize(("label", "install"), SIDECAR_STATES, ids=lambda v: v)
+def test_no_sidecar_state_permanently_bricks_a_healthy_ledger(
+    label: str, install, tmp_path: Path
+) -> None:
+    """Failing closed must not mean failing forever.
+
+    A refusal that cannot be cleared is an availability defect, and this
+    repository has already shipped one: a sidecar shape that could never be
+    written again silently disabled the check it fed. `provision-ledger
+    --reset-replay-history` is the documented route out, so it must actually
+    work from every state -- which is also the only thing that keeps the
+    refusals above from being free.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+    assert _spend(ApprovalLedger(path), 0)
+    install(side)
+
+    # The reset, performed the way the CLI performs it: remove both artifacts
+    # by shape and re-provision.
+    for target in (path, side, side.with_name(side.name + ".migrating")):
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
+        for suffix in ("-wal", "-shm"):
+            sibling = target.with_name(target.name + suffix)
+            if sibling.exists():
+                sibling.unlink()
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-fresh", "rd-fresh", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-FRESH",
+    )
+    assert claimed is True, (
+        f"sidecar state {label!r}: after the documented reset a FRESH grant "
+        f"still could not release, so the ledger is permanently bricked: {reason!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# CONTROLS. Without these, every assertion above is satisfied by a ledger that
+# refuses everything, and the module would prove nothing at all.
+# --------------------------------------------------------------------------
+
+
+def test_the_control_a_healthy_ledger_releases_a_fresh_grant(tmp_path: Path) -> None:
+    """If this fails, the refusals above are not evidence of anything."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0) is True
+
+
+def test_the_control_the_rollback_is_detected_when_the_sidecar_is_intact(
+    tmp_path: Path,
+) -> None:
+    """The setup genuinely loses history AND is genuinely noticed.
+
+    This is the arm that proves `_rolled_back_ledger` builds the state the
+    parametrised tests think it builds. If the WAL checkpoint were wrong the
+    restore would keep its history, every refusal above would arrive for the
+    ordinary already-consumed reason, and the module would be green over a
+    setup that never rolled anything back.
+    """
+    path, _side = _rolled_back_ledger(tmp_path)
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-3",
+    )
+    assert claimed is False
+    assert LEDGER_ROLLED_BACK in reason, (
+        "with an intact sidecar the rollback must be detected as a rollback, "
+        f"not as something else: {reason!r}"
+    )
+
+
+def test_an_unreadable_sidecar_refuses_with_its_own_code(tmp_path: Path) -> None:
+    """The coded refusal exists and is reachable through `consume`.
+
+    Named separately from the property test because an operator acts on the
+    code: LEDGER_CONTINUITY_UNKNOWN says the mark cannot be read, which is a
+    different remedy from LEDGER_ROLLED_BACK. A review found this code had no
+    executing test of any kind -- four assertions elsewhere name the constant,
+    all of them about a missing `established_at`, a different cause entirely.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0)
+    side = path.with_name(path.name + ".highwater")
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"not a database and not a number")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+    assert "--reset-replay-history" in reason, (
+        "the refusal does not name a remedy, and a refusal an operator cannot "
+        "act on is how the previous wording sent people to re-provision, which "
+        "measurably did not clear it"
+    )
+
+
+def test_provisioning_writes_the_mark_so_there_is_no_unmarked_window(
+    tmp_path: Path,
+) -> None:
+    """The invariant, made true by construction instead of by argument.
+
+    The first version of this repair reasoned: "a ledger holding rows
+    necessarily had a mark written, so unmarked-over-non-empty is a
+    contradiction". Running it showed the reasoning has a hole --
+    `_record_consumptions` writes the mark AFTER the insert commits, so between
+    those two moments a used ledger legitimately has none. Six concurrent
+    first-time consumers measured five legitimate grants refused through that
+    window.
+
+    `provision` writing the mark closes it: the mark exists whenever the ledger
+    does, so absence and emptiness stop being ambiguous and become what they
+    look like. This test pins the property the repair now rests on.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+
+    assert side.exists(), "provisioning did not create the mark"
+    assert ApprovalLedger(path)._recorded_consumptions() == 0, (
+        "a freshly provisioned ledger must record zero consumptions, not None; "
+        "None is the ambiguous state this change exists to remove"
+    )
+
+    # And a truncated mark is now tampering even over an empty ledger, because
+    # provisioning already wrote one.
+    side.unlink()
+    sqlite3.connect(side).close()
+    assert side.stat().st_size == 0
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-first", "rd-first", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-FIRST",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+
+
+def test_concurrent_first_time_consumers_are_not_refused(tmp_path: Path) -> None:
+    """The regression that forced the design, driven directly.
+
+    Every one of these is a distinct, legitimate, never-before-seen grant on a
+    freshly provisioned ledger. If the mark is not present from provisioning,
+    the ones that reach `_recorded_consumptions` before the first mark write
+    are refused -- measured as `1 == 6` before this was fixed.
+    """
+    import threading
+
+    path = tmp_path / "race.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+
+    barrier = threading.Barrier(6)
+    granted: list = []
+    lock = threading.Lock()
+
+    def run(index: int) -> None:
+        ledger = ApprovalLedger(path)
+        barrier.wait()
+        claimed, reason = ledger.consume(
+            f"fp-race-{index}", f"rd-race-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-RACE-{index}",
+        )
+        with lock:
+            granted.append((claimed, reason))
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    refused = [reason for claimed, reason in granted if not claimed]
+    assert refused == [], (
+        "distinct first-time grants were refused on a freshly provisioned "
+        f"ledger: {refused}"
+    )
+    assert _rows(path) == 6

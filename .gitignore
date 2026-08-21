@@ -11,6 +11,12 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+# `.coverage` is written by `pytest --cov`, which `pyproject.toml`
+# declares as a dev dependency. Untracked, it makes the session's
+# governed-tree guard fail at teardown -- the guard is right, and the
+# ordinary use of a declared dependency should not trip it.
+.coverage
+.coverage.*
 coverage.xml
 htmlcov/
 .nornyx/runs/
