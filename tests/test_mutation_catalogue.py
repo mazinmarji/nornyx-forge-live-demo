@@ -895,3 +895,49 @@ def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
             "that edit is not an independently required route and this compound "
             "is padded rather than minimal"
         )
+
+
+def test_every_killing_test_is_actually_collected_by_pytest():
+    """TASK 11: the totals rest on tests that RUN, not on tests that exist.
+
+    `test_every_owner_module_exists_and_defines_its_killing_test` checks that
+    the module contains `def <node>(`. That is presence. A node can be present
+    and never run -- deselected by a marker, shadowed by a same-named
+    definition later in the file, or excluded by configuration -- and every
+    count in this catalogue would still be reported.
+
+    So collection is MEASURED, by asking pytest what it would run. `addopts` is
+    cleared because this repository sets `-q`, which makes a second `-q`
+    summarise per module and hide the node ids entirely -- the output would then
+    contain none of the names and this test would fail for a reason that has
+    nothing to do with the catalogue.
+
+    Parametrised nodes appear as `node[case]`, so a prefix match is the right
+    comparison and the COUNT is reported: an attack whose node collects zero
+    cases is an attack nothing proves.
+    """
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    collected = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:randomly", "-o", "addopts="],
+        cwd=ROOT, capture_output=True, text=True, timeout=1800, check=False,
+    ).stdout.replace(chr(92), "/")
+
+    assert collected.count("::") > 500, (
+        "pytest collection produced almost no node ids, so this test cannot "
+        "establish anything about which killing tests run: "
+        + collected[-300:]
+    )
+
+    uncollected = []
+    for owner, node in sorted({(a.owner, a.killed_by) for a in CATALOGUE}):
+        if collected.count(f"{owner}::{node}") == 0:
+            uncollected.append(f"{owner}::{node}")
+
+    assert uncollected == [], (
+        "these attacks name a killing test that pytest does not collect, so "
+        "the attack is counted in the totals and proven by nothing that runs: "
+        f"{uncollected}"
+    )
