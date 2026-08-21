@@ -203,6 +203,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
     "tests/test_ledger_continuity.py": 30,
+    # A7-P1-2: the crash sweep, both restore directions, and the
+    # concurrency controls. The sweep spawns 60 children per node, so
+    # this module is slow by construction -- the price of MEASURING a
+    # crash boundary rather than reasoning about it.
+    "tests/test_ledger_atomicity.py": 13,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -418,6 +423,7 @@ REQUIRED_MODULES = (
     "tests/test_probe_containment.py",
     "tests/test_probe_withdrawal.py",
     "tests/test_ledger_continuity.py",
+    "tests/test_ledger_atomicity.py",
     "tests/test_trust_store_parity.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",

@@ -197,6 +197,16 @@ def demo(
 @app.command("provision-ledger")
 def provision_ledger(
     root: Path = typer.Option(Path("."), help="Repository root the ledger serves."),
+    migrate_continuity: bool = typer.Option(
+        False,
+        "--migrate-continuity",
+        help=(
+            "Convert the ledger and its continuity witness to the journal mode "
+            "under which SQLite commits them as one unit. Preserves all "
+            "history. Refuses if the two stores disagree, because a "
+            "disagreement is the thing continuity exists to detect."
+        ),
+    ),
     reset_replay_history: bool = typer.Option(
         False,
         "--reset-replay-history",
@@ -226,6 +236,83 @@ def provision_ledger(
 
     location = approval_ledger_path(root.resolve())
     existed = location.is_file()
+    if migrate_continuity:
+        import sqlite3
+        from contextlib import closing
+
+        from .nornyx_runtime import (
+            LEDGER_WATERMARK_SUFFIX,
+            REQUIRED_JOURNAL_MODE,
+            ROLLBACK_JOURNAL_MODES,
+        )
+
+        witness = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+        if not location.is_file() or not witness.is_file():
+            raise typer.BadParameter(
+                f"both stores must exist to migrate: ledger "
+                f"{'present' if location.is_file() else 'ABSENT'}, witness "
+                f"{'present' if witness.is_file() else 'ABSENT'}. Use "
+                "--reset-replay-history to establish a fresh epoch instead."
+            )
+
+        def _rows(path: Path, sql: str) -> int:
+            with closing(sqlite3.connect(path)) as conn:
+                return int(conn.execute(sql).fetchone()[0])
+
+        # VERIFY BEFORE. A migration is not a repair: if the two stores already
+        # disagree, converting them preserves the disagreement and hands back a
+        # store that looks migrated and is still broken.
+        before_rows = _rows(location, "SELECT count(*) FROM consumed_approvals")
+        before_mark = _rows(witness, "SELECT value FROM high_water")
+        if before_rows != before_mark:
+            raise typer.BadParameter(
+                f"the ledger holds {before_rows} consumptions and the witness "
+                f"records {before_mark}. They must agree before they can be "
+                "migrated; a disagreement is what continuity exists to detect, "
+                "and this command must not paper over it. Use "
+                "--reset-replay-history to establish a fresh epoch."
+            )
+
+        converted = {}
+        for label, path in (("ledger", location), ("witness", witness)):
+            with closing(sqlite3.connect(path, timeout=30)) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
+                conn.execute("PRAGMA synchronous=FULL")
+                conn.commit()
+                converted[label] = str(
+                    conn.execute("PRAGMA journal_mode").fetchone()[0]
+                ).lower()
+
+        # VERIFY AFTER, and by reading the file back rather than trusting the
+        # statement that was just issued.
+        wrong = {
+            label: mode for label, mode in converted.items()
+            if mode not in ROLLBACK_JOURNAL_MODES
+        }
+        if wrong:
+            raise typer.BadParameter(
+                "the journal mode could not be converted: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(wrong.items()))
+                + ". A store still in WAL cannot commit with its sibling, so "
+                "nothing has been made safe by this run."
+            )
+        after_rows = _rows(location, "SELECT count(*) FROM consumed_approvals")
+        after_mark = _rows(witness, "SELECT value FROM high_water")
+        if (after_rows, after_mark) != (before_rows, before_mark):
+            raise typer.BadParameter(
+                f"history changed during migration: rows {before_rows}->"
+                f"{after_rows}, witness {before_mark}->{after_mark}. The "
+                "migration must preserve history exactly."
+            )
+        typer.echo(json.dumps({
+            "status": "pass",
+            "action": "migrated_continuity",
+            "journal_modes": converted,
+            "consumptions_preserved": after_rows,
+        }, indent=2))
+        return
+
     if reset_replay_history:
         # THE REMEDY THE REFUSAL NAMES, made real. `LEDGER_ROLLED_BACK` used to
         # say "re-provision the ledger and obtain a fresh approval", and a

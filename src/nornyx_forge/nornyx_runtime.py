@@ -641,6 +641,20 @@ LEDGER_METADATA_TABLE = "ledger_identity"
 #: backup -- now fails closed, which is what the paragraph above claimed.
 LEDGER_WATERMARK_SUFFIX = ".highwater"
 
+#: Journal modes under which SQLite commits a multi-database transaction as one
+#: unit. WAL is deliberately absent: its documented behaviour is atomic PER FILE
+#: and not across the attached set, which is exactly the guarantee the ledger
+#: and its continuity witness need from each other.
+ROLLBACK_JOURNAL_MODES = frozenset({"delete", "truncate", "persist"})
+
+#: The mode both stores are provisioned in.
+REQUIRED_JOURNAL_MODE = "delete"
+
+#: A store that predates this requirement, or that something has switched back
+#: to WAL, cannot give the cross-file guarantee. That is a governed refusal with
+#: an explicit maintenance action, never a silent conversion inside `consume`.
+LEDGER_CONTINUITY_MIGRATION_REQUIRED = "LEDGER_CONTINUITY_MIGRATION_REQUIRED"
+
 #: Refusal codes for continuity, distinct because the operator response differs:
 #: a grant older than the ledger needs a fresh approval, while a ledger with no
 #: identity row at all needs re-provisioning.
@@ -651,6 +665,16 @@ GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
 #: a rolled-back ledger is not a stale grant and not an unreadable anchor. The
 #: history is gone and cannot be recovered by re-reading anything.
 LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
+
+
+class LedgerContinuityMigrationRequired(RuntimeError):
+    """Both stores exist and cannot give the cross-file commit guarantee.
+
+    Distinct from `LedgerContinuityUnknown`: nothing is corrupt and nothing is
+    missing. The stores are simply in a journal mode under which SQLite does
+    not commit them as one unit, so the property this runtime asserts about
+    single use cannot be maintained until they are converted.
+    """
 
 
 class LedgerContinuityUnknown(RuntimeError):
@@ -1018,6 +1042,11 @@ class ApprovalLedger:
                 staging = Path(str(ledger_mark) + ".provisioning")
                 staging.unlink(missing_ok=True)
                 with closing(sqlite3.connect(staging, timeout=30)) as mark:
+                    # ROLLBACK JOURNAL, NOT WAL, AND DURABLE. See
+                    # `ROLLBACK_JOURNAL_MODES`: this is what lets the witness
+                    # and the ledger commit as one unit later.
+                    mark.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
+                    mark.execute("PRAGMA synchronous=FULL")
                     mark.execute(
                         "CREATE TABLE IF NOT EXISTS high_water"
                         " (id INTEGER PRIMARY KEY CHECK (id = 1),"
@@ -1040,7 +1069,21 @@ class ApprovalLedger:
                 ) from exc
         connection = sqlite3.connect(location, timeout=30, isolation_level=None)
         try:
-            connection.execute("PRAGMA journal_mode=WAL")
+            # WAL WAS HERE, AND WAL IS THE REASON A7-P1-2 EXISTED.
+            #
+            # The consumption row and the continuity witness live in two files
+            # and must become durable together. SQLite gives that guarantee for
+            # a transaction spanning ATTACHed databases ONLY when none of them
+            # is in WAL -- in WAL the commit is atomic per file and not across
+            # the set. Measured on the WAL design: 8 of 45 kill points during a
+            # consumption left the row committed and the witness stale, and a
+            # ledger-only restore then released the spent grant.
+            #
+            # `synchronous=FULL` because the guarantee is about surviving a
+            # crash, and NORMAL permits the commit to be acknowledged before it
+            # is durable.
+            connection.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
+            connection.execute("PRAGMA synchronous=FULL")
             with connection:
                 connection.execute(
                     "CREATE TABLE IF NOT EXISTS consumed_approvals ("
@@ -1171,7 +1214,23 @@ class ApprovalLedger:
             f"file:{self.path.as_posix()}?mode=rw", uri=True,
             timeout=30, isolation_level=None,
         )
-        connection.execute("PRAGMA journal_mode=WAL")
+        # THE JOURNAL MODE IS NOT SET HERE ANY MORE, and that is the point.
+        #
+        # This executed `PRAGMA journal_mode=WAL` on EVERY connection, so a
+        # ledger provisioned in a rollback-journal mode was converted back to
+        # WAL by the next thing that opened it. WAL commits a multi-database
+        # transaction per file rather than across the set, which is the gap
+        # A7-P1-2 lives in.
+        #
+        # A connection now inherits whatever mode the file already has, and
+        # `_assert_commit_atomicity_available` refuses when that is not a mode
+        # the cross-file guarantee holds under. Setting it here would be a
+        # silent migration; refusing names it.
+        #
+        # `synchronous` IS per-connection and is set, because the guarantee is
+        # about surviving a crash and NORMAL acknowledges a commit before it is
+        # durable.
+        connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=30000")
         return connection
 
@@ -1245,28 +1304,24 @@ class ApprovalLedger:
         # again'). The anchor lives in the same file, in the same directory,
         # with the same write exposure, and was not.
         established_now: str | None = self.established_at
-        # THE MARK IS READ FIRST, THEN THE ROW COUNT, AND THE ORDER IS THE
-        # WHOLE CORRECTNESS ARGUMENT. Rows only accumulate and the mark trails
-        # them, so a mark read at T1 can never exceed rows read at T2 > T1 --
-        # unless history was actually rolled back. Reading them the other way
-        # round would let a concurrent consumption advance the mark between the
-        # two reads and refuse a legitimate grant. Eight-process races are
-        # already measured here; this must not regress them.
-        try:
-            recorded = self._recorded_consumptions()
-        except LedgerContinuityUnknown as exc:
-            return False, (
-                f"{LEDGER_CONTINUITY_UNKNOWN}: the replay high-water mark "
-                "beside this ledger cannot be read, so whether history was "
-                f"rolled back cannot be established: {exc}" + "\n\n"
-                "TO RECOVER: run `nornyx-forge provision-ledger "
-                "--reset-replay-history`, which clears both the ledger and the "
-                "mark and establishes a fresh epoch, then obtain a NEW human "
-                "approval. Deleting the mark by hand instead would clear this "
-                "refusal and DISABLE the rollback check, making every "
-                "forgotten grant replayable."
-            )
-        held = 0
+        # THE WITNESS IS NOT READ HERE ANY MORE.
+        #
+        # This read the mark on its own connection, then the row count on
+        # another, and the comment justified the ORDER as "the whole
+        # correctness argument": rows accumulate and the mark trails them, so a
+        # mark read first can never exceed rows read second unless history was
+        # rolled back.
+        #
+        # That argument was sound about ORDERING and silent about what actually
+        # broke: the mark could be written LATE or not at all, and a mark that
+        # has fallen behind reads as healthy from either order. Both values are
+        # now read inside the transaction that writes them, in
+        # `_commit_consumption`, where they are required to be EQUAL.
+        #
+        # The reads below remain because the checks between here and there --
+        # the establishment anchor and the grant's issuance instant -- are
+        # about THIS GRANT rather than about continuity, and refusing early
+        # keeps their diagnostics specific.
         try:
             # `_connect()`, not a bare `sqlite3.connect`: the bare form CREATES
             # the file, and this line is reached precisely when the ledger may
@@ -1275,11 +1330,6 @@ class ApprovalLedger:
             with closing(self._connect()) as conn:
                 _assert_ledger_structure(conn, self.path, self.UNREADABLE)
                 established_now = _read_established_at(conn)
-                held = int(
-                    conn.execute(
-                        "SELECT count(*) FROM consumed_approvals"
-                    ).fetchone()[0]
-                )
         except NornyxRuntimeUnavailable as exc:
             return (
                 False,
@@ -1355,75 +1405,25 @@ class ApprovalLedger:
         # one whose sidecar was removed, has nothing to compare against, and
         # reading that as zero would refuse every ledger that has ever been
         # used. It bootstraps on the next successful consumption instead.
-        if recorded is not None and held < recorded:
-            return False, (
-                f"{LEDGER_ROLLED_BACK}: this ledger holds {held} consumption "
-                f"records but {recorded} were recorded against it. Replay "
-                "history was rolled back, so a grant already spent would be "
-                "released again. Restoring a backup cannot restore what it "
-                "forgot.\n\nTO RECOVER: run `nornyx-forge provision-ledger "
-                "--reset-replay-history`, which clears BOTH this ledger and "
-                "the high-water mark beside it and establishes a fresh epoch, "
-                "then obtain a NEW human approval -- every outstanding grant "
-                "predates the new epoch and is refused.\n\nThe previous "
-                "wording said only 'Re-provision the ledger and obtain a fresh "
-                "approval'. Measured, that does not work: `provision` never "
-                "touched the mark, so re-provisioning left this refusal "
-                "standing, and deleting the ledger entirely left it standing "
-                "too. The only action that cleared it was deleting the mark by "
-                "hand -- which DISABLES this check and makes every forgotten "
-                "grant replayable at once."
-            )
-
-
+        # THE ROLLBACK CHECK, THE INSERT AND THE WITNESS ADVANCE ARE ONE
+        # TRANSACTION NOW. See `_commit_consumption`.
+        #
+        # They used to be three separate steps across two connections and two
+        # files: read the mark, commit the row, then write the mark. A review
+        # killed a consumption at each SQL statement in turn and measured 8 of
+        # 45 kill points leaving the row durable and the mark stale -- after
+        # which a ledger-only restore released the already-spent grant.
+        #
+        # The comparison also had to be `held < recorded` rather than
+        # `held != recorded`, because a monotone mark legitimately trailed the
+        # rows between the two writes. That tolerance is what made the check
+        # unable to see a mark that had fallen behind, which is the defect.
+        # With one transaction there is no legitimate committed disagreement,
+        # so the check is equality and the tolerance is gone.
         try:
-            with self._session() as conn:
-                conn.execute(
-                    "INSERT INTO consumed_approvals"
-                    " (fingerprint, request_digest, approval_id, consumed_at)"
-                    " VALUES (?, ?, ?, ?)",
-                    (fingerprint, request_digest, approval_id, at),
-                )
-                # THE WRITE IS VERIFIED, not assumed. `INSERT` succeeding is
-                # not the same fact as a row existing: a BEFORE INSERT trigger
-                # running RAISE(IGNORE) discards it and reports success. The
-                # structure check above refuses such a trigger, but it runs on
-                # a different connection a moment earlier, and a review
-                # measured 943 claims granted with no row by flapping a trigger
-                # inside that window -- the original 'one grant, N effects,
-                # zero rows' defeat, relocated from WHAT the check looks at to
-                # WHEN it looks.
-                #
-                # Reading the row back ON THE SAME CONNECTION, immediately
-                # after the INSERT, catches whatever discarded it.
-                #
-                # NOT "inside the same transaction", which is what this said and
-                # is false: `_connect` sets `isolation_level=None`, so the
-                # connection is in autocommit and the row is COMMITTED before
-                # this SELECT runs -- a separate connection can already see it.
-                # The enumerated attack is still caught, because a trigger fires
-                # within the INSERT statement itself and its effect is visible
-                # here; but "closes the window regardless of timing" claimed a
-                # transactional guarantee that no transaction provides.
-                landed = conn.execute(
-                    "SELECT count(*) FROM consumed_approvals"
-                    " WHERE fingerprint = ? AND request_digest = ?",
-                    (fingerprint, request_digest),
-                ).fetchone()
-                landed_total = int(
-                    conn.execute(
-                        "SELECT count(*) FROM consumed_approvals"
-                    ).fetchone()[0]
-                )
-                if not landed or int(landed[0]) != 1:
-                    return (
-                        False,
-                        f"{self.UNREADABLE}: the consumption row for this grant "
-                        "was not written, so single use cannot be guaranteed. "
-                        "The insert reported success and the ledger holds "
-                        f"{0 if not landed else landed[0]} matching rows -- "
-                        "something is discarding writes.",
-                    )
+            return self._commit_consumption(
+                fingerprint, request_digest, approval_id or fingerprint, at
+            )
         except sqlite3.IntegrityError:
             spent = self.lookup(fingerprint=fingerprint) or self.lookup(
                 request_digest=request_digest
@@ -1438,32 +1438,25 @@ class ApprovalLedger:
                     "it again"
                 )
             return False, f"this approval was already consumed at {when}"
+        except LedgerContinuityMigrationRequired as exc:
+            return False, str(exc)
+        except LedgerContinuityUnknown as exc:
+            return False, (
+                f"{LEDGER_CONTINUITY_UNKNOWN}: the continuity witness beside "
+                "this ledger cannot be read, so whether history was rolled "
+                f"back cannot be established: {exc}" + chr(10) + chr(10)
+                + "TO RECOVER: run `nornyx-forge provision-ledger "
+                "--reset-replay-history`, which clears both stores and "
+                "establishes a fresh epoch, then obtain a NEW human approval."
+            )
+        except NornyxRuntimeUnavailable as exc:
+            return False, str(exc)
         except (sqlite3.Error, OSError) as exc:
             # Cannot record the claim, so cannot promise single use. Withhold.
             return False, (
                 f"action approval ledger is unusable, so single use cannot be "
                 f"guaranteed: {type(exc).__name__}: {exc}"
             )
-        # THE COUNT COMES FROM THE INSERT, NOT FROM BEFORE IT.
-        #
-        # This was `self._record_consumptions(held + 1)`, and `held` is the row
-        # count read BEFORE the insert on a DIFFERENT connection. Concurrent
-        # consumers therefore all observe the same `held` and all record the
-        # same `held + 1`, so the mark lands far below the true row count and a
-        # backup holding any intermediate count restores undetected.
-        #
-        # Measured by a review on unmodified code: four barrier-pinned threads
-        # gave rows 4, mark 1; the real method violated "never lower it" in 111
-        # of 400 trials; and end to end through SQLite's own Connection.backup()
-        # an already-spent grant was RELEASED AGAIN in 6 of 20 trials at 12
-        # consumers. One human approval, two effects -- the exact defect the
-        # mark exists to prevent, behind a claim I had published in three
-        # places as closed.
-        #
-        # `landed_total` is read inside the same transaction as the INSERT, so
-        # each consumer sees its own committed row and they cannot collide.
-        self._record_consumptions(landed_total)
-        return True, f"approval {approval_id or fingerprint} consumed"
 
     @property
     def watermark_path(self) -> Path:
@@ -1475,6 +1468,227 @@ class ApprovalLedger:
     # ambiguity it existed to resolve, and a helper that decides a security
     # question from a count nobody needs is worth deleting rather than
     # keeping in case.
+    def _assert_witness_structure(self, conn: sqlite3.Connection) -> None:
+        """The witness is as load-bearing as the ledger, so it is closed too.
+
+        Same argument as `_assert_ledger_structure`: the next hostile object is
+        the one nobody enumerated. A trigger on `high_water` was measured
+        silently discarding every advance of the mark, and a table rebuilt
+        without `CHECK (id = 1)` holding two rows answered whichever row SQLite
+        returned first.
+        """
+        objects = {
+            (str(kind), str(name)) for kind, name in conn.execute(
+                "SELECT type, name FROM witness.sqlite_master"
+                " WHERE name NOT LIKE 'sqlite_%'"
+            )
+        }
+        hostile = sorted(
+            f"{kind} {name!r}" for kind, name in objects
+            if kind != "index" and not (kind == "table" and name == "high_water")
+        )
+        if hostile:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} carries objects the continuity model "
+                f"does not permit: {hostile}. A trigger or view here can "
+                "silently discard an advance of the witness while consumptions "
+                "accumulate."
+            )
+        if not any(kind == "table" and name == "high_water" for kind, name in objects):
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} carries no high_water table. It is "
+                "created when the ledger is provisioned, so a store without "
+                "one has been truncated or replaced."
+            )
+        marks = conn.execute("SELECT value FROM witness.high_water").fetchall()
+        if len(marks) != 1:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} holds {len(marks)} witness rows where "
+                "exactly one is required; which one is the witness would "
+                "depend on ordering."
+            )
+        try:
+            int(marks[0][0])
+        except (TypeError, ValueError) as exc:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} holds a witness value that is not a "
+                f"number ({marks[0][0]!r})."
+            ) from exc
+
+    def _commit_consumption(
+        self, fingerprint: str, request_digest: str, approval_id: str, at: str
+    ) -> tuple[bool, str]:
+        """Spend the grant and advance the witness in ONE SQLite transaction.
+
+        THE WHOLE POINT OF THIS METHOD. The row and the witness live in two
+        files. Committing them separately left a window -- measured at 8 of 45
+        kill points during a consumption -- where the row was durable and the
+        witness was not, and a ledger-only restore then released the spent
+        grant a second time.
+
+        SQLite commits a transaction spanning ATTACHed databases as one unit,
+        using a super-journal, PROVIDED none of them is in WAL. So the two
+        stores are attached and written in a single transaction, and
+        `_assert_commit_atomicity_available` refuses when the modes cannot give
+        that guarantee rather than proceeding without it.
+
+        WHAT IS RELIED ON RATHER THAN PROVEN HERE: that SQLite's own multi-file
+        commit is crash-atomic under the required configuration. That is
+        SQLite's documented guarantee about its internals. This code's job is to
+        establish the configuration, verify it, and put both writes in one
+        transaction; a Python test cannot demonstrate the internals of another
+        program's commit protocol and this repository does not claim it does.
+
+        `BEGIN IMMEDIATE` serialises writers so no consumer observes the pair
+        mid-update. That solves the CONCURRENCY half; the attached transaction
+        solves the CRASH half. Both are needed and neither substitutes for the
+        other.
+        """
+        if not self.watermark_path.exists():
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} is absent. It is created when the "
+                "ledger is provisioned, so a ledger without one has had its "
+                "continuity witness removed, and how much history it recorded "
+                "cannot be recovered."
+            )
+        conn = self._connect()
+        try:
+            # ATTACH cannot run inside a transaction, so it comes first. The
+            # existence check above matters here: attaching a missing file
+            # would CREATE it, turning "the witness was removed" into "the
+            # witness says zero".
+            try:
+                conn.execute(
+                    "ATTACH DATABASE ? AS witness",
+                    (self.watermark_path.as_posix(),),
+                )
+            except sqlite3.Error as exc:
+                # A witness that cannot be attached is a WITNESS fault, and the
+                # refusal must say so. Left to the generic handler it surfaced
+                # as "action approval ledger is unusable ... file is not a
+                # database", which names the wrong store -- the misdirection
+                # coded refusals exist to prevent.
+                raise LedgerContinuityUnknown(
+                    f"{self.watermark_path} exists and cannot be opened as the "
+                    f"continuity witness: {exc}"
+                ) from exc
+            self._assert_commit_atomicity_available(conn)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                _assert_ledger_structure(conn, self.path, self.UNREADABLE)
+                self._assert_witness_structure(conn)
+                held = int(
+                    conn.execute(
+                        "SELECT count(*) FROM consumed_approvals"
+                    ).fetchone()[0]
+                )
+                witness = int(
+                    conn.execute("SELECT value FROM witness.high_water").fetchone()[0]
+                )
+                if witness != held:
+                    conn.execute("ROLLBACK")
+                    return False, self._continuity_mismatch(held, witness)
+                conn.execute(
+                    "INSERT INTO consumed_approvals"
+                    " (fingerprint, request_digest, approval_id, consumed_at)"
+                    " VALUES (?, ?, ?, ?)",
+                    (fingerprint, request_digest, approval_id, at),
+                )
+                landed = conn.execute(
+                    "SELECT count(*) FROM consumed_approvals"
+                    " WHERE fingerprint = ? AND request_digest = ?",
+                    (fingerprint, request_digest),
+                ).fetchone()
+                if not landed or int(landed[0]) != 1:
+                    conn.execute("ROLLBACK")
+                    return False, (
+                        f"{self.UNREADABLE}: the consumption row for this grant "
+                        "was not written, so single use cannot be guaranteed. "
+                        "The insert reported success and the ledger holds "
+                        f"{0 if not landed else landed[0]} matching rows -- "
+                        "something is discarding writes."
+                    )
+                conn.execute(
+                    "UPDATE witness.high_water SET value = ? WHERE id = 1",
+                    (held + 1,),
+                )
+                conn.execute("COMMIT")
+            except BaseException:
+                # A failed transaction must leave NEITHER store advanced. The
+                # rollback is unconditional and swallows its own errors: if the
+                # connection is already unusable there is nothing to undo, and
+                # masking the original exception would hide why.
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+        finally:
+            conn.close()
+        return True, f"approval {approval_id} consumed"
+
+    def _continuity_mismatch(self, held: int, witness: int) -> str:
+        """The refusal for a disagreement, naming WHICH store moved.
+
+        Both directions are refusals and they are different diagnoses, so they
+        are reported differently. A witness AHEAD of the ledger means the ledger
+        lost rows -- a restore or a truncation. A witness BEHIND means the
+        witness itself was rolled back, which the ledger cannot repair.
+        """
+        which = (
+            "the LEDGER holds fewer consumptions than the witness records, so "
+            "ledger history was rolled back, truncated or restored"
+            if witness > held else
+            "the WITNESS records fewer consumptions than the ledger holds, so "
+            "the witness was rolled back, restored or replaced"
+        )
+        return (
+            f"{LEDGER_ROLLED_BACK}: this ledger holds {held} consumption "
+            f"records and its continuity witness records {witness}. They are "
+            "written in one transaction and are equal in every committed "
+            f"state, so {which}. A grant already spent could be released "
+            "again, and restoring a backup cannot restore what it forgot."
+            "\n\nTO RECOVER: run `nornyx-forge provision-ledger "
+            "--reset-replay-history`, which clears BOTH stores and establishes "
+            "a fresh epoch, then obtain a NEW human approval -- every "
+            "outstanding grant predates the new epoch and is refused."
+        )
+
+    def _assert_commit_atomicity_available(self, conn: sqlite3.Connection) -> None:
+        """Both databases must be in a mode where one COMMIT covers both.
+
+        Checked, not assumed. A store provisioned before this requirement is in
+        WAL, and a WAL store gives per-file atomicity only -- the exact gap
+        A7-P1-2 lives in. Converting it here would be a silent schema migration
+        inside an authorization decision, so this REFUSES and names the
+        maintenance action instead.
+        """
+        modes = {}
+        for schema in ("main", "witness"):
+            row = conn.execute(f"PRAGMA {schema}.journal_mode").fetchone()
+            modes[schema] = str(row[0]).lower() if row else "unknown"
+        wrong = {
+            schema: mode for schema, mode in modes.items()
+            if mode not in ROLLBACK_JOURNAL_MODES
+        }
+        if wrong:
+            raise LedgerContinuityMigrationRequired(
+                f"{LEDGER_CONTINUITY_MIGRATION_REQUIRED}: the approval ledger "
+                "and its continuity witness must commit as one unit, which "
+                "SQLite provides only when neither is in WAL. Measured here: "
+                + ", ".join(f"{schema}={mode}" for schema, mode in sorted(wrong.items()))
+                + ". No effect is released until this is corrected, and it is "
+                "NOT corrected automatically -- converting a journal mode "
+                "inside an authorization decision is a schema migration "
+                "performed by a caller that did not ask for one.\n\n"
+                "TO RECOVER: run `nornyx-forge provision-ledger "
+                "--migrate-continuity`, which verifies both stores, converts "
+                "them, and verifies the result. If this ledger holds no "
+                "history worth keeping, `--reset-replay-history` establishes a "
+                "fresh epoch instead, and every outstanding grant then predates "
+                "it and is refused."
+            )
+
     def _adopt_plaintext_mark(self) -> int | None:
         """Migrate a pre-database mark ONCE, atomically, or return None.
 
