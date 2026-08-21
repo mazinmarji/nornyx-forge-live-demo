@@ -333,13 +333,50 @@ def test_a_non_governed_import_failure_keeps_its_traceback(tmp_path: Path):
     else is a real environment fault, and dressing it up as a governance finding
     would hide a broken installation behind a sentence about governed content.
     """
-    source = (ROOT / "scripts/refresh_governance_evidence.py").read_text(
-        encoding="utf-8"
+    # AST, NOT SUBSTRING. R5: a scan must structurally distinguish USE from
+    # MENTION. Measured on the previous version of this guard: the real
+    # `raise exc` was deleted and replaced with the comment
+    #
+    #     # a non-governed failure would raise exc here
+    #
+    # and this control PASSED. `"raise exc" in source` cannot tell a statement
+    # from a sentence about one, and a guard that a comment satisfies is not a
+    # check on the code.
+    #
+    # (Three behavioural tests in this module did catch that deletion, which is
+    # why it was not a live false green. But relying on a sibling test to cover
+    # what this one claims is a helper standing in for a measured semantic --
+    # the substitution the invariant names.)
+    import ast  # noqa: PLC0415
+
+    tree = ast.parse(
+        (ROOT / "scripts/refresh_governance_evidence.py").read_text(encoding="utf-8")
     )
-    assert '{"governed_content", "nornyx_forge"}' in source, (
-        "the translation is no longer restricted to governed packages, so an "
-        "unrelated ImportError would be reported as missing governed content"
+    handler = next(
+        (node for node in ast.walk(tree)
+         if isinstance(node, ast.FunctionDef)
+         and node.name == "_refuse_missing_governed_module"),
+        None,
     )
-    assert "raise exc" in source, (
-        "a non-governed ModuleNotFoundError is no longer re-raised"
+    assert handler is not None, (
+        "the refusal function is gone or renamed, so this control is aimed "
+        "at nothing"
+    )
+
+    guarded = [
+        node for node in ast.walk(handler)
+        if isinstance(node, ast.Set)
+        and {getattr(e, "value", None) for e in node.elts}
+        == {"governed_content", "nornyx_forge"}
+    ]
+    assert guarded, (
+        "the translation is no longer restricted to the governed packages by a "
+        "literal set of their names, so an unrelated ImportError could be "
+        "reported as missing governed content"
+    )
+
+    reraises = [node for node in ast.walk(handler) if isinstance(node, ast.Raise)]
+    assert reraises, (
+        "the function contains no `raise` STATEMENT, so a non-governed "
+        "ModuleNotFoundError is no longer re-raised -- whatever the comments say"
     )

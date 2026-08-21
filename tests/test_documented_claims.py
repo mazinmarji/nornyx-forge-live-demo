@@ -55,7 +55,16 @@ def governance_docs() -> list[Path]:
     vendored = {".venv", "node_modules", ".git", "site-packages", "__pycache__"}
     generated = (".nornyx/",)
     found = []
-    for path in root.rglob("*.md"):
+    # CASE-INSENSITIVE, AND DELIBERATELY SO. `rglob("*.md")` is
+    # case-insensitive on Windows and case-sensitive on the Linux runner, so a
+    # document named `REPORT.MD` is scanned on the author's machine and
+    # invisible in CI -- the corpus would differ between the place a claim is
+    # written and the place it is checked. Zero such files exist today, which
+    # makes this a latent scope gap rather than a live one; it is closed here
+    # because "no such file exists right now" is not a property.
+    for path in root.rglob("*"):
+        if path.suffix.lower() not in {".md", ".markdown", ".mdown"}:
+            continue
         relative = path.relative_to(root).as_posix()
         if any(part in vendored for part in path.relative_to(root).parts):
             continue
