@@ -162,3 +162,62 @@ def test_renaming_a_reported_key_makes_h17_and_h18_withdraw_not_kill(
             "named; nothing about the property changed. A kill credited here "
             "is a kill credited for a rename."
         )
+
+
+def test_an_unmet_precondition_withdraws_instead_of_deciding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe whose own setup did not happen must not be believed.
+
+    THE CLASS, after three rounds produced three instances of it: a criterion
+    returning a verdict when the state it was measuring was never reached. An
+    absent FIELD defaulted to the kill value; an absent KEY defaulted to None
+    and `None != x` was the violated branch; and an injected FAULT never fired
+    while the probe reported the value it would have reported anyway.
+
+    `ProbeReport` closes the second and is structurally blind to the third,
+    because there the probe SENDS the key carrying a value it invented. Only
+    the probe knows whether its setup landed, so it says so and `run_probe`
+    refuses on its behalf.
+
+    THIS CONTROL DISCRIMINATES, and that is checked rather than assumed --
+    round 6 shipped a control here that behaved identically with and without
+    the repair, and it was deleted after being measured. Both arms are driven
+    below: the same measurements with the precondition present and absent.
+    """
+    import json  # noqa: PLC0415
+
+    measurements = {"refused": False, "returned": "x"}
+
+    class _Child:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def _fake_run(*_args, **_kwargs):
+        return _Child
+
+    monkeypatch.setattr(attack_property.subprocess, "run", _fake_run)
+
+    # With the precondition reported UNMET, the criterion must never see it.
+    _Child.stdout = json.dumps(
+        dict(measurements, preconditions={"fault_delivered": False})
+    )
+    with pytest.raises(PropertyNotViolated):
+        attack_property.run_probe(Path("."), "unused")
+
+    # The control: the SAME measurements with no precondition are returned, and
+    # `refused: False` is exactly what a criterion reads as VIOLATED. If this
+    # arm also withdrew, the arm above would prove nothing.
+    _Child.stdout = json.dumps(measurements)
+    report = attack_property.run_probe(Path("."), "unused")
+    assert report["refused"] is False, (
+        "the control arm did not return the measurements, so the withdrawal "
+        "above is not evidence that the precondition caused it"
+    )
+
+    # And a MET precondition must not withdraw either.
+    _Child.stdout = json.dumps(
+        dict(measurements, preconditions={"fault_delivered": True})
+    )
+    assert attack_property.run_probe(Path("."), "unused")["refused"] is False

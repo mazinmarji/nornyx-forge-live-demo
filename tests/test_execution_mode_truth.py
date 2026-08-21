@@ -485,7 +485,7 @@ def _ui_surfaces() -> list[Path]:
 
 
 def test_the_ui_surface_sweep_finds_the_dashboard():
-    """Guard the guard: an empty sweep would pass the check below silently."""
+    """FG31. Guard the guard: an empty sweep would pass the check below silently."""
     names = {p.relative_to(ROOT).as_posix() for p in _ui_surfaces()}
     assert "src/demo_app/static/index.html" in names, (
         f"the dashboard is outside the UI sweep: {sorted(names)[:6]}"

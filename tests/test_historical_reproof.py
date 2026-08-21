@@ -1802,7 +1802,7 @@ def test_r2_a_mutation_that_removes_the_refusal_is_accepted(tmp_path: Path):
 
 
 def test_r2_a_green_helper_cannot_stand_in_for_the_runner(tmp_path: Path):
-    """The negative control the whole defect argues for.
+    """FG28. The negative control the whole defect argues for.
 
     `require_caused_failure` passed on the presentation-only report throughout
     the period the campaign was crediting an invalid kill. This pins that its

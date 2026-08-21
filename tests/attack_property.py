@@ -113,7 +113,26 @@ def run_probe(tree: Path, source: str) -> dict:
             f"{completed.returncode} {completed.stdout[-300:]} "
             f"{completed.stderr[-300:]}"
         )
-    measured = json.loads(completed.stdout[start:])
+    # THE LAST JSON OBJECT, not the last opening brace. `rfind("{")` assumed a
+    # FLAT object: the moment a probe reported a nested dict the last `{` was an
+    # inner one, and every probe using that shape died with `Extra data` -- a
+    # crash, so it withdrew rather than deciding, but it withdrew for a parsing
+    # reason and no criterion could have been measured. Each candidate opening
+    # brace is tried from the last backwards until one decodes.
+    measured = None
+    for position in [
+        index for index, char in enumerate(completed.stdout) if char == "{"
+    ][::-1]:
+        try:
+            measured = json.loads(completed.stdout[position:])
+        except json.JSONDecodeError:
+            continue
+        break
+    if measured is None:
+        raise PropertyNotViolated(
+            "the probe printed something that is not a JSON object, so nothing "
+            f"about the property was measured: {completed.stdout[-300:]}"
+        )
     # A PROBE MAY SAY "I COULD NOT MEASURE" IN BAND, and it withdraws HERE
     # rather than in each criterion. A probe that runs to completion cannot be
     # refused by the returncode check above, so before this there was no way to
@@ -129,6 +148,38 @@ def run_probe(tree: Path, source: str) -> dict:
             "the probe reported that it could not measure the property, so "
             f"nothing about it is established: {measured['unmeasurable']}"
         )
+    # A PROBE MUST NOT BE BELIEVED WHEN ITS OWN SETUP DID NOT HAPPEN.
+    #
+    # Three rounds have now produced three instances of one class -- a
+    # criterion returning a verdict when the state it was measuring was never
+    # reached:
+    #
+    #   an absent FIELD on the observed object defaulted to the kill value;
+    #   an absent KEY in the report defaulted to None, and `None != x` was the
+    #     violated branch;
+    #   the injected FAULT never fired, and the probe reported the value it
+    #     would have reported anyway.
+    #
+    # Each was repaired where it was found and each repair was blind to the
+    # next. `ProbeReport` withdraws on a key the probe DID NOT SEND; the third
+    # sends the key carrying a value it invented, so nothing downstream can see
+    # it. Only the probe knows whether its setup landed, so the probe says so
+    # and this refuses centrally on its behalf.
+    #
+    # A probe reports `{"preconditions": {"<name>": <bool>, ...}}` and any false
+    # entry is a withdrawal. Every criterion inherits it, including ones nobody
+    # has written yet.
+    if isinstance(measured, dict):
+        unmet = sorted(
+            name for name, met in (measured.get("preconditions") or {}).items()
+            if not met
+        )
+        if unmet:
+            raise PropertyNotViolated(
+                "the probe's own setup did not happen, so the state this "
+                "criterion measures was never reached: "
+                + ", ".join(unmet)
+            )
     # See `ProbeReport`: a key the probe did not send must not be answered for.
     return ProbeReport(measured) if isinstance(measured, dict) else measured
 
@@ -234,19 +285,29 @@ import refresh_governance_evidence as refresh
 target = refresh._unstaged_governed_paths
 
 real = subprocess.run
+delivered = []
 def unreachable(args, **kwargs):
-    if args and args[0] == "git":
+    # THE GATE IS A GUESS ABOUT HOW PRODUCTION SPELLS ITS ARGV, and a review
+    # measured what that costs: resolving the binary first
+    # (`shutil.which("git")`) makes args[0] a PATH, the gate never matches, the
+    # real subprocess runs, and the probe reports the value that scores a KILL
+    # -- for a change that removes no control and leaves the refusal
+    # byte-identical. So the gate now RECORDS whether it fired.
+    if args and str(args[0]).replace(chr(92), "/").rsplit("/", 1)[-1].startswith("git"):
+        delivered.append(True)
         raise FileNotFoundError(2, "not found", "git")
     return real(args, **kwargs)
 subprocess.run = unreachable
 
 try:
     returned = target()
-    print(json.dumps({"refused": False, "returned": repr(returned)[:80]}))
+    outcome = {"refused": False, "returned": repr(returned)[:80]}
 except SystemExit as exc:
-    print(json.dumps({"refused": True, "returned": str(exc)[:80]}))
+    outcome = {"refused": True, "returned": str(exc)[:80]}
 except Exception as exc:
-    print(json.dumps({"refused": False, "returned": "RAISED " + type(exc).__name__}))
+    outcome = {"refused": False, "returned": "RAISED " + type(exc).__name__}
+outcome["preconditions"] = {"git_call_intercepted": bool(delivered)}
+print(json.dumps(outcome))
 """
 
 

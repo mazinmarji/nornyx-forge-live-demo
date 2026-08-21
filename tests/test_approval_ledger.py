@@ -1160,7 +1160,7 @@ def _ledger_carrying(tmp_path: Path, name: str, *, writable_schema: bool) -> Pat
 def test_r1_a_hostile_ledger_object_cannot_enable_replay(
     tmp_path: Path, label: str, name: str, writable_schema: bool, must_refuse: bool
 ):
-    """Through the PRODUCTION path: `__init__` then `consume`, five times.
+    """FG27. Through the PRODUCTION path: `__init__` then `consume`, five times.
 
     Deliberately NOT a direct call to `_assert_ledger_structure`. A helper test
     proves the helper works; it cannot prove the production constructor invokes

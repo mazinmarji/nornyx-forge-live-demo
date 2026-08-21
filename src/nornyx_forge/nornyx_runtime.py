@@ -966,10 +966,58 @@ class ApprovalLedger:
         # "absent" and "unmarked" stop being ambiguous states that have to be
         # disambiguated by counting rows, and start being what they look like:
         # somebody removed it.
+        # ONLY FOR A LEDGER THIS CALL IS CREATING.
+        #
+        # This minted an absent mark at 0 whenever the file was missing, which
+        # directly contradicts `_recorded_consumptions`, where absence means
+        # REMOVAL. A review drove the contradiction with no adversary: a legacy
+        # ledger with rows and no mark correctly refused, the DOCUMENTED
+        # `provision-ledger` command then reported `"action": "left_unchanged"`
+        # and wrote a mark of 0, and the next restore released a spent grant --
+        # then every other forgotten grant in turn.
+        #
+        # A ledger that already exists has a history this call knows nothing
+        # about, so it may not assert one. Minting is for creation only; an
+        # existing ledger with a missing mark stays refused, and the refusal
+        # names `--reset-replay-history`, which deletes the ledger first and is
+        # therefore unaffected by this gate.
+        ledger_existed = location.is_file()
         ledger_mark = Path(str(location) + LEDGER_WATERMARK_SUFFIX)
-        if not ledger_mark.exists():
+        # A STRUCTURALLY INVALID MARK OVER AN EMPTY LEDGER IS REPAIRABLE.
+        #
+        # Minting was gated on absence alone, so the shape provision's OWN
+        # non-atomic create can leave -- `sqlite3.connect()` makes a 0-byte
+        # file before writing a page -- was never repaired. Measured on a
+        # ledger with ZERO history: 0-byte sidecar, documented provision, still
+        # 0 bytes, first-ever grant refused, and the only escape was a reset
+        # that invalidates every outstanding approval although nothing was ever
+        # spent. The asymmetry was backwards: the state the code calls REMOVAL
+        # was repaired permissively and the state a benign crash produces was
+        # not repaired at all.
+        #
+        # Repairing it is safe only where there is no history to contradict:
+        # an empty ledger has none by definition.
+        broken_mark = False
+        if ledger_mark.is_file() and ledger_existed is False:
+            broken_mark = True
+        elif ledger_mark.is_file():
             try:
-                with closing(sqlite3.connect(ledger_mark, timeout=30)) as mark:
+                with closing(sqlite3.connect(ledger_mark, timeout=30)) as check:
+                    check.execute("SELECT value FROM high_water").fetchall()
+            except sqlite3.Error:
+                with closing(sqlite3.connect(location, timeout=30)) as led:
+                    try:
+                        held = int(led.execute(
+                            "SELECT count(*) FROM consumed_approvals"
+                        ).fetchone()[0])
+                    except sqlite3.Error:
+                        held = 1
+                broken_mark = held == 0
+        if broken_mark or (not ledger_mark.exists() and not ledger_existed):
+            try:
+                staging = Path(str(ledger_mark) + ".provisioning")
+                staging.unlink(missing_ok=True)
+                with closing(sqlite3.connect(staging, timeout=30)) as mark:
                     mark.execute(
                         "CREATE TABLE IF NOT EXISTS high_water"
                         " (id INTEGER PRIMARY KEY CHECK (id = 1),"
@@ -980,6 +1028,10 @@ class ApprovalLedger:
                         " VALUES (1, 0)"
                     )
                     mark.commit()
+                # ATOMIC. Built under a temp name and moved into place, so no
+                # half-built shape is ever observable -- which is what made the
+                # 0-byte state reachable in the first place.
+                os.replace(staging, ledger_mark)
             except (sqlite3.Error, OSError) as exc:
                 raise NornyxRuntimeUnavailable(
                     f"{cls.UNWRITABLE}: the replay high-water mark beside "
@@ -1512,12 +1564,49 @@ class ApprovalLedger:
                 "recorded cannot be recovered."
             )
         try:
-            with closing(sqlite3.connect(self.watermark_path)) as conn:
-                tables = {
-                    str(row[0]) for row in conn.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+            with closing(
+                sqlite3.connect(self.watermark_path, timeout=30)
+            ) as conn:
+                # THE READER'S CONTENTION SETTINGS MATCH THE WRITER'S.
+                #
+                # `_record_consumptions` has had `timeout=30` and a 30s
+                # `busy_timeout` since it was written; this had neither, so a
+                # lock held elsewhere raised `sqlite3.OperationalError`, landed
+                # in the "not a database" branch and was diagnosed as a CORRUPT
+                # MARK -- a refusal whose named remedy destroys every
+                # outstanding approval. A review held a `BEGIN EXCLUSIVE` and
+                # measured a legitimate first-ever grant refused after 7.5s
+                # with LEDGER_CONTINUITY_UNKNOWN. Contention is not tampering.
+                conn.execute("PRAGMA busy_timeout=30000")
+                # THE SIDECAR IS AS LOAD-BEARING AS THE LEDGER AND HAD NO
+                # STRUCTURE CHECK AT ALL.
+                #
+                # `_assert_ledger_structure` closes the LEDGER's object set by
+                # (kind, name) and is re-run at claim time because "the next
+                # hostile object is the one nobody enumerated". None of it
+                # applied here. Measured: a trigger
+                # `BEFORE UPDATE ON high_water ... RAISE(IGNORE)` froze the mark
+                # at 0 across six consumptions, and a restore then released the
+                # spent grant.
+                objects = {
+                    (str(row[0]), str(row[1])) for row in conn.execute(
+                        "SELECT type, name FROM sqlite_master"
+                        " WHERE name NOT LIKE 'sqlite_%'"
                     )
                 }
+                hostile = sorted(
+                    f"{kind} {name!r}" for kind, name in objects
+                    if kind != "index" and not (kind == "table" and name == "high_water")
+                )
+                if hostile:
+                    raise LedgerContinuityUnknown(
+                        f"{self.watermark_path} carries objects the replay mark "
+                        f"model does not permit: {hostile}. A trigger or view "
+                        "here can silently freeze the mark while consumptions "
+                        "accumulate, which disables rollback detection without "
+                        "changing a single value a reader would look at."
+                    )
+                tables = {name for kind, name in objects if kind == "table"}
                 if "high_water" not in tables:
                     # UNMARKED IS ONLY A BOOTSTRAP OVER AN EMPTY LEDGER.
                     #
@@ -1551,7 +1640,36 @@ class ApprovalLedger:
                         "before it writes a page, so a crash during the "
                         "mark's own first write produces this shape."
                     )
-                row = conn.execute("SELECT value FROM high_water").fetchone()
+                # EXACTLY ONE ROW. `fetchone()` on a table built without
+                # `CHECK (id = 1)` silently answers the FIRST row, so
+                # `(1, 0), (2, 6)` reads as 0 -- the exact defect
+                # `_read_established_at` was repaired for (`len(rows) != 1 ->
+                # None`), un-repaired one file over.
+                marks = conn.execute("SELECT value FROM high_water").fetchall()
+                if len(marks) > 1:
+                    raise LedgerContinuityUnknown(
+                        f"{self.watermark_path} holds {len(marks)} high-water "
+                        "rows. Which one is the mark would depend on ordering, "
+                        "and the lowest of them disables rollback detection."
+                    )
+                row = marks[0] if marks else None
+        except sqlite3.OperationalError as exc:
+            # SEPARATED FROM "not a database" ON PURPOSE. A busy database is a
+            # database; retrying is the operator's remedy, not a fresh epoch.
+            if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                raise LedgerContinuityUnknown(
+                    f"{self.watermark_path} is locked by another process, so "
+                    "the recorded consumption count could not be read. This is "
+                    "CONTENTION, not damage: retry. Do not reset the replay "
+                    "history for it."
+                ) from exc
+            migrated = self._adopt_plaintext_mark()
+            if migrated is not None:
+                return migrated
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} exists and is neither a high-water "
+                f"database nor a legacy mark this ledger could convert: {exc}"
+            ) from exc
         except sqlite3.Error as exc:
             migrated = self._adopt_plaintext_mark()
             if migrated is not None:
@@ -1588,6 +1706,42 @@ class ApprovalLedger:
                 f"number ({row[0]!r}), so the recorded consumption count cannot "
                 "be read."
             ) from exc
+
+    # A RESERVE-BEFORE-INSERT MARK WAS TRIED HERE AND MEASURED WORSE.
+    #
+    # A review demonstrated that writing the mark AFTER the row forfeits history
+    # when a process dies between the two: terminating the child with `os._exit`
+    # after the commit gave rows=3 against mark=2, and a later restore then
+    # released an already-spent grant. Its prescribed fix was to advance the
+    # mark BEFORE the insert, so the only thing a crash can leave is a mark
+    # AHEAD of the rows -- a false refusal, which is the safe direction.
+    #
+    # Implemented and measured, that fix REFUSES LEGITIMATE GRANTS. Six
+    # concurrent distinct consumptions on a freshly provisioned ledger:
+    #
+    #     LEDGER_ROLLED_BACK: this ledger holds 0 consumption records but 1
+    #     were recorded against it
+    #
+    # in 1 of 12 trials. One consumer reserves, a second reads the raised mark
+    # before the first has inserted, and the rollback comparison fires on a
+    # ledger that was never rolled back. "Mark ahead is the safe direction" is
+    # true of a CRASH and false of ORDINARY CONCURRENCY, because the check
+    # cannot tell a reservation in flight from history that vanished.
+    #
+    # A tolerance band is not available: a `mark - rows <= 1` allowance
+    # reintroduces exactly one replayable grant, which is the defect.
+    #
+    # WHAT WOULD CLOSE IT, and it is not done here: read the row count and the
+    # mark, reserve, insert and record ALL under the ledger's own exclusive
+    # transaction (`BEGIN IMMEDIATE`), so no consumer can observe the pair in a
+    # partial state. `_session` takes no exclusive lock today, so that is a
+    # restructuring of `consume` rather than an added call, and it is recorded
+    # as the next step rather than attempted alongside everything else.
+    #
+    # UNTIL THEN THIS IS AN OPEN, BOUNDED RESIDUAL: a process death between the
+    # consumption row committing and the mark write leaves one grant
+    # unprotected against a subsequent ledger restore. It is narrow, it needs
+    # no adversary, and it is stated here rather than defended.
 
     def _record_consumptions(self, count: int) -> None:
         """Advance the mark, never lower it -- ATOMICALLY.

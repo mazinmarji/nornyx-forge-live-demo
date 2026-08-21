@@ -74,7 +74,7 @@ def test_the_shipped_case_entry_can_receive_an_approval():
 
 
 def test_the_flow_passes_the_grant_to_the_boundary():
-    """Possession must travel. A parameter that is accepted and dropped is worse
+    """FG32. Possession must travel. A parameter that is accepted and dropped is worse
     than none, because it looks like a route."""
     import ast  # noqa: PLC0415
 

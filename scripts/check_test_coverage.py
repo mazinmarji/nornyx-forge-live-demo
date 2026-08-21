@@ -123,7 +123,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 36,
+    "tests/test_recorded_measurements.py": 130,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -196,13 +196,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # checkout with src/ and scripts/ emptied) and requires each to
     # WITHDRAW. It found two probes -- H07 and H15 -- that three review
     # rounds and an AST sweep had all missed.
-    "tests/test_probe_withdrawal.py": 14,
+    "tests/test_probe_withdrawal.py": 15,
     # The sidecar state space driven through `consume`, plus the
     # controls. A review found the previous repair to this area
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 23,
+    "tests/test_ledger_continuity.py": 30,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -245,7 +245,25 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # high-water sidecar's whole state space through `consume`, and the round-6
 # additions to the two claim corpora. 1340 leaves 83 of slack, the same
 # deliberate margin as the last three raises.
-MINIMUM_COLLECTED = 1340
+#: How many CASES each declared skip identity may contribute. Anything not
+#: named here may contribute ONE -- an unparametrised test.
+#:
+#: `EXPECTED_SKIPS` is keyed on the identity with `[param]` stripped, so
+#: without this a single entry exempted an unbounded number of cases. A review
+#: drove forty skipping parameter sets of one declared identity through the
+#: real `classify` and measured `unexpected=[]` with both floors padded by
+#: forty.
+EXPECTED_SKIP_CASES = {
+    "tests/test_brd_evidence_shape.py::test_the_partially_recorded_fields_do_not_get_worse": 4,
+    "tests/test_brd_evidence_shape.py::test_the_universally_recorded_fields_stay_universal": 3,
+}
+
+# Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the
+# growth is not new tests but newly VISIBLE ones -- selection now uses the
+# container-independent recogniser, so documents whose transcripts sit in
+# blockquotes, bullets and tables enter the parametrised sweep that was only
+# ever handed fenced ones. 1450 leaves 81 of slack.
+MINIMUM_COLLECTED = 1450
 
 
 def band(collected: int) -> int:
@@ -446,6 +464,7 @@ def classify(
     # that kept one test and lost forty.
     seen_modules: Counter[str] = Counter()
     skipped_identities: set[str] = set()
+    skipped_cases: Counter[str] = Counter()
     allowed = 0
     total = 0
     for case in root.iter("testcase"):
@@ -467,10 +486,20 @@ def classify(
         # Not silently corrected, because excluding them would drop the
         # collected total by the whole declared-skip count and require every
         # floor to move at once, which is a change that should be argued for in
-        # its own diff rather than smuggled into a P3 sweep. What closes the
-        # hole meanwhile is that EVERY skip must be DECLARED in EXPECTED_SKIPS
-        # and the declaration list is pinned: converting a test into a skip
-        # requires an entry, and an entry is a diff.
+        # its own diff rather than smuggled into a P3 sweep.
+        #
+        # THE MITIGATION THAT USED TO BE CLAIMED HERE WAS FALSE. It read: "What
+        # closes the hole meanwhile is that EVERY skip must be DECLARED in
+        # EXPECTED_SKIPS and the declaration list is pinned: converting a test
+        # into a skip requires an entry, and an entry is a diff." A review
+        # measured that `node_id` strips `[param]`, so ONE declared identity
+        # exempts EVERY parameter set of it -- forty skipping parameters of an
+        # already-declared test needed zero new entries, padded both floors, and
+        # touched no declaration.
+        #
+        # So the COUNT is pinned too, per identity, below. Growing a
+        # parametrisation into more skips is now a diff, which is what the
+        # sentence above claimed and did not deliver.
         total += 1
         seen_modules[node_id(case).split("::", 1)[0]] += 1
         skipped = case.find("skipped")
@@ -501,8 +530,22 @@ def classify(
             continue
         message = (skipped.get("message") or "") + (skipped.text or "")
         if node_id(case) in EXPECTED_SKIPS:
+            identity = node_id(case)
+            skipped_cases[identity] += 1
+            permitted = EXPECTED_SKIP_CASES.get(identity, 1)
+            if skipped_cases[identity] > permitted:
+                # THE DECLARATION COVERS A COUNT, NOT AN IDENTITY. Growing a
+                # parametrisation into more skipped cases than were declared is
+                # a diff now, which is what the comment above claimed and did
+                # not deliver.
+                unexpected.append(
+                    f"{identity} — skipped {skipped_cases[identity]} cases "
+                    f"against a declared {permitted}; raise the entry in "
+                    "EXPECTED_SKIP_CASES or stop skipping the new parameters"
+                )
+                continue
             allowed += 1
-            skipped_identities.add(node_id(case))
+            skipped_identities.add(identity)
             continue
         unexpected.append(f"{node_id(case)} — {message.strip()}")
     return (

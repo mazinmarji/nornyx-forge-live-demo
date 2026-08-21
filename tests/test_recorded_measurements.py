@@ -231,6 +231,8 @@ from claim_vocabulary import (  # noqa: E402
 
 _HTML_TAG = re.compile("<[^>]+>")
 _BLOCKQUOTE = re.compile("^[ " + chr(9) + "]*>+[ ]?", re.M)
+#: A bullet, an ordered-list number, or a heading hash at the start of a line.
+_LIST_MARKER = re.compile(r"^[ 	]*(?:[-*+]|[0-9]+[.)]|#{1,6})[ 	]+")
 
 
 def _normalised(text: str) -> list:
@@ -250,6 +252,24 @@ def _normalised(text: str) -> list:
         line = raw.expandtabs(4)
         line = _BLOCKQUOTE.sub("", line)
         line = _HTML_TAG.sub(" ", line)
+        # A LIST MARKER AND EMPHASIS ARE CONTAINERS. `_FIELD_LINE` needs a
+        # letter at the first non-blank position, so `- status  pass`,
+        # `1. status  pass` and `**assurance_state**  independently_inspected`
+        # were all invisible -- and a bulleted pair is the commonest way this
+        # repository's own documents present one.
+        line = _LIST_MARKER.sub("", line)
+        line = line.replace("**", "").replace("__", "")
+        # A LINE CARRYING INLINE CODE IS PROSE, NOT A RECORD.
+        #
+        # Making list markers transparent exposed narrative to the field
+        # parser, and narrative quotes code: "a cold observation reports
+        # `compromised / authorizes=False` while the warm context still
+        # reports..." parses as key `authorizes`, value `False` under the `=`
+        # separator. A real transcript row does not contain a backtick -- the
+        # fence markers are their own lines -- so a backtick is the signal that
+        # this line is ABOUT a value rather than being one.
+        if "`" in line:
+            line = ""
         if line.lstrip().startswith("|"):
             # A markdown table row is a key/value pair written with pipes.
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
@@ -272,6 +292,13 @@ def _transcript_runs(text: str) -> list:
         match = _FIELD_LINE.match(line)
         if match:
             current.append((number, match.group(1).strip(), match.group(2).strip()))
+            continue
+        # A TABLE'S OWN SEPARATOR MUST NOT END ITS RUN. `| --- | --- |`
+        # normalises to nothing, and a two-column table with ONE data row then
+        # produced two runs of length 1 and was discarded entirely -- so every
+        # single-row table was invisible to the row rule. The separator is
+        # punctuation, not a break in the record.
+        if not line.strip():
             continue
         if len(current) >= 2:
             runs.append(current)
@@ -374,7 +401,20 @@ def _carries_a_measurement_claim(text: str) -> bool:
     nothing was looking, which is the same defect wearing the repair as a
     disguise. One recogniser now serves both, so the two cannot drift again.
     """
-    return bool(ANCHOR.search(text) or _blocks(text))
+    # AND `_transcript_runs`, which is the container-INDEPENDENT one.
+    #
+    # Round 6 added a THIRD recogniser and wired selection to the SECOND. So a
+    # transcript in a blockquote, a bullet list or a table was recognised by
+    # `_transcript_runs` and never handed to the only test that calls it: a
+    # review planted a document asserting a full independent inspection, a
+    # granted production approval and three named reviewers, measured
+    # `governance_docs -> True` but `in DOCUMENTS -> False`, and got 140 tests
+    # passing over it.
+    #
+    # The docstring above already says what happened -- "it had moved up one
+    # level, to the place nothing was looking" -- and it was describing the
+    # code as it then stood, one level further up.
+    return bool(ANCHOR.search(text) or _blocks(text) or _transcript_runs(text))
 
 
 DOCUMENTS = sorted(
@@ -613,7 +653,7 @@ def test_r4_an_anchored_block_carries_only_verifiable_fields(relative: str):
 
 
 def test_r4_a_fabricated_field_inside_an_anchored_block_is_refused():
-    """The counterexample a review used, pinned."""
+    """FG30. The counterexample a review used, pinned."""
     forged = _SPECIMEN_FORGED
     blocks = _blocks(forged)
     assert len(blocks) == 1, "the specimen no longer parses as a transcript"

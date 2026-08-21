@@ -165,6 +165,38 @@ def _directory(side: Path) -> None:
     side.mkdir(exist_ok=True)
 
 
+def _hostile_trigger(side: Path) -> None:
+    """A trigger that silently discards every advance of the mark.
+
+    The LEDGER's object set is closed by `_assert_ledger_structure` and re-run
+    at claim time, because "the next hostile object is the one nobody
+    enumerated". None of that applied to the sidecar, which carries exactly as
+    much weight for the replay decision. A review froze the mark at 0 across six
+    consumptions this way and then released a spent grant from a restore.
+    """
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute(
+            "CREATE TRIGGER freeze BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+
+def _two_marks(side: Path) -> None:
+    """A `high_water` table rebuilt WITHOUT `CHECK (id = 1)`, holding two rows.
+
+    `fetchone()` answers the first, so `(1, 0)` beside `(2, 6)` reads as 0 --
+    the exact defect `_read_established_at` was repaired for, un-repaired one
+    file over.
+    """
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("DROP TABLE IF EXISTS high_water")
+        conn.execute("CREATE TABLE high_water (id INTEGER, value INTEGER)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, 0)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (2, 6)")
+        conn.commit()
+
+
 SIDECAR_STATES = [
     ("absent", _absent),
     ("zero length", _zero_length),
@@ -176,6 +208,8 @@ SIDECAR_STATES = [
     ("plain text that is not a number", _plaintext_garbage),
     ("torn SQLite header", _torn_bytes),
     ("sidecar is a directory", _directory),
+    ("a trigger freezing the mark", _hostile_trigger),
+    ("two high_water rows", _two_marks),
 ]
 
 
@@ -218,28 +252,51 @@ def test_no_sidecar_state_permanently_bricks_a_healthy_ledger(
     work from every state -- which is also the only thing that keeps the
     refusals above from being free.
     """
-    path = tmp_path / "ledger.sqlite3"
+    from nornyx_forge.nornyx_runtime import approval_ledger_path  # noqa: PLC0415
+
+    path = approval_ledger_path(tmp_path.resolve())
+    path.parent.mkdir(parents=True, exist_ok=True)
     ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
     side = path.with_name(path.name + ".highwater")
     assert _spend(ApprovalLedger(path), 0)
     install(side)
 
-    # The reset, performed the way the CLI performs it: remove both artifacts
-    # by shape and re-provision.
-    for target in (path, side, side.with_name(side.name + ".migrating")):
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
-        for suffix in ("-wal", "-shm"):
-            sibling = target.with_name(target.name + suffix)
-            if sibling.exists():
-                sibling.unlink()
-    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    # THE SHIPPED COMMAND, NOT A COPY OF IT.
+    #
+    # This reimplemented the reset inline, under a docstring saying the reset
+    # "must actually work from every state -- which is also the only thing that
+    # keeps the refusals above from being free". A review mutated the real
+    # command three ways -- `rmtree` back to `unlink` only, the `finally`
+    # removed, and the entire body replaced by `pass` -- and this module stayed
+    # at 25 passed for all three. A control that reimplements what it controls
+    # is FG26, and it was committed in the module written to answer "no
+    # executing proof".
+    from typer.testing import CliRunner  # noqa: PLC0415
 
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path),
+              "--reset-replay-history"],
+    )
+    assert result.exit_code == 0, (
+        f"sidecar state {label!r}: the documented reset command failed: "
+        + str(result.exit_code) + " " + str(result.output)
+    )
+
+    # A GRANT ISSUED AFTER THE RESET, because the reset mints a NEW EPOCH and
+    # every outstanding grant is supposed to predate it. The previous version
+    # of this test re-provisioned inline with the fixture's pinned
+    # `established_at`, which kept the epoch still and hid that entirely -- the
+    # first thing driving the real command surfaced.
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    later = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
     claimed, reason = ApprovalLedger(path).consume(
-        "fp-fresh", "rd-fresh", at=NOW,
-        grant_issued_at=GRANT_ISSUED, approval_id="ACT-FRESH",
+        "fp-fresh", "rd-fresh", at=later,
+        grant_issued_at=later, approval_id="ACT-FRESH",
     )
     assert claimed is True, (
         f"sidecar state {label!r}: after the documented reset a FRESH grant "
@@ -391,3 +448,92 @@ def test_concurrent_first_time_consumers_are_not_refused(tmp_path: Path) -> None
         f"ledger: {refused}"
     )
     assert _rows(path) == 6
+
+
+def test_provisioning_an_existing_ledger_does_not_mint_a_mark(tmp_path: Path) -> None:
+    """The writer must not undo what the reader was taught.
+
+    `_recorded_consumptions` treats an absent mark as REMOVAL. `provision`
+    minted an absent mark at 0 whatever the ledger beside it held, so the state
+    the reader calls tampering was the state the writer called first-time
+    setup -- and the writer runs first.
+
+    A review drove it with no adversary and no deletion, on the legacy-upgrade
+    path the source itself names: a ledger with rows and no mark correctly
+    refused; the DOCUMENTED `provision-ledger` command then reported
+    `"action": "left_unchanged"` and wrote a mark of 0; the next restore
+    released an already-spent grant, and then every other forgotten grant in
+    turn.
+
+    The refusal text warns that deleting the mark by hand would disable the
+    check. The command one flag away did the same thing and reported `pass`.
+    """
+    path = tmp_path / "legacy.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0)
+    side = path.with_name(path.name + ".highwater")
+    side.unlink()
+
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+
+    assert not side.exists(), (
+        "re-provisioning an EXISTING ledger created a replay high-water mark. "
+        "This call knows nothing about the history that ledger holds, so a "
+        "mark it writes asserts a history it cannot have measured -- and a "
+        "mark of 0 over a used ledger disables rollback detection entirely."
+    )
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-0", "rd-0", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert claimed is False, (
+        "the already-spent grant released after the documented provisioning "
+        f"command: {reason!r}"
+    )
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+
+
+def test_provisioning_a_new_ledger_still_mints_its_mark(tmp_path: Path) -> None:
+    """The control. Without it the assertion above is satisfied by never
+    minting at all, which would reopen the concurrent-first-consumer window
+    that minting at provision time exists to close."""
+    path = tmp_path / "fresh.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+    assert side.exists(), "a NEW ledger was provisioned without its mark"
+    assert ApprovalLedger(path)._recorded_consumptions() == 0
+    assert _spend(ApprovalLedger(path), 0) is True
+
+
+def test_the_mark_cannot_be_lowered_deterministically(tmp_path: Path) -> None:
+    """The monotonicity guard, proved without a race.
+
+    `test_a21_the_mark_keeps_up_with_overlapping_consumptions` is the only
+    proof this guard had, and a review measured that removing the guard
+    (`UPDATE ... WHERE value < ?` -> `UPDATE ...`) is detected in 3 RUNS OF 10.
+    A security guard whose regression ships green seven times in ten is not
+    proved.
+
+    The concurrent test measures "the mark KEEPS UP", which needs a race. This
+    measures "the mark is NEVER LOWERED", which does not: set it high, ask for
+    lower, require it to refuse. Both are worth having; only one of them has to
+    be nondeterministic.
+    """
+    path = tmp_path / "monotone.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    ledger._record_consumptions(9)
+    assert ledger._recorded_consumptions() == 9
+
+    ledger._record_consumptions(3)
+    assert ledger._recorded_consumptions() == 9, (
+        "the recorded consumption count was LOWERED. A mark that can go down "
+        "is a mark a restore can rewrite, and the rollback check compares "
+        "against it."
+    )
+    ledger._record_consumptions(12)
+    assert ledger._recorded_consumptions() == 12, (
+        "the mark refused to RISE, so the guard above is satisfied by a setter "
+        "that never writes at all"
+    )

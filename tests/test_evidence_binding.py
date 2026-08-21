@@ -198,7 +198,7 @@ def test_the_generator_never_overwrites_the_committed_baseline():
 
 @pytest.mark.parametrize("flag", ["--no-baseline"])
 def test_the_baseline_can_be_defeated_for_adversarial_runs(flag: str):
-    """Grandfathering must be switchable off, or no regression can be trusted."""
+    """FG22. Grandfathering must be switchable off, or no regression can be trusted."""
     source = CHECKER.read_text(encoding="utf-8")
     assert flag in source, (
         f"{flag} is gone, so every adversarial range is silently excused by the "

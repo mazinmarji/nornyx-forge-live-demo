@@ -292,7 +292,7 @@ XFAIL_SPECIMENS = [
 def test_the_marker_detector_reads_code_and_not_prose(
     label: str, source: str, expected: bool
 ):
-    """Both directions, because a detector that never fires also never fails.
+    """FG21. Both directions, because a detector that never fires also never fails.
 
     The textual predecessor flagged `mutation_workspace.py` for a docstring
     sentence about xfail semantics. Exempting that file would have passed the

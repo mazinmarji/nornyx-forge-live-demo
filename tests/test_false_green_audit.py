@@ -1035,3 +1035,44 @@ def test_the_mechanism_map_names_only_known_classes():
     assert unknown == [], (
         f"the mechanism map points at classes that do not exist: {unknown}"
     )
+
+
+def test_every_false_green_owner_names_the_class_it_owns():
+    """An owner must SAY which class it proves, or re-pointing is invisible.
+
+    The idents are pinned by set -- FG14's lesson, applied correctly. The
+    OWNERS were pinned only by cardinality: module exists, node defined exactly
+    once, at least one assertion, owners distinct. A review re-pointed FG29 --
+    "a violated property, when the mutant crashed instead of deciding" -- at
+    `tests/test_skip_gate.py::test_a_clean_report_passes` and measured BOTH
+    inventory tests still PASSED. Any 33 distinct singly-defined asserting
+    nodes satisfy the audit, and `assert True` satisfies the AST counter.
+
+    That is the identity-versus-count substitution one level up from where it
+    was fixed. An owner whose source carries its own class id cannot be
+    silently re-pointed at an unrelated test.
+    """
+    import ast  # noqa: PLC0415
+
+    unnamed = []
+    for item in INVENTORY:
+        module, _, node = item.owner.partition("::")
+        source = (ROOT / module).read_text(encoding="utf-8")
+        function = next(
+            (found for found in ast.walk(ast.parse(source))
+             if isinstance(found, ast.FunctionDef) and found.name == node),
+            None,
+        )
+        if function is None:
+            unnamed.append(f"{item.ident}: {item.owner} does not exist")
+            continue
+        segment = ast.get_source_segment(source, function) or ""
+        if item.ident.lower() in node.lower() or item.ident in segment:
+            continue
+        unnamed.append(f"{item.ident}: {item.owner} never names it")
+
+    assert unnamed == [], (
+        "these catalogue entries point at a test that says nothing about the "
+        "class it is supposed to prove, so the entry could be re-pointed at "
+        f"any asserting node and this audit would stay green: {unnamed}"
+    )

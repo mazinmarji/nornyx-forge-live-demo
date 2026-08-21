@@ -68,7 +68,7 @@ OTHER_FAILED = _case(
 
 
 def test_case1_an_unrelated_node_failing_is_not_a_kill(tmp_path: Path):
-    """The named node PASSED. Something else broke. That is not evidence.
+    """FG18. The named node PASSED. Something else broke. That is not evidence.
 
     This is the defect in its purest form: the campaign would record the
     control as removed while the proof of that control still passes.
@@ -140,7 +140,7 @@ def test_case5_a_missing_named_node_is_not_a_kill(tmp_path: Path):
 def test_case6_the_named_node_failing_for_the_wrong_reason_is_not_a_kill(
     tmp_path: Path,
 ):
-    """CORRECT NODE, WRONG REASON is still a false kill.
+    """FG19. CORRECT NODE, WRONG REASON is still a false kill.
 
     Exact-node attribution alone permits it: the node fails, in the call phase,
     with a genuine assertion -- about something the attack never touched. This

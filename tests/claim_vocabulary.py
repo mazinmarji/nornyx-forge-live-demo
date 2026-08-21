@@ -61,8 +61,20 @@ ASSURANCE_FIELDS = frozenset({
 #: sayable without an anchor.
 ABSENT_SHAPES = frozenset({
     "false", "[]", "{}", "0", "none", "null", "not_performed", "not_granted",
-    "not_independently_inspected", "absent", "unavailable", "no", "",
+    "not_independently_inspected", "absent", "unavailable", "no",
+    # `""` IS NOT HERE ANY MORE. It was, and it was the mechanism of a
+    # demonstrated forgery: any value that could not be parsed collapsed to the
+    # empty string and was then read as "this property is absent". An
+    # unreadable value on a known field is a CLAIM, which is what
+    # `find_overclaims`' own no-recognisable-value branch already concluded --
+    # the divergence between the two was the defect.
     "deterministic_fallback", "not_derived_here", "not_established",
+    # `assurance_mode: autonomous_demonstration` is what the shipped evidence
+    # emits, and it is the standing truth here -- an autonomous run is exactly
+    # what this is. It was missing, and BOOTSTRAP.md was flagged for stating it.
+    # A review asked directly what honest value the system emits that is not in
+    # this set; this was one.
+    "autonomous_demonstration",
     # A document REPORTING A FAILURE is disclosing, not claiming.
     "fail", "failed", "compromised", "unverifiable", "invalid",
 })
@@ -70,6 +82,61 @@ ABSENT_SHAPES = frozenset({
 #: Fields where EMPTY is the reassuring value, so empty is the claim and a
 #: count is the disclosure. `problems []` asserts; `problems 12` admits.
 EMPTY_IS_THE_CLAIM = frozenset({"problems", "stale_artifacts"})
+
+#: NEGATIVELY NAMED FIELDS, by morpheme rather than by name.
+#:
+#: `EMPTY_IS_THE_CLAIM` listed two members of a class that cannot be
+#: enumerated: polarity is a property of the NAME, and names are unbounded --
+#: the same unboundedness the value inversion was adopted to escape. A review
+#: measured six invented ones passing untouched:
+#:
+#:     not_independently_inspected  false
+#:     outstanding_approvals        0
+#:     missing_attestations         []
+#:     assurance_gap                none
+#:     blocking_findings            []
+#:     unreviewed_changes           0
+#:
+#: `not_independently_inspected false` is the sharpest: `false` is an absent
+#: shape, and under a negatively named field it is the AFFIRMATIVE.
+#:
+#: Morphemes close the class in the direction that matters. A field whose name
+#: says it counts something MISSING, OUTSTANDING or BLOCKING is claiming
+#: something when it reports none.
+NEGATION_MORPHEMES = (
+    "not_", "no_", "missing", "outstanding", "gap", "blocking",
+    "unmet", "unresolved", "unreviewed", "pending", "remaining", "deficien",
+)
+
+
+def reads_as_negative(key: str) -> bool:
+    """Does this field's NAME say that empty is the good answer?
+
+    A NEGATION MORPHEME AND AN ASSURANCE ONE. The morpheme alone reaches too
+    far: a mutation-campaign result table lists `SURVIVED 0` beside
+    `UNPROVEN 0`, and a rule keyed on negation flagged the second and not the
+    first -- the same kind of claim, picked apart by which word it happened to
+    use. Flagging arbitrary members of a class is what this module exists to
+    stop doing.
+
+    Requiring both keeps the cases a review actually built --
+    `not_independently_inspected`, `outstanding_approvals`,
+    `missing_attestations`, `assurance_gap`, `unreviewed_changes` -- and leaves
+    unrelated counters alone.
+
+    THE BOUND, stated: a negatively named field with NO assurance morpheme is
+    not reached. `blocking_findings` and `unmet_requirements` are real cases
+    that fall in that gap. Closing it would mean deciding polarity for every
+    identifier in every table, which is the unbounded problem again.
+    """
+    lowered = key.lower()
+    if lowered in EMPTY_IS_THE_CLAIM:
+        return True
+    negated = any(
+        lowered.startswith(root) or ("_" + root) in lowered
+        for root in NEGATION_MORPHEMES
+    )
+    return negated and any(root in lowered for root in ASSURANCE_ROOTS)
 
 #: Values that assert an assurance verdict, used for keys this system does not
 #: emit -- an invented field name carrying one of these is still a claim.
@@ -93,17 +160,48 @@ ASSURANCE_ROOTS = (
 )
 
 
-def settles_to(value: str) -> str:
-    """The comparable head of a displayed value.
+#: A withdrawal marker, removed by EXACT match. `value.split("[")[0]` was used
+#: for this and did something else entirely: it discarded the WHOLE value when
+#: the value STARTED with a bracket. `["alice","bob","carol"]` became `""`, and
+#: `""` was a member of `ABSENT_SHAPES`, so every bracketed value on every
+#: field answered "this property is absent". `[...]` is exactly how `--verify`
+#: renders its list-valued fields, so the forger's rendering was the tool's own.
+_MARKERS = ("[FALSE]", "[WITHDRAWN]")
 
-    The first whitespace-delimited token, without trailing punctuation and
-    without a withdrawal marker. A real row reads
-    `status  fail          (claimed: pass)`; the parenthetical records what a
-    withdrawn document had asserted, and folding it into the value made an
-    honest disclosure look like a claim.
+
+def tokens_of(value: str) -> list:
+    """Every comparable token in a displayed value, in order."""
+    import re as _re  # noqa: PLC0415
+
+    settled = value
+    for marker in _MARKERS:
+        settled = settled.replace(marker, " ")
+    # A PARENTHETICAL ANNOTATES THE VALUE; IT IS NOT THE VALUE. A real row
+    # reads `status  fail          (claimed: pass)` -- a withdrawn document
+    # recording what it HAD asserted. Reading `pass` out of that annotation
+    # turns an honest retraction into a claim, which is the direction this
+    # module's siblings call worse than a missed claim.
+    settled = _re.sub(r"\([^)]*\)", " ", settled)
+
+    return [
+        token.strip(".,;:\"'`").lower()
+        for token in _re.findall(r"\[\]|\{\}|[A-Za-z_][A-Za-z0-9_.-]*|[0-9]+", settled)
+    ]
+
+
+def settles_to(value: str) -> str:
+    """The FIRST comparable token of a displayed value.
+
+    Retained because some callers want the head specifically. It is no longer
+    what decides a claim -- see `is_a_claim`. A review wrote
+
+        production_approval   not_granted at R3; granted 2026-08-18 by the board
+
+    where the head is an absent shape and everything a human reads comes after
+    it. Judging by the head alone admitted five such rows in one fence.
     """
-    head = value.split("[")[0].strip()
-    return (head.split() or [""])[0].strip(".,;:\"'`").lower()
+    found = tokens_of(value)
+    return found[0] if found else ""
 
 
 def is_a_claim(key: str, value: str, *, fields=None) -> bool:
@@ -114,11 +212,39 @@ def is_a_claim(key: str, value: str, *, fields=None) -> bool:
     note on `ASSURANCE_FIELDS`.
     """
     known = CLAIM_FIELDS if fields is None else fields
-    settled = settles_to(value)
-    if key in EMPTY_IS_THE_CLAIM and key in known:
-        return settled in {"[]", "{}", "0", "none", ""}
+    found = tokens_of(value)
+    if reads_as_negative(key):
+        # Empty is the claim here, whatever the field is called and whether or
+        # not this system emits it. An invented `unmet_requirements []` asserts
+        # exactly what `problems []` asserts.
+        return bool(found) and all(
+            token in {"[]", "{}", "0", "none", "false", ""} for token in found
+        )
     if key in known:
-        return settled not in ABSENT_SHAPES
-    return settled in VERDICT_VALUES and any(
-        root in key.lower() for root in ASSURANCE_ROOTS
+        # ANY TOKEN, NOT THE HEAD. A claim is present if the value asserts
+        # anywhere in it; the value is honest only if EVERY token is an absent
+        # shape. Comparing the head alone let an author write an honest head
+        # and append the claim, and an empty value (which is what a discarded
+        # bracketed list became) read as absent.
+        if any(token in VERDICT_VALUES for token in found):
+            return True
+        return not (found and all(token in ABSENT_SHAPES for token in found))
+    # THE HEAD NOUN, matching what `find_overclaims` asks.
+    #
+    # This matched the root against the WHOLE key while the sibling guard
+    # matched it against the head noun, so the single shared constant was asked
+    # two different questions by the two guards it exists to keep in step --
+    # the drift this module was written to prevent, inside the module itself.
+    # Measured: `ASSURANCE_MOVED true` and `trusted_approvers_loaded=true` were
+    # claims to one guard and mechanism to the other.
+    #
+    # An English compound is named by its LAST element: `human_approval` is an
+    # approval, `assurance_moved` is a movement. THE BOUND, restated honestly
+    # because the previous wording understated it: the assurance morpheme must
+    # be the FINAL segment of the identifier, so `approval_status: granted` is
+    # not reached here. It is reached by the transcript rule when it sits in a
+    # run, and that gap is real.
+    head_noun = key.lower().rsplit("_", 1)[-1]
+    return any(token in VERDICT_VALUES for token in found) and any(
+        root in head_noun for root in ASSURANCE_ROOTS
     )

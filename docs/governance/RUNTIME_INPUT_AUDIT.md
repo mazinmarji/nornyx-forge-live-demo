@@ -111,9 +111,17 @@ Both need write access to the runtime directory, which is the exposure this
 section already described. What changed is that the ordinary operator action —
 restore the ledger file from a backup — now fails closed.
 
+One residual is stated rather than defended: a process death between a
+consumption row committing and the mark write beside it leaves that one
+grant unprotected against a later restore. The two are separate files and
+SQLite's multi-database atomicity does not hold in WAL mode, so ordering
+is the only lever; advancing the mark first was implemented and measured
+refusing legitimate concurrent grants, and was withdrawn. The source
+records the measurement and the design that would close it.
+
 | Scenario | Before | Now |
 | --- | --- | --- |
-| Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `GRANT_PREDATES_LEDGER`, a fresh human approval required |
+| Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `LEDGER_ROLLED_BACK` — and a **fresh** approval is refused too, because the mark beside the deleted ledger still records the history that is gone. The route out is `provision-ledger --reset-replay-history`. This row previously promised `GRANT_PREDATES_LEDGER` with a fresh approval working; a review measured that it does not. |
 | Ledger **restored from a backup**, spent grant presented | released it again, once per restore | `LEDGER_ROLLED_BACK` |
 | Redeploy onto ephemeral storage | silently empty history | outstanding grants refused until reissued |
 | Approval carrying no issuance instant | continuity check skipped entirely | `GRANT_ISSUANCE_UNKNOWN` |

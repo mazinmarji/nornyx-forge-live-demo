@@ -878,7 +878,7 @@ def test_the_request_digest_covers_exactly_what_the_comment_says():
 
 
 def test_ci_shell_propagates_pipeline_failure():
-    """A piped assurance command must not be able to report a false green.
+    """FG20. A piped assurance command must not be able to report a false green.
 
     GitHub's IMPLICIT shell for `run:` is `bash -e`, which does NOT set
     pipefail. `pytest ... | tail -3` therefore reports `tail`'s status, and a

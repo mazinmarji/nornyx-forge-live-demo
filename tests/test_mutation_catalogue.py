@@ -848,7 +848,7 @@ def test_a_cumulative_attack_cannot_be_recorded_as_non_compound():
 
 
 def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
-    """MINIMALITY MEASURED, not inferred from the edit count.
+    """FG25. MINIMALITY MEASURED, not inferred from the edit count.
 
     An extra edit could be scaffolding rather than a second enforcement route,
     so `len(extra_mutations) > 0` is a reason to CHECK minimality, never a
