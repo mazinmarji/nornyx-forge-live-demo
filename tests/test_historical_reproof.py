@@ -929,16 +929,39 @@ def test_removing_the_control_revives_the_defect(item: SecurityClass, tmp_path: 
     # directly, so no message text, code name, or assertion wording can satisfy
     # it. A criterion that cannot be measured raises rather than reading as
     # "not violated".
-    if item.authoritative_property is not None:
-        if not item.authoritative_property.violated_in(tree):
-            pytest.fail(
-                item.ident + ": INVALID_PROPERTY_ATTRIBUTION -- the node failed "
-                "and the mutant is valid, but the attack's authoritative "
-                "property (" + item.authoritative_property.ident + ") is NOT "
-                "violated in the mutant tree, measured by executing it. The "
-                "failure is about something else, so it is not evidence that "
-                "this control was removed."
-            )
+    # ATTRIBUTION IS REQUIRED, NOT OPTIONAL.
+    #
+    # This read `if item.authoritative_property is not None:`, so an attack
+    # carrying NO criterion skipped attribution entirely and was credited on
+    # the victim test failing alone. Measured at runner level on the untouched
+    # code: the same attack, same mutation, same node, with only the criterion
+    # removed, was still credited -- `DID NOT RAISE`. Omitting the semantic
+    # attribution changed the verdict, which is precisely what the criterion
+    # exists to prevent.
+    #
+    # It was latent rather than live -- `DIRECT` happened to hold only attacks
+    # that carry one -- and "it happens to be fine right now" is not a
+    # property. Five of the nineteen registered attacks have no criterion.
+    if item.authoritative_property is None:
+        pytest.fail(
+            item.ident + ": NO_AUTHORITATIVE_PROPERTY -- this attack registers "
+            "a mutation and a victim test but no machine-verifiable violation "
+            "criterion, so a kill here would mean 'a named test failed', not "
+            "'the security property was broken'. A failure about a diagnostic "
+            "name satisfies every earlier step in this protocol. Register an "
+            "AuthoritativeProperty with an executable `violated_in`; the "
+            "`prop`, `control` and `expect` fields are prose and may not be "
+            "promoted into one."
+        )
+    if not item.authoritative_property.violated_in(tree):
+        pytest.fail(
+            item.ident + ": INVALID_PROPERTY_ATTRIBUTION -- the node failed "
+            "and the mutant is valid, but the attack's authoritative "
+            "property (" + item.authoritative_property.ident + ") is NOT "
+            "violated in the mutant tree, measured by executing it. The "
+            "failure is about something else, so it is not evidence that "
+            "this control was removed."
+        )
 
 
 # --------------------------------------------------------------------------
