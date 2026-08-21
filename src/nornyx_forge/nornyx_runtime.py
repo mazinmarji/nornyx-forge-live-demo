@@ -653,6 +653,17 @@ GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
 LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
 
 
+class LedgerContinuityUnknown(RuntimeError):
+    """The high-water sidecar exists and cannot be read as a mark.
+
+    Deliberately NOT `NornyxRuntimeUnavailable`: the ledger itself is fine and
+    the runtime is available. What is unknown is how many consumptions this
+    ledger has recorded -- exactly the input the rollback check needs -- so the
+    honest response is to refuse this claim rather than to compare against
+    nothing and call that agreement.
+    """
+
+
 def _instant(value: str | None) -> datetime | None:
     """Parse an ISO-8601 instant, or None if it is absent or unreadable.
 
@@ -1158,7 +1169,20 @@ class ApprovalLedger:
         # round would let a concurrent consumption advance the mark between the
         # two reads and refuse a legitimate grant. Eight-process races are
         # already measured here; this must not regress them.
-        recorded = self._recorded_consumptions()
+        try:
+            recorded = self._recorded_consumptions()
+        except LedgerContinuityUnknown as exc:
+            return False, (
+                f"{LEDGER_CONTINUITY_UNKNOWN}: the replay high-water mark "
+                "beside this ledger cannot be read, so whether history was "
+                f"rolled back cannot be established: {exc}" + "\n\n"
+                "TO RECOVER: run `nornyx-forge provision-ledger "
+                "--reset-replay-history`, which clears both the ledger and the "
+                "mark and establishes a fresh epoch, then obtain a NEW human "
+                "approval. Deleting the mark by hand instead would clear this "
+                "refusal and DISABLE the rollback check, making every "
+                "forgotten grant replayable."
+            )
         held = 0
         try:
             # `_connect()`, not a bare `sqlite3.connect`: the bare form CREATES
@@ -1363,25 +1387,96 @@ class ApprovalLedger:
         """Beside the ledger, deliberately not inside it."""
         return Path(str(self.path) + LEDGER_WATERMARK_SUFFIX)
 
+    def _adopt_plaintext_mark(self) -> int | None:
+        """Migrate a pre-database mark ONCE, atomically, or return None.
+
+        The previous code READ a plain-text mark and left it in place, with a
+        comment saying this let "an existing deployment keep its protection
+        across the upgrade". A review measured the opposite: because the writer
+        only ever writes SQLite and its `CREATE TABLE` against a plain-text
+        file raises `DatabaseError` -- which it swallowed -- the mark FROZE at
+        its upgrade-time value while rows kept accumulating. Measured 6 rows
+        against a mark of 1, and an already-spent grant released again with
+        `LEDGER_ROLLED_BACK` never firing. The read path added to protect the
+        upgrade was the thing that disabled the check.
+
+        So the mark is CONVERTED, not merely read. Written to a staging file
+        and moved into place with `os.replace`, which is atomic on POSIX and on
+        Windows, so a crash mid-migration leaves either the old plain-text mark
+        or the new database -- never a half-written file the reader would then
+        have to guess about.
+        """
+        try:
+            value = int(self.watermark_path.read_bytes().decode("utf-8").strip())
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None
+        if value < 0:
+            return None
+        staging = Path(str(self.watermark_path) + ".migrating")
+        try:
+            staging.unlink(missing_ok=True)
+            with closing(sqlite3.connect(staging)) as conn:
+                conn.execute(
+                    "CREATE TABLE high_water"
+                    " (id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT INTO high_water (id, value) VALUES (1, ?)", (value,)
+                )
+                conn.commit()
+            os.replace(staging, self.watermark_path)
+        except (sqlite3.Error, OSError):
+            # A migration that cannot be completed is NOT a mark. Returning the
+            # value here would restore the exact defect: a correct-looking
+            # number this ledger can never advance again.
+            return None
+        return value
+
     def _recorded_consumptions(self) -> int | None:
         """The high-water mark, or None if this ledger has never written one.
 
         None is NOT zero. A ledger predating this check, or one whose sidecar
         was removed, has no mark to compare against; treating that as zero
         would refuse every legitimate ledger with rows in it.
+
+        AND "UNREADABLE" IS NOT None EITHER, which is the repair. A sidecar
+        that EXISTS and cannot be read as a mark used to return None, and None
+        means "compare nothing" -- so a torn write disabled the rollback check
+        permanently and silently. A torn write needs no adversary: a crash
+        during the sidecar's own first write produces it, from this process,
+        with no write access required by anybody. It raises now, and `consume`
+        turns that into a coded refusal.
         """
+        if not self.watermark_path.exists():
+            return None
         try:
             with closing(sqlite3.connect(self.watermark_path)) as conn:
+                tables = {
+                    str(row[0]) for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if "high_water" not in tables:
+                    # A USABLE database that has not been marked yet: the
+                    # bootstrap state, and deliberately distinct from a file
+                    # that is not a database at all. A zero-length sidecar is a
+                    # valid empty SQLite database and lands here, which is why
+                    # it still self-heals on the next write rather than
+                    # refusing.
+                    return None
                 row = conn.execute("SELECT value FROM high_water").fetchone()
-        except sqlite3.Error:
-            # A plain-text mark from before this was a database. Read it so an
-            # existing deployment keeps its protection across the upgrade.
-            try:
-                return int(self.watermark_path.read_bytes().decode("utf-8").strip())
-            except (OSError, UnicodeDecodeError, ValueError):
-                return None
-        except OSError:
-            return None
+        except sqlite3.Error as exc:
+            migrated = self._adopt_plaintext_mark()
+            if migrated is not None:
+                return migrated
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} exists and is neither a high-water "
+                f"database nor a legacy mark this ledger could convert: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} exists and cannot be opened: {exc}"
+            ) from exc
         return int(row[0]) if row else None
 
     def _record_consumptions(self, count: int) -> None:
@@ -1415,8 +1510,17 @@ class ApprovalLedger:
                 )
                 conn.commit()
         except (sqlite3.Error, OSError):
-            # A mark we cannot write is a weaker future check, not a reason to
-            # refuse an effect whose row is already committed.
+            # A mark we cannot write is not a reason to refuse an effect whose
+            # row is ALREADY COMMITTED -- the grant was spent, and raising here
+            # would report a refusal for something that happened.
+            #
+            # This is only defensible because the failure is not silent for
+            # long: `_recorded_consumptions` is read at the TOP of the next
+            # `consume`, and a sidecar it cannot read now RAISES rather than
+            # returning None. So a broken sidecar costs at most the one
+            # consumption already committed and then refuses, instead of
+            # disabling the rollback check forever with no diagnostic, which is
+            # what a review measured this comment defending.
             pass
 
     def lookup(

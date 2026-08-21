@@ -39,12 +39,30 @@ def governance_docs() -> list[Path]:
     authored their claims here.
     """
     root = Path(__file__).resolve().parents[1]
-    skip = {".venv", "node_modules", ".git", ".nornyx", "evidence", "site-packages"}
-    return sorted(
-        path
-        for path in root.rglob("*.md")
-        if not any(part in skip for part in path.relative_to(root).parts)
-    )
+    # EXCLUDED BY LOCATION, NOT BY A NAME THAT MAY APPEAR ANYWHERE. This
+    # skipped any path with a COMPONENT called `evidence`, so a review created
+    # `docs/evidence/REPORT.md` -- asserting "This build has been independently
+    # inspected", `human_review: performed`, `production_approval: granted` --
+    # and measured it discovered: False, find_overclaims: 3 hits, 52 passed.
+    # An author making a `docs/evidence/` directory is doing nothing unusual.
+    #
+    # FG27 again, and shared: the transcript module imports this helper, so the
+    # hole was in both sweeps at once.
+    #
+    # Vendored trees keep component matching because they genuinely nest
+    # (`node_modules` inside a package). GENERATED governance evidence is at one
+    # known location and is excluded by prefix.
+    vendored = {".venv", "node_modules", ".git", "site-packages", "__pycache__"}
+    generated = (".nornyx/",)
+    found = []
+    for path in root.rglob("*.md"):
+        relative = path.relative_to(root).as_posix()
+        if any(part in vendored for part in path.relative_to(root).parts):
+            continue
+        if relative.startswith(generated):
+            continue
+        found.append(path)
+    return sorted(found)
 
 
 #: Retained for the required-module registration and for tests that want the
@@ -58,7 +76,17 @@ GOVERNANCE_DOCS = (
 )
 
 #: A 40-hex git object id, the shape that goes stale silently.
-COMMIT_LITERAL = re.compile(r"git:[0-9a-f]{40}")
+#:
+#: THE PREFIX IS OPTIONAL, because the prefix was never the concept. This read
+#: `git:[0-9a-f]{40}`, and a review wrote the identical pinning line without
+#: those four characters -- "Run subject revision: bb5db12f...22c0" -- and
+#: measured 24 passed, where the same line WITH `git:` gives 1 failed. The
+#: historical incident this guard cites (`ASSUMPTIONS.md` opening with a pinned
+#: revision) recurs verbatim minus the prefix.
+#:
+#: `` at both ends, so a 64-hex sha256 does not match on its first 40
+#: characters: there is no word boundary inside it.
+COMMIT_LITERAL = re.compile(r"(?:git:)?[0-9a-f]{40}")
 
 
 def test_no_governance_document_pins_a_commit_as_the_subject():
@@ -150,8 +178,40 @@ _SEP = "[ _" + _NEWLINE + "-]+"
 _NEGATED_BEFORE = re.compile("not[ _" + _NEWLINE + "-]+$")
 
 
+#: A quoted TERM is a mention. A quoted SENTENCE is not.
+#:
+#: Blanking every double-quoted span is exactly the arm removed above, after a
+#: review measured an ordinary quoted sentence carrying a forgery past the
+#: guard. The distinction that survives is length: naming a concept takes a few
+#: words, asserting one takes a sentence. Three words, so
+#: `"independent inspection"` in a section heading is a mention and
+#: `"This repository has been independently inspected"` is not.
+_QUOTED_TERM = re.compile('"[^"' + _NEWLINE + ']{1,40}"')
+
+
 def _mention_blanked(text: str) -> str:
-    return _MENTION.sub(lambda m: " " * len(m.group(0)), text)
+    def blank(match):
+        return " " * len(match.group(0))
+
+    def term(match):
+        inner = match.group(0).strip(chr(34)).split()
+        # A SINGLE quoted word is a JSON token, not a mention. Blanking those
+        # erased `"human_review"` and `"performed"` and stopped the guard
+        # reading the JSON form that all five evidence files use -- measured
+        # immediately, by two cases already in the table below.
+        #
+        # And a multi-word span carrying an affirmative is a quoted CLAIM, not
+        # a term: `"production approval granted"` names nothing, it asserts.
+        if not 2 <= len(inner) <= 3:
+            return match.group(0)
+        if any(word.lower() in _AFFIRMATIVE for word in inner):
+            return match.group(0)
+        if any(part in word.lower() for word in inner for part in _PARTICIPLES):
+            return match.group(0)
+        return blank(match)
+
+    text = _MENTION.sub(blank, text)
+    return _QUOTED_TERM.sub(term, text)
 
 
 def forbidden_claim_patterns() -> tuple:
@@ -178,6 +238,15 @@ def forbidden_claim_patterns() -> tuple:
 #: The MACHINE fields whose affirmative value is an assurance claim on its own.
 _SUBJECT_WORDS = frozenset({
     "human_review", "production_approval", "assurance_state",
+    # `attested` was named in the docstring below as a subject word and was
+    # NOT in this set. It was caught only incidentally, by the loose
+    # self-affirmation rule that also flagged "Independent inspection ... has
+    # never been performed"; tightening that rule dropped "Attested by three
+    # independent inspectors" -- a claim the operator dashboard was publishing.
+    # A vocabulary the docstring describes and the set omits is the same
+    # substitution of prose for a measured criterion this module exists to
+    # refuse.
+    "attested",
 })
 
 #: "INDEPENDENT REVIEW" IS NOT THE CLAIM; "INDEPENDENT INSPECTION" IS.
@@ -198,6 +267,16 @@ _SUBJECT_WORDS = frozenset({
 #: It is the same defect pointing the other way, and the pressure it creates on
 #: an author is to delete the disclosure.
 _QUALIFIER = ("inspect",)
+
+#: PEOPLE, not states. `independent inspectors` describes who someone is;
+#: `independent inspection` describes something that happened. A real document
+#: saying "read-only AI inspectors that are independent of the builder" was
+#: flagged as an assurance claim because `inspectors` satisfied the nearby
+#: inspection test. The dashboard claim "Attested by three independent
+#: inspectors" is still caught -- through `attested`, which is both a subject
+#: word and a completed participle -- so excluding agents costs no reach.
+_AGENTS = frozenset({"inspector", "inspectors", "reviewer", "reviewers",
+                     "auditor", "auditors"})
 
 #: Words that make a nearby assurance word a CLAIM rather than a description.
 _AFFIRMATIVE = frozenset({
@@ -220,12 +299,78 @@ _DISCLAIMING = frozenset({
     "forbids", "refuses", "refused", "retracted", "withdrawn", "cannot",
 })
 
+#: Past participles that carry a COMPLETED state in themselves, so
+#: `independently <participle>` needs no separate verb. A noun -- `inspection`,
+#: `review` -- does not, and treating it as though it did is what flagged an
+#: honest disclosure.
+_PARTICIPLES = ("inspected", "reviewed", "audited", "attested", "verified",
+                "approved", "certified")
+
 #: How far apart the two halves of a claim may sit and still be one claim.
 _WINDOW = 10
 
 
+#: Where one claim stops and the next begins. A disclaimer on the far side of
+#: one of these does not modify what precedes it.
+#:
+#: `.` is a boundary ONLY at end of sentence -- followed by whitespace or the
+#: end of the text -- because a bare `.` also sits inside `nornyx.forge`, and
+#: splitting there would let a disclaimer in an unrelated earlier sentence stop
+#: suppressing a claim it genuinely modifies.
+#:
+#: `|` is deliberately NOT a boundary. Markdown table cells are how this
+#: repository writes its honest disclosures ("| Human review | not performed
+#: |"), and splitting on the pipe would separate every subject from its own
+#: negation and flag the disclosure table wholesale -- the exact false positive
+#: this change exists to remove.
+#: A SINGLE newline is NOT a boundary, and treating it as one was measured
+#: wrong immediately: hard-wrapped prose puts "has not been" at the end of
+#: one line and "performed" at the start of the next, so every wrapped
+#: honest disclosure lost its own negation and 13 real documents were
+#: flagged. A BLANK line is a paragraph break and does separate claims.
+_BOUNDARY = re.compile(r"[;!?#()]|--|\.(?=\s|$)|\n[ \t]*\n")
+
+
 def _words(text: str) -> list:
     return [(m.group(0), m.start()) for m in re.finditer("[a-z_]+", text)]
+
+
+#: A machine-layout record: a bare key followed by two-or-more spaces and a
+#: value, or `key: value`. Each such line is its own claim, so the newline that
+#: ends it separates it from its neighbours -- unlike the newline inside a
+#: wrapped sentence, which separates nothing.
+_FIELD_LINE = re.compile("^[ " + chr(9) + "]*[a-z_][a-z0-9_.]*(:| {2,})", re.I)
+
+
+def _field_newlines(text: str) -> list:
+    """Offsets of newlines that separate machine records rather than wrap prose."""
+    cuts = []
+    offset = 0
+    lines = text.split(chr(10))
+    for index, line in enumerate(lines[:-1]):
+        offset += len(line)
+        nxt = lines[index + 1]
+        if _FIELD_LINE.match(line) or _FIELD_LINE.match(nxt):
+            cuts.append(offset)
+        offset += 1
+    return cuts
+
+
+def _clause_of(text: str, tokens: list) -> list:
+    """Which clause each token belongs to, by counting boundaries before it."""
+    cuts = sorted(
+        [m.start() for m in _BOUNDARY.finditer(text)] + _field_newlines(text)
+    )
+    clauses = []
+    for _word, offset in tokens:
+        index = 0
+        for cut in cuts:
+            if cut < offset:
+                index += 1
+            else:
+                break
+        clauses.append(index)
+    return clauses
 
 
 class _Overclaim:
@@ -279,6 +424,7 @@ def find_overclaims(text: str) -> list:
     lowered = _mention_blanked(text.lower())
     tokens = _words(lowered)
     words = [word for word, _offset in tokens]
+    clauses = _clause_of(lowered, tokens)
     hits = []
     for index, (word, offset) in enumerate(tokens):
         independent = word.startswith("independent")
@@ -287,15 +433,17 @@ def find_overclaims(text: str) -> list:
         if independent:
             near = words[max(0, index - 3): index + 4]
             if not any(
-                token.startswith(_QUALIFIER) or "inspect" in token
+                (token.startswith(_QUALIFIER) or "inspect" in token)
+                and token not in _AGENTS
                 for token in near
             ):
                 # "an independent review found ..." -- a reviewer, not a state.
                 continue
+        # `window` used to be materialised here and scanned as an unordered
+        # bag. Both lookups are index ranges now, because WHERE a word sits
+        # relative to the claim is the whole question -- a bag cannot answer
+        # it, which is why eleven evasions walked through.
         low = max(0, index - _WINDOW)
-        window = words[low: index + _WINDOW + 1]
-        if any(token in _DISCLAIMING for token in window):
-            continue
         # SELF-AFFIRMATIVE. `independently inspected` and
         # `independently_inspected` carry the completed state in the participle
         # itself -- there is no separate verb to find nearby, so requiring one
@@ -303,13 +451,65 @@ def find_overclaims(text: str) -> list:
         # prose form alike. The disclaiming window above still applies, which is
         # why `not_independently_inspected` and "never independently inspected"
         # are unaffected.
+        # THE PARTICIPLE, NOT THE NOUN PHRASE. This accepted any following token
+        # starting with `inspect`, so `independent inspection` -- an adjective
+        # and a noun, which asserts nothing on its own -- was read as a
+        # completed state. A review measured the consequence: "Independent
+        # inspection of the artifacts ... has never been performed" was FLAGGED
+        # as an overclaim, and the only way for an author to write that
+        # disclosure honestly was to delete it.
         following = words[index: index + 3]
-        self_affirming = independent and (
-            "inspect" in word or "review" in word
-            or any(token.startswith(("inspect", "review")) for token in following)
+        # A PARTICIPLE IS SELF-AFFIRMING WHEREVER IT SITS, not only after
+        # `independently`. `attested` is both a subject word and a completed
+        # state, so "Attested by three independent inspectors" asserts one
+        # without any separate verb -- and narrowing this to the
+        # `independently <participle>` pair alone dropped exactly that claim,
+        # which the dashboard was already publishing.
+        self_affirming = (
+            any(part in word for part in _PARTICIPLES)
+            or (independent and len(following) > 1
+                and following[1].startswith(_PARTICIPLES))
         )
-        if not self_affirming and not any(
-            token in _AFFIRMATIVE for token in window
+        if self_affirming:
+            # The claim is complete at the subject itself; nothing after it is
+            # part of the assertion.
+            completes_at = index
+        else:
+            # SAME CLAUSE, like the disclaimer below. An affirmative in a
+            # neighbouring record is not this record's verb -- measured on a
+            # real transcript where `true` on the preceding line supplied the
+            # affirmative for `assurance_state`, and the
+            # `not_independently_inspected` written beside it could not
+            # withdraw a claim that had been completed one line earlier.
+            affirmative = [
+                position for position in range(low, min(len(words), index + _WINDOW + 1))
+                if words[position] in _AFFIRMATIVE
+                and clauses[position] == clauses[index]
+            ]
+            if not affirmative:
+                continue
+            completes_at = max(affirmative)
+
+        # SCOPE, NOT PROXIMITY. A disclaimer counts only when it modifies THIS
+        # claim: same clause, and at or before the point where the claim
+        # completes. English negation precedes what it negates -- "has NOT been
+        # performed", "NO independent inspection" -- while a modal arriving
+        # after a completed claim is a new obligation, not a retraction.
+        #
+        # Measured: 11 of 11 deliberate evasions were admitted by the previous
+        # unordered-bag test, including `independently_inspected  # operators
+        # must not edit` and `granted -- deployers must record the date`.
+        # The claim is complete at the LATER of the subject and its verb, and a
+        # disclaimer anywhere earlier in the clause modifies it. `<= completes_at`
+        # alone missed post-copular negation -- "Those findings ARE a
+        # self-reported observation, NOT an independent inspection" -- where the
+        # verb precedes the negation and the negation precedes the subject.
+        settled = max(index, completes_at)
+        if any(
+            words[position] in _DISCLAIMING
+            and clauses[position] == clauses[index]
+            and position < settled
+            for position in range(len(words))
         ):
             continue
         hits.append(_Overclaim(offset, word))
@@ -714,4 +914,237 @@ def test_the_success_criteria_name_exactly_the_accepted_diagnostics():
         "the success criteria name diagnostics the pre-approval gate does NOT "
         f"accept, so the criterion promises tolerance that does not exist: "
         f"{overpromised}"
+    )
+
+
+# --------------------------------------------------------------------------
+# THE ADVERSARIAL CORPUS.
+#
+# Every one of these is a sentence a REVIEW put through this guard and
+# measured. They are kept because the alternative is what happened for five
+# rounds: a reviewer demonstrates an evasion, the guard is repaired, the
+# demonstration lives only in a report, and the next repair reopens it.
+#
+# `_EVASIONS` were ADMITTED when they were measured, and must now be caught.
+# `_TRUTHFUL` must stay sayable: a guard that flags honest disclosure leaves an
+# author no escape but to delete it, and this module's own docstring says that
+# is worse than a missed claim.
+#
+# Adding a case is cheap and removing one should be hard. If a case here ever
+# becomes wrong, the right change is to say why in the diff, not to delete the
+# line.
+# --------------------------------------------------------------------------
+
+_Q = chr(34)
+
+#: Round 5, Lens C: eleven deliberate evasions, ELEVEN ADMITTED. Every one
+#: worked the same way -- an ordinary English word from `_DISCLAIMING` placed
+#: within ten tokens of a completed claim, suppressing it regardless of what
+#: the word modified.
+_EVASIONS = (
+    ("disclaimer in a later clause",
+     "This repository has been independently inspected and every finding "
+     "closed; downstream consumers must retain a copy of the attestation."),
+    ("modal after the claim", "This build has been independently inspected "
+     "and must be retained."),
+    ("negation of something else", "This build has been independently "
+     "inspected and no exceptions were noted."),
+    ("temporal word after the claim",
+     "This build has been independently inspected before shipping."),
+    ("advice after the claim", "This build has been independently inspected; "
+     "you should keep the record."),
+    ("condition on something else", "This build has been independently "
+     "inspected if you need the record."),
+    ("obligation after the claim", "This build has been independently "
+     "inspected and requires archiving."),
+    ("concessive after the claim", "This build has been independently "
+     "inspected yet nobody objected."),
+    ("machine field with a trailing comment",
+     "assurance_state: independently_inspected  # operators must not edit"),
+    ("machine field with a parenthetical",
+     "human_review: performed (auditors must keep the record)"),
+    ("machine field with a dashed note",
+     "production_approval: granted -- deployers must record the date"),
+    # Round 5, Lens C, the operator dashboard: four markups the UI published
+    # that the DOCUMENT guard caught and the UI guard did not.
+    ("dashboard badge", "Independent inspection completed"),
+    ("dashboard badge, colon form", "Independent inspection: passed"),
+    ("dashboard body, agent form", "Attested by three independent inspectors"),
+    ("dashboard body, verb form",
+     "This build has undergone an independent inspection"),
+    # A quoted CLAIM is not a mention. The mention rule blanks a quoted TERM;
+    # blanking a quoted sentence is an arm this module already removed once,
+    # after a review measured a forgery riding through it.
+    ("a whole claim inside quotation marks",
+     _Q + "This repository has been independently inspected and every finding "
+     "closed" + _Q),
+)
+
+#: Sentences that must remain sayable. The first three were FLAGGED by a repair
+#: to the above -- widening a guard until it refuses honest disclosure is the
+#: same defect pointing the other way.
+_TRUTHFUL = (
+    ("negation far from the subject",
+     "Independent inspection of the artifacts, the contracts, the evidence "
+     "manifest, the runtime lock and the approval ledger has never been "
+     "performed."),
+    ("agents, not a state", "read-only AI inspectors that are independent of "
+     "the builder and cannot modify the implementation"),
+    ("post-copular negation", "Those findings are a self-reported "
+     "observation, not an independent inspection: independence requires an "
+     "attestation signed by a reviewer who is not the builder."),
+    ("a quoted term in a heading",
+     "## What an " + _Q + "independent inspection" + _Q + " is allowed to mean"),
+    ("plain negation", "This repository has not been independently inspected."),
+    ("machine field, negative", "human_review: not_performed"),
+    ("machine field, negative approval", "production_approval: not_granted"),
+    ("machine field, negative assurance",
+     "assurance_state: not_independently_inspected"),
+    ("a definition of the bar",
+     "An independent inspection requires three signed attestations."),
+    ("a hypothetical bar", "An independent inspection would require an "
+     "authenticated attestation."),
+    ("leading negation", "No independent inspection has been performed."),
+    ("a disclosure table row", "| Human review | not performed |"),
+    ("never", "This build has never been independently inspected."),
+    ("narrative about a reviewer",
+     "an independent review found two defects in the criteria"),
+    ("negated participle", "This repository is not attested."),
+    ("negated noun", "No attestation has been performed."),
+    # Round 5, Lens C: the transcript block this repository actually publishes.
+    # The `true` on the preceding line supplied an affirmative for the line
+    # below it, and the honest value beside it could not withdraw the claim.
+    ("adjacent machine fields",
+     "problems               []" + _NEWLINE
+     + "governed_input_match   true" + _NEWLINE
+     + "assurance_state        not_independently_inspected"),
+)
+
+
+@pytest.mark.parametrize(("label", "text"), _EVASIONS, ids=lambda v: v)
+def test_every_recorded_evasion_is_still_caught(label: str, text: str):
+    """What a review has walked past this guard once, it must not walk past again."""
+    assert find_overclaims(text), (
+        f"{label}: this evasion was measured being ADMITTED by an earlier "
+        "version of this guard and is admitted again. The class it belongs to "
+        "was reported closed: " + repr(text[:90])
+    )
+
+
+@pytest.mark.parametrize(("label", "text"), _TRUTHFUL, ids=lambda v: v)
+def test_every_recorded_truthful_disclosure_is_still_admitted(label: str, text: str):
+    """A guard that refuses honest disclosure leaves an author only deletion."""
+    hits = find_overclaims(text)
+    assert not hits, (
+        f"{label}: this sentence is TRUE of this repository and the guard "
+        f"refuses it, so the only way to satisfy the suite is to delete the "
+        f"disclosure. Flagged on {[h.group() for h in hits]}: "
+        + repr(text[:90])
+    )
+
+
+# --------------------------------------------------------------------------
+# THE PLACEMENT SWEEP.
+#
+# The corpus above proves that seventeen sentences are caught. A reviewer's
+# closing sentence on the round that produced it: "'33 nodes pinning every
+# forgery' is a COUNT, not a closure." That is correct, and this is the answer
+# to it for the one part of the guard where the space CAN be enumerated.
+#
+# The rule `find_overclaims` implements is stateable in a sentence:
+#
+#     a subject word is a CLAIM when an affirmative completes it in the same
+#     clause, and no disclaiming word appears in that clause before the point
+#     where it completes.
+#
+# So the space of single-disclaimer placements is generated -- every word in
+# `_DISCLAIMING`, at every position that matters, in both sentence shapes --
+# and the expected verdict is DERIVED FROM THE RULE rather than written down
+# beside each case. Nobody chooses the cases, so a reviewer inventing a new
+# placement is inventing one this already covers.
+#
+# Every one of round 5's eleven evasions was a disclaimer placed AFTER the
+# claim completed or in a LATER clause. Those are two whole columns here.
+#
+# WHAT THIS DOES NOT CLOSE, stated rather than implied: it closes single
+# disclaimer placements over two sentence shapes. It does not close English,
+# it says nothing about two disclaimers interacting, and a guard cannot be
+# made complete over prose. Claiming otherwise would be the substitution this
+# repository exists to refuse.
+# --------------------------------------------------------------------------
+
+
+def _placement_cases():
+    """Generate (label, sentence, expected) from the rule, not from a list."""
+    disclaimers = sorted(
+        word for word in _DISCLAIMING
+        if word.isalpha() and word not in _AFFIRMATIVE
+    )
+    assert len(disclaimers) > 15, (
+        f"only {len(disclaimers)} usable disclaimers; the sweep would be "
+        "measuring almost nothing"
+    )
+
+    for word in disclaimers:
+        # SEPARATE VERB: the claim completes at `performed`, which follows the
+        # subject. Four positions, and the rule decides each.
+        head = ["the", "record", "states", "that"]
+        tail = ["today"]
+        yield (
+            f"{word}: before the subject",
+            " ".join(head + [word, "human_review", "was", "performed"] + tail),
+            False,
+        )
+        yield (
+            f"{word}: between subject and verb",
+            " ".join(head + ["human_review", "was", word, "performed"] + tail),
+            False,
+        )
+        yield (
+            f"{word}: after the claim completes",
+            " ".join(head + ["human_review", "was", "performed", word] + tail),
+            True,
+        )
+        yield (
+            f"{word}: in a later clause",
+            " ".join(head + ["human_review", "was", "performed"] + tail)
+            + "; " + " ".join([word, "the", "operator", "should", "check"]),
+            True,
+        )
+
+        # SELF-AFFIRMING PARTICIPLE: the claim completes at the subject itself,
+        # so there is no "between" position and anything after it is later.
+        yield (
+            f"{word}: before a participle claim",
+            " ".join(["this", "build", "has", word, "been", "independently",
+                      "inspected"] + tail),
+            False,
+        )
+        yield (
+            f"{word}: after a participle claim",
+            " ".join(["this", "build", "has", "been", "independently",
+                      "inspected", word] + tail),
+            True,
+        )
+
+
+def test_a_disclaimer_decides_by_scope_at_every_generated_placement():
+    """Generated, so the cases are not the ones anybody thought of."""
+    wrong = []
+    total = 0
+    for label, sentence, expected in _placement_cases():
+        total += 1
+        if bool(find_overclaims(sentence)) != expected:
+            verdict = "ADMITTED" if expected else "FLAGGED"
+            wrong.append(f"{label} -> {verdict}: {sentence!r}")
+
+    assert total > 100, (
+        f"the generator produced only {total} cases; it has stopped generating "
+        "and this test would pass over nothing"
+    )
+    assert wrong == [], (
+        f"{len(wrong)} of {total} generated placements disagree with the rule "
+        "this guard states. A disclaimer that suppresses a claim it does not "
+        "scope is how eleven evasions walked past it; one that suppresses "
+        "nothing refuses honest disclosure. First few: " + repr(wrong[:6])
     )

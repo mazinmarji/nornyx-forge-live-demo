@@ -141,6 +141,7 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
         command,
         cwd=ROOT,
         text=True,
+        timeout=900,
         capture_output=True,
         check=False,
     )
@@ -187,7 +188,8 @@ def _regenerate(as_of: str | None) -> int:
     refresh = str(ROOT / "scripts" / "refresh_governance_evidence.py")
     for stage in ([refresh] + (["--as-of", as_of] if as_of else []), [refresh, "--sync-contracts"]):
         completed = subprocess.run(
-            [sys.executable, *stage], cwd=ROOT, text=True, capture_output=True, check=False
+            [sys.executable, *stage], cwd=ROOT, text=True, capture_output=True,
+            check=False, timeout=1800
         )
         if completed.returncode:
             print(completed.stdout + completed.stderr)

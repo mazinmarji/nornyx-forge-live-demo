@@ -119,6 +119,7 @@ def current_subject(work: Path) -> str:
         encoding="utf-8",
         errors="replace",
         env=inspection_env(work, None),
+        timeout=600,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     return completed.stdout.strip()

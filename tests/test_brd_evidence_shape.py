@@ -117,20 +117,28 @@ def test_the_universally_recorded_fields_stay_universal(field: str, tmp_path: Pa
     "field", ["capability", "decision", "reason", "subject_revision"]
 )
 def test_the_partially_recorded_fields_do_not_get_worse(field: str, tmp_path: Path):
-    """A floor, so the disclosed gap cannot widen unnoticed.
+    """The disclosed gap, pinned EXACTLY, so it cannot widen or narrow unnoticed.
 
-    Deliberately not an equality. If someone populates `subject_revision`, this
-    must fail LOUDLY and be raised along with BRD.md's table -- an improvement
-    that silently passed would leave the published gap describing a state the
-    system had already left.
+    This was `present >= floor` while calling itself a check that fails loudly
+    on an improvement. Those are contradictory: `>=` fails only on a DECREASE,
+    so an improvement passed silently -- and for `subject_revision`, whose
+    measured presence is 0, the assertion was `present >= 0`, which cannot fail
+    for any input at all. A review found it among the nine cases this module
+    declares human-blocked: one of them could never have failed anyway.
+
+    Equality does what the previous docstring described. BRD.md publishes these
+    counts, so a change in EITHER direction leaves the published table wrong,
+    and both must be a red test rather than one.
     """
     events = _shipped_events(tmp_path)
     present = sum(1 for event in events if event.get(field) not in (None, "", [], {}))
     floor = MEASURED_PRESENCE[field]
-    assert present >= floor, (
-        f"{field} is now recorded on {present} of {len(events)} events, below "
-        f"the {floor} measured when BRD-F-005's gap was disclosed: the gap has "
-        "widened and the disclosure in BRD.md understates it"
+    assert present == floor, (
+        f"{field} is now recorded on {present} of {len(events)} events against "
+        f"the {floor} measured when BRD-F-005's gap was disclosed. Either the "
+        "gap widened and BRD.md understates it, or it narrowed and BRD.md "
+        "still publishes a gap the system has already closed. Update the table "
+        "and this number together."
     )
 
 

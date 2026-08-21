@@ -1725,3 +1725,90 @@ def test_a21_the_mark_is_never_lowered_through_the_real_path(tmp_path: Path):
             f"burst {burst}: mark {mark} against {_rows(path)} rows"
         )
     assert seen == sorted(seen), f"the mark went backwards across bursts: {seen}"
+
+
+# --------------------------------------------------------------------------
+# A35 -- `--reset-replay-history` is named INSIDE a security refusal as the
+# route out of it, and had no test of any kind. A review measured it crashing
+# on the one ledger state that most needs it.
+# --------------------------------------------------------------------------
+
+
+def _run_reset(root: Path):
+    """Drive the real Typer command, not the function body it wraps."""
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    return CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(root), "--reset-replay-history"]
+    )
+
+
+def test_a35_the_reset_runs_on_a_ledger_the_boundary_calls_unusable(tmp_path: Path):
+    """The recovery must work on the state that needs recovering.
+
+    A trigger on `consumed_approvals` is refused at CONSTRUCTION with
+    APPROVAL_LEDGER_UNREADABLE, and the reset used to build an `ApprovalLedger`
+    to find the sidecar beside it -- so the repair inherited the refusal of the
+    thing it was repairing and died with a traceback, deleting nothing.
+    """
+    from nornyx_forge.nornyx_runtime import approval_ledger_path  # noqa: PLC0415
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    location = approval_ledger_path(root.resolve())
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location)
+
+    hostile = sqlite3.connect(location)
+    try:
+        hostile.execute(
+            "CREATE TRIGGER block_inserts BEFORE INSERT ON consumed_approvals "
+            "BEGIN SELECT RAISE(IGNORE); END"
+        )
+        hostile.commit()
+    finally:
+        hostile.close()
+
+    with pytest.raises(NornyxRuntimeUnavailable):
+        ApprovalLedger(location)
+
+    result = _run_reset(root)
+    assert result.exit_code == 0, (
+        "the remedy a security refusal names could not run on the ledger it "
+        f"exists to repair: exit {result.exit_code}\n{result.output}"
+    )
+    # It is usable again, which is the point of a destructive repair.
+    assert ApprovalLedger(location)
+
+
+def test_a35_the_reset_clears_the_mark_beside_the_ledger(tmp_path: Path):
+    """Both files, or the refusal survives its own remedy.
+
+    `LEDGER_ROLLED_BACK` compares the row count against the mark. Clearing the
+    ledger alone would leave a mark above zero and re-raise the same refusal on
+    the next consumption -- which is exactly what re-provisioning did before
+    this flag existed, and why the refusal wording had to be corrected.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_WATERMARK_SUFFIX,
+        approval_ledger_path,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    location = approval_ledger_path(root.resolve())
+    location.parent.mkdir(parents=True, exist_ok=True)
+    _established_ledger(location, LEDGER_ESTABLISHED)
+    _race_consumers(location, 3)
+
+    watermark = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+    assert watermark.exists(), "no mark was written; this measures nothing"
+    assert ApprovalLedger(location)._recorded_consumptions() == 3
+
+    assert _run_reset(root).exit_code == 0
+    assert ApprovalLedger(location)._recorded_consumptions() is None, (
+        "the high-water mark survived the reset, so the rollback check still "
+        "compares the fresh ledger against a count from the discarded history"
+    )

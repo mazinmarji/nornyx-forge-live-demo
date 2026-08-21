@@ -75,9 +75,33 @@ def _contained_scratch(tmp_path_factory: pytest.TempPathFactory):
     not of any test that has to remember to opt in. A test that must keep a
     workspace beyond the session should say so explicitly rather than rely on
     the absence of cleanup.
+
+    NOT inside `tmp_path_factory`'s numbered basetemp -- see the comment at the
+    creation site. Putting it there meant a concurrently starting pytest
+    session deleted this session's scratch mid-run, and 557 tests errored with
+    a path that no longer existed.
     """
+    # OUTSIDE THE NUMBERED BASETEMP, which is the repair.
+    #
+    # This was `tmp_path_factory.mktemp("scratch")`, putting the session
+    # scratch inside `pytest-of-<user>/pytest-<n>/` -- the directory pytest's
+    # own retention deletes when a LATER session starts. `tmp_path_retention_count`
+    # is unset, so the default keep-3 applies.
+    #
+    # A review measured the consequence: a census run reported `GATE: FAIL`
+    # with 557 errored setups, every one a FileNotFoundError on this scratch,
+    # because other pytest sessions started while it was running and collected
+    # the basetemp out from under it. The verdict was a property of the
+    # machine, not of the tree.
+    #
+    # `tmp_path_factory.getbasetemp().parent` is the `pytest-of-<user>` root,
+    # which retention walks but never deletes; a unique name under it belongs
+    # to this session alone and is removed below.
     original = tempfile.tempdir
-    scratch = Path(tmp_path_factory.mktemp("scratch"))
+    scratch = Path(tempfile.mkdtemp(
+        prefix="forge-session-",
+        dir=str(tmp_path_factory.getbasetemp().parent),
+    ))
     tempfile.tempdir = str(scratch)
     try:
         yield scratch

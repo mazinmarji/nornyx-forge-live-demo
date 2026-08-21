@@ -119,13 +119,13 @@ NEWLINE = chr(10)
 #: removing a third of a security module does not, and lowering the number has
 #: to happen in the diff where it can be argued with.
 REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
-    "tests/test_approval_authentication.py": 41,
+    "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 26,
+    "tests/test_recorded_measurements.py": 30,
     "tests/test_approval_reachability.py": 17,
-    "tests/test_approval_ledger.py": 63,
+    "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
     # floor, and named these two: the evidence-binding proofs and the sole
     # regression for the reachability probe were both deletable.
@@ -139,8 +139,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_security_context.py": 10,
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
-    "tests/test_skip_gate.py": 26,
-    "tests/test_documented_claims.py": 22,
+    "tests/test_skip_gate.py": 28,
+    "tests/test_documented_claims.py": 55,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
     "tests/test_governance_approval_verifier.py": 45,
@@ -191,7 +191,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_governance_failure.py": 17,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
-    "tests/test_probe_containment.py": 16,
+    "tests/test_probe_containment.py": 18,
+    # Drives all 14 attack criteria against a HOLLOW tree (a real
+    # checkout with src/ and scripts/ emptied) and requires each to
+    # WITHDRAW. It found two probes -- H07 and H15 -- that three review
+    # rounds and an AST sweep had all missed.
+    "tests/test_probe_withdrawal.py": 14,
+    # Discovers every trust store structurally and requires the registry
+    # to cover all of them, so the reviewer store cannot again sit
+    # outside checks the approver store beside it has had for rounds.
+    "tests/test_trust_store_parity.py": 5,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 2,
     "tests/test_requirements.py": 1,
@@ -219,7 +228,30 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # is supposed to catch. So it stays a constant, and the guard requiring it to
 # sit within 10% of the real suite is the thing that forces a deliberate raise
 # whenever the suite grows. Twice now that guard has been the one to notice.
-MINIMUM_COLLECTED = 1225
+# Raised again, from 1225, by round-5 remediation: 1370 collected. The growth
+# is mostly ADVERSARIAL CORPUS -- 33 nodes in `test_documented_claims.py` and 5
+# in `test_recorded_measurements.py` pinning every forgery three reviews walked
+# past this repository's guards, plus 15 in the new `test_probe_withdrawal.py`
+# driving every attack criterion against a tree with no symbols in it. 1290
+# leaves 80 of slack, the same deliberate margin as the last two raises.
+MINIMUM_COLLECTED = 1290
+
+
+def band(collected: int) -> int:
+    """The smallest floor that still counts as tracking a suite of this size.
+
+    ONE DEFINITION, because there were three and two of them disagreed.
+    `collected * 9 // 10` TRUNCATES; the rule is a CEILING, and a truncating
+    copy accepts a floor one test lower than the ceiling copy demands. At
+    today's numbers they agree, which is exactly how the drift survived: two
+    copies of a rule agree until they do not, and then the weaker one silently
+    accepts.
+
+    Defined here rather than in a test module because both `tests/test_skip_gate.py`
+    and `tests/attack_property.py` already import this file, and neither imports
+    the other.
+    """
+    return -(-collected * 9 // 10)
 
 #: Modules whose absence is a governance regression, not a smaller suite. Each
 #: holds the proof of an invariant that was reached through a reproduced exploit,
@@ -355,6 +387,8 @@ REQUIRED_MODULES = (
     "tests/test_in_session_reviews.py",
     "tests/test_mission_binding.py",
     "tests/test_probe_containment.py",
+    "tests/test_probe_withdrawal.py",
+    "tests/test_trust_store_parity.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
     "tests/test_requirements.py",

@@ -42,6 +42,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 REVIEWER_STORE_ENV = "FORGE_REVIEWER_TRUST_STORE"
@@ -132,7 +133,43 @@ def reviewer_store_path() -> Path:
     return Path(override) if override else DEFAULT_REVIEWER_STORE
 
 
-def _parse_reviewers(payload: Any, location: Path) -> dict[str, TrustedReviewer]:
+def _assert_loadable_public_key(key_id: str, material: str) -> None:
+    """A key that cannot be loaded is not a key, and the store is not usable.
+
+    Refused at PARSE time so the failure names the STORE. Deferred to the first
+    signature check -- which is where it lived -- a reviewer store whose only
+    `public_key` was the string "not a PEM key at all" loaded without raising,
+    reported `available: True`, and then refused with
+    `ATTESTATION_NOT_AUTHENTICATED: ValueError`, blaming the attestation for a
+    fault entirely in the store.
+
+    This is verbatim the defect `approval_trust._assert_loadable_public_key`
+    records as closed for the approver store. It was closed there and never
+    re-derived here.
+
+    PEM, NOT RAW BASE64. `verify_inspection_attestation` loads these keys with
+    `load_pem_public_key`; the approver store's equivalent uses
+    `Ed25519PublicKey.from_public_bytes` over base64. A check must load a key
+    the same way the verifier will, or it certifies a format nobody uses.
+    """
+    try:
+        from cryptography.hazmat.primitives.serialization import (  # noqa: PLC0415
+            load_pem_public_key,
+        )
+    except ImportError:  # pragma: no cover - cryptography is a hard dependency
+        return
+    try:
+        load_pem_public_key(material.encode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - any failure means unusable
+        raise ReviewerStoreUnavailable(
+            f"trusted reviewer {key_id!r} carries public key material that "
+            f"cannot be loaded ({type(exc).__name__}), so this store cannot "
+            "authenticate any independent inspection and must not report "
+            "itself available"
+        ) from exc
+
+
+def _parse_reviewers(payload: Any, location: Path) -> Mapping[str, TrustedReviewer]:
     if not isinstance(payload, Mapping):
         raise ReviewerStoreUnavailable(f"{location} is not a reviewer trust store")
     if payload.get("schema") != "nornyx.forge.reviewer_trust_store.v1":
@@ -163,6 +200,7 @@ def _parse_reviewers(payload: Any, location: Path) -> dict[str, TrustedReviewer]
             raise ReviewerStoreUnavailable(
                 f"{location}: reviewer {key_id!r} is authorized for no role"
             )
+        _assert_loadable_public_key(key_id, public_key)
         reviewers[key_id] = TrustedReviewer(
             key_id=key_id,
             reviewer=str(entry.get("reviewer", "")),
@@ -170,12 +208,28 @@ def _parse_reviewers(payload: Any, location: Path) -> dict[str, TrustedReviewer]
             public_key=public_key,
             status=str(entry.get("status", "active")),
         )
-    return reviewers
+    # READ-ONLY, because `frozen=True` on the store freezes the REFERENCE and
+    # not what it points at. A review inserted an attacker key into the "frozen
+    # startup snapshot" after load and authenticated a FORGED independent
+    # inspection -- signed with a key present in no store on disk -- while
+    # `store.digest`, the value an audit would compare, stayed unchanged.
+    #
+    # `approval_trust._parse_signers` already returns `MappingProxyType` for
+    # exactly this reason, recorded there against exactly this demonstration.
+    # The authority protected here is the one CLAUDE.md names as the only thing
+    # that can clear SOD_EVIDENCE_PRODUCER_UNKNOWN, so the two stores being out
+    # of step ran the dangerous way round.
+    return MappingProxyType(reviewers)
 
 
 @dataclass(frozen=True)
 class ReviewerTrustStore:
-    """Trusted reviewers, fixed at the moment they were loaded."""
+    """Trusted reviewers, fixed at the moment they were loaded.
+
+    "Fixed" is now true as measured rather than as intended: `_parse_reviewers`
+    returns a `MappingProxyType`, so this word describes the type and not an
+    aspiration. It did not, and a review demonstrated the difference.
+    """
 
     reviewers: Mapping[str, TrustedReviewer] = field(default_factory=dict)
     digest: str = "sha256:" + hashlib.sha256(b"").hexdigest()

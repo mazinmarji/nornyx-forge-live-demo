@@ -44,6 +44,13 @@ class AuthoritativeProperty:
     violated_in: Callable[[Path], bool]
 
 
+# `_census_band` was defined here and called from INSIDE `_H06_PROBE`.
+# The probes are standalone sources run by `python -c` in the mutant tree:
+# they cannot see this module's functions at all, so the child died with a
+# NameError, `run_probe` withdrew, and the historical reproof for H06 went
+# red -- a control that could no longer be shown to revive its defect.
+# The probe already imports the census module, so it calls `census.band`
+# directly and the single definition is still the only one.
 def run_probe(tree: Path, source: str) -> dict:
     """Execute a criterion probe inside the mutant workspace and read its JSON.
 
@@ -66,7 +73,52 @@ def run_probe(tree: Path, source: str) -> dict:
             f"{completed.returncode} {completed.stdout[-300:]} "
             f"{completed.stderr[-300:]}"
         )
-    return json.loads(completed.stdout[start:])
+    measured = json.loads(completed.stdout[start:])
+    # A PROBE MAY SAY "I COULD NOT MEASURE" IN BAND, and it withdraws HERE
+    # rather than in each criterion. A probe that runs to completion cannot be
+    # refused by the returncode check above, so before this there was no way to
+    # report "the symbol I observe no longer exists" except by inventing a
+    # value -- and a review measured two probes doing exactly that, one
+    # returning `refused: False` for any exception and one defaulting an absent
+    # `subject_verified` to True. Both converted an unreachable production
+    # symbol into a KILL, through this repository's own protocol.
+    #
+    # Central, so a fifteenth probe added tomorrow inherits it.
+    if isinstance(measured, dict) and "unmeasurable" in measured:
+        raise PropertyNotViolated(
+            "the probe reported that it could not measure the property, so "
+            f"nothing about it is established: {measured['unmeasurable']}"
+        )
+    return measured
+
+
+def require_the_tool_answered(measured: dict, tool: str) -> None:
+    """A criterion that reads a TOOL's result must first know the tool ran.
+
+    Every probe here that shells out judges the child by what it produced, and
+    an ABSENT child produces the same thing a compliant one does in at least
+    one direction: rc 0 with no output. Measured on a tree whose `scripts/`
+    modules were emptied, that made `H07` report the architecture gate as
+    having ACCEPTED a smuggled capability, and `H15` report a refusal as
+    carrying no machine-readable structure. Neither tool existed.
+
+    One function, called by all three shell-out criteria, because three copies
+    of this reasoning is exactly how `H15` kept the defect through the round
+    that repaired `H07`, `H10`, `H14`, `H17` and `H18` -- as its own docstring
+    records.
+
+    A structured report on EITHER stream counts. Which stream carries it is not
+    the property; that a machine can read it is. A review moved a report from
+    stdout to stderr, leaving rc=2 and no traceback, and was credited with a
+    violation for it.
+    """
+    if not measured.get("structured"):
+        raise PropertyNotViolated(
+            f"{tool} produced no machine-readable output at all "
+            f"(rc={measured.get('returncode')}), so it cannot be distinguished "
+            "from a tool that is not present, and nothing about the property "
+            "was measured"
+        )
 
 
 #: H10. The property is the continuity invariant itself, not the diagnostic
@@ -127,6 +179,19 @@ import json, subprocess, sys
 sys.path.insert(0, "scripts")
 import refresh_governance_evidence as refresh
 
+# RESOLVED OUTSIDE THE TRY, ON PURPOSE. This lookup used to sit inside it,
+# under `except Exception -> refused: False`, which reports VIOLATED. So
+# renaming this private helper -- an ordinary tidy-up touching no security
+# logic -- made an AttributeError indistinguishable from "the governed-tree
+# check answered when it could not prove anything", and the mutant was
+# credited as killed on a property nobody measured.
+#
+# Out here, an absent symbol is a traceback, `run_probe` sees rc != 0, and the
+# criterion WITHDRAWS. Inside, a genuine crash while ANSWERING is still a
+# violation -- that distinction is the whole point, and it is the difference
+# between "the code failed to refuse" and "the probe failed to run".
+target = refresh._unstaged_governed_paths
+
 real = subprocess.run
 def unreachable(args, **kwargs):
     if args and args[0] == "git":
@@ -135,12 +200,12 @@ def unreachable(args, **kwargs):
 subprocess.run = unreachable
 
 try:
-    returned = refresh._unstaged_governed_paths()
+    returned = target()
     print(json.dumps({"refused": False, "returned": repr(returned)[:80]}))
 except SystemExit as exc:
     print(json.dumps({"refused": True, "returned": str(exc)[:80]}))
 except Exception as exc:
-    print(json.dumps({"refused": False, "returned": type(exc).__name__ + ": crashed"}))
+    print(json.dumps({"refused": False, "returned": "RAISED " + type(exc).__name__}))
 """
 
 
@@ -400,11 +465,25 @@ shutil.rmtree(Path(".github"), ignore_errors=True)
 try:
     ctx = bootstrap_security_context(Path("."))
     subject = ctx.runtime_subject
-    print(json.dumps({
-        "verified": bool(getattr(subject, "subject_verified", True)),
-        "reason": str(getattr(subject, "unavailable_reason", ""))[:90],
-        "digest": str(getattr(subject, "governed_subject_digest", ""))[:24],
-    }))
+    # NO getattr DEFAULTS. This read `getattr(subject, "subject_verified", True)`,
+    # and that default DECIDED: an absent field -- a rename, or a None subject --
+    # reported `verified: True`, which this criterion scores as a violation. It
+    # never raised, so the `RAISED` withdrawal below could not see it. An absent
+    # field is an unmeasurable probe, not a verified subject.
+    absent = [
+        name for name in
+        ("subject_verified", "unavailable_reason", "governed_subject_digest")
+        if not hasattr(subject, name)
+    ]
+    if absent:
+        print(json.dumps({"unmeasurable":
+                          "the subject exposes no " + ", ".join(absent)}))
+    else:
+        print(json.dumps({
+            "verified": bool(subject.subject_verified),
+            "reason": str(subject.unavailable_reason)[:90],
+            "digest": str(subject.governed_subject_digest)[:24],
+        }))
 except Exception as exc:
     print(json.dumps({"verified": False, "reason": "RAISED " + type(exc).__name__,
                       "digest": ""}))
@@ -525,13 +604,13 @@ done = subprocess.run(
     [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
     capture_output=True, text=True, encoding="utf-8", errors="replace")
 combined = done.stdout + done.stderr
-start = done.stdout.find("{")
-structured = start >= 0
-names_it = "reviewer_trust" in combined
 print(json.dumps({
     "traceback": "Traceback (most recent call last)" in combined,
-    "structured": structured,
-    "names_module": names_it,
+    # EITHER STREAM, and see `require_the_tool_answered`: this read stdout
+    # alone, so moving the report to stderr registered as "no structure".
+    "structured": combined.find("{") >= 0,
+    "names_module": "reviewer_trust" in combined,
+    "returncode": done.returncode,
 }))
 """
 
@@ -543,8 +622,10 @@ def _h15_violated(tree: Path) -> bool:
     # is the violation: those are the two ways "reported, not crashed" fails.
     if measured["traceback"]:
         return True
-    if not measured["structured"]:
-        return True
+    # WAS `if not structured: return True`. On a tree whose `scripts/` modules
+    # were emptied that scored a KILL: no tool, no output, "no machine-readable
+    # refusal". Absence of a tool is not a failure to report.
+    require_the_tool_answered(measured, "refresh_governance_evidence.py --verify")
     # THE NAME MAY ONLY WITHDRAW. This read
     # `not (structured and names_module)`, so changing ONLY the wording of the
     # refusal -- `f"{exc.name!r}"` to "a governed module", rc still 2, no
@@ -597,7 +678,10 @@ print(json.dumps({
     "collected": collected,
     "floor": floor,
     "slack": collected - floor,
-    "within_band": floor >= collected * 9 // 10,
+    # `census.band`, the single definition, imported two lines above. This
+    # line read `collected * 9 // 10`, which TRUNCATES where the rule is a
+    # CEILING -- one of three copies, two of which disagreed.
+    "within_band": floor >= census.band(collected),
 }))
 """
 
@@ -728,14 +812,36 @@ done = subprocess.run(
 combined = done.stdout + done.stderr
 print(json.dumps({
     "traceback": "Traceback (most recent call last)" in combined,
-    "structured": done.stdout.find("{") >= 0,
+    # EITHER STREAM. This read stdout alone, and a review moved the report to
+    # stderr -- leaving a refusal that is rc=2, traceback-free and fully
+    # machine-readable -- and was credited with violating "produces a
+    # machine-readable refusal". Which STREAM carries the report is not the
+    # property; that a machine can read it is.
+    "structured": combined.find("{") >= 0,
+    "returncode": done.returncode,
 }))
 """
 
 
 def _h05_violated(tree: Path) -> bool:
+    """A traceback violates. A structured refusal holds. NOTHING withdraws.
+
+    This was `traceback or not structured`, which made silence a violation --
+    and silence is what an ABSENT tool produces. H05 was the only one of the
+    fourteen criteria with no `PropertyNotViolated` arm, so it was the only one
+    that answered a question it had not asked.
+
+    THE BOUND, stated rather than implied: a tool that genuinely ran, reported
+    nothing and exited cleanly WOULD be a defect, and this withdraws on it
+    rather than calling it a violation. H05 cannot tell that apart from a tool
+    that is not there, and inventing the distinction is how the other thirteen
+    criteria got theirs wrong.
+    """
     measured = run_probe(tree, _H05_PROBE)
-    return measured["traceback"] or not measured["structured"]
+    if measured["traceback"]:
+        return True
+    require_the_tool_answered(measured, "refresh_governance_evidence.py --verify")
+    return False
 
 
 H05_MISSING_GOVERNED_CONTENT_IS_REPORTED_NOT_CRASHED = AuthoritativeProperty(
@@ -776,6 +882,11 @@ combined = done.stdout + done.stderr
 print(json.dumps({
     "gate_rc": done.returncode,
     "capability_named": "performs process execution" in combined,
+    # See `require_the_tool_answered`. An EMPTY check_architecture.py exits 0,
+    # which this criterion reads as "the gate accepted the smuggled
+    # capability". A gate that is not there has accepted nothing.
+    "structured": combined.find("{") >= 0,
+    "returncode": done.returncode,
 }))
 """
 
@@ -788,6 +899,12 @@ def _h07_violated(tree: Path) -> bool:
     # message -- gate still refusing, rc still 2 -- satisfied the criterion.
     # Deciding on rc alone is also the conservative direction: a mutant that
     # makes the gate fail for an unrelated reason is NOT credited.
+    #
+    # But rc alone is NOT conservative in the other direction, which is how
+    # this was wrong: rc 0 is also what an ABSENT gate returns, so "accepted"
+    # and "was never run" were one answer and an emptied `scripts/` scored a
+    # kill here.
+    require_the_tool_answered(measured, "check_architecture.py")
     return measured["gate_rc"] == 0
 
 

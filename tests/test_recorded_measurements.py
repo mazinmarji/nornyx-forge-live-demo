@@ -31,6 +31,7 @@ the one that admits the anchor.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -73,24 +74,127 @@ VERIFIABLE_FIELDS = frozenset({
 #: by nothing.
 _KEY = "[A-Za-z_][A-Za-z0-9_. -]*?"
 _GAP = "[ " + chr(9) + "]"
-_FIELD_LINE = re.compile(
-    "^" + _GAP + "*(" + _KEY + ")" + _GAP + "*[:=]?" + _GAP + "+("
+#: A REAL SEPARATOR, which is what tells a transcript row from a sentence.
+#:
+#: This accepted a single space, and `_KEY` admits spaces because real anchored
+#: blocks here use them (`Verified tree           990caea`). Together that made
+#: almost any prose line a "field": a review measured
+#: "The build was independently inspected by three parties" parsing with key
+#: `The`, and "Nothing here is a field." parsing with key `Nothing` -- which
+#: left the inverted test (every line inside an anchored block must BE a
+#: verifiable field) with nothing to reject, while its docstring claimed to
+#: have closed the class.
+#:
+#: TWO SHAPES, because one rule cannot cover both and requiring two spaces
+#: everywhere rejected `evidence_manifest_match True` in this repository's own
+#: transcripts:
+#:
+#:   a snake_case key is already unmistakably a field name -- one space is
+#:   enough after it;
+#:   a multi-word key is distinguishable from prose only by ALIGNMENT, so it
+#:   needs two spaces or an explicit `:`/`=`.
+#:
+#: Prose puts one space between words and never contains an underscore-bearing
+#: token in the leading position, so it satisfies neither.
+_IDENT_KEY = "[A-Za-z][A-Za-z0-9_.-]*_[A-Za-z0-9_.-]*|_[A-Za-z0-9_.-]+"
+_FIELD_SNAKE = re.compile(
+    "^" + _GAP + "*(" + _IDENT_KEY + ")" + _GAP + "*[:=]?" + _GAP + "+("
     + "[^ " + chr(9) + "].*)$"
+)
+_FIELD_ALIGNED = re.compile(
+    "^" + _GAP + "*(" + _KEY + ")"
+    + "(?:" + _GAP + "*[:=]" + _GAP + "*|" + _GAP + "{2,})"
+    + "([^ " + chr(9) + "].*)$"
 )
 
 
-def _transcript_fields(body: str) -> dict:
-    """Every `key   value` line in a fenced block."""
-    found = {}
+class _FieldLine:
+    """Either shape, behind the `.match` the rest of this module already uses."""
+
+    @staticmethod
+    def match(line: str):
+        return _FIELD_SNAKE.match(line) or _FIELD_ALIGNED.match(line)
+
+
+_FIELD_LINE = _FieldLine()
+
+
+
+def _asserting_lines(body: str) -> list:
+    """The rows inside a block that actually claim something.
+
+    NOT every field line. A block that marks its positive rows `[FALSE]` and
+    leaves `independent False` and `authenticated_reviewers []` standing is
+    being honest -- those remain true -- and demanding a withdrawal beside a
+    true statement is the same pressure the sibling guard exists to avoid:
+    the only way to satisfy it is to delete the disclosure.
+
+    A row asserts something when it shows a PASS integrity state, or when
+    `find_overclaims` reads it as an assurance claim. The second is imported
+    rather than re-listed: a second vocabulary of assurance words would drift
+    from the first, and drift between two copies of one concept is the defect
+    this whole module family keeps rediscovering.
+
+    Markers are stripped before the question is asked, because `[FALSE]`
+    contains a disclaiming word and would otherwise answer it.
+    """
+    from test_documented_claims import find_overclaims  # noqa: PLC0415
+
+    asserting = []
+    for line_text in body.splitlines():
+        if not _FIELD_LINE.match(line_text):
+            continue
+        bare = line_text.replace("[FALSE]", "").replace("[WITHDRAWN]", "")
+        state = TRANSCRIPT.search(bare)
+        if (state and state.group(1).lower() in _PASS_STATES) or find_overclaims(bare):
+            asserting.append(line_text)
+    return asserting
+
+
+def _transcript_pairs(body: str) -> list:
+    """Every `key   value` line in a fenced block, IN ORDER, duplicates kept.
+
+    `_transcript_fields` returns a dict and a dict cannot hold a repeated key.
+    A review used exactly that: inside a block anchored at a real commit,
+
+        status                       pass, independently inspected, ...
+        status                       pass
+
+    Only the LAST `status` was re-verified, while BOTH were displayed inside
+    the fence -- and everything inside an anchored fence is presented as
+    measured. The document passed, including its own parametrised case.
+
+    So verification walks pairs. The dict view remains for callers that only
+    need a lookup.
+    """
+    found = []
     for line in body.splitlines():
         match = _FIELD_LINE.match(line)
         if match:
-            found[match.group(1)] = match.group(2).strip()
+            found.append((match.group(1), match.group(2).strip()))
     return found
 
 
-#: A fenced block, OR an indented one. Markdown has two code-block forms and
-#: this convention only ever saw the first. A review presented the same
+def _transcript_fields(body: str) -> dict:
+    """Every `key   value` line in a fenced block, as a lookup.
+
+    LOSSY BY CONSTRUCTION -- see `_transcript_pairs`. Anything that must judge
+    what a reader SEES has to use the pairs; a dict silently answers for the
+    last occurrence only.
+    """
+    return dict(_transcript_pairs(body))
+
+
+#: A fenced block -- BACKTICK or TILDE -- or an indented one. CommonMark has
+#: THREE code-block forms and this comment used to say two, which is the whole
+#: defect: a review put a fabricated `--verify` transcript in a `~~~` fence and
+#: it was never selected, never scanned, and appeared in no parametrisation at
+#: all. 57 passed over a document asserting an independent inspection.
+#:
+#: An enumeration that excludes members before checking them is FG27, and
+#: FG27's recorded remedy is "enumerate the complete candidate set first; never
+#: exclude on the way in". The count is now stated because a wrong count here
+#: is invisible: the missing form produces no failure, only silence. A review presented the same
 #: fabricated transcript as a 4-space indented block and `_blocks` returned
 #: nothing at all -- the document was never selected, never scanned, and every
 #: R4 test passed. Not hypothetical: `LENS_C_CLOSURE.md` carries its own
@@ -98,6 +202,8 @@ def _transcript_fields(body: str) -> dict:
 #: never seen it.
 _BLOCK = (
     "```[^" + chr(10) + "]*" + chr(10) + "(.*?)```"
+    + "|"
+    + "~~~[^" + chr(10) + "]*" + chr(10) + "(.*?)~~~"
     + "|"
     + "(?:^|" + chr(10) + ")((?:[ ]{4}[^" + chr(10) + "]*" + chr(10) + "){2,})"
 )
@@ -116,7 +222,13 @@ def _blocks(text: str) -> list[tuple[int, str, str]]:
     """Fenced blocks containing a `--verify` transcript, with the text above."""
     found = []
     for match in re.finditer(_BLOCK, text, re.S):
-        body = match.group(1) if match.group(1) is not None else match.group(2)
+        # Whichever of the three forms matched. Indexing two groups here was
+        # what made the tilde form silently unreachable even after it was added
+        # to the pattern -- an omission that produces no error, only a block
+        # nobody looks at.
+        body = next(
+            (group for group in match.groups() if group is not None), ""
+        )
         preceding = text[max(0, match.start() - 400):match.start()]
         # RECOGNITION NO LONGER HINGES ON ONE FIELD. This gated on
         # `integrity_state`, so a block omitting that single line was invisible
@@ -206,7 +318,18 @@ def test_every_recorded_verify_transcript_is_anchored_or_withdrawn(relative: str
         # `_FIELD_LINE` had been widened to accept any key case in the same
         # commit; the value comparison stayed case-sensitive, which is how the
         # two ended up disagreeing.
-        withdrawn = "[FALSE]" in body or "[WITHDRAWN]" in body
+        # PER LINE, as the module docstring has always said: "every claim line
+        # carries `[FALSE]`, or the block records a failure rather than a pass".
+        # This was a per-BLOCK substring test, so ONE irrelevant withdrawn row
+        # exempted every claim standing beside it from ever needing an anchor.
+        # A review published `assurance_state independently_inspected` and
+        # `authenticated_reviewers alice, bob, carol` in a block whose only
+        # withdrawn row was `stale_artifacts`: 56 passed.
+        claim_lines = _asserting_lines(body)
+        withdrawn = bool(claim_lines) and all(
+            "[FALSE]" in line_text or "[WITHDRAWN]" in line_text
+            for line_text in claim_lines
+        )
         if not withdrawn and state.lower() not in _PASS_STATES:
             # A genuine failure transcript still needs no anchor -- but it has
             # to SAY it failed, in a value this convention knows, rather than
@@ -421,6 +544,13 @@ def _verify_at(sha: str) -> dict:
     The anchor's whole point is that the numbers were true THERE. Checking the
     governed_input_digest alone left every other displayed field unverified, so
     this recomputes them at the commit rather than trusting the document.
+
+    WHAT THIS RE-EXECUTION IS, precisely, because a review measured the gap
+    between the description and the mechanism: the DATA is the commit's, and
+    the ALGORITHM is the working tree's, because the editable install resolves
+    `nornyx_forge` to the repository rather than to the extraction. So this
+    detects a fabricated VALUE, which is what it exists for, and would not
+    detect a change to the code that computes it. Recorded rather than implied.
     """
     import json  # noqa: PLC0415
     import shutil  # noqa: PLC0415
@@ -441,10 +571,31 @@ def _verify_at(sha: str) -> dict:
         with tarfile.open(bundle) as tar:
             tar.extractall(tree)  # noqa: S202
 
+        # AN EXPLICIT ENVIRONMENT. With none, the child inherited
+        # `FORGE_REVIEWER_TRUST_STORE` and `HOME`, and the assurance fields this
+        # function re-verifies -- `assurance_state`, `independent`,
+        # `authenticated_reviewers`, `required_inspectors_complete` -- are
+        # derived from the reviewer store those name. A review changed one
+        # variable and changed `--verify`'s assurance output in an unchanged
+        # tree.
+        #
+        # `ASSURANCE_BOUNDARY.md` removed `FORGE_RUNTIME_AS_OF` on the ground
+        # that an environment variable is ambient authority. This was the same
+        # authority, still deciding, inside the function whose entire purpose is
+        # to recompute a value instead of trusting one.
+        #
+        # The variables are dropped rather than pinned to a fixture: a store
+        # supplied here would be this machine's answer too, just a tidier one.
+        # Absent, the answer is the one the commit's own content produces.
+        environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith("FORGE_")
+        }
+        environment["PYTHONIOENCODING"] = "utf-8"
         done = subprocess.run(  # noqa: S603
             [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
             cwd=tree, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=1800,
+            errors="replace", timeout=1800, env=environment,
         )
         start = done.stdout.find("{")
         assert start >= 0, (
@@ -490,12 +641,15 @@ def test_r4_every_displayed_field_is_true_at_the_anchored_commit(
     """
     body = next(b for doc, ln, s, b in _anchored_blocks()
                 if (doc, ln, s) == (relative, line, sha))
-    displayed = _transcript_fields(body)
+    # PAIRS, not the dict. Everything inside the fence is presented as
+    # measured, so everything inside it is verified -- including a key that
+    # appears twice, where the dict would answer for the last one only.
+    displayed = _transcript_pairs(body)
     assert displayed, f"{relative}:{line} anchored block carries no fields"
 
     measured = _verify_at(sha)
     wrong = []
-    for key, shown in displayed.items():
+    for key, shown in displayed:
         actual = measured.get(key)
         text = shown.strip()
         if isinstance(actual, (list, tuple)):
@@ -512,3 +666,149 @@ def test_r4_every_displayed_field_is_true_at_the_anchored_commit(
     assert wrong == [], (
         f"{relative}:{line} displays fields that are not true at {sha}: {wrong}"
     )
+
+
+# --------------------------------------------------------------------------
+# THE FORGERIES, KEPT.
+#
+# Each of these is a document a review actually built against this convention
+# and got a green suite from. They are pinned for the same reason as the
+# corpus in `test_documented_claims.py`: for five rounds the evidence that a
+# hole was closed lived in a review report, and the next repair reopened it.
+#
+# Each test asserts the MECHANISM the forgery exploited, not the forged
+# document as a whole -- driving a whole document would need it written into
+# the tree, and a guard that only fires on files it can see is the shape being
+# refused here.
+# --------------------------------------------------------------------------
+
+_TILDE = "~" * 3
+
+
+def test_a_tilde_fence_is_not_invisible():
+    """CommonMark has three code-block forms; this convention saw two.
+
+    A review put a fabricated `--verify` transcript in a `~~~` fence. The
+    document was never selected, never scanned, and appeared in no
+    parametrisation: 57 passed while it asserted an independent inspection.
+    """
+    document = (
+        "Running --verify on this tree today reports:" + chr(10) * 2
+        + _TILDE + chr(10)
+        + "status                       pass" + chr(10)
+        + "integrity_state              intact" + chr(10)
+        + "assurance_state              independently_inspected" + chr(10)
+        + _TILDE + chr(10)
+    )
+    found = _blocks(document)
+    assert found, (
+        "a tilde-fenced transcript is invisible to `_blocks`, so every test in "
+        "this module skips it silently -- no failure, just a document nobody "
+        "looks at"
+    )
+    assert "integrity_state" in found[0][2]
+
+
+def test_a_repeated_key_is_not_collapsed_to_its_last_value():
+    """Everything inside an anchored fence is presented as measured.
+
+    A review anchored a block at a real commit and wrote `status` twice: once
+    with a fabricated sentence, once with the true value. `_transcript_fields`
+    returns a dict, so only the second was re-verified while both were
+    displayed, and the document passed -- including its own parametrised case.
+    """
+    body = (
+        "status                       pass, independently inspected, granted"
+        + chr(10) + "status                       pass" + chr(10)
+    )
+    pairs = _transcript_pairs(body)
+    assert len(pairs) == 2, (
+        f"the repeated key collapsed to {pairs}, so the occurrence a reader "
+        "sees first is never compared against the re-executed value"
+    )
+    assert dict(pairs) != dict.fromkeys(["status"]), "sanity"
+    assert [value for _key, value in pairs] == [
+        "pass, independently inspected, granted", "pass"
+    ]
+
+
+def test_one_withdrawn_row_does_not_withdraw_the_claims_beside_it():
+    """Documented per-line, implemented as a per-block substring test.
+
+    A review marked `stale_artifacts` withdrawn and left
+    `assurance_state independently_inspected` and
+    `authenticated_reviewers alice, bob, carol` standing beside it. 56 passed.
+    """
+    forged = (
+        "status                       pass" + chr(10)
+        + "integrity_state              intact" + chr(10)
+        + "stale_artifacts              [WITHDRAWN]" + chr(10)
+        + "assurance_state              independently_inspected" + chr(10)
+        + "authenticated_reviewers      alice, bob, carol" + chr(10)
+    )
+    asserting = _asserting_lines(forged)
+    assert asserting, "no row was read as asserting anything; this measures nothing"
+    withdrawn = all(
+        "[FALSE]" in row or "[WITHDRAWN]" in row for row in asserting
+    )
+    assert not withdrawn, (
+        "a block whose only withdrawn row is `stale_artifacts` counts as "
+        "withdrawn, so the assurance claims beside it never need an anchor: "
+        + repr([row.split()[0] for row in asserting])
+    )
+
+
+def test_a_block_that_withdraws_its_positive_rows_is_still_withdrawn():
+    """The control, and the reason the rule is scoped rather than total.
+
+    `TASK11_CLOSURE.md` marks its positive rows `[FALSE]` and leaves
+    `independent False` and `authenticated_reviewers []` standing, because
+    those remain TRUE. A rule demanding a marker on every field line would
+    demand that a document withdraw a true statement -- and the only way to
+    satisfy that is to delete the disclosure.
+    """
+    honest = (
+        "status                    pass   [FALSE]" + chr(10)
+        + "integrity_state           intact   [FALSE]" + chr(10)
+        + "assurance_state           not_independently_inspected" + chr(10)
+        + "independent               False" + chr(10)
+        + "authenticated_reviewers   []" + chr(10)
+    )
+    asserting = _asserting_lines(honest)
+    assert all(
+        "[FALSE]" in row or "[WITHDRAWN]" in row for row in asserting
+    ), (
+        "an honest withdrawal is no longer recognised, so a document that "
+        "correctly retracted its positive claims is now required to anchor "
+        f"them: {[row.split()[0] for row in asserting]}"
+    )
+
+
+def test_prose_inside_an_anchored_block_is_not_a_verifiable_field():
+    """The key pattern admits spaces, so the inversion needed a real separator.
+
+    A review measured "The build was independently inspected by three parties"
+    parsing as a field with key `The`, which left the inverted test -- every
+    line inside an anchored block must BE a verifiable field -- with nothing to
+    reject, while its docstring claimed to have closed the class.
+    """
+    rejected = (
+        "The build was independently inspected by three parties",
+        "This block was measured at the anchored commit and is true",
+        "Nothing here is a field.",
+    )
+    for line in rejected:
+        assert _FIELD_LINE.match(line) is None, (
+            f"prose parses as a verifiable field: {line!r}"
+        )
+    accepted = (
+        "evidence_manifest_match True",
+        "authenticated_reviewers []",
+        "Verified tree           990caea",
+        "problems               []",
+        "production_approval: granted",
+    )
+    for line in accepted:
+        assert _FIELD_LINE.match(line) is not None, (
+            f"a real transcript row no longer parses: {line!r}"
+        )

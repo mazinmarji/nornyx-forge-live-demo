@@ -218,7 +218,11 @@ def provision_ledger(
     Safe to re-run: an existing ledger is left exactly as it is, contents
     included.
     """
-    from .nornyx_runtime import ApprovalLedger, approval_ledger_path
+    from .nornyx_runtime import (
+        LEDGER_WATERMARK_SUFFIX,
+        ApprovalLedger,
+        approval_ledger_path,
+    )
 
     location = approval_ledger_path(root.resolve())
     existed = location.is_file()
@@ -235,9 +239,26 @@ def provision_ledger(
         # the remedy exists, it is explicit, and it is destructive on purpose:
         # it discards the history AND the mark together, then mints a later
         # epoch so nothing outstanding survives it.
-        for path in (location, ApprovalLedger(location).watermark_path
-                     if location.is_file() else location.with_name(
-                         location.name + ".highwater")):
+        # THE PATH IS COMPUTED FROM THE STRING, NOT FROM A LEDGER OBJECT.
+        # This read `ApprovalLedger(location).watermark_path`, and constructing
+        # an `ApprovalLedger` runs the full structure check -- so on a ledger
+        # carrying a hostile object the constructor raised
+        # APPROVAL_LEDGER_UNREADABLE and this recovery died with an unhandled
+        # traceback, having deleted nothing. A review measured exit 1 with the
+        # ledger still in place.
+        #
+        # That is precisely backwards: the more broken the ledger, the more
+        # certainly the destructive repair refused to run, leaving an operator
+        # with no route but deleting files by hand -- and deleting the mark by
+        # hand DISABLES the rollback check. The path is a string operation and
+        # never needed to open anything.
+        #
+        # `.migrating` is the staging file `_adopt_plaintext_mark` moves into
+        # place; a crash mid-migration can leave one, and a reset that left it
+        # behind would hand the fresh epoch a stale artifact.
+        watermark = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+        for path in (location, watermark,
+                     watermark.with_name(watermark.name + ".migrating")):
             for suffix in ("", "-wal", "-shm"):
                 sibling = path.with_name(path.name + suffix)
                 if sibling.exists():

@@ -45,7 +45,13 @@ from human_authority import (  # noqa: E402
     LOCK_ABSENT,
     assert_absent_human_authority,
 )
-from test_documented_claims import forbidden_claim_patterns  # noqa: E402
+
+# `forbidden_claim_patterns` is deliberately NOT imported here any more. It is
+# the retired four-shape enumeration -- the module that defines it says so --
+# and this file used it to judge the operator dashboard while the markdown side
+# used `find_overclaims`. One concept, two implementations, and the weaker one
+# simply passed.
+from test_documented_claims import find_overclaims  # noqa: E402
 
 from nornyx_forge.governed_subject import (  # noqa: E402
     GovernedSubjectError,
@@ -491,6 +497,27 @@ def test_no_ui_surface_claims_a_governance_mode_the_run_does_not_use():
                 offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
             if "governance" in words and "nornyx" in words and "fallback" not in words:
                 offenders.append(f"{path.relative_to(ROOT).as_posix()}:{number}")
+    # THE SAME QUESTION, ASKED OF LABEL AND VALUE TOGETHER. The sweep above is
+    # per LINE, and `_dashboard_metrics` allows whitespace between the label
+    # span and the value strong -- so putting the value on its own line hid it:
+    #
+    #     <article><span>Governance</span>
+    #       <strong>Nornyx runtime authorization</strong></article>
+    #
+    # measured 47 passed, while the guard's own scraper read
+    # {"Governance": "Nornyx runtime authorization"}. The Framework row was
+    # caught by the identical split, which is how it is clear the closed metric
+    # set works and only the VALUE check was line-bound.
+    for label, value in _dashboard_metrics().items():
+        asserted = _unquoted(label + " " + value).lower()
+        words = set(re.split("[^a-z-]+", asserted))
+        if "crewai" in words and "flow" in words and not (
+            "compatible" in words or "sequential" in words
+        ):
+            offenders.append(f"dashboard metric {label!r} = {value!r}")
+        if "governance" in words and "nornyx" in words and "fallback" not in words:
+            offenders.append(f"dashboard metric {label!r} = {value!r}")
+
     assert offenders == [], (
         "these operator-facing surfaces claim a governance or execution mode "
         f"the shipped run does not use: {offenders}"
@@ -594,14 +621,22 @@ def test_the_dashboard_claims_no_independent_inspection():
     guard refuses it in documents; nothing refused it in the UI, and a review
     measured `Independently inspected` admitted when substituted in.
     """
+    # THE LIVE GUARD. This ran `forbidden_claim_patterns()`, which the module
+    # defining it describes as "what the guard used to BE ... admitting 9 of 14
+    # assertion spellings". A review put four claim markups through both and
+    # measured the dashboard scan admitting every one that `find_overclaims`
+    # catches, including the badge text `Independent inspection completed`.
+    #
+    # Importing the concept guard rather than keeping a second enumeration is
+    # the point: two lists of shapes drift, and the drift is invisible because
+    # the weaker one simply passes.
+    #
+    # The manual `not[ _-]+$` lookback is gone too -- `find_overclaims` decides
+    # negation by clause scope, which is strictly what that lookback was
+    # approximating with one character class.
     html = (ROOT / "src/demo_app/static/index.html").read_text(encoding="utf-8")
-    stripped = re.sub(r"<[^>]+>", " ", html).lower()
-    offences = [
-        match.group(0)
-        for pattern in forbidden_claim_patterns()
-        for match in pattern.finditer(stripped)
-        if not re.search("not[ _-]+$", stripped[: match.start()])
-    ]
+    stripped = re.sub(r"<[^>]+>", " ", html)
+    offences = [hit.group() for hit in find_overclaims(stripped)]
     assert offences == [], (
         "the operator dashboard asserts assurance this repository does not "
         f"hold: {offences}"
@@ -619,7 +654,7 @@ def test_the_dashboard_presents_no_metric_outside_the_closed_set():
     that row's label.
 
     So the set is closed. A row nobody has classified fails here rather than
-    defaulting to unchecked, which is the same rule `artifact_authority`已
+    defaulting to unchecked, which is the same rule `artifact_authority`
     applies to evidence files: absence of a classification is a refusal, never
     a default.
     """

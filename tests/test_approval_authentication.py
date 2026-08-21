@@ -50,7 +50,11 @@ from nornyx_forge.nornyx_runtime import (
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
 from test_approval_ledger import _fingerprint  # noqa: E402
-from test_governance_failure import TEST_REVISION, _permissive_boundary  # noqa: E402
+from test_governance_failure import (  # noqa: E402
+    TEST_REVISION,
+    TEST_SUBJECT,
+    _permissive_boundary,
+)
 
 NOW = "2026-08-03T00:00:00Z"
 KEY_ID = "fixture-approval-01"
@@ -972,6 +976,29 @@ def test_a07_a_loadable_key_is_not_refused(tmp_path: Path):
     assert sorted(store.active_signers) == ["K"]
 
 
+def _real_reviewer_key() -> str:
+    """A PEM public key, which is what a REVIEWER store actually holds.
+
+    Not `_real_public_key()`. That returns base64 raw bytes, which is the
+    APPROVER store's format; `verify_inspection_attestation` loads reviewer
+    keys with `load_pem_public_key`. A reviewer fixture built from the approver
+    helper carries key material the reviewer verifier can never load -- which
+    went unnoticed while the store did not check its keys at parse time, and
+    surfaced the moment it did.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (  # noqa: PLC0415
+        Ed25519PrivateKey,
+    )
+    from cryptography.hazmat.primitives.serialization import (  # noqa: PLC0415
+        Encoding,
+        PublicFormat,
+    )
+
+    return Ed25519PrivateKey.generate().public_key().public_bytes(
+        Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+    ).decode('utf-8')
+
+
 def test_a06_the_two_stores_now_refuse_the_same_shape(tmp_path: Path):
     """The asymmetry itself, asserted so it cannot reopen.
 
@@ -987,9 +1014,9 @@ def test_a06_the_two_stores_now_refuse_the_same_shape(tmp_path: Path):
     reviewers.write_bytes(json.dumps({
         "schema": "nornyx.forge.reviewer_trust_store.v1", "reviewers": [
         {"key_id": "R1", "reviewer": "a", "roles": ["test-inspector"],
-         "algorithm": "Ed25519", "public_key": _real_public_key()},
+         "algorithm": "Ed25519", "public_key": _real_reviewer_key()},
         {"key_id": "R1", "reviewer": "b", "roles": ["test-inspector"],
-         "algorithm": "Ed25519", "public_key": _real_public_key()},
+         "algorithm": "Ed25519", "public_key": _real_reviewer_key()},
     ]}, indent=2).encode("utf-8"))
 
     with pytest.raises(ReviewerStoreUnavailable, match="twice"):
@@ -1002,3 +1029,120 @@ def test_a06_the_two_stores_now_refuse_the_same_shape(tmp_path: Path):
     ])
     with pytest.raises(TrustStoreUnavailable, match="twice"):
         ApprovalTrustStore.load(approvers, domain=ACTION_TRUST_DOMAIN)
+
+
+# --------------------------------------------------------------------------
+# A30 -- SUBJECT_UNVERIFIED reaches `RuntimeDecision.code`, and until now
+# NOTHING asserted it. A review found four occurrences of the name under
+# `tests/`, all of them comments, while the only `decision.code ==` assertions
+# in the suite were five HUMAN_APPROVAL_REQUIRED and one
+# GOVERNANCE_INTEGRITY_COMPROMISED. The repair was live, correct and unguarded.
+#
+# The distinction matters operationally: "no human approval exists" tells an
+# operator to go and obtain one. "the runtime cannot say what it is governing"
+# is a fault no approval can fix, and an approval obtained in response to the
+# wrong code is an approval bound to nothing.
+# --------------------------------------------------------------------------
+
+
+def _release_without_subject(work: Path, grant, store, *, request=None,
+                             subject=None):
+    """`_release`, with the subject removed AFTER the boundary is built.
+
+    It cannot be removed by parameter: `_permissive_boundary` ends with
+    `runtime_subject=runtime_subject or TEST_SUBJECT`, so `None` means "give me
+    the default", not "give me none". A test that passed None and believed it
+    had measured the subject-less path would be measuring the default subject.
+    """
+    boundary = _permissive_boundary(
+        work,
+        runtime_context=RuntimeContext.for_test(work, at=NOW, revision=TEST_REVISION),
+    )
+    boundary.action_trust_store = store
+    boundary.approval_ledger = ApprovalLedger.provision(
+        work / "ledger.sqlite3", established_at=LEDGER_ESTABLISHED)
+    boundary.runtime_subject = subject
+    ran: list[int] = []
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-1",
+        risk="high",
+        action=lambda: ran.append(1) or "ran",
+        action_approval=grant,
+        action_request=request,
+        action_descriptor=None if request is not None else DESCRIPTOR,
+    )
+    return decision, len(ran)
+
+
+def test_a_boundary_with_no_subject_refuses_as_a_subject_failure(
+    tmp_path: Path, keypair, trust_store
+):
+    """A valid grant, and only the subject missing.
+
+    The grant is the same one `test_a_correctly_signed_grant_releases_exactly_once`
+    releases on, so a refusal here cannot be blamed on the approval. If this
+    reported HUMAN_APPROVAL_REQUIRED it would be sending an operator to obtain
+    an approval that already exists and would not help.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _grant(request, keypair)
+
+    decision, ran = _release_without_subject(work, grant, trust_store,
+                                             request=request)
+    assert ran == 0, "the action ran with no established subject"
+    assert decision.effect == "DENY"
+    assert decision.code == "SUBJECT_UNVERIFIED", (
+        f"refused with {decision.code!r} while holding a VALID grant and no "
+        "runtime subject. The subject is what an approval is bound TO, so "
+        "reporting a missing approval here names the one input that is present."
+    )
+
+
+def test_an_unverified_subject_is_refused_as_a_subject_failure(
+    tmp_path: Path, keypair, trust_store
+):
+    """The other arm: a subject exists and says it could not verify itself.
+
+    `subject is None or not subject.subject_verified` -- two states, one code.
+    Testing only the None arm would leave the second satisfiable by a boundary
+    that checks for None alone, which is a different and weaker property.
+    """
+    from dataclasses import replace  # noqa: PLC0415
+
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _grant(request, keypair)
+    unverified = replace(
+        TEST_SUBJECT,
+        subject_verified=False,
+        unavailable_reason="SUBJECT_SCOPE_INCOMPLETE: a declared member is absent",
+    )
+
+    decision, ran = _release_without_subject(work, grant, trust_store,
+                                             request=request, subject=unverified)
+    assert ran == 0, "the action ran on a subject that did not verify"
+    assert decision.code == "SUBJECT_UNVERIFIED", decision.code
+    assert "SUBJECT_SCOPE_INCOMPLETE" in (decision.reason or ""), (
+        "the refusal does not carry the subject's own reason, so an operator "
+        f"cannot tell WHY it could not verify: {decision.reason!r}"
+    )
+
+
+def test_the_same_grant_releases_once_a_subject_is_established(
+    tmp_path: Path, keypair, trust_store
+):
+    """The control. Without it both assertions above are satisfied by a
+    boundary that refuses everything, and the code they pin would mean nothing.
+    """
+    work = _repo(tmp_path)
+    request = _request()
+    grant = _grant(request, keypair)
+
+    decision, ran = _release_without_subject(work, grant, trust_store,
+                                             request=request, subject=TEST_SUBJECT)
+    assert decision.effect == "ALLOW", (
+        "the grant did not release even WITH a subject, so the two refusals "
+        f"above prove nothing about the subject: {decision.code} {decision.reason}"
+    )
+    assert ran == 1

@@ -68,21 +68,86 @@ def test_fg26_contamination_is_detected_and_clean_runs_are_not(
     )
 
 
-def test_fg26_an_unanswerable_git_is_not_an_answer_of_unchanged():
-    """`_worktree_state` returns "" when git cannot run, and the fixture then
-    returns without asserting -- despite its own comment saying absence of an
-    answer is not a pass.
+def _drive_the_session_guard(before, after):
+    """Run the real session fixture's body against controlled git answers.
 
-    Pinned as the known bound: with no state on either side the comparison is
-    vacuous, so the guard must not be read as evidence the tree was clean. This
-    is the same shape as H16, one layer out.
+    THE FIXTURE, NOT A COPY OF ITS ARITHMETIC. Every earlier version of this
+    coverage called `introduced_paths` directly, so deleting the fixture's
+    assertions -- both of them -- left this module green. A guard is what the
+    fixture DOES; the helper it happens to call is an implementation detail.
+
+    Returns None when the guard accepted the run, and lets the `AssertionError`
+    out when it refused, because that refusal is the behaviour under test.
     """
-    assert introduced_paths("", "") == [], (
-        "two empty states must compare equal; if not, the vacuous case is "
-        "producing spurious findings"
+    import conftest  # noqa: PLC0415
+
+    definition = conftest._governed_tree_is_left_as_found
+    body = getattr(definition, "__wrapped__", None)
+    assert body is not None, (
+        "the session fixture no longer exposes its underlying function, so "
+        "this module can no longer drive the guard it claims to cover -- which "
+        "is the failure this helper exists to make loud rather than silent"
     )
-    # The bound itself: emptiness is indistinguishable from cleanliness here.
-    assert introduced_paths("", "") == introduced_paths("", ""), "comparison is unstable"
+
+    answers = iter((before, after))
+    original = conftest._worktree_state
+    conftest._worktree_state = lambda: next(answers)
+    try:
+        generator = body()
+        next(generator)
+        try:
+            next(generator)
+        except StopIteration:
+            return None
+        raise AssertionError("the fixture yielded twice")
+    finally:
+        conftest._worktree_state = original
+
+
+def test_fg26_the_session_guard_refuses_when_git_cannot_answer():
+    """An unanswered question is not a clean result.
+
+    Both states were once `""`, so an unusable git and a clean tree were the
+    same value and the guard was silent in precisely the environment where a
+    dirtied tree would go unnoticed. `UNANSWERED` separates them -- and this
+    drives the fixture, so DELETING that check makes this red.
+    """
+    from conftest import UNANSWERED  # noqa: PLC0415
+
+    with pytest.raises(AssertionError) as raised:
+        _drive_the_session_guard(UNANSWERED, "M  BRD.md" + chr(10))
+    assert "unanswered question" in str(raised.value), str(raised.value)
+
+    with pytest.raises(AssertionError) as raised:
+        _drive_the_session_guard("", UNANSWERED)
+    assert "unanswered question" in str(raised.value), str(raised.value)
+
+
+def test_fg26_the_session_guard_refuses_a_tree_the_suite_modified():
+    """The positive case, through the fixture.
+
+    A review replaced the fixture's comparison with `introduced = []` and this
+    module stayed green at 17 passed, because nothing here ran the fixture.
+    """
+    with pytest.raises(AssertionError) as raised:
+        _drive_the_session_guard(
+            "", " M .nornyx/contracts/evidence/review_binding.json" + chr(10)
+        )
+    assert "left the governed tree modified" in str(raised.value)
+    assert "review_binding.json" in str(raised.value), (
+        "the refusal does not name the path that changed, so an operator "
+        "cannot tell what to restore"
+    )
+
+
+def test_fg26_the_session_guard_accepts_a_run_that_changed_nothing():
+    """The control, without which every assertion above is satisfiable by a
+    fixture that refuses unconditionally."""
+    unchanged = " M some-file-a-test-legitimately-left-dirty" + chr(10)
+    assert _drive_the_session_guard(unchanged, unchanged) is None, (
+        "the guard refused a run that introduced no new modification, so it "
+        "would fail every session regardless of what the suite did"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -231,22 +296,43 @@ def test_fg33_both_harness_entry_points_bound_their_runs():
     while the campaign ran unbounded. AST, not text: the word `timeout` in a
     comment is what let the previous owner look correct.
     """
-    # EVERY child run in the harness, not two named functions. The previous
-    # version checked a hand-written two-entry dict, and a review measured 110
-    # of 144 `subprocess` call sites in this repository passing no timeout --
-    # including `tracked_files`, `faithful_copy`'s three git calls, and the
-    # census's own pytest run, which spawns the entire suite.
+    # THE SCOPE IS DERIVED. This listed four module paths while calling itself
+    # "structural, over the real call sites rather than over a table" -- it had
+    # replaced a two-entry table with a four-entry one. Two reviews measured the
+    # same omission independently: `tests/inspection.py`, a harness that spawns
+    # children for four proofs and meets this guard's own stated criterion, plus
+    # four `scripts/` gates including `refresh_governance_evidence.py`, which
+    # every `--verify` probe shells out to.
     #
-    # SCOPE, stated rather than implied: this covers the modules that spawn
-    # children ON BEHALF OF a proof, where a hang produces no verdict and no
-    # signal. Ad-hoc `subprocess.run` calls inside individual tests are not
-    # covered; those hang a single test that pytest reports, which is a
-    # different and much louder failure.
-    harness = (
-        "tests/mutation_workspace.py",
-        "tests/mutation.py",
-        "tests/attack_property.py",
-        "scripts/check_test_coverage.py",
+    # SCOPE: modules that spawn children ON BEHALF OF a proof or a gate. That
+    # is every non-`test_` module under `tests/` (the harnesses) and every
+    # module under `scripts/` (the gates). Both are computed, so a new harness
+    # is judged the day it lands.
+    #
+    # `Popen` IS NOT IN SCOPE, and not by oversight: it accepts no `timeout=`
+    # keyword: the bound belongs on the later `wait`/`communicate`. Requiring
+    # one would be requiring a TypeError, and `scripts/smoke_http.py` starts a
+    # server it deliberately keeps running.
+    #
+    # THE RESIDUAL, corrected. This used to say ad-hoc calls inside individual
+    # tests "hang a single test that pytest reports, which is a different and
+    # much louder failure". That is FALSE here and was never measured:
+    # `pytest_timeout` is not installed and no ini timeout is set, so a hung
+    # child hangs the whole session and pytest reports nothing at all. Quieter,
+    # not louder. Those call sites remain out of scope -- bounding every one is
+    # a larger change than this guard -- but the exclusion is now recorded as a
+    # known gap rather than excused by a property this repository does not have.
+    harness = [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "tests").glob("*.py"))
+        if not path.name.startswith("test_")
+    ] + [
+        path.relative_to(ROOT).as_posix()
+        for path in sorted((ROOT / "scripts").glob("*.py"))
+    ]
+    assert len(harness) >= 8, (
+        f"only {len(harness)} harness modules were discovered; the derivation "
+        "above has stopped matching and this guard would sweep almost nothing"
     )
     unbounded = []
     for relative in harness:
@@ -254,7 +340,7 @@ def test_fg33_both_harness_entry_points_bound_their_runs():
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "run"
+                    and node.func.attr in {"run", "check_output"}
                     and getattr(node.func.value, "id", "") == "subprocess"):
                 continue
             if not any(keyword.arg == "timeout" for keyword in node.keywords):

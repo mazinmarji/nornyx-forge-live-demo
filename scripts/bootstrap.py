@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run(command: list[str], *, check: bool = True) -> int:
     print("+", " ".join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, check=False)
+    result = subprocess.run(command, cwd=ROOT, check=False, timeout=3600)
     if check and result.returncode:
         raise SystemExit(result.returncode)
     return result.returncode

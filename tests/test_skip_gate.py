@@ -242,7 +242,7 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
     # docstring says "a floor at zero is decoration". Half was the same
     # decoration one step up. The floor has to sit close enough to the suite
     # that deleting a module of any size trips it.
-    assert MINIMUM_COLLECTED >= collected * 9 // 10, (
+    assert MINIMUM_COLLECTED >= census.band(collected), (
         f"a floor of {MINIMUM_COLLECTED} against {collected} collected tests "
         f"leaves {collected - MINIMUM_COLLECTED} of slack: whole modules could "
         "be deleted with this gate still passing"
@@ -467,22 +467,69 @@ def test_a_required_module_that_shrinks_is_refused(tmp_path):
     )
 
 
-def test_the_declared_floors_are_met_by_the_real_suite(tmp_path):
+def _real_module_counts() -> dict:
+    """How many tests each module ACTUALLY contributes, by collecting them.
+
+    The floors are a hand-written table and the census enforces them. Nothing
+    compared them against the suite: the test below built its report from the
+    floors and then checked the floors against it, so every floor was met by
+    construction and a floor set ABOVE a module's real contribution -- which
+    fails every census run -- could not be detected here.
+    """
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:randomly"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=1800,
+    )
+    assert completed.returncode == 0, (
+        "the suite could not be collected, so nothing about the floors was "
+        f"measured: {completed.stdout[-400:]}{completed.stderr[-300:]}"
+    )
+    # `-q --collect-only` prints one `path/to/module.py: COUNT` line per module,
+    # not one line per test. Parsing it as `module::test` returned an empty
+    # dict -- caught by the floor below, which is why that floor is here.
+    counts: dict = {}
+    for line in completed.stdout.splitlines():
+        module, separator, tail = line.partition(": ")
+        if not separator or not module.endswith(".py"):
+            continue
+        if tail.strip().isdigit():
+            counts[module.strip().replace(chr(92), "/")] = int(tail.strip())
+    assert len(counts) > 50, (
+        f"only {len(counts)} modules were collected; the parse above has "
+        "stopped matching pytest's output and this measures nothing"
+    )
+    return counts
+
+
+def test_the_declared_floors_are_met_by_the_real_suite():
     """The control, and the thing that keeps the floors honest.
 
     Floors set above what the suite actually contributes would fail every run;
-    floors set at zero would accept anything. Measured against a report built
-    from the current counts.
+    floors set at zero would accept anything. Measured by COLLECTING, because
+    the previous version built its report out of the floors it was checking.
     """
-    counts = dict(census.REQUIRED_MODULE_MINIMUMS)
-    padding = census.MINIMUM_COLLECTED - sum(counts.values())
-    if padding > 0:
-        counts["tests/test_filler.py"] = padding
-
-    assert census.evaluate(_counted_report(tmp_path, counts), 0) == 0, (
-        "a run meeting every declared floor was refused, so the floors are "
-        "above what the suite actually proves"
+    real = _real_module_counts()
+    impossible = []
+    for module, floor in sorted(census.REQUIRED_MODULE_MINIMUMS.items()):
+        actual = real.get(module)
+        if actual is None:
+            impossible.append(f"{module}: floored at {floor}, collects nothing")
+        elif actual < floor:
+            impossible.append(f"{module}: floored at {floor}, collects {actual}")
+    assert impossible == [], (
+        "these floors are above what the module actually contributes, so every "
+        f"census run fails until they are corrected: {impossible}"
     )
+
+
+# A per-module drift guard is NOT added here: this module already has one,
+# `test_no_module_floor_drifts_far_below_its_module`, and it fired on the
+# floors this round changed. Writing a second implementation of a check
+# that already exists is FG26 -- the defect where a guard and its owner
+# test two different copies of the same rule -- committed while repairing
+# a sibling of it.
 
 
 def test_every_required_module_has_a_declared_floor():
@@ -669,13 +716,17 @@ def test_the_census_accepts_a_complete_report(tmp_path: Path):
 def _band(collected: int) -> int:
     """The lowest floor that still counts as 90% of `collected`.
 
+    Delegates to `census.band`, which is now the only definition. This module
+    had its own, `tests/attack_property.py` had a third, and two of the three
+    truncated. See the note there.
+
     CEILING, not floor division. `collected * 9 // 10` TRUNCATES, so a
     two-test module passed with a floor of 1 (50%) and a three-test module with
     2 (67%) -- a review measured five modules sitting in that vacuous band. The
     smaller the module, the further the truncation let it drift, which is
     backwards: a small module is the one a single deletion guts.
     """
-    return -(-collected * 9 // 10)
+    return census.band(collected)
 
 
 def test_the_band_is_not_vacuous_for_small_modules():
@@ -752,4 +803,46 @@ def test_the_module_band_guard_would_notice_a_drifted_floor():
     assert not (36 < _band(collected)), (
         "a floor at 90% is being reported as drifted, so the guard would refuse "
         "every honest floor and would be turned off"
+    )
+
+
+def test_the_brd_f_005_exemption_still_describes_the_ci_workflow():
+    """Nine skips rest on a sentence about CI. Bind the sentence.
+
+    `EXPECTED_SKIPS` requires only that a reason be longer than sixty
+    characters, so its CONTENT is unbound. BRD-F-005's entries assert that "NO
+    reader and NO CI job can produce one -- the `test` job has no
+    prepare-runtime step". A reviewer confirmed that is TRUE today and observed
+    that it would go stale silently: someone adding an ungated
+    `prepare_runtime.py` step to CI would make nine declared skips describe a
+    workflow that no longer exists, with every gate green.
+
+    So the claim is measured. Either the workflow never runs
+    `prepare_runtime.py`, or every step that does is conditional on an approval
+    being present -- which is the state the sentence describes.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    lines = workflow.splitlines()
+    unguarded = []
+    for number, line in enumerate(lines, start=1):
+        if "prepare_runtime.py" not in line:
+            continue
+        # The `if:` guarding a step precedes its `run:`. Look back a few lines
+        # rather than parsing YAML: a dependency on a YAML library here would
+        # be a new install for one assertion.
+        window = lines[max(0, number - 6):number]
+        if not any("steps.approval.outputs.present" in earlier for earlier in window):
+            unguarded.append(f".github/workflows/ci.yml:{number}")
+
+    assert unguarded == [], (
+        "CI runs `prepare_runtime.py` without gating it on an approval being "
+        "present, so the BRD-F-005 skip reasons -- which tell a reader that no "
+        "CI job can produce a runtime lock -- now describe a workflow this "
+        f"repository does not have: {unguarded}"
+    )
+    assert "prepare_runtime.py" in workflow, (
+        "the workflow no longer mentions `prepare_runtime.py` at all, so this "
+        "check passes vacuously and the skip reasons are unbound again"
     )

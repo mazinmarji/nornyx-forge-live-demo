@@ -305,16 +305,31 @@ def test_no_production_source_constructs_a_test_context():
 
     root = Path(__file__).resolve().parents[1]
     offenders = []
+    # THE CALLEE, NOT THE RECEIVER. This also required the receiver to be the
+    # bare name `RuntimeContext`, and a review measured what that costs: of six
+    # spellings, ONE was caught.
+    #
+    #   CAUGHT     RuntimeContext.for_test(...)
+    #   INVISIBLE  nornyx_runtime.RuntimeContext.for_test(...)
+    #   INVISIBLE  RC.for_test(...)                     aliased on import
+    #   INVISIBLE  Ctx = RuntimeContext; Ctx.for_test(...)
+    #   INVISIBLE  getattr(RuntimeContext, "for_test")(...)
+    #   INVISIBLE  self.runtime_context.for_test(...)
+    #
+    # The sibling guard in `test_authority_domains.py` has matched on
+    # `id or attr` alone since it was written and catches all of ITS variants.
+    # The correct predicate was in the tree; this one was narrower for no
+    # reason anybody recorded. There are no legitimate `for_test` calls under
+    # `src/`, so matching the name alone is exactly right and not over-broad.
     for path in sorted((root / "src").rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "for_test"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "RuntimeContext"
-            ):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if name == "for_test":
                 offenders.append(f"{path.relative_to(root)}:{node.lineno}")
     assert offenders == [], (
         "RuntimeContext.for_test is a test seam and must not appear in shipped "

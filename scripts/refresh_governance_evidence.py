@@ -134,6 +134,7 @@ def _revision() -> str:
         text=True,
         capture_output=True,
         check=False,
+        timeout=600,
     )
     if result.returncode:
         raise SystemExit("git rev-parse HEAD failed; a bound revision is required")
@@ -442,6 +443,7 @@ def _architecture_report() -> dict:
         text=True,
         capture_output=True,
         check=False,
+        timeout=900,
     )
     try:
         return json.loads(result.stdout)
@@ -1387,7 +1389,8 @@ REGENERATED_OUTPUTS = frozenset(
 
 def _git_lines(*args: str) -> list[str]:
     result = subprocess.run(
-        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False
+        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False,
+        timeout=600
     )
     if result.returncode:
         raise SystemExit(
@@ -1558,7 +1561,8 @@ def require_approval_matches_head() -> str | None:
 
 def _head_commit() -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=False
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True,
+        check=False, timeout=600
     )
     return "git:" + result.stdout.strip() if result.returncode == 0 else "git:unbound"
 

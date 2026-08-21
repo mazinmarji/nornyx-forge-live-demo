@@ -165,7 +165,19 @@ def test_regeneration_restores_a_healthy_baseline_at_any_instant(as_of: str, tmp
         assert _codes(work, contract, as_of) <= APPROVAL_GAP_CODES
 
 
-_ISO = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T")
+#: A calendar date, with or without a time. The `T` used to be REQUIRED and
+#: the match ANCHORED at position 0, and a review measured what that cost:
+#: four ways a far-future date evaded the sweep -- inside prose
+#: ("valid until 2099-..."), behind a leading space, as a plain
+#: "2099-01-01" with no `T`, and as a dictionary KEY, which was never
+#: visited at all.
+#:
+#: The predecessor was a substring scan that caught all four. Replacing it
+#: with a shape walk removed a real false positive and introduced these
+#: four false negatives WITHOUT SAYING SO, which is the trade this
+#: repository refuses: a narrowing that is not stated is indistinguishable
+#: from a repair.
+_ISO = re.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def _timestamps(payload) -> list:
@@ -177,13 +189,19 @@ def _timestamps(payload) -> list:
     """
     found = []
     if isinstance(payload, dict):
-        for value in payload.values():
+        # KEYS TOO. Only values were visited, so a date used as a key -- which
+        # is how a per-day map is written -- was invisible to the whole sweep.
+        for key, value in payload.items():
+            found.extend(_timestamps(key))
             found.extend(_timestamps(value))
     elif isinstance(payload, list):
         for value in payload:
             found.extend(_timestamps(value))
-    elif isinstance(payload, str) and _ISO.match(payload):
-        found.append(payload)
+    elif isinstance(payload, str):
+        # `search`, not `match`: a date reached by reading a sentence is still
+        # a date, and anchoring at position 0 meant a leading space hid one.
+        for hit in _ISO.finditer(payload):
+            found.append(payload[hit.start():])
     return found
 
 

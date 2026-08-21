@@ -381,14 +381,38 @@ def test_a_boundary_without_a_subject_refuses_and_says_so(tmp_path: Path):
     assert flow.boundary.runtime_subject is None
 
 
-def test_the_high_risk_case_is_refused_for_governance_not_for_wiring():
-    """The demonstration must demonstrate the property it claims.
+def test_the_shipped_high_risk_refusal_comes_from_the_fallback_and_says_so():
+    """What the END-TO-END path can actually establish, which is less than the
+    previous version of this test claimed.
 
-    `prevented` is the right outcome, but it has to arrive because no human
-    approval exists -- not because the boundary could not establish what it was
-    governing. Before the subject reached the boundary this case was prevented
-    with SUBJECT_UNVERIFIED, and the demonstration proved only that a
-    disconnected system refuses everything.
+    IT CLAIMED: `prevented` "has to arrive because no human approval exists --
+    not because the boundary could not establish what it was governing", and
+    that a real canonical request "only happens past the subject check".
+
+    MEASURED, with `boundary.runtime_subject` forced to None -- the precise
+    defect it existed to catch -- both of its assertions still passed:
+
+        action_status   prevented
+        decision.code   HUMAN_APPROVAL_REQUIRED
+        request_digest  sha256:7bccb1d7878bfc322...
+
+    Two reasons, both structural. `HUMAN_APPROVAL_REQUIRED` is the
+    deterministic fallback's UNCONDITIONAL constant for any high-risk act,
+    returned before subject, trust store, ledger or any approval rule is
+    consulted; `_official` is never entered on the shipped path. And
+    `canonical_action_request` is called by the CALLER in `agentic.py` AFTER
+    `evaluate_and_execute` returns, on every path, with `subject_revision=""`
+    when the subject is absent -- so the digest is evidence that the caller ran,
+    not that the subject was checked.
+
+    So this asserts the source, which is the honest end-to-end claim, and the
+    subject distinction is measured in
+    `test_an_unverified_subject_is_refused_as_a_subject_failure_not_an_approval_one`
+    below, at a boundary where `_official` actually runs.
+
+    The `source` assertion is not decoration. If the shipped path ever does
+    load the authorizer, this test goes RED and forces someone to strengthen it
+    rather than leaving a fallback-shaped claim standing over a governed path.
     """
     from fastapi.testclient import TestClient
 
@@ -402,9 +426,22 @@ def test_the_high_risk_case_is_refused_for_governance_not_for_wiring():
         f"the high-risk act was refused for {decision.get('code')!r}, not because "
         "a human approval is required"
     )
-    # A real canonical request was built, which only happens past the subject
-    # check -- so the refusal came from the approval rules, not from before them.
-    assert result.get("action_request", {}).get("request_digest", "").startswith("sha256:")
+    assert decision.get("source") == "deterministic_fallback", (
+        "the shipped demonstration path no longer refuses through the "
+        f"deterministic fallback but through {decision.get('source')!r}. This "
+        "test is calibrated for the fallback, whose high-risk denial is "
+        "unconditional and therefore proves nothing about the approval rules. "
+        "On a governed path it must assert the governed property instead."
+    )
+
+
+# `SUBJECT_UNVERIFIED` is measured in `tests/test_approval_authentication.py`
+# (`test_a_boundary_with_no_subject_refuses_as_a_subject_failure`), not here.
+# It is reachable only once an approval is being BOUND -- behind
+# `if high_risk and decision.allowed` -- so a module with no signing
+# fixtures cannot drive it, and an attempt from here refused with
+# HUMAN_APPROVAL_REQUIRED for want of a grant: the very collapse the test
+# exists to tell apart, reproduced while trying to measure it.
 
 
 # --------------------------------------------------------------------------
