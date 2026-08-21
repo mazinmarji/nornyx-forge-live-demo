@@ -211,6 +211,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # R2: the authoritative-property contract and the terminal
     # classification of every registered attack.
     "tests/test_attack_attribution_contract.py": 9,
+    # R3: every structural refusal in verify_action_approval, and WHICH
+    # control catches each -- so a shadowing change is visible.
+    "tests/test_approval_structure_refusals.py": 10,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -271,7 +274,13 @@ EXPECTED_SKIP_CASES = {
 # container-independent recogniser, so documents whose transcripts sit in
 # blockquotes, bullets and tables enter the parametrised sweep that was only
 # ever handed fenced ones. 1450 leaves 81 of slack.
-MINIMUM_COLLECTED = 1450
+# RAISED ABOVE THE SUM OF THE PER-MODULE FLOORS, which is the only way this is
+# a floor at all. At 1450 against a module-floor sum of 1458 the aggregate could
+# never fire on its own: any report satisfying every module also satisfied it, so
+# it was a declared check that could not reach a verdict.
+# `test_the_floor_refusal_actually_runs` caught it. 1490 sits above the sum and
+# 77 below the 1567 actually collected.
+MINIMUM_COLLECTED = 1490
 
 
 def band(collected: int) -> int:
@@ -428,6 +437,7 @@ REQUIRED_MODULES = (
     "tests/test_ledger_continuity.py",
     "tests/test_ledger_atomicity.py",
     "tests/test_attack_attribution_contract.py",
+    "tests/test_approval_structure_refusals.py",
     "tests/test_trust_store_parity.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",

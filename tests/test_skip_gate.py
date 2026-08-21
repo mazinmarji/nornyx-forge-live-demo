@@ -25,6 +25,7 @@ import check_test_coverage as census  # noqa: E402
 from check_test_coverage import (  # noqa: E402
     EXPECTED_SKIPS,
     MINIMUM_COLLECTED,
+    REQUIRED_MODULE_MINIMUMS,  # noqa: E402
     REQUIRED_MODULES,
     classify,
     evaluate,
@@ -338,6 +339,26 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
     assert code == 2
     assert "below the floor" in captured
     assert "collection below floor" in captured
+
+
+def test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors():
+    """A floor below the sum of its parts can never fire.
+
+    MEASURED: `MINIMUM_COLLECTED` was 1450 while the per-module floors summed to
+    1458, so any report satisfying every module floor also satisfied the
+    aggregate. It was a declared check that could not reach a verdict of its
+    own -- the shape this repository calls a false green.
+
+    Found because `test_the_floor_refusal_actually_runs` started returning 0
+    where it requires 2: its synthetic report, built from one case per required
+    module, had grown past the aggregate floor.
+    """
+    module_sum = sum(REQUIRED_MODULE_MINIMUMS.values())
+    assert MINIMUM_COLLECTED > module_sum, (
+        f"the aggregate floor is {MINIMUM_COLLECTED} and the per-module floors "
+        f"sum to {module_sum}. The aggregate cannot refuse anything the module "
+        "floors already accept, so it is decoration. Raise it above the sum."
+    )
 
 
 def test_a_failing_pytest_is_reported_as_failure_on_the_last_line(tmp_path, capsys):
