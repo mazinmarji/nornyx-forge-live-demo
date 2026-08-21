@@ -174,7 +174,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 55,
     "tests/test_mutation_catalogue.py": 30,
-    "tests/test_false_green_audit.py": 18,
+    "tests/test_false_green_audit.py": 20,
     "tests/test_xfail_strictness.py": 17,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
