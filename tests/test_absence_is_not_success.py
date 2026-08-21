@@ -328,6 +328,7 @@ def test_the_refusal_names_the_module_rather_than_the_python_error(tmp_path: Pat
 
 def test_a_non_governed_import_failure_keeps_its_traceback(tmp_path: Path):
     """The control, and the reason the translation is narrow.
+    FG37: a structural control that a COMMENT satisfied.
 
     Only modules under the governed source packages are translated. Anything
     else is a real environment fault, and dressing it up as a governance finding

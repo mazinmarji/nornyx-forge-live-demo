@@ -171,6 +171,7 @@ def test_no_kill_point_during_a_consumption_leaves_the_stores_disagreeing(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
     """The sweep that reproduced A7-P1-2, run as a regression.
+    FG39: single use, with two durable stores committed separately.
 
     Design-independent by construction: the kill is injected by wrapping
     `sqlite3.connect` in the child and installing a trace callback, so it fires

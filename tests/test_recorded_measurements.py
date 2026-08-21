@@ -1131,6 +1131,7 @@ def test_the_anchored_re_execution_does_not_depend_on_the_readers_machine(
 )
 def test_r4_an_anchor_is_recognised_in_every_rendering(rendering, prefix):
     """R4: an anchored claim must be field-checked whatever encloses it.
+    FG36: a verified anchor when only one rendering was ever read.
 
     MEASURED before this was fixed: `_anchored_blocks` used `_blocks`, which
     knows backtick, four-backtick, tilde and 4-space indent. An anchored

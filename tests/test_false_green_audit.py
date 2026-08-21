@@ -254,6 +254,65 @@ INVENTORY = (
         "tests/test_probe_containment.py"
         "::test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning",
     ),
+    FalseGreen(
+        "FG34", "a KILL, when only a named test failed",
+        "semantic attribution was OPTIONAL -- `if item.authoritative_property "
+        "is not None` -- so an attack carrying no machine-verifiable criterion "
+        "skipped attribution and was credited on the victim test failing alone",
+        "attribution is mandatory: an attack with no executable criterion is "
+        "refused as NO_AUTHORITATIVE_PROPERTY rather than counted",
+        "tests/test_attack_attribution_contract.py"
+        "::test_an_attack_without_a_criterion_is_refused_by_the_runner",
+    ),
+    FalseGreen(
+        "FG35", "a floor, when the check could not reach its own verdict",
+        "the aggregate collection floor sat BELOW the sum of the per-module "
+        "floors, 1450 against 1458, so every report satisfying the modules "
+        "satisfied it too and it could never refuse anything on its own",
+        "the aggregate floor must exceed the sum of the parts it aggregates",
+        "tests/test_skip_gate.py"
+        "::test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors",
+    ),
+    FalseGreen(
+        "FG36", "a verified anchor, when only one rendering was ever read",
+        "anchored transcripts were located with the container-DEPENDENT block "
+        "grammar, so a claim rendered tab-indented, blockquoted or bulleted was "
+        "never field-checked against the commit it named",
+        "recognition is container-independent, and every rendering is pinned",
+        "tests/test_recorded_measurements.py"
+        "::test_r4_an_anchor_is_recognised_in_every_rendering",
+    ),
+    FalseGreen(
+        "FG37", "a structural control, when a COMMENT satisfied it",
+        "a declared control checked production structure by substring and "
+        "passed after the statement was deleted and replaced by a comment "
+        "mentioning it -- a substring cannot tell a statement from a sentence "
+        "about one",
+        "the control walks the AST and requires a real statement node, so a "
+        "mention cannot satisfy what only a use should",
+        "tests/test_absence_is_not_success.py"
+        "::test_a_non_governed_import_failure_keeps_its_traceback",
+    ),
+    FalseGreen(
+        "FG38", "a proven attack, when its proof was only DEFINED",
+        "the catalogue verified the owner module contained `def <node>(`; a "
+        "node can be present and never run -- deselected, shadowed by a later "
+        "definition, or excluded by configuration -- and still be counted",
+        "collection is measured by asking pytest what it would actually run",
+        "tests/test_mutation_catalogue.py"
+        "::test_every_killing_test_is_actually_collected_by_pytest",
+    ),
+    FalseGreen(
+        "FG39", "single use, when two durable stores were committed separately",
+        "the consumption row and the continuity witness were written to two "
+        "files in sequence, so a process death between them left the row "
+        "durable and the witness stale -- 8 of 45 kill points -- after which a "
+        "ledger-only restore released the already-spent grant",
+        "both stores are written in ONE SQLite transaction over an attached "
+        "database, in a journal mode where that commit covers the set",
+        "tests/test_ledger_atomicity.py"
+        "::test_no_kill_point_during_a_consumption_leaves_the_stores_disagreeing",
+    ),
 )
 
 
@@ -303,6 +362,13 @@ EXPECTED_FALSE_GREEN_CLASSES = frozenset({
     "FG31",
     "FG32",
     "FG33",
+    # Task 12: the mechanisms R2-R6 and Task 11 measured during remediation.
+    "FG34",
+    "FG35",
+    "FG36",
+    "FG37",
+    "FG38",
+    "FG39",
 })
 
 #: Mechanisms learned across the whole remediation, mapped to the class that

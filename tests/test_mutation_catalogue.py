@@ -899,6 +899,7 @@ def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
 
 def test_every_killing_test_is_actually_collected_by_pytest():
     """TASK 11: the totals rest on tests that RUN, not on tests that exist.
+    FG38: a proven attack whose proof was only DEFINED.
 
     `test_every_owner_module_exists_and_defines_its_killing_test` checks that
     the module contains `def <node>(`. That is presence. A node can be present

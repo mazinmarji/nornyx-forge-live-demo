@@ -343,6 +343,7 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
 
 def test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors():
     """A floor below the sum of its parts can never fire.
+    FG35: a floor whose check could not reach its own verdict.
 
     MEASURED: `MINIMUM_COLLECTED` was 1450 while the per-module floors summed to
     1458, so any report satisfying every module floor also satisfied the
