@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import html
 import io
 import json
 import os
@@ -472,10 +473,87 @@ UI_SUFFIXES = (".html", ".htm", ".js", ".css", ".json", ".toml")
 #: it is meaningless where the payload is a quoted string by definition.
 #: A quoted string literal, which in these formats carries the payload a
 #: reader actually sees.
+#: THE BACKTICK ARM IS NOT OPTIONAL. A template literal is how modern JS
+#: builds strings, and it is how the dashboard in this repository builds
+#: EVERY element. With only the two quote arms:
+#:
+#:     .js single-quoted banner        FLAGGED   ['independently']
+#:     .js template-literal payload    ADMITTED  []
+#:
+#: and ADMITTED is the generous word for it: because other quoted spans
+#: exist elsewhere in the file, `joined` is truthy, so the `or text`
+#: fallback never fires and the payload is DISCARDED rather than judged.
+#: A claim planted in app.js above the case list passed 23 tests.
+#:
+#: Template literals may cross line breaks, so that arm does not exclude
+#: the newline the two quote arms do.
 _STRING_LITERAL = re.compile(
     chr(34) + "([^" + chr(34) + chr(10) + "]*)" + chr(34)
     + "|" + chr(39) + "([^" + chr(39) + chr(10) + "]*)" + chr(39)
+    + "|" + chr(96) + "([^" + chr(96) + "]*)" + chr(96)
 )
+
+#: A JS or JSON escape.
+_JS_ESCAPE = re.compile(
+    r"\\u\{([0-9a-fA-F]{1,6})\}"
+    r"|\\u([0-9a-fA-F]{4})"
+    r"|\\x([0-9a-fA-F]{2})"
+)
+
+#: A CSS escape: a backslash, one to six hex digits, and one optional
+#: trailing space which is a DELIMITER rather than content.
+_CSS_ESCAPE = re.compile(r"\\([0-9a-fA-F]{1,6})[ \t\n]?")
+
+
+def _decoded(text: str) -> str:
+    r"""Escapes back to the characters a reader sees.
+
+    THE LINE THIS REPLACES WAS A NO-OP, BY ONE MISSING BACKSLASH:
+
+        re.sub(r"\[0-9a-fA-F]{2,6}\s?", " ", stripped)
+
+    In a raw string `\[` is a LITERAL bracket, so the pattern matched the
+    six-character text `[0-9a-fA-F]]` and never matched an escape at all.
+    Measured both directions: it did NOT match `\49 ndep`, and it DID
+    match `[0-9a-fA-F]]`.
+
+    Two operator-facing payloads went in under it:
+
+        .json  "\u0049ndependently inspected ..."   ADMITTED
+        .css   content:"\49 ndependently inspected"  ADMITTED
+
+    and `json.load(plugin.json)["description"]` then read "Independently
+    inspected; production approval granted." -- what a marketplace listing
+    shows a reader. Twenty-three tests passed.
+
+    DECODED, NOT BLANKED. Repairing only the backslash leaves the sub
+    replacing the escape with a SPACE, so `\49 ndependently` becomes
+    ` ndependently` -- which matches no rule either, and the claim stays
+    admitted by a SECOND mechanism with the regex now correct. The escape
+    has to become the character it denotes.
+
+    HTML entities are decoded here too: `&#73;ndependently` renders as the
+    word in the same surfaces, and they also carry U+00A0.
+    """
+    text = html.unescape(text)
+
+    def character(hit):
+        digits = next(group for group in hit.groups() if group)
+        point = int(digits, 16)
+        # A LONE SURROGATE OR AN OUT-OF-RANGE POINT IS NOT A CHARACTER.
+        # chr() raises on the second and yields an unencodable string for
+        # the first, and either aborts the sweep -- turning a planted
+        # escape into a crash rather than into a finding.
+        if point > 0x10FFFF or 0xD800 <= point <= 0xDFFF:
+            return " "
+        return chr(point)
+
+    # JS FORMS FIRST. The CSS rule would otherwise read `\u0049` as a
+    # backslash followed by no hex at all, since `u` is not a hex digit,
+    # and leave it in place.
+    text = _JS_ESCAPE.sub(character, text)
+    return _CSS_ESCAPE.sub(character, text)
+
 
 STRUCTURED_SUFFIXES = (".json", ".toml", ".css", ".js")
 
@@ -703,9 +781,7 @@ def test_the_dashboard_claims_no_independent_inspection():
             # admitted while the same claim in `app.js` and both package
             # descriptions was caught.
         stripped = re.sub(r"<[^>]+>", " ", stripped)
-        # CSS/JS escapes back to the character a reader sees, so a claim cannot
-        # hide behind `4`.
-        stripped = re.sub(r"\[0-9a-fA-F]{2,6}\s?", " ", stripped)
+        stripped = _decoded(stripped)
         stripped = stripped.replace(chr(92), " ")
         for hit in find_overclaims(stripped):
             offences.append(f"{path.relative_to(ROOT).as_posix()}: {hit.group()}")

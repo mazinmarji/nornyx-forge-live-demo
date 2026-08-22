@@ -43,9 +43,11 @@ import pytest
 from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
 
 from nornyx_forge.nornyx_runtime import (
+    LEDGER_CONTINUITY_MIGRATION_REQUIRED,
     LEDGER_CONTINUITY_UNKNOWN,
     LEDGER_ROLLED_BACK,
     ApprovalLedger,
+    NornyxRuntimeUnavailable,
 )
 
 NOW = "2026-08-03T00:00:00Z"
@@ -537,3 +539,357 @@ def test_the_mark_cannot_be_lowered_deterministically(tmp_path: Path) -> None:
         "the mark refused to RISE, so the guard above is satisfied by a setter "
         "that never writes at all"
     )
+
+
+def test_the_plaintext_mark_helpers_are_not_on_a_production_path():
+    """A9-P2-2. The comment says they are dead; this is what says it.
+
+    `_recorded_consumptions` and `_record_consumptions` are the two-step
+    plaintext-mark path that `_commit_consumption` replaced. A residual beside
+    the writer claimed the reader "is read at the TOP of the next `consume`",
+    which was FALSE and false in the direction of claiming safety -- and it
+    survived because nothing checked it.
+
+    Read from the PARSE TREE of the production module: a call is an
+    `ast.Call`, and neither a comment nor a docstring can be one, which is the
+    whole difference between this and the sentence it replaces.
+
+    If someone wires either into `consume`, this goes red and the note beside
+    them has to be rewritten -- which is the point. It is not an assertion
+    that dead code is good; it is an assertion that the DESCRIPTION and the
+    CODE agree.
+    """
+    import ast  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    source = Path(nornyx_runtime.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    called = [
+        (node.lineno, name)
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for name in [getattr(node.func, "attr", getattr(node.func, "id", None))]
+        if name in {"_recorded_consumptions", "_record_consumptions"}
+    ]
+    assert called == [], (
+        "the plaintext-mark helpers are called from production source, so the "
+        "note beside them -- which says the single-transaction path replaced "
+        f"them and reaches neither -- is now false: {called}"
+    )
+
+
+def test_the_witness_object_closure_judges_a_wildcard_named_trigger(tmp_path: Path):
+    """A9-P2-2. The THIRD copy of the inverted filter, measured.
+
+    `WHERE name NOT LIKE 'sqlite_%'` is documented twice in the runtime as
+    having produced live bypasses, and the copy inside `_recorded_consumptions`
+    was left carrying it. `_` is a single-character LIKE wildcard, so a trigger
+    named `sqliteXz` was DISCARDED BEFORE BEING JUDGED.
+
+    Driven against the helper rather than argued: a trigger that freezes the
+    mark must be refused, and an ordinary `ANALYZE` must NOT be -- the naive
+    repair (drop the filter, refuse everything unknown) bricks the store on
+    the statistics tables SQLite creates for itself.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LedgerContinuityUnknown,
+    )
+
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute(
+            "CREATE TRIGGER sqliteXz BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+    with pytest.raises(LedgerContinuityUnknown) as refusal:
+        ledger._recorded_consumptions()
+    assert "sqliteXz" in str(refusal.value), (
+        "the wildcard-named trigger was not the object named in the refusal, "
+        f"so it was not what the closure judged: {refusal.value}"
+    )
+
+
+def test_the_witness_object_closure_still_tolerates_analyze(tmp_path: Path):
+    """The positive control for the check above.
+
+    Without this, refusing the trigger would be satisfied by a closure that
+    refuses everything -- and that closure BRICKS a healthy ledger, because
+    `ANALYZE` creates `sqlite_stat1` in the witness store.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+
+    assert ledger._recorded_consumptions() is not None, (
+        "a healthy witness was refused after ANALYZE, so the closure is "
+        "over-inclusive and would brick an ordinary store"
+    )
+    assert _spend(ledger, 1), "a grant was refused after ANALYZE"
+
+
+def _replace_witness_key(ledger: ApprovalLedger, key) -> None:
+    """Re-key the witness row.
+
+    The provisioned column is an INTEGER PRIMARY KEY, so a plain UPDATE is
+    refused with `datatype mismatch` -- the table has to be rebuilt, which is
+    also what a tamper looks like.
+    """
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        held = conn.execute("SELECT value FROM high_water").fetchone()[0]
+        conn.execute("DROP TABLE high_water")
+        conn.execute("CREATE TABLE high_water (id, value INTEGER NOT NULL)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (?, ?)",
+                     (key, held))
+        conn.commit()
+
+
+def _spent_ledger(tmp_path: Path) -> ApprovalLedger:
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+    return ledger
+
+
+# --------------------------------------------------------------------------
+# A9-P2-1 -- ONE PARAMETER PER MECHANISM, AND THE REFUSAL IS NAMED
+#
+# Three mechanisms guard this witness: the object closure, the `id = 1`
+# assertion, and the post-UPDATE re-read of the VALUE. A review deleted each
+# one individually and ran 51 selected tests: three of the four deletions left
+# ZERO tests red. The four sabotage parameters in use were jointly covered by
+# any one of the three, so no test attributed anything, and the docstring
+# claiming which mechanism caught what was wrong in both directions.
+#
+# A control that cannot say WHICH mechanism caught a thing cannot notice when
+# that mechanism is removed. Each test below drives a parameter only ONE of
+# them catches, and asserts the refusal that mechanism produces.
+# --------------------------------------------------------------------------
+
+
+def test_a_wildcard_named_trigger_is_caught_by_the_object_closure(
+    tmp_path: Path,
+) -> None:
+    """Only the closure sees this: `_` is a single-character LIKE wildcard.
+
+    The filter that used to live in the closure query, `WHERE name NOT LIKE
+    'sqlite_%'`, DISCARDED a trigger named `sqliteXz` before it could be
+    judged -- and such a trigger freezes the witness while `consume` returns
+    True. The id assertion cannot see it (the row is still keyed 1) and the
+    re-read runs after it.
+    """
+    ledger = _spent_ledger(tmp_path)
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute(
+            "CREATE TRIGGER sqliteXz BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a frozen witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "carries objects" in reason and "sqliteXz" in reason, (
+        "the refusal did not name the object the closure judged, so this "
+        f"cannot attribute the catch to the closure: {reason}"
+    )
+
+
+def test_a_witness_keyed_seven_is_caught_by_the_id_assertion(
+    tmp_path: Path,
+) -> None:
+    """Only the id assertion sees this.
+
+    `_commit_consumption` updates `WHERE id = 1`. A row keyed 7 makes that
+    update match nothing -- and the closure is satisfied, because the object
+    set is unchanged.
+    """
+    ledger = _spent_ledger(tmp_path)
+    _replace_witness_key(ledger, 7)
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a re-keyed witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "holds its witness under id" in reason, (
+        "the refusal did not name the key, so this cannot attribute the catch "
+        f"to the id assertion: {reason}"
+    )
+
+
+def test_a_witness_keyed_as_text_is_caught_only_by_the_value_re_read(
+    tmp_path: Path,
+) -> None:
+    """THE ONE PARAMETER THAT ISOLATES THE RE-READ.
+
+    `int(id) == 1` and `WHERE id = 1` are DIFFERENT PREDICATES under SQLite
+    affinity. A row keyed TEXT `'01'` satisfies the id assertion -- `int('01')`
+    is 1 -- and does NOT match `WHERE id = 1` in a column with no declared
+    type, so the UPDATE silently matches nothing. The closure sees an
+    unchanged object set.
+
+    With the re-read removed, a review measured this releasing the grant and
+    committing the row while the witness stayed behind: `claimed=True, rows=3,
+    witness=[('01', 2)]` -- a COMMITTED DISAGREEMENT, which is the exact state
+    the two-store design exists to make impossible.
+
+    `changes()` cannot substitute here: a `RAISE(IGNORE)` trigger reports a
+    row as changed while discarding the write, so the VALUE is what gets read
+    back.
+    """
+    ledger = _spent_ledger(tmp_path)
+    _replace_witness_key(ledger, "01")
+
+    before = _rows(ledger.path)
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, (
+        "a witness the UPDATE cannot reach released a grant, which is the "
+        "committed-disagreement state this design exists to prevent"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "did not record this consumption" in reason, (
+        "the refusal did not name the unrecorded advance, so this cannot "
+        f"attribute the catch to the value re-read: {reason}"
+    )
+    assert _rows(ledger.path) == before, (
+        "the transaction was not rolled back: the consumption row is "
+        "committed while the witness did not advance"
+    )
+
+
+def _journal_mode(path: Path) -> str:
+    with closing(sqlite3.connect(path)) as conn:
+        return str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+
+
+# --------------------------------------------------------------------------
+# A9-P2-5 -- TWO REAL REPAIRS THAT NOTHING MEASURED
+#
+# Both held at the head where this was written, and both could be reverted
+# SIMULTANEOUSLY with 194 tests passing and none red. `grep "mode=rw" tests/`
+# returned nothing at all. A repair with no failing witness is indistinguishable
+# from a repair that was never made.
+# --------------------------------------------------------------------------
+
+
+def test_a_missing_witness_refuses_and_nothing_is_created(
+    tmp_path: Path,
+) -> None:
+    """The PROPERTY, stated without attributing it to a mechanism.
+
+    A ledger whose witness is gone must refuse, and the refusal must LEAVE
+    NOTHING BEHIND -- a witness created here would hold 0 beside a ledger
+    holding N, which is exactly the state a rollback produces, except that the
+    code would have manufactured it itself and would believe it on the next
+    call. So the second half is not decoration: it is the difference between
+    "the witness was removed" and "the witness says zero".
+
+    ATTRIBUTION WAS ATTEMPTED AND NOT ACHIEVED. This test was first written
+    claiming the `mode=rw` URI on the ATTACH is what produces it, because the
+    runtime comment beside that URI says a bare ATTACH creates the file. On
+    this head that does not reproduce, measured three ways:
+
+        mode=rw -> bare ATTACH                  refuses, creates nothing
+        the same, with the deletion RACED into
+          the existence-check window            refuses, creates nothing
+        existence check at either site removed  this test stays GREEN
+
+    SQLite defers creating an attached database file until something writes to
+    it, and nothing here does before the refusal. So the property is
+    OVER-DETERMINED at this head and no single mechanism is attributable --
+    the same shape as the finding that produced the three attribution tests
+    above, and it is recorded rather than papered over with a docstring that
+    names a cause this test cannot see.
+
+    What this DOES measure is the property itself, which is what a rollback
+    would exploit and what nothing measured before: `grep "mode=rw" tests/`
+    returned nothing at all, and both repairs in this section could be
+    reverted together with 194 tests passing and none red.
+    """
+    ledger = _spent_ledger(tmp_path)
+    witness = ledger.watermark_path
+    assert witness.exists(), "setup is broken: no witness was provisioned"
+    witness.unlink()
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a ledger with no witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert not witness.exists(), (
+        "the refusal CREATED the witness file. The next call would read a "
+        "fresh witness holding 0 beside a ledger holding one consumption, and "
+        "treat a store this code just manufactured as evidence of history"
+    )
+
+
+def test_provisioning_a_wal_ledger_does_not_convert_it_or_flip_the_verdict(
+    tmp_path: Path,
+) -> None:
+    """The sequence, end to end: refuse, provision, and refuse the SAME grant.
+
+    A ledger in WAL cannot give the single-transaction guarantee this design
+    rests on, so `consume` refuses with LEDGER_CONTINUITY_MIGRATION_REQUIRED.
+    The danger is the obvious fix: if `provision` quietly converted the
+    journal mode, an operator would run it, the same grant would then release,
+    and an AUTHORIZATION VERDICT would have been flipped by a maintenance
+    command. Conversion is a migration -- it has to be asked for by name.
+
+    Three things measured in one sequence, because the risk is in their order:
+    the mode is unchanged, `provision` refuses rather than converting, and the
+    same grant is refused again afterwards.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.commit()
+    assert _journal_mode(path) == "wal", "setup is broken: the ledger is not WAL"
+
+    first, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert first is False, "a WAL ledger released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert LEDGER_CONTINUITY_MIGRATION_REQUIRED in str(refusal.value), (
+        f"provision refused for some other reason: {refusal.value}"
+    )
+    assert _journal_mode(path) == "wal", (
+        "provision CONVERTED the journal mode of an existing ledger. A "
+        "maintenance command must not silently change what the replay store "
+        "can guarantee"
+    )
+
+    second, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert second is False, (
+        "the SAME grant was refused, then released after `provision-ledger` "
+        "-- an authorization verdict flipped by a maintenance command"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason

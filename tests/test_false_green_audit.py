@@ -21,6 +21,7 @@ error, except where the guard under test is itself a collection guard.
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -254,8 +255,13 @@ INVENTORY = (
         # returning a CompletedProcess whose exit code could be misread. That
         # is a real guard; it was simply not the one written down.
         "bound every child run, so a timeout RAISES and yields no result to misread",
+        # OWNER CORRECTED to the node this entry's own note describes.
+        # Measured with the eight `timeout=` bindings stripped from the
+        # harness: the node named here went RED and the one previously
+        # named stayed GREEN, because it exercises CPython's subprocess
+        # timeout rather than anything this repository does.
         "tests/test_probe_containment.py"
-        "::test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning",
+        "::test_fg33_both_harness_entry_points_bound_their_runs",
     ),
     FalseGreen(
         "FG34", "a KILL, when only a named test failed",
@@ -301,7 +307,7 @@ INVENTORY = (
         "the catalogue verified the owner module contained `def <node>(`; a "
         "node can be present and never run -- deselected, shadowed by a later "
         "definition, or excluded by configuration -- and still be counted",
-        "collection is measured by asking pytest what it would actually run",
+        "collection is measured by asking pytest what it would collect, and a declared guard may carry no skip or xfail marker",
         "tests/test_mutation_catalogue.py"
         "::test_every_killing_test_is_actually_collected_by_pytest",
     ),
@@ -430,6 +436,55 @@ MECHANISM_TO_CLASS = {
     # the mechanism, in `test_domain_collapse_mutations.py`.
     "crash_detector_matches_only_named_suffixes": "FG21",
 }
+
+
+def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
+    """Is this assertion's subject fixed at parse time?
+
+    `assert True` IS AN `ast.Assert`, so a counter that recognises the NODE
+    TYPE accepts it. A review gutted a declared guard to exactly that, kept its
+    marker, and the audit reported the class proven: 32 passed, exit 0, with
+    collection identical to pristine. Independently reproduced on a second
+    class. The marker rule closed "the guard was deleted" and "the guard is a
+    nested function pytest never collects", and left the cheaper edit open --
+    the guard is still THERE, still COLLECTED, and asserts nothing.
+
+    Two shapes, because the second is how it appeared in this repository:
+
+        assert True                 the literal
+        proves_origin = True        a name bound to a literal and nothing else
+        assert proves_origin
+
+    The second was live in `test_mutation_catalogue.py`, under twenty lines of
+    comment explaining why the real proof lived elsewhere.
+
+    A NAME REBOUND ANYWHERE ELSE IN THE FUNCTION IS NOT JUDGED HERE. If a
+    guard computes a value and asserts it, that is a real assertion whatever
+    its first binding was; only a name whose every binding in the function is
+    a constant literal is fixed at parse time.
+    """
+    if isinstance(test, ast.Constant):
+        return bool(test.value)
+    if isinstance(test, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        # A non-empty literal container is truthy at parse time. An EMPTY one
+        # is falsy, so `assert []` fails every time -- noisy, but not vacuous.
+        try:
+            return bool(ast.literal_eval(test))
+        except ValueError:
+            return False
+    if isinstance(test, ast.Name):
+        bindings = [
+            node.value
+            for node in ast.walk(function)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == test.id
+                    for target in node.targets)
+        ]
+        return bool(bindings) and all(
+            isinstance(value, ast.Constant) and bool(value.value)
+            for value in bindings
+        )
+    return False
 
 
 def test_the_inventory_is_exactly_the_known_classes():
@@ -797,7 +852,9 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
         exercised = sum(
             1
             for child in ast.walk(found[0])
-            if isinstance(child, (ast.Assert, ast.Raise))
+            if (isinstance(child, ast.Assert)
+                and not _cannot_fail(child.test, found[0]))
+            or isinstance(child, ast.Raise)
             or (
                 isinstance(child, ast.withitem)
                 and isinstance(child.context_expr, ast.Call)
@@ -810,9 +867,10 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
             )
         )
         assert exercised >= 1, (
-            f"{item.ident}: {node} contains no assertion and no expected "
-            "refusal, so it would pass with its body deleted. A self-attack "
-            "that asserts nothing is the defect this inventory exists to find."
+            f"{item.ident}: {node} contains no assertion that can fail. A "
+            "self-attack that asserts nothing is the defect this inventory "
+            "exists to find, and `assert True` is that defect wearing the "
+            "shape of a proof."
         )
     assert len({item.owner for item in INVENTORY}) == len(INVENTORY), (
         "two catalogue entries share an owner, so one of them is proven by a "
@@ -1169,9 +1227,10 @@ def _declared_by_collection() -> dict:
         )
     declared: dict = {}
     for row in dump.read_text(encoding="utf-8").splitlines():
-        ident, _, nodeid = row.partition(chr(9))
+        ident, _, rest = row.partition(chr(9))
+        nodeid, _, blocking = rest.partition(chr(9))
         if ident:
-            declared.setdefault(ident, set()).add(nodeid.split("[")[0])
+            declared.setdefault(ident, {})[nodeid.split("[")[0]] = blocking
     return declared
 
 
@@ -1223,4 +1282,82 @@ def test_no_two_classes_are_declared_by_the_same_guard():
     shared = {node: sorted(ids) for node, ids in owners.items() if len(ids) > 1}
     assert shared == {}, (
         f"these nodes declare more than one false-green class: {shared}"
+    )
+
+
+# --------------------------------------------------------------------------
+# B9-P2-1 -- "THE MARKED NODE MUST GO RED UNDER ITS CLASS'S DEFECT"
+#
+# The right property, and only partly enforceable here. What was measured, so
+# the next reader starts from evidence rather than from this paragraph:
+#
+# FG33 WAS A REAL INSTANCE AND IS FIXED. Its marker sat on
+# `test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning`, which
+# exercises CPython's own subprocess timeout. With all eight `timeout=`
+# bindings stripped from `mutation_workspace.py` -- the class's own defect,
+# reproduced -- that node stayed GREEN while
+# `test_fg33_both_harness_entry_points_bound_their_runs` went RED. The marker
+# and the inventory owner now name the second, and it is measured RED under
+# the defect and green when it is restored. The entry's own note had described
+# that node all along.
+#
+# FG26 DOES NOT REPRODUCE at this head. Gutting the conftest session guard's
+# `assert introduced == []` turns the MARKED guard RED, along with its three
+# unmarked siblings.
+#
+# THE STATIC SCREEN REPRODUCES AND IS NOT A FIT CRITERION. Screening for a
+# marked guard that references no REPOSITORY name -- stdlib and pytest
+# excluded -- gives 12 of 39, exactly the figure the review reported. But
+# FG33's repaired guard IS ONE OF THE TWELVE, and it was just measured going
+# red under its class's defect: it reads the harness's SOURCE, so it exercises
+# repository content while referencing no repository NAME. Several others
+# (FG31, FG38) are structural checks of the same kind. Enforcing the screen
+# would demand rewriting twelve guards to satisfy a proxy that has already
+# been shown to misclassify the one guard here proven sound, so it is NOT
+# enforced, and this is why rather than an omission.
+#
+# WHAT REMAINS OPEN, NAMED: FG04 and FG06 assert over `_restored` and its
+# sibling, two helpers defined in this file, over synthetic temporary files.
+# They prove the ALGORITHM is right; they do not measure that this repository
+# applies it. No production counterpart exists to point them at -- the nearest
+# real mechanism is the conftest session guard, which is FG26's, already
+# taken. Rewiring them at a guess would trade a disclosed gap for an
+# undisclosed wrong attribution, which this inventory exists to refuse.
+#
+# The general property needs a per-class defect reproduction: 39 mutations of
+# shared files, each run against one node. That is a harness, not a check, and
+# it is the honest next step rather than something this comment supplies.
+# --------------------------------------------------------------------------
+
+
+def test_no_declared_guard_can_be_prevented_from_running():
+    """B9-P2-3. COLLECTED IS NOT RUNS, and the catalogue said otherwise.
+
+    FG38's own guard text read "collection is measured by asking pytest what
+    it would actually RUN". `--collect-only` reports what pytest would
+    COLLECT. `skip`, `skipif` and `xfail` are evaluated at setup, so a node
+    carrying one is collected, is seen by `iter_markers`, satisfies every
+    marker check in this module -- and never executes. A review added
+    `@pytest.mark.skip` to a declared guard and measured 5 passed, exit 0,
+    with the collection count unchanged.
+
+    That is a property (runs) stated one step stronger than the property
+    measured (collected), which is the substitution this whole inventory
+    exists to refuse -- appearing in the inventory itself.
+
+    `skipif` is refused alongside `skip` even though its condition may be
+    false today: a guard whose execution depends on an expression evaluated
+    at setup is a guard that can stop running without anything here changing.
+    """
+    declared = _declared_by_collection()
+    blocked = sorted(
+        f"{ident}: {node} carries @pytest.mark.{blocking}"
+        for ident, nodes in declared.items()
+        for node, blocking in nodes.items()
+        if blocking
+    )
+    assert blocked == [], (
+        "these declared guards are COLLECTED and would not RUN, so the class "
+        "they certify is proven by a node that executes nothing: "
+        + "; ".join(blocked)
     )

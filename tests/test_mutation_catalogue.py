@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -415,41 +416,132 @@ def test_every_owner_is_protected_by_the_anti_shrink_census():
     )
 
 
+def _called_names(module: Path) -> set:
+    """Every name CALLED in a module, read from the parse tree.
+
+    `ast.Call` is the point of this: a docstring or a comment cannot be one,
+    and the text search this control replaces was defeated by exactly that --
+    it matched `PYTHONPATH` in prose and `sys.path.insert(0, ...)` on a line
+    that had nothing to do with mutant origin.
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    return {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for name in [getattr(node.func, "id", getattr(node.func, "attr", None))]
+        if name
+    }
+
+
+def _tree_factories() -> set:
+    """What counts as materializing a workspace, closed over the call graph.
+
+    Seeded with `mutation._materialize`, the one function in these helpers
+    that builds a tree, and extended with any function in the shared modules
+    or in an owner that calls one. Derived, so that a factory added later is
+    covered by the same rule instead of needing to be added to a list.
+    """
+    factories = {"_materialize"}
+    sources = [ROOT / "tests" / "mutation.py",
+               ROOT / "tests" / "mutation_workspace.py"]
+    sources += [ROOT / owner for owner in OWNERS]
+    for _ in range(3):
+        grown = set(factories)
+        for source in sources:
+            if not source.is_file():
+                continue
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                inner = {
+                    getattr(call.func, "id", getattr(call.func, "attr", None))
+                    for call in ast.walk(node) if isinstance(call, ast.Call)
+                }
+                if inner & factories:
+                    grown.add(node.name)
+        if grown == factories:
+            break
+        factories = grown
+    return factories
+
+
 def test_every_production_mutating_owner_proves_mutant_origin():
     """A catalogue that mutates production without isolation proves nothing.
 
-    Asserted structurally against each owner, because this is the property H01
-    showed can fail silently: without it a run measures the original source and
-    reports whatever the original does.
+    THE PREVIOUS BODY WAS `proves_origin = True` FOLLOWED BY AN ASSERT ON IT,
+    inside a loop whose variable was never read, under twenty lines of comment
+    explaining that the property was proven elsewhere. A review put it plainly:
+    the deferral was PROSE. Both executing origin proofs were gutted to
+    `assert True` and `pytest -k "origin or owner"` reported 4 passed, exit 0,
+    with collection unchanged in all three modules.
+
+    That replaced a text search with a literal -- strictly weaker -- and the
+    text search it replaced was itself the defect (it matched
+    `sys.path.insert(0, str(ROOT / "tests"))`, which says nothing about mutant
+    origin, in an owner carrying 14 of the 41 attacks).
+
+    So this measures two things that a comment cannot satisfy:
+
+    1. EACH OWNER CALLS THE ORIGIN HELPER, read from the PARSED module. An
+       `ast.Call` cannot appear in a docstring or a comment, which is exactly
+       what defeated the text search. Prose naming `require_mutant_origin` no
+       longer counts; a call to it does.
+
+    2. THE HELPER THEY CALL ACTUALLY DISCRIMINATES, executed here rather than
+       asserted about: it accepts a materialized workspace and REFUSES a tree
+       with no `src/`, where production resolves to the installed package.
+       Without this, every owner could call a helper that returns
+       unconditionally and this test would still pass.
     """
+    import mutation_workspace  # noqa: PLC0415
+    from mutation import _materialize  # noqa: PLC0415
+
+    missing = []
     for owner in OWNERS:
-        # (the owner's source is no longer read; see below)
-        # THE EXECUTING PROOF, NOT A TEXT SEARCH.
+        called = _called_names(ROOT / owner)
+        # ONLY AN OWNER THAT MATERIALIZES A WORKSPACE HAS AN ORIGIN TO PROVE.
         #
-        # This read `("_prove_resolution" in source or "PYTHONPATH" in source
-        # or "sys.path.insert(0" in source)`. A review split each owner into
-        # code and prose with `tokenize` and measured:
+        # Asking every owner unconditionally was measured WRONG on the first
+        # run of this control: `test_semantic_binding_theorem.py` calls
+        # `require_production_mutation_scope` -- it checks that each attack's
+        # TARGET is production source -- and materializes nothing at all. It
+        # has no mutant tree, so there is no origin to read.
         #
-        #   test_domain_collapse_mutations   _prove_resolution ABSENT,
-        #       PYTHONPATH ABSENT, and `sys.path.insert(0` matching ONE line --
-        #       `sys.path.insert(0, str(ROOT / "tests"))`, which puts the REAL
-        #       repository's tests/ on sys.path and says nothing whatever about
-        #       mutant origin. That owner carries 14 of the 41 attacks.
-        #   test_semantic_binding_theorem    PYTHONPATH in PROSE ONLY
-        #   test_historical_reproof          PYTHONPATH in PROSE ONLY
-        #
-        # `test_historical_reproof`'s own sibling names this defect verbatim --
-        # "a text search that matches the unrelated sys.path.insert(0, ...)" --
-        # and repairs it by EXECUTING an origin spy and comparing resolved
-        # paths. The unrepaired copy was left here. FG13 by name.
-        #
-        # The property HOLDS, measured by that executing test, so this defers
-        # to it instead of re-implementing a weaker copy.
-        proves_origin = True
-        assert proves_origin, (
-            f"{owner} mutates production source but shows no evidence of "
-            "forcing the mutant ahead of the installed package"
+        # Which owners materialize is DERIVED from the call graph rather than
+        # listed: `_materialize` is the one workspace factory these modules
+        # have, and a local helper that calls it is itself a factory. A new
+        # factory added tomorrow is reached by the same closure, where a list
+        # of factory names would have let it through.
+        if not (called & _tree_factories()):
+            continue
+        if "require_mutant_origin" not in called:
+            missing.append(owner)
+    assert missing == [], (
+        "these owners materialize a mutant workspace and never CALL the "
+        "origin helper -- naming it in a comment is what the text search this "
+        f"replaces accepted: {missing}"
+    )
+
+    with tempfile.TemporaryDirectory() as work:
+        isolated = _materialize(Path(work) / "isolated")
+        # POSITIVE CONTROL. A real workspace must be accepted, or the refusal
+        # below would prove only that the helper always raises.
+        mutation_workspace.require_mutant_origin(
+            isolated, ("nornyx_forge.approval_trust",)
         )
+
+        bare = Path(work) / "bare"
+        bare.mkdir()
+        with pytest.raises(mutation_workspace.AttackNotAdmissible) as refusal:
+            mutation_workspace.require_mutant_origin(
+                bare, ("nornyx_forge.approval_trust",)
+            )
+    assert "outside the mutant workspace" in str(refusal.value), (
+        "the origin helper refused a workspace with no production source for "
+        f"some other reason, so origin is not what it measures: {refusal.value}"
+    )
 
 
 # --------------------------------------------------------------------------

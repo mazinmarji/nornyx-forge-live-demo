@@ -264,7 +264,6 @@ def test_fg29_a_crash_yields_no_verdict_by_any_route(monkeypatch):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.false_green("FG33")
 def test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning(tmp_path: Path):
     """The real property: an unfinished run yields no result to misread.
 
@@ -292,6 +291,19 @@ def test_fg33_a_run_that_finishes_returns_its_code(tmp_path: Path):
     )
 
 
+# THE MARKER MOVED HERE, to the node that actually fails for this class.
+#
+# It sat on `test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_
+# returning`, which exercises CPython's own subprocess timeout and would
+# pass with every file in this repository deleted. Measured: with all
+# eight `timeout=` bindings stripped from `mutation_workspace.py` -- the
+# class's own defect, reproduced -- that node stayed GREEN and this one
+# went RED.
+#
+# The inventory's own note already said so: "what actually protects the
+# campaign is that both harness entry points pass `timeout=`". The guard
+# TEXT described this node and the owner named the other one.
+@pytest.mark.false_green("FG33")
 def test_fg33_both_harness_entry_points_bound_their_runs():
     """Structural, over the real call sites rather than over a table.
 

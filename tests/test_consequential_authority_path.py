@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from signing import signed_grant  # noqa: E402
 from test_governance_failure import _permissive_boundary  # noqa: E402
 
@@ -164,3 +165,145 @@ def test_altering_a_field_the_verifier_never_reads_does_not_grant_authority(
         "in which case the synthetic-grant case above is testing the wrong field"
     )
     assert effect.runs == 1
+
+
+def _ledger_codes_in_source() -> set:
+    """Every code the ledger puts at the head of a refusal, read from the AST.
+
+    A reason in this class is built as `f"{CODE}: ..."`. Collecting the name in
+    that leading slot is what makes the set DERIVED rather than a second list
+    to keep in step with the first -- and the first list is exactly what went
+    stale, carrying five of eight codes.
+
+    `ast.IfExp` is handled because one site chooses between two codes inline:
+    `f"{self.UNWRITABLE if readonly else self.UNREADABLE}: ..."`.
+    """
+    import ast  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    source = Path(nornyx_runtime.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    ledger = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "ApprovalLedger"
+    )
+
+    def named(expr):
+        if isinstance(expr, ast.IfExp):
+            return [n for part in (expr.body, expr.orelse) for n in named(part)]
+        name = getattr(expr, "attr", getattr(expr, "id", None))
+        return [name] if name else []
+
+    found = set()
+    for node in ast.walk(ledger):
+        if not (isinstance(node, ast.JoinedStr) and node.values):
+            continue
+        head, rest = node.values[0], node.values[1:]
+        if not isinstance(head, ast.FormattedValue):
+            continue
+        if not (rest and isinstance(rest[0], ast.Constant)
+                and str(rest[0].value).startswith(":")):
+            continue
+        for name in named(head.value):
+            value = getattr(nornyx_runtime.ApprovalLedger, name, None)
+            if value is None:
+                value = getattr(nornyx_runtime, name, None)
+            if isinstance(value, str):
+                found.add(value)
+    return found
+
+
+def test_every_code_the_ledger_emits_survives_to_the_decision():
+    """A9-P2-4. The boundary's list was five of eight, and nothing said so.
+
+    The three it omitted -- `APPROVAL_LEDGER_MISSING`, `_UNREADABLE`,
+    `_UNWRITABLE` -- are the ledger's own codes for a store that is absent,
+    corrupt or unwritable, and the class comment beside them says they are
+    distinct "because the operator response differs". The boundary flattened
+    all three into HUMAN_APPROVAL_REQUIRED, which tells an operator to obtain
+    an approval when the correct action is to investigate a tampered replay
+    store -- and no approval they obtain can fix a read-only ledger.
+
+    Compared in BOTH directions, so this fails whether a code is added to the
+    ledger and not to the tuple, or removed and left behind.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_DECISION_CODES,
+    )
+
+    emitted = _ledger_codes_in_source()
+    carried = set(LEDGER_DECISION_CODES)
+    assert emitted, "no ledger reason codes were found at all; the parse failed"
+    assert emitted - carried == set(), (
+        "the ledger emits these codes and the boundary does not carry them, "
+        "so each arrives at the decision as HUMAN_APPROVAL_REQUIRED: "
+        f"{sorted(emitted - carried)}"
+    )
+    assert carried - emitted == set(), (
+        "the boundary carries codes the ledger never emits, so the tuple has "
+        f"drifted from the source it is meant to mirror: {sorted(carried - emitted)}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "sabotage", "expected"),
+    [
+        ("deleted", "delete", "APPROVAL_LEDGER_UNREADABLE"),
+        ("frozen by a trigger", "freeze", "APPROVAL_LEDGER_UNREADABLE"),
+        ("read-only", "readonly", "APPROVAL_LEDGER_UNWRITABLE"),
+    ],
+)
+def test_a_damaged_ledger_is_not_reported_as_a_missing_approval(
+    label: str, sabotage: str, expected: str, tmp_path: Path,
+) -> None:
+    """A9-P2-4, on the real boundary with a VALID grant.
+
+    Each of these was `HUMAN_APPROVAL_REQUIRED` before the boundary carried
+    the ledger's own codes. The grant is valid every time -- the refusal is
+    about the STORE, and the code has to say so.
+    """
+    import os  # noqa: PLC0415
+    import sqlite3  # noqa: PLC0415
+    import stat  # noqa: PLC0415
+    from contextlib import closing  # noqa: PLC0415
+
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    grant = signed_grant(_request(boundary))
+    path = approval_ledger_path(root)
+
+    if sabotage == "delete":
+        for suffix in ("", "-wal", "-shm"):
+            sibling = path.with_name(path.name + suffix)
+            if sibling.exists():
+                sibling.unlink()
+    elif sabotage == "freeze":
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute(
+                "CREATE TRIGGER freeze BEFORE INSERT ON consumed_approvals"
+                " BEGIN SELECT RAISE(IGNORE); END"
+            )
+            conn.commit()
+    else:
+        os.chmod(path, stat.S_IREAD)
+
+    effect = _Effect()
+    try:
+        decision = _release(boundary, effect, grant)
+    finally:
+        if sabotage == "readonly" and path.exists():
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+
+    assert decision.effect == "DENY", decision
+    assert effect.runs == 0, "a damaged ledger released a consequential effect"
+    assert decision.code == expected, (
+        f"a {label} ledger reported {decision.code!r}. A damaged replay store "
+        "is not 'nobody approved': an operator told to obtain an approval will "
+        f"obtain one and be refused again. reason: {decision.reason[:200]}"
+    )

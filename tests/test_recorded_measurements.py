@@ -75,7 +75,17 @@ ANCHOR = re.compile(r"<!--\s*verify-measured-at:\s*([0-9a-f]{7,40})\s*-->")
 #: part of a key, and `:` or `=` is accepted as a separator.
 #: by nothing.
 _KEY = "[A-Za-z_][A-Za-z0-9_. -]*?"
-_GAP = "[ " + chr(9) + "]"
+#: A COLUMN GAP IS ANY NON-NEWLINE WHITESPACE, not a space or a tab.
+#:
+#: `[ 	]` was an enumeration of two of them, and U+00A0 NO-BREAK SPACE
+#: renders identically to a space in every markdown reader. Measured:
+#:
+#:     NBSP-aligned rows   runs=0  dishonest=0
+#:     the same rows, ASCII-aligned   runs=1  dishonest=3
+#:
+#: An entirely U+00A0-aligned transcript is invisible to every rule in
+#: this module while reading, to a human, exactly like the ASCII one.
+_GAP = r"[^\S" + chr(10) + "]"
 #: A REAL SEPARATOR, which is what tells a transcript row from a sentence.
 #:
 #: This accepted a single space, and `_KEY` admits spaces because real anchored
@@ -237,8 +247,39 @@ _BLOCKQUOTE = re.compile("^[ " + chr(9) + "]*>+[ ]?", re.M)
 #: A bullet, an ordered-list number, or a heading hash at the start of a line.
 _LIST_MARKER = re.compile(r"^[ 	]*(?:[-*+]|[0-9]+[.)]|#{1,6})[ 	]+")
 #: An inline code span. Blanked where it stands, never taking its line with it.
-_CODE_SPAN = re.compile(r"`[^`]*`", re.S)
+#: A code span, bounded THE WAY CommonMark bounds one: a backtick run is
+#: closed by a run of THE SAME LENGTH, and the content may wrap a line
+#: break but MAY NOT CONTAIN A BLANK LINE -- a blank line ends the
+#: paragraph, and a span cannot leave its paragraph.
+#:
+#: THE UNBOUNDED FORM WAS A CORPUS-DELETION PRIMITIVE. `r"`[^`]*`"` with
+#: re.S pairs ANY odd backtick with the next one at ANY distance, and
+#: because `_carries_a_measurement_claim` shares `_transcript_runs`, a
+#: blanked region does not merely hide rows -- it takes the WHOLE DOCUMENT
+#: out of the corpus. Measured on the production path at this head:
+#:
+#:     clean document                selected=True   runs=1  rows=4
+#:     two stray backticks added     selected=False  runs=0  rows=0
+#:
+#: One backtick in the narrative before a table and one after it, and a
+#: table reading `status pass` / `integrity_state intact` / `problems []`
+#: was never judged at all.
+#:
+#: The bound is not a line budget. The cross-line pass exists for a real
+#: measured case -- a span wrapping ONE break, whose second line then
+#: parsed as a record out of narrative -- and the paragraph is the
+#: smallest container that holds that case while refusing this one.
+_CODE_SPAN = re.compile(
+    r"(?P<ticks>`+)"
+    r"(?:(?!(?P=ticks))[^" + chr(10) + r"]"
+    r"|" + chr(10) + r"(?![^\S" + chr(10) + r"]*" + chr(10) + r"))*?"
+    r"(?P=ticks)"
+)
 #: A line that is only a fence marker: ``` or ~~~, optionally with a language.
+#: Markdown emphasis written with a single marker.
+_EMPHASIS_STAR = re.compile(r"\*([^*\n]+)\*")
+_EMPHASIS_UNDER = re.compile(r"(?<![^\W_])_(\S+?)_(?![^\W_])")
+
 _FENCE_MARKER = re.compile(r"^[ 	]*(?:`{3,}|~{3,})[A-Za-z0-9_-]*[ 	]*$")
 
 
@@ -286,7 +327,26 @@ def _normalised(text: str) -> list:
         # were all invisible -- and a bulleted pair is the commonest way this
         # repository's own documents present one.
         line = _LIST_MARKER.sub("", line)
+        # SINGLE-CHARACTER EMPHASIS IS A CONTAINER TOO. This stripped `**`
+        # and `__` and left `*` and `_`, which are the OTHER half of the same
+        # markdown syntax and render identically. Measured on the same rows:
+        #
+        #     plain          runs=1 rows=2 dishonest=2
+        #     *emphasised*   runs=0 rows=0 dishonest=0   <- the run vanishes
+        #     _emphasised_   runs=1 rows=2 dishonest=0   <- the KEY vanishes
+        #
+        # The two failures are different and both total: an asterisk breaks
+        # `_FIELD_LINE`'s requirement of a letter at the first non-blank
+        # position, so the row is not a row; an underscore is a legal
+        # identifier character, so `_integrity_state_` IS a row and is a field
+        # nobody has ever heard of.
         line = line.replace("**", "").replace("__", "")
+        line = _EMPHASIS_STAR.sub(r"\1", line)
+        # THE UNDERSCORE FORM IS BOUNDED, because `_` is what this repository's
+        # own field names are built from. Only a pair that opens at a
+        # non-word boundary and closes at one is emphasis; `integrity_state`
+        # has neither, and survives untouched.
+        line = _EMPHASIS_UNDER.sub(r"\1", line)
         # THE SPAN IS BLANKED, NOT THE LINE.
         #
         # This blanked the WHOLE LINE on the reasoning that "a real transcript
@@ -1239,3 +1299,95 @@ def test_r4_an_anchor_is_recognised_in_every_rendering(rendering, prefix):
         f"{rendering}: the run was recognised but the claim rows were not "
         f"extracted from it: {sorted(keys)}"
     )
+
+
+def _rows_and_claims(document: str):
+    """Runs, rows and dishonest rows, through the production readers."""
+    runs = _transcript_runs(document)
+    rows = [row for run in runs for row in run]
+    dishonest = [row for row in rows if is_a_claim(row[-2], row[-1])]
+    return len(runs), rows, dishonest
+
+
+@pytest.mark.parametrize(
+    ("label", "marker"),
+    [("plain", ""), ("single asterisk", "*"), ("single underscore", "_"),
+     ("double asterisk", "**"), ("double underscore", "__")],
+)
+def test_emphasis_is_a_container_and_does_not_change_what_a_row_says(
+    label: str, marker: str,
+):
+    """C9-P2-3. `**` and `__` were stripped; `*` and `_` were not.
+
+    They are the other half of the same markdown syntax and render
+    identically. The two failures were different and both total:
+
+        *integrity_state*   the run VANISHES -- an asterisk breaks the
+                            requirement of a letter at the first non-blank
+                            position, so the row is not a row
+        _integrity_state_   the run survives and the KEY vanishes -- `_` is a
+                            legal identifier character, so this parses as a
+                            field nobody has ever heard of
+
+    An author who emphasised a row hid it, in a repository whose documents are
+    full of emphasis.
+    """
+    document = (
+        "# Report" + chr(10) * 2
+        + f"{marker}integrity_state{marker}  intact" + chr(10)
+        + f"{marker}status{marker}  pass" + chr(10)
+    )
+    runs, rows, dishonest = _rows_and_claims(document)
+    assert runs == 1, f"{label}: the run was lost entirely"
+    assert len(rows) == 2, f"{label}: rows={rows}"
+    assert len(dishonest) == 2, (
+        f"{label}: {len(dishonest)} of 2 rows were judged. Emphasis changed "
+        f"what the reader is told this document says: {rows}"
+    )
+
+
+def test_an_assurance_modifier_on_a_state_noun_is_still_a_claim():
+    """C9-P2-1. The head-noun bound named a compensating control that was prose.
+
+    The bound exists for a good reason -- `assurance_moved` and
+    `trusted_approvers_loaded` are MECHANISM, named by `moved` and `loaded` --
+    and its docstring covered the rest of the gap by saying those fields "are
+    reached by the transcript rule when they sit in a run". They are not: the
+    transcript rule calls the same `is_a_claim` and lands in the same branch.
+
+    Measured before the repair, this five-row run gave runs=1, rows=5,
+    DISHONEST=0 and find_overclaims=[]. Every row asserts an assurance act
+    this repository does not hold.
+    """
+    document = (
+        "# Report" + chr(10) * 2
+        + "approval_status      granted" + chr(10)
+        + "inspection_outcome   passed" + chr(10)
+        + "review_result        complete" + chr(10)
+        + "independence_check   passed" + chr(10)
+        + "attestation_state    verified" + chr(10)
+    )
+    runs, rows, dishonest = _rows_and_claims(document)
+    assert runs == 1 and len(rows) == 5, f"runs={runs} rows={rows}"
+    assert len(dishonest) == 5, (
+        "these rows name a state OF an assurance act at its affirmative value "
+        f"and were not judged: {[r for r in rows if r not in dishonest]}"
+    )
+
+
+def test_a_mechanism_field_is_still_not_a_claim():
+    """The positive control for the rule above, and the reason for the bound.
+
+    Without this, widening the head-noun rule is satisfied by widening it to
+    everything -- and this repository's own value-flow document reports
+    `ASSURANCE_MOVED true` and `trusted_approvers_loaded=true` as MEASURED
+    DEFECTS. Flagging those would refuse the disclosure, which is the failure
+    this module treats as worse than a missed claim.
+    """
+    for key, value in (("assurance_moved", "true"),
+                       ("trusted_approvers_loaded", "true"),
+                       ("frozen_moved", "false")):
+        assert not is_a_claim(key, value), (
+            f"{key}: a past participle head noun names an EVENT that happened "
+            "to the system, not a state of an assurance act"
+        )

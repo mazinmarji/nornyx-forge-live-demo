@@ -1503,9 +1503,29 @@ class ApprovalLedger:
             return False, str(exc)
         except (sqlite3.Error, OSError) as exc:
             # Cannot record the claim, so cannot promise single use. Withhold.
+            #
+            # CODED, LIKE EVERY OTHER REFUSAL THIS CLASS RETURNS. This one led
+            # with prose, so it carried no code for the boundary to classify
+            # and arrived at the decision as HUMAN_APPROVAL_REQUIRED. Measured
+            # through the real boundary with a valid grant and the ledger file
+            # made read-only:
+            #
+            #     before  DENY  HUMAN_APPROVAL_REQUIRED
+            #             "...single use cannot be guaranteed: OperationalError:
+            #              attempt to write a readonly database"
+            #
+            # An operator told to obtain an approval will obtain one, present
+            # it, and be refused again, because the ledger is read-only and no
+            # approval can fix that. The sibling handler twenty lines above
+            # already makes exactly this distinction; this branch did not.
+            readonly = (
+                "readonly" in str(exc).lower()
+                or "attempt to write" in str(exc).lower()
+            )
+            code = self.UNWRITABLE if readonly else self.UNREADABLE
             return False, (
-                f"action approval ledger is unusable, so single use cannot be "
-                f"guaranteed: {type(exc).__name__}: {exc}"
+                f"{code}: action approval ledger is unusable, so single use "
+                f"cannot be guaranteed: {type(exc).__name__}: {exc}"
             )
 
     @property
@@ -1571,12 +1591,41 @@ class ApprovalLedger:
         # nothing. The reader's `len(marks)` check guarded the READ and left the
         # one invariant the WRITE depends on unasserted.
         keyed = conn.execute("SELECT id FROM witness.high_water").fetchall()
-        if len(keyed) == 1 and int(keyed[0][0]) != 1:
-            raise LedgerContinuityUnknown(
-                f"{self.watermark_path} holds its witness under id "
-                f"{keyed[0][0]!r} rather than 1. The consumption path updates "
-                "the row keyed 1, so this witness can never be advanced."
-            )
+        if len(keyed) == 1:
+            # THE CONVERSION IS GUARDED, exactly as the one twenty lines below
+            # already is. `int()` here was bare, and a witness whose `id`
+            # column is not an integer made it RAISE THROUGH `consume`, whose
+            # contract is `tuple[bool, str]` and whose handler set does not
+            # catch ValueError or TypeError. Measured on the real boundary
+            # with the witness table replaced -- which is what a tamper looks
+            # like, since the provisioned column is an INTEGER PRIMARY KEY and
+            # refuses a plain UPDATE:
+            #
+            #     id TEXT 'x'   *** RAISED ValueError
+            #     id NULL       *** RAISED TypeError
+            #     id blob       *** RAISED ValueError
+            #     id TEXT '01'  refused, LEDGER_CONTINUITY_UNKNOWN
+            #     id 1          released
+            #
+            # Three of six tampered witnesses produced NO DECISION RECORD AT
+            # ALL. This repository's own grading of the identical line, in the
+            # reader that `consume` never calls, says exactly that -- and that
+            # repair went into the dead copy while the live checker kept the
+            # bare call.
+            #
+            # A non-integer id is not "id 1" by any reading, so it refuses on
+            # the same ground rather than needing a second outcome.
+            try:
+                identifier = int(keyed[0][0])
+            except (TypeError, ValueError):
+                identifier = None
+            if identifier != 1:
+                raise LedgerContinuityUnknown(
+                    f"{self.watermark_path} holds its witness under id "
+                    f"{keyed[0][0]!r} rather than 1. The consumption path "
+                    "updates the row keyed 1, so this witness can never be "
+                    "advanced."
+                )
         marks = conn.execute("SELECT value FROM witness.high_water").fetchall()
         if len(marks) != 1:
             raise LedgerContinuityUnknown(
@@ -1931,15 +1980,32 @@ class ApprovalLedger:
                 # `BEFORE UPDATE ON high_water ... RAISE(IGNORE)` froze the mark
                 # at 0 across six consumptions, and a restore then released the
                 # spent grant.
+                # THE THIRD COPY OF THE INVERSION, REPAIRED LAST.
+                #
+                # `WHERE name NOT LIKE 'sqlite_%'` is documented twice in this
+                # file as having produced live bypasses -- `_` is a single-
+                # character LIKE wildcard, so an ordinary `CREATE TRIGGER
+                # sqliteXz` was discarded before it could be judged, and
+                # `PRAGMA writable_schema` reached the literal prefix. Both
+                # were measured freezing a witness while `consume` returned
+                # True. The two documented sites were repaired and this one,
+                # in the copy nothing calls, was left carrying the defect --
+                # which is how it survived: a review reads the annotated sites.
+                #
+                # A set that calls itself closed cannot be filtered on the way
+                # in, so the statistics tables are carried and judged rather
+                # than excluded by a pattern. Filtering them out naively bricks
+                # the store on `ANALYZE`, which is why they are named.
                 objects = {
                     (str(row[0]), str(row[1])) for row in conn.execute(
                         "SELECT type, name FROM sqlite_master"
-                        " WHERE name NOT LIKE 'sqlite_%'"
                     )
                 }
                 hostile = sorted(
                     f"{kind} {name!r}" for kind, name in objects
-                    if kind != "index" and not (kind == "table" and name == "high_water")
+                    if kind != "index"
+                    and not (kind == "table" and name == "high_water")
+                    and name not in PERMITTED_LEDGER_STATISTICS
                 )
                 if hostile:
                     raise LedgerContinuityUnknown(
@@ -2121,13 +2187,26 @@ class ApprovalLedger:
             # row is ALREADY COMMITTED -- the grant was spent, and raising here
             # would report a refusal for something that happened.
             #
-            # This is only defensible because the failure is not silent for
-            # long: `_recorded_consumptions` is read at the TOP of the next
-            # `consume`, and a sidecar it cannot read now RAISES rather than
-            # returning None. So a broken sidecar costs at most the one
-            # consumption already committed and then refuses, instead of
-            # disabling the rollback check forever with no diagnostic, which is
-            # what a review measured this comment defending.
+            # THE COMPENSATING CONTROL THIS NAMED DOES NOT EXIST.
+            #
+            # It read: "the failure is not silent for long --
+            # `_recorded_consumptions` is read at the TOP of the next
+            # `consume`". It is not. `consume` spends the grant and advances
+            # the witness in ONE transaction through `_commit_consumption`,
+            # and reaches neither this writer nor that reader. Measured by
+            # parsing this module: BOTH have ZERO call sites in production
+            # source, and installing an AssertionError as the first statement
+            # of each fails exactly the six tests that call them BY NAME as
+            # observers. `test_the_plaintext_mark_helpers_are_not_on_a_
+            # production_path` pins that, so this note cannot go stale
+            # silently the way the one it replaces did.
+            #
+            # So this is a two-step write that the single-transaction path
+            # REPLACED, kept for the tests that read a legacy plaintext mark.
+            # The residual it disclosed was real for the code it describes and
+            # describes code that no longer runs -- and it was false in the
+            # direction of claiming safety, which is the direction that
+            # matters.
             pass
 
     def lookup(
@@ -2156,6 +2235,41 @@ class ApprovalLedger:
             "approval_id": row[2],
             "consumed_at": row[3],
         }
+
+
+#: EVERY CODE THE LEDGER CAN PUT AT THE HEAD OF A REFUSAL, in one place.
+#:
+#: The boundary used to carry these as a tuple written out at the point of
+#: use, and it listed FIVE of the eight. Measured through the real boundary
+#: with a valid grant, the three it omitted collapsed into the one code that
+#: means the opposite of what had happened:
+#:
+#:     healthy                              ALLOW  ALLOWED
+#:     ledger file DELETED                  DENY   HUMAN_APPROVAL_REQUIRED
+#:     RAISE(IGNORE) trigger on the ledger  DENY   HUMAN_APPROVAL_REQUIRED
+#:     ledger file READ-ONLY                DENY   HUMAN_APPROVAL_REQUIRED
+#:
+#: A tampered replay store and a missing one are not "nobody approved". The
+#: operator is told to obtain an approval when the correct action is to
+#: investigate, and the class comment on `MISSING`/`UNREADABLE`/`UNWRITABLE`
+#: says exactly that -- "distinct codes, because the operator response
+#: differs" -- while the boundary threw the distinction away.
+#:
+#: `test_every_code_the_ledger_emits_survives_to_the_decision` DERIVES this
+#: set by parsing the ledger for reasons of the form `f"{CODE}: ..."` and
+#: compares it against this tuple in both directions, so a code added later
+#: cannot be silently dropped the way these three were.
+LEDGER_DECISION_CODES = (
+    LEDGER_ROLLED_BACK,
+    GRANT_PREDATES_LEDGER,
+    LEDGER_CONTINUITY_UNKNOWN,
+    LEDGER_CONTINUITY_MIGRATION_REQUIRED,
+    GRANT_ISSUANCE_UNKNOWN,
+    ApprovalLedger.MISSING,
+    ApprovalLedger.UNREADABLE,
+    ApprovalLedger.UNWRITABLE,
+)
+
 
 
 def approval_ledger_path(root: Path) -> Path:
@@ -2848,20 +2962,7 @@ class NornyxActionBoundary:
                 # re-provision a ledger, versus stop and investigate a rollback.
                 # An operator reading the evidence could not tell which.
                 if not released:
-                    for ledger_code in (
-                        LEDGER_ROLLED_BACK,
-                        GRANT_PREDATES_LEDGER,
-                        LEDGER_CONTINUITY_UNKNOWN,
-                        # Added by the commit that introduced the code, which
-                        # is where it should have been from the start: without
-                        # it the boundary reported HUMAN_APPROVAL_REQUIRED and
-                        # told an operator to obtain an approval when the
-                        # correct action is `provision-ledger
-                        # --migrate-continuity`. That is the identical defect
-                        # the comment above claims to have repaired.
-                        LEDGER_CONTINUITY_MIGRATION_REQUIRED,
-                        GRANT_ISSUANCE_UNKNOWN,
-                    ):
+                    for ledger_code in LEDGER_DECISION_CODES:
                         if release_reason.startswith(ledger_code):
                             withheld_code = ledger_code
                             break

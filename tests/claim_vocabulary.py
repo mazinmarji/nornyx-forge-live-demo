@@ -77,6 +77,19 @@ ABSENT_SHAPES = frozenset({
     "autonomous_demonstration",
     # A document REPORTING A FAILURE is disclosing, not claiming.
     "fail", "failed", "compromised", "unverifiable", "invalid",
+    # THE STANDARD SPELLINGS OF "NO VALUE YET", completing this class
+    # rather than opening a new one. `absent`, `none`, `null`,
+    # `unavailable` and `not_established` were here and these were not,
+    # so a field disclosing that its answer is not established read as
+    # a claim. Measured, in the commonest notation there is:
+    #
+    #     assurance_state: unknown     REFUSED
+    #     Production approval: N/A     REFUSED
+    #     Human review: TBD            REFUSED
+    #
+    # while the pipe-table form of the same fact was admitted. An
+    # honest author had no way to write any of them.
+    "unknown", "tbd", "n/a", "undetermined", "unset",
 })
 
 #: Fields where EMPTY is the reassuring value, so empty is the claim and a
@@ -238,13 +251,67 @@ def is_a_claim(key: str, value: str, *, fields=None) -> bool:
     note on `ASSURANCE_FIELDS`.
     """
     known = CLAIM_FIELDS if fields is None else fields
+    # CASE-FOLDED. Every membership test here was exact-case, and a review
+    # capitalised one letter to delete a field from the vocabulary: with
+    # `Integrity_state`, `Status`, `Governed_input_match` and
+    # `Evidence_manifest_match` the block went from 5 dishonest rows to 2. Only
+    # the two polarity fields survived, because `reads_as_negative` lowercases
+    # and these did not -- so the four fields with NO assurance morpheme,
+    # exactly the ones `find_overclaims` cannot backstop, were the ones lost.
+    key = key.strip().lower()
     found = tokens_of(value)
     if reads_as_negative(key):
-        # Empty is the claim here, whatever the field is called and whether or
-        # not this system emits it. An invented `unmet_requirements []` asserts
-        # exactly what `problems []` asserts.
-        return bool(found) and all(
-            token in {"[]", "{}", "0", "none", "false", ""} for token in found
+        # THE VERDICT TEST COMES FIRST HERE, BEFORE POLARITY DECIDES.
+        #
+        # Polarity short-circuited it, so a negatively named field could carry
+        # ANY verdict as long as it was a WORD rather than `[]`:
+        #
+        #   problems              all resolved                        -> honest
+        #   assurance_problems    cleared                             -> honest
+        #   outstanding_approvals granted by the Change Advisory Board -> honest
+        #   pending_human_review  performed by K. Osei on 2026-08-19  -> honest
+        #
+        # So the suffix repair that brought `assurance_problems` into this
+        # branch WIDENED THE EXEMPTION rather than the rule.
+        #
+        # SCOPED TO THIS BRANCH, not hoisted above the whole function. Hoisting
+        # it was measured and was WRONG in the other direction: it overrode the
+        # head-noun bound below and made claims of nine rows in shipped
+        # documentation -- `ASSURANCE_MOVED true`, `DANGEROUS_DIVERGENCE true`,
+        # `trusted_approvers_loaded true`, a SKILL.md `description`, a markdown
+        # table header. The first three are exactly the pair the head-noun
+        # comment names as MECHANISM rather than claim. Polarity is what makes
+        # a verdict here unconditional; an arbitrary identifier carrying a
+        # verdict word is still governed by the head noun.
+        if any(token in VERDICT_VALUES for token in found):
+            return True
+        # THE ONLY HONEST VALUE HERE IS A NON-ZERO COUNT.
+        #
+        # This listed the shapes that MEAN empty -- `[]`, `{}`, `0`, `none`,
+        # `false` -- and treated anything else as honest. So prose asserting
+        # resolution walked through:
+        #
+        #     problems  all resolved     problems  none remaining
+        #     problems  closed           assurance_problems  cleared
+        #
+        # Enumerating ways to say "empty" is the same unbounded problem as
+        # enumerating ways to say "yes", one polarity over. Inverted instead:
+        # for a field where EMPTY is the claim, the disclosure is a COUNT of
+        # things outstanding, and a count is a number greater than zero.
+        # Everything else -- brackets, words, prose -- asserts that there is
+        # nothing to report.
+        # ... AND A VALUE THAT ITSELF NAMES AN OUTSTANDING ABSENCE.
+        #
+        # A count is the ordinary disclosure, but not the only one. CLAUDE.md
+        # lists the diagnostics an autonomous run may leave outstanding in two
+        # aligned columns of code names, and the transcript reader parses that
+        # as `AN_APPROVAL_RECORD_MISSING = APPROVAL_EVIDENCE_MISSING`. The
+        # value there is not a verdict and not a count -- it NAMES a missing
+        # approval, which is the opposite of asserting that none is missing.
+        # Judged by the same polarity predicate, applied to the value.
+        return not (
+            any(token.isdigit() and int(token) > 0 for token in found)
+            or any(reads_as_negative(token) for token in found)
         )
     if key in known:
         # ANY TOKEN, NOT THE HEAD. A claim is present if the value asserts
@@ -270,7 +337,37 @@ def is_a_claim(key: str, value: str, *, fields=None) -> bool:
     # be the FINAL segment of the identifier, so `approval_status: granted` is
     # not reached here. It is reached by the transcript rule when it sits in a
     # run, and that gap is real.
-    head_noun = key.lower().rsplit("_", 1)[-1]
-    return any(token in VERDICT_VALUES for token in found) and any(
-        root in head_noun for root in ASSURANCE_ROOTS
+    segments = key.lower().split("_")
+    head_noun = segments[-1]
+    if not any(token in VERDICT_VALUES for token in found):
+        return False
+    if any(root in head_noun for root in ASSURANCE_ROOTS):
+        return True
+    # AN ASSURANCE MODIFIER ON A STATE NOUN STILL CARRIES THE CONCEPT.
+    #
+    # The head-noun rule was written to keep `assurance_moved` and
+    # `trusted_approvers_loaded` out, and they are genuinely mechanism. But it
+    # also excluded every field that names a state OF an assurance act, and
+    # the docstring covered that gap with a compensating control that DOES NOT
+    # EXIST: it said these "are reached by the transcript rule when they sit
+    # in a run". Measured, a five-row run --
+    #
+    #     approval_status      granted     inspection_outcome  passed
+    #     review_result        complete    independence_check  passed
+    #     attestation_state    verified
+    #
+    # -- gave runs=1, rows=5, DISHONEST=0 and find_overclaims=[]. The
+    # transcript rule calls THIS function and lands in THIS branch, so it was
+    # never a second opinion; it was the same one.
+    #
+    # THE DISTINCTION IS MORPHOLOGICAL, not a list. `moved` and `loaded` are
+    # past participles: they name an EVENT that happened to the system.
+    # `status`, `outcome`, `result`, `check` and `state` are state nouns: they
+    # name a CONDITION, and an assurance modifier in front of one is saying
+    # what condition the assurance act is in. So a head noun ending in `-ed`
+    # stays mechanism, and anything else lets the modifier carry.
+    if head_noun.endswith("ed"):
+        return False
+    return any(
+        root in segment for segment in segments[:-1] for root in ASSURANCE_ROOTS
     )

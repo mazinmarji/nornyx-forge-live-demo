@@ -284,6 +284,60 @@ def _clause_text(lowered: str, tokens: list, clauses: list, index: int) -> str:
 #: recorded elsewhere" was flagged, because `status` became a subject and `is`
 #: an affirmative. A field name in a sentence is a word; a field name in a row
 #: is a measurement.
+#: OPEN RESIDUAL: THIS SET IS STILL AN ENUMERATION, AND DERIVING IT WAS
+#: ATTEMPTED AND DID NOT LAND. Recorded here rather than in a review note
+#: because the next author will reach for the same repair.
+#:
+#: The claim vocabulary was derived by INVERSION -- judge a value by the
+#: small closed set of shapes that mean ABSENT -- and the subject side
+#: never was. Eleven ordinary English approval sentences were measured
+#: against this guard, and NINE were admitted: not because their verdicts
+#: were unknown, but because the verdict is never ASKED for want of a
+#: subject. `approved`, `signed off`, `certified` and `established` were
+#: already in the affirmative vocabulary the whole time.
+#:
+#: WHAT WAS BUILT AND MEASURED, on the production path:
+#:
+#:   subject derived from `ASSURANCE_ROOTS` by HEAD NOUN (matching the
+#:   root anywhere reintroduced `assurance_moved` and
+#:   `trusted_approvers_loaded` as claims, and both are mechanism);
+#:   `audit` and `certif` added to that root set; `_COPULA` split out of
+#:   `_AFFIRMATIVE` because a copula asserts EXISTENCE where an assurance
+#:   claim asserts COMPLETION; possession separated from predication; the
+#:   participle derived from the roots instead of listed beside them,
+#:   including the two-word `signed off` form; attributive participles
+#:   ("approved content", "certified foundation") excluded from asserting.
+#:
+#:     claims caught      2 / 11  ->  10 / 11
+#:     honest misflagged  0 / 15  ->   0 / 15   (a 15-sentence probe)
+#:     SHIPPED CORPUS     green   ->   FOUR honest lines flagged
+#:
+#: THE FOUR ARE WHY IT WAS REVERTED, and they are not a tuning problem:
+#:
+#:   ASSURANCE_BOUNDARY.md:44  a role DEFINITION quoting a signature
+#:   LENS_C_CLOSURE.md:9       a retracted claim being quoted to retract it
+#:   TASK11_CLOSURE.md:132     a FENCED transcript row about zone crossing
+#:   ASSUMPTIONS.md:117        a narrative about a defect that was removed
+#:
+#: Each needs a DIFFERENT mechanism -- quoted mention, attribution, the
+#: prose/fence boundary, past-narrative -- and closing them one at a time
+#: against these four lines is fitting the guard to the corpus, which is
+#: the failure mode this whole module exists to refuse. Two narrowings
+#: were measured and both COST TRUE POSITIVES without clearing the list:
+#: excluding `_AGENTS` dropped "signed off by three inspectors" (10 -> 9
+#: with four lines still flagged), and requiring an assurance-rooted
+#: verdict dropped five more (10 -> 6, three lines still flagged).
+#:
+#: A SECOND DEFECT WAS FOUND WHILE MEASURING THIS, and is also open: the
+#: docstring of `test_no_document_claims_an_independent_inspection_this_repository_lacks`
+#: says "Code spans and quotations are blanked (length preserved, so line
+#: numbers stay true)". The test passes `raw` to `find_overclaims`. The
+#: blanking was removed deliberately -- the recorded case named "an
+#: ordinary quoted sentence, which used to be blanked wholesale" expects
+#: True, because quoting a claim publishes it -- so the MECHANISM is
+#: right and the PROSE describing it is false. A comment describing a
+#: control the code does not implement is the FG37 shape exactly.
+#:
 _SUBJECT_WORDS = frozenset({
     "human_review", "production_approval", "assurance_state",
     # `attested` was named in the docstring below as a subject word and was
@@ -353,6 +407,12 @@ _DISCLAIMING = frozenset({
     # module's own docstring calls worse than a missed claim.
     "when", "once", "after", "where", "will", "whether", "becomes", "become",
     "shall", "may", "might", "could", "upon",
+    # `scheduled` IS THE SAME FRAME IN THE VALUE SLOT. "Human review:
+    # scheduled" says the review has NOT happened, and it was refused
+    # while "A human_review WILL be performed" -- the identical claim
+    # about the identical future -- was admitted, because one spelling
+    # was here and the other was not.
+    "scheduled",
 })
 
 #: Past participles that carry a COMPLETED state in themselves, so
@@ -653,9 +713,32 @@ def find_overclaims(text: str) -> list:
             # so honest prose reads as a claim. Two real documents were flagged
             # that way. A verdict ANYWHERE in the value still counts, which is
             # what the parenthetical forgery needs.
-            recognised = re.findall(r"[a-z_]+|\[\]|\{\}|[0-9]+", tail)
+            recognised = re.findall(r"n/a|[a-z_]+|\[\]|\{\}|[0-9]+", tail)
             has_verdict = any(tok in _VERDICT_VALUES for tok in recognised)
             has_absent = any(tok in _ABSENT_SHAPES for tok in recognised)
+            # A DISCLAIMING WORD THAT IS THE VALUE DISCLAIMS THE ROW IT IS
+            # THE VALUE OF.
+            #
+            # `pending` and `blocked` are in `_DISCLAIMING`, and the scope rule
+            # requires a disclaimer to PRECEDE the point a claim completes -- so
+            # a word standing in the value slot, which is always after the key,
+            # could never disclaim the row it was the honest answer for.
+            # Measured, every one of these REFUSED while the pipe-table form of
+            # the same fact was admitted:
+            #
+            #     Production approval: pending    Human review: scheduled
+            #     Production approval: blocked    Human review: TBD
+            #     Production approval: N/A        assurance_state: unknown
+            #     | Production approval | pending |   <- ok
+            #
+            # That is the mirror of the bug the adjacent-absent-shape exception
+            # was added to fix, and it left an author no way to disclose a
+            # pending approval in the commonest notation there is.
+            #
+            # GATED ON THERE BEING NO VERDICT, which is what keeps the
+            # parenthetical forgery closed: `production_approval  not_granted
+            # (granted by the CAB)` carries `granted`, so it is still judged.
+            has_disclaimer = any(tok in _DISCLAIMING for tok in recognised)
             decided = tail if has_verdict else ("" if has_absent else "")
             # THE CLAIM COMPLETES AT THE AFFIRMATIVE, so only a VERDICT value
             # anchors it. Anchoring on any recognisable token put the anchor on
@@ -665,7 +748,7 @@ def find_overclaims(text: str) -> list:
             # such words failed the generated placement sweep in the
             # between-subject-and-verb column.
             value_token = ""
-            for candidate in re.findall(r"[a-z_]+|\[\]|\{\}|[0-9]+", tail):
+            for candidate in re.findall(r"n/a|[a-z_]+|\[\]|\{\}|[0-9]+", tail):
                 if candidate in _VERDICT_VALUES:
                     value_token = candidate
                     break
@@ -692,6 +775,10 @@ def find_overclaims(text: str) -> list:
                         or separator.startswith("  ")):
                     continue
                 if word not in ASSURANCE_FIELDS:
+                    continue
+                if has_disclaimer:
+                    # See `has_disclaimer`: the value says the property is not
+                    # established, which is the disclosure, not a claim.
                     continue
                 decided = "(unrecognised)"
             # THE CLAIM COMPLETES AT THE VALUE TOKEN, wherever that is.
@@ -1056,6 +1143,28 @@ def test_the_process_start_sites_match_the_documented_list():
 #: matter: this system emits `independently_inspected`, never the prose form,
 #: and the guard used `\s` which does not match `_`.
 OVERCLAIM_SPECIMENS = [
+    # C9-P2-2 -- A DISCLAIMING WORD IN THE VALUE SLOT DISCLAIMS ITS OWN ROW.
+    # Every one of these was REFUSED while the pipe-table form of the same
+    # fact was admitted, which left an author no way to disclose a pending
+    # approval in the commonest notation there is.
+    ("colon form, pending", "Production approval: pending", False),
+    ("colon form, blocked", "Production approval: blocked", False),
+    ("colon form, not applicable", "Production approval: N/A", False),
+    ("colon form, scheduled", "Human review: scheduled", False),
+    ("colon form, to be determined", "Human review: TBD", False),
+    ("colon form, unknown", "assurance_state: unknown", False),
+    ("pipe form, the control that always worked",
+     "| Production approval | pending |", False),
+    # ... AND THE FORGERIES THAT MUST STILL BE CAUGHT, because the rule above
+    # is gated on there being no verdict anywhere in the value. Without that
+    # gate an author writes the honest value first and the false one second.
+    ("disclaimer then claim, parenthetical",
+     "production_approval  not_granted (granted by the Change Advisory Board)",
+     True),
+    ("disclaimer then claim, colon form",
+     "assurance_state: unknown (independently_inspected)", True),
+    ("disclaimer then claim, dashed",
+     "Human review: TBD -- performed by K. Osei", True),
     ("machine spelling, bare claim", "assurance_state: independently_inspected", True),
     ("prose spelling, bare claim", "this build was independently inspected", True),
     ("machine spelling, honest negative", "not_independently_inspected", False),

@@ -123,7 +123,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 138,
+    "tests/test_recorded_measurements.py": 140,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -140,7 +140,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 28,
-    "tests/test_documented_claims.py": 78,
+    "tests/test_documented_claims.py": 82,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
     "tests/test_governance_approval_verifier.py": 45,
@@ -202,7 +202,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 30,
+    "tests/test_ledger_continuity.py": 36,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
@@ -216,7 +216,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_approval_structure_refusals.py": 10,
     # R6: the four consequential-authority properties composed on the
     # real boundary, with the EFFECT counted rather than the decision read.
-    "tests/test_consequential_authority_path.py": 5,
+    "tests/test_consequential_authority_path.py": 9,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -281,9 +281,21 @@ EXPECTED_SKIP_CASES = {
 # a floor at all. At 1450 against a module-floor sum of 1458 the aggregate could
 # never fire on its own: any report satisfying every module also satisfied it, so
 # it was a declared check that could not reach a verdict.
-# `test_the_floor_refusal_actually_runs` caught it. 1490 sits above the sum and
-# 77 below the 1567 actually collected.
-MINIMUM_COLLECTED = 1490
+# `test_the_floor_refusal_actually_runs` caught it.
+#
+# RAISED AGAIN by Task 14b remediation, and the numbers here are now the
+# MEASURED ones. The line this replaces read "1490 sits above the sum and 77
+# below the 1567 actually collected", which was stale by 27 at the head where
+# it was written -- a comment stating a count nobody re-measured, in the file
+# whose whole purpose is to notice counts changing.
+#
+#     collected across tests/     1623
+#     sum of the module floors    1504
+#     MINIMUM_COLLECTED           1518
+#
+# 14 above the sum, so the aggregate can still refuse a report every module
+# floor accepts, and 105 below what actually collects.
+MINIMUM_COLLECTED = 1518
 
 
 def band(collected: int) -> int:
@@ -472,7 +484,8 @@ def node_id(case) -> str:
 def classify(
     report: Path,
 ) -> tuple[
-    int, int, list[str], "Counter[str]", set[str], list[str], list[str]
+    int, int, list[str], "Counter[str]", "Counter[str]", set[str],
+    list[str], list[str]
 ]:
     """Split a junit report into (total, expected skips, unexpected skips).
 
@@ -487,6 +500,7 @@ def classify(
     # A COUNT per module, not a presence set: presence cannot see a module
     # that kept one test and lost forty.
     seen_modules: Counter[str] = Counter()
+    executing_modules: Counter[str] = Counter()
     skipped_identities: set[str] = set()
     skipped_cases: Counter[str] = Counter()
     allowed = 0
@@ -504,8 +518,22 @@ def classify(
         # DECLARED SKIPS COUNT HERE, and that is a bound worth naming rather
         # than a property. This module's premise is that a skipped test proves
         # nothing, yet a skip increments both the aggregate total and its
-        # module's floor -- so a module could in principle replace real tests
-        # with declared skips and keep satisfying both.
+        # module's floor.
+        #
+        # "COULD IN PRINCIPLE" WAS AN UNDERSTATEMENT, and understating a hole
+        # is the failure this census exists to refuse. Measured on a clean
+        # checkout: `tests/test_brd_evidence_shape.py` has a floor of 9 and
+        # reports `sssssssss.` -- NINE OF TEN SKIP. Driving the production
+        # `evaluate()` with its ONE executing test deleted gave collected 1593,
+        # expected skips 9, unexpected skips 0, GATE: PASS, return code 0. The
+        # named mitigation was that one deletable test.
+        #
+        # So a required module now has to contribute at least one EXECUTED
+        # case, checked at the gate below. That is deliberately NOT a change to
+        # the floors: excluding skips from them would drop the collected total
+        # by the whole declared-skip count and require every floor to move at
+        # once, which is a change to argue for in its own diff. This closes the
+        # measured hole without moving a single number.
         #
         # Not silently corrected, because excluding them would drop the
         # collected total by the whole declared-skip count and require every
@@ -525,9 +553,13 @@ def classify(
         # parametrisation into more skips is now a diff, which is what the
         # sentence above claimed and did not deliver.
         total += 1
-        seen_modules[node_id(case).split("::", 1)[0]] += 1
+        module_name = node_id(case).split("::", 1)[0]
+        seen_modules[module_name] += 1
         skipped = case.find("skipped")
         if skipped is None:
+            # EXECUTED, as distinct from COLLECTED. See
+            # `executing_modules` at the gate below.
+            executing_modules[module_name] += 1
             continue
         # An EXPECTED FAILURE is not a skip. pytest reports both as `<skipped>`
         # in JUnit XML, distinguished only by `type`, and conflating them is a
@@ -573,7 +605,8 @@ def classify(
             continue
         unexpected.append(f"{node_id(case)} — {message.strip()}")
     return (
-        total, allowed, unexpected, seen_modules, skipped_identities,
+        total, allowed, unexpected, seen_modules, executing_modules,
+        skipped_identities,
         unexpected_xfails, errors,
     )
 
@@ -588,7 +621,8 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
     `classify` had been separated far enough to act on that.
     """
     (
-        total, allowed, unexpected, seen_modules, skipped_identities,
+        total, allowed, unexpected, seen_modules, executing_modules,
+        skipped_identities,
         unexpected_xfails, errors,
     ) = classify(report)
 
@@ -662,6 +696,26 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
             "gone, however many tests ran elsewhere."
         )
         print(NEWLINE + "GATE: FAIL - a required test module is missing")
+        return 2
+
+    inert = [
+        f"{name}: {seen_modules.get(name, 0)} collected, "
+        f"{executing_modules.get(name, 0)} executed"
+        for name in REQUIRED_MODULES
+        if executing_modules.get(name, 0) == 0
+    ]
+    if inert:
+        print(NEWLINE + "These required modules contributed no EXECUTED test:"
+              + NEWLINE)
+        for entry in inert:
+            print(f"  {entry}")
+        print(
+            NEWLINE + "A skipped test asserts nothing, and a module whose whole "
+            "floor is met by declared skips is present, counted, and proving "
+            "nothing. Measured on a clean checkout, one required module was "
+            "already one deletion away from exactly that."
+        )
+        print(NEWLINE + "GATE: FAIL - a required module executed nothing")
         return 2
 
     shrunk = [
