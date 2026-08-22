@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -341,6 +343,7 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
     assert "collection below floor" in captured
 
 
+@pytest.mark.false_green("FG35")
 def test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors():
     """A floor below the sum of its parts can never fire.
     FG35: a floor whose check could not reach its own verdict.

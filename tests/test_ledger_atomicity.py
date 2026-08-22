@@ -167,6 +167,7 @@ def test_wal_on_either_store_refuses_rather_than_converting(
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG39")
 def test_no_kill_point_during_a_consumption_leaves_the_stores_disagreeing(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:

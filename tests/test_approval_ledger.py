@@ -1152,6 +1152,7 @@ def _ledger_carrying(tmp_path: Path, name: str, *, writable_schema: bool) -> Pat
     return path
 
 
+@pytest.mark.false_green("FG27")
 @pytest.mark.parametrize(
     ("label", "name", "writable_schema", "must_refuse"),
     R1_SPECIMENS,

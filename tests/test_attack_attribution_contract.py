@@ -107,6 +107,7 @@ def test_prose_fields_are_never_the_criterion() -> None:
             )
 
 
+@pytest.mark.false_green("FG34")
 def test_an_attack_without_a_criterion_is_refused_by_the_runner(
     tmp_path: Path,
 ) -> None:

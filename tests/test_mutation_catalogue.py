@@ -847,6 +847,7 @@ def test_a_cumulative_attack_cannot_be_recorded_as_non_compound():
     )
 
 
+@pytest.mark.false_green("FG25")
 def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
     """FG25. MINIMALITY MEASURED, not inferred from the edit count.
 
@@ -897,6 +898,7 @@ def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
         )
 
 
+@pytest.mark.false_green("FG38")
 def test_every_killing_test_is_actually_collected_by_pytest():
     """TASK 11: the totals rest on tests that RUN, not on tests that exist.
     FG38: a proven attack whose proof was only DEFINED.

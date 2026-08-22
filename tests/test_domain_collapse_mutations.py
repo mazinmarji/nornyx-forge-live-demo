@@ -471,6 +471,7 @@ def healthy_against(base: dict, mutant: dict) -> list[str]:
     return problems
 
 
+@pytest.mark.false_green("FG23")
 def test_fg23_a_mutant_that_broke_the_run_is_not_a_kill(tmp_path: Path):
     """The negative specimen: expected value reached for the wrong reason.
 

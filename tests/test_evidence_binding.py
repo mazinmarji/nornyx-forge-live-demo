@@ -196,6 +196,7 @@ def test_the_generator_never_overwrites_the_committed_baseline():
     assert "known_violations" in source, "the checker no longer reads the baseline"
 
 
+@pytest.mark.false_green("FG22")
 @pytest.mark.parametrize("flag", ["--no-baseline"])
 def test_the_baseline_can_be_defeated_for_adversarial_runs(flag: str):
     """FG22. Grandfathering must be switchable off, or no regression can be trusted."""

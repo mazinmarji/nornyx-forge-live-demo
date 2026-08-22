@@ -484,6 +484,7 @@ def _ui_surfaces() -> list[Path]:
     )
 
 
+@pytest.mark.false_green("FG31")
 def test_the_ui_surface_sweep_finds_the_dashboard():
     """FG31. Guard the guard: an empty sweep would pass the check below silently."""
     names = {p.relative_to(ROOT).as_posix() for p in _ui_surfaces()}

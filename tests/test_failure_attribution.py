@@ -67,6 +67,7 @@ OTHER_FAILED = _case(
 )
 
 
+@pytest.mark.false_green("FG18")
 def test_case1_an_unrelated_node_failing_is_not_a_kill(tmp_path: Path):
     """FG18. The named node PASSED. Something else broke. That is not evidence.
 
@@ -137,6 +138,7 @@ def test_case5_a_missing_named_node_is_not_a_kill(tmp_path: Path):
     assert "test_the_named_proof" in str(refusal.value)
 
 
+@pytest.mark.false_green("FG19")
 def test_case6_the_named_node_failing_for_the_wrong_reason_is_not_a_kill(
     tmp_path: Path,
 ):

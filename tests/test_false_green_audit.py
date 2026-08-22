@@ -21,7 +21,10 @@ error, except where the guard under test is itself a collection guard.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -493,6 +496,7 @@ def _request():
     )
 
 
+@pytest.mark.false_green("FG01")
 def test_fg01_a_wrong_keyword_breaks_the_signature():
     """The historical mistake, reproduced exactly.
 
@@ -528,6 +532,7 @@ def test_fg01_a_wrong_keyword_breaks_the_signature():
     assert "signature invalid" in reason, reason
 
 
+@pytest.mark.false_green("FG02")
 def test_fg02_a_tampered_signature_is_caught_as_a_prerequisite():
     """A negative authority test must not be satisfied by a broken signature."""
     from signing import signed_grant  # noqa: PLC0415
@@ -546,6 +551,7 @@ def test_fg02_a_tampered_signature_is_caught_as_a_prerequisite():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG03")
 def test_fg03_a_comment_target_is_refused():
     """The token exists in a comment BEFORE the executable line.
 
@@ -564,6 +570,7 @@ def test_fg03_the_same_token_in_the_executable_line_is_admitted():
     check_mutation("probe.py", source, source.replace("'low'", "'high'"), "'low'", 1)
 
 
+@pytest.mark.false_green("FG07")
 def test_fg07_a_stale_anchor_is_refused():
     """Zero edits is INVALID_MUTATION, never a survivor."""
     source = "value = 1\n"
@@ -578,6 +585,7 @@ def test_fg07_a_no_op_replacement_is_refused():
         check_mutation("probe.py", source, source, "value = 1", 1)
 
 
+@pytest.mark.false_green("FG08")
 def test_fg08_an_unisolated_child_is_refused():
     """Origin is proven, never inferred from how the environment was built."""
     import os  # noqa: PLC0415
@@ -607,6 +615,7 @@ def _restored(before: dict[Path, bytes]) -> list[str]:
     return sorted(p.name for p, data in before.items() if p.read_bytes() != data)
 
 
+@pytest.mark.false_green("FG04")
 def test_fg04_partial_restoration_is_detected(tmp_path: Path):
     """Restoring some files is not restoring the workspace.
 
@@ -638,6 +647,7 @@ def test_fg04_partial_restoration_is_detected(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG05")
 def test_fg05_a_shared_ledger_contaminates_the_pair(tmp_path: Path):
     """The second half must not inherit the first half's spent grant.
 
@@ -679,6 +689,7 @@ def _is_stable(samples: list[str]) -> bool:
     return len(set(samples)) == 1
 
 
+@pytest.mark.false_green("FG06")
 def test_fg06_convergence_is_told_apart_from_oscillation():
     """A -> B -> B -> B is convergence. A -> B -> A -> B is not.
 
@@ -704,6 +715,7 @@ def test_fg06_convergence_is_told_apart_from_oscillation():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG09")
 def test_fg09_possession_does_not_discriminate(tmp_path: Path):
     """Two stores that DECIDE differently are indistinguishable by possession.
 
@@ -841,6 +853,7 @@ def _counted_report(tmp_path: Path, counts: dict) -> Path:
     return report
 
 
+@pytest.mark.false_green("FG10")
 def test_fg10_a_workspace_whose_baseline_already_fails_is_refused(tmp_path: Path):
     """FG10. A kill credited for a workspace where the proof already failed.
 
@@ -877,6 +890,7 @@ def test_fg10_a_workspace_whose_baseline_already_fails_is_refused(tmp_path: Path
     assert "FAILS before any mutation" in str(refusal.value)
 
 
+@pytest.mark.false_green("FG11")
 def test_fg11_a_missing_test_node_is_not_a_kill(tmp_path: Path):
     """FG11. `pytest module::gone` exits 4 and was read as a failing test.
 
@@ -907,6 +921,7 @@ def test_fg11_a_missing_test_node_is_not_a_kill(tmp_path: Path):
     assert "does not collect" in str(refusal.value)
 
 
+@pytest.mark.false_green("FG12")
 def test_fg12_an_undeclared_expected_failure_fails_the_census(tmp_path: Path):
     """FG12. A security proof with an off switch.
 
@@ -950,6 +965,7 @@ def test_fg12_an_undeclared_expected_failure_fails_the_census(tmp_path: Path):
     assert options.get("xfail_strict") is True, options.get("xfail_strict")
 
 
+@pytest.mark.false_green("FG13")
 def test_fg13_a_text_search_is_not_proof_of_mutant_origin(tmp_path: Path):
     """FG13. The origin proof matched an unrelated line.
 
@@ -1001,6 +1017,7 @@ def test_fg13_a_text_search_is_not_proof_of_mutant_origin(tmp_path: Path):
     assert "outside the mutant workspace" in str(refusal.value), str(refusal.value)
 
 
+@pytest.mark.false_green("FG14")
 def test_fg14_an_aggregate_floor_permits_deleting_critical_proofs(tmp_path: Path):
     """FG14. 43 tests deleted across six modules, total unchanged.
 
@@ -1041,6 +1058,7 @@ def test_fg14_an_aggregate_floor_permits_deleting_critical_proofs(tmp_path: Path
     ]
 
 
+@pytest.mark.false_green("FG15")
 def test_fg15_one_route_of_a_chain_is_not_the_property(tmp_path: Path):
     """FG15. Removing one guard, seeing the property hold, and calling it either.
 
@@ -1103,42 +1121,106 @@ def test_the_mechanism_map_names_only_known_classes():
     )
 
 
-def test_every_false_green_owner_names_the_class_it_owns():
-    """An owner must SAY which class it proves, or re-pointing is invisible.
+def _declared_by_collection() -> dict:
+    """Which COLLECTED node declares which FG class, read from pytest itself.
 
-    The idents are pinned by set -- FG14's lesson, applied correctly. The
-    OWNERS were pinned only by cardinality: module exists, node defined exactly
-    once, at least one assertion, owners distinct. A review re-pointed FG29 --
-    "a violated property, when the mutant crashed instead of deciding" -- at
-    `tests/test_skip_gate.py::test_a_clean_report_passes` and measured BOTH
-    inventory tests still PASSED. Any 33 distinct singly-defined asserting
-    nodes satisfy the audit, and `assert True` satisfies the AST counter.
+    NOT FROM SOURCE. The substring rule this replaces matched raw text --
+    docstrings and comments included:
 
-    That is the identity-versus-count substitution one level up from where it
-    was fixed. An owner whose source carries its own class id cannot be
-    silently re-pointed at an unrelated test.
+        if item.ident.lower() in node.lower() or item.ident in segment
+
+    Measured across all 39 entries: 22 satisfied by the node NAME, 17 by PROSE
+    ONLY -- including all six classes Task 12 minted -- and ZERO with the class
+    id anywhere in executable code. A review then certified a class whose guard
+    was gone, three ways: deleted and re-pointed at a meta-test whose docstring
+    mentions the id; gutted to `assert True` and re-pointed at the owner-naming
+    rule ITSELF, whose docstring names FG29, with collection unchanged at 1578;
+    and replaced by a NESTED function of the same name, which pytest never
+    collects. Twenty tests passed each time, and the census stayed green.
+
+    That is FG37 ("a structural control, when a COMMENT satisfied it") and FG38
+    ("a proven attack, when its proof was only DEFINED") -- the two classes
+    Task 12 minted -- reproduced by the Task-12 guard written to close them.
+
+    A marker is metadata on a node pytest ACTUALLY COLLECTED. A comment cannot
+    carry one, and neither can a function pytest never sees, so both evasions
+    close together and the declaration lives in ONE place instead of two that
+    can drift.
     """
-    import ast  # noqa: PLC0415
-
-    unnamed = []
-    for item in INVENTORY:
-        module, _, node = item.owner.partition("::")
-        source = (ROOT / module).read_text(encoding="utf-8")
-        function = next(
-            (found for found in ast.walk(ast.parse(source))
-             if isinstance(found, ast.FunctionDef) and found.name == node),
-            None,
+    dump = Path(tempfile.mkdtemp()) / "markers.tsv"
+    environment = dict(os.environ, FG_MARKER_DUMP=str(dump),
+                       PYTHONIOENCODING="utf-8",
+                       # `-p` resolves a plugin by import, and `tests/` is on
+                       # sys.path only via conftest -- which has not run yet at
+                       # plugin-load time.
+                       PYTHONPATH=str(ROOT / "tests"))
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-o",
+         "addopts=", "-p", "no:randomly", "-p", "fg_marker_dump",
+         "--no-header", "tests/"],
+        cwd=ROOT, capture_output=True, text=True, timeout=1800, check=False,
+        env=environment,
+    )
+    if not dump.exists():
+        raise AssertionError(
+            "collection produced no marker report, so the class-to-guard link "
+            f"could not be established at all: rc={done.returncode} "
+            f"{done.stdout[-400:]} {done.stderr[-400:]}"
         )
-        if function is None:
-            unnamed.append(f"{item.ident}: {item.owner} does not exist")
-            continue
-        segment = ast.get_source_segment(source, function) or ""
-        if item.ident.lower() in node.lower() or item.ident in segment:
-            continue
-        unnamed.append(f"{item.ident}: {item.owner} never names it")
+    declared: dict = {}
+    for row in dump.read_text(encoding="utf-8").splitlines():
+        ident, _, nodeid = row.partition(chr(9))
+        if ident:
+            declared.setdefault(ident, set()).add(nodeid.split("[")[0])
+    return declared
 
-    assert unnamed == [], (
-        "these catalogue entries point at a test that says nothing about the "
-        "class it is supposed to prove, so the entry could be re-pointed at "
-        f"any asserting node and this audit would stay green: {unnamed}"
+
+def test_every_false_green_class_is_declared_by_a_collected_guard():
+    """The link is a USE, and the guard is proven to COLLECT.
+
+    Two properties from one measurement, because they share the evidence: the
+    marker names the class from INSIDE the guard, and a marker exists only on a
+    node pytest collected.
+    """
+    declared = _declared_by_collection()
+
+    missing = sorted(item.ident for item in INVENTORY
+                     if item.ident not in declared)
+    assert missing == [], (
+        "these classes are declared by no collected guard, so nothing "
+        "mechanically ties them to a proof -- such a class can be re-pointed "
+        f"at any asserting node, or at one pytest never runs: {missing}"
+    )
+
+    stray = sorted(set(declared) - {item.ident for item in INVENTORY})
+    assert stray == [], (
+        f"these guards declare a class the inventory does not list: {stray}"
+    )
+
+    mismatched = []
+    for item in INVENTORY:
+        owner = item.owner.split("[")[0]
+        if owner not in declared[item.ident]:
+            mismatched.append(
+                f"{item.ident}: inventory names {owner}, declared by "
+                f"{sorted(declared[item.ident])}"
+            )
+    assert mismatched == [], (
+        "the inventory and the guards disagree about which node proves which "
+        "class. Re-pointing an inventory row now requires moving the marker OFF "
+        "the real guard, which leaves that guard undeclared: "
+        + "; ".join(mismatched)
+    )
+
+
+def test_no_two_classes_are_declared_by_the_same_guard():
+    """One guard, one class -- otherwise a single node certifies many."""
+    declared = _declared_by_collection()
+    owners: dict = {}
+    for ident, nodes in declared.items():
+        for node in nodes:
+            owners.setdefault(node, []).append(ident)
+    shared = {node: sorted(ids) for node, ids in owners.items() if len(ids) > 1}
+    assert shared == {}, (
+        f"these nodes declare more than one false-green class: {shared}"
     )

@@ -840,6 +840,7 @@ def _distinguishes_any_other_pair(src, attack) -> bool:
         restore()
 
 
+@pytest.mark.false_green("FG24")
 def test_fg24_a_constant_projection_is_refused_by_the_guard(monkeypatch, restored_contracts):
     """The negative specimen, now INVOKING the guard it is about.
 

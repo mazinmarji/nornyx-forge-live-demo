@@ -284,6 +284,7 @@ XFAIL_SPECIMENS = [
 ]
 
 
+@pytest.mark.false_green("FG21")
 @pytest.mark.parametrize(
     ("label", "source", "expected"),
     XFAIL_SPECIMENS,

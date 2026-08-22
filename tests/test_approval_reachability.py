@@ -73,6 +73,7 @@ def test_the_shipped_case_entry_can_receive_an_approval():
     )
 
 
+@pytest.mark.false_green("FG32")
 def test_the_flow_passes_the_grant_to_the_boundary():
     """FG32. Possession must travel. A parameter that is accepted and dropped is worse
     than none, because it looks like a route."""

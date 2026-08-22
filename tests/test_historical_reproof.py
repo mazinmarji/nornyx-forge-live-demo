@@ -1700,6 +1700,7 @@ def test_no_route_in_the_inventory_is_inert(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG16")
 def test_fg16_a_mutation_outside_production_scope_is_refused():
     """Negative: mutating a test fixture is the suite reacting to itself.
 
@@ -1720,6 +1721,7 @@ def test_fg16_a_production_target_is_admitted():
         require_production_mutation_scope(inside)
 
 
+@pytest.mark.false_green("FG17")
 def test_fg17_a_module_target_cannot_stand_in_for_an_exact_node():
     """Negative: `tests/test_x.py` accepted where one node was required.
 
@@ -1824,6 +1826,7 @@ def test_r2_a_mutation_that_removes_the_refusal_is_accepted(tmp_path: Path):
     )
 
 
+@pytest.mark.false_green("FG28")
 def test_r2_a_green_helper_cannot_stand_in_for_the_runner(tmp_path: Path):
     """FG28. The negative control the whole defect argues for.
 

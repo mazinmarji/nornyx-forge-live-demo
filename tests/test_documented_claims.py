@@ -953,6 +953,7 @@ def test_the_request_digest_covers_exactly_what_the_comment_says():
     )
 
 
+@pytest.mark.false_green("FG20")
 def test_ci_shell_propagates_pipeline_failure():
     """FG20. A piped assurance command must not be able to report a false green.
 

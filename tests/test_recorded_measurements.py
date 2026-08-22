@@ -698,6 +698,7 @@ def test_r4_an_anchored_block_carries_only_verifiable_fields(relative: str):
         )
 
 
+@pytest.mark.false_green("FG30")
 def test_r4_a_fabricated_field_inside_an_anchored_block_is_refused():
     """FG30. The counterexample a review used, pinned."""
     forged = _SPECIMEN_FORGED
@@ -1169,6 +1170,7 @@ def test_the_anchored_re_execution_does_not_depend_on_the_readers_machine(
     ), "the planted store changed how many assurance problems were reported"
 
 
+@pytest.mark.false_green("FG36")
 @pytest.mark.parametrize(
     ("rendering", "prefix"),
     [("fenced", None), ("tab-indented", chr(9)), ("blockquoted", "> "),
