@@ -178,9 +178,14 @@ VERDICT_VALUES = frozenset({
 #: BOUND, stated: a field naming an assurance concept with no shared morpheme
 #: is not reached. That is a smaller gap than a word list leaves, and it is
 #: recorded rather than assumed away.
+#: `audit` AND `certif` BELONG HERE BY THE SAME TEST THE OTHER TWELVE PASS.
+#: With the subject rule derived from this set, their absence was measured
+#: admitting two claims outright -- "The external audit is complete and all
+#: findings are closed" and "certified by an external auditor".
 ASSURANCE_ROOTS = (
     "approval", "approve", "approv", "authoriz", "authoris", "inspect",
     "review", "attest", "assur", "independen", "sign_off", "signoff",
+    "audit", "certif",
 )
 
 

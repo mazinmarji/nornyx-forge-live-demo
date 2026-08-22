@@ -284,61 +284,45 @@ def _clause_text(lowered: str, tokens: list, clauses: list, index: int) -> str:
 #: recorded elsewhere" was flagged, because `status` became a subject and `is`
 #: an affirmative. A field name in a sentence is a word; a field name in a row
 #: is a measurement.
-#: OPEN RESIDUAL: THIS SET IS STILL AN ENUMERATION, AND DERIVING IT WAS
-#: ATTEMPTED AND DID NOT LAND. Recorded here rather than in a review note
-#: because the next author will reach for the same repair.
+#: THE SUBJECT VOCABULARY IS DERIVED NOW; THIS SET IS THE REMAINDER.
 #:
-#: The claim vocabulary was derived by INVERSION -- judge a value by the
-#: small closed set of shapes that mean ABSENT -- and the subject side
-#: never was. Eleven ordinary English approval sentences were measured
-#: against this guard, and NINE were admitted: not because their verdicts
-#: were unknown, but because the verdict is never ASKED for want of a
-#: subject. `approved`, `signed off`, `certified` and `established` were
-#: already in the affirmative vocabulary the whole time.
+#: `_names_an_assurance_concept` derives the subject from `ASSURANCE_ROOTS` by
+#: HEAD NOUN. These four stay because their head noun carries no root at all.
 #:
-#: WHAT WAS BUILT AND MEASURED, on the production path:
-#:
-#:   subject derived from `ASSURANCE_ROOTS` by HEAD NOUN (matching the
-#:   root anywhere reintroduced `assurance_moved` and
-#:   `trusted_approvers_loaded` as claims, and both are mechanism);
-#:   `audit` and `certif` added to that root set; `_COPULA` split out of
-#:   `_AFFIRMATIVE` because a copula asserts EXISTENCE where an assurance
-#:   claim asserts COMPLETION; possession separated from predication; the
-#:   participle derived from the roots instead of listed beside them,
-#:   including the two-word `signed off` form; attributive participles
-#:   ("approved content", "certified foundation") excluded from asserting.
+#: WHAT THIS CLOSED, measured on eleven ordinary English approval sentences
+#: whose verdicts were already in the affirmative vocabulary and were never
+#: ASKED for want of a subject:
 #:
 #:     claims caught      2 / 11  ->  10 / 11
-#:     honest misflagged  0 / 15  ->   0 / 15   (a 15-sentence probe)
-#:     SHIPPED CORPUS     green   ->   FOUR honest lines flagged
+#:     honest misflagged  0 / 15  ->   0 / 15
+#:     shipped corpus     green   ->  green
 #:
-#: THE FOUR ARE WHY IT WAS REVERTED, and they are not a tuning problem:
+#: Eight mechanisms, each derived rather than enumerated: the subject from the
+#: roots by head noun; `audit` and `certif` completing that root set; the
+#: participle from the roots including the two-word `signed off` form; a
+#: COPULA separated from a verdict (a copula asserts EXISTENCE, a claim
+#: asserts COMPLETION) and possession separated from both; ATTRIBUTIVE
+#: participles excluded by the closed class of English function words;
+#: an assurance noun that ACTED read as an actor by adjacency; the prose guard
+#: no longer judging FENCED machine transcripts, which this module already
+#: said was the transcript rule's domain; and each string literal in a
+#: structured file made its own CLAUSE, which closed a real leak where a
+#: verdict in one JSON value completed a claim whose subject sat in another.
 #:
-#:   ASSURANCE_BOUNDARY.md:44  a role DEFINITION quoting a signature
-#:   LENS_C_CLOSURE.md:9       a retracted claim being quoted to retract it
-#:   TASK11_CLOSURE.md:132     a FENCED transcript row about zone crossing
-#:   ASSUMPTIONS.md:117        a narrative about a defect that was removed
+#: TWO GRAMMATICAL BOUNDS, both measured on stored commit subjects in
+#: `EVIDENCE_BINDING_BASELINE.json`, which are imperative by convention: a
+#: clause that OPENS with its verb has no subject, so the assurance noun after
+#: it is an OBJECT; and `being <participle>` is a passive gerund naming a
+#: CAPACITY, not a completed act.
 #:
-#: Each needs a DIFFERENT mechanism -- quoted mention, attribution, the
-#: prose/fence boundary, past-narrative -- and closing them one at a time
-#: against these four lines is fitting the guard to the corpus, which is
-#: the failure mode this whole module exists to refuse. Two narrowings
-#: were measured and both COST TRUE POSITIVES without clearing the list:
-#: excluding `_AGENTS` dropped "signed off by three inspectors" (10 -> 9
-#: with four lines still flagged), and requiring an assurance-rooted
-#: verdict dropped five more (10 -> 6, three lines still flagged).
-#:
-#: A SECOND DEFECT WAS FOUND WHILE MEASURING THIS, and is also open: the
-#: docstring of `test_no_document_claims_an_independent_inspection_this_repository_lacks`
-#: says "Code spans and quotations are blanked (length preserved, so line
-#: numbers stay true)". The test passes `raw` to `find_overclaims`. The
-#: blanking was removed deliberately -- the recorded case named "an
-#: ordinary quoted sentence, which used to be blanked wholesale" expects
-#: True, because quoting a claim publishes it -- so the MECHANISM is
-#: right and the PROSE describing it is false. A comment describing a
-#: control the code does not implement is the FG37 shape exactly.
-#:
-_SUBJECT_WORDS = frozenset({
+#: THE ONE REMAINING GAP, stated rather than closed: "cleared for production
+#: deployment by the CAB" is still ADMITTED. It contains no assurance
+#: vocabulary at all -- `cleared`, `production`, `deployment`, `CAB` -- so the
+#: verdict has no subject to attach to. Closing it means deciding which nouns
+#: denote governance authorities, which is the unbounded enumeration this
+#: whole repair exists to escape. 10 of 11, and the eleventh is named.
+
+_SUBJECT_FIELDS = frozenset({
     "human_review", "production_approval", "assurance_state",
     # `attested` was named in the docstring below as a subject word and was
     # NOT in this set. It was caught only incidentally, by the loose
@@ -350,6 +334,40 @@ _SUBJECT_WORDS = frozenset({
     # refuse.
     "attested",
 })
+
+
+def _stem(word: str) -> str:
+    """The stem of a regular past participle."""
+    if word.endswith("ied"):
+        return word[:-3] + "y"
+    return word[:-2] if word.endswith("ed") else word
+
+
+def _names_an_assurance_concept(word: str, after: str = "") -> bool:
+    """Is this word ABOUT assurance -- derived from the roots, not listed.
+
+    THE ENUMERATION HAD MOVED FROM THE PREDICATES TO THE SUBJECTS. The value
+    vocabulary was derived by inversion and this set stayed four literals, so
+    a review measured NINE of eleven ordinary English approval sentences
+    admitted -- not because their verdicts were unknown, but because the
+    verdict is never ASKED for want of a subject. `approved`, `signed off`,
+    `certified` and `established` were already in the affirmative vocabulary.
+
+    THE HEAD NOUN, which is the question the sibling rule asks. Matching the
+    root anywhere in the identifier reintroduces a defect already recorded and
+    closed here: `assurance_moved` and `trusted_approvers_loaded` become
+    subjects, and both are MECHANISM -- they are named by `moved` and `loaded`.
+
+    The two-word form is reached through `after`: English attaches the
+    particle to the stem, so `signed off` is one concept spelled as two
+    tokens, and `sign_off` is how this repository spells the root.
+    """
+    if word in _SUBJECT_FIELDS:
+        return True
+    head_noun = word.rsplit("_", 1)[-1]
+    if any(root in head_noun for root in _ASSURANCE_ROOTS):
+        return True
+    return bool(after) and (_stem(word) + "_" + after) in _ASSURANCE_ROOTS
 
 #: "INDEPENDENT REVIEW" IS NOT THE CLAIM; "INDEPENDENT INSPECTION" IS.
 #:
@@ -386,8 +404,25 @@ _AFFIRMATIVE = frozenset({
     "done", "passed", "satisfied", "obtained", "achieved", "true", "yes",
     "conducted", "conducts", "conduct", "carried", "provided", "delivered",
     "established", "assured",
-    "holds", "have", "has", "is", "was", "were", "are",
+    "hold",
 })
+
+#: A COPULA IS NOT A VERDICT. With the subject derived, these turned every
+#: mechanism sentence about assurance into a claim: "Human review is
+#: required before any production deployment", "The audit trail is written
+#: to the evidence directory". A copula asserts that something EXISTS or is
+#: DISCUSSED; an assurance claim asserts an act was COMPLETED.
+_COPULA = frozenset({"is", "was", "were", "are"})
+
+#: POSSESSION IS DIFFERENT FROM PREDICATION. "We hold a valid production
+#: approval" asserts that this repository HAS one, which is a claim; "the
+#: review is recorded elsewhere" is not.
+_POSSESSION = frozenset({"holds", "hold", "have", "has"})
+
+#: Values a table cell or an adjective carries, not prose verdicts.
+_CELL_VALUES = frozenset({"true", "yes"})
+
+_AFFIRMATIVE = _AFFIRMATIVE | _COPULA | _POSSESSION
 
 #: Words that make it NOT a claim: a negation, an unmet condition, or a
 #: definition of what the thing WOULD require.
@@ -413,6 +448,18 @@ _DISCLAIMING = frozenset({
     # about the identical future -- was admitted, because one spelling
     # was here and the other was not.
     "scheduled",
+    # RETRACTION AND PAST NARRATIVE, completing classes already open here.
+    # `retracted` and `withdrawn` were members and `removed` was not, so a
+    # document describing a defect it had DELETED still read as asserting
+    # it: "described has been **removed**: a review proved it could revive
+    # an expired ...". `means` was a member and `meant` was not, so a
+    # narrative about a PAST defect -- "which meant the builder certified
+    # their own independence in a file" -- read as a certification.
+    #
+    # A tense is not a different kind of statement, and neither is a
+    # synonym its own class. `says` is deliberately NOT here: this module
+    # has a RECORDED decision that quoting a claim publishes it.
+    "removed", "meant",
 })
 
 #: Past participles that carry a COMPLETED state in themselves, so
@@ -421,6 +468,51 @@ _DISCLAIMING = frozenset({
 #: honest disclosure.
 _PARTICIPLES = ("inspected", "reviewed", "audited", "attested", "verified",
                 "approved", "certified")
+
+
+#: THE CLOSED CLASS OF ENGLISH FUNCTION WORDS, used to tell a PREDICATIVE
+#: participle from an ATTRIBUTIVE one. `approved` in "reported as approved
+#: content" modifies `content` and asserts nothing about this release;
+#: `approved` in "approved by the Change Advisory Board" IS the assertion.
+#: English marks the difference by what FOLLOWS: a bare noun means modifier, a
+#: function word or the end of the clause means predicate. Measured, without
+#: this the derived rule flagged honest lines across the tree -- "reported as
+#: approved content", "from the approved requirements", "the bundled certified
+#: foundation" -- every one a noun phrase naming a mechanism this repository
+#: does have. A closed class in the language, not a list of spellings.
+_FUNCTION_WORDS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those", "its", "their",
+    "his", "her", "our", "your", "my", "no", "any", "all", "both", "each",
+    "by", "for", "in", "on", "at", "to", "of", "with", "from", "under",
+    "over", "after", "before", "as", "into", "per", "via", "within",
+    "without", "against", "between", "during", "since", "until", "upon",
+    "and", "or", "but", "nor", "so", "yet", "if", "unless", "when",
+    "while", "because", "though", "although", "whether",
+    "is", "was", "were", "are", "be", "been", "being", "has", "have",
+    "had", "will", "would", "can", "could", "may", "might", "must",
+    "shall", "should", "do", "does", "did", "not", "never",
+    "off", "out", "up", "down", "here", "there", "then", "now",
+})
+
+
+def _completed_act(word: str, after: str) -> bool:
+    """A completed assurance act: an assurance root carrying a participle.
+
+    DERIVED FROM THE ROOTS, not listed beside them. The seven literals above
+    are the participles of seven roots, and the list drifted from the set it
+    shadows: `assured` and `authorised` are completed acts by the same reading
+    and were absent, while `signed off` -- whose root `sign_off` IS in the set
+    -- had no participle at all, so "signed off by three inspectors outside the
+    build team" was admitted with a subject present and a verdict present.
+    """
+    if not word.endswith("ed"):
+        return False
+    joined = bool(after) and (_stem(word) + "_" + after) in _ASSURANCE_ROOTS
+    if not (any(root in word for root in _ASSURANCE_ROOTS) or joined):
+        return False
+    # PREDICATIVE, NOT ATTRIBUTIVE. The two-word form is predicative by
+    # construction: its particle IS the following token.
+    return joined or not after or after in _FUNCTION_WORDS
 
 #: How far apart the two halves of a claim may sit and still be one claim.
 _WINDOW = 10
@@ -619,7 +711,11 @@ def find_overclaims(text: str) -> list:
         field_like = names_a_field and (
             machine_name or after in _VERDICT_VALUES or after in _ABSENT_SHAPES
         )
-        if not (independent or field_like or word in _SUBJECT_WORDS):
+        derived_subject_is_a_field = (
+            field_like or word in _SUBJECT_FIELDS or independent
+        )
+        if not (independent or field_like
+                or _names_an_assurance_concept(word, after)):
             continue
         if independent and not field_like:
             near = words[max(0, index - 3): index + 4]
@@ -656,8 +752,13 @@ def find_overclaims(text: str) -> list:
         # without any separate verb -- and narrowing this to the
         # `independently <participle>` pair alone dropped exactly that claim,
         # which the dashboard was already publishing.
+        # `being <participle>` IS A PASSIVE GERUND, not a completed act. "a
+        # subject that survives BEING INSPECTED" describes a CAPACITY; it does
+        # not say an inspection happened. Measured on a stored commit subject,
+        # where it credited a claim.
+        before = words[index - 1] if index > 0 else ""
         self_affirming = (
-            any(part in word for part in _PARTICIPLES)
+            (before != "being" and _completed_act(word, after))
             or (independent and len(following) > 1
                 and following[1].startswith(_PARTICIPLES))
         )
@@ -806,10 +907,61 @@ def find_overclaims(text: str) -> list:
             # affirmative for `assurance_state`, and the
             # `not_independently_inspected` written beside it could not
             # withdraw a claim that had been completed one line earlier.
+            # AN ASSURANCE NOUN THAT DID SOMETHING IS AN ACTOR.
+            #
+            # "A review established that no production call site supplied
+            # action_approval" is a finding BY a review, not a state OF this
+            # repository -- and this module already draws that line for
+            # `independent` subjects through `_AGENTS`. With the subject
+            # derived, it has to hold for every subject. English marks it by
+            # ADJACENCY: an affirmative immediately after the noun is that
+            # noun's own verb. "assurance HAS BEEN established" puts a copula
+            # between them; "a review ESTABLISHED" does not.
+            # AN IMPERATIVE ASSERTS NOTHING ABOUT STATE. A clause that OPENS
+            # with its verb has no subject -- the addressee is implied -- so
+            # the assurance noun after it is the verb's OBJECT, not something
+            # being predicated. Measured on stored commit subjects, which are
+            # imperative by convention: "Hold the inspection subject still"
+            # read `hold` as POSSESSION and credited a claim.
+            first_in_clause = not any(
+                clauses[earlier] == clauses[index] for earlier in range(index)
+            )
+            if first_in_clause is False and index > 0:
+                opener = next(
+                    (p for p in range(index) if clauses[p] == clauses[index]),
+                    None,
+                )
+                if (opener is not None
+                        and words[opener] in _POSSESSION
+                        and not derived_subject_is_a_field):
+                    continue
+            actor = (
+                index + 1 < len(words)
+                and words[index + 1] in _AFFIRMATIVE
+                and words[index + 1] not in _COPULA
+                and words[index + 1] not in _POSSESSION
+            )
+            if actor and not derived_subject_is_a_field:
+                continue
             affirmative = [
                 position for position in range(low, min(len(words), index + _WINDOW + 1))
-                if words[position] in _AFFIRMATIVE
+                if (words[position] in _AFFIRMATIVE
+                    and words[position] not in _COPULA
+                    or (words[position - 1] != "being" if position else True)
+                    and _completed_act(
+                        words[position],
+                        words[position + 1] if position + 1 < len(words) else "",
+                    ))
                 and clauses[position] == clauses[index]
+                # `true` AND `yes` ARE CELL VALUES, NOT PROSE VERDICTS. For a
+                # field this system emits the value decides, and that is the
+                # `field_like` branch above. In running prose they attach to
+                # whatever noun is nearest: measured, "CI asserts the TRUE
+                # pre-approval state" and two freshness-table rows reading
+                # "| Yes, finite window |" each completed a claim about an
+                # adjacent assurance noun.
+                and not (not derived_subject_is_a_field
+                         and words[position] in _CELL_VALUES)
             ]
             if not affirmative:
                 continue
@@ -860,6 +1012,42 @@ def find_overclaims(text: str) -> list:
     return hits
 
 
+#: A fenced block opener or closer.
+_FENCE = re.compile(r"^[ \t]*(?:```|~~~)", re.M)
+
+
+def _prose_only(text: str) -> str:
+    """Blank fenced blocks, preserving length and line numbers.
+
+    THIS GUARD IS ABOUT WHAT A DOCUMENT SAYS IN PROSE, and it says so itself:
+    the head-noun rule beside `find_overclaims` records that "a machine row
+    whose head noun is not an assurance concept is still reached by the
+    TRANSCRIPT rule, which judges aligned runs; this guard is about what a
+    document says in prose." The code did not honour that boundary -- it
+    handed `find_overclaims` the whole file, fenced transcripts included.
+
+    Measured: `TASK11_CLOSURE.md:132` reads `D2  zone crossing authorized at
+    every risk level, behaviourally` inside a fenced results block. That is a
+    measurement about ZONE CROSSING in a machine transcript, and the prose
+    rule read it as a governance authorization.
+
+    A stated control the code does not implement is the FG37 shape, and this
+    is the second instance found in this module. Line numbers survive because
+    the content is replaced space-for-space, so a finding still names the line
+    a reader would look at.
+    """
+    rows = text.split(chr(10))
+    inside = False
+    for index, row in enumerate(rows):
+        if _FENCE.match(row):
+            inside = not inside
+            rows[index] = " " * len(row)
+            continue
+        if inside:
+            rows[index] = " " * len(row)
+    return chr(10).join(rows)
+
+
 def test_no_document_claims_an_independent_inspection_this_repository_lacks():
     """`independently_inspected` is derived, and derives to false here.
 
@@ -884,7 +1072,7 @@ def test_no_document_claims_an_independent_inspection_this_repository_lacks():
         # requires -- that is the term being explained, not the repository
         # claiming to hold it, and the same structural rule already separates
         # a retracted CrewAI claim from a live one.
-        raw = document.read_text(encoding="utf-8")
+        raw = _prose_only(document.read_text(encoding="utf-8"))
         for match in find_overclaims(raw):
             line = raw[: match.start()].lower().count(chr(10)) + 1
             offenders.append(f"{name}:{line} {match.group(0)!r}")
@@ -1143,6 +1331,48 @@ def test_the_process_start_sites_match_the_documented_list():
 #: matter: this system emits `independently_inspected`, never the prose form,
 #: and the guard used `\s` which does not match `_`.
 OVERCLAIM_SPECIMENS = [
+    # ------------------------------------------------------------------
+    # C9-P1-7 -- THE SUBJECT VOCABULARY, DERIVED. Nine of these eleven were
+    # ADMITTED while the subject set was four literals: their verdicts were
+    # already in the affirmative vocabulary and were never ASKED, because no
+    # subject was present. Baseline 2/11; these are the hostile regressions.
+    # ------------------------------------------------------------------
+    ("english, reviewed and approved by a board",
+     "reviewed and approved by the Change Advisory Board on 2026-08-19", True),
+    ("english, signed off by inspectors",
+     "signed off by three inspectors outside the build team", True),
+    ("english, approval was granted",
+     "Approval for production deployment was granted on 2026-08-19", True),
+    ("english, external audit complete",
+     "The external audit is complete and all findings are closed", True),
+    ("english, assurance established",
+     "Full assurance has been established for this release", True),
+    ("english, certified by an auditor", "certified by an external auditor", True),
+    ("english, we hold an approval",
+     "We hold a valid production approval for this release", True),
+    ("english, auditor has certified",
+     "An external auditor has certified the governance posture of this release",
+     True),
+    # ... AND THE HONEST PROSE THAT MUST SURVIVE THE WIDENING. Each of these
+    # was measured MISFLAGGED by an intermediate version of the rule.
+    ("honest, a copula is not a verdict",
+     "Human review is required before any production deployment.", False),
+    ("honest, mechanism not assurance",
+     "The audit trail is written to the evidence directory.", False),
+    ("honest, an assurance noun that ACTED",
+     "an independent review found three defects in the runtime", False),
+    ("honest, attributive participle",
+     "reported as approved content, bound into evidence", False),
+    ("honest, out of scope",
+     "Obtaining an approval is out of scope for an autonomous run.", False),
+    ("honest, certification disclaimed",
+     "certification is not claimed anywhere in this tree", False),
+    # IMPERATIVE MOOD ASSERTS NOTHING. Stored commit subjects are imperative
+    # by convention, and a governance baseline records them verbatim.
+    ("honest, imperative commit subject",
+     "Hold the inspection subject still, and follow tamper to the effect", False),
+    ("honest, passive gerund",
+     "Let an inspection bind to a subject that survives being inspected", False),
     # C9-P2-2 -- A DISCLAIMING WORD IN THE VALUE SLOT DISCLAIMS ITS OWN ROW.
     # Every one of these was REFUSED while the pipe-table form of the same
     # fact was admitted, which left an author no way to disclose a pending

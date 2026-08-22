@@ -41,8 +41,8 @@ Two consequences worth stating plainly:
   set compromised.
 
 Reviewer keys are not approver keys: separate stores, separate schemas, separate
-roles. A reviewer signs "I inspected this content"; an approver signs "this
-effect may be released". One key satisfying both would let whoever authorizes a
+roles. A reviewer key signs for content inspection; an approver key signs
+for effect release. One key satisfying both would let whoever authorizes a
 payment also certify that the code releasing it had been independently reviewed.
 Signing lives in `scripts/`, which the runtime image never copies — the image
 carries verification material only.

@@ -769,7 +769,21 @@ def test_the_dashboard_claims_no_independent_inspection():
             # In these formats the reader-visible payload IS the string
             # literals, so those are what gets judged.
             literals = _STRING_LITERAL.findall(text)
-            joined = chr(10).join(
+            # EACH LITERAL IS ITS OWN CLAUSE. Joined by a single newline the
+            # whole file became ONE clause, because `_BOUNDARY` treats a BLANK
+            # line as a break and a bare newline as a wrapped sentence. So a
+            # verdict in one JSON value could complete a claim whose subject
+            # sat in another -- measured on
+            # `docs/governance/EVIDENCE_BINDING_BASELINE.json`, where a stored
+            # commit subject ("Keep the inspection subject and the runtime
+            # authority subject apart", imperative mood, asserting nothing) was
+            # flagged while the same sentence standing alone was not.
+            #
+            # This is the mirror of the reasoning in `_field_newlines`: no
+            # boundary BETWEEN records made a table body one clause and let an
+            # honest row shield the claims below it. Here the leak runs the
+            # other way and lets a neighbour supply the verdict.
+            joined = (chr(10) * 2).join(
                 part for pair in literals for part in pair if part
             )
             stripped = joined or text
