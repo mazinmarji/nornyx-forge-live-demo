@@ -19,11 +19,16 @@ it claims to report. The document asserting `--verify` passes was the sole
 reason `--verify` failed:
 
 ```
-status                  fail          (claimed: pass)
-integrity_state         compromised   (claimed: intact)
-problems                12            (claimed: [])
-governed_input_match    False         (claimed: True)
-evidence_manifest_match False         (claimed: True)
+# Each row is marked [FALSE]: the parenthetical records the value this
+# document had CLAIMED, and every one of those claims is withdrawn. The
+# marker is required rather than inferred -- a retraction and a live claim
+# are structurally identical (honest head, opposing parenthetical), so the
+# convention marks one instead of guessing.
+status                  fail          (claimed: pass) [FALSE]
+integrity_state         compromised   (claimed: intact) [FALSE]
+problems                12            (claimed: []) [FALSE]
+governed_input_match    False         (claimed: True) [FALSE]
+evidence_manifest_match False         (claimed: True) [FALSE]
 ```
 
 Nine of the fourteen gate claims below were true when measured; the five false

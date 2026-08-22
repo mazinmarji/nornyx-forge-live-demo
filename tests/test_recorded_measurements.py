@@ -233,6 +233,10 @@ _HTML_TAG = re.compile("<[^>]+>")
 _BLOCKQUOTE = re.compile("^[ " + chr(9) + "]*>+[ ]?", re.M)
 #: A bullet, an ordered-list number, or a heading hash at the start of a line.
 _LIST_MARKER = re.compile(r"^[ 	]*(?:[-*+]|[0-9]+[.)]|#{1,6})[ 	]+")
+#: An inline code span. Blanked where it stands, never taking its line with it.
+_CODE_SPAN = re.compile(r"`[^`]*`", re.S)
+#: A line that is only a fence marker: ``` or ~~~, optionally with a language.
+_FENCE_MARKER = re.compile(r"^[ 	]*(?:`{3,}|~{3,})[A-Za-z0-9_-]*[ 	]*$")
 
 
 def _normalised(text: str) -> list:
@@ -247,6 +251,27 @@ def _normalised(text: str) -> list:
     Returns (line_number, normalised_text) so a finding can still name the line
     a reader would look at.
     """
+    # SPANS ARE BLANKED OVER THE WHOLE TEXT, BEFORE SPLITTING.
+    #
+    # Done per line, a span that crosses a line break never completes: each
+    # line carries an ODD number of backticks and matches nothing. Measured on
+    # a real document, where a span crossed a line break, and the second
+    # line then parsed `authorizes` / `False` as a record out of narrative.
+    #
+    # The replacement preserves newlines and pads with spaces, so line numbers
+    # and column alignment survive and a finding still names the line a reader
+    # would look at.
+    # FENCE MARKER LINES GO FIRST. A ``` opener and its closer are two runs of
+    # backticks, and a span pattern reading across line breaks pairs them --
+    # swallowing the entire fenced block, which is where the records live.
+    # Marker lines carry no record themselves, so blanking them costs nothing
+    # and keeps the span pass honest.
+    text = chr(10).join(
+        "" if _FENCE_MARKER.match(row) else row for row in text.splitlines()
+    )
+    text = _CODE_SPAN.sub(
+        lambda hit: re.sub(r"[^" + chr(10) + r"]", " ", hit.group()), text
+    )
     lines = []
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.expandtabs(4)
@@ -259,17 +284,28 @@ def _normalised(text: str) -> list:
         # repository's own documents present one.
         line = _LIST_MARKER.sub("", line)
         line = line.replace("**", "").replace("__", "")
-        # A LINE CARRYING INLINE CODE IS PROSE, NOT A RECORD.
+        # THE SPAN IS BLANKED, NOT THE LINE.
         #
-        # Making list markers transparent exposed narrative to the field
-        # parser, and narrative quotes code: "a cold observation reports
-        # `compromised / authorizes=False` while the warm context still
-        # reports..." parses as key `authorizes`, value `False` under the `=`
-        # separator. A real transcript row does not contain a backtick -- the
-        # fence markers are their own lines -- so a backtick is the signal that
-        # this line is ABOUT a value rather than being one.
-        if "`" in line:
-            line = ""
+        # This blanked the WHOLE LINE on the reasoning that "a real transcript
+        # row does not contain a backtick -- the fence markers are their own
+        # lines". That premise is true only of the FENCED rendering, and this
+        # module deliberately widened to bullets, blockquotes, tables and plain
+        # aligned text, where a row and its source citation share a line.
+        #
+        # A review measured the cost:
+        #
+        #     status   pass, all gates green [`ci.yml` run 4471]
+        #
+        # Four such rows: with the citations the document was not SELECTED at
+        # all (runs 0, dishonest 0); without them, 4 flagged. The whole record
+        # vanished because of a footnote.
+        #
+        # It also disagreed with its own sibling: `_mention_blanked` blanks the
+        # SPAN. Blanking the span keeps the reason the rule exists -- narrative
+        # quoting code, "reports `compromised / authorizes=False` while..." ,
+        # loses the quoted fragment and stops parsing as a record -- while a row
+        # whose key and value both survive is still a row.
+
         if line.lstrip().startswith("|"):
             # A markdown table row is a key/value pair written with pipes.
             cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
@@ -290,7 +326,17 @@ def _transcript_runs(text: str) -> list:
     current = []
     for number, line in _normalised(text):
         match = _FIELD_LINE.match(line)
-        if match:
+        # A RECORD'S KEY IS AN IDENTIFIER, AND THAT BOUNDS THE RUN.
+        #
+        # Without it a prose line with a colon or an aligned gap joins the run,
+        # and a run that absorbs the sentence ABOVE an anchor starts before the
+        # anchor -- so the anchored block is then judged as unanchored. Measured
+        # on a real document: the run began at line 29 on
+        # "commit could keep true. Run", eleven lines before its own
+        # `verify-measured-at` marker at line 31.
+        #
+        # Every field `--verify` emits is one token; no English clause is.
+        if match and " " not in match.group(1).strip():
             current.append((number, match.group(1).strip(), match.group(2).strip()))
             continue
         # A TABLE'S OWN SEPARATOR MUST NOT END ITS RUN. `| --- | --- |`

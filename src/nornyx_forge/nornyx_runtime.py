@@ -667,6 +667,16 @@ GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
 LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
 
 
+#: The recovery both continuity refusals name. Written once so the two cannot
+#: drift into naming different commands for the same state.
+_CONTINUITY_REMEDY = (
+    "\n\nTO RECOVER: run `nornyx-forge provision-ledger "
+    "--reset-replay-history`, which clears both stores and establishes a fresh "
+    "epoch, then obtain a NEW human approval -- every outstanding grant "
+    "predates the new epoch and is refused."
+)
+
+
 class LedgerContinuityMigrationRequired(RuntimeError):
     """Both stores exist and cannot give the cross-file commit guarantee.
 
@@ -1477,15 +1487,31 @@ class ApprovalLedger:
         without `CHECK (id = 1)` holding two rows answered whichever row SQLite
         returned first.
         """
+        # ENUMERATE EVERYTHING, THEN JUDGE. The filter that used to live in
+        # this query -- `WHERE name NOT LIKE 'sqlite_%'` -- is the inversion the
+        # sibling ledger check documents as having produced two live bypasses,
+        # and I copied it here unrepaired. `_` is a single-character LIKE
+        # wildcard, so an ordinary `CREATE TRIGGER sqliteXz` was discarded
+        # before it could be judged, and `PRAGMA writable_schema` reached the
+        # literal prefix. Both were measured freezing this witness while
+        # `consume` returned True.
+        #
+        # A set that calls itself closed cannot be filtered on the way in.
         objects = {
             (str(kind), str(name)) for kind, name in conn.execute(
                 "SELECT type, name FROM witness.sqlite_master"
-                " WHERE name NOT LIKE 'sqlite_%'"
             )
         }
         hostile = sorted(
             f"{kind} {name!r}" for kind, name in objects
-            if kind != "index" and not (kind == "table" and name == "high_water")
+            if kind != "index"
+            and not (kind == "table" and name == "high_water")
+            # SQLite's own statistics tables, which `ANALYZE` creates. Measured:
+            # dropping the filter without carrying this allowance across turns
+            # an ordinary ANALYZE into a permanent refusal -- the availability
+            # defect `PERMITTED_LEDGER_STATISTICS` exists to prevent on the
+            # ledger, reintroduced on the witness by the repair.
+            and not (kind == "table" and name in PERMITTED_LEDGER_STATISTICS)
         )
         if hostile:
             raise LedgerContinuityUnknown(
@@ -1499,6 +1525,17 @@ class ApprovalLedger:
                 f"{self.watermark_path} carries no high_water table. It is "
                 "created when the ledger is provisioned, so a store without "
                 "one has been truncated or replaced."
+            )
+        # THE KEY THE WRITE USES IS ASSERTED. `_commit_consumption` updates
+        # `WHERE id = 1`; a row with any other id makes that update match
+        # nothing. The reader's `len(marks)` check guarded the READ and left the
+        # one invariant the WRITE depends on unasserted.
+        keyed = conn.execute("SELECT id FROM witness.high_water").fetchall()
+        if len(keyed) == 1 and int(keyed[0][0]) != 1:
+            raise LedgerContinuityUnknown(
+                f"{self.watermark_path} holds its witness under id "
+                f"{keyed[0][0]!r} rather than 1. The consumption path updates "
+                "the row keyed 1, so this witness can never be advanced."
             )
         marks = conn.execute("SELECT value FROM witness.high_water").fetchall()
         if len(marks) != 1:
@@ -1612,6 +1649,36 @@ class ApprovalLedger:
                     "UPDATE witness.high_water SET value = ? WHERE id = 1",
                     (held + 1,),
                 )
+                # THE ADVANCE IS VERIFIED, exactly as the insert above is.
+                #
+                # The ledger insert is read back and refuses when the row did
+                # not land. The witness update had no counterpart, and two
+                # separate routes exploited that -- a RAISE(IGNORE) trigger the
+                # closure check let through, and a witness row whose id is not
+                # 1, which makes this UPDATE match nothing at all. Both left a
+                # COMMITTED state with witness != rows, and a ledger-only
+                # restore then released an already-spent grant.
+                #
+                # Atomicity of a no-op is still a no-op. The transaction was
+                # doing exactly what it promised; what it committed was an
+                # update that changed nothing.
+                #
+                # Reading the VALUE rather than `changes()`: a trigger that
+                # discards the write still reports a row as changed, so the
+                # count answers the wrong question.
+                advanced = conn.execute(
+                    "SELECT value FROM witness.high_water"
+                ).fetchall()
+                if len(advanced) != 1 or int(advanced[0][0]) != held + 1:
+                    conn.execute("ROLLBACK")
+                    return False, (
+                        f"{LEDGER_CONTINUITY_UNKNOWN}: the continuity witness "
+                        f"did not record this consumption. It should now hold "
+                        f"{held + 1} and holds {[row[0] for row in advanced]}. "
+                        "Something is discarding writes to it, so single use "
+                        "cannot be guaranteed and nothing was released."
+                        + _CONTINUITY_REMEDY
+                    )
                 conn.execute("COMMIT")
             except BaseException:
                 # A failed transaction must leave NEITHER store advanced. The

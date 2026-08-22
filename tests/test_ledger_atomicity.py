@@ -198,25 +198,60 @@ def test_no_kill_point_during_a_consumption_leaves_the_stores_disagreeing(
     )
 
 
-def test_the_kill_sweep_actually_reaches_the_write(
+def test_the_kill_sweep_actually_kills_children(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """The control. If every child died before touching anything, the sweep
-    above would pass while measuring nothing at all."""
-    reached = 0
+    """The control, corrected. It used to be satisfied by children never killed.
+
+    It asserted `reached > 0` -- "at least one kill point left a committed
+    consumption" -- and a review measured what actually satisfies that:
+
+        kill points declared             60
+        points that actually killed      38   (1..38)
+        points where NOTHING was killed  22   (39..60)
+        points leaving a committed row   22   -- EXACTLY the no-kill tail
+        of the 38 children actually killed, ZERO left a committed row
+
+    So the control could not distinguish "a kill landed after the write" from
+    "no kill landed at all", and the 22 trials passing it were the 22 where the
+    child ran to completion.
+
+    WHY NO KILLED CHILD LEAVES A COMMITTED ROW, which is the fact the old
+    assertion was groping for and getting backwards: a consumption is a fixed
+    number of statements ending in `COMMIT`, and `set_trace_callback` fires
+    BEFORE a statement executes. No kill point can therefore land INSIDE
+    SQLite's multi-file commit -- the only window in which the single-
+    transaction design could fail. That is a property of the design, not a
+    deficiency of the sweep, and stating it is more honest than asserting a
+    number the tail satisfies.
+
+    What this control now measures is that the sweep REACHES the work at all:
+    children must actually die, and they must die across the consumption rather
+    than all at import time.
+    """
+    killed = []
     for kill_at in range(1, KILL_POINTS + 1):
         work = tmp_path_factory.mktemp("reach")
-        path, side = _ledger(work, spends=2)
+        path, _side = _ledger(work, spends=2)
         child = _CHILD.format(src=str(ROOT / "src"), kill_at=kill_at,
                               path=str(path), now=NOW, gi=GRANT_ISSUED)
-        subprocess.run(  # noqa: S603
+        done = subprocess.run(  # noqa: S603
             [sys.executable, "-c", child], capture_output=True, text=True,
             timeout=300, check=False)
-        if _rows(path) == 3:
-            reached += 1
-    assert reached > 0, (
-        "no kill point in the sweep left a committed consumption, so every "
-        "child died before the write and the sweep proves nothing"
+        if done.returncode == 70:
+            killed.append(kill_at)
+
+    assert killed, (
+        "no child in the sweep was killed at all, so every trial ran to "
+        "completion and the sweep above measures nothing about crash behaviour"
+    )
+    assert len(killed) >= 10, (
+        f"only {len(killed)} of {KILL_POINTS} kill points actually terminated a "
+        "child; the sweep is barely reaching the consumption"
+    )
+    assert max(killed) - min(killed) >= 5, (
+        f"every kill landed in a narrow band ({min(killed)}..{max(killed)}), so "
+        "the sweep is exercising one moment rather than the consumption"
     )
 
 
@@ -393,3 +428,98 @@ def test_a_spent_grant_is_refused_without_moving_the_witness(
     assert ApprovalLedger(path).consume(
         "fp-fresh", "rd-fresh", at=NOW, grant_issued_at=GRANT_ISSUED,
         approval_id="ACT-FRESH")[0] is True
+
+
+def _witness_conn(side: Path):
+    return closing(sqlite3.connect(side))
+
+
+@pytest.mark.parametrize(
+    ("label", "sabotage"),
+    [
+        ("trigger in the sqlite_% shadow", "shadow"),
+        ("trigger via writable_schema", "writable"),
+        ("witness row keyed 7", "rekey"),
+        ("witness row keyed 0", "rekey0"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else "",
+)
+def test_a_witness_that_cannot_record_the_advance_refuses(
+    label: str, sabotage: str, tmp_path: Path
+) -> None:
+    """The witness write is VERIFIED, exactly as the ledger insert is.
+
+    Two routes reached a COMMITTED state where witness != rows, and each let one
+    signed human approval run a consequential effect twice through the real
+    boundary, with 123 tests green:
+
+      the closure query filtered candidates on the way IN with
+      `WHERE name NOT LIKE 'sqlite_%'` -- `_` is a single-character LIKE
+      wildcard, so an ordinary `CREATE TRIGGER sqliteXz` was discarded before it
+      could be judged, and `PRAGMA writable_schema` reached the literal prefix.
+      That inversion is documented at length by the sibling ledger check as
+      having already produced two live bypasses; it was copied here unrepaired.
+
+      the `UPDATE ... WHERE id = 1` matched zero rows when the witness was
+      rebuilt under another id, and nothing checked either the key or the
+      result. Atomicity of a no-op is still a no-op.
+
+    Both are closed by re-reading the VALUE inside the transaction. `changes()`
+    would catch the second and not the first -- a RAISE(IGNORE) trigger reports
+    a row as changed -- which is why the value is what is read.
+    """
+    path, side = _ledger(tmp_path, spends=2)
+    with _witness_conn(side) as conn:
+        if sabotage == "shadow":
+            conn.execute("CREATE TRIGGER sqliteXz BEFORE UPDATE ON high_water"
+                         " BEGIN SELECT RAISE(IGNORE); END")
+        elif sabotage == "writable":
+            conn.execute("PRAGMA writable_schema=ON")
+            conn.execute("CREATE TRIGGER sqlite_guard BEFORE UPDATE ON high_water"
+                         " BEGIN SELECT RAISE(IGNORE); END")
+            conn.execute("PRAGMA writable_schema=OFF")
+        else:
+            conn.execute("DROP TABLE high_water")
+            conn.execute("CREATE TABLE high_water"
+                         " (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
+            conn.execute("INSERT INTO high_water (id, value) VALUES (?, 2)",
+                         (7 if sabotage == "rekey" else 0,))
+        conn.commit()
+
+    before = _rows(path)
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-sab", "rd-sab", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-SAB",
+    )
+    assert claimed is False, (
+        f"{label}: the grant released while the witness could not record it, so "
+        "a later ledger-only restore would release it again"
+    )
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+    assert _rows(path) == before, (
+        f"{label}: the consumption row committed even though the refusal "
+        f"rolled back -- rows {before} -> {_rows(path)}"
+    )
+
+
+def test_analyze_on_the_witness_does_not_brick_the_ledger(tmp_path: Path) -> None:
+    """The control for the closure repair, and it is load-bearing.
+
+    Dropping the `WHERE` alone -- the obvious fix -- makes an ordinary `ANALYZE`
+    fatal, because it creates `sqlite_stat1`. That is the availability defect
+    `PERMITTED_LEDGER_STATISTICS` exists to prevent on the ledger, reintroduced
+    on the witness by the repair. Measured before the allowance was carried
+    across: a permanent LEDGER_CONTINUITY_UNKNOWN.
+    """
+    path, side = _ledger(tmp_path, spends=1)
+    with _witness_conn(side) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-an", "rd-an", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-AN",
+    )
+    assert claimed is True, (
+        f"an ANALYZE on the witness bricked a healthy ledger: {reason!r}"
+    )

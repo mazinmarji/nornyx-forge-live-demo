@@ -144,6 +144,11 @@ VERDICT_VALUES = frozenset({
     "granted", "approved", "passed", "pass", "performed", "complete",
     "completed", "established", "verified", "certified", "accepted",
     "cleared", "signed_off", "adopted", "authorized", "authorised", "yes",
+    # "closed" as an assurance verdict -- "independent inspection: closed" is a
+    # completion claim. Narrow risk of a false positive on "the issue is
+    # closed", which is bounded here because a verdict only decides when the
+    # subject is an assurance FIELD.
+    "closed",
     "true", "independently_inspected", "fully_assured", "intact",
 })
 
@@ -176,12 +181,27 @@ def tokens_of(value: str) -> list:
     settled = value
     for marker in _MARKERS:
         settled = settled.replace(marker, " ")
-    # A PARENTHETICAL ANNOTATES THE VALUE; IT IS NOT THE VALUE. A real row
-    # reads `status  fail          (claimed: pass)` -- a withdrawn document
-    # recording what it HAD asserted. Reading `pass` out of that annotation
-    # turns an honest retraction into a claim, which is the direction this
-    # module's siblings call worse than a missed claim.
-    settled = _re.sub(r"\([^)]*\)", " ", settled)
+    # THE PARENTHETICAL IS PART OF THE VALUE. It used to be deleted, on the
+    # reasoning that `status  fail  (claimed: pass)` is a withdrawn document
+    # recording what it HAD asserted, and reading `pass` out of it turns an
+    # honest retraction into a claim.
+    #
+    # A review measured what that costs, and the two cases are STRUCTURALLY
+    # IDENTICAL:
+    #
+    #     status               fail        (claimed: pass)
+    #     production_approval  not_granted (granted by the Change Advisory
+    #                                       Board, ref CAB-2026-0412)
+    #
+    # Honest head, opposing parenthetical, both times. Six rows in that shape --
+    # production_approval, human_review, assurance_state, independent,
+    # authenticated_reviewers, required_inspectors_complete -- all returned
+    # `is_a_claim False`, and a reader takes away exactly the parenthetical.
+    #
+    # Nothing structural separates a retraction from a live claim here, so the
+    # deletion cannot be made safe by refining it. A retraction is MARKED, with
+    # the `[FALSE]` / `[WITHDRAWN]` markers this module already strips above,
+    # rather than inferred from the fact that it is in brackets.
 
     return [
         token.strip(".,;:\"'`").lower()

@@ -600,15 +600,63 @@ def find_overclaims(text: str) -> list:
             # token at all -- and `authenticated_reviewers      []` then took
             # its "value" from the next line. Measured: four real documents
             # flagged, three of them for rows whose actual value was `[]`.
-            tail = lowered[offset + len(word): offset + len(word) + 64]
-            decided = ""
+            # THE WHOLE VALUE, NOT THE FIRST RECOGNISABLE TOKEN.
+            #
+            # This scanned for the first token in either vocabulary and handed
+            # `is_a_claim` that ONE token -- which reintroduced, here, exactly
+            # the head-only judgement `claim_vocabulary` was rewritten to
+            # remove. Measured:
+            #
+            #   production_approval  not_granted (granted by the Change
+            #                                     Advisory Board)
+            #
+            # first recognisable token `not_granted` -> absent -> not a claim,
+            # while the transcript rule beside it flagged the same row. Two
+            # guards over one shared vocabulary, disagreeing because one of
+            # them pre-chewed the input.
+            #
+            # Bounded to the END OF THE LINE so the next record cannot leak in.
+            line_end = lowered.find(chr(10), offset)
+            tail = lowered[offset + len(word): line_end if line_end != -1 else None]
+            # TWO DIFFERENT QUESTIONS, TWO DIFFERENT INPUTS.
+            #
+            # `is_a_claim` judges the WHOLE value, because a claim can sit
+            # anywhere in it. `completes_at` needs the position of the VALUE
+            # TOKEN, because a disclaimer counts only when it precedes the point
+            # the claim completes -- and "a human_review WILL be performed"
+            # depends on `will` sitting before `performed`. Setting the anchor
+            # from the first word of the tail put it on `will` itself, so the
+            # frame could not scope its own clause.
+            # BOUNDED TO THE VALUE, NOT THE LINE. A line carries prose after the
+            # value -- "State autonomous_demo, human_review not_performed, and
+            # production_approval not_granted." -- and judging the whole line
+            # makes "every token is an absent shape" false for every sentence,
+            # so honest prose reads as a claim. Two real documents were flagged
+            # that way. A verdict ANYWHERE in the value still counts, which is
+            # what the parenthetical forgery needs.
+            recognised = re.findall(r"[a-z_]+|\[\]|\{\}|[0-9]+", tail)
+            has_verdict = any(tok in _VERDICT_VALUES for tok in recognised)
+            has_absent = any(tok in _ABSENT_SHAPES for tok in recognised)
+            decided = tail if has_verdict else ("" if has_absent else "")
+            # THE CLAIM COMPLETES AT THE AFFIRMATIVE, so only a VERDICT value
+            # anchors it. Anchoring on any recognisable token put the anchor on
+            # the disclaimer itself when the disclaimer is also an absent shape
+            # -- `absent`, `false`, `no`, `none`, `unavailable` -- and a
+            # disclaimer cannot scope a claim it is standing on. Measured: five
+            # such words failed the generated placement sweep in the
+            # between-subject-and-verb column.
+            value_token = ""
             for candidate in re.findall(r"[a-z_]+|\[\]|\{\}|[0-9]+", tail):
-                if candidate in _VERDICT_VALUES or candidate in _ABSENT_SHAPES:
-                    decided = candidate
+                if candidate in _VERDICT_VALUES:
+                    value_token = candidate
                     break
             if decided:
                 if not is_a_claim(word, decided, fields=ASSURANCE_FIELDS):
                     continue
+                decided = value_token or (decided.split() or [""])[0]
+            elif has_absent:
+                # Only absent shapes in the value: the honest form.
+                continue
             else:
                 # NO RECOGNISABLE VALUE. `authenticated_reviewers: alice, bob,
                 # carol` names three people, and a name is in no value
@@ -680,6 +728,25 @@ def find_overclaims(text: str) -> list:
             words[position] in _DISCLAIMING
             and clauses[position] == clauses[index]
             and position < settled
+            # IN A RECORD, AN ABSENT SHAPE AFTER THE KEY IS THE VALUE, NOT A
+            # MODIFIER. This is the semantic core of the parenthetical forgery:
+            #
+            #     production_approval  not_granted (granted by the CAB)
+            #
+            # `not_granted` is in `_DISCLAIMING`, so the honest head suppressed
+            # the claim appended behind it -- an author writes the true value
+            # first and the false one second, and the scope rule reads the
+            # second as disclaimed by the first. For prose that rule is right;
+            # for a row it inverts the meaning, because a row states ONE value
+            # and a second one contradicts rather than qualifies it.
+            #
+            # IMMEDIATELY after the key, and only there. Applied to any later
+            # position it reached into prose -- "human_review was ABSENT
+            # performed today" -- where an absent-shape word genuinely IS the
+            # disclaimer, and five such words failed the generated placement
+            # sweep. Adjacency is what distinguishes a value from a modifier.
+            and not (field_like and position == index + 1
+                     and words[position] in _ABSENT_SHAPES)
             for position in range(len(words))
         ):
             continue
@@ -1146,6 +1213,22 @@ _EVASIONS = (
     # A quoted CLAIM is not a mention. The mention rule blanks a quoted TERM;
     # blanking a quoted sentence is an arm this module already removed once,
     # after a review measured a forgery riding through it.
+    # Task 14, Lens C: AN HONEST HEAD WITH THE CLAIM IN A PARENTHETICAL.
+    # `tokens_of` deleted parentheticals, on the reasoning that
+    # `status fail (claimed: pass)` is a retraction. The two are structurally
+    # identical -- honest head, opposing parenthetical -- and six rows in this
+    # shape returned `is_a_claim False` while a reader takes away exactly the
+    # parenthetical. A retraction is MARKED now, not inferred from brackets.
+    ("the claim in a parenthetical",
+     "production_approval          not_granted (granted by the Change Advisory Board)"),
+    ("and again, with a name",
+     "human_review                 not_performed (performed by K. Osei, 2026-08-19)"),
+    # And the disclaimer inversion underneath it: `not_granted` is itself in
+    # `_DISCLAIMING`, so the honest head suppressed the claim appended behind
+    # it. In a RECORD an absent shape adjacent to the key is the VALUE, and a
+    # second value contradicts rather than qualifies.
+    ("an honest value followed by a contradicting one",
+     "assurance_state              not_independently_inspected (inspection closed)"),
     # Round 6, Lens C: ELEVEN of the thirteen field names this system emits,
     # at their affirmative value, all ADMITTED by the affirmative word list.
     # `approved` is the root of the field's own name.
