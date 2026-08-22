@@ -677,16 +677,15 @@ def test_r4_an_anchored_block_has_no_line_that_is_not_a_verifiable_field(
     "relative",
     [path.relative_to(ROOT).as_posix() for path in DOCUMENTS],
 )
-def test_r4_an_anchored_block_carries_only_verifiable_fields(relative: str):
+def test_r4_an_anchored_run_carries_only_verifiable_fields(relative: str):
     """No field may sit inside a verified fence unless a machine can recheck it.
 
     `collected 999999` or a list of reviewer names cannot be recomputed from
     the anchor, so presenting them inside the block presents them as verified
     when nothing verifies them.
     """
-    text = (ROOT / relative).read_text(encoding="utf-8")
-    for line, above, body in _blocks(text):
-        if not ANCHOR.search(above):
+    for document, line, _sha, body in _anchored_blocks():
+        if document != relative:
             continue
         unverifiable = sorted(
             key for key in _transcript_fields(body) if key not in VERIFIABLE_FIELDS

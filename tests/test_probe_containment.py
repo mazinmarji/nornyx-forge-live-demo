@@ -49,6 +49,7 @@ CONTAMINATION_SPECIMENS = [
 ]
 
 
+@pytest.mark.false_green("FG26")
 @pytest.mark.parametrize(
     ("label", "before", "after", "contaminated"),
     CONTAMINATION_SPECIMENS,
@@ -172,6 +173,7 @@ CRASH_SPECIMENS = [
 ]
 
 
+@pytest.mark.false_green("FG29")
 @pytest.mark.parametrize(
     ("label", "measured", "kind"),
     CRASH_SPECIMENS,
@@ -262,6 +264,7 @@ def test_fg29_a_crash_yields_no_verdict_by_any_route(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.false_green("FG33")
 def test_fg33_a_run_that_exceeds_its_timeout_raises_instead_of_returning(tmp_path: Path):
     """The real property: an unfinished run yields no result to misread.
 

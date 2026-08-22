@@ -470,6 +470,13 @@ UI_SUFFIXES = (".html", ".htm", ".js", ".css", ".json", ".toml")
 #: erases the claim before any rule runs. `_unquoted` is a PROSE
 #: convention -- "if you are repeating a retired claim, quote it" -- and
 #: it is meaningless where the payload is a quoted string by definition.
+#: A quoted string literal, which in these formats carries the payload a
+#: reader actually sees.
+_STRING_LITERAL = re.compile(
+    chr(34) + "([^" + chr(34) + chr(10) + "]*)" + chr(34)
+    + "|" + chr(39) + "([^" + chr(39) + chr(10) + "]*)" + chr(39)
+)
+
 STRUCTURED_SUFFIXES = (".json", ".toml", ".css", ".js")
 
 
@@ -653,12 +660,58 @@ def test_the_dashboard_claims_no_independent_inspection():
     # The manual `not[ _-]+$` lookback is gone too -- `find_overclaims` decides
     # negation by clause scope, which is strictly what that lookback was
     # approximating with one character class.
-    html = (ROOT / "src/demo_app/static/index.html").read_text(encoding="utf-8")
-    stripped = re.sub(r"<[^>]+>", " ", html)
-    offences = [hit.group() for hit in find_overclaims(stripped)]
+    # EVERY SURFACE, NOT index.html ALONE.
+    #
+    # The dashboard is made of three files and this read one. A review planted
+    # `.metrics::after{content:"Independently inspected - production approval
+    # granted, human review performed"}` in `styles.css` -- which renders in
+    # bold directly under the metric tiles -- an `insertAdjacentHTML` banner in
+    # `app.js`, and assurance claims in BOTH published package descriptions,
+    # and measured 101 passed.
+    #
+    # The earlier repair added `.json`/`.toml` to `_ui_surfaces` and stopped
+    # `_unquoted` erasing quoted payloads. That restored the two KEYWORD pairs
+    # over those files. The ASSURANCE class -- the one `find_overclaims`
+    # decides -- was never extended past `index.html`. Closed for the
+    # demonstration, not for the class.
+    offences = []
+    for path in _ui_surfaces():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        stripped = text
+        if path.suffix in STRUCTURED_SUFFIXES:
+            # JUDGE THE STRING LITERALS, NOT THE SYNTAX AROUND THEM.
+            #
+            # Unquoting the whole file leaves selectors and property names in
+            # the text, and those collide with the prose vocabulary: the CSS
+            # pseudo-element `::after` contributes the word `after`, which is a
+            # TEMPORAL FRAME in `_DISCLAIMING`, so a selector disclaimed the
+            # claim its own rule renders. Measured -- the `::after` payload was
+            # admitted while the identical sentence standing alone was flagged.
+            #
+            # In these formats the reader-visible payload IS the string
+            # literals, so those are what gets judged.
+            literals = _STRING_LITERAL.findall(text)
+            joined = chr(10).join(
+                part for pair in literals for part in pair if part
+            )
+            stripped = joined or text
+            # THE QUOTED STRING IS THE CONTENT HERE, NOT A MENTION.
+            # `find_overclaims` blanks quoted spans because in prose a quoted
+            # phrase is usually a mention. In CSS, JS, JSON and TOML the payload
+            # lives inside quotes by definition, so that convention erases
+            # exactly what a reader sees -- measured, the `::after` rule was
+            # admitted while the same claim in `app.js` and both package
+            # descriptions was caught.
+        stripped = re.sub(r"<[^>]+>", " ", stripped)
+        # CSS/JS escapes back to the character a reader sees, so a claim cannot
+        # hide behind `4`.
+        stripped = re.sub(r"\[0-9a-fA-F]{2,6}\s?", " ", stripped)
+        stripped = stripped.replace(chr(92), " ")
+        for hit in find_overclaims(stripped):
+            offences.append(f"{path.relative_to(ROOT).as_posix()}: {hit.group()}")
     assert offences == [], (
-        "the operator dashboard asserts assurance this repository does not "
-        f"hold: {offences}"
+        "these operator-facing surfaces assert assurance this repository does "
+        f"not hold: {offences}"
     )
 
 
