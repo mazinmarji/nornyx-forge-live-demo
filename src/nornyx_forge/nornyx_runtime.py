@@ -669,6 +669,9 @@ LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
 
 #: The recovery both continuity refusals name. Written once so the two cannot
 #: drift into naming different commands for the same state.
+#: A paragraph break inside a refusal message.
+_CONTINUITY_BREAK = chr(10) + chr(10)
+
 _CONTINUITY_REMEDY = (
     "\n\nTO RECOVER: run `nornyx-forge provision-ledger "
     "--reset-replay-history`, which clears both stores and establishes a fresh "
@@ -1092,7 +1095,44 @@ class ApprovalLedger:
             # `synchronous=FULL` because the guarantee is about surviving a
             # crash, and NORMAL permits the commit to be acknowledged before it
             # is durable.
-            connection.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
+            # ONLY FOR A LEDGER THIS CALL IS CREATING.
+            #
+            # Unconditional, this SILENTLY MIGRATED an existing store. Measured:
+            # a ledger in WAL refused every release with
+            # LEDGER_CONTINUITY_MIGRATION_REQUIRED; plain `provision-ledger`
+            # then exited 0 reporting `"action": "left_unchanged"`; and the
+            # identical grant released afterwards. The authorization outcome
+            # flipped from refuse to release across a command whose own
+            # docstring says "an existing ledger is left exactly as it is,
+            # contents included" -- bypassing `--migrate-continuity`'s
+            # verify-before, which REFUSES stores that disagree, and its
+            # verify-after.
+            #
+            # `consume` already refuses to convert a mode inside an
+            # authorization decision, on the ground that it would be a schema
+            # migration nobody asked for. Provisioning an EXISTING ledger is
+            # the same act by another caller.
+            if ledger_existed:
+                current = str(
+                    connection.execute("PRAGMA journal_mode").fetchone()[0]
+                ).lower()
+                if current not in ROLLBACK_JOURNAL_MODES:
+                    raise NornyxRuntimeUnavailable(
+                        f"{LEDGER_CONTINUITY_MIGRATION_REQUIRED}: this ledger "
+                        f"already exists and is in {current!r}, which cannot "
+                        "commit as one unit with its continuity witness. "
+                        "Provisioning does NOT convert it, because that would "
+                        "change replay-safety semantics for a caller who asked "
+                        "only to provision." + _CONTINUITY_BREAK +
+                        "TO RECOVER: run "
+                        "`nornyx-forge provision-ledger --migrate-continuity`, "
+                        "which verifies both stores, converts them, and "
+                        "verifies the result."
+                    )
+            else:
+                connection.execute(
+                    f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}"
+                )
             connection.execute("PRAGMA synchronous=FULL")
             with connection:
                 connection.execute(
@@ -1596,8 +1636,15 @@ class ApprovalLedger:
             # witness says zero".
             try:
                 conn.execute(
+                    # `mode=rw` VIA URI, the same control `_connect` applies
+                    # to the ledger and for the same reason: a bare ATTACH
+                    # CREATES the file. A review deleted the witness inside the
+                    # existence-check window and measured the REFUSAL leaving a
+                    # 0-byte witness behind -- an authorization decision that
+                    # refused, and mutated the store it refused over, changing
+                    # the diagnosis from "removed" to "truncated".
                     "ATTACH DATABASE ? AS witness",
-                    (self.watermark_path.as_posix(),),
+                    (f"file:{self.watermark_path.as_posix()}?mode=rw",),
                 )
             except sqlite3.Error as exc:
                 # A witness that cannot be attached is a WITNESS fault, and the
@@ -2790,6 +2837,14 @@ class NornyxActionBoundary:
                         LEDGER_ROLLED_BACK,
                         GRANT_PREDATES_LEDGER,
                         LEDGER_CONTINUITY_UNKNOWN,
+                        # Added by the commit that introduced the code, which
+                        # is where it should have been from the start: without
+                        # it the boundary reported HUMAN_APPROVAL_REQUIRED and
+                        # told an operator to obtain an approval when the
+                        # correct action is `provision-ledger
+                        # --migrate-continuity`. That is the identical defect
+                        # the comment above claims to have repaired.
+                        LEDGER_CONTINUITY_MIGRATION_REQUIRED,
                         GRANT_ISSUANCE_UNKNOWN,
                     ):
                         if release_reason.startswith(ledger_code):

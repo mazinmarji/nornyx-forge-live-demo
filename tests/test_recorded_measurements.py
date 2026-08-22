@@ -49,12 +49,13 @@ TRANSCRIPT = re.compile(r"^\s*integrity_state\s+(\S+)", re.M)
 ANCHOR = re.compile(r"<!--\s*verify-measured-at:\s*([0-9a-f]{7,40})\s*-->")
 
 
-VERIFIABLE_FIELDS = frozenset({
-    "status", "integrity_state", "governed_input_match", "evidence_manifest_match",
-    "governed_input_digest", "inspection_subject_digest", "inspection_subject_match",
-    "assurance_state", "independent", "authenticated_reviewers",
-    "required_inspectors_complete", "problems", "stale_artifacts",
-})
+# VERIFIABLE_FIELDS IS IMPORTED, NOT REDECLARED.
+#
+# It was defined here AND in `claim_vocabulary`, with nothing pinning the
+# copies -- in the module whose own docstring says "two copies of a concept
+# drift; the drift is invisible, because the weaker copy simply passes".
+# They were equal by luck rather than by construction, and a review measured
+# `claim_vocabulary.VERIFIABLE_FIELDS is <this one>` -> False.
 
 #: A `key   value` line, whatever the key is. The predecessor keyed on
 #: `integrity_state` alone, so dropping that one line hid the block entirely.
@@ -226,6 +227,8 @@ _FAILURE_STATES = frozenset({"compromised", "unavailable", "unverifiable"})
 # with different contents, which is how eleven of the thirteen field names
 # this system emits walked through one of them at their affirmative value.
 from claim_vocabulary import (  # noqa: E402
+    CLAIM_FIELDS,
+    VERIFIABLE_FIELDS,
     is_a_claim,
 )
 
@@ -346,12 +349,32 @@ def _transcript_runs(text: str) -> list:
         # punctuation, not a break in the record.
         if not line.strip():
             continue
-        if len(current) >= 2:
+        if _is_a_run(current):
             runs.append(current)
         current = []
-    if len(current) >= 2:
+    if _is_a_run(current):
         runs.append(current)
     return runs
+
+
+def _is_a_run(rows: list) -> bool:
+    """Two adjacent records, OR one whose key is a field this system emits.
+
+    The two-row minimum keeps ordinary prose and non-transcript tables out.
+    It also let a SINGLE row through unchecked: `integrity_state intact`
+    standing alone is an unanchored present-tense measurement on a known
+    verifiable field, and `find_overclaims` does not backstop it --
+    `status`, `integrity_state`, `governed_input_match` and
+    `evidence_manifest_match` are in CLAIM_FIELDS but not ASSURANCE_FIELDS,
+    and their head nouns carry no assurance morpheme.
+
+    A shape heuristic was standing in for the stated property. When the KEY
+    is one this system emits, the shape is not needed: the key alone
+    establishes that the line is a measurement.
+    """
+    if len(rows) >= 2:
+        return True
+    return bool(rows) and rows[0][1] in CLAIM_FIELDS
 
 
 def _dishonest_rows(run: list) -> list:

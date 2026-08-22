@@ -521,7 +521,26 @@ def find_overclaims(text: str) -> list:
         # an UNDERSCORED token is a machine identifier and never ordinary
         # English, and a bare field name is a row only when what follows it is
         # a recognisable VALUE rather than a noun.
-        machine_name = "_" in word
+        # AN ADJACENT PAIR WHOSE JOINED FORM IS A FIELD IS THAT FIELD.
+        #
+        # `machine_name = "_" in word` made `human_review` a subject and
+        # `human review` not one, so the ENGLISH spelling of this guard's own
+        # subjects was not a claim:
+        #
+        #     production approval   GRANTED by the Change Advisory Board  -> no
+        #     production_approval   GRANTED by the Change Advisory Board  -> yes
+        #
+        # Joining the pair recovers the subject. The clause machinery still
+        # keeps `| Human review | not performed |` sayable, because `not`
+        # precedes the point the claim completes.
+        joined = ""
+        if index + 1 < len(words):
+            candidate = word + "_" + words[index + 1]
+            if candidate in ASSURANCE_FIELDS:
+                joined = candidate
+        if joined:
+            word = joined
+        machine_name = "_" in word or bool(joined)
         after = words[index + 1] if index + 1 < len(words) else ""
         # THE HEAD NOUN CARRIES THE CONCEPT. An English compound is named by
         # its LAST element: `human_approval` is an approval, `independent_ai_review`

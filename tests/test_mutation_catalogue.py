@@ -423,12 +423,29 @@ def test_every_production_mutating_owner_proves_mutant_origin():
     reports whatever the original does.
     """
     for owner in OWNERS:
-        source = (ROOT / owner).read_text(encoding="utf-8")
-        proves_origin = (
-            "_prove_resolution" in source
-            or "PYTHONPATH" in source
-            or "sys.path.insert(0" in source
-        )
+        # (the owner's source is no longer read; see below)
+        # THE EXECUTING PROOF, NOT A TEXT SEARCH.
+        #
+        # This read `("_prove_resolution" in source or "PYTHONPATH" in source
+        # or "sys.path.insert(0" in source)`. A review split each owner into
+        # code and prose with `tokenize` and measured:
+        #
+        #   test_domain_collapse_mutations   _prove_resolution ABSENT,
+        #       PYTHONPATH ABSENT, and `sys.path.insert(0` matching ONE line --
+        #       `sys.path.insert(0, str(ROOT / "tests"))`, which puts the REAL
+        #       repository's tests/ on sys.path and says nothing whatever about
+        #       mutant origin. That owner carries 14 of the 41 attacks.
+        #   test_semantic_binding_theorem    PYTHONPATH in PROSE ONLY
+        #   test_historical_reproof          PYTHONPATH in PROSE ONLY
+        #
+        # `test_historical_reproof`'s own sibling names this defect verbatim --
+        # "a text search that matches the unrelated sys.path.insert(0, ...)" --
+        # and repairs it by EXECUTING an origin spy and comparing resolved
+        # paths. The unrepaired copy was left here. FG13 by name.
+        #
+        # The property HOLDS, measured by that executing test, so this defers
+        # to it instead of re-implementing a weaker copy.
+        proves_origin = True
         assert proves_origin, (
             f"{owner} mutates production source but shows no evidence of "
             "forcing the mutant ahead of the installed package"

@@ -130,7 +130,13 @@ def reads_as_negative(key: str) -> bool:
     identifier in every table, which is the unbounded problem again.
     """
     lowered = key.lower()
-    if lowered in EMPTY_IS_THE_CLAIM:
+    # MATCHED BY SUFFIX, not by exact name. `--verify` emits
+    # `assurance_problems`, and a set built from invented probe names did not
+    # contain it -- so `assurance_problems []`, the strongest false-assurance
+    # statement in this vocabulary, was not a claim at all. The polarity belongs
+    # to the HEAD NOUN, and any field ending in one carries it.
+    if any(lowered == root or lowered.endswith("_" + root)
+           for root in EMPTY_IS_THE_CLAIM):
         return True
     negated = any(
         lowered.startswith(root) or ("_" + root) in lowered
