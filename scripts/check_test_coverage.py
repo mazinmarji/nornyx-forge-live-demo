@@ -207,7 +207,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
     # crash boundary rather than reasoning about it.
-    "tests/test_ledger_atomicity.py": 18,
+    "tests/test_ledger_atomicity.py": 20,
     # R2: the authoritative-property contract and the terminal
     # classification of every registered attack.
     "tests/test_attack_attribution_contract.py": 9,

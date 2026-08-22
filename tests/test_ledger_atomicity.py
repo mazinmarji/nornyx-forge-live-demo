@@ -524,3 +524,53 @@ def test_analyze_on_the_witness_does_not_brick_the_ledger(tmp_path: Path) -> Non
     assert claimed is True, (
         f"an ANALYZE on the witness bricked a healthy ledger: {reason!r}"
     )
+
+
+def test_a_legacy_plain_text_mark_migrates_on_a_healthy_ledger(
+    tmp_path: Path,
+) -> None:
+    """The documented upgrade must cost nothing, and it was costing everything.
+
+    `_adopt_plaintext_mark` existed and NO production path called it. A review
+    measured a HEALTHY ledger carrying a pre-database mark refusing every
+    release, with the mark left unconverted, and the only escape being
+    `--reset-replay-history` -- which mints a new epoch and invalidates every
+    outstanding approval, for an upgrade that should be invisible.
+
+    A migration nothing calls is not a migration. It runs from the ATTACH path
+    now: a witness that cannot be opened as a database is converted ONCE and the
+    attach retried, and only a conversion that FAILS becomes a refusal.
+    """
+    path, side = _ledger(tmp_path, spends=2)
+    side.unlink()
+    side.write_bytes(b"2")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-legacy", "rd-legacy", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-LEGACY",
+    )
+    assert claimed is True, (
+        f"a healthy ledger with a legacy mark refused a fresh grant: {reason!r}"
+    )
+    with closing(sqlite3.connect(side)) as conn:
+        rows = conn.execute("SELECT id, value FROM high_water").fetchall()
+    assert rows == [(1, 3)], (
+        f"the legacy mark was not converted in step with the ledger: {rows}"
+    )
+
+
+def test_a_plain_text_mark_that_is_not_a_number_still_refuses(
+    tmp_path: Path,
+) -> None:
+    """The control. Without it the migration above is satisfied by converting
+    anything, including a witness whose contents mean nothing."""
+    path, side = _ledger(tmp_path, spends=1)
+    side.unlink()
+    side.write_bytes(b"not a number at all")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-junk", "rd-junk", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-JUNK",
+    )
+    assert claimed is False, "an unreadable witness released an effect"
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason

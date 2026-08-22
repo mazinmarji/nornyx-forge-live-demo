@@ -1647,15 +1647,30 @@ class ApprovalLedger:
                     (f"file:{self.watermark_path.as_posix()}?mode=rw",),
                 )
             except sqlite3.Error as exc:
-                # A witness that cannot be attached is a WITNESS fault, and the
-                # refusal must say so. Left to the generic handler it surfaced
-                # as "action approval ledger is unusable ... file is not a
-                # database", which names the wrong store -- the misdirection
-                # coded refusals exist to prevent.
-                raise LedgerContinuityUnknown(
-                    f"{self.watermark_path} exists and cannot be opened as the "
-                    f"continuity witness: {exc}"
-                ) from exc
+                # A PRE-DATABASE MARK IS MIGRATED HERE, ONCE, THEN RETRIED.
+                #
+                # `_adopt_plaintext_mark` existed and no production path called
+                # it: a review measured a HEALTHY ledger carrying a legacy
+                # plain-text mark refusing every release, with the mark left
+                # unconverted, and the only documented escape being
+                # `--reset-replay-history` -- which invalidates every
+                # outstanding approval for an upgrade that should cost nothing.
+                # A migration nothing calls is not a migration.
+                if self._adopt_plaintext_mark() is not None:
+                    conn.execute(
+                        "ATTACH DATABASE ? AS witness",
+                        (f"file:{self.watermark_path.as_posix()}?mode=rw",),
+                    )
+                else:
+                    # A witness that cannot be attached is a WITNESS fault, and
+                    # the refusal must say so. Left to the generic handler it
+                    # surfaced as "action approval ledger is unusable ... file
+                    # is not a database", naming the wrong store -- the
+                    # misdirection coded refusals exist to prevent.
+                    raise LedgerContinuityUnknown(
+                        f"{self.watermark_path} exists and cannot be opened "
+                        f"as the continuity witness: {exc}"
+                    ) from exc
             self._assert_commit_atomicity_available(conn)
             conn.execute("BEGIN IMMEDIATE")
             try:
