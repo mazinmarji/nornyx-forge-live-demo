@@ -175,7 +175,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 55,
     "tests/test_mutation_catalogue.py": 32,
-    "tests/test_false_green_audit.py": 21,
+    "tests/test_false_green_audit.py": 22,
     "tests/test_xfail_strictness.py": 17,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
@@ -203,7 +203,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 44,
+    "tests/test_ledger_continuity.py": 45,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
@@ -290,16 +290,16 @@ EXPECTED_SKIP_CASES = {
 # it was written -- a comment stating a count nobody re-measured, in the file
 # whose whole purpose is to notice counts changing.
 #
-#     collected across tests/     1640
-#     sum of the module floors    1519
-#     MINIMUM_COLLECTED           1533
+#     collected across tests/     1666
+#     sum of the module floors    1543
+#     MINIMUM_COLLECTED           1557
 #
 # 14 above the sum, so the aggregate can still refuse a report every module
 # floor accepts, and 107 below what actually collects. Raised again by the
 # C9-P1-7 repair, which ADDED sixteen hostile regressions: the anti-shrink
 # band demanded the documented-claims floor rise 82 -> 97, which pushed the
 # floor sum past the previous aggregate.
-MINIMUM_COLLECTED = 1543
+MINIMUM_COLLECTED = 1557
 
 
 def band(collected: int) -> int:

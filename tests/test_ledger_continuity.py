@@ -1170,3 +1170,73 @@ def test_the_migration_still_converts_a_healthy_pair(tmp_path: Path) -> None:
     assert _journal_mode(location) in {"delete", "truncate", "persist"}, (
         "the migration reported pass and left the ledger in WAL"
     )
+
+
+def test_deleting_the_sidecar_after_a_rollback_still_refuses(tmp_path: Path) -> None:
+    """A9-P3-4. The residual claimed this DISABLED the check. It does not.
+
+    `nornyx_runtime.py` stated, as a disclosed limitation, that "anyone who can
+    delete the sidecar disables the check". That was FALSE at the head where it
+    was written, and this file's own note two hundred lines away contradicted
+    it -- calling the same residual "a working replay ... and this one closes".
+
+    A false disclosure is not the harmless direction of wrong. It understates
+    what the system does, and an operator reading it would believe a deleted
+    sidecar silently reopened replay. Measured here: it fails CLOSED.
+    """
+    path, sidecar = _rolled_back_ledger(tmp_path)
+    assert sidecar.exists(), "setup is broken: there is no sidecar to delete"
+    sidecar.unlink()
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-3",
+    )
+    assert claimed is False, (
+        "deleting the sidecar released a grant that was already spent, which "
+        "is what the residual claimed and what this test exists to refute"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+
+
+def test_a_whole_directory_restore_is_the_disclosed_limit(tmp_path: Path) -> None:
+    """A9-P3-4, the half that IS true, pinned so it cannot go stale either.
+
+    Both stores roll back together and agree at the old count, so nothing is
+    left to disagree with and a grant spent after the backup releases again.
+    That is the honest limit of a two-store design against an adversary who
+    can restore the whole runtime directory -- and it is exactly the property
+    the C-4 review refused to let this system claim it had closed.
+
+    Pinned in the AFFIRMATIVE: if someone later closes this, the correction
+    fails here and the residual beside `LEDGER_WATERMARK_SUFFIX` has to be
+    rewritten rather than left describing a weakness that no longer exists.
+    """
+    import shutil  # noqa: PLC0415
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    path = runtime / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    backup = tmp_path / "backup"
+    shutil.copytree(runtime, backup)
+    for index in range(1, 6):
+        assert _spend(ledger, index), f"grant {index} did not release"
+
+    shutil.rmtree(runtime)
+    shutil.copytree(backup, runtime)
+
+    claimed, _reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-3",
+    )
+    assert claimed is True, (
+        "a whole-directory restore no longer releases a spent grant. That is "
+        "an IMPROVEMENT, and it means the disclosed limitation beside "
+        "LEDGER_WATERMARK_SUFFIX is now wrong: rewrite it with the new "
+        "measurement rather than leaving a weakness described that this "
+        "system does not have."
+    )

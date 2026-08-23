@@ -1219,6 +1219,25 @@ def _declared_by_collection() -> dict:
         cwd=ROOT, capture_output=True, text=True, timeout=1800, check=False,
         env=environment,
     )
+    # A COLLECTION THAT FAILED CANNOT ESTABLISH A LINK.
+    #
+    # This checked only that the dump FILE existed. The plugin writes it from
+    # `pytest_collection_modifyitems`, which runs over whatever collected
+    # SUCCESSFULLY -- so a module that fails to import leaves a dump that looks
+    # complete while the run was interrupted. Measured: a syntax error in
+    # `tests/test_action_binding.py`, a module carrying no markers at all, gave
+    # `--collect-only` rc=2 and "Interrupted", and these audits reported
+    # 3 PASSED, EXIT 0.
+    #
+    # The inventory they certify is drawn from that collection. If a module
+    # carrying markers had been the one to break, its classes would simply be
+    # absent, and "absent" is indistinguishable here from "never declared".
+    if done.returncode != 0:
+        raise AssertionError(
+            "pytest collection did not succeed, so the class-to-guard link is "
+            f"established over an incomplete inventory: rc={done.returncode} "
+            f"{done.stdout[-400:]} {done.stderr[-400:]}"
+        )
     if not dump.exists():
         raise AssertionError(
             "collection produced no marker report, so the class-to-guard link "
@@ -1360,4 +1379,81 @@ def test_no_declared_guard_can_be_prevented_from_running():
         "these declared guards are COLLECTED and would not RUN, so the class "
         "they certify is proven by a node that executes nothing: "
         + "; ".join(blocked)
+    )
+
+
+#: A module carrying NO false-green markers. Breaking it leaves the marker dump
+#: looking complete while the collection that produced it failed -- which is
+#: the whole point of the specimen below.
+_MARKERLESS_MODULE = "tests/test_action_binding.py"
+
+
+def test_a_collection_that_failed_cannot_establish_the_guard_link():
+    """B9-P3-1. The audits certified a link over a collection that FAILED.
+
+    `_declared_by_collection` checked only that the dump FILE existed. The
+    plugin writes it from `pytest_collection_modifyitems`, which runs over
+    whatever collected SUCCESSFULLY, so a module that fails to import leaves a
+    dump that looks complete while the run was interrupted.
+
+    Measured before the repair: a syntax error in a module carrying NO markers
+    gave `--collect-only` rc=2 and "Interrupted", and the marker audits
+    reported 3 PASSED, EXIT 0. Had a module carrying markers been the one to
+    break, its classes would simply have been absent -- and "absent" is
+    indistinguishable here from "never declared".
+
+    THE SPECIMEN RUNS AGAINST THE REAL TREE, and that is not laziness. Two
+    isolated vehicles were tried and BOTH measured the wrong thing:
+
+      `mutation._materialize` carries only src/, tests/ and scripts/, so
+      collection there is already incomplete before anything is broken;
+
+      a detached git worktree does not isolate this at all -- `import
+      test_false_green_audit` resolves to the REAL repository's copy, because
+      its `tests/` is on sys.path, so `ROOT` points back home and the guard
+      never sees the broken worktree. That is FG08/FG13's own mechanism, and
+      it is exactly the defect B9-P3-2 records about this audit's child.
+
+    So the break is made here and undone in a `finally`, with the restoration
+    asserted. The module chosen carries no markers, which is the sharp case:
+    the dump still looks complete.
+    """
+    import subprocess  # noqa: PLC0415
+
+    node = (
+        "tests/test_false_green_audit.py"
+        "::test_every_false_green_class_is_declared_by_a_collected_guard"
+    )
+
+    def guard() -> subprocess.CompletedProcess:
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", node, "-q", "-o", "addopts=",
+             "-p", "no:randomly", "--no-header"],
+            cwd=ROOT, capture_output=True, text=True, timeout=2400,
+            encoding="utf-8", errors="replace", check=False,
+        )
+
+    target = ROOT / _MARKERLESS_MODULE
+    pristine = target.read_bytes()
+    try:
+        healthy = guard()
+        assert healthy.returncode == 0, (
+            "the guard does not pass on the pristine tree, so this specimen "
+            f"would prove nothing: {healthy.stdout[-400:]}"
+        )
+        rubble = chr(10).join(["", "", "def this_will_not_parse(:", "    pass", ""])
+        target.write_bytes(pristine + rubble.encode("utf-8"))
+        interrupted = guard()
+    finally:
+        target.write_bytes(pristine)
+
+    assert target.read_bytes() == pristine, "the specimen did not restore the tree"
+    assert interrupted.returncode != 0, (
+        "a module that cannot be imported interrupted collection, and the "
+        "audit still certified the class-to-guard link it drew from that "
+        f"collection: {interrupted.stdout[-500:]}"
+    )
+    assert "collection did not succeed" in interrupted.stdout, (
+        "the guard failed for some other reason, so this does not measure the "
+        f"return-code check: {interrupted.stdout[-600:]}"
     )

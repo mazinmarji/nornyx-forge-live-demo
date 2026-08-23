@@ -1031,11 +1031,20 @@ def test_every_killing_test_is_actually_collected_by_pytest():
     import subprocess  # noqa: PLC0415
     import sys  # noqa: PLC0415
 
-    collected = subprocess.run(  # noqa: S603
+    done = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "pytest", "--collect-only", "-q",
          "-p", "no:randomly", "-o", "addopts="],
         cwd=ROOT, capture_output=True, text=True, timeout=1800, check=False,
-    ).stdout.replace(chr(92), "/")
+    )
+    # THE RETURN CODE, not just the node count. A module that fails to import
+    # interrupts collection while leaving well over five hundred node ids
+    # behind, so the count below passes and the run that produced it FAILED.
+    # Same defect as the marker audit's, one file over.
+    assert done.returncode == 0, (
+        "pytest collection did not succeed, so which killing tests run cannot "
+        f"be established from it: rc={done.returncode} {done.stdout[-300:]}"
+    )
+    collected = done.stdout.replace(chr(92), "/")
 
     assert collected.count("::") > 500, (
         "pytest collection produced almost no node ids, so this test cannot "

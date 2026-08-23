@@ -633,12 +633,30 @@ LEDGER_METADATA_TABLE = "ledger_identity"
 #: stored in the thing being restored. Consumption rows only ever accumulate,
 #: so a ledger holding fewer rows than were recorded here has lost history.
 #:
-#: WHAT THIS DOES NOT DEFEND, stated rather than implied: restoring the whole
-#: directory carries the sidecar back too, and anyone who can delete the
-#: sidecar disables the check. Both need write access to the runtime directory,
-#: which is the exposure RUNTIME_INPUT_AUDIT.md already records. What changes
-#: is that the ORDINARY operator action -- restore the ledger file from a
-#: backup -- now fails closed, which is what the paragraph above claimed.
+#: WHAT THIS DOES NOT DEFEND, stated rather than implied -- AND BOTH HALVES
+#: MEASURED, because this paragraph previously asserted one thing that was
+#: true and one that was false, in the direction of understating safety.
+#:
+#:   RESTORING THE WHOLE DIRECTORY DOES DEFEAT IT.  Measured: back up the
+#:   runtime directory after one consumption, spend five more, restore the
+#:   directory, and a grant spent after the backup RELEASES AGAIN -- `claimed
+#:   True`. Both stores roll back together and agree at the old count, so
+#:   there is nothing left to disagree with. Pinned by
+#:   `test_a_whole_directory_restore_is_the_disclosed_limit`.
+#:
+#:   DELETING THE SIDECAR DOES NOT.  The sentence here used to say "anyone who
+#:   can delete the sidecar disables the check". That is FALSE at this head and
+#:   was contradicted by this file's own note that the residual "is a working
+#:   replay ... and this one closes". Measured: roll the ledger back AND delete
+#:   the sidecar, then replay a spent grant -- `claimed False`,
+#:   LEDGER_CONTINUITY_UNKNOWN. A missing witness fails CLOSED; it does not
+#:   disable anything. Pinned by
+#:   `test_deleting_the_sidecar_after_a_rollback_still_refuses`.
+#:
+#: Both attacks need write access to the runtime directory, which is the
+#: exposure RUNTIME_INPUT_AUDIT.md already records. What changes is that the
+#: ORDINARY operator action -- restore the ledger file from a backup -- now
+#: fails closed, which is what the paragraph above claimed.
 LEDGER_WATERMARK_SUFFIX = ".highwater"
 
 #: Journal modes under which SQLite commits a multi-database transaction as one
