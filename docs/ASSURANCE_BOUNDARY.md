@@ -118,3 +118,34 @@ seven-day agentic-network approval window is real elapsed time: an approval
 issued at *T* stops satisfying `nornyx check` after *T + 7 days*, and the
 contract must then be re-approved by a human. Nothing in this repository may
 backdate an approval to widen that window.
+
+## The bounded claim surface
+
+Machine assurance here verifies a **closed, explicitly declared claim
+surface**: the governance contracts and the structured evidence records whose
+content is bound by hash. Arbitrary natural-language prose is **not**
+mechanically certified, and cannot create, upgrade, or satisfy assurance,
+inspection, approval, or production-readiness state.
+
+This is a deliberate boundary, not an unfinished control. A lint sweep does
+read the documents in this repository for unearned governance sentences, and
+it catches many of them, but it is defence in depth and nothing here may
+describe it as a certification of English. The measured limit is recorded with
+its specimen in `tests/test_claim_surface_boundary.py`: the sentence *cleared
+for production deployment by the CAB* is not recognised by that grammar and is
+not going to be, because recognising it means enumerating the nouns that
+denote governance authorities -- CAB, board, committee, council, release
+authority -- and the sentence after that one would be *the release authority
+gave the green light*. A grammar that chases English never closes.
+
+What the same module measures instead is that missing such a sentence costs
+nothing that matters: the residual is inserted into a governed document,
+committed so the content digest genuinely sees it, and the authoritative
+verdict is required to be identical. A false statement placed on the
+STRUCTURED surface is refused in the same module, and the mechanism that
+refuses it is named -- the content hash binding a record to what it describes,
+not the approval check, which the forgery alone would have satisfied.
+
+Prose remains subject to human editorial review. That is the correct authority
+for free text, and stating it here is what keeps this control's claim equal to
+what it measures.

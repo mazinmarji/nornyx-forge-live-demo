@@ -1049,11 +1049,31 @@ def _prose_only(text: str) -> str:
 
 
 def test_no_document_claims_an_independent_inspection_this_repository_lacks():
-    """`independently_inspected` is derived, and derives to false here.
+    """LINT OVER PROSE. Defence in depth, NOT a certification of English.
 
-    A document asserting otherwise would be the same defect as an artifact
-    asserting it — a claim about assurance from something that cannot establish
-    it — just written in English.
+    `independently_inspected` is derived, and derives to false here. A
+    document asserting otherwise is the same defect as an artifact asserting
+    it -- a claim about assurance from something that cannot establish it --
+    just written in English, and this sweep catches a great many of them.
+
+    WHAT THIS TEST DOES NOT CLAIM, stated because the name reads stronger
+    than the property. It does not certify that repository prose is free of
+    false governance claims. It cannot: the grammar is bounded and English is
+    not. The measured limit is recorded in `test_claim_surface_boundary.py`
+    with its specimen -- "cleared for production deployment by the CAB" is
+    admitted here and always will be, because closing it means enumerating
+    governance-authority nouns forever.
+
+    The property this repository DOES mechanically claim is the one that
+    module states and measures: assurance is verified over a CLOSED,
+    explicitly declared claim surface, and prose is not part of it -- a
+    sentence this sweep misses cannot create, upgrade, or satisfy any
+    assurance, inspection, approval or production-readiness state.
+
+    Prose remains subject to HUMAN EDITORIAL REVIEW. That is not a gap this
+    sweep is failing to fill; it is the correct authority for free text, and
+    saying so here is what keeps this control's claim equal to what it
+    measures.
     """
     # Patterns, not exact strings. The review defeated the previous list by
     # dropping a trailing word: "independently inspected by" was forbidden,
@@ -1331,6 +1351,16 @@ def test_the_process_start_sites_match_the_documented_list():
 #: matter: this system emits `independently_inspected`, never the prose form,
 #: and the guard used `\s` which does not match `_`.
 OVERCLAIM_SPECIMENS = [
+    # THE TWO FORMS REMOVED FROM GOVERNANCE DOCUMENTS BY THE C9-P1-7 REPAIR.
+    # They are pinned HERE so that correcting the published prose did not also
+    # retire the guard's obligation to catch them. Both quoted an assurance
+    # claim, and this module's recorded rule is that quoting publishes -- so
+    # both were TRUE positives, and must stay caught forever.
+    ("retired doc form, quoted first-person inspection",
+     'A reviewer signs "I inspected this content"; an approver signs "this', True),
+    ("retired doc form, quoted assurance cycle",
+     "It says that the tree at `990caea` passed an assurance cycle WITH ONE ROW",
+     True),
     # ------------------------------------------------------------------
     # C9-P1-7 -- THE SUBJECT VOCABULARY, DERIVED. Nine of these eleven were
     # ADMITTED while the subject set was four literals: their verdicts were
