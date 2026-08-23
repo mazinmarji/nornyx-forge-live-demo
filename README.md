@@ -1,40 +1,48 @@
 # Nornyx Forge Live Demo
 
-**From a BRD and a public repository to a governed, running agentic application — with one Claude Code prompt.**
+**Claude Code is the engineer. Nornyx Forge is the governed transformation and conformance system around it. Nornyx supplies the authority semantics underneath it.**
 
-This repository is a public reference implementation for demonstrating three Nornyx value claims:
+Nornyx Forge is a public reference implementation for demonstrating three Nornyx value claims:
 
 1. **Software-development governance** — requirements, goals, permissions, tests, repair budgets, evidence, and release gates are explicit and revision-bound.
 2. **Architecture governance** — target components, layers, interfaces, trust boundaries, and architecture evidence are checked before acceptance.
 3. **Delivery speed** — Repo Scout reuses a suitable foundation, deterministic gates catch defects early, and bounded repair loops reduce uncontrolled re-iteration.
 
-## What runs
+## Preferred entry point: the Claude Code Skill
 
-- **Claude Code** performs repository analysis, architecture, implementation, review, and repair.
-- **CrewAI Flow** coordinates the development and live application workflows without requiring a CrewAI model API key in the default mode.
-- **Nornyx** validates the generated BRD contract, architecture contract, runtime network, and control/evidence boundary.
-- **FastAPI** serves the live governed customer-operations application and dashboard.
-
-The default is an **autonomous demonstration**, not a production approval. Human review is not performed and the evidence says so explicitly.
-
-## The one prompt
-
-Open Claude Code in any directory and paste the prompt in [`ONE_PROMPT.md`](ONE_PROMPT.md). It tells Claude to clone this repository, run the autonomous workflow, start the application, and report the URLs.
-
-After cloning manually, start Claude Code with the local plugin loaded:
+After cloning the repository, start Claude Code with the local plugin:
 
 ```bash
 claude --plugin-dir .
 ```
 
-Then use the current Claude Code session and its subagents:
+Then invoke Forge through the Skill:
 
 ```text
 /nornyx-forge:build-app BRD.md
 ```
 
-The recommended one-prompt instructions are in [`ONE_PROMPT.md`](ONE_PROMPT.md).
-They run reviewer subagents in-session and finish with:
+The Skill is the preferred human-facing interface. Claude Code performs the reasoning, repository analysis, architecture, implementation, review, and repair work. The Skill does **not** become the governance authority: deterministic Forge/Nornyx controls remain responsible for the properties they mechanically validate.
+
+See [`docs/FORGE_SKILL_BOUNDARY.md`](docs/FORGE_SKILL_BOUNDARY.md) for the exact separation between model reasoning, Forge conformance, Nornyx governance semantics, and human or organizational authority.
+
+## What runs
+
+- **Claude Code** performs repository analysis, architecture, implementation, review, and repair.
+- **Nornyx Forge Skill** orchestrates the engineering workflow and invokes the required deterministic gates.
+- **CrewAI Flow** coordinates the development and live application workflows without requiring a CrewAI model API key in the default mode.
+- **Nornyx** validates the generated BRD contract, architecture contract, runtime network, and control/evidence boundary.
+- **FastAPI** serves the live governed customer-operations application and dashboard.
+
+The default is an **autonomous demonstration**, not a production approval. Human review is not performed and the evidence says so explicitly. In-session model reviewers are bounded review evidence; they are not external independent confirmation or human approval.
+
+## Bootstrap from outside a clone
+
+[`ONE_PROMPT.md`](ONE_PROMPT.md) remains a convenience for users starting in an arbitrary directory. It clones this repository, loads the Forge instructions, and then executes the same `build-app` Skill. It is not a second assurance path.
+
+The recommended path inside an existing clone is the Skill invocation above.
+
+The current Claude Code session and its subagents finish with:
 
 ```bash
 python scripts/bootstrap.py --autonomous --worker-mode in-session
@@ -45,6 +53,20 @@ The optional fully scripted mode uses bounded `claude -p` workers:
 ```bash
 python scripts/bootstrap.py --autonomous --worker-mode claude-code
 ```
+
+## What the Skill cannot replace
+
+A prompt or Skill can direct Claude to analyze, design, code, test, and repair. It cannot create authority merely by saying that something is approved, verified, safe, production-ready, or governed.
+
+Forge therefore keeps the following outside model discretion:
+
+- deterministic repository, architecture, security, evidence, and Nornyx validation;
+- mechanically bounded assurance claims;
+- approval and evidence-integrity checks;
+- runtime action-boundary enforcement integration;
+- any real human or organizational authority required by the governed contract.
+
+If Claude's interpretation conflicts with a deterministic result, the deterministic result controls and the conflict must be reported.
 
 ## Fast local verification without Claude or external APIs
 
@@ -65,9 +87,11 @@ Prerequisites:
 - Docker Desktop or Docker Engine
 - Claude Code installed and authenticated
 
-Then paste [`ONE_PROMPT.md`](ONE_PROMPT.md) into Claude Code. The current
-session uses its Agent subagents directly, writes independent review evidence,
-and runs the in-session bootstrap without a separate model API key.
+Then start Claude Code with the local plugin and invoke:
+
+```text
+/nornyx-forge:build-app BRD.md
+```
 
 The workflow generates `.nornyx/generated/brd_contract.nyx`, creates evidence under `.nornyx/runs/`, requires strict Nornyx/CrewAI execution in the installed path, launches the application, and prints:
 
@@ -88,7 +112,7 @@ Repo Scout never treats stars or README claims as proof. It generates a scored s
 
 ## Assurance boundary
 
-The live demo uses cooperative controls over declared surfaces. It does not claim mandatory sandbox enforcement, runtime truth attestation, or production approval. See [`docs/ASSURANCE_BOUNDARY.md`](docs/ASSURANCE_BOUNDARY.md) and [`docs/CLAUDE_CODE_AND_CREWAI.md`](docs/CLAUDE_CODE_AND_CREWAI.md).
+The live demo uses cooperative controls over declared surfaces. It does not claim mandatory sandbox enforcement, runtime truth attestation, or production approval. A gate may claim only the exact property it mechanically measures. See [`docs/ASSURANCE_BOUNDARY.md`](docs/ASSURANCE_BOUNDARY.md), [`docs/FORGE_SKILL_BOUNDARY.md`](docs/FORGE_SKILL_BOUNDARY.md), and [`docs/CLAUDE_CODE_AND_CREWAI.md`](docs/CLAUDE_CODE_AND_CREWAI.md).
 
 ## Source of truth
 
