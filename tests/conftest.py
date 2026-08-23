@@ -91,8 +91,18 @@ def _contained_scratch(tmp_path_factory: pytest.TempPathFactory):
     # A review measured the consequence: a census run reported `GATE: FAIL`
     # with 557 errored setups, every one a FileNotFoundError on this scratch,
     # because other pytest sessions started while it was running and collected
-    # the basetemp out from under it. The verdict was a property of the
-    # machine, not of the tree.
+    # the basetemp out from under it.
+    #
+    # THAT ATTRIBUTION WAS WRONG, and it mattered. It called the verdict "a
+    # property of the machine, not of the tree", which excused a defect this
+    # suite causes itself: eighteen call sites spawn `python -m pytest` as a
+    # subprocess, none passed `--basetemp`, and every child shared this root.
+    # Retention keeps three numbered basetemps and deletes older ones, so a
+    # long parent run has its own basetemp rotated away beneath it. Measured
+    # again at head d44021b: GATE: FAIL, 793 teardown errors, all
+    # FileNotFoundError here. `_child_pytest_sessions_get_their_own_temp_root`
+    # is the fix; this note is left as the record of a defect twice blamed on
+    # the machine it ran on.
     #
     # `tmp_path_factory.getbasetemp().parent` is the `pytest-of-<user>` root,
     # which retention walks but never deletes; a unique name under it belongs
@@ -143,6 +153,50 @@ def _reclaim_scratch_between_modules(_contained_scratch: Path):
         shutil.rmtree(entry, ignore_errors=True) if entry.is_dir() else entry.unlink(
             missing_ok=True
         )
+
+
+@pytest.fixture(autouse=True)
+def _child_pytest_sessions_get_their_own_temp_root(tmp_path_factory, request):
+    """A child pytest must not share `pytest-of-<user>` with its parent.
+
+    THE SUITE SPAWNS ITS OWN COMPETITORS. Eighteen call sites across eight
+    modules run `python -m pytest` in a subprocess, and not one passed
+    `--basetemp`. Every child therefore created its basetemp in the SAME
+    `pytest-of-<user>` root as the parent, and pytest's retention keeps the
+    last three numbered basetemps and DELETES older ones. Over a run long
+    enough to spawn four children, the parent's own basetemp is rotated away
+    beneath it.
+
+    Measured: three of these tests run together left `pytest-0, pytest-4,
+    pytest-5, pytest-6` -- the parent plus one root per child. A full census
+    then failed with GATE: FAIL and 793 teardown errors, every one a
+    FileNotFoundError on the session scratch, because
+    `_reclaim_scratch_between_modules` iterates a directory that no longer
+    existed.
+
+    The session-scratch fixture above already records this symptom and
+    attributes it to "other pytest sessions started while it was running" --
+    that is, to the MACHINE. It is not the machine. It is this suite, and the
+    comment there is corrected to say so.
+
+    `PYTEST_DEBUG_TEMPROOT` is the root pytest builds `pytest-of-<user>`
+    under. Pointing each test's children at a directory of their own means a
+    child's retention can only rotate its own basetemps. Function scope
+    deliberately: a per-test root keeps the blast radius to one test, and the
+    suite runs sequentially so mutating the environment here is safe.
+    """
+    import os  # noqa: PLC0415
+
+    original = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+    root = tmp_path_factory.mktemp("child-temproot-" + request.node.name[:24])
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = str(root)
+    try:
+        yield root
+    finally:
+        if original is None:
+            os.environ.pop("PYTEST_DEBUG_TEMPROOT", None)
+        else:
+            os.environ["PYTEST_DEBUG_TEMPROOT"] = original
 
 
 @pytest.fixture(scope="session", autouse=True)

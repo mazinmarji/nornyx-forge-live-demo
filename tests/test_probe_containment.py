@@ -465,3 +465,59 @@ def test_fg29_neither_h17_nor_h18_defaults_a_missing_verification():
         assert raises, (
             f"{name} does not fail closed when --verify yields no JSON"
         )
+
+
+def test_a_child_pytest_does_not_create_a_basetemp_beside_its_parent(tmp_path: Path):
+    """The suite must not spawn competitors for its own temp root.
+
+    Eighteen call sites here run `python -m pytest` in a subprocess, and none
+    passed `--basetemp`. Every child therefore built its basetemp in the SAME
+    `pytest-of-<user>` root as the parent, and pytest keeps the last three
+    numbered basetemps and DELETES older ones -- so a long parent run has its
+    own basetemp rotated away beneath it.
+
+    Measured at head d44021b: three such tests left `pytest-0, pytest-4,
+    pytest-5, pytest-6`, and a full census then failed GATE: FAIL with 793
+    teardown errors, every one a FileNotFoundError on the session scratch.
+    Twice this was recorded as a property of the machine. It is a property of
+    this suite.
+
+    `_child_pytest_sessions_get_their_own_temp_root` in conftest points each
+    test's children at a root of their own. What is measured here is the
+    consequence: a child spawned from inside a test adds NOTHING to the root
+    its parent is using.
+    """
+    import os  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    shared = Path(os.environ["PYTEST_DEBUG_TEMPROOT"]).parent
+    # The parent session's own root, which retention must never rotate.
+    parent_root = Path(__import__("tempfile").gettempdir())
+
+    probe = tmp_path / "test_probe_child.py"
+    probe.write_text("def test_ok():" + chr(10) + "    assert True" + chr(10),
+                     encoding="utf-8")
+
+    def roots() -> set:
+        base = parent_root / ("pytest-of-" + (os.environ.get("USER")
+                                              or os.environ.get("USERNAME") or ""))
+        return {entry.name for entry in base.iterdir()} if base.is_dir() else set()
+
+    before = roots()
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", str(probe), "-q", "-o", "addopts=",
+         "-p", "no:randomly", "--no-header"],
+        cwd=ROOT, capture_output=True, text=True, timeout=900, check=False,
+    )
+    assert done.returncode == 0, f"the child probe did not run: {done.stdout[-300:]}"
+    after = roots()
+
+    assert after == before, (
+        "a child pytest session created a basetemp in the root its parent is "
+        "using. Retention keeps three and deletes older ones, so a long parent "
+        f"run loses its own scratch: {sorted(after - before)}"
+    )
+    assert shared.exists(), (
+        "the per-test child temp root was not created, so this test measured "
+        "nothing"
+    )
