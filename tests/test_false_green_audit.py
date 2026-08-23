@@ -1179,6 +1179,25 @@ def test_the_mechanism_map_names_only_known_classes():
     )
 
 
+def _audit_child_env(dump: Path) -> dict:
+    """The environment the marker-collection child runs under.
+
+    SEPARATED SO IT CAN BE MEASURED. The first test written for this checked
+    the SOURCE for a substring, and matched its own docstring -- a comment
+    satisfying a structural control, which is FG37 by name and the exact thing
+    this module exists to refuse. What is testable is the dict this returns.
+    """
+    inherited = os.environ.get("PYTHONPATH", "")
+    return dict(
+        os.environ,
+        FG_MARKER_DUMP=str(dump),
+        PYTHONIOENCODING="utf-8",
+        PYTHONPATH=os.pathsep.join(
+            [str(ROOT / "tests")] + ([inherited] if inherited else [])
+        ),
+    )
+
+
 def _declared_by_collection() -> dict:
     """Which COLLECTED node declares which FG class, read from pytest itself.
 
@@ -1206,12 +1225,21 @@ def _declared_by_collection() -> dict:
     can drift.
     """
     dump = Path(tempfile.mkdtemp()) / "markers.tsv"
-    environment = dict(os.environ, FG_MARKER_DUMP=str(dump),
-                       PYTHONIOENCODING="utf-8",
-                       # `-p` resolves a plugin by import, and `tests/` is on
-                       # sys.path only via conftest -- which has not run yet at
-                       # plugin-load time.
-                       PYTHONPATH=str(ROOT / "tests"))
+    # PREPENDED, NOT REPLACED.
+    #
+    # `-p` resolves a plugin by import, and `tests/` is on sys.path only via
+    # conftest -- which has not run yet at plugin-load time. So this entry has
+    # to be there. Setting it with `PYTHONPATH=` DISCARDED whatever the caller
+    # had, which is the same substitution FG08/FG13 describe, operating inside
+    # the audit that certifies FG08 and FG13.
+    #
+    # Measured: with a caller's PYTHONPATH holding a sentinel module, the child
+    # reported `sentinel importable: False`; prepending gives True. The impact
+    # is bounded today because markers live in tests/ and the link is measured
+    # on the right tree either way -- but a harness that puts its own `src`
+    # first, which is exactly how every mutant in this repository is isolated,
+    # had that isolation silently removed.
+    environment = _audit_child_env(dump)
     done = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "-o",
          "addopts=", "-p", "no:randomly", "-p", "fg_marker_dump",
@@ -1275,13 +1303,27 @@ def test_every_false_green_class_is_declared_by_a_collected_guard():
         f"these guards declare a class the inventory does not list: {stray}"
     )
 
+    # EXACTLY ONE NODE, NOT "THE OWNER IS AMONG THEM".
+    #
+    # This asked whether the inventory's owner appeared IN the set of nodes
+    # declaring the class. A module-level `pytestmark = pytest.mark.false_green
+    # ("FGnn")` makes EVERY node in that module declare it, and the real owner
+    # is still among them, so the check passed. Measured: one line added to
+    # `tests/test_absence_is_not_success.py` gave `FG37 declared by 9 NODES`
+    # and both audits reported 2 passed, green.
+    #
+    # A class certified by nine nodes, eight of which have nothing to do with
+    # it, is not a link -- it is a claim that some node somewhere is relevant.
+    # The sibling test catches a node declaring two CLASSES; nothing caught a
+    # class declared by two NODES until this became equality.
     mismatched = []
     for item in INVENTORY:
         owner = item.owner.split("[")[0]
-        if owner not in declared[item.ident]:
+        nodes = sorted(declared[item.ident])
+        if nodes != [owner]:
             mismatched.append(
                 f"{item.ident}: inventory names {owner}, declared by "
-                f"{sorted(declared[item.ident])}"
+                f"{nodes}"
             )
     assert mismatched == [], (
         "the inventory and the guards disagree about which node proves which "
@@ -1456,4 +1498,138 @@ def test_a_collection_that_failed_cannot_establish_the_guard_link():
     assert "collection did not succeed" in interrupted.stdout, (
         "the guard failed for some other reason, so this does not measure the "
         f"return-code check: {interrupted.stdout[-600:]}"
+    )
+
+
+def test_the_audit_child_preserves_a_caller_supplied_pythonpath(tmp_path: Path):
+    """B9-P3-2. The audit discarded the isolation its own subject depends on.
+
+    `_declared_by_collection` set `PYTHONPATH` by REPLACEMENT. The `tests/`
+    entry is genuinely needed -- `-p` resolves a plugin by import and conftest
+    has not run at plugin-load time -- but replacing threw away whatever the
+    caller had.
+
+    That is FG08/FG13's own mechanism operating inside the audit that certifies
+    FG08 and FG13: a harness that puts its own `src` first, which is how every
+    mutant here is isolated, had that isolation silently removed. Measured
+    before the repair: a sentinel on the caller's PYTHONPATH came back
+    `importable: False`.
+
+    THE ENVIRONMENT IS MEASURED, NOT THE SOURCE. The first version of this test
+    searched the module text for the old spelling and matched its own
+    docstring -- a comment satisfying a structural control, FG37 by name.
+    """
+    import os  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    (extra / "b9p32_sentinel.py").write_text("MARK = 1" + chr(10), encoding="utf-8")
+
+    keep = os.environ.get("PYTHONPATH")
+    os.environ["PYTHONPATH"] = str(extra)
+    try:
+        environment = _audit_child_env(tmp_path / "markers.tsv")
+    finally:
+        if keep is None:
+            os.environ.pop("PYTHONPATH", None)
+        else:
+            os.environ["PYTHONPATH"] = keep
+
+    entries = environment["PYTHONPATH"].split(os.pathsep)
+    assert str(ROOT / "tests") in entries, (
+        "the plugin directory is gone from the child's path, so `-p "
+        f"fg_marker_dump` cannot resolve at all: {entries}"
+    )
+    assert str(extra) in entries, (
+        "the caller's PYTHONPATH was DISCARDED. A harness that puts its own "
+        "src first -- which is how every mutant in this repository is isolated "
+        f"-- would have that isolation silently removed: {entries}"
+    )
+
+    probe = (
+        "import importlib.util;"
+        "print(importlib.util.find_spec('b9p32_sentinel') is not None)"
+    )
+    done = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True,
+        timeout=600, env=environment, check=False,
+    )
+    assert done.stdout.strip() == "True", (
+        "a child launched with this environment cannot import from the "
+        f"caller's path: {done.stdout!r} {done.stderr[-200:]}"
+    )
+
+
+def test_a_module_level_marker_cannot_declare_a_class_for_every_node():
+    """B9-P3-4. The link was membership, so nine nodes could declare one class.
+
+    `test_every_false_green_class_is_declared_by_a_collected_guard` asked
+    whether the inventory's owner appeared IN the set of nodes declaring the
+    class. A module-level `pytestmark = pytest.mark.false_green("FGnn")` makes
+    EVERY node in that module declare it and leaves the real owner among them,
+    so the check passed.
+
+    Measured before the repair: ONE line added to
+    `tests/test_absence_is_not_success.py` gave `FG37 declared by 9 nodes`, and
+    both audits reported 2 passed, green. A class certified by nine nodes,
+    eight of them unrelated, is not a link.
+
+    The sibling test catches a node declaring two CLASSES. Nothing caught a
+    class declared by two NODES, which is the same drift in the other
+    direction.
+
+    The specimen is planted in the real tree and removed in a `finally`, with
+    the restoration asserted -- the two isolated vehicles that would avoid that
+    are recorded as dead ends in
+    `test_a_collection_that_failed_cannot_establish_the_guard_link`.
+    """
+    import subprocess  # noqa: PLC0415
+
+    node = (
+        "tests/test_false_green_audit.py"
+        "::test_every_false_green_class_is_declared_by_a_collected_guard"
+    )
+    target = ROOT / "tests" / "test_absence_is_not_success.py"
+
+    def guard() -> subprocess.CompletedProcess:
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", node, "-q", "-o", "addopts=",
+             "-p", "no:randomly", "--no-header"],
+            cwd=ROOT, capture_output=True, text=True, timeout=2400,
+            encoding="utf-8", errors="replace", check=False,
+        )
+
+    pristine = target.read_bytes()
+    try:
+        healthy = guard()
+        assert healthy.returncode == 0, (
+            "the guard does not pass on the pristine tree: "
+            + healthy.stdout[-300:]
+        )
+        text = pristine.decode("utf-8")
+        tree = ast.parse(text)
+        after_imports = max(
+            statement.end_lineno for statement in tree.body
+            if isinstance(statement, (ast.Import, ast.ImportFrom))
+        )
+        lines = text.split(chr(10))
+        lines.insert(
+            after_imports,
+            'pytestmark = __import__("pytest").mark.false_green("FG37")',
+        )
+        target.write_bytes(chr(10).join(lines).encode("utf-8"))
+        blanketed = guard()
+    finally:
+        target.write_bytes(pristine)
+
+    assert target.read_bytes() == pristine, "the specimen did not restore the tree"
+    assert blanketed.returncode != 0, (
+        "a module-level marker made every node in that module declare FG37 and "
+        "the audit still certified the class-to-guard link: "
+        + blanketed.stdout[-500:]
+    )
+    assert "declared by" in blanketed.stdout, (
+        "the guard failed for some other reason, so this does not measure the "
+        f"one-to-one link: {blanketed.stdout[-500:]}"
     )

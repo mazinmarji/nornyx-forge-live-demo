@@ -1,7 +1,7 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-08-23T08:58:21Z",
-  "governed_input_digest": "sha256:6da427b18aa64a94dab7ee4e4c42c312ff8bca82afa128353be4919a6c5809b7",
+  "generated_at": "2026-08-23T09:13:38Z",
+  "governed_input_digest": "sha256:7b6b165f8a9579e4aa6aed06a4041f9a14ea9b03d8f8f71e658350e3952558ac",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [
@@ -193,6 +193,6 @@
     "source_sha256": "sha256:6e68fcef1b822d95e0681c17c64cd7182e23f743afdae31db6aebbde5dc71a7a"
   },
   "statement": "Architecture conformance was inspected by read-only inspectors that cannot modify the implementation and did not author this record's verdict on their own behalf. This is an independent machine review, not a human review and not an approval.",
-  "subject_revision": "git:432da8e2c1966727ad5c4aaf3582f77e42eb5647",
+  "subject_revision": "git:691ae8e478c3d53cee67f98faa34cd8d48f900a0",
   "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (C:\\Users\\mazin.LAPTOP-EMF4NEOK\\.nornyx\\forge_reviewer_trust.json (absent)))"
 }
