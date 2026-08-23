@@ -207,9 +207,18 @@ ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 | A: the trust-domain guard is opt-in for unlabelled stores | ACCEPTED_NON_BLOCKING_WITH_RATIONALE, on measured evidence. Making the clause total was implemented and reverted: it broke thirteen call sites across five modules, and two were security proofs whose MECHANISM it changed — removing the frozen store to show a decision moves stops proving that if a domain refusal arrives first. Trading a latent affordance for a real reduction in what two H01 proofs measure is a bad trade. Bounded instead by asserting the property the clause relies on:  takes the domain as a required keyword, and no site under  builds a store without one. That test immediately found the single production site that did — the authenticator's own fallback store — which is now labelled with the asking authority. Two independently correct changes were kept: absence is decided before domain, so an unprovisioned store refuses as ABSENT rather than as a mismatch; and the shared boundary fixture names ACTION explicitly |
 | A: the "trust resolved once" closure is not total on the unresolvable-root branch | FIXED - that branch left both approval domains as None while the rooted branch froze two stores, so the closure held on one path out of two. None is the absence of a field, indistinguishable from never-established. The domains never depended on the root, so the branch now resolves them and a consumer gets a store that says it is unavailable and why. The control asserts nothing was granted by doing so |
 
-**Open**
+**Open AT THAT HEAD -- SUPERSEDED, and kept as the record of what the review
+found.**
 
-
+> Every item below appears in the Closed table above with a disposition of
+> FIXED, PARTIALLY FIXED, or ACCEPTED_NON_BLOCKING_WITH_RATIONALE. This
+> list is what `45f858c` looked like to the reviewers, not what is
+> outstanding now. A review found this file stating twice that all
+> twenty-nine findings were closed and twice that all twenty-nine were
+> open, with no supersession marker and no date -- the same defect this
+> repository recorded as C-P2-3, recurring inside a single file. An
+> operator reading `docs/governance/` to find what is outstanding was
+> handed the answer twice, in opposite directions.
 
 - **Lens A (6)** — `GovernanceIntegrityState` docstring claims a constructor
   refusal that does not exist; `_canonical` is not injective (`{1:…}` and
@@ -348,6 +357,10 @@ does not pass governance validation. No classification was made. It is deferred
 to the gate that regenerates evidence in causal order, and recorded in
 [AUTHORITY_VALUE_FLOW.md](AUTHORITY_VALUE_FLOW.md) §4.
 
-### Still OPEN
+### What was open AT `45f858c` -- superseded
 
-All twelve P2s, all seventeen P3s.
+All twelve P2s and all seventeen P3s were open **at that failed
+pre-candidate head**. Their dispositions are in the Closed tables above.
+This heading read "### Still OPEN" and was the last thing in the file, so
+the document's final word said twenty-nine findings remained -- including
+five controls its own body documents as repaired.

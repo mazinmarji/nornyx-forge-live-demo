@@ -32,9 +32,14 @@ symbol exists and whose OBSERVED OBJECT lacks the field being read. Hollowing
 the modules cannot produce that -- the module is empty, so the call never
 returns an object at all. The second recorded defect (`getattr(subject,
 "subject_verified", True)`, where an absent field defaulted to the value that
-scores a kill) is repaired at the probe and is covered by
-`test_a_probe_reports_absence_rather_than_inventing_a_value` below, which is a
-narrower control over a smaller domain and is labelled as one.
+scores a kill) is repaired AT THE PROBE, in `tests/attack_property.py`: the
+three fields are read with `hasattr` first and any absence is reported as
+`unmeasurable`, so no default can decide. There is NO separate test of that
+repair, and this docstring used to say there was -- it cited
+test_a_probe_reports_absence_rather_than_inventing_a_value "below", and this
+module defines three tests, none of them that one. Saying "covered by" and
+naming nothing is worse than saying "not covered here", because the reader
+stops looking.
 """
 
 from __future__ import annotations

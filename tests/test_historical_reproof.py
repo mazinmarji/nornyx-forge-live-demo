@@ -23,6 +23,7 @@ authority-domain collapse (14 mutations) and semantic-projection collapse (8).
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -1952,4 +1953,94 @@ def test_the_independent_id_list_names_nothing_that_does_not_exist():
     assert phantom == [], (
         "INVENTORY carries attack ids the independent list does not name, so "
         f"the two inventories have drifted apart: {phantom}"
+    )
+
+
+#: Number words this repository writes counts with, and their values.
+_NUMBER_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+    "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+    "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+}
+
+#: Parametrised nodes whose case count prose is allowed to state, and how to
+#: count them WITHOUT a collection.
+#:
+#: A closed, declared surface. A sentence naming a node that is not here is not
+#: checked, and that is stated rather than implied -- the alternative is a full
+#: `--collect-only` inside this test, which costs minutes and would make the
+#: guard something nobody runs.
+COUNTED_NODES = {
+    "test_removing_the_control_revives_the_defect": lambda: len(DIRECT),
+}
+
+#: The shape "all nineteen <backtick>test_something<backtick> cases", in
+#: either number-word or digit form.
+#:
+#: THE PLACEHOLDER IS NOT BACKTICKED, and that is not fussiness. This
+#: comment originally illustrated the pattern with a backticked test_x,
+#: and the repo-wide citation guard resolved it as a real citation and
+#: went red -- correctly. In this repository backticks around a test
+#: name mean it resolves; an example name resolves to nothing.
+_COUNT_CLAIM = re.compile(
+    r"all\s+([A-Za-z]+|\d+)\s+`(test_[a-z0-9_]+)`\s+cases",
+    re.IGNORECASE,
+)
+
+
+def test_no_document_states_a_case_count_that_is_not_the_case_count():
+    """"All nineteen cases" was never true of the node it named.
+
+    The inventory holds nineteen CLASSES. That node is parametrised over
+    `DIRECT`, the FOURTEEN with a single mutation each -- H03 and H04 are
+    compound-only and H13 is an obsolete historical attack. The sentence
+    credited the runner with five classes this repository goes to some length
+    elsewhere to say it does not prove that way, and it said so in two places:
+    a governance document and a production docstring, in identical wording.
+
+    Reconstructing the module at the commit that introduced the wording gives
+    fourteen there too, so it was not drift -- it was never right. Nothing read
+    it, which is why it survived a review that was looking directly at the
+    mutation campaign.
+    """
+    import subprocess  # noqa: PLC0415
+
+    listing = subprocess.run(  # noqa: S603
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+        check=True, encoding="utf-8", errors="replace",
+    )
+    wrong = []
+    checked = 0
+    for name in listing.stdout.split():
+        path = ROOT / name
+        if path.suffix not in {".py", ".md"} or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for match in _COUNT_CLAIM.finditer(text):
+            spelled, node = match.group(1), match.group(2)
+            if node not in COUNTED_NODES:
+                continue
+            stated = _NUMBER_WORDS.get(spelled.lower())
+            if stated is None and spelled.isdigit():
+                stated = int(spelled)
+            line = text.count(chr(10), 0, match.start()) + 1
+            actual = COUNTED_NODES[node]()
+            checked += 1
+            if stated != actual:
+                wrong.append(
+                    f"{name}:{line} says {spelled} {node} cases; there are {actual}"
+                )
+    assert checked, (
+        "no document states a case count for any node in COUNTED_NODES, so "
+        "this guard measured nothing. Either the claims were removed -- in "
+        "which case remove the entry -- or the pattern stopped matching them."
+    )
+    assert wrong == [], (
+        "a document states a case count that is not the case count. A number "
+        "in prose has nothing holding it to the thing it counts, which is how "
+        f"this one stayed wrong from the commit that introduced it: {wrong}"
     )

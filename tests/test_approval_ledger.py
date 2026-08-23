@@ -62,7 +62,6 @@ def _fingerprint(approval_id: str, request, *, approver: str = "human.test_fixtu
             "expires_at": "2026-08-05T00:00:00Z",
             "granted": True,
         },
-        request,
     )
 
 

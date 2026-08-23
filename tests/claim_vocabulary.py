@@ -1,9 +1,10 @@
 """The assurance vocabulary, in ONE place, derived rather than re-listed.
 
 Three review rounds have now found the same defect in three modules, and the
-reason is that each module carried its own words. `test_documented_claims` had
-a four-entry subject list; `test_recorded_measurements` had a thirteen-entry
-field set; `test_execution_mode_truth` had a retired four-pattern table. A
+reason is that each module carried its own words. `tests/test_documented_claims.py`
+had a four-entry subject list; `tests/test_recorded_measurements.py` had a
+thirteen-entry field set; `tests/test_execution_mode_truth.py` had a retired
+four-pattern table. A
 review measured eleven of the thirteen field names this system actually emits
 walking straight through the four-entry list at their affirmative value --
 including `production_approval: approved`, the field's own root.

@@ -84,8 +84,15 @@ class NotAGitCheckout(RuntimeError):
     A `git archive` tarball is a faithful copy of the CONTENT and carries no
     `.git`, so every proof that asks git what is tracked fails -- 62 failures
     and 10 errors across 16 modules when a review measured it, including all
-    nineteen `test_removing_the_control_revives_the_defect` cases, the mutation
-    catalogue, and three false-green guards.
+    FOURTEEN `test_removing_the_control_revives_the_defect` cases, the
+    mutation catalogue, and three false-green guards.
+
+    This read "nineteen" and was never true of the node it names. The
+    inventory holds nineteen classes; that node is parametrised over DIRECT,
+    which is the fourteen with a single mutation each. H03 and H04 are
+    compound-only and H13 is an obsolete historical attack, so the sentence
+    credited this runner with five classes the repository goes to some
+    length elsewhere to say it does not prove that way.
 
     Those are the repository's central "every historical defect stays dead"
     evidence, and they pass in any git CHECKOUT. But a reviewer handed the

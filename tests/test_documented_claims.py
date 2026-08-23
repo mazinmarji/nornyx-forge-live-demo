@@ -93,9 +93,267 @@ GOVERNANCE_DOCS = (
 #: historical incident this guard cites (`ASSUMPTIONS.md` opening with a pinned
 #: revision) recurs verbatim minus the prefix.
 #:
-#: `` at both ends, so a 64-hex sha256 does not match on its first 40
-#: characters: there is no word boundary inside it.
-COMMIT_LITERAL = re.compile(r"(?:git:)?[0-9a-f]{40}")
+#: NOT SPELLED WITH A WORD-BOUNDARY ESCAPE, AND THAT IS THE WHOLE POINT.
+#:
+#: In the author's intent this line read `[word-boundary](?:git:)?[0-9a-f]{40}
+#: [word-boundary]`. In the FILE it held two literal U+0008 BACKSPACE bytes,
+#: written by a tool that turned the escape into the character it names. It is
+#: a raw string, so nothing put the boundary back. No document contains a
+#: backspace, so the pattern MATCHED NOTHING, EVER, and
+#: `test_no_governance_document_pins_a_commit_as_the_subject` passed over all
+#: 40 documents by finding zero of everything -- including the two real 40-hex
+#: ids sitting in ASSUMPTIONS.md.
+#:
+#: An inert pattern is a guard that cannot fail, and it reads exactly like one
+#: that works. Two things changed. The bound is written with LOOKAROUNDS, which
+#: contain no backslash escape for a tool to eat. And
+#: `test_the_commit_pin_rule_fires_and_stops_where_it_says` now requires this pattern to fire on
+#: a specimen, so an inert successor is red rather than reassuring.
+#:
+#: The bound still does what the old comment claimed: a 64-hex sha256 is not
+#: matched on its first 40 characters, because the character after them is hex.
+COMMIT_LITERAL = re.compile(r"(?<![0-9a-f])(?:git:)?[0-9a-f]{40}(?![0-9a-f])")
+
+
+#: Where one sentence ends and the next begins, for exemption scoping.
+_SENTENCE_EDGES = (". ", "." + chr(10), "! ", "? ", chr(10) * 2,
+                   chr(10) + "- ", chr(10) + "#")
+
+
+def _sentence_around(text: str, index: int) -> str:
+    """The sentence containing `index`, spanning line breaks.
+
+    Markdown wraps prose at whatever column the author left it at, so the
+    physical line is not the unit the exemption is about. This walks out to
+    the nearest sentence edge in each direction instead.
+    """
+    before = max(text.rfind(edge, 0, index) for edge in _SENTENCE_EDGES)
+    after = [position for position in
+             (text.find(edge, index) for edge in _SENTENCE_EDGES)
+             if position != -1]
+    return text[(before + 1) if before != -1 else 0:
+                (min(after) + 1) if after else len(text)]
+
+
+def _cited_guards() -> dict:
+    """Every backticked `test_...` in tracked text, by name -> where."""
+    import subprocess  # noqa: PLC0415
+
+    listing = subprocess.run(  # noqa: S603
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+        check=True, encoding="utf-8", errors="replace",
+    )
+    cited: dict = {}
+    for name in listing.stdout.split():
+        path = ROOT / name
+        if path.suffix not in {".py", ".md", ".nyx", ".json", ".toml", ".yml"}:
+            continue
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for match in re.finditer(r"`(test_[a-z0-9_]+)`", text):
+            line = text.count(chr(10), 0, match.start()) + 1
+            cited.setdefault(match.group(1), []).append(f"{name}:{line}")
+    return cited
+
+
+def _defined_guards() -> set:
+    """Every test function the suite actually defines."""
+    found: set = set()
+    for module in sorted((ROOT / "tests").glob("test_*.py")):
+        found.update(re.findall(
+            r"^def (test_[a-z0-9_]+)\(", module.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ))
+    return found
+
+
+def test_every_guard_the_repository_cites_by_name_exists():
+    """A citation nobody can resolve reads as assurance and carries none.
+
+    THIS CHECK ALREADY EXISTED AND READ ONE FILE. It was written for the census
+    script, scoped to `scripts/check_test_coverage.py`, and correct there. Run
+    across the repository it found thirteen names that resolve to nothing --
+    including a comment in PRODUCTION source (`approval_trust.py`) whose whole
+    argument for admitting the one hole in subject binding was "this hole is
+    NAMED and TESTED by two guards", where the second name existed nowhere; a
+    test docstring deferring a security property to a guard that was never
+    written, contradicted by a correct note 28 lines below it in the same file;
+    and a citation this very module had written twenty minutes earlier under a
+    name that was changed before the test was committed.
+
+    That last one is the argument for the check. The names are not wrong because
+    anyone was careless with them -- they are wrong because a name in prose has
+    nothing holding it to the thing it names, and only a machine reading every
+    one of them can keep the two together.
+
+    Seven of the thirteen were MODULES cited by their bare stem. Those are now
+    written as paths, which is unambiguous and cannot collide with a function.
+
+    THERE IS NO EXCEPTION LIST, on purpose. The first draft had one, for names
+    the repository deliberately records as DEAD -- and an exception list is a
+    way to make this guard green by growing it rather than by fixing anything.
+    The convention does the same work with nothing to abuse: backticks around a
+    `test_...` name mean IT RESOLVES. A name being recorded as dead is written
+    plainly, without them, which is also how it reads: as history, not as a
+    guard someone can go and look at.
+    """
+    defined = _defined_guards()
+    unresolved = {
+        name: where for name, where in _cited_guards().items()
+        if name not in defined
+    }
+    assert unresolved == {}, (
+        "these guard names are cited in tracked content and defined nowhere "
+        "in tests/. If a MODULE was meant, cite it as a path. If the guard was "
+        "renamed, cite the new name. If the name is DEAD and you are recording "
+        "that it died, write it WITHOUT backticks -- in this repository "
+        "backticks around a `test_...` name mean it resolves, and that is the "
+        f"whole convention this guard enforces: {unresolved}"
+    )
+
+
+def commit_pins(text: str) -> list:
+    """Line numbers where `text` pins a commit as the subject.
+
+    EXTRACTED so the specimen tables below exercise THIS rule rather than a
+    copy of it. A specimen table that tests a reimplementation proves the
+    reimplementation.
+    """
+    found = []
+    for match in COMMIT_LITERAL.finditer(text):
+        number = text.count(chr(10), 0, match.start()) + 1
+        # SCOPED TO THE SENTENCE, NOT THE LINE.
+        #
+        # A line break in markdown is a wrapping artifact, not a unit of
+        # meaning, and the exemption is about what the prose SAYS. Measured
+        # when this was line-scoped: ASSUMPTIONS.md wrote "which does not
+        # correspond to any commit in this repository (`HEAD` is <sha>)"
+        # across two lines, so the qualifying clause sat on line 26 and the
+        # id on line 27 -- a sentence saying explicitly that the id is NOT
+        # this repository, reported as pinning it. Re-wrapping the paragraph
+        # would have silenced it, which is the tell that the line was never
+        # the right unit.
+        #
+        # A document may *discuss* a commit: A-002 records a placeholder
+        # revision that was corrected, and deleting that history to satisfy
+        # a regex would lose the reasoning. What it must not do is pin one
+        # as the revision this repository currently is.
+        # WHITESPACE COLLAPSED, for the same reason the window spans lines:
+        # `does not correspond` is a phrase, and markdown will wrap it
+        # between any two of its words. A phrase that stops matching
+        # because the paragraph was re-flowed is not a rule about prose.
+        lowered = " ".join(_sentence_around(text, match.start()).lower().split())
+        if any(
+            word in lowered
+            for word in (
+                "fixture",
+                "example",
+                "superseded",
+                "tag",
+                "does not correspond",
+                "was bound to",
+                "stale",
+                # A document saying a commit FAILED makes the opposite
+                # claim to the one this guard refuses. Kept as a PHRASE:
+                # single words like "tag" are cheap to sprinkle by
+                # accident, a phrase has to be meant.
+                "failed pre-candidate",
+            )
+        ):
+            continue
+        found.append(number)
+
+
+    return found
+
+
+#: (document text, the line numbers `commit_pins` must report).
+#:
+#: THE GUARD THIS TABLE DEFENDS WAS INERT FOR ITS ENTIRE LIFE. `COMMIT_LITERAL`
+#: held two literal U+0008 BACKSPACE bytes where a word-boundary escape was
+#: meant, so it matched nothing in any document and the guard passed over all
+#: 40 of them by finding zero of everything. Nothing noticed, because a guard
+#: that never fires is indistinguishable from a guard with nothing to report.
+COMMIT_PIN_SPECIMENS = [
+    # CAUGHT: the historical incident, with and without the prefix.
+    ("Run subject revision: git:" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + ".", [1]),
+    ("Run subject revision: " + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + ".", [1]),
+    ("This repository is `" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + "`.", [1]),
+
+    # NOT A COMMIT ID: a 64-hex digest must not match on its first 40.
+    ("The governed input digests to sha256:" + 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' + ".", []),
+    ("No identifier of any kind appears in this sentence.", []),
+
+    # EXEMPT, and each for a reason stated in the exemption vocabulary.
+    ("The contracts were bound to `git:" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + "`, which does not" + chr(10)
+     + "correspond to any commit here (`HEAD` is `" + 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' + "`).", []),
+    ("`" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + "` is a failed pre-candidate head, not a candidate.", []),
+
+    # THE CONTROL THAT KEEPS SENTENCE SCOPING FROM BECOMING PARAGRAPH SCOPING.
+    # An exemption word in a NEIGHBOURING sentence must not exempt this one.
+    ("The subject revision is `" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + "`. Stale hashes are discussed" + chr(10)
+     + "in the appendix.", [1]),
+    ("Fixtures are listed below. The repository is `" + 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' + "`.", [2 - 1]),
+]
+
+
+@pytest.mark.parametrize(("document", "expected"), COMMIT_PIN_SPECIMENS)
+def test_the_commit_pin_rule_fires_and_stops_where_it_says(document, expected):
+    """A pattern that matches nothing reads exactly like one with nothing to say.
+
+    Both directions are here on purpose. The catches prove the pattern is not
+    inert; the exemptions prove it has not been widened into silence; and the
+    two neighbouring-sentence cases prove the scoping fix did not turn the
+    exemption into "any paragraph mentioning a stale hash is fine".
+    """
+    assert commit_pins(document) == expected, (
+        "the commit-pin rule reported " + repr(commit_pins(document))
+        + " for this specimen, expected " + repr(expected) + ": " + repr(document)
+    )
+
+
+def test_no_tracked_text_file_carries_an_injected_control_character():
+    """U+0008 in a regex is how the guard above came to match nothing.
+
+    The escape was written correctly and a tool along the way turned it into the
+    character it names. In a raw string nothing puts it back, and the result is
+    syntactically valid, visually identical in most editors, and semantically
+    dead. That is the worst possible failure mode for a guard.
+
+    So no tracked text file may carry one. TAB and LF are the only control
+    characters with a legitimate place in this repository's sources; CR is
+    excluded too, because the governed-content digest is canonical-LF and a
+    stray CR changes it.
+    """
+    import subprocess  # noqa: PLC0415
+
+    listing = subprocess.run(  # noqa: S603
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+        check=True, encoding="utf-8", errors="replace",
+    )
+    allowed = {9, 10}
+    offenders = []
+    for name in listing.stdout.split():
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue  # genuinely binary; not a text file this rule is about
+        for code in sorted({byte for byte in raw if byte < 32 and byte not in allowed}):
+            line = raw[: raw.find(bytes([code]))].count(b"" + chr(10).encode()) + 1
+            offenders.append(f"{name}:{line} U+{code:04X}")
+    assert offenders == [], (
+        "a tracked text file carries a control character that no editor shows "
+        "and no reviewer sees. In a regex this makes the pattern inert; in "
+        f"governed content it changes the digest: {offenders}"
+    )
 
 
 def test_no_governance_document_pins_a_commit_as_the_subject():
@@ -107,28 +365,8 @@ def test_no_governance_document_pins_a_commit_as_the_subject():
     offenders: list[str] = []
     for document in governance_docs():
         name = document.relative_to(ROOT).as_posix()
-        for number, line in enumerate(document.read_text(encoding="utf-8").splitlines(), 1):
-            if not COMMIT_LITERAL.search(line):
-                continue
-            lowered = line.lower()
-            # A document may *discuss* a commit — A-002 records a placeholder
-            # revision that was corrected, and deleting that history to satisfy
-            # a regex would lose the reasoning. What it must not do is pin one
-            # as the revision this repository currently is.
-            if any(
-                word in lowered
-                for word in (
-                    "fixture",
-                    "example",
-                    "superseded",
-                    "tag",
-                    "does not correspond",
-                    "was bound to",
-                    "stale",
-                )
-            ):
-                continue
-            offenders.append(f"{name}:{number}")
+        text = document.read_text(encoding="utf-8")
+        offenders += [f"{name}:{number}" for number in commit_pins(text)]
 
     assert offenders == [], (
         "a document names a commit as the subject; identity is the governed "

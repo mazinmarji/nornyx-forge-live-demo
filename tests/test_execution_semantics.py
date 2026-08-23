@@ -127,7 +127,7 @@ def test_a_failed_run_does_not_claim_completion(
 def test_governed_policy_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Under the governed policy a failure must surface, not be absorbed.
 
-    This was `test_strict_mode_still_raises`, keyed on `FORGE_STRICT_CREWAI`.
+    This was test_strict_mode_still_raises, keyed on `FORGE_STRICT_CREWAI`.
     That variable is retired: a boolean in the environment could change which
     governance path ran while every governed byte — and therefore the whole
     authority identity — stayed identical. The behaviour is now selected by

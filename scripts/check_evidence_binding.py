@@ -92,15 +92,61 @@ def commits_in(spec: str) -> list[str]:
     return [line.strip() for line in completed.stdout.splitlines() if line.strip()]
 
 
-def recorded_digest(commit: str) -> str | None:
-    """What the evidence AT THAT COMMIT claims the governed inputs digest to."""
+#: `recorded_digest` returns this when the binding file is not at that commit.
+#:
+#: DISTINCT FROM `None`, and that distinction is the whole repair. The function
+#: used to return `None` for four different states -- file absent, field absent,
+#: field null, JSON unparseable -- and `evaluate` skipped all four under a
+#: comment written for the first one: "No binding at this commit: nothing is
+#: being claimed, so there is nothing that can be false."
+#:
+#: That reasoning is sound for an absent FILE and false for the other three. A
+#: commit that ships `review_binding.json` with `governed_input_digest` deleted,
+#: null, or in a file truncated by a failed write IS carrying evidence -- it is
+#: carrying evidence that says nothing, which is not the same as carrying none.
+#: Measured: such a commit produced `commits_carrying_evidence: 0`,
+#: `status: pass`, rc 0. `--verify` would catch it at HEAD, but this checker
+#: exists precisely because HEAD going green does not clear the history behind
+#: it: a bad commit followed by a corrective one leaves false evidence in the
+#: range permanently.
+NO_BINDING = object()
+
+#: The binding file is there, and has no `governed_input_digest` KEY.
+#:
+#: NOT A VIOLATION, and the first draft of this repair called it one. Measured
+#: over `origin/main...HEAD`: 24 commits, every one of them carrying the OLDER
+#: artifact schema, which recorded `control_pack_commit` and had no
+#: `governed_input_digest` field at all. Flagging them would have been
+#: anachronistic -- a rule that fails every commit made before the field it
+#: requires existed, dressed up as a finding.
+#:
+#: A deliberately DELETED key is indistinguishable from a key that never
+#: existed without dating the schema, so this checker does not claim to catch
+#: that. It counts these commits and reports the count, which is the honest
+#: shape: the gap is visible, and nothing asserts a violation it cannot
+#: substantiate. What IS caught is the file being present and the claim being
+#: unusable -- null, empty, the wrong type, or a file that will not parse.
+PREDATES_THE_CLAIM = object()
+
+
+def recorded_digest(commit: str):
+    """What the evidence AT THAT COMMIT claims the governed inputs digest to.
+
+    Returns the claimed digest, `NO_BINDING` when the file is not there at all,
+    or `None` when the file IS there and the claim is missing or unreadable.
+    """
     completed = _git("show", f"{commit}:{BINDING}")
     if completed.returncode != 0:
-        return None
+        return NO_BINDING
     try:
-        return json.loads(completed.stdout).get("governed_input_digest")
+        body = json.loads(completed.stdout)
     except json.JSONDecodeError:
         return None
+    if not isinstance(body, dict):
+        return None
+    if "governed_input_digest" not in body:
+        return PREDATES_THE_CLAIM
+    return body["governed_input_digest"]
 
 
 def actual_digest(commit: str) -> str:
@@ -129,17 +175,36 @@ def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
     # own exemption list.
     grandfathered = known_violations() if apply_baseline else set()
     excused: list[str] = []
+    predating: list[str] = []
 
     for commit in commits_in(spec):
         if commit in grandfathered:
             excused.append(commit[:12])
             continue
         claimed = recorded_digest(commit)
-        if claimed is None:
-            # No binding at this commit: nothing is being claimed, so there is
-            # nothing that can be false. Absence of a claim is not a violation.
+        if claimed is NO_BINDING:
+            # No binding file at this commit: nothing is being claimed, so
+            # there is nothing that can be false. Absence of a claim is not a
+            # violation. This is the ONLY state that reasoning covers.
+            continue
+        if claimed is PREDATES_THE_CLAIM:
+            predating.append(commit[:12])
             continue
         checked += 1
+        if not isinstance(claimed, str) or not claimed:
+            # The file is here and says nothing. That is a claim that cannot be
+            # checked, shipped in the artifact whose entire job is to be
+            # checkable -- and it is indistinguishable, to every later reader,
+            # from a commit that was verified.
+            subject = _git("log", "-1", "--format=%h %s", commit).stdout.strip()
+            problems.append(
+                f"{subject}"
+                f"{chr(10)}      ships {BINDING} with no usable governed_input_digest"
+                f" (found {claimed!r})"
+                f"{chr(10)}      -> this commit carries evidence that cannot be"
+                " checked against anything"
+            )
+            continue
         actual = actual_digest(commit)
         if claimed != actual:
             subject = _git("log", "-1", "--format=%h %s", commit).stdout.strip()
@@ -155,6 +220,11 @@ def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
         "range": spec,
         "commits_carrying_evidence": checked,
         "grandfathered_commits": len(excused),
+        # Reported rather than silently skipped: these commits carry a
+        # binding artifact from before `governed_input_digest` existed, so
+        # there is nothing to check and nothing false. A number nobody can
+        # see is the difference between a known gap and an invisible one.
+        "commits_predating_the_digest_claim": len(predating),
         "problems": problems,
         "status": "fail" if problems else "pass",
     }
@@ -176,8 +246,14 @@ def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
 def main() -> int:
     # PR-SCOPED by default. `origin/main..HEAD` fails this branch forever on 130
     # recorded historical violations, and a permanently red security control is
-    # one that gets switched off. The merge-base range asks the only question
+    # one that gets switched off. The three-dot range asks the only question
     # enforcement can act on: is anything NEW introducing the defect.
+    #
+    # THREE DOTS IS THE SYMMETRIC DIFFERENCE, not the merge-base range, and
+    # this comment called it the latter. They agree whenever HEAD descends from
+    # `origin/main`, which is the normal case and why the wording survived; on
+    # a DIVERGED branch three dots also walks the commits that are on
+    # `origin/main` and not here, which are somebody else's to answer for.
     args = [a for a in sys.argv[1:] if a != "--no-baseline"]
     spec = args[0] if args else "origin/main...HEAD"
     return evaluate(spec, apply_baseline="--no-baseline" not in sys.argv)

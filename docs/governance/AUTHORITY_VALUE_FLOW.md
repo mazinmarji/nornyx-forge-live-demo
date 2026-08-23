@@ -136,8 +136,23 @@ It could not be answered honestly yet. Three attempts, all discarded:
 
 In each case the pristine baseline failed, so no mutation could have changed a
 verdict and any classification would have been harness evidence rather than
-security evidence. `INVALID_BASELINE` is the recorded outcome, not SURVIVED and
-not KILLED.
+security evidence.
+
+The recorded outcome is **`HUMAN_BLOCKED`**, not `INVALID_BASELINE`, and not
+SURVIVED or KILLED. This paragraph said `INVALID_BASELINE` while
+[HUMAN_BLOCKED_MEASUREMENTS.md](HUMAN_BLOCKED_MEASUREMENTS.md) said, of the
+identical three attempts, "**They are not `INVALID_BASELINE`.** That outcome
+describes an attack that entered the protocol and failed step 2. These never
+entered it: the precondition is external." `MUTATION_CAMPAIGN.md` agrees, and
+both campaign summaries report `INVALID_BASELINE = 0`.
+
+The distinction is not bookkeeping. `INVALID_BASELINE` means an attack entered
+the protocol and its harness was broken -- an engineering problem, closable
+by machine work, and a reader would go looking for the fix. `HUMAN_BLOCKED`
+means the precondition is a human approval this repository must never
+manufacture. It is the one category no autonomous run can close, and
+labelling it as the closable one points the reader at work that does not
+exist.
 
 **Deferred to the gate that regenerates evidence in causal order**, which is
 where a contract that genuinely validates first exists. Until then the observed

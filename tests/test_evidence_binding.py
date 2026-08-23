@@ -181,19 +181,245 @@ def test_appending_a_new_sha_to_the_baseline_does_not_make_a_violation_pass(
     assert resolved.returncode != 0, "the synthetic SHA unexpectedly resolves"
 
 
-def test_the_generator_never_overwrites_the_committed_baseline():
+#: (what `git show` returns for the binding file, what recorded_digest answers)
+#:
+#: FOUR STATES COLLAPSED INTO ONE `None`, and `evaluate` skipped all four under
+#: a comment written for the first: "No binding at this commit: nothing is
+#: being claimed, so there is nothing that can be false." That reasoning is
+#: sound for an absent FILE and false for a file that is present and says
+#: nothing -- which is not the absence of evidence, it is unusable evidence,
+#: shipped in the artifact whose whole job is to be checkable.
+BINDING_STATES = [
+    ("absent", None, "NO_BINDING"),
+    ("a usable claim", '{"governed_input_digest": "sha256:abc"}', "sha256:abc"),
+    ("the key deleted", '{"other": 1}', "PREDATES_THE_CLAIM"),
+    ("the claim null", '{"governed_input_digest": null}', None),
+    ("the claim empty", '{"governed_input_digest": ""}', ""),
+    ("the claim a number", '{"governed_input_digest": 7}', 7),
+    ("truncated by a failed write", '{"governed_input_dig', None),
+    ("not an object at all", '["governed_input_digest"]', None),
+]
+
+
+@pytest.mark.parametrize(("label", "content", "expected"), BINDING_STATES)
+def test_the_binding_reader_separates_absence_from_an_unusable_claim(
+    label: str, content, expected, monkeypatch: pytest.MonkeyPatch,
+):
+    """Absence of a claim is not a violation. An unusable claim is.
+
+    Driven through the production `recorded_digest` with `_git` stubbed, so
+    this measures the function the checker actually calls.
+    """
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    def fake_git(*args: str):
+        failed = content is None
+        return subprocess.CompletedProcess(
+            args=list(args), returncode=1 if failed else 0,
+            stdout="" if failed else content, stderr="",
+        )
+
+    monkeypatch.setattr(binding, "_git", fake_git)
+    answer = binding.recorded_digest("0" * 40)
+    if expected == "NO_BINDING":
+        assert answer is binding.NO_BINDING, label
+    elif expected == "PREDATES_THE_CLAIM":
+        assert answer is binding.PREDATES_THE_CLAIM, label
+    else:
+        assert answer == expected and answer is not binding.NO_BINDING, label
+
+
+def test_a_commit_shipping_an_unusable_claim_is_a_violation(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+):
+    """The end-to-end consequence, at the checker's verdict.
+
+    Measured before the repair: a commit shipping `review_binding.json` with
+    the digest set to null produced `commits_carrying_evidence: 0`,
+    `status: pass`, rc 0. `--verify` would catch it at HEAD -- and this checker
+    exists precisely because HEAD going green does not clear the history behind
+    it. A bad commit followed by a corrective one leaves false evidence in the
+    range permanently, which is the incident it was written for.
+    """
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    commit = "1" * 40
+    monkeypatch.setattr(binding, "commits_in", lambda spec: [commit])
+    monkeypatch.setattr(binding, "known_violations", set)
+    monkeypatch.setattr(
+        binding, "recorded_digest",
+        lambda sha: None,  # present, and says nothing
+    )
+    monkeypatch.setattr(
+        binding, "_git",
+        lambda *args: subprocess.CompletedProcess(list(args), 0, "1111111 a commit", ""),
+    )
+    code = binding.evaluate("does-not-matter")
+    report = json.loads(capsys.readouterr().out)
+    assert code != 0, "a commit shipping an unusable claim was accepted"
+    assert report["problems"], report
+    assert "no usable governed_input_digest" in report["problems"][0]
+
+
+def test_a_commit_with_no_binding_file_at_all_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+):
+    """Absence of a claim is not a violation, measured at the VERDICT.
+
+    The reader's own table covers this, and a reader test is not a verdict:
+    when I mutated `evaluate` to treat an absent file as a violation, every
+    other control in this group stayed green. Over-strictness here would fail
+    every commit made before the binding artifact existed at all -- the same
+    date bug as the anachronistic rule above, pointing the other way.
+    """
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    commit = "3" * 40
+    monkeypatch.setattr(binding, "commits_in", lambda spec: [commit])
+    monkeypatch.setattr(binding, "known_violations", set)
+    monkeypatch.setattr(binding, "recorded_digest", lambda sha: binding.NO_BINDING)
+    code = binding.evaluate("does-not-matter")
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0, report
+    assert report["problems"] == [], report
+    assert report["commits_carrying_evidence"] == 0, report
+    assert report["commits_predating_the_digest_claim"] == 0, (
+        "a commit with no binding file was counted as one that predates the "
+        "digest claim; those are different states and the report says so"
+    )
+
+
+def test_a_binding_from_before_the_field_existed_is_counted_not_blamed(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+):
+    """The first draft of this repair flagged 24 real commits anachronistically.
+
+    Every one of them carried the OLDER artifact schema, which recorded
+    `control_pack_commit` and had no `governed_input_digest` field at all. A
+    rule that fails every commit made before the field it requires existed is
+    not a finding, it is a rule with a date bug -- so the checker reports these
+    as a COUNT and asserts nothing about them.
+
+    A deliberately deleted key is indistinguishable from a key that never
+    existed without dating the schema, and this checker does not claim to catch
+    that. Saying so in the report is the difference between a known gap and an
+    invisible one.
+    """
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    commit = "2" * 40
+    monkeypatch.setattr(binding, "commits_in", lambda spec: [commit])
+    monkeypatch.setattr(binding, "known_violations", set)
+    monkeypatch.setattr(binding, "recorded_digest",
+                        lambda sha: binding.PREDATES_THE_CLAIM)
+    code = binding.evaluate("does-not-matter")
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0, report
+    assert report["problems"] == []
+    assert report["commits_predating_the_digest_claim"] == 1, report
+    assert report["commits_carrying_evidence"] == 0, (
+        "a commit with nothing to check was counted as carrying checked evidence"
+    )
+
+
+def _a_grandfathered_commit() -> str:
+    """The first baselined commit that is an ancestor of HEAD, deterministically."""
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    for sha in sorted(binding.known_violations()):
+        reachable = subprocess.run(  # noqa: S603
+            ["git", "-C", str(ROOT), "merge-base", "--is-ancestor", sha, "HEAD"],
+            capture_output=True, timeout=120, check=False,
+        )
+        if reachable.returncode == 0:
+            return sha
+    raise AssertionError(
+        "no commit in the evidence-binding baseline is reachable from HEAD, so "
+        "the grandfathering path cannot be exercised by any range"
+    )
+
+
+@pytest.mark.parametrize("apply_baseline", [True, False])
+def test_the_generator_never_overwrites_the_committed_baseline(apply_baseline: bool):
     """Ordinary verification must not rewrite the evidence it verifies against.
 
     The baseline is EVIDENCE. A checker that regenerates its own exemption list
     while verifying is not checking anything -- it is recording whatever it
     found, which is how 062ed8b was absorbed in the first place.
+
+    THIS USED TO BE `assert "write_text" not in source and "open(" not in
+    source`. That is a claim about two tokens in one file, and the claim being
+    made is about behaviour. Measured against the real source plus each
+    realistic way of writing that file:
+
+        BASELINE.write_bytes(...)          the guard PASSED
+        shutil.copyfile(staging, BASELINE) the guard PASSED
+        os.replace(staging, BASELINE)      the guard PASSED
+        json.dump(x, BASELINE.open("w"))   caught
+        Path.write_text alias              caught
+
+    Three of five evade it, and `shutil` is already imported in that file for
+    `unpack_archive`, so `copyfile` is the natural spelling. This module's own
+    docstring says every exception mechanism gets an adversarial test proving it
+    cannot enlarge its own exception set; a text scan is not that test.
+
+    So the checker is RUN, over the real range, in both baseline modes, and the
+    file's bytes are compared either side. Behaviour, measured as behaviour.
     """
-    source = CHECKER.read_text(encoding="utf-8")
-    assert "write_text" not in source and "open(" not in source, (
-        "the binding checker can write files, so it can rewrite the baseline it "
-        "is meant to be constrained by"
+    import hashlib  # noqa: PLC0415
+
+    import check_evidence_binding as binding  # noqa: PLC0415
+
+    def digest() -> str:
+        return hashlib.sha256(BASELINE.read_bytes()).hexdigest()
+
+    # A ONE-COMMIT RANGE THAT CONTAINS A GRANDFATHERED VIOLATION.
+    #
+    # The property is "verifying does not rewrite the evidence", which does not
+    # depend on range size -- but the range has to reach the code that consults
+    # the baseline at all, or the run proves nothing about grandfathering. This
+    # one does, and both modes diverge on it:
+    #
+    #     apply_baseline=True   grandfathered 1, status pass, rc 0   (0.1s)
+    #     apply_baseline=False  problems 1,     status fail, rc 2    (2.0s)
+    #
+    # The full `origin/main...HEAD` range costs ~2.5s per commit over 135+
+    # commits, twice. A control nobody can afford to run is a control that
+    # stops being run.
+    spec = f"{_a_grandfathered_commit()}~1...{_a_grandfathered_commit()}"
+    before, before_mtime = digest(), BASELINE.stat().st_mtime_ns
+    binding.evaluate(spec, apply_baseline=apply_baseline)
+    assert digest() == before, (
+        "the binding checker REWROTE the baseline it is meant to be constrained "
+        "by. Every violation it just found is now grandfathered, and the next "
+        "run will report a clean range over exactly the evidence that was bad."
     )
-    assert "known_violations" in source, "the checker no longer reads the baseline"
+    assert BASELINE.stat().st_mtime_ns == before_mtime, (
+        "the baseline was rewritten with identical content. The bytes match, so "
+        "nothing is lost today -- but a checker that opens its own exemption "
+        "list for writing at all is one edit away from recording what it found."
+    )
+
+
+def test_the_immutability_control_is_not_a_text_scan():
+    """The repair, pinned so it cannot quietly revert to reading the source.
+
+    The predecessor asserted two tokens were absent from a file. Reverting to
+    that shape would leave a test with the same name, the same docstring, and
+    none of the property -- which is the exact substitution this module exists
+    to refuse.
+    """
+    import inspect  # noqa: PLC0415
+
+    body = inspect.getsource(test_the_generator_never_overwrites_the_committed_baseline)
+    executable = body[body.index('"""', body.index('"""') + 3) + 3:]
+    assert "evaluate(" in executable, (
+        "the immutability control no longer RUNS the checker, so whatever it "
+        "asserts is about text rather than about what the checker does"
+    )
+    assert "read_text" not in executable, (
+        "the immutability control reads the checker's source again"
+    )
 
 
 @pytest.mark.parametrize("flag", ["--no-baseline"])

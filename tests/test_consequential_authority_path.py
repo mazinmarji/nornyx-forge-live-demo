@@ -29,6 +29,7 @@ the field the lookup actually uses.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -212,6 +213,243 @@ def _ledger_codes_in_source() -> set:
             if isinstance(value, str):
                 found.add(value)
     return found
+
+
+def test_a_tampered_ledger_reaches_the_decision_as_a_ledger_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """The DECISION, not the source. This is what an operator actually reads.
+
+    The structural check runs once when the ledger is opened and again inside
+    the transaction that consumes the grant, because the runtime directory is
+    bind-mounted read-write and gitignored -- an object can be installed on
+    `consumed_approvals` between the two. Occupying that window is the whole
+    specimen.
+
+    Measured before the repair:
+
+        effect      DENY          it fails safe, which is why this was P2
+        callbacks   0             the act genuinely did not run
+        code        HUMAN_APPROVAL_REQUIRED
+        reason      "... is unusable: APPROVAL_LEDGER_UNREADABLE, ..."
+
+    The correct code was IN the reason and the classifier read position 0 only.
+    `HUMAN_APPROVAL_REQUIRED` tells an operator to go and obtain an approval.
+    They will obtain one, present it, and be refused again, because no approval
+    can fix a ledger carrying a hostile object.
+
+    THE REPAIR IS TWO INDEPENDENT HALVES AND THE CONTROL SAYS SO. Measured by
+    reverting each:
+
+        the return site loses its code          still green
+        the classifier goes back to startswith  still green
+        BOTH reverted together                  RED, HUMAN_APPROVAL_REQUIRED
+
+    So this is defence in depth, and either half alone closes the defect. That
+    is worth stating precisely rather than claiming the test catches either
+    regression on its own, which it demonstrably does not. The structural
+    check beside it is what notices a return site losing its code; this one is
+    what notices the decision carrying the wrong one.
+    """
+    import nornyx_forge.nornyx_runtime as runtime  # noqa: PLC0415
+
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    grant = signed_grant(_request(boundary))
+    effect = _Effect()
+
+    real = runtime._assert_ledger_structure
+    calls = {"n": 0}
+
+    def tampered(conn, path, code):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real(conn, path, code)
+        raise runtime.NornyxRuntimeUnavailable(
+            f"action approval ledger at {path} is unusable: {code}, "
+            "an unexpected object is defined on it"
+        )
+
+    monkeypatch.setattr(runtime, "_assert_ledger_structure", tampered)
+    decision = _release(boundary, effect, grant)
+
+    assert decision.effect == "DENY", decision
+    assert effect.runs == 0, "the effect ran against a ledger that cannot be read"
+    assert decision.code != "HUMAN_APPROVAL_REQUIRED", (
+        "a ledger carrying a hostile object was reported as a missing human "
+        "approval. The operator will obtain one, present it, and be refused "
+        "again: " + str(decision.code) + " / " + str(decision.reason)[:200]
+    )
+    assert decision.code == runtime.ApprovalLedger.UNREADABLE, (
+        "the decision names " + str(decision.code) + "; the ledger raised "
+        + runtime.ApprovalLedger.UNREADABLE
+    )
+
+
+def _ledger_code_at(text: str) -> bool:
+    """Does this literal begin with one of the ledger's decision codes?"""
+    from nornyx_forge.nornyx_runtime import LEDGER_DECISION_CODES  # noqa: PLC0415
+
+    return any(text.startswith(code) for code in LEDGER_DECISION_CODES)
+
+
+def _raises_lead_with_a_code(caught, module) -> bool:
+    """Every `raise <Type>(...)` of the caught type leads with a code."""
+    types = set()
+    for element in (caught.elts if isinstance(caught, ast.Tuple) else [caught]):
+        if isinstance(element, ast.Name):
+            types.add(element.id)
+    raised = [
+        node for node in ast.walk(module)
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+        and isinstance(node.exc.func, ast.Name) and node.exc.func.id in types
+    ]
+    def leads(expression) -> bool:
+        # A raise may build its message by concatenation -- the migration
+        # refusal appends a measured list of journal modes -- so unwrap the
+        # left spine before asking where the code is.
+        while isinstance(expression, ast.BinOp):
+            expression = expression.left
+        return (
+            isinstance(expression, ast.JoinedStr)
+            and bool(expression.values)
+            and isinstance(expression.values[0], ast.FormattedValue)
+        ) or (
+            isinstance(expression, ast.Constant)
+            and _ledger_code_at(str(expression.value))
+        )
+
+    return bool(raised) and all(
+        node.exc.args and leads(node.exc.args[0]) for node in raised
+    )
+
+
+def _leads_with_a_code(expression, module, cls, handlers) -> bool:
+    """Can this refusal message be seen to lead with a decision code?
+
+    Resolves one level of indirection, because the ledger legitimately routes
+    some refusals through a helper, an attribute, or an exception:
+
+        f"{CODE}: ..."                  yes, directly
+        self.unavailable_reason         resolve the attribute's assignments
+        self._continuity_mismatch(...)  resolve the method's returns
+        str(exc)                        resolve that exception's raise sites
+        _ledger_code_in(...)            it reads the code out of the message
+
+    Anything it cannot resolve is NOT credited. Over-strictness here costs a
+    comment at a call site; under-strictness costs an operator being told to
+    obtain an approval for a ledger that no approval can fix.
+    """
+    if isinstance(expression, ast.JoinedStr) and expression.values:
+        head = expression.values[0]
+        if isinstance(head, ast.FormattedValue):
+            return True
+        if isinstance(head, ast.Constant) and _ledger_code_at(str(head.value)):
+            return True
+        return False
+    if isinstance(expression, ast.BinOp):
+        return _leads_with_a_code(expression.left, module, cls, handlers)
+    if isinstance(expression, ast.Constant):
+        return _ledger_code_at(str(expression.value))
+    if isinstance(expression, ast.Attribute):
+        assignments = [
+            node for node in ast.walk(cls)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Attribute)
+                    and target.attr == expression.attr
+                    for target in node.targets)
+        ]
+        return bool(assignments) and all(
+            _leads_with_a_code(node.value, module, cls, handlers)
+            for node in assignments
+        )
+    if isinstance(expression, ast.Call):
+        func = expression.func
+        if isinstance(func, ast.Name) and func.id in {"_ledger_code_in", "_with_code"}:
+            return True
+        if isinstance(func, ast.Name) and func.id == "str" and expression.args:
+            # THE ENCLOSING HANDLER, not a name -> type map. Nearly every
+            # handler in this class binds `exc`, so a map keyed on the bound
+            # name silently resolves to whichever handler `ast.walk` reached
+            # last -- a resolver that answers confidently about the wrong
+            # exception is worse than one that declines.
+            caught = handlers.get(id(expression))
+            return caught is not None and _raises_lead_with_a_code(caught, module)
+        if isinstance(func, ast.Attribute):
+            method = next(
+                (node for node in ast.walk(cls)
+                 if isinstance(node, ast.FunctionDef) and node.name == func.attr),
+                None,
+            )
+            if method is not None:
+                returns = [
+                    node.value for node in ast.walk(method)
+                    if isinstance(node, ast.Return) and node.value is not None
+                ]
+                return bool(returns) and all(
+                    _leads_with_a_code(value, module, cls, handlers)
+                    for value in returns
+                )
+    return False
+
+
+def test_no_ledger_refusal_reaches_the_decision_without_its_code():
+    """A completeness check that cannot report a MISSING code is not one.
+
+    Its sibling, test_every_code_the_ledger_emits_survives_to_the_decision,
+    derives its set by AST-matching reason heads of the form `f"{CODE}: ..."`,
+    so it can only ever find codes that ALREADY EXIST. It is structurally
+    incapable of reporting a refusal that carries no code at all. This
+    repository wrote that sentence down -- "A completeness check that cannot
+    report a MISSING code is not one" -- and then left one such site standing.
+
+    MEASURED AT THAT SITE, by occupying the window between the structural
+    re-read and the in-transaction re-check:
+
+        effect DENY, callbacks 0        it fails safe
+        code   HUMAN_APPROVAL_REQUIRED  and tells the wrong story
+        reason "... is unusable: APPROVAL_LEDGER_UNREADABLE, ..."
+
+    The correct code was IN the message and the classifier matched position 0
+    only. An operator reading HUMAN_APPROVAL_REQUIRED obtains a fresh approval,
+    presents it, and is refused again, because the ledger is carrying a hostile
+    object that no approval can fix.
+
+    So this walks every refusal `return False, <message>` in `ApprovalLedger`
+    and requires the message to be traceable to a code, which is the question
+    the other test cannot ask.
+    """
+    import nornyx_forge.nornyx_runtime as runtime  # noqa: PLC0415
+
+    module = ast.parse(Path(runtime.__file__).read_text(encoding="utf-8"))
+    cls = next(node for node in ast.walk(module)
+               if isinstance(node, ast.ClassDef) and node.name == "ApprovalLedger")
+    # Every expression inside an `except` block, mapped to THAT block's type.
+    handlers = {}
+    for node in ast.walk(cls):
+        if isinstance(node, ast.ExceptHandler) and node.type is not None:
+            for statement in node.body:
+                for inner in ast.walk(statement):
+                    handlers[id(inner)] = node.type
+    codeless = []
+    for node in ast.walk(cls):
+        if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Tuple):
+            continue
+        parts = node.value.elts
+        if len(parts) != 2:
+            continue
+        first = parts[0]
+        if not (isinstance(first, ast.Constant) and first.value is False):
+            continue
+        if not _leads_with_a_code(parts[1], module, cls, handlers):
+            codeless.append("nornyx_runtime.py:" + str(node.lineno))
+    assert codeless == [], (
+        "these ledger refusals reach the decision with no code the classifier "
+        "can read, so they arrive as HUMAN_APPROVAL_REQUIRED, indistinguishable "
+        "from a grant nobody ever approved. An operator will obtain an "
+        "approval, present it, and be refused again: " + repr(codeless)
+    )
 
 
 def test_every_code_the_ledger_emits_survives_to_the_decision():

@@ -95,9 +95,27 @@ deliberate and separately tested.
 What catches restoration is a consumption **high-water mark** kept beside the
 ledger rather than in it (`<ledger>.highwater`). Consumption rows only ever
 accumulate, so a ledger holding fewer rows than were recorded against it has
-lost history, and `consume` refuses with `LEDGER_ROLLED_BACK`. The mark is read
-before the row count, never after, so a concurrent consumption cannot make a
-legitimate grant look like a rollback.
+lost history, and `consume` refuses with `LEDGER_ROLLED_BACK`.
+
+**Ordering is no longer the mechanism, and this paragraph used to say it was.**
+It read: "The mark is read before the row count, never after, so a
+concurrent consumption cannot make a legitimate grant look like a
+rollback." At this head the order is the opposite -- rows are counted
+first, at `nornyx_runtime.py`'s `count(*) FROM consumed_approvals`, and the
+witness is read after it. The runtime source flags the old argument as
+superseded in as many words: it "was sound about ORDERING and silent about
+what actually broke".
+
+What protects the comparison now is that **both values are read inside the
+single `ATTACH`ed transaction that writes them**, under `BEGIN IMMEDIATE`
+with a rollback journal, where they are required to be EQUAL. Ordering
+within that transaction cannot matter, because nothing else can interleave.
+
+This mattered as more than pedantry: an engineer restructuring
+`_commit_consumption` for performance could have PRESERVED the documented
+property -- read the mark first -- by splitting the two reads onto separate
+connections, and reintroduced the defect the source records as measured at
+8 of 45 kill points. The document would have licensed the regression.
 
 What remains open, named precisely:
 

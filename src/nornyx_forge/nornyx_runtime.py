@@ -582,14 +582,21 @@ APPROVAL_LEDGER_ENV = "FORGE_APPROVAL_LEDGER"
 DEFAULT_APPROVAL_LEDGER = "evidence/runtime/action_approvals.sqlite3"
 
 
-def approval_fingerprint(approval: Mapping[str, Any], request: ActionRequest) -> str:
+def approval_fingerprint(approval: Mapping[str, Any]) -> str:
     """Digest the authority a validated grant actually carries.
 
     The canonical signed payload, which is exactly the material a trusted key
-    committed to. Deliberately not ``approval_id``: keying single use on it made
-    the control caller-selectable, and the same grant re-presented as ACT-0002
-    released the effect again. An id is a label a presenter chooses; it is not
-    part of what a human decided.
+    committed to.
+
+    NOT KEYED *ON* ``approval_id``, which is not the same as excluding it, and
+    this docstring used to say the latter. ``approval_id`` IS in
+    ``SIGNED_FIELDS``, so the fingerprint is a function of it -- what changed is
+    that it is no longer the KEY. Keying single use on the id alone made the
+    control caller-selectable: the same grant re-presented as ACT-0002 released
+    the effect again, because an id is a label a presenter chooses. Digesting
+    the whole signed payload means changing the id changes the fingerprint,
+    which is the opposite failure mode and a harmless one -- the second
+    constraint, ``UNIQUE(request_digest)``, refuses it on the request instead.
 
     Deliberately not the signature bytes either. Ed25519 is deterministic today,
     but keying replay protection on an encoding rather than on meaning is the
@@ -850,6 +857,38 @@ REQUIRED_LEDGER_UNIQUE_COLUMNS = {
     "fingerprint": "one human decision could be spent twice under different labels",
     "request_digest": "one consequential act could run twice under different decisions",
 }
+
+
+def _with_code(message: str, fallback: str) -> str:
+    """`message`, guaranteed to lead with a ledger decision code.
+
+    A refusal must carry its code BY CONSTRUCTION rather than by invariant.
+    `self.unavailable_reason` is set wherever `available` is cleared and every
+    such assignment leads with a code -- but "every assignment happens to" is
+    an argument, and the next assignment is one edit away from not. This makes
+    the property structural, so no reasoning about reachability is required to
+    know the code survives to the decision.
+    """
+    if _ledger_code_in(message):
+        return message
+    return f"{fallback}: {message}" if message else fallback
+
+
+def _ledger_code_in(message: str) -> str:
+    """The ledger decision code this message carries, or "".
+
+    Leading-token match first, because that is where a well-formed reason puts
+    it; then anywhere, because a reason that names its code has named it
+    whatever the surrounding formatting does. Returns "" when there is none,
+    which is the state a caller must handle rather than paper over.
+    """
+    for code in LEDGER_DECISION_CODES:
+        if message.startswith(code):
+            return code
+    for code in LEDGER_DECISION_CODES:
+        if code in message:
+            return code
+    return ""
 
 
 def _read_established_at(conn: sqlite3.Connection) -> str | None:
@@ -1391,7 +1430,7 @@ class ApprovalLedger:
         answers, and only one of them may release an effect.
         """
         if not self.available:
-            return False, self.unavailable_reason
+            return False, _with_code(self.unavailable_reason, self.UNREADABLE)
 
         # RE-VALIDATED HERE, not only at construction. The structure check ran
         # once in __init__, and the ledger file lives in the directory the
@@ -1597,7 +1636,26 @@ class ApprovalLedger:
                 "establishes a fresh epoch, then obtain a NEW human approval."
             )
         except NornyxRuntimeUnavailable as exc:
-            return False, str(exc)
+            # THE ONE REFUSAL THIS LEDGER RETURNED WITHOUT LEADING WITH A CODE.
+            #
+            # `_assert_ledger_structure` raises "action approval ledger at
+            # <path> is unusable: APPROVAL_LEDGER_UNREADABLE, ..." -- the code
+            # is in the middle. The boundary classifies by
+            # `release_reason.startswith(code)`, so nothing matched and
+            # `withheld_code` kept its `HUMAN_APPROVAL_REQUIRED` default.
+            #
+            # Measured by occupying the window between the structural re-read
+            # and the in-transaction re-check: effect DENY, callbacks 0 -- it
+            # fails safe -- and code HUMAN_APPROVAL_REQUIRED, which tells an
+            # operator to obtain an approval. They will obtain one, present it,
+            # and be refused again, because the ledger is carrying a hostile
+            # object no approval can fix.
+            #
+            # `LEDGER_DECISION_CODES` exists to stop exactly this collapse, and
+            # `_ledger_code_in` now reads the code from anywhere in the message
+            # rather than only at position 0, so a message that carries its
+            # code cannot lose it to formatting.
+            return False, f"{_ledger_code_in(str(exc)) or self.UNREADABLE}: {exc}"
         except (sqlite3.Error, OSError) as exc:
             # Cannot record the claim, so cannot promise single use. Withhold.
             #
@@ -3039,7 +3097,7 @@ class NornyxActionBoundary:
                 # approval_id the presenter chose.
                 assert action_approval is not None
                 released, release_reason = self.approval_ledger.consume(
-                    approval_fingerprint(action_approval, request),
+                    approval_fingerprint(action_approval),
                     request.digest,
                     at=self.as_of,
                     approval_id=str(action_approval.get("approval_id", "")),
@@ -3061,10 +3119,13 @@ class NornyxActionBoundary:
                 # re-provision a ledger, versus stop and investigate a rollback.
                 # An operator reading the evidence could not tell which.
                 if not released:
-                    for ledger_code in LEDGER_DECISION_CODES:
-                        if release_reason.startswith(ledger_code):
-                            withheld_code = ledger_code
-                            break
+                    # ANYWHERE IN THE MESSAGE, not only at position 0. A
+                    # `startswith` classifier silently returns "nobody
+                    # approved" for a refusal whose code is one word further
+                    # in, and a completeness check built by AST-matching
+                    # `f"{CODE}: ..."` heads cannot report a code that is
+                    # MISSING -- so the two failed together.
+                    withheld_code = _ledger_code_in(release_reason) or withheld_code
             withheld = not released
         else:
             withheld = False

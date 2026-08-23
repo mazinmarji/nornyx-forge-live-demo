@@ -38,6 +38,9 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
 
+#: A newline, spelled so no tool can eat the escape.
+NL = chr(10)
+
 
 @dataclass(frozen=True)
 class FalseGreen:
@@ -46,9 +49,18 @@ class FalseGreen:
     root_cause: str
     guard: str
     owner: str
-    #: (path, before, after, count) -- an EXECUTABLE reproduction of this
-    #: class's defect, applied to the real tree and undone afterwards. When
-    #: present, the marked guard MUST go red under it, FOR ITS OWN REASON.
+    #: (path, before, after, count, property) -- an EXECUTABLE reproduction of
+    #: this class's defect, applied to the real tree and undone afterwards.
+    #: When present, the marked guard MUST go red under it, FOR ITS OWN REASON.
+    #:
+    #: `property` is a phrase that has to appear in the failure evidence. The
+    #: contract used to call `require_caused_failure` WITHOUT it, and that
+    #: helper's own docstring says why that is not attribution: "same node
+    #: failed" is weaker than "same node failed BECAUSE the intended assertion
+    #: was violated". Measured: a report where the FG22 owner failed in the
+    #: call phase for an unrelated reason RETURNED CLEAN without it, and
+    #: INVALID_MUTATION with it. Both phrases below were taken from the actual
+    #: failure text, by running the mutation and reading what came out.
     #:
     #: `root_cause` and `guard` above are PROSE and always were. A review
     #: found two markers sitting on nodes that could not fail for the control
@@ -204,7 +216,7 @@ INVENTORY = (
         # file -- which is precisely how the class was missed.
         ("scripts/check_evidence_binding.py",
          "known_violations() if apply_baseline else set()",
-         "known_violations()", 1),
+         "known_violations()", 1, "escape hatch"),
     ),
     FalseGreen(
         "FG23", "a kill, when the observable collapsed because the mutant broke the run",
@@ -292,7 +304,8 @@ INVENTORY = (
         # The COUNT is part of the reproduction: a stale anchor that matches
         # nothing is FG07, and one that matches more than intended is a
         # different mutation than the one recorded.
-        ("tests/mutation_workspace.py", "timeout=timeout", "timeout=None", 2),
+        ("tests/mutation_workspace.py", "timeout=timeout", "timeout=None",
+         2, "with no timeout"),
     ),
     FalseGreen(
         "FG34", "a KILL, when only a named test failed",
@@ -498,7 +511,44 @@ _ARITHMETIC = {
 _MAX_OPERAND = 2 ** 32
 
 
-def _fold(node: ast.expr):
+def _constant_bindings(function: ast.AST) -> dict:
+    """Names whose EVERY binding in this guard is a constant literal.
+
+    A NAME REBOUND FROM ANYTHING ELSE IS NOT IN HERE. If a guard computes a
+    value and asserts it, that is a real assertion whatever its first binding
+    was -- so a name assigned from a call, a subscript, a loop target, a `with`
+    target, a comprehension, or an augmented assignment is excluded outright,
+    not merely overwritten.
+    """
+    constants: dict = {}
+    rebound: set = set()
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            complex_target = len(targets) != len(node.targets)
+            for target in targets:
+                if isinstance(node.value, ast.Constant) and not complex_target:
+                    if target.id in constants and constants[target.id] != node.value.value:
+                        rebound.add(target.id)
+                    constants[target.id] = node.value.value
+                else:
+                    rebound.add(target.id)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            target = getattr(node, "target", None)
+            if isinstance(target, ast.Name):
+                rebound.add(target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            for name in ast.walk(node.target):
+                if isinstance(name, ast.Name):
+                    rebound.add(name.id)
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            for name in ast.walk(node.optional_vars):
+                if isinstance(name, ast.Name):
+                    rebound.add(name.id)
+    return {name: value for name, value in constants.items() if name not in rebound}
+
+
+def _fold(node: ast.expr, bindings: dict | None = None):
     """The value of an expression that names nothing, or `_UNDECIDED`.
 
     THE FIRST VERSION COMPILED THE EXPRESSION AND RAN IT WITH `__builtins__`
@@ -521,45 +571,64 @@ def _fold(node: ast.expr):
     credited as real, because string arithmetic is not folded.
     """
     try:
-        return _decide(node)
+        return _decide(node, bindings or {})
     except (_Undecidable, ArithmeticError, TypeError,
             ValueError, IndexError, KeyError):
         return _UNDECIDED
 
 
-def _decide(node: ast.expr):
+def _decide(node: ast.expr, bindings: dict):
     """One node of the vocabulary, or `_Undecidable`. Recursive."""
     if isinstance(node, ast.Constant):
         return node.value
+    # A NAME BOUND ONLY TO LITERALS IS AS FIXED AS A LITERAL.
+    #
+    # The Name rule used to live in `_cannot_fail` and fire only when the whole
+    # assert test WAS a bare Name, so the moment the name sat under any
+    # operator the expression became undecided and was credited as real:
+    #
+    #     flag = True; assert flag           caught
+    #     flag = True; assert flag == True   CREDITED AS A REAL ASSERTION
+    #     flag = True; assert flag is True   CREDITED
+    #     gone = False; assert not gone      CREDITED
+    #     flag = True; assert flag != False  CREDITED
+    #
+    # One token apart, and the docstring beside `UNDECIDED_BY_DESIGN` promised
+    # the only unscreened shapes were exponent, shift, sequence arithmetic and
+    # operands past 2**32. Folding the name here makes that promise true.
+    if isinstance(node, ast.Name):
+        if node.id not in bindings:
+            raise _Undecidable
+        return bindings[node.id]
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        items = [_decide(element) for element in node.elts]
+        items = [_decide(element, bindings) for element in node.elts]
         if isinstance(node, ast.List):
             return items
         return tuple(items) if isinstance(node, ast.Tuple) else set(items)
     if isinstance(node, ast.Dict):
         if any(key is None for key in node.keys):  # {**other}
             raise _Undecidable
-        return {_decide(key): _decide(value)
+        return {_decide(key, bindings): _decide(value, bindings)
                 for key, value in zip(node.keys, node.values)}
     if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY:
-        return _UNARY[type(node.op)](_decide(node.operand))
+        return _UNARY[type(node.op)](_decide(node.operand, bindings))
     if isinstance(node, ast.BoolOp):
-        values = [_decide(value) for value in node.values]
+        values = [_decide(value, bindings) for value in node.values]
         if isinstance(node.op, ast.And):
             return all(values) and values[-1]
         return next((value for value in values if value), values[-1])
     if isinstance(node, ast.Compare):
-        left = _decide(node.left)
+        left = _decide(node.left, bindings)
         for operation, right_node in zip(node.ops, node.comparators):
             if type(operation) not in _COMPARE:
                 raise _Undecidable
-            right = _decide(right_node)
+            right = _decide(right_node, bindings)
             if not _COMPARE[type(operation)](left, right):
                 return False
             left = right
         return True
     if isinstance(node, ast.BinOp) and type(node.op) in _ARITHMETIC:
-        left, right = _decide(node.left), _decide(node.right)
+        left, right = _decide(node.left, bindings), _decide(node.right, bindings)
         if not all(isinstance(side, (int, float)) for side in (left, right)):
             raise _Undecidable  # numbers only: no sequence can be grown here
         if any(abs(side) > _MAX_OPERAND for side in (left, right)):
@@ -568,38 +637,162 @@ def _decide(node: ast.expr):
     raise _Undecidable
 
 
-def _reachable(node: ast.AST, function: ast.AST) -> bool:
-    """Is this statement inside a branch that can be taken?
+#: Handler types that stop an assertion failing the test.
+_SWALLOWING = frozenset({"AssertionError", "Exception", "BaseException"})
 
-    The counter credited any `ast.Raise` that `ast.walk` could reach, so
 
-        if False:
-            raise AssertionError("never")
+def _swallows(node: ast.Try) -> bool:
+    """Does this `try` catch the failure of an assertion in its body?
 
-    satisfied "this guard carries something that can fail" while the guard did
-    nothing. Measured on FG01 with its marker kept: 3 passed, rc 0.
+    `try: assert real` / `except AssertionError: pass` EXECUTES the assertion
+    and cannot fail the test. The counter could not see the handler at all, so
+    this shape satisfied "carries an assertion that can fail" while carrying
+    one that provably cannot.
 
-    Only the guard's own condition is judged, by the same parse-time rule the
-    assertions use -- a branch whose test is a literal that folds to False is
-    never taken. Anything this cannot decide is treated as reachable, because
-    the question here is whether a proof exists, not whether it is optimal.
+    A handler that re-raises does not swallow, so a guard using `try` for
+    cleanup around a real assertion is untouched.
     """
-    for branch in ast.walk(function):
-        if not isinstance(branch, ast.If):
+    for handler in node.handlers:
+        caught = handler.type
+        names = caught.elts if isinstance(caught, ast.Tuple) else [caught]
+        catches = caught is None or any(
+            (isinstance(name, ast.Name) and name.id in _SWALLOWING)
+            or (isinstance(name, ast.Attribute) and name.attr in _SWALLOWING)
+            for name in names if name is not None
+        )
+        if not catches:
             continue
-        if not any(node is inner for inner in ast.walk(branch)):
-            continue
-        in_body = any(node is inner for statement in branch.body
-                      for inner in ast.walk(statement))
-        if in_body and _folds_to_false(branch.test):
-            return False
-    return True
+        rethrows = any(
+            isinstance(inner, ast.Raise) or _is_pytest_call(inner, "fail")
+            for statement in handler.body for inner in ast.walk(statement)
+        )
+        if not rethrows:
+            return True
+    return False
 
 
-def _folds_to_false(test: ast.expr) -> bool:
-    """A branch condition that is decided at parse time, and decided False."""
-    folded = _fold(test)
-    return folded is not _UNDECIDED and not folded
+def _is_pytest_call(node: ast.AST, attribute: str) -> bool:
+    """`pytest.<attribute>(...)`, matched as a SHAPE rather than as text.
+
+    The `.fail()` clause matched ANY attribute call named `fail` on any object,
+    so `record.fail(reason)` counted as a proof. This asks what is called.
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == attribute:
+        return isinstance(func.value, ast.Name) and func.value.id == "pytest"
+    return isinstance(func, ast.Name) and func.id == attribute
+
+
+def _is_expected_refusal(expr: ast.expr) -> bool:
+    """`pytest.raises(...)`, matched structurally.
+
+    THIS WAS `"raises" in ast.dump(child.context_expr)` -- a substring scan over
+    a dumped AST, which is FG21's own class committed inside the FG auditor. It
+    matched those six characters anywhere in the dump, INCLUDING inside a string
+    constant, so `with io.StringIO("raises.txt") as handle:` was credited as an
+    expected-refusal block. Measured: exercised=1 for that, and the same for
+    `with open(base / "no-raises-here")`.
+    """
+    return _is_pytest_call(expr, "raises")
+
+
+def executed_nodes(function: ast.AST) -> list:
+    """(node, swallowed) for every node the guard's own body actually runs.
+
+    CONTAINMENT IS NOT EXECUTION, and `ast.walk` only answers containment. The
+    counter walked the whole subtree, so every one of these credited a guard
+    that executed nothing -- each measured end to end on FG01 with its marker
+    kept, collection identical to pristine, audit GREEN:
+
+        if False:  <the original assertions>     the cheapest edit of all
+        while False:  raise AssertionError(...)
+        for _ in ():  raise AssertionError(...)
+        if True: pass / else: raise AssertionError(...)
+        def _inner(): assert real                (never called)
+        an assertion inside a lambda
+        try: assert real / except AssertionError: pass
+
+    Reachability had been bolted onto the `ast.Raise` clause alone and
+    understood one statement form, so three of these worked by changing `if` to
+    `while`, and three more by wrapping the assertions instead of a raise.
+
+    This walks the guard the way the interpreter would: a branch decided at
+    parse time contributes only the side that is taken, a body no caller reaches
+    contributes nothing, and an assertion whose failure is caught is marked so
+    the counter can refuse it.
+    """
+    found: list = []
+
+    def statements(block: list, swallowed: bool) -> None:
+        for statement in block:
+            visit(statement, swallowed)
+
+    def visit(node: ast.AST, swallowed: bool) -> None:
+        # A BODY NOBODY CALLS PROVES NOTHING. The marker rule closed "the guard
+        # is a nested function pytest never collects"; this closes the nested
+        # ASSERTION inside a collected guard, which `ast.walk` descends into
+        # just as happily.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return
+        found.append((node, swallowed))
+        if isinstance(node, ast.If):
+            visit(node.test, swallowed)
+            decided = _fold(node.test)
+            if decided is _UNDECIDED or decided:
+                statements(node.body, swallowed)
+            if decided is _UNDECIDED or not decided:
+                statements(node.orelse, swallowed)
+            return
+        if isinstance(node, ast.While):
+            visit(node.test, swallowed)
+            decided = _fold(node.test)
+            if decided is _UNDECIDED or decided:
+                statements(node.body, swallowed)
+            statements(node.orelse, swallowed)
+            return
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            visit(node.iter, swallowed)
+            decided = _fold(node.iter)
+            if decided is _UNDECIDED or len(decided) > 0:
+                statements(node.body, swallowed)
+            statements(node.orelse, swallowed)
+            return
+        if isinstance(node, ast.Try):
+            statements(node.body, swallowed or _swallows(node))
+            for handler in node.handlers:
+                statements(handler.body, swallowed)
+            statements(node.orelse, swallowed)
+            statements(node.finalbody, swallowed)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, swallowed)
+
+    statements(getattr(function, "body", []), False)
+    return found
+
+
+def exercised_assertions(function: ast.AST) -> int:
+    """How many things this guard EXECUTES that can fail the test.
+
+    EXTRACTED so the specimen table exercises this rule rather than a copy of
+    it. The gap that made all of the shapes above possible survived a green
+    suite of helper unit tests, because each helper was correct on its own and
+    nothing measured what they added up to.
+    """
+    return sum(
+        1
+        for node, swallowed in executed_nodes(function)
+        if not swallowed
+        and (
+            (isinstance(node, ast.Assert) and not _cannot_fail(node.test, function))
+            or isinstance(node, ast.Raise)
+            or (isinstance(node, ast.withitem)
+                and _is_expected_refusal(node.context_expr))
+            or _is_pytest_call(node, "fail")
+        )
+    )
 
 
 def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
@@ -641,11 +834,14 @@ def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
     # nothing anywhere checked that authenticating first catches the
     # wrong-keyword grant.
     #
-    # An expression naming nothing depends on no state, so its value is
-    # decided here. `_fold` has no branch for Name, Call, Attribute or
-    # Subscript, so anything that reads state is undecided by construction --
-    # that is the screen, not a pre-filter in front of it.
-    folded = _fold(test)
+    # An expression depends on no state when everything in it is either a
+    # literal or a name bound only to literals, and `_fold` decides exactly
+    # that. It has no branch for Call, Attribute or Subscript, so anything that
+    # reads state is undecided by construction -- that is the screen, not a
+    # pre-filter in front of it. Names are resolved through
+    # `_constant_bindings`, which is why `flag == True` is now judged rather
+    # than only a bare `flag`.
+    folded = _fold(test, _constant_bindings(function))
     if folded is not _UNDECIDED:
         return bool(folded)
     if isinstance(test, ast.Constant):
@@ -657,18 +853,8 @@ def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
             return bool(ast.literal_eval(test))
         except ValueError:
             return False
-    if isinstance(test, ast.Name):
-        bindings = [
-            node.value
-            for node in ast.walk(function)
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == test.id
-                    for target in node.targets)
-        ]
-        return bool(bindings) and all(
-            isinstance(value, ast.Constant) and bool(value.value)
-            for value in bindings
-        )
+    # The bare-Name case is handled by the folder above, which sees the same
+    # bindings and also sees them through operators.
     return False
 
 
@@ -708,6 +894,52 @@ def _assertion(source: str) -> tuple:
         chr(10).join(["def guard():", "    assert " + source, ""])
     ).body[0]
     return function.body[0].test, function
+
+
+#: (guard body, is the assertion fixed at parse time).
+#:
+#: A NAME BOUND ONLY TO LITERALS, seen through an operator. The Name rule fired
+#: only when the whole test WAS a bare Name, so every row marked True below
+#: except the first was credited as a real assertion -- one token away from the
+#: shape that was live in `tests/test_mutation_catalogue.py`.
+NAME_BINDING_SPECIMENS = [
+    ("flag = True" + NL + "assert flag", True),
+    ("flag = True" + NL + "assert flag == True", True),
+    ("flag = True" + NL + "assert flag is True", True),
+    ("gone = False" + NL + "assert not gone", True),
+    ("flag = True" + NL + "assert flag and True", True),
+    ("flag = True" + NL + "assert flag != False", True),
+    ("count = 2" + NL + "assert count > 1", True),
+
+    # NOT fixed: the name is computed, or rebound from something that is not a
+    # literal. A guard that computes a value and asserts it is a real guard,
+    # whatever its first binding was.
+    ("flag = compute()" + NL + "assert flag", False),
+    ("flag = True" + NL + "flag = compute()" + NL + "assert flag == True", False),
+    ("flag = True" + NL + "flag += 1" + NL + "assert flag", False),
+    ("for flag in rows:" + NL + "    pass" + NL + "assert flag", False),
+    ("with open(path) as flag:" + NL + "    pass" + NL + "assert flag", False),
+    ("assert flag == True", False),
+]
+
+
+@pytest.mark.parametrize(("body", "fixed"), NAME_BINDING_SPECIMENS)
+def test_a_name_bound_only_to_literals_is_as_fixed_as_a_literal(body: str, fixed: bool):
+    """`assert flag == True` where `flag = True` is not an assertion.
+
+    Both directions, because the wrong answer in the other direction is worse:
+    calling a computed value vacuous would fail a genuine guard for a property
+    it does not have. So a name is folded ONLY when every binding of it in the
+    guard is a constant literal, and any other kind of binding -- a call, a loop
+    target, a `with` target, an augmented assignment -- disqualifies it
+    outright rather than merely being overwritten.
+    """
+    guard = _guard(body)
+    test = next(node for node in ast.walk(guard) if isinstance(node, ast.Assert)).test
+    assert _cannot_fail(test, guard) is fixed, (
+        "this guard body was judged " + ("fixed" if not fixed else "real")
+        + " at parse time:" + NL + body
+    )
 
 
 @pytest.mark.parametrize("source", VACUOUS_ASSERTIONS)
@@ -768,32 +1000,83 @@ def test_the_folder_stops_where_it_says_it_stops(source: str):
     )
 
 
-@pytest.mark.parametrize(
-    ("condition", "taken"),
-    [("False", False), ("0", False), ("1 == 2", False), ("not True", False),
-     ("True", True), ("flag", True), ("compute()", True), ("1 == 1", True)],
-)
-def test_a_branch_decided_at_parse_time_is_not_a_place_a_proof_can_live(
-    condition: str, taken: bool,
-):
-    """`if False: raise` satisfied "this guard can fail" while doing nothing.
+#: Guard bodies, and how many failing things each one EXECUTES.
+#:
+#: Every zero here is a real edit an adversary can make to a marked guard: the
+#: node stays, the marker stays, collection is identical, and the audit reports
+#: the class proven. Seven of them were measured GREEN end to end on FG01
+#: before the counter stopped confusing containment with execution.
+EXECUTION_SPECIMENS = [
+    # --- executes a real proof --------------------------------------------
+    ("assert result == 4", 1),
+    ("assert a" + NL + "assert b", 2),
+    ("raise AssertionError('no')", 1),
+    ("with pytest.raises(ValueError):" + NL + "    boom()", 1),
+    ("pytest.fail('unreachable')", 1),
+    ("if flag:" + NL + "    assert real", 1),
+    ("for row in rows:" + NL + "    assert row", 1),
+    ("try:" + NL + "    assert real" + NL + "finally:" + NL + "    clean()", 1),
+    # TWO: the assertion, and the re-raise that keeps it fatal. A handler that
+    # re-raises does not swallow, which is what separates this from the same
+    # shape ending in `pass` further down.
+    ("try:" + NL + "    assert real" + NL + "except AssertionError:" + NL
+     + "    raise", 2),
+    ("try:" + NL + "    assert real" + NL + "except ValueError:" + NL
+     + "    pass", 1),
 
-    The counter credited any `ast.Raise` that `ast.walk` could reach. Measured
-    on FG01 with its marker kept: 3 passed, rc 0. Only the guard's own
-    condition is judged, and only when it folds -- `flag` and `compute()` are
-    reachable because the screen cannot know otherwise, which is again the
-    permissive direction.
+    # --- executes nothing that can fail ------------------------------------
+    ("if False:" + NL + "    assert real", 0),
+    ("if False:" + NL + "    raise AssertionError('never')", 0),
+    ("while False:" + NL + "    raise AssertionError('never')", 0),
+    ("for _ in ():" + NL + "    raise AssertionError('never')", 0),
+    ("for _ in []:" + NL + "    assert real", 0),
+    ("if True:" + NL + "    pass" + NL + "else:" + NL
+     + "    raise AssertionError('never')", 0),
+    ("def _inner():" + NL + "    assert real", 0),
+    ("check = lambda: (_ for _ in ()).throw(AssertionError('x'))", 0),
+    ("try:" + NL + "    assert real" + NL + "except AssertionError:" + NL
+     + "    pass", 0),
+    ("try:" + NL + "    assert real" + NL + "except Exception:" + NL
+     + "    pass", 0),
+    ("try:" + NL + "    assert real" + NL + "except:" + NL + "    pass", 0),
+    ("assert True", 0),
+    ("assert 1 == 1", 0),
+    ("pass", 0),
+
+    # --- the substring scan that credited a filename ------------------------
+    ("with io.StringIO('raises.txt') as handle:" + NL + "    handle.read()", 0),
+    ("with open(base / 'no-raises-here') as handle:" + NL + "    handle.read()", 0),
+    ("record.fail(reason)", 0),
+    ("if False:" + NL + "    record.fail(reason)", 0),
+]
+
+
+def _guard(body: str) -> ast.AST:
+    """A collected guard whose body is `body`."""
+    lines = ["def guard():", '    """A docstring."""']
+    lines += ["    " + line if line.strip() else line for line in body.split(NL)]
+    return ast.parse(NL.join(lines) + NL).body[0]
+
+
+@pytest.mark.parametrize(("body", "expected"), EXECUTION_SPECIMENS)
+def test_the_counter_measures_what_a_guard_executes(body: str, expected: int):
+    """Containment is not execution, and `ast.walk` only answers containment.
+
+    This is the COMPOSITION, and the composition is where the gap lived. The
+    helpers each had unit tests over synthetic snippets and each was correct;
+    nothing measured what they added up to, so reachability was applied to one
+    of four clauses and understood one of five statement forms. Changing `if`
+    to `while`, or wrapping the assertions instead of a raise, walked straight
+    through a green helper suite.
+
+    A zero here is not academic. It is a one-line edit that leaves the guard
+    collected, its marker in place, its name unchanged, and the audit reporting
+    its class proven.
     """
-    function = ast.parse(chr(10).join([
-        "def guard():",
-        "    if " + condition + ":",
-        "        raise AssertionError('never')",
-        "",
-    ])).body[0]
-    raised = function.body[0].body[0]
-    assert _reachable(raised, function) is taken, (
-        "`if " + condition + ":` was judged "
-        + ("reachable" if not taken else "unreachable")
+    counted = exercised_assertions(_guard(body))
+    assert counted == expected, (
+        "the counter says this guard executes " + str(counted) + " failing "
+        "thing(s); it executes " + str(expected) + ":" + NL + body
     )
 
 
@@ -1156,6 +1439,53 @@ PENDING_REPRODUCTION = frozenset(
 EXPECTED_REPRODUCED = frozenset({"FG22", "FG33"})
 
 
+def test_the_reproduction_contract_asks_for_attribution():
+    """Removing the attribution question is invisible to every other control.
+
+    Measured: deleting `expected_property=expected` from the contract's call
+    left BOTH reproductions GREEN, because the real reproductions do fail for
+    the right reason -- so nothing that runs them can notice the question is no
+    longer being asked. The two controls that DO discriminate work by naming
+    the WRONG property, which only proves the question is asked when it is.
+
+    That is the shape this whole module exists to refuse: a check whose absence
+    produces no signal. So the question is required in two places at once --
+    every reproduction must carry a property, and the contract must pass it.
+    """
+    missing = sorted(
+        item.ident for item in INVENTORY
+        if item.reproduces and not (len(item.reproduces) == 5 and item.reproduces[4])
+    )
+    assert missing == [], (
+        "these reproductions carry no property for the failure to concern, so "
+        f"any failure of the right node would be credited: {missing}"
+    )
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    contract = next(
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_a_reproduced_defect_turns_its_own_marked_guard_red"
+    )
+    calls = [
+        node for node in ast.walk(contract)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "require_caused_failure"
+    ]
+    assert calls, "the contract no longer calls require_caused_failure at all"
+    assert all(
+        any(keyword.arg == "expected_property" for keyword in call.keywords)
+        for call in calls
+    ), (
+        "the contract calls require_caused_failure WITHOUT expected_property, "
+        "so a failure of the right node for an unrelated reason is credited as "
+        "the class's own defect. That helper's docstring says so itself: "
+        '"same node failed" is weaker than "same node failed BECAUSE the '
+        'intended assertion was violated".'
+    )
+
+
 def test_every_false_green_class_has_a_terminal_classification():
     """B9-P2-1. Every class is reproduced, specified, or declared pending.
 
@@ -1229,24 +1559,35 @@ def test_a_reproduced_defect_turns_its_own_marked_guard_red(item, tmp_path: Path
     FG19 ("the right node failed for an unrelated reason") committed inside
     the contract that certifies the FG inventory.
 
-    It also skipped three admissibility rules the sibling runner enforces on
-    every mutation, so the same edit could have targeted a comment (FG03), a
-    stale anchor matching nothing (FG07), or a file outside production scope
-    (FG16). All four questions are asked here now, in the order the campaign
-    asks them:
+    It also skipped admissibility rules the sibling runner enforces on every
+    mutation, so the same edit could have targeted a comment (FG03) or a stale
+    anchor matching nothing (FG07). Both are asked here now.
+
+    PRODUCTION SCOPE (FG16) IS DELIBERATELY NOT ASKED, and saying otherwise was
+    itself a false claim in this docstring. `require_production_mutation_scope`
+    would REFUSE both live reproductions: FG33 targets
+    `tests/mutation_workspace.py` and FG22's owner is a test module, because
+    two of these classes are defects IN the test machinery and a reproduction
+    of them has to edit the test machinery. The rule is right and the exemption
+    is real; what was wrong was listing it among the questions asked.
+
+    The questions this contract does ask, in the order the campaign asks them:
 
         the target exists, is executable, and matches EXACTLY n times
         the guard passes on the pristine tree
         the guard FAILS under the defect
         the EXACT owner node failed, in the CALL phase -- not errored,
           not absent, not some other node in the same file
+        and it failed FOR THE INTENDED PROPERTY, which is the question
+          `expected_property` exists to ask and which this contract used
+          to leave unasked
     """
     import subprocess  # noqa: PLC0415
 
     from mutation_validity import check_mutation  # noqa: PLC0415
     from mutation_workspace import require_caused_failure  # noqa: PLC0415
 
-    relative, before, after, count = item.reproduces
+    relative, before, after, count, expected = item.reproduces
     target = ROOT / relative
     assert target.is_file(), f"{item.ident}: {relative} is not in the tree"
     text = target.read_text(encoding="utf-8")
@@ -1292,7 +1633,8 @@ def test_a_reproduced_defect_turns_its_own_marked_guard_red(item, tmp_path: Path
     # THE EXACT NODE, IN THE CALL PHASE. This is what separates "the guard
     # failed" from "something in that file went wrong" -- and from "the node
     # was not there to run", which exits non-zero and proves nothing at all.
-    require_caused_failure(report, item.owner, damaged.stdout)
+    require_caused_failure(report, item.owner, damaged.stdout,
+                           expected_property=expected)
 
 
 
@@ -1352,23 +1694,7 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
             "assertions below it never execute. A guard that returns early "
             "asserts nothing, whatever its body still contains."
         )
-        exercised = sum(
-            1
-            for child in ast.walk(found[0])
-            if (isinstance(child, ast.Assert)
-                and not _cannot_fail(child.test, found[0]))
-            or (isinstance(child, ast.Raise) and _reachable(child, found[0]))
-            or (
-                isinstance(child, ast.withitem)
-                and isinstance(child.context_expr, ast.Call)
-                and "raises" in ast.dump(child.context_expr)
-            )
-            or (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Attribute)
-                and child.func.attr == "fail"
-            )
-        )
+        exercised = exercised_assertions(found[0])
         assert exercised >= 1, (
             f"{item.ident}: {node} contains no assertion that can fail. A "
             "self-attack that asserts nothing is the defect this inventory "
@@ -2197,7 +2523,8 @@ def test_the_specification_only_guards_are_declared_as_such():
     import ast  # noqa: PLC0415
 
     stdlib = {
-        "os", "sys", "re", "json", "ast", "subprocess", "tempfile", "shutil",
+        "operator",
+    "os", "sys", "re", "json", "ast", "subprocess", "tempfile", "shutil",
         "sqlite3", "pathlib", "contextlib", "textwrap", "itertools", "time",
         "collections", "hashlib", "stat", "io", "math", "types", "typing",
         "datetime", "random", "pytest", "importlib", "copy", "uuid",

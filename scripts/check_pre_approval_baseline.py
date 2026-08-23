@@ -99,6 +99,14 @@ class UnstructuredCheckerOutput(RuntimeError):
     """The checker emitted something this gate cannot classify."""
 
 
+#: Diagnostic levels this gate knows how to classify.
+#:
+#: Enumerated from the installed Nornyx, which emits `error` and `warning`.
+#: `info` is included because it is the obvious next one and ignoring it would
+#: be harmless; anything OUTSIDE this set is reported rather than dropped.
+KNOWN_DIAGNOSTIC_LEVELS = frozenset({"error", "warning", "info"})
+
+
 def _diagnostics(output: str) -> list[dict]:
     """Parse the concatenated JSON objects the Nornyx CLI prints.
 
@@ -141,6 +149,12 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
         command,
         cwd=ROOT,
         text=True,
+        # PINNED, not inherited. Without this the output decodes with the
+        # Windows locale codepage while the renderer emits `ensure_ascii=False`,
+        # so a diagnostic carrying a non-cp1252 character raises out of the gate
+        # instead of being classified. The sibling checker already pins it.
+        encoding="utf-8",
+        errors="replace",
         timeout=900,
         capture_output=True,
         check=False,
@@ -156,7 +170,49 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
             "unexpected_diagnostics": [{"unstructured_output": str(exc)}],
         }
 
-    offending = [
+    # A FAILURE THAT SAYS NOTHING IS NOT AN APPROVAL GAP.
+    #
+    # `_diagnostics("")` returns an empty list without raising, so a checker
+    # that exited non-zero having printed NOTHING left `offending` empty, and
+    # `not offending` is vacuously true. The gate then reported
+    # `approval_blocked: True` and `status: pass` -- under the sentence
+    # "Governance contracts must fail only because a human approval record is
+    # absent" -- having observed nothing to be absent, or present.
+    #
+    # Measured with two fake checkers differing by a single echo line:
+    #     noisy crash  -> status FAIL, approval_blocked False
+    #     SILENT crash -> status PASS, approval_blocked True
+    #
+    # The docstring on `_diagnostics` already states the rule this violated:
+    # output the gate cannot account for is a reason to fail, not to skip. An
+    # unexplained non-zero exit is the emptiest such output there is.
+    if completed.returncode != 0 and not diagnostics:
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{
+                "unexplained_failure":
+                    f"the checker exited {completed.returncode} and emitted no "
+                    "diagnostic at all. Nothing was observed to be absent, so "
+                    "nothing licenses calling this an approval gap.",
+            }],
+        }
+
+    # A LEVEL THIS GATE DOES NOT KNOW IS NOT A LEVEL IT MAY IGNORE.
+    #
+    # The filter read `level == "error"` and dropped everything else on the
+    # floor. Today's checker emits only `error` and `warning`, so this is
+    # complete now -- and "complete now" is exactly the property that stops
+    # holding without anyone noticing. An unknown level is unaccountable
+    # output, and lands in `unexpected_diagnostics` where it can be read.
+    unknown_levels = [
+        item for item in diagnostics
+        if str(item.get("level")) not in KNOWN_DIAGNOSTIC_LEVELS
+    ]
+
+    offending = unknown_levels + [
         item
         for item in diagnostics
         if item.get("level") == "error"

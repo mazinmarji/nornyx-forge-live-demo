@@ -356,7 +356,8 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
 #: The four rows of the dated table above `MINIMUM_COLLECTED`.
 _DOCUMENTED_ROW = re.compile(
     r"^#\s{4,}(collected across tests/|sum of the module floors|"
-    r"band\(\d+\) = ceil\(0\.9\*n\)|MINIMUM_COLLECTED)\s+(\d+)",
+    r"band\(\d+\) = ceil\(0\.9\*n\)|MINIMUM_COLLECTED|"
+    r"above the module sum|below what collects)\s+(\d+)",
     re.MULTILINE,
 )
 
@@ -364,9 +365,19 @@ _DOCUMENTED_ROW = re.compile(
 def documented_census_numbers() -> dict:
     """The table beside `MINIMUM_COLLECTED`, parsed."""
     source = (ROOT / "scripts/check_test_coverage.py").read_text(encoding="utf-8")
-    rows = {label: int(value) for label, value in _DOCUMENTED_ROW.findall(source)}
-    assert len(rows) == 4, (
-        "the dated table beside MINIMUM_COLLECTED no longer has its four rows, "
+    found = _DOCUMENTED_ROW.findall(source)
+    # A DICT SILENTLY KEEPS THE LAST OF ANY DUPLICATE LABEL, so a stale row
+    # sitting above a correct one would be masked and `len(rows)` could not
+    # see it. Each label has to appear exactly once.
+    labels = [label for label, _ in found]
+    duplicated = sorted({label for label in labels if labels.count(label) > 1})
+    assert duplicated == [], (
+        "the table has more than one row for these labels, so a stale row can "
+        f"hide behind a correct one: {duplicated}"
+    )
+    rows = {label: int(value) for label, value in found}
+    assert len(rows) == 6, (
+        "the dated table beside MINIMUM_COLLECTED no longer has its six rows, "
         f"so nothing here is being checked: found {sorted(rows)}"
     )
     return rows
@@ -392,6 +403,21 @@ def test_the_aggregate_floor_comment_states_the_measured_numbers():
     assert rows["sum of the module floors"] == module_sum, (
         f"the comment says the module floors sum to "
         f"{rows['sum of the module floors']}; they sum to {module_sum}"
+    )
+    # THE TWO MARGINS. These were prose until a review moved the constant and
+    # its row together and left both sentences wrong by 38, with every guard
+    # green -- in the comment whose repair had just been committed for exactly
+    # that. A number nothing reads is a number that has already started to rot.
+    assert rows["above the module sum"] == MINIMUM_COLLECTED - module_sum, (
+        f"the comment says the aggregate sits {rows['above the module sum']} "
+        f"above the module sum; it sits {MINIMUM_COLLECTED - module_sum}"
+    )
+    assert rows["below what collects"] == (
+        rows["collected across tests/"] - MINIMUM_COLLECTED
+    ), (
+        f"the comment says the aggregate sits {rows['below what collects']} "
+        "below what collects; it sits "
+        f"{rows['collected across tests/'] - MINIMUM_COLLECTED}"
     )
     assert rows["MINIMUM_COLLECTED"] == MINIMUM_COLLECTED, (
         f"the comment says the aggregate floor is {rows['MINIMUM_COLLECTED']}; "
@@ -420,7 +446,7 @@ def test_the_aggregate_floor_comment_states_the_measured_numbers():
     # Scanned over the WHOLE census script rather than the one comment block,
     # because narrowing it to the block would have made this assertion's own
     # message the broader claim -- and it found a second imprecision straight
-    # away: `test_skip_gate` was cited where the MODULE was meant.
+    # away: a module was cited by its bare stem where a path was meant.
     source = (ROOT / "scripts/check_test_coverage.py").read_text(encoding="utf-8")
     cited = set(re.findall(r"`(test_[a-z0-9_]+)`", source))
     assert cited, "the census cites no guard at all, so this checks nothing"

@@ -406,9 +406,19 @@ def test_the_shipped_high_risk_refusal_comes_from_the_fallback_and_says_so():
     not that the subject was checked.
 
     So this asserts the source, which is the honest end-to-end claim, and the
-    subject distinction is measured in
-    `test_an_unverified_subject_is_refused_as_a_subject_failure_not_an_approval_one`
-    below, at a boundary where `_official` actually runs.
+    subject distinction is measured by
+    `test_a_boundary_with_no_subject_refuses_as_a_subject_failure` in
+    `tests/test_approval_authentication.py`, at a boundary where `_official`
+    actually runs.
+
+    THAT CITATION WAS WRONG AND POINTED THE WRONG WAY. It named
+    test_an_unverified_subject_is_refused_as_a_subject_failure_not_an_approval_one
+    -- a test that exists nowhere -- and placed it "below", in this module. The
+    correction was already sitting 28 lines further down, where the note says
+    plainly that `SUBJECT_UNVERIFIED` is measured in
+    `tests/test_approval_authentication.py`, NOT here. A reader checking whether
+    the shipped high-risk refusal is a governance decision or the fallback's
+    unconditional constant was handed a name that resolves to nothing.
 
     The `source` assertion is not decoration. If the shipped path ever does
     load the authorizer, this test goes RED and forces someone to strengthen it

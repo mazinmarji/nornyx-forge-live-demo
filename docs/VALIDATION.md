@@ -40,8 +40,15 @@ A `git archive` extraction carries the content and no `.git`. Several proofs
 shell out to `git ls-files` to establish what a clean checkout contains, so in
 an archive they fail for a reason that has nothing to do with the control under
 test -- an independent review measured 62 failures and 10 errors across 16
-modules, including all nineteen `test_removing_the_control_revives_the_defect`
-cases, the mutation catalogue, and three false-green guards. Those are the
+modules, including all FOURTEEN `test_removing_the_control_revives_the_defect`
+cases, the mutation catalogue, and three false-green guards. (This said
+"nineteen" and was never true of the node it names: the inventory holds
+nineteen classes, and that node is parametrised over the FOURTEEN with a
+single mutation each. H03, H04 and H13 are excluded on purpose -- two are
+compound-only, one is an obsolete historical attack -- so the sentence
+credited that runner with five classes the repository elsewhere takes care
+to say it does not prove. `TASK11_CLOSURE.md` recorded the right figure the
+whole time.) Those are the
 central "every historical defect stays dead" evidence, and they pass in any git
 checkout.
 

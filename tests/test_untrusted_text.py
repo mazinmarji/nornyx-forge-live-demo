@@ -322,6 +322,105 @@ def test_the_gate_reports_unstructured_output_rather_than_passing(tmp_path: Path
     assert result["unexpected_diagnostics"], "noise was accepted as an approval gap"
 
 
+@pytest.mark.parametrize(
+    ("label", "script"),
+    [
+        ("silent", ("@exit /b 1", "exit 1")),
+        ("noisy", ("@echo INTERNAL VALIDATOR CRASHED" + chr(10) + "@exit /b 1",
+                   "echo INTERNAL VALIDATOR CRASHED" + chr(10) + "exit 1")),
+        ("stderr only", ("@echo boom 1>&2" + chr(10) + "@exit /b 1",
+                         "echo boom 1>&2" + chr(10) + "exit 1")),
+    ],
+)
+def test_a_checker_that_fails_without_saying_why_is_not_an_approval_gap(
+    label: str, script: tuple, tmp_path: Path,
+):
+    """The silent neighbour of the noisy crash, one echo line away.
+
+    `_diagnostics("")` returns an empty list without raising, so a checker that
+    exited non-zero having printed NOTHING left `offending` empty and
+    `not offending` vacuously true. The gate reported `approval_blocked: True`
+    and `status: pass` -- under the sentence "Governance contracts must fail
+    only because a human approval record is absent" -- having observed nothing
+    to be absent, or present.
+
+    Measured before the repair, with two fake checkers differing by a single
+    echo line:
+
+        noisy crash   -> status FAIL, approval_blocked [False, False]
+        SILENT crash  -> status PASS, approval_blocked [True, True]
+
+    The noisy case was already covered. The whole property is "a non-zero exit
+    must be EXPLAINED", and covering only the loud half of it is how the quiet
+    half survived: an assurance gate is exactly where the quiet failure is the
+    dangerous one, because nobody reads a green run.
+    """
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    windows, posix = script
+    if sys.platform == "win32":
+        fake.write_text(windows.replace(chr(10), chr(13) + chr(10)) + chr(13) + chr(10),
+                        encoding="utf-8")
+    else:
+        fake.write_text("#!/bin/sh" + chr(10) + posix + chr(10), encoding="utf-8")
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["approval_blocked"] is False, (
+        f"a checker that crashed ({label}) was reported as blocked only by the "
+        "missing human approval. Nothing was observed to be absent."
+    )
+    assert result["unexpected_diagnostics"], (
+        f"a {label} crash left nothing for an operator to read, and the gate "
+        "still reached a verdict about why the contract failed"
+    )
+
+
+def test_a_diagnostic_level_the_gate_cannot_classify_is_reported(tmp_path: Path):
+    """An unknown level was dropped on the floor by an `== "error"` filter.
+
+    Complete against today's checker, which emits only `error` and `warning` --
+    and "complete against today's" is precisely the property that stops holding
+    without anyone noticing. A future level carrying a real refusal would be
+    invisible to the classifier and absent from the report, and the gate would
+    say the contract fails only for the missing approval.
+
+    Driven through the real `_check` with a fake checker, not by re-running the
+    filter expression here: a test that re-implements the rule proves the
+    re-implementation.
+    """
+    import json as _json  # noqa: PLC0415
+
+    payload = _json.dumps({
+        "level": "critical",
+        "code": "SOMETHING_NEW",
+        "path": "approvals[0].required_evidence",
+        "source_id": "human_approval.v1",
+    })
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    if sys.platform == "win32":
+        escaped = payload.replace("%", "%%").replace('"', chr(94) + '"')
+        fake.write_text("@echo " + escaped + chr(13) + chr(10) + "@exit /b 1" + chr(13) + chr(10),
+                        encoding="utf-8")
+    else:
+        fake.write_text("#!/bin/sh" + chr(10) + "cat <<'JSON'" + chr(10) + payload
+                        + chr(10) + "JSON" + chr(10) + "exit 1" + chr(10), encoding="utf-8")
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    assert {"error", "warning"} <= gate.KNOWN_DIAGNOSTIC_LEVELS
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["approval_blocked"] is False, (
+        "a diagnostic at a level this gate cannot classify was treated as "
+        "absent, and the contract was reported as blocked only by the approval"
+    )
+    assert result["unexpected_diagnostics"], (
+        "an unclassifiable diagnostic left nothing for an operator to read"
+    )
+
+
 def test_no_assurance_gate_classifies_by_message_text():
     """The invariant, asserted against the source rather than assumed."""
     source = (ROOT / "scripts/check_pre_approval_baseline.py").read_text(encoding="utf-8")

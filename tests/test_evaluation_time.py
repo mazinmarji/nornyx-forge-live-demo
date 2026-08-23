@@ -1,7 +1,7 @@
 """Evaluation time is a governed fact, and comes from trusted sources.
 
 The revision tests that lived here are gone with the model they described.
-`test_no_environment_value_can_supply_a_revision` was the clearest example of
+test_no_environment_value_can_supply_a_revision was the clearest example of
 what this repository keeps producing: a name asserting a universal, a body
 checking two retired `FORGE_*` strings, and `GIT_DIR` walking straight through
 the property the name claimed. Its real successors are in

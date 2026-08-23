@@ -198,8 +198,16 @@ GOVERNANCE_APPROVAL_SUBJECT_UNBOUND = "GOVERNANCE_APPROVAL_SUBJECT_UNBOUND"
 #:
 #: A sentinel is a hole, so it is a NAMED and TESTED hole:
 #: `test_the_subject_opt_out_is_used_in_exactly_one_place` pins its single
-#: production use, and `test_a_stale_approval_still_reaches_the_drift_detector`
+#: production use, and
+#: `test_a_stale_approval_still_authenticates_so_the_drift_detector_can_see_it`
 #: proves the control it exists to preserve is still reachable.
+#:
+#: THE SECOND NAME WAS WRONG FOR THIS SENTINEL'S WHOLE LIFE. It cited
+#: test_a_stale_approval_still_reaches_the_drift_detector, which exists
+#: nowhere. The property IS proved, under the name above -- but the argument
+#: for admitting the one hole in subject binding rested on two named guards,
+#: and half of it did not resolve. A reviewer who greps finds nothing and has
+#: to decide whether the hole is guarded or the comment is.
 SUBJECT_BOUND_ELSEWHERE = "<subject bound by require_approval_matches_head>"
 APPROVAL_WINDOW_INVALID = "APPROVAL_WINDOW_INVALID"
 

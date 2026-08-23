@@ -12,9 +12,10 @@ stops a NON-HUMAN approver releasing a high-risk effect -- and
 
     118 passed
 
-across `test_approval_authentication`, `test_governance_approval_verifier` and
-`test_production_security_context`. Nothing in the repository was sensitive to
-it.
+across `tests/test_approval_authentication.py`,
+`tests/test_governance_approval_verifier.py` and
+`tests/test_production_security_context.py`. Nothing in the repository was
+sensitive to it.
 
 Each case below drives the real production entry point with one field spoiled
 and requires the refusal that clause produces. Because each asserts the SPECIFIC

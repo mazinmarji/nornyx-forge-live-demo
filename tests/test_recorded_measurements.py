@@ -234,7 +234,8 @@ _FAILURE_STATES = frozenset({"compromised", "unavailable", "unverifiable"})
 #: Values that mean "this property is ABSENT", read from the tool rather than
 #: listed. See `honest_values`.
 # The vocabulary lives in `tests/claim_vocabulary.py` and every guard
-# imports it. It used to be defined here AND in `test_documented_claims`
+# imports it. It used to be defined here AND in
+# `tests/test_documented_claims.py`
 # with different contents, which is how eleven of the thirteen field names
 # this system emits walked through one of them at their affirmative value.
 from claim_vocabulary import (  # noqa: E402
