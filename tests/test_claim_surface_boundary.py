@@ -220,14 +220,27 @@ def test_a_false_claim_on_the_structured_surface_is_refused(worktree):
     assert state["status"] == "fail", (
         "a forged approval on the structured surface was ACCEPTED: " + str(state)
     )
-    codes = {
-        code
-        for _validates, _blocked, unexpected in state["contracts"].values()
-        for code in unexpected
-    }
-    assert "EVIDENCE_ARTIFACT_HASH_MISMATCH" in codes, (
+
+    # THE ATTRIBUTION, FROZEN IN BOTH DIRECTIONS.
+    #
+    # Asserting only that the hash mismatch appears would let someone later
+    # describe the approval-absence diagnostic as the anti-forgery control. It
+    # is not, and this measures why: the forgery REMOVES the absence, so the
+    # absence check stops firing on the contract it was supposed to protect.
+    architecture = next(
+        value for contract, value in state["contracts"].items()
+        if "architecture_governance" in contract
+    )
+    _validates, blocked, unexpected = architecture
+    assert blocked is False, (
+        "the approval-absence diagnostic still fires under forgery. If that "
+        "is now true, the attribution recorded here and in "
+        "ASSURANCE_BOUNDARY.md is stale and must be re-measured -- do not "
+        "leave two different stories about which control carries this."
+    )
+    assert "EVIDENCE_ARTIFACT_HASH_MISMATCH" in unexpected, (
         "the forgery was refused for some other reason, so the content-hash "
-        f"binding is not what is holding this surface closed: {codes}"
+        f"binding is not what is holding this surface closed: {unexpected}"
     )
 
 
@@ -250,6 +263,43 @@ def test_the_residual_sentence_stays_outside_the_closed_grammar():
         "test and the boundary note. If it was done by adding CAB, board, "
         "committee, authority or council to a list, revert it: the next "
         f"sentence is 'the release authority gave the green light'. {hits}"
+    )
+
+
+#: THE PROPERTY, in the exact words the documentation uses. Bound rather than
+#: restated: this repository has been bitten before by a comment describing a
+#: control the code did not implement, and a boundary whose statement can drift
+#: away from its measurement is that defect with better prose.
+STATED_PROPERTY = (
+    "Arbitrary natural-language prose is **not**" + chr(10)
+    + "mechanically certified, and cannot create, upgrade, or satisfy"
+    + " assurance," + chr(10) + "inspection, approval, or production-readiness"
+    + " state."
+)
+
+#: The attribution the documentation is required to carry, because getting it
+#: backwards is the natural mistake.
+STATED_ATTRIBUTION = "EVIDENCE_ARTIFACT_HASH_MISMATCH"
+
+
+def test_the_documented_property_matches_the_one_measured_here():
+    """The boundary's WORDS and its MEASUREMENT cannot drift apart.
+
+    `docs/ASSURANCE_BOUNDARY.md` states the property this module measures. If
+    someone softens the documentation -- or strengthens it into a claim the
+    tests do not support -- this fails, which is the whole point: the failure
+    mode being frozen out is a document that says more than the code does.
+    """
+    boundary = (ROOT / "docs" / "ASSURANCE_BOUNDARY.md").read_text(encoding="utf-8")
+    assert STATED_PROPERTY in boundary, (
+        "the stated property in ASSURANCE_BOUNDARY.md no longer matches the "
+        "one this module measures. Change both together, or neither."
+    )
+    assert STATED_ATTRIBUTION in boundary, (
+        "the documentation no longer names the control that actually refuses "
+        "a forged structured claim. The approval-absence diagnostic does NOT "
+        "refuse it -- it stops firing under forgery -- and describing it as "
+        "the anti-forgery control is the mistake this note exists to prevent."
     )
 
 

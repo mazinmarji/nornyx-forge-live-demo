@@ -141,7 +141,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 28,
     "tests/test_documented_claims.py": 99,
-    "tests/test_claim_surface_boundary.py": 7,
+    "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
     "tests/test_governance_approval_verifier.py": 45,

@@ -149,3 +149,21 @@ not the approval check, which the forgery alone would have satisfied.
 Prose remains subject to human editorial review. That is the correct authority
 for free text, and stating it here is what keeps this control's claim equal to
 what it measures.
+
+### Which control refuses a forged structured claim
+
+Not the approval-absence diagnostic. That distinction is measured, and it is
+the opposite of what a reader would assume.
+
+Falsifying `architecture_approval_record.json` so that it claims an approval
+makes `approval_blocked` go **false** for the architecture contract, because
+the forgery removes the very absence that diagnostic reports. The
+approval-presence logic alone would therefore accept the forgery. What refuses
+it is `EVIDENCE_ARTIFACT_HASH_MISMATCH` -- the content hash binding a record
+to the content it describes.
+
+So the evidence binding is the control that carries this property, and the
+approval-absence diagnostic must never be described as preventing structured
+approval forgery. `test_a_false_claim_on_the_structured_surface_is_refused`
+asserts both directions, so this note cannot go stale quietly: it requires the
+absence check to stop firing under forgery AND the hash mismatch to appear.
