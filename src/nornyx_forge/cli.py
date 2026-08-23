@@ -231,6 +231,7 @@ def provision_ledger(
     from .nornyx_runtime import (
         LEDGER_WATERMARK_SUFFIX,
         ApprovalLedger,
+        NornyxRuntimeUnavailable,
         approval_ledger_path,
     )
 
@@ -263,7 +264,36 @@ def provision_ledger(
         # disagree, converting them preserves the disagreement and hands back a
         # store that looks migrated and is still broken.
         before_rows = _rows(location, "SELECT count(*) FROM consumed_approvals")
-        before_mark = _rows(witness, "SELECT value FROM high_water")
+        # EXACTLY ONE WITNESS ROW, READ IN FULL.
+        #
+        # This was `fetchone()[0]`, which returns whichever row SQLite yields
+        # first and never looks at the rest. A witness holding two rows -- one
+        # agreeing with the ledger and one not -- therefore migrated or refused
+        # DEPENDING ON THE ORDER SQLITE HAPPENED TO RETURN. Measured on the
+        # same two rows against a 2-row ledger:
+        #
+        #     (1, 99) then (2, 2)   fetchone -> 99   REFUSED
+        #     (1, 2)  then (2, 99)  fetchone -> 2    status pass,
+        #                                            action migrated_continuity
+        #
+        # The second left a witness still holding 99 in a store the command had
+        # just called migrated. Which row comes first is not a property of the
+        # data, so a verdict that turns on it is not a verdict.
+        #
+        # This is the ordering-dependent read that `_assert_witness_structure`
+        # and the consumption re-read were each repaired for; the migration
+        # path kept the original shape.
+        with closing(sqlite3.connect(witness)) as conn:
+            marks = conn.execute("SELECT id, value FROM high_water").fetchall()
+        if len(marks) != 1:
+            raise typer.BadParameter(
+                f"the continuity witness holds {len(marks)} rows where exactly "
+                f"one is required: {marks}. Which of them is the mark would "
+                "depend on the order SQLite returned it, so this store cannot "
+                "be migrated. Use --reset-replay-history to establish a fresh "
+                "epoch."
+            )
+        before_mark = int(marks[0][1])
         if before_rows != before_mark:
             raise typer.BadParameter(
                 f"the ledger holds {before_rows} consumptions and the witness "
@@ -380,7 +410,32 @@ def provision_ledger(
                 "stale state: " + "; ".join(failures)
             )
         existed = False
-    ledger = ApprovalLedger.provision(location)
+    # A GOVERNED REFUSAL, NOT A TRACEBACK.
+    #
+    # `provision` refuses an existing ledger whose journal mode cannot commit
+    # as one unit with its witness -- correctly, because converting it would
+    # change replay-safety semantics for a caller who asked only to provision.
+    # That refusal reached the operator as an UNHANDLED EXCEPTION: measured,
+    # exit 1 with a Python traceback in stderr wrapping the message.
+    #
+    # The message itself is good and names the recovery command. Delivering it
+    # as a crash is the defect: every other refusal on this surface is a JSON
+    # report and a chosen exit code, and an operator parsing this output gets
+    # a stack trace instead of a status.
+    try:
+        ledger = ApprovalLedger.provision(location)
+    except NornyxRuntimeUnavailable as exc:
+        console.print_json(
+            json.dumps(
+                {
+                    "status": "fail",
+                    "ledger": str(location),
+                    "action": "refused",
+                    "reason": str(exc),
+                }
+            )
+        )
+        raise typer.Exit(2) from exc
     console.print_json(
         json.dumps(
             {

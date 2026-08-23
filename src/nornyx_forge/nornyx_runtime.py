@@ -1474,12 +1474,39 @@ class ApprovalLedger:
             return self._commit_consumption(
                 fingerprint, request_digest, approval_id or fingerprint, at
             )
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as exc:
             spent = self.lookup(fingerprint=fingerprint) or self.lookup(
                 request_digest=request_digest
             )
-            when = spent["consumed_at"] if spent else "an earlier run"
-            if spent and spent["fingerprint"] != fingerprint:
+            if spent is None:
+                # NO ROW MEANS NO REPLAY. This branch reported "this approval
+                # was already consumed at an earlier run" for EVERY
+                # IntegrityError, including ones raised for reasons that have
+                # nothing to do with duplication -- and it said so even when
+                # the lookup that was supposed to find the earlier consumption
+                # found NOTHING. `when` fell back to the literal string "an
+                # earlier run", which reads as a date the ledger does not have.
+                #
+                # Measured: with `consumed_approvals` rebuilt carrying a CHECK
+                # the row violates -- the object set unchanged, so the closure
+                # check passes -- a grant that had never been presented before
+                # produced `rows before 0, after 0` and the reason "this
+                # approval was already consumed at an earlier run".
+                #
+                # That is a governance record stating a falsehood, and it sends
+                # an operator to look for a duplicate that does not exist. What
+                # actually happened is that the ledger REFUSED to record the
+                # consumption, which is the same class of fault as a ledger
+                # that cannot be read: it cannot answer "was this spent?".
+                return False, (
+                    f"{self.UNREADABLE}: the ledger refused the consumption "
+                    f"record for {fingerprint!r} and holds no row for it, so "
+                    "whether this grant was ever spent cannot be established. "
+                    "This is NOT a replay -- nothing was consumed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            when = spent["consumed_at"]
+            if spent["fingerprint"] != fingerprint:
                 # Same act, different decision: a second grant cannot release an
                 # effect that has already happened.
                 return False, (

@@ -123,7 +123,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 140,
+    "tests/test_recorded_measurements.py": 144,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -203,7 +203,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 36,
+    "tests/test_ledger_continuity.py": 44,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a

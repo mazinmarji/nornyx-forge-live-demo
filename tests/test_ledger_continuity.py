@@ -893,3 +893,280 @@ def test_provisioning_a_wal_ledger_does_not_convert_it_or_flip_the_verdict(
         "-- an authorization verdict flipped by a maintenance command"
     )
     assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+
+
+def _constrain_ledger_against(path: Path, approval_id: str) -> None:
+    """Rebuild `consumed_approvals` so one approval_id cannot be recorded.
+
+    The OBJECT SET is unchanged -- same table name, same automatic indexes --
+    so the ledger closure check passes and the INSERT is what fails. That is
+    the point: this produces an `IntegrityError` that is NOT a duplicate.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("ALTER TABLE consumed_approvals RENAME TO shadow_ca")
+        conn.execute(
+            "CREATE TABLE consumed_approvals ("
+            " fingerprint TEXT PRIMARY KEY,"
+            " request_digest TEXT NOT NULL UNIQUE,"
+            " approval_id TEXT NOT NULL,"
+            " consumed_at TEXT NOT NULL,"
+            f" CHECK (approval_id <> {approval_id!r}))"
+        )
+        conn.execute("INSERT INTO consumed_approvals SELECT * FROM shadow_ca")
+        conn.execute("DROP TABLE shadow_ca")
+        conn.commit()
+
+
+def test_an_integrity_error_with_no_row_is_not_reported_as_a_replay(
+    tmp_path: Path,
+) -> None:
+    """A9-P3-1. The record said a grant was spent that had never been presented.
+
+    Every `sqlite3.IntegrityError` out of the consumption transaction was read
+    as a replay, and the fallback said so even when the lookup meant to find
+    the earlier consumption found NOTHING -- `when` became the literal string
+    "an earlier run", which reads like a date the ledger does not have.
+
+    Measured before the repair: `rows before 0, after 0`, and the reason "this
+    approval was already consumed at an earlier run" for a grant presented for
+    the first time. A governance record stating a falsehood, sending an
+    operator to look for a duplicate that does not exist.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    _constrain_ledger_against(path, "ACT-never-seen")
+
+    assert _rows(path) == 0, "setup is broken: the ledger is not empty"
+    claimed, reason = ledger.consume(
+        "fp-never-seen", "rd-never-seen", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-never-seen",
+    )
+
+    assert claimed is False, "a ledger that refused the record released a grant"
+    assert _rows(path) == 0, "a row was committed despite the integrity error"
+    assert "already consumed" not in reason, (
+        "the ledger holds NO row for this grant and the record still claims it "
+        f"was consumed: {reason}"
+    )
+    assert reason.startswith(ApprovalLedger.UNREADABLE), (
+        "a ledger that cannot record a consumption cannot answer whether the "
+        f"grant was spent, and must say so with its own code: {reason}"
+    )
+
+
+def test_a_genuine_replay_is_still_reported_as_one(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL for the test above.
+
+    Narrowing the replay branch is satisfied by a branch that never reports a
+    replay at all, which would delete the single-use diagnostic entirely. The
+    second presentation of the SAME grant must still name the replay, and name
+    the real timestamp rather than a placeholder.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    assert _spend(ledger, 0), "the first presentation did not release"
+    claimed, reason = ledger.consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-0",
+    )
+    assert claimed is False, "the same grant released twice"
+    assert "already consumed" in reason, reason
+    assert "an earlier run" not in reason, (
+        "the replay is real, so the record must carry the consumption time it "
+        f"actually holds rather than a placeholder: {reason}"
+    )
+
+
+def test_the_same_act_under_a_second_grant_is_still_refused(tmp_path: Path) -> None:
+    """The other positive control: a different fingerprint, the same act."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    first, _ = ledger.consume("fp-a", "rd-shared", at=NOW,
+                              grant_issued_at=GRANT_ISSUED, approval_id="ACT-a")
+    assert first is True, "setup is broken: the first grant did not release"
+
+    claimed, reason = ledger.consume("fp-b", "rd-shared", at=NOW,
+                                     grant_issued_at=GRANT_ISSUED,
+                                     approval_id="ACT-b")
+    assert claimed is False, "a second grant released an act already performed"
+    assert "already released" in reason and "ACT-a" in reason, reason
+
+
+def test_provisioning_a_wal_ledger_refuses_in_the_governed_way(tmp_path: Path) -> None:
+    """A9-P3-2. The refusal was correct and arrived as a crash.
+
+    `provision` refuses an existing ledger whose journal mode cannot commit as
+    one unit with its witness, and it is right to: converting would change
+    replay-safety semantics for a caller who asked only to provision. But the
+    refusal reached the operator as an UNHANDLED EXCEPTION -- measured, exit 1
+    with a Python traceback in stderr wrapping the message.
+
+    Every other refusal on this surface is a JSON report and a chosen exit
+    code. An operator parsing this output got a stack trace instead of a
+    status, and a stack trace is not a governed record of a decision.
+    """
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    with closing(sqlite3.connect(location)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.commit()
+    assert _journal_mode(location) == "wal", "setup is broken"
+
+    result = CliRunner().invoke(app, ["provision-ledger", "--root", str(tmp_path)])
+
+    assert result.exit_code == 2, (
+        f"a governed refusal must choose its exit code: {result.exit_code}"
+    )
+    assert "Traceback" not in result.output, (
+        "the refusal arrived as an unhandled exception: " + result.output[-400:]
+    )
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "fail", report
+    assert report["action"] == "refused", report
+    assert "--migrate-continuity" in report["reason"], (
+        "the refusal no longer names the recovery command, which is the only "
+        f"thing that makes it actionable: {report['reason']}"
+    )
+    assert _journal_mode(location) == "wal", (
+        "the refused provision converted the ledger anyway"
+    )
+
+
+def test_provisioning_a_healthy_ledger_still_reports_pass(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL. Catching the refusal is satisfied by a command
+    that refuses everything, which would make provisioning impossible."""
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    result = CliRunner().invoke(app, ["provision-ledger", "--root", str(tmp_path)])
+    assert result.exit_code == 0, result.output[-300:]
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "pass" and report["action"] == "created", report
+
+
+def _two_row_witness(tmp_path: Path, planted) -> Path:
+    """A ledger with two consumptions beside a witness holding two rows."""
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_WATERMARK_SUFFIX,
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert _spend(ledger, 0) and _spend(ledger, 1), "setup is broken"
+
+    witness = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+    with closing(sqlite3.connect(witness)) as conn:
+        conn.execute("DROP TABLE high_water")
+        conn.execute(
+            "CREATE TABLE high_water ("
+            " id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"
+        )
+        for pair in planted:
+            conn.execute(
+                "INSERT INTO high_water (id, value) VALUES (?, ?)", pair
+            )
+        conn.commit()
+    for path in (location, witness):
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
+    return location
+
+
+@pytest.mark.parametrize(
+    ("label", "planted"),
+    [
+        ("the agreeing row comes first", [(1, 2), (2, 99)]),
+        ("the agreeing row comes second", [(1, 99), (2, 2)]),
+    ],
+)
+def test_the_migration_refuses_a_multi_row_witness_whatever_the_order(
+    label: str, planted, tmp_path: Path,
+) -> None:
+    """A9-P3-3. The verdict turned on which row SQLite happened to return.
+
+    The pre-migration check read the witness with `fetchone()[0]`, which takes
+    the first row and never looks at the rest. Against a 2-row ledger, the SAME
+    two witness rows gave OPPOSITE verdicts depending only on their order:
+
+        (1, 99) then (2, 2)   fetchone -> 99   refused
+        (1, 2)  then (2, 99)  fetchone -> 2    status pass,
+                                               action migrated_continuity
+
+    The second left a witness still holding 99 in a store the command had just
+    called migrated. Row order is not a property of the data, so a verdict that
+    turns on it is not a verdict -- and this is the ordering-dependent read
+    that two other sites in this system were already repaired for.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    _two_row_witness(tmp_path, planted)
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 2, (
+        f"{label}: a witness holding two rows was migrated. "
+        + result.output[-300:]
+    )
+    assert "two rows" in result.output or "2 rows" in result.output, (
+        f"{label}: the refusal does not name what was wrong: "
+        + result.output[-300:]
+    )
+
+
+def test_the_migration_still_converts_a_healthy_pair(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL. Refusing every witness would satisfy the tests
+    above and make the documented recovery command useless."""
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_WATERMARK_SUFFIX,
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert _spend(ledger, 0), "setup is broken"
+    witness = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+    for path in (location, witness):
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 0, result.output[-300:]
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "pass", report
+    assert _journal_mode(location) in {"delete", "truncate", "persist"}, (
+        "the migration reported pass and left the ledger in WAL"
+    )
