@@ -45,9 +45,9 @@ class FalseGreen:
     root_cause: str
     guard: str
     owner: str
-    #: (path, before, after) -- an EXECUTABLE reproduction of this class's
-    #: defect, applied to the real tree and undone afterwards. When present,
-    #: the marked guard MUST go red under it.
+    #: (path, before, after, count) -- an EXECUTABLE reproduction of this
+    #: class's defect, applied to the real tree and undone afterwards. When
+    #: present, the marked guard MUST go red under it, FOR ITS OWN REASON.
     #:
     #: `root_cause` and `guard` above are PROSE and always were. A review
     #: found two markers sitting on nodes that could not fail for the control
@@ -194,7 +194,16 @@ INVENTORY = (
         "FG22", "a clean gate, when the violation was added to the baseline excusing it",
         "a grandfather list that the author may extend absolves the author's own commit",
         "record culpable entries separately, pin the count, and keep --no-baseline",
-        "tests/test_evidence_binding.py::test_the_baseline_can_be_defeated_for_adversarial_runs",
+        # OWNER CORRECTED to the node that fails for this class; the one
+        # previously named is a substring scan and passed under FG22's own
+        # defect.
+        "tests/test_evidence_binding.py"
+        "::test_the_escape_hatch_is_exercised_not_merely_present",
+        # Delete the escape hatch's BEHAVIOUR while leaving its NAME in the
+        # file -- which is precisely how the class was missed.
+        ("scripts/check_evidence_binding.py",
+         "known_violations() if apply_baseline else set()",
+         "known_violations()", 1),
     ),
     FalseGreen(
         "FG23", "a kill, when the observable collapsed because the mutant broke the run",
@@ -279,7 +288,10 @@ INVENTORY = (
         "tests/test_probe_containment.py"
         "::test_fg33_both_harness_entry_points_bound_their_runs",
         # Strip the timeout bindings the campaign actually relies on.
-        ("tests/mutation_workspace.py", "timeout=timeout", "timeout=None"),
+        # The COUNT is part of the reproduction: a stale anchor that matches
+        # nothing is FG07, and one that matches more than intended is a
+        # different mutation than the one recorded.
+        ("tests/mutation_workspace.py", "timeout=timeout", "timeout=None", 2),
     ),
     FalseGreen(
         "FG34", "a KILL, when only a named test failed",
@@ -456,6 +468,53 @@ MECHANISM_TO_CLASS = {
 }
 
 
+def _reachable(node: ast.AST, function: ast.AST) -> bool:
+    """Is this statement inside a branch that can be taken?
+
+    The counter credited any `ast.Raise` that `ast.walk` could reach, so
+
+        if False:
+            raise AssertionError("never")
+
+    satisfied "this guard carries something that can fail" while the guard did
+    nothing. Measured on FG01 with its marker kept: 3 passed, rc 0.
+
+    Only the guard's own condition is judged, by the same parse-time rule the
+    assertions use -- a branch whose test is a literal that folds to False is
+    never taken. Anything this cannot decide is treated as reachable, because
+    the question here is whether a proof exists, not whether it is optimal.
+    """
+    for branch in ast.walk(function):
+        if not isinstance(branch, ast.If):
+            continue
+        if not any(node is inner for inner in ast.walk(branch)):
+            continue
+        in_body = any(node is inner for statement in branch.body
+                      for inner in ast.walk(statement))
+        if in_body and _folds_to_false(branch.test):
+            return False
+    return True
+
+
+def _folds_to_false(test: ast.expr) -> bool:
+    """A branch condition that is decided at parse time, and decided False."""
+    if any(
+        isinstance(inner, (ast.Name, ast.Call, ast.Attribute, ast.Subscript))
+        for inner in ast.walk(test)
+    ):
+        return False
+    try:
+        return not bool(
+            eval(  # noqa: S307
+                compile(ast.Expression(test), "<literal>", "eval"),
+                {"__builtins__": {}},
+                {},
+            )
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
     """Is this assertion's subject fixed at parse time?
 
@@ -481,6 +540,37 @@ def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
     its first binding was; only a name whose every binding in the function is
     a constant literal is fixed at parse time.
     """
+    # A LITERAL EXPRESSION IS FIXED AT PARSE TIME WHATEVER ITS SHAPE.
+    #
+    # This answered only for a bare `ast.Constant`, so three cheaper edits than
+    # `assert True` walked straight through, each defeating the class entirely:
+    #
+    #     assert 1 == 1          counts as CAN-FAIL
+    #     assert not False       counts as CAN-FAIL
+    #     assert 'a' in 'abc'    counts as CAN-FAIL
+    #
+    # Measured end to end on FG01 with its marker kept: body replaced by
+    # `assert 1 == 1` -> ALL EIGHT certification nodes 8 passed, rc 0, and
+    # nothing anywhere checked that authenticating first catches the
+    # wrong-keyword grant.
+    #
+    # An expression naming nothing -- no Name, Call, Attribute or Subscript --
+    # depends on no state, so its value is decided here. Evaluated with empty
+    # builtins: this is a constant folder, not an interpreter for test bodies.
+    if not any(
+        isinstance(node, (ast.Name, ast.Call, ast.Attribute, ast.Subscript))
+        for node in ast.walk(test)
+    ):
+        try:
+            return bool(
+                eval(  # noqa: S307
+                    compile(ast.Expression(test), "<literal>", "eval"),
+                    {"__builtins__": {}},
+                    {},
+                )
+            )
+        except Exception:  # noqa: BLE001 - an expression we cannot fold is not vacuous
+            return False
     if isinstance(test, ast.Constant):
         return bool(test.value)
     if isinstance(test, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
@@ -849,9 +939,19 @@ PENDING_REPRODUCTION = frozenset(
 ) | frozenset({
     "FG01", "FG02", "FG03", "FG05", "FG07", "FG08", "FG09", "FG10", "FG11",
     "FG12", "FG13", "FG14", "FG15", "FG16", "FG17", "FG18", "FG19", "FG20",
-    "FG21", "FG22", "FG23", "FG24", "FG25", "FG26", "FG27", "FG28", "FG29",
+    "FG21", "FG23", "FG24", "FG25", "FG26", "FG27", "FG28", "FG29",
     "FG30", "FG31", "FG32", "FG34", "FG35", "FG36", "FG37", "FG38", "FG39",
 })
+
+
+#: WHICH classes carry a reproduction, pinned by identity.
+#:
+#: The contract below asserted only `reproduced` non-empty. With exactly one
+#: live reproduction that let the whole contract be re-pointed at a different
+#: class with everything green -- which is how a bogus triple was demonstrated
+#: passing. Membership is now a diff, the same way `EXPECTED_FALSE_GREEN_CLASSES`
+#: is.
+EXPECTED_REPRODUCED = frozenset({"FG22", "FG33"})
 
 
 def test_every_false_green_class_has_a_terminal_classification():
@@ -899,9 +999,12 @@ def test_every_false_green_class_has_a_terminal_classification():
         f"these classifications name a class the inventory does not list: {stray}"
     )
 
-    assert reproduced, (
-        "no class carries an executable reproduction at all, so the contract "
-        "below measures nothing and this whole scheme is decoration"
+    assert reproduced == EXPECTED_REPRODUCED, (
+        "the set of classes carrying an executable reproduction changed. That "
+        "is a diff to argue with, not a side effect: adding one is progress, "
+        "and removing one silently is how a contract stops measuring "
+        f"anything. expected {sorted(EXPECTED_REPRODUCED)}, found "
+        f"{sorted(reproduced)}"
     )
 
 
@@ -910,42 +1013,60 @@ def test_every_false_green_class_has_a_terminal_classification():
     [entry for entry in INVENTORY if entry.reproduces is not None],
     ids=[entry.ident for entry in INVENTORY if entry.reproduces is not None],
 )
-def test_a_reproduced_defect_turns_its_own_marked_guard_red(item):
-    """The contract: a class with a reproduction must have a guard that fails.
+def test_a_reproduced_defect_turns_its_own_marked_guard_red(item, tmp_path: Path):
+    """The class's own defect must make its marked guard fail, FOR ITS REASON.
 
-    This is the property the whole inventory was missing. A marker says which
-    node certifies a class; nothing said that node could FAIL for the reason
-    the class names. FG33's marker sat on a guard exercising CPython's own
-    subprocess timeout -- it would have passed with every file in this
-    repository deleted -- while an unmarked sibling was the one that failed.
+    THE FIRST VERSION OF THIS CONTRACT ASSERTED `returncode != 0` AND NOTHING
+    ELSE, and that is not attribution. A review gave a class the triple
+    `("tests/test_absence_is_not_success.py", "def test_", "def zzz_")` --
+    which has nothing to do with that class and simply deletes every test in
+    the module -- and the contract CREDITED it. `pytest <owner>` exits 4 with
+    "no tests ran" when the node is gone, and 4 is not zero.
 
-    The defect is applied to the real tree and undone in a `finally`, with the
-    restoration asserted. The isolated vehicles do not work here, for the
-    reason recorded in
-    `test_a_collection_that_failed_cannot_establish_the_guard_link`.
+    That is FG11 ("a kill, when the named test node no longer exists") and
+    FG19 ("the right node failed for an unrelated reason") committed inside
+    the contract that certifies the FG inventory.
+
+    It also skipped three admissibility rules the sibling runner enforces on
+    every mutation, so the same edit could have targeted a comment (FG03), a
+    stale anchor matching nothing (FG07), or a file outside production scope
+    (FG16). All four questions are asked here now, in the order the campaign
+    asks them:
+
+        the target exists, is executable, and matches EXACTLY n times
+        the guard passes on the pristine tree
+        the guard FAILS under the defect
+        the EXACT owner node failed, in the CALL phase -- not errored,
+          not absent, not some other node in the same file
     """
     import subprocess  # noqa: PLC0415
 
-    relative, before, after = item.reproduces
+    from mutation_validity import check_mutation  # noqa: PLC0415
+    from mutation_workspace import require_caused_failure  # noqa: PLC0415
+
+    relative, before, after, count = item.reproduces
     target = ROOT / relative
     assert target.is_file(), f"{item.ident}: {relative} is not in the tree"
+    text = target.read_text(encoding="utf-8")
 
-    def guard() -> subprocess.CompletedProcess:
+    # FG03 + FG07: an executable target, present exactly as many times as the
+    # reproduction says. A comment target or a stale anchor is refused here
+    # rather than producing a mutant that changes nothing.
+    check_mutation(relative, text, text.replace(before, after), before, count)
+
+    report = tmp_path / "damaged.xml"
+
+    def guard(report_path=None) -> subprocess.CompletedProcess:
+        command = [sys.executable, "-m", "pytest", item.owner, "-q", "-o",
+                   "addopts=", "-p", "no:randomly", "--no-header"]
+        if report_path is not None:
+            command += ["--junit-xml", str(report_path)]
         return subprocess.run(  # noqa: S603
-            [sys.executable, "-m", "pytest", item.owner, "-q", "-o", "addopts=",
-             "-p", "no:randomly", "--no-header"],
-            cwd=ROOT, capture_output=True, text=True, timeout=2400,
+            command, cwd=ROOT, capture_output=True, text=True, timeout=2400,
             encoding="utf-8", errors="replace", check=False,
         )
 
     pristine = target.read_bytes()
-    text = pristine.decode("utf-8")
-    occurrences = text.count(before)
-    assert occurrences > 0, (
-        f"{item.ident}: the reproduction anchor {before!r} is not in "
-        f"{relative}, so this class's defect can no longer be applied and the "
-        "triple is stale"
-    )
     try:
         healthy = guard()
         assert healthy.returncode == 0, (
@@ -953,7 +1074,7 @@ def test_a_reproduced_defect_turns_its_own_marked_guard_red(item):
             f"tree, so this measures nothing: {healthy.stdout[-300:]}"
         )
         target.write_bytes(text.replace(before, after).encode("utf-8"))
-        damaged = guard()
+        damaged = guard(report)
     finally:
         target.write_bytes(pristine)
 
@@ -962,10 +1083,16 @@ def test_a_reproduced_defect_turns_its_own_marked_guard_red(item):
     )
     assert damaged.returncode != 0, (
         f"{item.ident}: the class's own defect was reproduced in {relative} "
-        f"({occurrences} site(s)) and the guard the inventory names as its "
-        "proof STAYED GREEN. That guard cannot fail for the control this "
-        f"class is about: {damaged.stdout[-400:]}"
+        f"({count} site(s)) and the guard the inventory names as its proof "
+        "STAYED GREEN. That guard cannot fail for the control this class is "
+        f"about: {damaged.stdout[-400:]}"
     )
+    # THE EXACT NODE, IN THE CALL PHASE. This is what separates "the guard
+    # failed" from "something in that file went wrong" -- and from "the node
+    # was not there to run", which exits non-zero and proves nothing at all.
+    require_caused_failure(report, item.owner, damaged.stdout)
+
+
 
 
 def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
@@ -1008,12 +1135,27 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
         # not minimal -- read as having no evidence at all. A counter that
         # misses a whole form of failure is the same defect as the bodies it
         # was written to catch.
+        # AN EARLY RETURN MAKES EVERY ASSERTION BELOW IT UNREACHABLE.
+        #
+        # `return` as the first statement after the docstring left the real
+        # assertions in place, so the counter found them and the guard passed
+        # while executing none of them. Measured on FG01: 2 passed, rc 0.
+        body = list(found[0].body)
+        if body and isinstance(body[0], ast.Expr) and isinstance(
+            body[0].value, ast.Constant
+        ):
+            body = body[1:]
+        assert not (body and isinstance(body[0], ast.Return)), (
+            f"{item.ident}: {node} returns before its first assertion, so the "
+            "assertions below it never execute. A guard that returns early "
+            "asserts nothing, whatever its body still contains."
+        )
         exercised = sum(
             1
             for child in ast.walk(found[0])
             if (isinstance(child, ast.Assert)
                 and not _cannot_fail(child.test, found[0]))
-            or isinstance(child, ast.Raise)
+            or (isinstance(child, ast.Raise) and _reachable(child, found[0]))
             or (
                 isinstance(child, ast.withitem)
                 and isinstance(child.context_expr, ast.Call)
@@ -1837,13 +1979,18 @@ def test_the_specification_only_guards_are_declared_as_such():
     it. The criterion is sound for these two, which were examined
     individually, and is not a general test of relevance.
 
-    THE BOUND, found by the control that checks this test. Only IMPORTED
-    repository names are recognised. A guard that reached for a module-local
-    object carrying repository facts -- `INVENTORY` itself, say -- would still
-    read as specification-only: the first revert control wired FG06's guard to
-    `INVENTORY` and this test stayed GREEN. Wiring it to `census` turns it
-    red. So this catches a guard that starts importing the system, not one
-    that reads a fact this module already holds.
+    THE BOUND, restated after a review measured the first version of it wrong.
+    Static imports, DYNAMIC imports (`importlib.import_module`, `__import__`
+    with a literal) and string literals naming a top-level repository
+    directory are all recognised.
+
+    What is still NOT recognised is a guard reading a module-local object that
+    carries repository facts -- `INVENTORY` itself, say. Measured: wiring
+    FG06's guard to `INVENTORY` leaves this GREEN; wiring it to `census`, to
+    `importlib.import_module("nornyx_forge.approval_trust")`, or to
+    `(ROOT / "src")` turns it RED. The earlier wording claimed this "catches a
+    guard that starts importing the system", which was false while dynamic
+    imports escaped it.
     """
     import ast  # noqa: PLC0415
 
@@ -1874,6 +2021,38 @@ def test_the_specification_only_guards_are_declared_as_such():
                 if root not in stdlib:
                     repository_names.add((alias.asname or alias.name).split(".")[0])
 
+    # A DYNAMIC IMPORT IS AN IMPORT. The first version of this collected names
+    # only from `ast.Import` / `ast.ImportFrom`, and its own disclosure claimed
+    # to catch "a guard that starts importing the system". Measured, appending
+    # one line to FG06's guard:
+    #
+    #     assert len(INVENTORY) > 0                      rc 0  (disclosed bound)
+    #     importlib.import_module("nornyx_forge...")     rc 0  NOT CAUGHT
+    #     assert (ROOT / "src").is_dir()                 rc 0  NOT CAUGHT
+    #     import check_test_coverage as census; ...      rc 1  control fires
+    #
+    # A guard importing production through `importlib` IS importing the system,
+    # so that summary sentence was false. String arguments to `import_module`
+    # and `__import__`, and string literals naming a top-level repository
+    # directory, are read as repository references too.
+    _REPOSITORY_DIRECTORIES = ("src", "scripts", "docs", ".nornyx", "tests")
+
+    def _dynamic_repository_reference(function) -> list:
+        found = []
+        for node in ast.walk(function):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                if name in {"import_module", "__import__"} and node.args:
+                    first = node.args[0]
+                    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                        if first.value.split(".")[0] not in stdlib:
+                            found.append(f"import_module({first.value!r})")
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                head = node.value.strip("/").split("/")[0]
+                if head in _REPOSITORY_DIRECTORIES:
+                    found.append(f"path {node.value!r}")
+        return sorted(set(found))
+
     def touches_repository(function_name: str) -> list:
         function = next(
             node for node in ast.walk(tree)
@@ -1893,7 +2072,11 @@ def test_the_specification_only_guards_are_declared_as_such():
             f"{ident} is declared specification-only but its guard lives in "
             f"{module}, which this test cannot parse"
         )
-        touched = touches_repository(name)
+        function = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        touched = touches_repository(name) + _dynamic_repository_reference(function)
         assert touched == [], (
             f"{ident} is declared specification-only and its guard now "
             f"references repository code {touched}. If that is deliberate, "

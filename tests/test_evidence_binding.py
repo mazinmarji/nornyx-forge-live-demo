@@ -196,7 +196,6 @@ def test_the_generator_never_overwrites_the_committed_baseline():
     assert "known_violations" in source, "the checker no longer reads the baseline"
 
 
-@pytest.mark.false_green("FG22")
 @pytest.mark.parametrize("flag", ["--no-baseline"])
 def test_the_baseline_can_be_defeated_for_adversarial_runs(flag: str):
     """FG22. Grandfathering must be switchable off, or no regression can be trusted."""
@@ -207,6 +206,24 @@ def test_the_baseline_can_be_defeated_for_adversarial_runs(flag: str):
     )
 
 
+# THE MARKER MOVED HERE, to the node that fails for this class.
+#
+# It sat on `test_the_baseline_can_be_defeated_for_adversarial_runs`, whose
+# whole body is `assert flag in CHECKER.read_text(...)` -- a SUBSTRING SCAN,
+# which is FG21's own class. Measured by deleting FG22's defect from
+# `scripts/check_evidence_binding.py` (`known_violations() if apply_baseline
+# else set()` -> `known_violations()`), so the baseline can no longer be
+# defeated and every adversarial range is silently excused:
+#
+#     the marked owner                          PASSED
+#     this node, unmarked at the time           FAILED
+#     all three audit certifications            PASSED
+#
+# The token `--no-baseline` stays in the file, so the scan still finds it.
+# This module's own docstring already recorded that repair -- "both were
+# looking at the file rather than running it" -- and the marker was left
+# behind on the one that looks.
+@pytest.mark.false_green("FG22")
 def test_the_escape_hatch_is_exercised_not_merely_present(tmp_path: Path):
     """FG22's specimen read source text; removing the hatch left it green.
 
