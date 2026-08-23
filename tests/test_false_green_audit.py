@@ -45,6 +45,22 @@ class FalseGreen:
     root_cause: str
     guard: str
     owner: str
+    #: (path, before, after) -- an EXECUTABLE reproduction of this class's
+    #: defect, applied to the real tree and undone afterwards. When present,
+    #: the marked guard MUST go red under it.
+    #:
+    #: `root_cause` and `guard` above are PROSE and always were. A review
+    #: found two markers sitting on nodes that could not fail for the control
+    #: their class names -- FG33's exercised CPython's subprocess timeout and
+    #: would have passed with every file here deleted -- and prose could not
+    #: have caught either. Only ident + this triple affect a verdict.
+    #:
+    #: Optional ON PURPOSE. Defaulting to None leaves the classes that have no
+    #: reproduction yet UNMIGRATED rather than guessed, which is the same
+    #: discipline `authoritative_property` follows for the attack catalogue.
+    #: `test_every_false_green_class_has_a_terminal_classification` is what
+    #: stops that default from becoming a silent exemption.
+    reproduces: tuple | None = None
 
 
 INVENTORY = (
@@ -262,6 +278,8 @@ INVENTORY = (
         # timeout rather than anything this repository does.
         "tests/test_probe_containment.py"
         "::test_fg33_both_harness_entry_points_bound_their_runs",
+        # Strip the timeout bindings the campaign actually relies on.
+        ("tests/mutation_workspace.py", "timeout=timeout", "timeout=None"),
     ),
     FalseGreen(
         "FG34", "a KILL, when only a named test failed",
@@ -809,6 +827,147 @@ def test_fg09_possession_does_not_discriminate(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
+#: Classes whose defect has no executable reproduction YET, each with the
+#: reason. A class is in exactly one of three terminal states: it carries a
+#: `reproduces` triple, it is SPECIFICATION_ONLY, or it is named here.
+#:
+#: This list is not an exemption. It is the honest form of "not migrated",
+#: and `test_every_false_green_class_has_a_terminal_classification` fails the
+#: moment a class belongs to none of the three -- which is what a new entry
+#: added without thought would do.
+#:
+#: WHY THESE ARE PENDING rather than done: reproducing a false-green class
+#: mechanically means reintroducing the pattern that made a test lie, and for
+#: most of these the pattern lives in the SHAPE of a proof rather than in a
+#: line that can be swapped. FG33 could be reproduced because its class is
+#: "a result, when the run did not finish", and the binding that prevents it
+#: is a literal `timeout=` argument. The rest need a per-class edit that has
+#: to be derived one at a time -- deliberately not a bulk migration, for the
+#: same reason the attack catalogue refused one.
+PENDING_REPRODUCTION = frozenset(
+    item.ident for item in ()
+) | frozenset({
+    "FG01", "FG02", "FG03", "FG05", "FG07", "FG08", "FG09", "FG10", "FG11",
+    "FG12", "FG13", "FG14", "FG15", "FG16", "FG17", "FG18", "FG19", "FG20",
+    "FG21", "FG22", "FG23", "FG24", "FG25", "FG26", "FG27", "FG28", "FG29",
+    "FG30", "FG31", "FG32", "FG34", "FG35", "FG36", "FG37", "FG38", "FG39",
+})
+
+
+def test_every_false_green_class_has_a_terminal_classification():
+    """B9-P2-1. Every class is reproduced, specified, or declared pending.
+
+    The inventory's `root_cause` and `guard` are prose. A review found two
+    markers on nodes that could not fail for the control their class names,
+    and no amount of prose would have caught either.
+
+    So a class must now be in exactly ONE of three terminal states, and the
+    third is a declaration rather than a silence:
+
+        reproduces          an executable defect the guard must go red under
+        SPECIFICATION_ONLY  a guard that pins an algorithm, not this system
+        PENDING_REPRODUCTION  no reproduction derived yet, named as such
+
+    A class in none of them fails here. A class in two of them fails here.
+    That is what keeps "not migrated" from turning into "exempt" the way an
+    optional attribution once did in the attack catalogue.
+    """
+    idents = {item.ident for item in INVENTORY}
+    reproduced = {item.ident for item in INVENTORY if item.reproduces is not None}
+
+    unclassified = sorted(
+        idents - reproduced - SPECIFICATION_ONLY - PENDING_REPRODUCTION
+    )
+    assert unclassified == [], (
+        "these false-green classes have no terminal classification: they name "
+        "no executable reproduction, are not declared specification-only, and "
+        "are not declared pending. A class in none of the three is one nobody "
+        f"has decided about: {unclassified}"
+    )
+
+    overlapping = sorted(
+        (reproduced & SPECIFICATION_ONLY)
+        | (reproduced & PENDING_REPRODUCTION)
+        | (SPECIFICATION_ONLY & PENDING_REPRODUCTION)
+    )
+    assert overlapping == [], (
+        f"these classes carry two terminal classifications at once: {overlapping}"
+    )
+
+    stray = sorted((SPECIFICATION_ONLY | PENDING_REPRODUCTION) - idents)
+    assert stray == [], (
+        f"these classifications name a class the inventory does not list: {stray}"
+    )
+
+    assert reproduced, (
+        "no class carries an executable reproduction at all, so the contract "
+        "below measures nothing and this whole scheme is decoration"
+    )
+
+
+@pytest.mark.parametrize(
+    "item",
+    [entry for entry in INVENTORY if entry.reproduces is not None],
+    ids=[entry.ident for entry in INVENTORY if entry.reproduces is not None],
+)
+def test_a_reproduced_defect_turns_its_own_marked_guard_red(item):
+    """The contract: a class with a reproduction must have a guard that fails.
+
+    This is the property the whole inventory was missing. A marker says which
+    node certifies a class; nothing said that node could FAIL for the reason
+    the class names. FG33's marker sat on a guard exercising CPython's own
+    subprocess timeout -- it would have passed with every file in this
+    repository deleted -- while an unmarked sibling was the one that failed.
+
+    The defect is applied to the real tree and undone in a `finally`, with the
+    restoration asserted. The isolated vehicles do not work here, for the
+    reason recorded in
+    `test_a_collection_that_failed_cannot_establish_the_guard_link`.
+    """
+    import subprocess  # noqa: PLC0415
+
+    relative, before, after = item.reproduces
+    target = ROOT / relative
+    assert target.is_file(), f"{item.ident}: {relative} is not in the tree"
+
+    def guard() -> subprocess.CompletedProcess:
+        return subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", item.owner, "-q", "-o", "addopts=",
+             "-p", "no:randomly", "--no-header"],
+            cwd=ROOT, capture_output=True, text=True, timeout=2400,
+            encoding="utf-8", errors="replace", check=False,
+        )
+
+    pristine = target.read_bytes()
+    text = pristine.decode("utf-8")
+    occurrences = text.count(before)
+    assert occurrences > 0, (
+        f"{item.ident}: the reproduction anchor {before!r} is not in "
+        f"{relative}, so this class's defect can no longer be applied and the "
+        "triple is stale"
+    )
+    try:
+        healthy = guard()
+        assert healthy.returncode == 0, (
+            f"{item.ident}: the marked guard does not pass on the pristine "
+            f"tree, so this measures nothing: {healthy.stdout[-300:]}"
+        )
+        target.write_bytes(text.replace(before, after).encode("utf-8"))
+        damaged = guard()
+    finally:
+        target.write_bytes(pristine)
+
+    assert target.read_bytes() == pristine, (
+        f"{item.ident}: the reproduction did not restore {relative}"
+    )
+    assert damaged.returncode != 0, (
+        f"{item.ident}: the class's own defect was reproduced in {relative} "
+        f"({occurrences} site(s)) and the guard the inventory names as its "
+        "proof STAYED GREEN. That guard cannot fail for the control this "
+        f"class is about: {damaged.stdout[-400:]}"
+    )
+
+
 def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
     """The matrix. Each class names a test that exists and really runs.
 
@@ -1177,6 +1336,30 @@ def test_the_mechanism_map_names_only_known_classes():
     assert unknown == [], (
         f"the mechanism map points at classes that do not exist: {unknown}"
     )
+
+
+#: CLASSES WHOSE GUARD IS A SPECIFICATION, NOT A MEASUREMENT OF THIS SYSTEM.
+#:
+#: FG04 and FG06 assert over `_restored` and `_is_stable`, two helpers defined
+#: in this file, against synthetic inputs. They prove the ALGORITHM is right --
+#: a partial restore is not a restore; a settled series is not an oscillating
+#: one -- and they do not measure that this repository applies it.
+#:
+#: That is not a defect to patch quietly, because there is nothing here to
+#: point them at: a search of `src/` and `scripts/` finds no convergence
+#: sampler and no restoration detector. The `settled` vocabulary in
+#: `governed_subject.py` is contract resolution, a different sense of the word.
+#: Both classes describe mistakes made by the ASSURANCE PROCESS -- sampling
+#: before the state settled, regenerating step one of three and calling it
+#: cleanup -- not code paths in the product.
+#:
+#: So they are declared as what they are, and the declaration is checked below
+#: rather than left as a label. If someone later wires either guard to
+#: repository code, `test_the_specification_only_guards_are_declared_as_such`
+#: fails and this note has to be rewritten -- which is the point: the failure
+#: mode being frozen out is an inventory that calls a specification a
+#: measurement.
+SPECIFICATION_ONLY = frozenset({"FG04", "FG06"})
 
 
 def _audit_child_env(dump: Path) -> dict:
@@ -1633,3 +1816,88 @@ def test_a_module_level_marker_cannot_declare_a_class_for_every_node():
         "the guard failed for some other reason, so this does not measure the "
         f"one-to-one link: {blanketed.stdout[-500:]}"
     )
+
+
+def test_the_specification_only_guards_are_declared_as_such():
+    """FG04/FG06. An inventory must not call a specification a measurement.
+
+    These two guards assert over helpers defined in this file against
+    synthetic inputs. They are worth keeping -- the algorithms they pin are
+    the ones the assurance process must follow -- but the inventory should not
+    imply they measure this system, and `SPECIFICATION_ONLY` is where that is
+    said.
+
+    CHECKED IN BOTH DIRECTIONS, so the label cannot drift from the code:
+    a declared entry must genuinely reference no repository name, and a guard
+    that stops being a specification has to be removed from the set.
+
+    NOT A GLOBAL SCREEN. Applying this criterion to all thirty-nine was
+    measured and MISCLASSIFIED: it flags FG33, whose repaired guard reads the
+    harness SOURCE and so exercises repository content while naming none of
+    it. The criterion is sound for these two, which were examined
+    individually, and is not a general test of relevance.
+
+    THE BOUND, found by the control that checks this test. Only IMPORTED
+    repository names are recognised. A guard that reached for a module-local
+    object carrying repository facts -- `INVENTORY` itself, say -- would still
+    read as specification-only: the first revert control wired FG06's guard to
+    `INVENTORY` and this test stayed GREEN. Wiring it to `census` turns it
+    red. So this catches a guard that starts importing the system, not one
+    that reads a fact this module already holds.
+    """
+    import ast  # noqa: PLC0415
+
+    stdlib = {
+        "os", "sys", "re", "json", "ast", "subprocess", "tempfile", "shutil",
+        "sqlite3", "pathlib", "contextlib", "textwrap", "itertools", "time",
+        "collections", "hashlib", "stat", "io", "math", "types", "typing",
+        "datetime", "random", "pytest", "importlib", "copy", "uuid",
+        "platform", "zipfile", "tarfile", "socket",
+        # Stdlib the first version of this set missed, which made
+        # `dataclasses`, `tomllib` and `__future__` read as repository names.
+        "dataclasses", "tomllib", "__future__", "functools", "inspect",
+        "textwrap", "string", "warnings", "traceback", "enum", "abc",
+    }
+    source = (ROOT / "tests" / "test_false_green_audit.py").read_text(
+        encoding="utf-8"
+    )
+    tree = ast.parse(source)
+    repository_names: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] not in stdlib:
+                repository_names |= {a.asname or a.name for a in node.names}
+                repository_names.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in stdlib:
+                    repository_names.add((alias.asname or alias.name).split(".")[0])
+
+    def touches_repository(function_name: str) -> list:
+        function = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == function_name
+        )
+        used = {n.id for n in ast.walk(function) if isinstance(n, ast.Name)}
+        used |= {n.attr for n in ast.walk(function) if isinstance(n, ast.Attribute)}
+        return sorted(used & repository_names)
+
+    declared = sorted(SPECIFICATION_ONLY)
+    assert declared, "the declaration emptied out, so it checks nothing"
+
+    for ident in declared:
+        item = next(entry for entry in INVENTORY if entry.ident == ident)
+        module, _, name = item.owner.partition("::")
+        assert module.endswith("test_false_green_audit.py"), (
+            f"{ident} is declared specification-only but its guard lives in "
+            f"{module}, which this test cannot parse"
+        )
+        touched = touches_repository(name)
+        assert touched == [], (
+            f"{ident} is declared specification-only and its guard now "
+            f"references repository code {touched}. If that is deliberate, "
+            "remove it from SPECIFICATION_ONLY and rewrite the note beside "
+            "the set -- do not leave the inventory calling a measurement a "
+            "specification, or the reverse."
+        )

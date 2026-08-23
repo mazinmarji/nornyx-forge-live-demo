@@ -358,7 +358,32 @@ def test_fg33_both_harness_entry_points_bound_their_runs():
                     and node.func.attr in {"run", "check_output"}
                     and getattr(node.func.value, "id", "") == "subprocess"):
                 continue
-            if not any(keyword.arg == "timeout" for keyword in node.keywords):
+            # A `timeout=` THAT DOES NOT BOUND ANYTHING IS NOT A TIMEOUT.
+            #
+            # This asked only whether the KEYWORD was present. `timeout=None`
+            # is subprocess's documented "wait forever", so the exact
+            # unbounded run this class is about satisfied the guard that
+            # exists to forbid it -- a name standing in for the property,
+            # inside the false-green inventory.
+            #
+            # Found by `test_a_reproduced_defect_turns_its_own_marked_guard_red`
+            # the first time FG33 carried an executable reproduction: swapping
+            # `timeout=timeout` for `timeout=None` at both sites left this
+            # guard GREEN.
+            #
+            # A NON-LITERAL VALUE IS STILL ACCEPTED. `timeout=timeout` cannot
+            # be evaluated here and is the ordinary spelling in these
+            # harnesses; what is refused is a literal that provably bounds
+            # nothing.
+            bound = next(
+                (kw for kw in node.keywords if kw.arg == "timeout"), None
+            )
+            unbounded_literal = (
+                bound is not None
+                and isinstance(bound.value, ast.Constant)
+                and (bound.value.value is None or bound.value.value is False)
+            )
+            if bound is None or unbounded_literal:
                 unbounded.append(f"{relative}:{node.lineno}")
     assert unbounded == [], (
         "these harness call sites run a child process with no timeout, so a "
