@@ -31,6 +31,7 @@ the one that admits the anchor.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -320,6 +321,27 @@ def _normalised(text: str) -> list:
     for number, raw in enumerate(text.splitlines(), start=1):
         line = raw.expandtabs(4)
         line = _BLOCKQUOTE.sub("", line)
+        # ENTITIES ARE DECODED, LIKE THE SIBLING NORMALISER ALREADY DOES.
+        #
+        # `&#95;` is an underscore and `&#32;` a space in every markdown
+        # reader, so a transcript spelled with them renders exactly like an
+        # ASCII one and was invisible here. Measured: five rows asserting a
+        # present-tense `--verify` PASS with no anchor --
+        #
+        #     status&#32; &#32;pass
+        #     integrity&#95;state&#32; &#32;intact
+        #     governed&#95;input&#95;match&#32; &#32;true
+        #
+        # -- gave runs=0, `_carries_a_measurement_claim` False, and the
+        # document was not in DOCUMENTS at all; the identical rows in ASCII
+        # gave five offending rows. Those five fields are precisely the ones
+        # `_is_a_run` records that `find_overclaims` does not backstop, so
+        # nothing else reached them.
+        #
+        # `test_execution_mode_truth._decoded` already calls `html.unescape`
+        # for this exact reason. Two normalisers disagreeing about what a
+        # reader sees is how a claim slips between them.
+        line = html.unescape(line)
         line = _HTML_TAG.sub(" ", line)
         # A LIST MARKER AND EMPHASIS ARE CONTAINERS. `_FIELD_LINE` needs a
         # letter at the first non-blank position, so `- status  pass`,
@@ -971,7 +993,25 @@ def _anchored_blocks() -> list[tuple[str, int, str, str]]:
             records = [
                 (key, value) for _n, key, value in run if not key.strip().count(" ")
             ]
-            if len(records) < 2:
+            # A ONE-ROW ANCHORED BLOCK IS STILL AN ANCHORED BLOCK.
+            #
+            # This dropped any run of fewer than two records while the anchor
+            # above it still EXEMPTED that run from
+            # `test_every_recorded_verify_transcript_is_anchored_or_withdrawn`
+            # and from the unanchored-row sweep. So a single row under an
+            # anchor got the credibility of the anchor and none of the
+            # re-execution.
+            #
+            # Measured: `LENS_C_CLOSURE.md`'s anchored fence reduced to the one
+            # row `independent  True` -- a value that measures False at the
+            # anchored commit -- left the whole module green and the
+            # parametrised case for that block DISAPPEARED from the run. With
+            # all eight rows present the same lie fails, naming the field.
+            #
+            # `_is_a_run` already decides whether a lone row is a record, by
+            # key and value shape. This `>= 2` test duplicated that decision
+            # with a cruder one and only subtracted reach.
+            if not records:
                 continue
             body = chr(10).join(f"{key}  {value}" for key, value in records)
             found.append(

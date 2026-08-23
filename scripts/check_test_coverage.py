@@ -140,7 +140,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 28,
-    "tests/test_documented_claims.py": 99,
+    "tests/test_documented_claims.py": 106,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
@@ -290,16 +290,16 @@ EXPECTED_SKIP_CASES = {
 # it was written -- a comment stating a count nobody re-measured, in the file
 # whose whole purpose is to notice counts changing.
 #
-#     collected across tests/     1666
-#     sum of the module floors    1543
-#     MINIMUM_COLLECTED           1557
+#     collected across tests/     1687
+#     sum of the module floors    1562
+#     MINIMUM_COLLECTED           1576
 #
 # 14 above the sum, so the aggregate can still refuse a report every module
 # floor accepts, and 107 below what actually collects. Raised again by the
 # C9-P1-7 repair, which ADDED sixteen hostile regressions: the anti-shrink
 # band demanded the documented-claims floor rise 82 -> 97, which pushed the
 # floor sum past the previous aggregate.
-MINIMUM_COLLECTED = 1557
+MINIMUM_COLLECTED = 1576
 
 
 def band(collected: int) -> int:

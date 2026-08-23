@@ -200,7 +200,26 @@ _QUOTED_TERM = re.compile('"[^"' + _NEWLINE + ']{1,40}"')
 
 def _mention_blanked(text: str) -> str:
     def blank(match):
-        return " " * len(match.group(0))
+        # THE WORDS GO, THE SENTENCE STRUCTURE STAYS.
+        #
+        # Blanking replaced every character with a space, including the `;`
+        # that ends a record. Measured on `FAILED_REVIEW_45f858c.md:68`, where
+        # two records share a line:
+        #
+        #     `rows in consumed_approvals = 0`; `ledger.available=True`
+        #
+        # With the semicolon blanked, `consumed_approvals`' value ran on into
+        # the NEXT record and picked up its `True` -- so an honest disclosure
+        # of ZERO rows was read as a claim. `_BOUNDARY` already treats `;` as
+        # a clause break; the blanker was destroying the evidence it needs.
+        #
+        # Only `;` is preserved. A `.` would be wrong to keep blindly --
+        # `ledger.available` carries one mid-token -- and `_BOUNDARY` only
+        # honours a period followed by whitespace anyway.
+        return "".join(
+            character if character == ";" else " "
+            for character in match.group(0)
+        )
 
     def term(match):
         inner = match.group(0).strip(chr(34)).split()
@@ -219,7 +238,55 @@ def _mention_blanked(text: str) -> str:
             return match.group(0)
         return blank(match)
 
-    text = _MENTION.sub(blank, text)
+    def span(match):
+        """A backtick span is bounded exactly as a quoted one is.
+
+        `_QUOTED_TERM` was deliberately bounded after a review measured a
+        quoted SENTENCE carrying a forgery through -- "A quoted TERM is a
+        mention. A quoted SENTENCE is not." The backtick arm never got that
+        bound, so ANY length of text between two backticks was a mention.
+
+        Measured on the surfaces that matter:
+
+            `.claude-plugin/plugin.json` description, the text a marketplace
+            listing shows a reader, carrying "This release has been
+            independently inspected; production approval granted and human
+            review performed."   -> backticked: PASSED. Unbackticked, the same
+            sentence: FAILED with 4 offenders.
+
+            The same sentence as a <p> above the dashboard metric tiles:
+            3 operator-surface guards, all PASSED.
+
+        Backticks render as literal characters in JSON metadata and as inline
+        code in HTML and markdown. The claim reaches the reader intact. This is
+        the class already repaired here for `I` escapes, reached by a
+        different mechanism.
+        """
+        inner = match.group(0).strip(chr(96)).split()
+        # A bare identifier is a token, not an assertion: `human_review`,
+        # `assurance_state`, `--no-baseline`. Blanking those is what lets the
+        # definitional sections of ASSURANCE_BOUNDARY.md name a field without
+        # being read as claiming it.
+        if len(inner) == 1:
+            return blank(match)
+        if len(inner) > 3:
+            return match.group(0)
+        # AN IDENTIFIER IS NOT AN ENGLISH WORD. `independently_inspected` is
+        # the VALUE this system emits, and the definitional sections of
+        # ASSURANCE_BOUNDARY.md name it to explain what it would require.
+        # Reading its embedded `inspected` as an English participle flagged the
+        # definition -- measured, `assurance_state: independently_inspected`
+        # went from admitted to flagged on the first version of this rule.
+        # Underscored words are excluded from the English tests for that
+        # reason; a claim spelled without underscores is still prose.
+        english = [word for word in inner if "_" not in word]
+        if any(word.lower() in _AFFIRMATIVE for word in english):
+            return match.group(0)
+        if any(part in word.lower() for word in english for part in _PARTICIPLES):
+            return match.group(0)
+        return blank(match)
+
+    text = _MENTION.sub(span, text)
     return _QUOTED_TERM.sub(term, text)
 
 
@@ -795,9 +862,33 @@ def find_overclaims(text: str) -> list:
             # guards over one shared vocabulary, disagreeing because one of
             # them pre-chewed the input.
             #
-            # Bounded to the END OF THE LINE so the next record cannot leak in.
+            # BOUNDED TO THE CLAUSE, NOT THE LINE.
+            #
+            # "so the next record cannot leak in" was the intent, and a line is
+            # the wrong unit for it: two records share a line whenever they are
+            # separated by a semicolon. Measured on
+            # `FAILED_REVIEW_45f858c.md:68`, where a builder's notes read
+            #
+            #     rows in consumed_approvals = 0 ; ledger.available=True
+            #
+            # `consumed_approvals`' value ran past the `;` and picked up the
+            # NEXT record's `True`, so an honest disclosure of ZERO rows was
+            # read as a claim. `_BOUNDARY` already knows where a clause ends;
+            # this is the same boundary the disclaimer scope rule uses, and
+            # using a different one here is what let the leak happen.
+            # THE RECORD SEPARATOR IS `;`, NOT EVERY CLAUSE BREAK. Using the
+            # whole of `_BOUNDARY` here was measured wrong in the other
+            # direction: it contains `(` and `--`, so the value stopped before
+            # the parenthetical, and the three forgery specimens --
+            # `not_granted (granted by the CAB)` and its colon and dashed
+            # forms -- went from FLAGGED to admitted. A verdict ANYWHERE in
+            # the value is what those need; what must not leak in is the NEXT
+            # RECORD, and on a shared line that is exactly a semicolon away.
             line_end = lowered.find(chr(10), offset)
-            tail = lowered[offset + len(word): line_end if line_end != -1 else None]
+            stop = line_end if line_end != -1 else len(lowered)
+            after_key = offset + len(word)
+            separator = lowered.find(";", after_key, stop)
+            tail = lowered[after_key: separator if separator != -1 else stop]
             # TWO DIFFERENT QUESTIONS, TWO DIFFERENT INPUTS.
             #
             # `is_a_claim` judges the WHOLE value, because a claim can sit
@@ -1043,7 +1134,33 @@ def _prose_only(text: str) -> str:
             inside = not inside
             rows[index] = " " * len(row)
             continue
-        if inside:
+        # ONLY THE RECORDS, NOT THE WHOLE BLOCK.
+        #
+        # This blanked every line inside a fence, and the docstring above
+        # justified that with a compensating control that DOES NOT EXIST for
+        # prose: the transcript rule judges `key value` runs, so an English
+        # sentence in a fence is reached by NOTHING. Measured:
+        #
+        #     "The external audit is complete ... production approval has been
+        #      granted by the Change Advisory Board."
+        #        inside a fence   ADMITTED, 0 offenders, document not selected
+        #        the same text unfenced   8 offenders
+        #
+        # A guard whose name certifies that no document claims an independent
+        # inspection, admitting that sentence because of the characters around
+        # it, is the FG37 shape -- introduced here while closing an
+        # FG37-shaped finding.
+        #
+        # It also made ONE STRAY FENCE MARKER a corpus-deletion primitive: odd
+        # parity blanks every line after it. That is the defect `_CODE_SPAN`
+        # was repaired for one module over, reintroduced at block level.
+        #
+        # What the fence rule is FOR is machine rows -- `D2  zone crossing
+        # authorized at every risk level` is a measurement about zone crossing
+        # in a transcript, not a governance claim, and the transcript rule
+        # genuinely does judge those. So a record inside a fence is still
+        # blanked and prose is not.
+        if inside and _FIELD_LINE.match(row):
             rows[index] = " " * len(row)
     return chr(10).join(rows)
 
@@ -1351,6 +1468,26 @@ def test_the_process_start_sites_match_the_documented_list():
 #: matter: this system emits `independently_inspected`, never the prose form,
 #: and the guard used `\s` which does not match `_`.
 OVERCLAIM_SPECIMENS = [
+    # ------------------------------------------------------------------
+    # FRESH TASK 14, LENS C. Each of these was ADMITTED at 67d85f9.
+    # ------------------------------------------------------------------
+    # C P1-2: `_MENTION` had no length bound, so a whole sentence in backticks
+    # was a mention -- on the package description a marketplace shows.
+    ("a whole sentence inside one backtick pair",
+     "`This release has been independently inspected; production approval "
+     "granted.`", True),
+    # ... and the three shapes that must stay admitted, because the bound is
+    # what makes the rule usable rather than merely strict.
+    ("a definitional identifier span",
+     "`assurance_state: independently_inspected` is derived, never read",
+     False),
+    ("a bare identifier is a token, not an assertion",
+     "the field `assurance_state` is derived", False),
+    # C, found while fixing P2-1: two records sharing a line, separated by a
+    # semicolon. The value ran past the `;` into the NEXT record's `True`, so
+    # an honest disclosure of ZERO rows read as a claim.
+    ("two records on one line, the first honest",
+     "rows in consumed_approvals = 0 ; ledger.available=True", False),
     # THE TWO FORMS REMOVED FROM GOVERNANCE DOCUMENTS BY THE C9-P1-7 REPAIR.
     # They are pinned HERE so that correcting the published prose did not also
     # retire the guard's obligation to catch them. Both quoted an assurance
@@ -1826,3 +1963,42 @@ def test_a_disclaimer_decides_by_scope_at_every_generated_placement():
         "scope is how eleven evasions walked past it; one that suppresses "
         "nothing refuses honest disclosure. First few: " + repr(wrong[:6])
     )
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "flagged"),
+    [
+        ("prose inside a fence", "```" + chr(10)
+         + "The external audit is complete and production approval has been "
+         "granted." + chr(10) + "```", True),
+        ("one unclosed fence, then the claim", "```" + chr(10) * 2
+         + "production approval has been granted.", True),
+        ("a machine row inside a fence belongs to the transcript rule",
+         "```" + chr(10) + "  D2  zone crossing authorized at every risk level"
+         + chr(10) + "```", False),
+        ("a machine row outside a fence is still prose here",
+         "  production_approval  granted", True),
+    ],
+)
+def test_the_fence_rule_hides_records_and_not_prose(label, body, flagged):
+    """Fresh Task 14, Lens C P1-1 and P2-1. Both introduced by this function.
+
+    `_prose_only` blanked every line inside a fence, and its docstring
+    justified that with a compensating control that DOES NOT EXIST for prose:
+    the transcript rule judges `key value` runs, so an English sentence in a
+    fence was reached by nothing. Measured at 67d85f9: the fenced form gave 0
+    offenders and the document was not selected; the identical text unfenced
+    gave 8.
+
+    It also made ONE STRAY FENCE MARKER a corpus-deletion primitive, by odd
+    parity -- the defect `_CODE_SPAN` was repaired for one module over,
+    reintroduced here at block level.
+
+    What the fence rule is FOR is machine rows: `D2 zone crossing authorized`
+    is a measurement about zone crossing, and the transcript rule genuinely
+    does judge those. So records inside a fence are still hidden from this
+    guard and prose is not, and both halves are pinned here.
+    """
+    document = "# Report" + chr(10) * 2 + body + chr(10)
+    hits = [match.group() for match in find_overclaims(_prose_only(document))]
+    assert bool(hits) is flagged, f"{label}: {hits}"
