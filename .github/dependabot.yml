@@ -4,6 +4,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # crewai is exact-pinned by nornyx-agentic-adapters' conformance model;
+      # upgrades ride an adapters release with re-run conformance, never a
+      # direct bump here. Security alerts are unaffected by this ignore.
+      - dependency-name: crewai
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
   - package-ecosystem: github-actions
     directory: /
     schedule:
