@@ -1,7 +1,7 @@
 {
   "name": "nornyx-forge",
   "version": "0.2.0",
-  "description": "Build and run a Nornyx-governed application from a BRD using Claude Code and CrewAI Flows.",
+  "description": "Claude Code Skill front end for Nornyx Forge governed repository transformation and conformance; deterministic Forge/Nornyx controls remain authoritative.",
   "author": {"name": "Mazin Marji and Nornyx Forge contributors"},
   "homepage": "https://github.com/mazinmarji/nornyx-forge-live-demo",
   "repository": "https://github.com/mazinmarji/nornyx-forge-live-demo",
