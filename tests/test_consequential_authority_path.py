@@ -307,3 +307,179 @@ def test_a_damaged_ledger_is_not_reported_as_a_missing_approval(
         "is not 'nobody approved': an operator told to obtain an approval will "
         f"obtain one and be refused again. reason: {decision.reason[:200]}"
     )
+
+
+class _Raising:
+    """An effect that is released and then fails, outcome unknown."""
+
+    runs = 0
+
+    def __call__(self) -> str:
+        type(self).runs += 1
+        raise RuntimeError("payment gateway timed out after debit")
+
+
+def _reports(root: Path) -> list:
+    return sorted((root / "evidence/runtime/nornyx").glob("*.report.json"))
+
+
+def _records_a_release(path: Path) -> bool:
+    import json  # noqa: PLC0415
+
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if body.get("effect_release"):
+        return True
+    return "tool_invoked" in (body.get("observations") or [])
+
+
+@pytest.mark.parametrize("effect_type", ["raises", "returns"])
+def test_a_retry_never_destroys_the_record_that_the_effect_ran(
+    effect_type: str, tmp_path: Path,
+) -> None:
+    """Lens A P1-1. The surviving record said the act was WITHHELD. It ran.
+
+    `_emit_evidence` keys both artifacts on (mission, attempt) and `write_json`
+    truncates. The A11 repair moved the collision from missions down to
+    attempts and left the sharpest case: re-evaluating THE SAME attempt. That
+    is not an adversary -- it is a client retrying after a transport failure,
+    with the stable mission id the retry model presumes.
+
+    Measured before the repair, with the effect raising after the grant was
+    spent: the report carrying `effect_release {released true, completed
+    false, outcome unknown}` -- the one artifact an operator needs most,
+    because whether the payment happened is unknown -- was REPLACED on the
+    retry by a record saying human approval is required. Surviving artifacts
+    mentioning the release: none.
+
+    Both release shapes are pinned, because they leave different traces:
+    `effect_release` when the effect raised, a `tool_invoked` observation when
+    it returned.
+    """
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    grant = signed_grant(_request(boundary))
+    effect = _Raising() if effect_type == "raises" else _Effect()
+
+    try:
+        _release(boundary, effect, grant)
+    except RuntimeError:
+        pass  # the raising case; the grant is spent either way
+
+    released = [path for path in _reports(root) if _records_a_release(path)]
+    assert len(released) == 1, (
+        f"the first evaluation left no record of the release: {_reports(root)}"
+    )
+
+    # The client retries the SAME mission and the SAME attempt.
+    second = _release(boundary, _Effect(), grant)
+    assert second.effect == "DENY", second
+
+    survived = [path for path in _reports(root) if _records_a_release(path)]
+    assert len(survived) == 1, (
+        "the retry DESTROYED the record that a consequential effect was "
+        "released. What survives now says the act was withheld and human "
+        f"approval is required, and the act ran: {_reports(root)}"
+    )
+    assert len(_reports(root)) == 2, (
+        "the refusal did not get a record of its own beside the release: "
+        f"{_reports(root)}"
+    )
+
+
+def test_a_replayed_grant_reaches_the_decision_with_its_own_code(
+    tmp_path: Path,
+) -> None:
+    """Lens A P2-1. The ledger's central refusal had no code at all.
+
+    Both replay refusals were plain prose, so `withheld_code` kept its
+    `HUMAN_APPROVAL_REQUIRED` default and a REPLAYED grant arrived
+    indistinguishable from one that was never approved -- the exact collapse
+    `LEDGER_DECISION_CODES` was introduced to repair, still live for the case
+    the ledger exists to detect.
+
+    The derivation test could not see it either: it AST-matches `f"{CODE}: ..."`
+    reasons, so it only ever finds codes that ALREADY EXIST. A completeness
+    check that cannot report a missing code is not one, which is why this
+    measures the decision rather than the code set.
+    """
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    grant = signed_grant(_request(boundary))
+    effect = _Effect()
+
+    first = _release(boundary, effect, grant)
+    assert first.effect == "ALLOW", first
+    assert effect.runs == 1
+
+    replay = _release(boundary, effect, grant)
+    assert replay.effect == "DENY", replay
+    assert replay.code == "APPROVAL_ALREADY_CONSUMED", (
+        "a replayed grant still reports the code that means nobody approved. "
+        "An operator told to obtain an approval will obtain one, present it, "
+        f"and be refused again: {replay.code} / {replay.reason[:160]}"
+    )
+    assert effect.runs == 1, "the replay released the effect a second time"
+
+    # The same act under a DIFFERENT, valid grant.
+    second_grant = signed_grant(_request(boundary), approval_id="ACT-SECOND")
+    again = _release(boundary, effect, second_grant)
+    assert again.effect == "DENY", again
+    assert again.code == "ACTION_ALREADY_RELEASED", again.code
+    assert effect.runs == 1
+
+
+def test_no_pending_request_is_written_for_a_digest_that_cannot_be_consumed(
+    tmp_path: Path,
+) -> None:
+    """Lens A P2-4. The artifact asked for an approval that cannot work.
+
+    `UNIQUE(request_digest)` means a digest already consumed can never be
+    consumed again by any grant. The pending artifact was emitted whenever an
+    act was withheld and a request existed, including after a release -- and
+    its note reads "Approving a different attempt releases nothing", which
+    asserts that approving THIS one does.
+
+    Measured: signing that exact digest with a new valid grant gave DENY,
+    "this action was already released ... a further approval cannot release it
+    again". A real human approval ceremony spent on a request that cannot work.
+
+    The positive control is first: when no approval exists, the artifact is
+    exactly what an approver needs and must still be written.
+    """
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    pending = root / "evidence/runtime/pending"
+
+    # POSITIVE CONTROL: no grant at all -- an approval genuinely would release.
+    refused = _release(boundary, _Effect(), None)
+    assert refused.effect == "DENY", refused
+    assert pending.is_dir() and list(pending.glob("*")), (
+        "no pending request was written for an act that a human approval "
+        "could still release, which is what the artifact is for"
+    )
+    # CONTENT, NOT FILENAMES. The artifact is keyed on the attempt, so a
+    # replay OVERWRITES it and the file list is unchanged either way -- the
+    # first version of this test compared names and stayed green with the
+    # repair removed, which is a control that cannot fail.
+    before = {
+        path.name: path.read_bytes() for path in pending.glob("*")
+    }
+
+    grant = signed_grant(_request(boundary))
+    effect = _Effect()
+    assert _release(boundary, effect, grant).effect == "ALLOW"
+    _release(boundary, effect, grant)
+
+    after = {path.name: path.read_bytes() for path in pending.glob("*")}
+    changed = sorted(
+        name for name in set(before) | set(after)
+        if before.get(name) != after.get(name)
+    )
+    assert changed == [], (
+        "a pending request was written or rewritten for a digest "
+        "UNIQUE(request_digest) can never accept again, telling an operator "
+        "to spend a human approval ceremony that cannot work: " + str(changed)
+    )

@@ -103,25 +103,39 @@ What remains open, named precisely:
 
 - Restoring the **whole runtime directory** carries the sidecar back with the
   ledger, and both agree again.
-- Anyone who can **delete the sidecar** disables the check, because a ledger
-  with no recorded mark has to bootstrap — reading absence as zero would refuse
-  every ledger that has ever been used.
+- Deleting the sidecar does **not** disable the check. This section used to
+  say it did. Measured at this head: roll the ledger back, delete the sidecar,
+  then replay a spent grant — `claimed False`, `LEDGER_CONTINUITY_UNKNOWN`. A
+  missing witness fails **closed**. The runtime's own note beside
+  `LEDGER_WATERMARK_SUFFIX` records the same measurement, and
+  `test_deleting_the_sidecar_after_a_rollback_still_refuses` pins it.
 
 Both need write access to the runtime directory, which is the exposure this
 section already described. What changed is that the ordinary operator action —
 restore the ledger file from a backup — now fails closed.
 
-One residual is stated rather than defended: a process death between a
-consumption row committing and the mark write beside it leaves that one
-grant unprotected against a later restore. The two are separate files and
-SQLite's multi-database atomicity does not hold in WAL mode, so ordering
-is the only lever; advancing the mark first was implemented and measured
-refusing legitimate concurrent grants, and was withdrawn. The source
-records the measurement and the design that would close it.
+That residual is **closed**, and this paragraph is kept as the record of what
+it used to claim. It described a process death between a consumption row
+committing and the mark write beside it — a two-step write performed by
+`_record_consumptions`. Measured at this head: `_record_consumptions` and
+`_recorded_consumptions` have **zero call sites in `src/`**, and `consume`
+commits the row and the mark in one `ATTACH`ed transaction through
+`_commit_consumption`. The WAL precondition it named is enforced rather than
+assumed — both stores in WAL gives `LEDGER_CONTINUITY_MIGRATION_REQUIRED`
+and no release.
+
+What remains open is stated in the runtime source and measured in both
+directions: restoring the **whole runtime directory** carries both stores back
+together, they agree at the old count, and a grant spent after the backup
+releases again. That is the honest limit of a two-store design against an
+adversary who can restore the directory, and
+`test_a_whole_directory_restore_is_the_disclosed_limit` pins it in the
+affirmative so that closing it later forces this paragraph to be rewritten.
 
 | Scenario | Before | Now |
 | --- | --- | --- |
-| Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `LEDGER_ROLLED_BACK` — and a **fresh** approval is refused too, because the mark beside the deleted ledger still records the history that is gone. The route out is `provision-ledger --reset-replay-history`. This row previously promised `GRANT_PREDATES_LEDGER` with a fresh approval working; a review measured that it does not. |
+| Ledger deleted, documented provisioning re-run, old grant presented | released the effect a second time | `GRANT_PREDATES_LEDGER`, and a **fresh** approval issued after the new epoch works normally. The route out is plain `provision-ledger`. Measured at this head: spend a grant, delete only the ledger file, run the real CLI — rc 0, rows 0, mark 0, a new epoch — then the old grant gives `GRANT_PREDATES_LEDGER` and a fresh one releases. `ApprovalLedger.provision` mints a fresh mark when the ledger file is absent, which is what makes this recoverable. |
+| Ledger deleted **and an empty file recreated** before provisioning | as above | `LEDGER_ROLLED_BACK` on a fresh approval, because the mark beside it still records history the rows no longer have. This is the state the row above used to describe, and the one that needs `provision-ledger --reset-replay-history`. |
 | Ledger **restored from a backup**, spent grant presented | released it again, once per restore | `LEDGER_ROLLED_BACK` |
 | Redeploy onto ephemeral storage | silently empty history | outstanding grants refused until reissued |
 | Approval carrying no issuance instant | continuity check skipped entirely | `GRANT_ISSUANCE_UNKNOWN` |

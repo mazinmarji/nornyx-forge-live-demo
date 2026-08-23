@@ -63,6 +63,35 @@ def runtime_as_of(explicit: str | None = None) -> str:
 
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
+def _reports_a_release(path: Path) -> bool:
+    """Does this report record that a consequential effect was RELEASED?
+
+    Two shapes, because the release leaves two different traces depending on
+    whether the effect completed: `effect_release` is written when it ran and
+    raised, and a `tool_invoked` observation when it ran and returned.
+
+    An unreadable or non-conforming file is treated as recording a release.
+    The question this answers is "may I truncate this?", and the safe answer
+    when the content cannot be established is no.
+    """
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    if not isinstance(body, dict):
+        return True
+    if body.get("effect_release"):
+        return True
+    observations = body.get("observations") or []
+    if isinstance(observations, list) and "tool_invoked" in observations:
+        return True
+    events = body.get("events") or []
+    return isinstance(events, list) and any(
+        isinstance(event, dict) and event.get("event_type") == "tool_invoked"
+        for event in events
+    )
+
+
 def evidence_storage_key(value: str) -> str:
     """A filesystem-safe, collision-resistant key for a caller-supplied id.
 
@@ -683,6 +712,25 @@ GRANT_ISSUANCE_UNKNOWN = "GRANT_ISSUANCE_UNKNOWN"
 #: a rolled-back ledger is not a stale grant and not an unreadable anchor. The
 #: history is gone and cannot be recovered by re-reading anything.
 LEDGER_ROLLED_BACK = "LEDGER_ROLLED_BACK"
+
+#: The ledger's central refusal: this exact grant was already spent.
+#:
+#: It had NO CODE. Both replay refusals were plain prose, so
+#: `withheld_code` kept its `HUMAN_APPROVAL_REQUIRED` default and a REPLAYED
+#: grant arrived at the decision indistinguishable from one that was never
+#: approved -- the exact collapse `LEDGER_DECISION_CODES` was introduced to
+#: repair, still live for the case the ledger exists to detect. Measured:
+#: first ALLOW ALLOWED, replay DENY HUMAN_APPROVAL_REQUIRED.
+#:
+#: The derivation test could not see it either: it AST-matches `f"{CODE}: ..."`
+#: reasons, so it only ever finds codes that already exist. A completeness
+#: check that cannot report a MISSING code is not one.
+APPROVAL_ALREADY_CONSUMED = "APPROVAL_ALREADY_CONSUMED"
+
+#: The same act, a different grant. A second approval cannot release an effect
+#: that has already been released, and telling an operator to obtain one is
+#: telling them to spend a human ceremony that cannot work.
+ACTION_ALREADY_RELEASED = "ACTION_ALREADY_RELEASED"
 
 
 #: The recovery both continuity refusals name. Written once so the two cannot
@@ -1528,11 +1576,15 @@ class ApprovalLedger:
                 # Same act, different decision: a second grant cannot release an
                 # effect that has already happened.
                 return False, (
-                    f"this action was already released at {when} under approval "
-                    f"{spent['approval_id']!r}; a further approval cannot release "
-                    "it again"
+                    f"{ACTION_ALREADY_RELEASED}: this action was already "
+                    f"released at {when} under approval "
+                    f"{spent['approval_id']!r}; a further approval cannot "
+                    "release it again"
                 )
-            return False, f"this approval was already consumed at {when}"
+            return False, (
+                f"{APPROVAL_ALREADY_CONSUMED}: this approval was already "
+                f"consumed at {when}"
+            )
         except LedgerContinuityMigrationRequired as exc:
             return False, str(exc)
         except LedgerContinuityUnknown as exc:
@@ -2313,6 +2365,8 @@ LEDGER_DECISION_CODES = (
     ApprovalLedger.MISSING,
     ApprovalLedger.UNREADABLE,
     ApprovalLedger.UNWRITABLE,
+    APPROVAL_ALREADY_CONSUMED,
+    ACTION_ALREADY_RELEASED,
 )
 
 
@@ -3066,7 +3120,24 @@ class NornyxActionBoundary:
                 actor_ref="identity.execution",
                 capability_ref=capability_name,
             )
-        if withheld and request is not None:
+        # NOT WHEN NO APPROVAL COULD RELEASE IT.
+        #
+        # `UNIQUE(request_digest)` means a digest that has already been
+        # consumed can never be consumed again, by any grant. Emitting a
+        # pending request for one tells an operator to sign something the
+        # ledger will refuse -- and the note in the artifact says "Approving a
+        # different attempt releases nothing", which asserts that approving
+        # THIS one does.
+        #
+        # Measured: after a release, re-presenting the grant wrote a pending
+        # artifact; signing that exact digest with a NEW valid grant gave
+        # DENY, "this action was already released ... a further approval
+        # cannot release it again". A real human approval ceremony spent on a
+        # request that cannot work.
+        spent_already = release_reason.startswith(
+            (APPROVAL_ALREADY_CONSUMED, ACTION_ALREADY_RELEASED)
+        )
+        if withheld and request is not None and not spent_already:
             # Emit the exact request an approver would be signing. Without this
             # an operator has to reconstruct mission, attempt, capability and
             # digest by hand — a second implementation of canonicalization, and
@@ -3186,8 +3257,37 @@ class NornyxActionBoundary:
         # record of their own -- while the pending artifacts beside them were
         # already per-attempt.
         storage_key = evidence_storage_key(mission_id + "#attempt-" + str(attempt))
-        write_json(evidence_dir / f"{storage_key}.events.json", stream)
-        write_json(evidence_dir / f"{storage_key}.report.json", report)
+        # A RECORD THAT AN EFFECT RAN IS NEVER OVERWRITTEN.
+        #
+        # `write_json` truncates, and the key above is (mission, attempt). The
+        # A11 repair moved the collision down one level -- missions no longer
+        # collide, attempts no longer collide -- and left the sharpest case:
+        # re-evaluating THE SAME attempt. That is not an adversary. It is a
+        # client retrying after a transport failure, with the stable mission
+        # id the retry model presumes.
+        #
+        # Measured: a grant spent, the effect RAISED, and the report carrying
+        #
+        #     effect_release {released true, completed false,
+        #                     outcome unknown, error RuntimeError...}
+        #
+        # -- the one artifact an operator needs most, because whether the
+        # payment happened is unknown -- replaced on the retry by a record
+        # saying the act was WITHHELD and human approval is required. Surviving
+        # artifacts mentioning the release: none.
+        #
+        # A governance record that states a released effect was withheld is
+        # false in the direction that matters. So a later record goes BESIDE
+        # the earlier one; nothing that says an effect ran is truncated.
+        base = evidence_dir / f"{storage_key}.report.json"
+        suffix = ""
+        if base.is_file() and _reports_a_release(base):
+            index = 1
+            while (evidence_dir / f"{storage_key}.{index}.report.json").is_file():
+                index += 1
+            suffix = f".{index}"
+        write_json(evidence_dir / f"{storage_key}{suffix}.events.json", stream)
+        write_json(evidence_dir / f"{storage_key}{suffix}.report.json", report)
         return report
 
     def evaluate_and_execute(
