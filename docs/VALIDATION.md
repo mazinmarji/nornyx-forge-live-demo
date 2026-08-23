@@ -17,7 +17,7 @@
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:
 
 - installation of `nornyx==1.11.0`;
-- installation of `nornyx-agentic-adapters[crewai]==0.2.0`;
+- installation of `nornyx-agentic-adapters[crewai]==0.3.0`;
 - installation and native kickoff of `crewai==1.15.4`;
 - Nornyx contract generation, lock creation, lock verification, and strict runtime evidence validation;
 - Docker image construction.
