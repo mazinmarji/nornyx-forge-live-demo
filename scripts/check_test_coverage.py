@@ -175,7 +175,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 55,
     "tests/test_mutation_catalogue.py": 32,
-    "tests/test_false_green_audit.py": 28,
+    "tests/test_false_green_audit.py": 59,
     "tests/test_xfail_strictness.py": 17,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
@@ -242,7 +242,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 # and it named the dirty-tree gate and the reachability regressions as
 # deletable. 1000 fixed that, and then the Lens C work added ~30 tests and
 # reopened the gap: 1000 against 1115 collected is 115 of slack, and
-# `test_skip_gate` failed exactly as designed.
+# `tests/test_skip_gate.py` failed exactly as designed.
 #
 # THIS NUMBER IS MEANT TO NEED UPDATING. A floor computed from the current
 # count could never detect shrinkage -- it would move down with the deletion it
@@ -284,22 +284,49 @@ EXPECTED_SKIP_CASES = {
 # it was a declared check that could not reach a verdict.
 # `test_the_floor_refusal_actually_runs` caught it.
 #
-# RAISED AGAIN by Task 14b remediation, and the numbers here are now the
-# MEASURED ones. The line this replaces read "1490 sits above the sum and 77
-# below the 1567 actually collected", which was stale by 27 at the head where
-# it was written -- a comment stating a count nobody re-measured, in the file
-# whose whole purpose is to notice counts changing.
+# THIS COMMENT HAS NOW GONE STALE TWICE, in the file whose whole purpose is to
+# notice counts changing, and both times a review found it rather than a test.
+# The first stale line claimed "1490 sits above the sum and 77 below the 1567
+# actually collected" and was wrong by 27 the day it was written. The second
+# claimed 1687 collected against a 1562 sum and "14 above the sum" -- three
+# numbers, none of them true at the head that carried them, and the arithmetic
+# did not hold between them either.
 #
-#     collected across tests/     1687
-#     sum of the module floors    1562
-#     MINIMUM_COLLECTED           1576
+# So the numbers below are dated and measured, and nothing here is derived by
+# hand. Measured at 41c5ce2 (+ this working round) by a full
+# `--collect-only` over tests/:
 #
-# 14 above the sum, so the aggregate can still refuse a report every module
-# floor accepts, and 107 below what actually collects. Raised again by the
-# C9-P1-7 repair, which ADDED sixteen hostile regressions: the anti-shrink
-# band demanded the documented-claims floor rise 82 -> 97, which pushed the
-# floor sum past the previous aggregate.
-MINIMUM_COLLECTED = 1576
+#     collected across tests/     1728   (88 modules)
+#     sum of the module floors    1597
+#     band(1728) = ceil(0.9*n)    1556
+#     MINIMUM_COLLECTED           1612
+#
+# 15 above the sum, which is the only thing that makes the aggregate a gate at
+# all -- at or below the sum, any report satisfying every module floor also
+# satisfies it, and it is a declared check that cannot reach a verdict. 116
+# below what actually collects, which is the slack the per-module bands
+# already grant in total (131); the aggregate refuses shrinkage spread thinly
+# enough to stay inside every individual band.
+#
+# The two bounds are held by
+# `test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors` and
+# `test_the_floor_sits_below_the_current_suite_and_above_nothing`. Neither of
+# them used to read this comment, which is why it could rot twice while both
+# stayed green: prose beside a constant is not a measurement of it.
+#
+# THAT IS NOW CLOSED. The guard named next parses the four rows above and
+# compares each against the live value, and the collection test compares the
+# first row against what it actually collected. A third rot is a red test,
+# not a review finding. The guard is
+# `test_the_aggregate_floor_comment_states_the_measured_numbers`.
+#
+# Two test names in the paragraph this replaces DID NOT EXIST -- prose citing
+# guards nobody ever wrote, which is the same failure one level up, and a
+# third draft of this very comment broke a real name across a line so that it
+# cited nothing either. Every backticked `test_...` in this block is now
+# checked against the suite by that same guard, so a cited name that does not
+# resolve is red rather than reassuring.
+MINIMUM_COLLECTED = 1612
 
 
 def band(collected: int) -> int:

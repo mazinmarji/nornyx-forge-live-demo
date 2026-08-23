@@ -254,6 +254,16 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
         "the floor is above what the suite can collect, so every run fails"
     )
 
+    # THE ROW THAT COSTS A COLLECTION. This test already paid for one, so the
+    # documented count is checked here rather than in a second full run.
+    documented = documented_census_numbers()["collected across tests/"]
+    assert documented == collected, (
+        f"the dated table beside MINIMUM_COLLECTED says {documented} tests "
+        f"collect across tests/; {collected} do. That comment has gone stale "
+        "twice already and both times a human found it. Re-measure it and "
+        "update the four rows together -- the band row depends on this one."
+    )
+
 
 # --------------------------------------------------------------------------
 # The gate's own refusals, executed
@@ -341,6 +351,91 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
     assert code == 2
     assert "below the floor" in captured
     assert "collection below floor" in captured
+
+
+#: The four rows of the dated table above `MINIMUM_COLLECTED`.
+_DOCUMENTED_ROW = re.compile(
+    r"^#\s{4,}(collected across tests/|sum of the module floors|"
+    r"band\(\d+\) = ceil\(0\.9\*n\)|MINIMUM_COLLECTED)\s+(\d+)",
+    re.MULTILINE,
+)
+
+
+def documented_census_numbers() -> dict:
+    """The table beside `MINIMUM_COLLECTED`, parsed."""
+    source = (ROOT / "scripts/check_test_coverage.py").read_text(encoding="utf-8")
+    rows = {label: int(value) for label, value in _DOCUMENTED_ROW.findall(source)}
+    assert len(rows) == 4, (
+        "the dated table beside MINIMUM_COLLECTED no longer has its four rows, "
+        f"so nothing here is being checked: found {sorted(rows)}"
+    )
+    return rows
+
+
+def test_the_aggregate_floor_comment_states_the_measured_numbers():
+    """The comment beside the constant has gone stale TWICE. Not again.
+
+    Both times a human review caught it, and both times every test beside it
+    stayed green -- because prose beside a constant is not a measurement of
+    it. The first stale line was wrong by 27 the day it was written; the
+    second stated three numbers of which none was true and whose arithmetic
+    did not hold between them either.
+
+    This reads the four rows and checks the three that are pure source facts.
+    The fourth -- what actually collects -- costs a collection, so it is
+    checked by `test_the_floor_sits_below_the_current_suite_and_above_nothing`,
+    which was already paying for one.
+    """
+    rows = documented_census_numbers()
+    module_sum = sum(REQUIRED_MODULE_MINIMUMS.values())
+
+    assert rows["sum of the module floors"] == module_sum, (
+        f"the comment says the module floors sum to "
+        f"{rows['sum of the module floors']}; they sum to {module_sum}"
+    )
+    assert rows["MINIMUM_COLLECTED"] == MINIMUM_COLLECTED, (
+        f"the comment says the aggregate floor is {rows['MINIMUM_COLLECTED']}; "
+        f"the constant below it is {MINIMUM_COLLECTED}"
+    )
+    band_label = next(key for key in rows if key.startswith("band("))
+    stated_band = census.band(rows["collected across tests/"])
+    assert rows[band_label] == stated_band, (
+        f"the comment records {band_label} = {rows[band_label]}; the census "
+        f"computes {stated_band} for {rows['collected across tests/']} "
+        "collected. The row and the function disagree."
+    )
+    assert band_label == "band(%d) = ceil(0.9*n)" % rows["collected across tests/"], (
+        f"the band row is labelled {band_label} but the table says "
+        f"{rows['collected across tests/']} collect: the label names a "
+        "different suite than the row above it."
+    )
+
+    # EVERY GUARD THE CENSUS CITES MUST EXIST.
+    #
+    # One draft of the comment above the constant named two tests that were
+    # never written; the next broke a real name across a line so it cited
+    # nothing either. Prose pointing at a guard is worth exactly what the
+    # guard is worth, and a name nobody can resolve is worth nothing.
+    #
+    # Scanned over the WHOLE census script rather than the one comment block,
+    # because narrowing it to the block would have made this assertion's own
+    # message the broader claim -- and it found a second imprecision straight
+    # away: `test_skip_gate` was cited where the MODULE was meant.
+    source = (ROOT / "scripts/check_test_coverage.py").read_text(encoding="utf-8")
+    cited = set(re.findall(r"`(test_[a-z0-9_]+)`", source))
+    assert cited, "the census cites no guard at all, so this checks nothing"
+    defined = set()
+    for module in sorted((ROOT / "tests").glob("test_*.py")):
+        defined.update(re.findall(
+            r"^def (test_[a-z0-9_]+)\(", module.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ))
+    unresolved = sorted(cited - defined)
+    assert unresolved == [], (
+        "the census script cites guards that do not exist in tests/: "
+        f"{unresolved}. A citation nobody can resolve reads as assurance and "
+        "carries none. If a MODULE was meant, name it as a path."
+    )
 
 
 @pytest.mark.false_green("FG35")

@@ -22,6 +22,7 @@ error, except where the guard under test is itself a collection guard.
 from __future__ import annotations
 
 import ast
+import operator
 import os
 import subprocess
 import sys
@@ -468,6 +469,105 @@ MECHANISM_TO_CLASS = {
 }
 
 
+class _Undecidable(Exception):
+    """This expression cannot be decided without executing code."""
+
+
+#: Returned by `_fold` for anything outside its vocabulary.
+_UNDECIDED = object()
+
+#: THE ENTIRE VOCABULARY. Anything absent from these tables is undecided.
+_UNARY = {ast.Not: operator.not_, ast.USub: operator.neg,
+          ast.UAdd: operator.pos, ast.Invert: operator.invert}
+_COMPARE = {
+    ast.Eq: operator.eq, ast.NotEq: operator.ne,
+    ast.Lt: operator.lt, ast.LtE: operator.le,
+    ast.Gt: operator.gt, ast.GtE: operator.ge,
+    ast.Is: operator.is_, ast.IsNot: operator.is_not,
+    ast.In: lambda left, right: left in right,
+    ast.NotIn: lambda left, right: left not in right,
+}
+#: Arithmetic, NUMBERS ONLY and no growth operators. `**` and the shifts are
+#: absent on purpose: they are what turns a folder into an interpreter with a
+#: memory budget, and no vacuous assertion needs them.
+_ARITHMETIC = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+}
+_MAX_OPERAND = 2 ** 32
+
+
+def _fold(node: ast.expr):
+    """The value of an expression that names nothing, or `_UNDECIDED`.
+
+    THE FIRST VERSION COMPILED THE EXPRESSION AND RAN IT WITH `__builtins__`
+    EMPTIED, AND THE SECURITY GATE WAS RIGHT TO REFUSE IT.
+    `dynamic_python_execution` does not ask whether a particular call site
+    looks defensible; it asks whether this repository executes text it
+    assembled, and the answer has to stay "no" in the file whose whole job is
+    judging whether other people's guards are real. Emptying the builtins
+    mapping is a hardening argument, not an absence.
+
+    (The gate matches the bare name followed by a parenthesis, so it fires on
+    a MENTION as readily as on a call. That is a false positive in the strict
+    sense and the right trade for a one-line regex: the remedy is to describe
+    the construct instead of writing it, which this docstring now does.)
+
+    So the vocabulary is written out above, and every node outside it is
+    undecided. Undecided means "a real assertion" at both call sites, so this
+    screen can only ever be too permissive -- it may miss a vacuous guard, it
+    cannot fail a genuine one. The stated cost: `assert 'a' + 'b' == 'ab'` is
+    credited as real, because string arithmetic is not folded.
+    """
+    try:
+        return _decide(node)
+    except (_Undecidable, ArithmeticError, TypeError,
+            ValueError, IndexError, KeyError):
+        return _UNDECIDED
+
+
+def _decide(node: ast.expr):
+    """One node of the vocabulary, or `_Undecidable`. Recursive."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        items = [_decide(element) for element in node.elts]
+        if isinstance(node, ast.List):
+            return items
+        return tuple(items) if isinstance(node, ast.Tuple) else set(items)
+    if isinstance(node, ast.Dict):
+        if any(key is None for key in node.keys):  # {**other}
+            raise _Undecidable
+        return {_decide(key): _decide(value)
+                for key, value in zip(node.keys, node.values)}
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY:
+        return _UNARY[type(node.op)](_decide(node.operand))
+    if isinstance(node, ast.BoolOp):
+        values = [_decide(value) for value in node.values]
+        if isinstance(node.op, ast.And):
+            return all(values) and values[-1]
+        return next((value for value in values if value), values[-1])
+    if isinstance(node, ast.Compare):
+        left = _decide(node.left)
+        for operation, right_node in zip(node.ops, node.comparators):
+            if type(operation) not in _COMPARE:
+                raise _Undecidable
+            right = _decide(right_node)
+            if not _COMPARE[type(operation)](left, right):
+                return False
+            left = right
+        return True
+    if isinstance(node, ast.BinOp) and type(node.op) in _ARITHMETIC:
+        left, right = _decide(node.left), _decide(node.right)
+        if not all(isinstance(side, (int, float)) for side in (left, right)):
+            raise _Undecidable  # numbers only: no sequence can be grown here
+        if any(abs(side) > _MAX_OPERAND for side in (left, right)):
+            raise _Undecidable
+        return _ARITHMETIC[type(node.op)](left, right)
+    raise _Undecidable
+
+
 def _reachable(node: ast.AST, function: ast.AST) -> bool:
     """Is this statement inside a branch that can be taken?
 
@@ -498,21 +598,8 @@ def _reachable(node: ast.AST, function: ast.AST) -> bool:
 
 def _folds_to_false(test: ast.expr) -> bool:
     """A branch condition that is decided at parse time, and decided False."""
-    if any(
-        isinstance(inner, (ast.Name, ast.Call, ast.Attribute, ast.Subscript))
-        for inner in ast.walk(test)
-    ):
-        return False
-    try:
-        return not bool(
-            eval(  # noqa: S307
-                compile(ast.Expression(test), "<literal>", "eval"),
-                {"__builtins__": {}},
-                {},
-            )
-        )
-    except Exception:  # noqa: BLE001
-        return False
+    folded = _fold(test)
+    return folded is not _UNDECIDED and not folded
 
 
 def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
@@ -554,23 +641,13 @@ def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
     # nothing anywhere checked that authenticating first catches the
     # wrong-keyword grant.
     #
-    # An expression naming nothing -- no Name, Call, Attribute or Subscript --
-    # depends on no state, so its value is decided here. Evaluated with empty
-    # builtins: this is a constant folder, not an interpreter for test bodies.
-    if not any(
-        isinstance(node, (ast.Name, ast.Call, ast.Attribute, ast.Subscript))
-        for node in ast.walk(test)
-    ):
-        try:
-            return bool(
-                eval(  # noqa: S307
-                    compile(ast.Expression(test), "<literal>", "eval"),
-                    {"__builtins__": {}},
-                    {},
-                )
-            )
-        except Exception:  # noqa: BLE001 - an expression we cannot fold is not vacuous
-            return False
+    # An expression naming nothing depends on no state, so its value is
+    # decided here. `_fold` has no branch for Name, Call, Attribute or
+    # Subscript, so anything that reads state is undecided by construction --
+    # that is the screen, not a pre-filter in front of it.
+    folded = _fold(test)
+    if folded is not _UNDECIDED:
+        return bool(folded)
     if isinstance(test, ast.Constant):
         return bool(test.value)
     if isinstance(test, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
@@ -593,6 +670,131 @@ def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
             for value in bindings
         )
     return False
+
+
+#: Assertions whose subject is fixed before the suite runs. Each is a REAL
+#: edit an adversary can make to a marked guard: they keep the node, keep the
+#: marker, keep collection identical, and assert nothing.
+VACUOUS_ASSERTIONS = [
+    "True", "1", "'text'", "1 == 1", "not False", "'a' in 'abc'",
+    "[1]", "(1, 2)", "{'k': 'v'}", "1 < 2 < 3", "True and 1",
+    "2 + 2 == 4", "10 % 3 == 1", "not (1 > 2)",
+]
+
+#: Assertions that read state. The screen must credit every one of these, or a
+#: genuine guard gets called vacuous and the audit fails for a lie in the other
+#: direction -- which is the worse failure, because it is loud and wrong.
+REAL_ASSERTIONS = [
+    "result == 4", "compute()", "obj.field", "values[0]",
+    "'a' in haystack", "len(rows) == 2", "not missing",
+    "report.returncode != 0", "{name: 1} == expected",
+]
+
+#: THE STATED COST OF A BOUNDED FOLDER. These ARE fixed at parse time and the
+#: screen credits them anyway, because deciding them needs operators that turn
+#: a folder into an interpreter with a memory budget. Pinned as a list to
+#: argue with: shrinking it is progress, and growing it silently is not.
+UNDECIDED_BY_DESIGN = [
+    "2 ** 2 == 4",              # growth: no exponent is folded
+    "1 << 4 == 16",             # growth: no shift is folded
+    "'a' + 'b' == 'ab'",        # sequences are never grown by arithmetic
+    "4294967297 * 2 > 0",       # an operand past 2**32 is refused
+]
+
+
+def _assertion(source: str) -> tuple:
+    """(test expression, enclosing function) for `assert <source>`."""
+    function = ast.parse(
+        chr(10).join(["def guard():", "    assert " + source, ""])
+    ).body[0]
+    return function.body[0].test, function
+
+
+@pytest.mark.parametrize("source", VACUOUS_ASSERTIONS)
+def test_an_assertion_fixed_at_parse_time_is_called_vacuous(source: str):
+    """Every shape here defeats a marked guard entirely, and cheaply.
+
+    `assert True` is the one everybody names, and it is not the interesting
+    one. A review gutted a declared guard to `assert 1 == 1`, kept its marker,
+    and the audit reported the class proven: all eight certification nodes
+    passed, rc 0, collection identical to pristine, and nothing anywhere
+    checked the property the class exists for.
+
+    The screen answered only for a bare `ast.Constant` then, so `1 == 1`,
+    `not False` and `'a' in 'abc'` each walked straight through.
+    """
+    test, function = _assertion(source)
+    assert _cannot_fail(test, function), (
+        "`assert " + source + "` has the same value on every run, and the "
+        "screen credits it as a proof. A guard can be gutted to exactly this, "
+        "keep its marker, and the audit will report its class proven."
+    )
+
+
+@pytest.mark.parametrize("source", REAL_ASSERTIONS)
+def test_an_assertion_that_reads_state_is_left_alone(source: str):
+    """The screen must be too permissive, never too strict.
+
+    `_fold` has no branch for Name, Call, Attribute or Subscript, so anything
+    reading state is undecided by construction rather than by a filter in
+    front of it -- and undecided means "real" at every call site.
+    """
+    test, function = _assertion(source)
+    assert not _cannot_fail(test, function), (
+        "`assert " + source + "` depends on state the suite computes, and the "
+        "screen called it vacuous. A genuine guard would be failed for a "
+        "property it does not have."
+    )
+
+
+@pytest.mark.parametrize("source", UNDECIDED_BY_DESIGN)
+def test_the_folder_stops_where_it_says_it_stops(source: str):
+    """The documented gap, asserted rather than described.
+
+    These are fixed at parse time and the screen credits them anyway. That is
+    a real hole and it is written down instead of implied: `**`, the shifts,
+    sequence arithmetic and operands past 2**32 are absent from the vocabulary
+    because folding them is unbounded work on source this file does not own.
+
+    Asserted in the AFFIRMATIVE so that closing the gap later cannot happen
+    silently -- extending the vocabulary turns this test red and forces the
+    list above to be rewritten.
+    """
+    test, function = _assertion(source)
+    assert not _cannot_fail(test, function), (
+        "`assert " + source + "` is now decided by the folder. That is an "
+        "improvement, and it has to be recorded: move it out of "
+        "UNDECIDED_BY_DESIGN into VACUOUS_ASSERTIONS."
+    )
+
+
+@pytest.mark.parametrize(
+    ("condition", "taken"),
+    [("False", False), ("0", False), ("1 == 2", False), ("not True", False),
+     ("True", True), ("flag", True), ("compute()", True), ("1 == 1", True)],
+)
+def test_a_branch_decided_at_parse_time_is_not_a_place_a_proof_can_live(
+    condition: str, taken: bool,
+):
+    """`if False: raise` satisfied "this guard can fail" while doing nothing.
+
+    The counter credited any `ast.Raise` that `ast.walk` could reach. Measured
+    on FG01 with its marker kept: 3 passed, rc 0. Only the guard's own
+    condition is judged, and only when it folds -- `flag` and `compute()` are
+    reachable because the screen cannot know otherwise, which is again the
+    permissive direction.
+    """
+    function = ast.parse(chr(10).join([
+        "def guard():",
+        "    if " + condition + ":",
+        "        raise AssertionError('never')",
+        "",
+    ])).body[0]
+    raised = function.body[0].body[0]
+    assert _reachable(raised, function) is taken, (
+        "`if " + condition + ":` was judged "
+        + ("reachable" if not taken else "unreachable")
+    )
 
 
 def test_the_inventory_is_exactly_the_known_classes():
