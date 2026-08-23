@@ -434,7 +434,32 @@ def _is_a_run(rows: list) -> bool:
     """
     if len(rows) >= 2:
         return True
-    return bool(rows) and rows[0][1] in CLAIM_FIELDS
+    if not rows:
+        return False
+    # A LONE ROW MUST CARRY A VALUE, NOT A CLAUSE.
+    #
+    # `independent` is a field this system emits AND an ordinary English
+    # adjective, so an aligned sentence beginning with it parsed as a record:
+    #
+    #     independent  reviewers were engaged   -> runs=1, dishonest=1
+    #     independent reviewers were engaged    -> runs=0
+    #
+    # The SAME sentence, judged differently by how its author spaced it. That
+    # is whitespace deciding meaning, which is the shape this module refuses
+    # everywhere else.
+    #
+    # The four fields this single-row rule exists for -- `status`,
+    # `integrity_state`, `governed_input_match`, `evidence_manifest_match` --
+    # all carry ONE token: `pass`, `intact`, `true`. So does every negative
+    # this repository actually emits: `not_independently_inspected`, `[]`,
+    # `false`. A multi-word value is prose that happens to be aligned.
+    #
+    # Multi-word values in a REAL transcript are still reached: two adjacent
+    # rows are a run whatever their values, and an assurance-named field is
+    # backstopped by `find_overclaims`. What this drops is exactly the case
+    # where a lone aligned English sentence starts with a field name.
+    key, value = rows[0][1], rows[0][2]
+    return key in CLAIM_FIELDS and len(value.split()) == 1
 
 
 def _dishonest_rows(run: list) -> list:
@@ -1391,3 +1416,71 @@ def test_a_mechanism_field_is_still_not_a_claim():
             f"{key}: a past participle head noun names an EVENT that happened "
             "to the system, not a state of an assurance act"
         )
+
+
+@pytest.mark.parametrize(
+    ("label", "body", "runs", "dishonest"),
+    [
+        # THE SPECIMEN: the same sentence, judged by its whitespace.
+        ("aligned English beginning with a field name",
+         "independent  reviewers were engaged", 0, 0),
+        ("the same sentence, single-spaced",
+         "independent reviewers were engaged", 0, 0),
+        # THE PURPOSE OF THE RULE, which must survive: a lone row on a field
+        # this system emits, carrying a one-token value.
+        ("lone row, verifiable field", "integrity_state  intact", 1, 1),
+        ("lone row, status", "status  pass", 1, 1),
+        ("lone row, honest negative",
+         "assurance_state  not_independently_inspected", 1, 0),
+        ("lone row, empty list", "authenticated_reviewers  []", 1, 0),
+    ],
+)
+def test_a_lone_row_must_carry_a_value_and_not_a_clause(
+    label: str, body: str, runs: int, dishonest: int,
+):
+    """C9-P3-2. Whitespace decided whether a sentence was a measurement.
+
+    `independent` is a field this system emits AND an ordinary English
+    adjective, so an aligned sentence beginning with it parsed as a record:
+
+        independent  reviewers were engaged   -> runs=1, dishonest=1
+        independent reviewers were engaged    -> runs=0
+
+    The same words, judged differently by how the author spaced them. That is
+    whitespace deciding meaning, which this module refuses everywhere else.
+
+    The four fields the single-row rule exists for -- `status`,
+    `integrity_state`, `governed_input_match`, `evidence_manifest_match` --
+    all carry ONE token, as does every negative this repository emits. So a
+    lone row now needs a value rather than a clause, and the cases that gave
+    the rule its purpose are pinned here beside the specimen so narrowing it
+    cannot quietly empty it.
+    """
+    document = "# Report" + chr(10) * 2 + body + chr(10)
+    found = _transcript_runs(document)
+    rows = [row for run in found for row in run]
+    judged = [row for row in rows if is_a_claim(row[-2], row[-1])]
+    assert len(found) == runs, f"{label}: runs={len(found)} rows={rows}"
+    assert len(judged) == dishonest, f"{label}: judged={judged}"
+
+
+def test_a_multi_word_value_is_still_reached_when_it_sits_in_a_run():
+    """The compensating control, measured rather than asserted.
+
+    Narrowing the lone-row rule is only safe because a multi-word value in a
+    REAL transcript still arrives as part of a run. If that stopped being
+    true, the narrowing above would have opened a hole instead of closing one.
+    """
+    document = (
+        "# Report" + chr(10) * 2
+        + "production_approval  granted by the Change Advisory Board" + chr(10)
+        + "human_review          performed" + chr(10)
+    )
+    found = _transcript_runs(document)
+    rows = [row for run in found for row in run]
+    judged = [row for row in rows if is_a_claim(row[-2], row[-1])]
+    assert len(rows) == 2, f"the run was lost: {found}"
+    assert len(judged) == 2, (
+        "a multi-word value in a genuine run is no longer judged, so the "
+        f"lone-row narrowing removed reach instead of noise: {rows}"
+    )

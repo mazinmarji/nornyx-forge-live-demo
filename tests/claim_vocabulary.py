@@ -17,6 +17,25 @@ of values this system emits WHEN A PROPERTY IS ABSENT is small and closed. So
 the guards do not ask "is this a claim?"; they ask "is this one of the values
 that means the property is absent?" -- and anything else is a positive
 measurement that must be anchored, withdrawn, or removed.
+
+A REVIEW ASKED WHAT HONEST VALUE A DIGEST HAS, and the answer is in that last
+clause rather than in this set. A `governed_input_digest` or a non-zero count
+has no ABSENT shape and never will, so the inversion above cannot judge one on
+its own: every real digest is a positive measurement. That is not a hole in
+the premise -- it is the third route the premise names, and it is measured, not
+asserted:
+
+    anchored blocks in docs/                                4
+    verifiable fields carrying a claim-shaped value inside
+      one of them (status pass, integrity_state intact,
+      governed_input_match true, problems [])               5 distinct fields
+    removing ONE anchor from HUMAN_BLOCKED_MEASUREMENTS.md  2 tests RED
+      test_every_recorded_verify_transcript_is_anchored_or...
+      test_no_transcript_row_asserts_a_measurement_without...
+
+So the anchor is load-bearing rather than decorative: it is what separates a
+decaying measurement written honestly from the same words written as a
+standing claim. A field with no absent shape is anchored or it is refused.
 """
 
 from __future__ import annotations
