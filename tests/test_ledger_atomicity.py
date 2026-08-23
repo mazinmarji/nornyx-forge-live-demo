@@ -53,6 +53,7 @@ import pytest
 from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
 
 from nornyx_forge.nornyx_runtime import (
+    LEDGER_BUSY,
     LEDGER_CONTINUITY_MIGRATION_REQUIRED,
     LEDGER_CONTINUITY_UNKNOWN,
     LEDGER_ROLLED_BACK,
@@ -526,20 +527,53 @@ def test_analyze_on_the_witness_does_not_brick_the_ledger(tmp_path: Path) -> Non
     )
 
 
-def test_a_legacy_plain_text_mark_migrates_on_a_healthy_ledger(
+def _roll_back_to_one_row(path: Path) -> None:
+    """Leave the ledger holding exactly one consumption row.
+
+    The rollback signature the continuity witness exists to detect: rows only
+    ever accumulate, so a ledger holding fewer than were recorded against it
+    has lost history.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "DELETE FROM consumed_approvals WHERE rowid NOT IN"
+            " (SELECT rowid FROM consumed_approvals LIMIT 1)"
+        )
+        conn.commit()
+
+
+def test_a_legacy_plain_text_mark_refuses_and_names_the_non_destructive_remedy(
     tmp_path: Path,
 ) -> None:
-    """The documented upgrade must cost nothing, and it was costing everything.
+    """AUTHORIZATION DOES NOT MIGRATE. This test used to require that it did.
 
-    `_adopt_plaintext_mark` existed and NO production path called it. A review
-    measured a HEALTHY ledger carrying a pre-database mark refusing every
-    release, with the mark left unconverted, and the only escape being
-    `--reset-replay-history` -- which mints a new epoch and invalidates every
-    outstanding approval, for an upgrade that should be invisible.
+    The withdrawn expectation was `claimed is True` -- a healthy ledger with a
+    pre-database mark had to release, converting the mark from the ATTACH path.
+    It was written to fix a real problem: the upgrade refused every release and
+    the only documented escape was `--reset-replay-history`, which mints a new
+    epoch and invalidates every outstanding approval.
 
-    A migration nothing calls is not a migration. It runs from the ATTACH path
-    now: a witness that cannot be opened as a database is converted ONCE and the
-    attach retried, and only a conversion that FAILS becomes a refusal.
+    THE CURE WAS WORSE, and a review measured it. The plain-text mark is an
+    unauthenticated integer in a directory the governed process writes to, so
+    adopting it at authorization time lets whoever can write one byte choose
+    the replay high-water mark. On this repository's own rollback fixture --
+    six grants spent, ledger restored to one row:
+
+        sidecar b"6" (the true count)   claimed False   LEDGER_ROLLED_BACK
+        sidecar b"1"                    claimed True    RELEASED
+          then five already-spent grants released in turn,
+          the witness re-anchoring at each step
+
+    No check repairs this. Requiring the mark to agree with the row count does
+    not, because the adversary writes the row count. The value carries no
+    authentication, so it cannot decide anything at authorization time.
+
+    This is not a test weakened to let an implementation pass. It is a test
+    whose pinned behaviour a hostile specimen proved unsafe, rewritten to pin
+    the property that replaces it: the authorization REFUSES, and names the
+    non-destructive remedy that the earlier round actually needed --
+    `--migrate-continuity`, an explicit operator act that checks agreement,
+    rather than `--reset-replay-history`, which discards approvals.
     """
     path, side = _ledger(tmp_path, spends=2)
     side.unlink()
@@ -549,13 +583,60 @@ def test_a_legacy_plain_text_mark_migrates_on_a_healthy_ledger(
         "fp-legacy", "rd-legacy", at=NOW,
         grant_issued_at=GRANT_ISSUED, approval_id="ACT-LEGACY",
     )
-    assert claimed is True, (
-        f"a healthy ledger with a legacy mark refused a fresh grant: {reason!r}"
+    assert claimed is False, (
+        "an authorization converted an unauthenticated plain-text mark and "
+        "released against it"
     )
-    with closing(sqlite3.connect(side)) as conn:
-        rows = conn.execute("SELECT id, value FROM high_water").fetchall()
-    assert rows == [(1, 3)], (
-        f"the legacy mark was not converted in step with the ledger: {rows}"
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+    assert "--migrate-continuity" in reason, (
+        "the refusal does not name the non-destructive remedy, which is the "
+        f"whole reason the migration was wired into consume once: {reason}"
+    )
+    assert "--reset-replay-history" not in reason, (
+        "the refusal sends the operator to the remedy that discards every "
+        "outstanding approval, for an upgrade that costs nothing"
+    )
+    assert side.read_bytes() == b"2", (
+        "the refusal MUTATED the store it refused over; a decision that "
+        "declines must leave the evidence as it found it"
+    )
+
+
+def test_a_one_byte_sidecar_cannot_re_anchor_the_continuity_witness(
+    tmp_path: Path,
+) -> None:
+    """The hostile specimen, on this repository's own rollback fixture.
+
+    Six grants spent, the ledger restored to one row -- the exact state the
+    witness exists to detect. Replacing the sidecar with the single byte `1`
+    made the rolled-back ledger agree with itself, and five already-spent human
+    approvals released five more effects.
+
+    The cost of the attack is one ASCII digit, which is strictly weaker than
+    the capability `RUNTIME_INPUT_AUDIT.md` discloses ("an adversary who can
+    restore the directory") and the OPPOSITE outcome from deleting the same
+    file, which fails closed.
+    """
+    # `_ledger(spends=n)` consumes fp-0..fp-(n-1) itself, so the fingerprints
+    # replayed below must be its own -- presenting new ones would measure
+    # nothing about replay.
+    path, side = _ledger(tmp_path, spends=6)
+    assert _rows(path) == 6, _rows(path)
+
+    _roll_back_to_one_row(path)
+    side.unlink()
+    side.write_bytes(b"1")  # the whole attack
+
+    released = []
+    for index in range(1, 6):
+        claimed, reason = ApprovalLedger(path).consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )
+        released.append((index, claimed, reason[:60]))
+    assert not any(claimed for _, claimed, _ in released), (
+        "an already-spent approval released again after a one-byte sidecar "
+        f"re-anchored the witness: {released}"
     )
 
 
@@ -574,3 +655,97 @@ def test_a_plain_text_mark_that_is_not_a_number_still_refuses(
     )
     assert claimed is False, "an unreadable witness released an effect"
     assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+
+
+@pytest.mark.parametrize("held", ["ledger", "witness"])
+def test_lock_contention_is_not_diagnosed_as_lost_history(held: str, tmp_path: Path):
+    """A busy database is a database. It was reported as a damaged one.
+
+    MEASURED on both live paths, each with a legitimate, first-ever,
+    never-spent grant and another connection holding the lock:
+
+        witness held    DENY LEDGER_CONTINUITY_UNKNOWN
+                        "TO RECOVER: run `provision-ledger
+                         --reset-replay-history`"
+        ledger held     DENY APPROVAL_LEDGER_UNREADABLE
+                        "action approval ledger is unusable, so single use
+                         cannot be guaranteed"
+
+    Neither ledger was unusable. Neither had lost history. Both remedies are
+    wrong, and the first is destructive: `--reset-replay-history` discards the
+    replay history and mints a later epoch, invalidating EVERY outstanding
+    human approval — to cure a lock that would have cleared on its own.
+
+    This is reachable without an adversary. `provision-ledger
+    --migrate-continuity` run while traffic is served does it; so does a
+    backup, an antivirus scan, or simply two consequential requests in flight.
+
+    Asserted on both directions: the code says BUSY, and the refusal does not
+    carry the destructive remedy.
+    """
+    path, side = _ledger(tmp_path, spends=0)
+    target = path if held == "ledger" else side
+
+    blocker = sqlite3.connect(target, timeout=1, isolation_level=None)
+    try:
+        blocker.execute("BEGIN EXCLUSIVE")
+        claimed, reason = ApprovalLedger(path).consume(
+            "fp-busy", "rd-busy", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id="ACT-BUSY",
+        )
+    finally:
+        blocker.close()
+
+    assert claimed is False, "a consumption was recorded against a locked store"
+    assert reason.startswith(LEDGER_BUSY), (
+        "contention was diagnosed as " + reason.split(":")[0] + ", which is a "
+        "damage or lost-history code. The operator response differs: one is "
+        "'retry', the others are 'investigate' and 'discard every approval'"
+    )
+    # THE PRESCRIPTION, not the mention. The refusal names
+    # `--reset-replay-history` in order to warn AGAINST it, which is exactly
+    # what an operator who has seen the old message needs to read. What must
+    # not appear is that command presented as the recovery.
+    assert "TO RECOVER: run `nornyx-forge provision-ledger " not in reason or (
+        "--reset-replay-history" not in reason.split("TO RECOVER:")[1].split(".")[0]
+    ), (
+        "the refusal for a transient lock prescribes the remedy that discards "
+        "the replay history and invalidates every outstanding approval"
+    )
+    assert "Do NOT run" in reason, (
+        "the refusal does not warn against the destructive remedy, which is "
+        "what the previous message sent operators to"
+    )
+    assert "retry" in reason.lower(), (
+        "the refusal does not tell the operator the one thing that works"
+    )
+
+
+def test_a_busy_ledger_does_not_spend_the_grant(tmp_path: Path):
+    """Refusing for contention must leave the approval usable.
+
+    The whole argument for 'retry' as the remedy is that nothing was consumed.
+    If a contention refusal spent the grant, retrying would fail as
+    APPROVAL_ALREADY_CONSUMED and the advice would be worse than useless.
+    """
+    path, _side = _ledger(tmp_path, spends=0)
+
+    blocker = sqlite3.connect(path, timeout=1, isolation_level=None)
+    try:
+        blocker.execute("BEGIN EXCLUSIVE")
+        refused, reason = ApprovalLedger(path).consume(
+            "fp-retry", "rd-retry", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id="ACT-RETRY",
+        )
+        assert refused is False, reason
+    finally:
+        blocker.close()
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-retry", "rd-retry", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-RETRY",
+    )
+    assert claimed is True, (
+        "the retry the refusal recommends does not work: the grant was spent "
+        f"by a refusal that released nothing: {reason}"
+    )

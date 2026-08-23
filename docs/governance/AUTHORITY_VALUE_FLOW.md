@@ -143,8 +143,19 @@ SURVIVED or KILLED. This paragraph said `INVALID_BASELINE` while
 [HUMAN_BLOCKED_MEASUREMENTS.md](HUMAN_BLOCKED_MEASUREMENTS.md) said, of the
 identical three attempts, "**They are not `INVALID_BASELINE`.** That outcome
 describes an attack that entered the protocol and failed step 2. These never
-entered it: the precondition is external." `MUTATION_CAMPAIGN.md` agrees, and
-both campaign summaries report `INVALID_BASELINE = 0`.
+entered it: the precondition is external." `MUTATION_CAMPAIGN.md` agrees on
+the classification.
+
+It does **not** report `INVALID_BASELINE = 0`, and this sentence used to say
+it did — along with "both campaign summaries", which resolves to one
+document that deliberately refuses the wording and one that is withdrawn.
+`MUTATION_CAMPAIGN.md` renamed its counter to
+`ADMITTED_ATTACK_INVALID_BASELINE` precisely so the two could not be read as
+the same ground: "reporting them as `INVALID_BASELINE = 0` alongside a
+description of their failing baselines would have been the same sentence
+meaning two things." The only document literally reporting
+`INVALID_BASELINE 0` is `TASK11_CLOSURE.md`, which is superseded in its own
+header. Citing a renaming decision as agreement inverted it.
 
 The distinction is not bookkeeping. `INVALID_BASELINE` means an attack entered
 the protocol and its harness was broken -- an engineering problem, closable

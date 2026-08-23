@@ -250,8 +250,13 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
         f"leaves {collected - MINIMUM_COLLECTED} of slack: whole modules could "
         "be deleted with this gate still passing"
     )
-    assert MINIMUM_COLLECTED <= collected * 2, (
-        "the floor is above what the suite can collect, so every run fails"
+    # `<= collected * 2` under the message "the floor is above what the suite
+    # can collect, so every run fails". Every value in (collected, 2*collected]
+    # makes every run fail AND satisfies that bound, so the assertion admitted
+    # exactly the state its message describes. The correct bound is the count.
+    assert MINIMUM_COLLECTED <= collected, (
+        f"the floor is {MINIMUM_COLLECTED} against {collected} collected, so "
+        "every run fails the aggregate no matter what the suite does"
     )
 
     # THE ROW THAT COSTS A COLLECTION. This test already paid for one, so the

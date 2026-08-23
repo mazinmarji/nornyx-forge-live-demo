@@ -98,7 +98,31 @@ class _Recorder:
         return [{"event_type": name} for name in self.observations]
 
     def validate(self) -> dict[str, object]:
-        return {"status": "pass", "observations": list(self.observations)}
+        """The shape the REAL `EvidenceRecorder.validate()` returns.
+
+        This used to return `{"status", "observations"}`. `observations` is a
+        key the production recorder has never emitted -- extracting
+        `nornyx.agentic.validate_runtime_events` gives `counts_by_type`,
+        `tools_executed`, `event_count` and fifteen others, and no
+        `observations` anywhere in the installed package.
+
+        Because this is the only recorder any test installs, the retry
+        regression passed its "returns" case against a shape production does
+        not produce, while on the real path a retry TRUNCATED the record that
+        a consequential effect had run. A double that drifts from the contract
+        it stands in for turns every test using it into a test of the double.
+        """
+        counts: dict[str, int] = {}
+        for name in self.observations:
+            counts[name] = counts.get(name, 0) + 1
+        return {
+            "status": "pass",
+            "counts_by_type": counts,
+            "event_count": len(self.observations),
+            "tools_executed": [
+                name for name in self.observations if name == "tool_invoked"
+            ],
+        }
 
 
 #: A pinned revision for tests whose subject is the action binding, not the
@@ -211,8 +235,15 @@ def test_high_risk_is_withheld_even_when_nornyx_allows(tmp_path: Path) -> None:
     assert decision.code == "HUMAN_APPROVAL_REQUIRED"
     assert result is None
     assert executed == [], "a withheld action must never reach its callable"
-    assert "action_withheld" in decision.evidence["observations"]
-    assert "tool_invoked" not in decision.evidence["observations"]
+    # READ THROUGH `counts_by_type`, which is what the real
+    # `EvidenceRecorder.validate()` emits. These read `evidence["observations"]`
+    # -- a key that exists only in the test double, so the assertion was about
+    # the double rather than about anything production writes.
+    counts = decision.evidence["counts_by_type"]
+    assert counts.get("action_withheld"), decision.evidence
+    assert not counts.get("tool_invoked"), (
+        "a high-risk act was released; the evidence records the effect running"
+    )
 
 
 def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) -> None:

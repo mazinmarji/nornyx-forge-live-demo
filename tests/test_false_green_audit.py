@@ -22,7 +22,6 @@ error, except where the guard under test is itself a collection guard.
 from __future__ import annotations
 
 import ast
-import operator
 import os
 import subprocess
 import sys
@@ -36,6 +35,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
+from guard_evidence import (  # noqa: E402
+    cannot_fail as _cannot_fail,
+)
+from guard_evidence import (  # noqa: E402
+    exercised_assertions,
+)
 from mutation_validity import InvalidMutation, check_mutation  # noqa: E402
 
 #: A newline, spelled so no tool can eat the escape.
@@ -482,382 +487,6 @@ MECHANISM_TO_CLASS = {
 }
 
 
-class _Undecidable(Exception):
-    """This expression cannot be decided without executing code."""
-
-
-#: Returned by `_fold` for anything outside its vocabulary.
-_UNDECIDED = object()
-
-#: THE ENTIRE VOCABULARY. Anything absent from these tables is undecided.
-_UNARY = {ast.Not: operator.not_, ast.USub: operator.neg,
-          ast.UAdd: operator.pos, ast.Invert: operator.invert}
-_COMPARE = {
-    ast.Eq: operator.eq, ast.NotEq: operator.ne,
-    ast.Lt: operator.lt, ast.LtE: operator.le,
-    ast.Gt: operator.gt, ast.GtE: operator.ge,
-    ast.Is: operator.is_, ast.IsNot: operator.is_not,
-    ast.In: lambda left, right: left in right,
-    ast.NotIn: lambda left, right: left not in right,
-}
-#: Arithmetic, NUMBERS ONLY and no growth operators. `**` and the shifts are
-#: absent on purpose: they are what turns a folder into an interpreter with a
-#: memory budget, and no vacuous assertion needs them.
-_ARITHMETIC = {
-    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-}
-_MAX_OPERAND = 2 ** 32
-
-
-def _constant_bindings(function: ast.AST) -> dict:
-    """Names whose EVERY binding in this guard is a constant literal.
-
-    A NAME REBOUND FROM ANYTHING ELSE IS NOT IN HERE. If a guard computes a
-    value and asserts it, that is a real assertion whatever its first binding
-    was -- so a name assigned from a call, a subscript, a loop target, a `with`
-    target, a comprehension, or an augmented assignment is excluded outright,
-    not merely overwritten.
-    """
-    constants: dict = {}
-    rebound: set = set()
-    for node in ast.walk(function):
-        if isinstance(node, ast.Assign):
-            targets = [t for t in node.targets if isinstance(t, ast.Name)]
-            complex_target = len(targets) != len(node.targets)
-            for target in targets:
-                if isinstance(node.value, ast.Constant) and not complex_target:
-                    if target.id in constants and constants[target.id] != node.value.value:
-                        rebound.add(target.id)
-                    constants[target.id] = node.value.value
-                else:
-                    rebound.add(target.id)
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
-            target = getattr(node, "target", None)
-            if isinstance(target, ast.Name):
-                rebound.add(target.id)
-        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
-            for name in ast.walk(node.target):
-                if isinstance(name, ast.Name):
-                    rebound.add(name.id)
-        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
-            for name in ast.walk(node.optional_vars):
-                if isinstance(name, ast.Name):
-                    rebound.add(name.id)
-    return {name: value for name, value in constants.items() if name not in rebound}
-
-
-def _fold(node: ast.expr, bindings: dict | None = None):
-    """The value of an expression that names nothing, or `_UNDECIDED`.
-
-    THE FIRST VERSION COMPILED THE EXPRESSION AND RAN IT WITH `__builtins__`
-    EMPTIED, AND THE SECURITY GATE WAS RIGHT TO REFUSE IT.
-    `dynamic_python_execution` does not ask whether a particular call site
-    looks defensible; it asks whether this repository executes text it
-    assembled, and the answer has to stay "no" in the file whose whole job is
-    judging whether other people's guards are real. Emptying the builtins
-    mapping is a hardening argument, not an absence.
-
-    (The gate matches the bare name followed by a parenthesis, so it fires on
-    a MENTION as readily as on a call. That is a false positive in the strict
-    sense and the right trade for a one-line regex: the remedy is to describe
-    the construct instead of writing it, which this docstring now does.)
-
-    So the vocabulary is written out above, and every node outside it is
-    undecided. Undecided means "a real assertion" at both call sites, so this
-    screen can only ever be too permissive -- it may miss a vacuous guard, it
-    cannot fail a genuine one. The stated cost: `assert 'a' + 'b' == 'ab'` is
-    credited as real, because string arithmetic is not folded.
-    """
-    try:
-        return _decide(node, bindings or {})
-    except (_Undecidable, ArithmeticError, TypeError,
-            ValueError, IndexError, KeyError):
-        return _UNDECIDED
-
-
-def _decide(node: ast.expr, bindings: dict):
-    """One node of the vocabulary, or `_Undecidable`. Recursive."""
-    if isinstance(node, ast.Constant):
-        return node.value
-    # A NAME BOUND ONLY TO LITERALS IS AS FIXED AS A LITERAL.
-    #
-    # The Name rule used to live in `_cannot_fail` and fire only when the whole
-    # assert test WAS a bare Name, so the moment the name sat under any
-    # operator the expression became undecided and was credited as real:
-    #
-    #     flag = True; assert flag           caught
-    #     flag = True; assert flag == True   CREDITED AS A REAL ASSERTION
-    #     flag = True; assert flag is True   CREDITED
-    #     gone = False; assert not gone      CREDITED
-    #     flag = True; assert flag != False  CREDITED
-    #
-    # One token apart, and the docstring beside `UNDECIDED_BY_DESIGN` promised
-    # the only unscreened shapes were exponent, shift, sequence arithmetic and
-    # operands past 2**32. Folding the name here makes that promise true.
-    if isinstance(node, ast.Name):
-        if node.id not in bindings:
-            raise _Undecidable
-        return bindings[node.id]
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        items = [_decide(element, bindings) for element in node.elts]
-        if isinstance(node, ast.List):
-            return items
-        return tuple(items) if isinstance(node, ast.Tuple) else set(items)
-    if isinstance(node, ast.Dict):
-        if any(key is None for key in node.keys):  # {**other}
-            raise _Undecidable
-        return {_decide(key, bindings): _decide(value, bindings)
-                for key, value in zip(node.keys, node.values)}
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY:
-        return _UNARY[type(node.op)](_decide(node.operand, bindings))
-    if isinstance(node, ast.BoolOp):
-        values = [_decide(value, bindings) for value in node.values]
-        if isinstance(node.op, ast.And):
-            return all(values) and values[-1]
-        return next((value for value in values if value), values[-1])
-    if isinstance(node, ast.Compare):
-        left = _decide(node.left, bindings)
-        for operation, right_node in zip(node.ops, node.comparators):
-            if type(operation) not in _COMPARE:
-                raise _Undecidable
-            right = _decide(right_node, bindings)
-            if not _COMPARE[type(operation)](left, right):
-                return False
-            left = right
-        return True
-    if isinstance(node, ast.BinOp) and type(node.op) in _ARITHMETIC:
-        left, right = _decide(node.left, bindings), _decide(node.right, bindings)
-        if not all(isinstance(side, (int, float)) for side in (left, right)):
-            raise _Undecidable  # numbers only: no sequence can be grown here
-        if any(abs(side) > _MAX_OPERAND for side in (left, right)):
-            raise _Undecidable
-        return _ARITHMETIC[type(node.op)](left, right)
-    raise _Undecidable
-
-
-#: Handler types that stop an assertion failing the test.
-_SWALLOWING = frozenset({"AssertionError", "Exception", "BaseException"})
-
-
-def _swallows(node: ast.Try) -> bool:
-    """Does this `try` catch the failure of an assertion in its body?
-
-    `try: assert real` / `except AssertionError: pass` EXECUTES the assertion
-    and cannot fail the test. The counter could not see the handler at all, so
-    this shape satisfied "carries an assertion that can fail" while carrying
-    one that provably cannot.
-
-    A handler that re-raises does not swallow, so a guard using `try` for
-    cleanup around a real assertion is untouched.
-    """
-    for handler in node.handlers:
-        caught = handler.type
-        names = caught.elts if isinstance(caught, ast.Tuple) else [caught]
-        catches = caught is None or any(
-            (isinstance(name, ast.Name) and name.id in _SWALLOWING)
-            or (isinstance(name, ast.Attribute) and name.attr in _SWALLOWING)
-            for name in names if name is not None
-        )
-        if not catches:
-            continue
-        rethrows = any(
-            isinstance(inner, ast.Raise) or _is_pytest_call(inner, "fail")
-            for statement in handler.body for inner in ast.walk(statement)
-        )
-        if not rethrows:
-            return True
-    return False
-
-
-def _is_pytest_call(node: ast.AST, attribute: str) -> bool:
-    """`pytest.<attribute>(...)`, matched as a SHAPE rather than as text.
-
-    The `.fail()` clause matched ANY attribute call named `fail` on any object,
-    so `record.fail(reason)` counted as a proof. This asks what is called.
-    """
-    if not isinstance(node, ast.Call):
-        return False
-    func = node.func
-    if isinstance(func, ast.Attribute) and func.attr == attribute:
-        return isinstance(func.value, ast.Name) and func.value.id == "pytest"
-    return isinstance(func, ast.Name) and func.id == attribute
-
-
-def _is_expected_refusal(expr: ast.expr) -> bool:
-    """`pytest.raises(...)`, matched structurally.
-
-    THIS WAS `"raises" in ast.dump(child.context_expr)` -- a substring scan over
-    a dumped AST, which is FG21's own class committed inside the FG auditor. It
-    matched those six characters anywhere in the dump, INCLUDING inside a string
-    constant, so `with io.StringIO("raises.txt") as handle:` was credited as an
-    expected-refusal block. Measured: exercised=1 for that, and the same for
-    `with open(base / "no-raises-here")`.
-    """
-    return _is_pytest_call(expr, "raises")
-
-
-def executed_nodes(function: ast.AST) -> list:
-    """(node, swallowed) for every node the guard's own body actually runs.
-
-    CONTAINMENT IS NOT EXECUTION, and `ast.walk` only answers containment. The
-    counter walked the whole subtree, so every one of these credited a guard
-    that executed nothing -- each measured end to end on FG01 with its marker
-    kept, collection identical to pristine, audit GREEN:
-
-        if False:  <the original assertions>     the cheapest edit of all
-        while False:  raise AssertionError(...)
-        for _ in ():  raise AssertionError(...)
-        if True: pass / else: raise AssertionError(...)
-        def _inner(): assert real                (never called)
-        an assertion inside a lambda
-        try: assert real / except AssertionError: pass
-
-    Reachability had been bolted onto the `ast.Raise` clause alone and
-    understood one statement form, so three of these worked by changing `if` to
-    `while`, and three more by wrapping the assertions instead of a raise.
-
-    This walks the guard the way the interpreter would: a branch decided at
-    parse time contributes only the side that is taken, a body no caller reaches
-    contributes nothing, and an assertion whose failure is caught is marked so
-    the counter can refuse it.
-    """
-    found: list = []
-
-    def statements(block: list, swallowed: bool) -> None:
-        for statement in block:
-            visit(statement, swallowed)
-
-    def visit(node: ast.AST, swallowed: bool) -> None:
-        # A BODY NOBODY CALLS PROVES NOTHING. The marker rule closed "the guard
-        # is a nested function pytest never collects"; this closes the nested
-        # ASSERTION inside a collected guard, which `ast.walk` descends into
-        # just as happily.
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return
-        found.append((node, swallowed))
-        if isinstance(node, ast.If):
-            visit(node.test, swallowed)
-            decided = _fold(node.test)
-            if decided is _UNDECIDED or decided:
-                statements(node.body, swallowed)
-            if decided is _UNDECIDED or not decided:
-                statements(node.orelse, swallowed)
-            return
-        if isinstance(node, ast.While):
-            visit(node.test, swallowed)
-            decided = _fold(node.test)
-            if decided is _UNDECIDED or decided:
-                statements(node.body, swallowed)
-            statements(node.orelse, swallowed)
-            return
-        if isinstance(node, (ast.For, ast.AsyncFor)):
-            visit(node.iter, swallowed)
-            decided = _fold(node.iter)
-            if decided is _UNDECIDED or len(decided) > 0:
-                statements(node.body, swallowed)
-            statements(node.orelse, swallowed)
-            return
-        if isinstance(node, ast.Try):
-            statements(node.body, swallowed or _swallows(node))
-            for handler in node.handlers:
-                statements(handler.body, swallowed)
-            statements(node.orelse, swallowed)
-            statements(node.finalbody, swallowed)
-            return
-        for child in ast.iter_child_nodes(node):
-            visit(child, swallowed)
-
-    statements(getattr(function, "body", []), False)
-    return found
-
-
-def exercised_assertions(function: ast.AST) -> int:
-    """How many things this guard EXECUTES that can fail the test.
-
-    EXTRACTED so the specimen table exercises this rule rather than a copy of
-    it. The gap that made all of the shapes above possible survived a green
-    suite of helper unit tests, because each helper was correct on its own and
-    nothing measured what they added up to.
-    """
-    return sum(
-        1
-        for node, swallowed in executed_nodes(function)
-        if not swallowed
-        and (
-            (isinstance(node, ast.Assert) and not _cannot_fail(node.test, function))
-            or isinstance(node, ast.Raise)
-            or (isinstance(node, ast.withitem)
-                and _is_expected_refusal(node.context_expr))
-            or _is_pytest_call(node, "fail")
-        )
-    )
-
-
-def _cannot_fail(test: ast.expr, function: ast.AST) -> bool:
-    """Is this assertion's subject fixed at parse time?
-
-    `assert True` IS AN `ast.Assert`, so a counter that recognises the NODE
-    TYPE accepts it. A review gutted a declared guard to exactly that, kept its
-    marker, and the audit reported the class proven: 32 passed, exit 0, with
-    collection identical to pristine. Independently reproduced on a second
-    class. The marker rule closed "the guard was deleted" and "the guard is a
-    nested function pytest never collects", and left the cheaper edit open --
-    the guard is still THERE, still COLLECTED, and asserts nothing.
-
-    Two shapes, because the second is how it appeared in this repository:
-
-        assert True                 the literal
-        proves_origin = True        a name bound to a literal and nothing else
-        assert proves_origin
-
-    The second was live in `test_mutation_catalogue.py`, under twenty lines of
-    comment explaining why the real proof lived elsewhere.
-
-    A NAME REBOUND ANYWHERE ELSE IN THE FUNCTION IS NOT JUDGED HERE. If a
-    guard computes a value and asserts it, that is a real assertion whatever
-    its first binding was; only a name whose every binding in the function is
-    a constant literal is fixed at parse time.
-    """
-    # A LITERAL EXPRESSION IS FIXED AT PARSE TIME WHATEVER ITS SHAPE.
-    #
-    # This answered only for a bare `ast.Constant`, so three cheaper edits than
-    # `assert True` walked straight through, each defeating the class entirely:
-    #
-    #     assert 1 == 1          counts as CAN-FAIL
-    #     assert not False       counts as CAN-FAIL
-    #     assert 'a' in 'abc'    counts as CAN-FAIL
-    #
-    # Measured end to end on FG01 with its marker kept: body replaced by
-    # `assert 1 == 1` -> ALL EIGHT certification nodes 8 passed, rc 0, and
-    # nothing anywhere checked that authenticating first catches the
-    # wrong-keyword grant.
-    #
-    # An expression depends on no state when everything in it is either a
-    # literal or a name bound only to literals, and `_fold` decides exactly
-    # that. It has no branch for Call, Attribute or Subscript, so anything that
-    # reads state is undecided by construction -- that is the screen, not a
-    # pre-filter in front of it. Names are resolved through
-    # `_constant_bindings`, which is why `flag == True` is now judged rather
-    # than only a bare `flag`.
-    folded = _fold(test, _constant_bindings(function))
-    if folded is not _UNDECIDED:
-        return bool(folded)
-    if isinstance(test, ast.Constant):
-        return bool(test.value)
-    if isinstance(test, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
-        # A non-empty literal container is truthy at parse time. An EMPTY one
-        # is falsy, so `assert []` fails every time -- noisy, but not vacuous.
-        try:
-            return bool(ast.literal_eval(test))
-        except ValueError:
-            return False
-    # The bare-Name case is handled by the folder above, which sees the same
-    # bindings and also sees them through operators.
-    return False
-
-
 #: Assertions whose subject is fixed before the suite runs. Each is a REAL
 #: edit an adversary can make to a marked guard: they keep the node, keep the
 #: marker, keep collection identical, and assert nothing.
@@ -886,6 +515,63 @@ UNDECIDED_BY_DESIGN = [
     "'a' + 'b' == 'ab'",        # sequences are never grown by arithmetic
     "4294967297 * 2 > 0",       # an operand past 2**32 is refused
 ]
+
+
+#: Binary operators the folder deliberately does not fold, and why.
+#:
+#: DERIVED-AGAINST, not merely listed. `UNDECIDED_BY_DESIGN` above is a set of
+#: example expressions, and a review pointed out the obvious hole in that: it
+#: asserts each listed shape is undecided and says nothing about whether the
+#: list is COMPLETE. Two shapes inside the declared vocabulary were mis-decided
+#: -- `True or compute()` and `1 if True else 0` are fixed at parse time and
+#: were credited as real assertions -- while the comment beside the list said
+#: the only unscreened shapes were exponent, shift, sequence arithmetic and
+#: operands past 2**32.
+#:
+#: The BoolOp and IfExp cases are folded now. This table closes the other half:
+#: every binary operator Python has is either folded or named here, so a new
+#: operator cannot appear in the gap without someone writing down why.
+DELIBERATELY_UNFOLDED_OPERATORS = {
+    "Pow": "exponent: unbounded growth from small operands",
+    "LShift": "shift: unbounded growth from small operands",
+    "RShift": "shift: paired with LShift rather than reasoned about separately",
+    "MatMult": "matrix multiply: no literal in this repository can produce one",
+}
+
+
+def test_the_folders_gaps_are_exactly_the_ones_it_declares():
+    """A list of examples cannot say whether the list is complete.
+
+    `UNDECIDED_BY_DESIGN` asserts four expressions are not folded. That is
+    worth having and it is not completeness: a fifth unfolded shape simply
+    would not appear in it, which is how `True or compute()` sat inside the
+    declared vocabulary being mis-decided while the prose beside the list
+    claimed the gaps were exhaustive.
+
+    This asks the question the other way round. Every binary operator the
+    language has must be either IN the folder's arithmetic table or NAMED as a
+    deliberate gap with a reason. A new operator is then a red test rather than
+    a silent widening.
+    """
+    from guard_evidence import ARITHMETIC  # noqa: PLC0415
+
+    every = {
+        node.__name__ for node in vars(ast).values()
+        if isinstance(node, type) and issubclass(node, ast.operator)
+        and node is not ast.operator
+    }
+    folded = {node.__name__ for node in ARITHMETIC}
+    declared = set(DELIBERATELY_UNFOLDED_OPERATORS)
+    unaccounted = sorted(every - folded - declared)
+    assert unaccounted == [], (
+        "these binary operators are neither folded nor declared as a gap, so "
+        "the folder's stated limits are not its real limits: " + repr(unaccounted)
+    )
+    phantom = sorted(declared & folded)
+    assert phantom == [], (
+        "these operators are declared as deliberate gaps AND folded, so the "
+        "declaration is stale: " + repr(phantom)
+    )
 
 
 def _assertion(source: str) -> tuple:
@@ -1077,6 +763,138 @@ def test_the_counter_measures_what_a_guard_executes(body: str, expected: int):
     assert counted == expected, (
         "the counter says this guard executes " + str(counted) + " failing "
         "thing(s); it executes " + str(expected) + ":" + NL + body
+    )
+
+
+#: Shapes a third review round demonstrated, each measured GREEN end to end on
+#: a real gutted guard before the screen moved into `tests/guard_evidence.py`.
+ROUND_THREE_SPECIMENS = [
+    # A NAME AWAY FROM THE LITERAL. The walker called the folder without the
+    # guard's constant bindings, so any `ast.Name` was undecidable and BOTH
+    # sides of the branch were credited -- the identical defect this repository
+    # had just repaired one function away, in `cannot_fail`.
+    ("dead = False" + NL + "if dead:" + NL + "    assert real", 0),
+    ("alive = True" + NL + "if alive:" + NL + "    pass" + NL + "else:" + NL
+     + "    assert real", 0),
+    ("empty = ()" + NL + "for _ in empty:" + NL + "    assert real", 0),
+
+    # A HANDLER FOR A BODY THAT CANNOT RAISE NEVER RUNS.
+    ("try:" + NL + "    pass" + NL + "except Exception:" + NL
+     + "    raise AssertionError('never')", 0),
+    # `rethrows` decided by CONTAINMENT credited a raise nothing executes.
+    ("try:" + NL + "    assert real" + NL + "except AssertionError:" + NL
+     + "    if False:" + NL + "        raise", 0),
+    ("try:" + NL + "    assert real" + NL + "except AssertionError:" + NL
+     + "    def _n():" + NL + "        raise", 0),
+    # `contextlib.suppress` swallows exactly as the handler does and is never
+    # an `ast.Try`, so the handler rule could not see it.
+    ("with contextlib.suppress(AssertionError):" + NL + "    assert real", 0),
+
+    # NOTHING AFTER AN UNCONDITIONAL EXIT EXECUTES. The old screen looked for
+    # `ast.Return` as the FIRST statement only.
+    ("pytest.skip('nope')" + NL + "assert real", 0),
+    ("if True:" + NL + "    return" + NL + "assert real", 0),
+
+    # SHORT-CIRCUITING. Evaluating every operand eagerly let one undecidable
+    # operand poison a result that is fixed either way.
+    ("assert True or compute()", 0),
+    ("assert compute() or True", 0),
+    ("assert not (compute() and False)", 0),
+    ("assert 1 if True else 0", 0),
+
+    # ---- and the other direction, which is the louder wrong answer --------
+    # A MUTABLE CONTAINER IS NOT FIXED. Extending bindings to literal
+    # containers so `empty = ()` folds also folded this, and reported that a
+    # 60-kill-point atomicity sweep -- the guard for FG39, single use across
+    # two durable stores -- asserts nothing.
+    ("disagreed = []" + NL + "for k in rows:" + NL + "    disagreed.append(k)" + NL
+     + "assert disagreed == []", 1),
+    ("found = {}" + NL + "assert found == {}", 1),
+    ("if cond:" + NL + "    return" + NL + "assert real", 1),
+    ("try:" + NL + "    compute()" + NL + "except Exception:" + NL
+     + "    raise AssertionError('x')", 1),
+    ("assert compute() or other()", 1),
+    ("assert x if cond else y", 1),
+    ("rows = [1]" + NL + "for _ in rows:" + NL + "    assert real", 1),
+]
+
+
+@pytest.mark.parametrize(("body", "expected"), ROUND_THREE_SPECIMENS)
+def test_the_screen_answers_the_shapes_a_third_round_demonstrated(
+    body: str, expected: int,
+):
+    """Every zero here was measured GREEN on a real gutted guard.
+
+    Not hypothetical shapes: each was applied to the FG01 owner body with the
+    marker kept, the node kept and collection identical to pristine, and the
+    audit reported the class proven.
+
+    The ones expecting 1 matter at least as much. Refusing a genuine guard is
+    the louder wrong answer, and the mutable-container row is there because
+    this screen briefly did exactly that to the FG39 atomicity sweep.
+    """
+    counted = exercised_assertions(_guard(body))
+    assert counted == expected, (
+        "the screen says this guard executes " + str(counted) + " failing "
+        "thing(s); it executes " + str(expected) + ":" + NL + body
+    )
+
+
+def test_no_module_reimplements_the_evidence_screen():
+    """The rule has ONE home, because three rounds found it repaired in one
+    place and intact in another.
+
+        round 2   `cannot_fail` taught to fold literal-bound names
+        round 3   the walker was calling the folder WITHOUT those bindings
+        round 3   `test_killed_by_validation._defensive_evidence` was the
+                  pre-repair implementation of all four clauses, governing
+                  every kill in the mutation catalogue
+
+    Extracting the rule in round 2 made this worse rather than better: it
+    created a canonical implementation and left the old copy standing, which is
+    FG26 -- "a guard and its owner test two different copies of the same rule".
+
+    WHAT THIS MEASURES, exactly: a substring test against a dumped AST. That is
+    the one retired spelling with no legitimate reading -- `ast.dump` renders a
+    tree as text and asking whether a name appears in that text cannot tell
+    executable code from a string constant, which is FG21's own class. It
+    credited `with io.StringIO("raises.txt")` as an expected-refusal block.
+
+    WHAT IT DOES NOT MEASURE, said plainly rather than implied: the other three
+    retired clauses. `ast.dump` used for tree COMPARISON is correct and live in
+    `tests/mutation_validity.py`; `.attr == "..."` is ordinary AST matching
+    almost everywhere it appears; and "counts evidence by containment" is not a
+    spelling at all. A scan claiming to catch those would be matching text and
+    calling it structure -- the exact substitution this module refuses.
+
+    So this closes the one clause a machine can decide, and the other three are
+    held by there being a single implementation for consumers to import.
+    """
+    home = ROOT / "tests/guard_evidence.py"
+    assert home.is_file(), "the shared screen is gone; every consumer is a copy"
+
+    offenders = []
+    for module in sorted((ROOT / "tests").glob("*.py")):
+        if module.name == "guard_evidence.py":
+            continue
+        text = module.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(text)):
+            # `<literal> in ast.dump(...)` -- a membership test against text
+            # that is standing in for a question about structure.
+            if not isinstance(node, ast.Compare):
+                continue
+            if not any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+                continue
+            for right in node.comparators:
+                if (isinstance(right, ast.Call)
+                        and isinstance(right.func, ast.Attribute)
+                        and right.func.attr == "dump"):
+                    offenders.append(module.name + ":" + str(node.lineno))
+    assert offenders == [], (
+        "a substring test against a dumped AST is executable outside "
+        "tests/guard_evidence.py. It cannot tell code from a string constant, "
+        "and it credited `io.StringIO('raises.txt')` as an expected-refusal "
+        "block the last time it was written: " + repr(offenders)
     )
 
 

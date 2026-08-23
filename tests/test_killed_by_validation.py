@@ -35,6 +35,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from guard_evidence import (  # noqa: E402
+    executed_nodes,
+    exercised_assertions,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -72,11 +76,31 @@ SPECIMENS = [
 
 
 def _defensive_evidence(source: str, name: str) -> int:
-    """Executable checks inside `name`: assertions and expected-refusal blocks.
+    """Executable checks inside `name`: what the body EXECUTES that can fail.
 
-    Deliberately narrow, and deliberately not the authority. A count above zero
-    means the body is not a placeholder; it does not mean the body proves
-    anything, which is why the runner still has to execute it.
+    THIS FUNCTION WAS THE PRE-REPAIR IMPLEMENTATION OF EVERY RULE THE FG AUDIT
+    SAYS IT FIXED, and it governs all 41 kills in the mutation catalogue.
+    Measured on a copy, against gutted copies of the node carrying 14 of those
+    attacks:
+
+        body -> assert True                            refused    (its own specimen)
+        body -> assert 1 == 1                          ACCEPTED
+        body -> assert not False                       ACCEPTED
+        body -> assert 'a' in 'abc'                    ACCEPTED
+        body -> with io.StringIO('raises.txt') as h:   ACCEPTED
+        body -> record.fail(reason)                    ACCEPTED
+        if False:  <the whole real body>               ACCEPTED
+
+    Four discredited spellings, one per clause: `ast.walk` containment,
+    `isinstance(child.test, ast.Constant)` as the vacuity decision,
+    `"raises" in ast.dump(...)`, and `child.func.attr == "fail"` on any object.
+    Each is named as repaired in `tests/guard_evidence.py`, and each survived
+    here because the repair was applied where the reviewer was pointing.
+
+    That is FG26 -- a guard and its owner testing two different copies of the
+    same rule -- so there is no copy any more. `require_*` admission calls stay
+    local, because they are this module's own vocabulary and not part of the
+    shared screen.
     """
     tree = ast.parse(source)
     found = [
@@ -85,35 +109,15 @@ def _defensive_evidence(source: str, name: str) -> int:
     ]
     if len(found) != 1:
         return 0
-    evidence = 0
-    for child in ast.walk(found[0]):
-        if isinstance(child, ast.Assert):
-            # `assert True` and `assert 1` cannot fail, so they are not evidence.
-            if isinstance(child.test, ast.Constant) and child.test.value:
-                continue
-            evidence += 1
-        elif (
-            isinstance(child, ast.withitem)
-            and isinstance(child.context_expr, ast.Call)
-            and "raises" in ast.dump(child.context_expr)
-        ):
-            evidence += 1
-        elif isinstance(child, ast.Raise):
-            # An explicit `raise AssertionError(...)` is evidence just as much
-            # as `assert`. Counting only the statement form misses proofs that
-            # build a message before failing.
-            evidence += 1
-        elif (
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Attribute)
-            and child.func.attr == "fail"
-        ):
-            evidence += 1
-        elif isinstance(child, ast.Call) and isinstance(child.func, ast.Name):
-            # A call into the admission protocol is a refusal that can fire.
-            if child.func.id.startswith("require_"):
-                evidence += 1
-    return evidence
+    admission = sum(
+        1
+        for node, swallowed in executed_nodes(found[0])
+        if not swallowed
+        and isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id.startswith("require_")
+    )
+    return exercised_assertions(found[0]) + admission
 
 
 @pytest.mark.parametrize(("label", "template"), SPECIMENS, ids=[s[0] for s in SPECIMENS])

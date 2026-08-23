@@ -330,6 +330,18 @@ def test_the_gate_reports_unstructured_output_rather_than_passing(tmp_path: Path
                    "echo INTERNAL VALIDATOR CRASHED" + chr(10) + "exit 1")),
         ("stderr only", ("@echo boom 1>&2" + chr(10) + "@exit /b 1",
                          "echo boom 1>&2" + chr(10) + "exit 1")),
+        # WARNINGS ONLY. The first repair required at least one PARSED
+        # diagnostic; a review pointed at the neighbouring vacuity, where the
+        # items parse but none is an error, so `offending` is empty again and
+        # `not offending` is true again. Latent against today's checker, which
+        # exits non-zero only when it has errors -- and "latent because of what
+        # another program happens to do" is what stops holding silently.
+        ("warnings only",
+         ('@echo {"level":"warning","code":"X","path":"p","source_id":"s"}'
+          + chr(10) + "@exit /b 1",
+          "cat <<'JSON'" + chr(10)
+          + '{"level":"warning","code":"X","path":"p","source_id":"s"}'
+          + chr(10) + "JSON" + chr(10) + "exit 1")),
     ],
 )
 def test_a_checker_that_fails_without_saying_why_is_not_an_approval_gap(

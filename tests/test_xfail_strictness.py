@@ -64,9 +64,22 @@ def _project(work: Path, *, strict: bool | None) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_xfail_strict_is_configured_and_true():
-    """Parsed from the real file, not asserted about prose."""
-    options = _ini_options()
+def refuse_unless_strict(options) -> None:
+    """The rule, EXTRACTED so the self-attacks below can actually run it.
+
+    They could not. `test_removing_the_setting_is_visible` popped a key from a
+    local dict and asserted it was gone; `test_flipping_the_setting_to_false_is
+    _visible` set a local key to False and asserted it was not True. Neither
+    invoked this rule, so both are identities over hand-written data -- and a
+    review measured them passing in the state the guard "must reject", in the
+    state that "must not satisfy the guard", AND in the correct state, all
+    three identically.
+
+    Nothing false was claimed about the SYSTEM: the property is genuinely
+    pinned by `test_xfail_strict_is_configured_and_true` below and by
+    `test_fg12_an_undeclared_expected_failure_fails_the_census`. What was false
+    was these two docstrings calling themselves self-attacks.
+    """
     assert "xfail_strict" in options, (
         "xfail_strict is not configured, so an xfail is not strict and an XPASS "
         "passes silently -- the exact state that let a decorator switch off four "
@@ -75,18 +88,41 @@ def test_xfail_strict_is_configured_and_true():
     assert options["xfail_strict"] is True, options["xfail_strict"]
 
 
+def test_xfail_strict_is_configured_and_true():
+    """Parsed from the real file, not asserted about prose."""
+    refuse_unless_strict(_ini_options())
+
+
 def test_removing_the_setting_is_visible():
-    """Self-attack: the guard must fail when the key is absent."""
+    """Self-attack: the guard must fail when the key is absent.
+
+    Runs the rule now. Measured before: this asserted `"xfail_strict" not in
+    options` after popping it from a local copy -- a property of `dict.pop`.
+    """
     options = dict(_ini_options())
     options.pop("xfail_strict", None)
-    assert "xfail_strict" not in options  # the state the guard must reject
+    with pytest.raises(AssertionError, match="not configured"):
+        refuse_unless_strict(options)
 
 
 def test_flipping_the_setting_to_false_is_visible():
-    """Self-attack: `false` must not satisfy the guard."""
+    """Self-attack: `false` must not satisfy the guard.
+
+    Measured before: this asserted `False is not True` -- a property of Python.
+    """
     options = dict(_ini_options())
     options["xfail_strict"] = False
-    assert options["xfail_strict"] is not True
+    with pytest.raises(AssertionError):
+        refuse_unless_strict(options)
+
+
+def test_the_correct_setting_is_accepted():
+    """The positive direction, so the rule is not merely refusing everything.
+
+    A self-attack pair that only ever asserts a refusal is satisfied by a rule
+    that refuses unconditionally, which would fail the real configuration too.
+    """
+    refuse_unless_strict({"xfail_strict": True})
 
 
 # --------------------------------------------------------------------------

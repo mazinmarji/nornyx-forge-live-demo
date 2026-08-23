@@ -63,16 +63,43 @@ def runtime_as_of(explicit: str | None = None) -> str:
 
 _UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
+#: Event type the boundary records when a released effect RETURNS.
+#:
+#: `record_observation("tool_invoked", ...)` at the success terminal. The real
+#: `EvidenceRecorder.validate()` surfaces it in `counts_by_type`; nothing in
+#: the production report is called `observations` or `events`.
+EFFECT_RAN_EVENT = "tool_invoked"
+
+
 def _reports_a_release(path: Path) -> bool:
     """Does this report record that a consequential effect was RELEASED?
 
-    Two shapes, because the release leaves two different traces depending on
-    whether the effect completed: `effect_release` is written when it ran and
-    raised, and a `tool_invoked` observation when it ran and returned.
+    THIS READ TWO KEYS THE PRODUCTION RECORDER NEVER EMITS. Its docstring said
+    a completed effect leaves "a `tool_invoked` observation", and it looked for
+    `body["observations"]` and `body["events"]`. Extracting the installed
+    `nornyx.agentic.validate_runtime_events` return shape mechanically gives:
 
-    An unreadable or non-conforming file is treated as recording a release.
-    The question this answers is "may I truncate this?", and the safe answer
-    when the content cannot be established is no.
+        contract_digest, counts_by_type, diagnostics, event_count,
+        events_schema, events_schema_version, external_connectors_used,
+        limitations, mission_count, models_called, network_id,
+        network_lock_digest, network_used, producers_executed, safety,
+        schema, status, subject_revision, tools_executed
+
+    No `observations`. No `events`. Those two keys exist in exactly one place
+    in this repository: `_Recorder`, the test double -- which is the only
+    recorder any test installs. So the regression that pins this behaviour,
+    `test_a_retry_never_destroys_the_record_that_the_effect_ran`, passed its
+    "returns" case against a shape production does not produce, while on the
+    real path a retry TRUNCATED the record that the effect ran and left one
+    artifact saying the act was withheld.
+
+    The completed-effect trace in a real report is `counts_by_type`, keyed by
+    event type. `effect_release` is written by `_emit_evidence` itself and is
+    the raised-effect trace.
+
+    An unreadable or non-conforming file is treated as recording a release: the
+    question is "may I truncate this?", and the safe answer when the content
+    cannot be established is no.
     """
     try:
         body = json.loads(path.read_text(encoding="utf-8"))
@@ -82,14 +109,13 @@ def _reports_a_release(path: Path) -> bool:
         return True
     if body.get("effect_release"):
         return True
-    observations = body.get("observations") or []
-    if isinstance(observations, list) and "tool_invoked" in observations:
+    counts = body.get("counts_by_type")
+    if isinstance(counts, dict) and counts.get(EFFECT_RAN_EVENT):
         return True
-    events = body.get("events") or []
-    return isinstance(events, list) and any(
-        isinstance(event, dict) and event.get("event_type") == "tool_invoked"
-        for event in events
-    )
+    executed = body.get("tools_executed")
+    if isinstance(executed, (list, tuple)) and executed:
+        return True
+    return False
 
 
 def evidence_storage_key(value: str) -> str:
@@ -763,6 +789,16 @@ class LedgerContinuityMigrationRequired(RuntimeError):
     """
 
 
+class LedgerBusy(RuntimeError):
+    """Another connection holds the lock. Nothing is wrong; retry.
+
+    A separate type because it must not be caught by the handlers that append
+    "TO RECOVER: run `provision-ledger --reset-replay-history`" -- the remedy
+    for lost history, which for contention would discard every outstanding
+    human approval to cure a lock that clears on its own.
+    """
+
+
 class LedgerContinuityUnknown(RuntimeError):
     """The high-water sidecar exists and cannot be read as a mark.
 
@@ -874,6 +910,34 @@ def _with_code(message: str, fallback: str) -> str:
     return f"{fallback}: {message}" if message else fallback
 
 
+def _is_contention(exc: BaseException) -> bool:
+    """Is this SQLite telling us to wait rather than telling us something broke?
+
+    Matched on the two messages SQLite uses for lock acquisition failure. A
+    busy database is a database: the ledger is intact, the witness is intact,
+    nothing has been rolled back, and no approval is invalid. It is the one
+    fault on this path whose remedy is to do nothing and try again.
+    """
+    text = str(exc).lower()
+    return isinstance(exc, sqlite3.OperationalError) and (
+        "database is locked" in text or "database is busy" in text
+    )
+
+
+def _busy_refusal(store: str, exc: BaseException) -> str:
+    """The refusal for contention, naming the remedy that is not destructive."""
+    return (
+        f"{LEDGER_BUSY}: the {store} is locked by another connection, so this "
+        "consumption could not be recorded. Nothing was released and the "
+        "grant was NOT spent."
+        + chr(10) + chr(10) +
+        "TO RECOVER: retry. A busy database is a database -- the ledger is "
+        "intact, no history is lost, and every outstanding approval remains "
+        "valid. Do NOT run `--reset-replay-history` for this: it discards the "
+        f"replay history and invalidates every approval. Underlying: {exc}"
+    )
+
+
 def _ledger_code_in(message: str) -> str:
     """The ledger decision code this message carries, or "".
 
@@ -976,11 +1040,21 @@ def _assert_ledger_structure(
     # than skipped: `sqlite_autoindex_*` arrives as kind `index`, which is in
     # PERMITTED_LEDGER_KINDS. Anything else in that namespace is unexpected and
     # must be refused -- which is what the excluding query made impossible.
-    present = {
-        (kind, name) for kind, name in conn.execute(
-            "SELECT type, name FROM sqlite_master"
-        )
-    }
+    # CONTENTION REACHES HERE FIRST. The structure check is the first thing
+    # that touches the database on the consume path, so a locked ledger raised
+    # `APPROVAL_LEDGER_UNREADABLE: ... is unusable` from here -- the tamper
+    # code, whose documented recovery discards every outstanding approval --
+    # before the handler that knows how to tell a lock from damage ever ran.
+    try:
+        present = {
+            (kind, name) for kind, name in conn.execute(
+                "SELECT type, name FROM sqlite_master"
+            )
+        }
+    except sqlite3.OperationalError as exc:
+        if _is_contention(exc):
+            raise LedgerBusy(_busy_refusal("action approval ledger", exc)) from exc
+        raise
     unexpected = sorted(
         f"{kind} {name!r}"
         for kind, name in present
@@ -1341,10 +1415,29 @@ class ApprovalLedger:
                     # history it is checking. A ledger that recorded its own
                     # pre-flight would be a ledger that lies about what it spent.
                     conn.execute("ROLLBACK")
-        except (sqlite3.Error, OSError) as exc:
+        except LedgerBusy as exc:
+            # NOT A RAISE. A lock is transient, and this class already has a
+            # vocabulary for "this instance cannot serve": `unavailable_reason`,
+            # which `consume` turns into a coded refusal. Raising out of the
+            # constructor would make a busy database a 500 rather than a DENY
+            # the caller can retry.
+            self.unavailable_reason = str(exc)
+            return
+        except (sqlite3.Error, OSError) as exc:  # noqa: BLE001
             # A ledger we cannot read is a ledger we cannot trust to say whether
             # a grant was already spent, so refuse in the governed way the rest
             # of this boundary uses rather than crashing out as a raw 500.
+            #
+            # CONTENTION IS ASKED FIRST. Construction is where the consume path
+            # first touches the file, so a locked ledger surfaced from here as
+            # APPROVAL_LEDGER_UNREADABLE -- the tamper code -- before either of
+            # the two handlers that know the difference could run. Three sites
+            # conflated a lock with damage; this was the earliest.
+            if _is_contention(exc):
+                self.unavailable_reason = _busy_refusal(
+                    "action approval ledger", exc
+                )
+                return
             readonly = "readonly" in str(exc).lower() or "attempt to write" in str(exc).lower()
             raise NornyxRuntimeUnavailable(
                 f"{self.UNWRITABLE if readonly else self.UNREADABLE}: action "
@@ -1626,6 +1719,15 @@ class ApprovalLedger:
             )
         except LedgerContinuityMigrationRequired as exc:
             return False, str(exc)
+        except LedgerBusy as exc:
+            # BEFORE the continuity handler, which appends the destructive
+            # remedy. Contention is the one fault here that needs no operator
+            # action at all.
+            #
+            # `_with_code` rather than a bare `str(exc)`: a refusal must carry
+            # its code BY CONSTRUCTION, and the structural completeness check
+            # refuses a return whose message it cannot trace to one.
+            return False, _with_code(str(exc), LEDGER_BUSY)
         except LedgerContinuityUnknown as exc:
             return False, (
                 f"{LEDGER_CONTINUITY_UNKNOWN}: the continuity witness beside "
@@ -1673,6 +1775,12 @@ class ApprovalLedger:
             # it, and be refused again, because the ledger is read-only and no
             # approval can fix that. The sibling handler twenty lines above
             # already makes exactly this distinction; this branch did not.
+            # CONTENTION IS NOT DAMAGE, and it reached the operator as the
+            # damage code. Asked first, because "database is locked" also
+            # contains none of the read-only markers below and so fell through
+            # to UNREADABLE.
+            if _is_contention(exc):
+                return False, _busy_refusal("action approval ledger", exc)
             readonly = (
                 "readonly" in str(exc).lower()
                 or "attempt to write" in str(exc).lower()
@@ -1851,30 +1959,65 @@ class ApprovalLedger:
                     (f"file:{self.watermark_path.as_posix()}?mode=rw",),
                 )
             except sqlite3.Error as exc:
-                # A PRE-DATABASE MARK IS MIGRATED HERE, ONCE, THEN RETRIED.
+                # AUTHORIZATION DOES NOT MIGRATE. It used to.
                 #
-                # `_adopt_plaintext_mark` existed and no production path called
-                # it: a review measured a HEALTHY ledger carrying a legacy
-                # plain-text mark refusing every release, with the mark left
-                # unconverted, and the only documented escape being
-                # `--reset-replay-history` -- which invalidates every
-                # outstanding approval for an upgrade that should cost nothing.
-                # A migration nothing calls is not a migration.
-                if self._adopt_plaintext_mark() is not None:
-                    conn.execute(
-                        "ATTACH DATABASE ? AS witness",
-                        (f"file:{self.watermark_path.as_posix()}?mode=rw",),
-                    )
-                else:
-                    # A witness that cannot be attached is a WITNESS fault, and
-                    # the refusal must say so. Left to the generic handler it
-                    # surfaced as "action approval ledger is unusable ... file
-                    # is not a database", naming the wrong store -- the
-                    # misdirection coded refusals exist to prevent.
-                    raise LedgerContinuityUnknown(
-                        f"{self.watermark_path} exists and cannot be opened "
-                        f"as the continuity witness: {exc}"
+                # A previous round wired `_adopt_plaintext_mark` in here,
+                # correctly diagnosing that a healthy ledger carrying a legacy
+                # plain-text mark refused every release with only a destructive
+                # escape. The cure was worse: the plain-text mark is an
+                # UNAUTHENTICATED integer in a directory the governed process
+                # writes to, so adopting it at authorization time lets whoever
+                # can write one byte choose the high-water mark.
+                #
+                # Measured on this repository's own rollback fixture -- six
+                # grants spent, ledger restored to one row -- with the sidecar
+                # replaced by the single byte `1`:
+                #
+                #     plaintext b"6" (the true count)  claimed False  ROLLED_BACK
+                #     plaintext b"1"                   claimed True   RELEASED
+                #       then five already-spent grants released in turn,
+                #       the witness re-anchoring at each step
+                #
+                # No check fixes this. Requiring the mark to agree with the row
+                # count does not: the adversary writes the row count. The value
+                # carries no authentication, so it cannot decide anything at
+                # authorization time.
+                #
+                # The upgrade case keeps its non-destructive remedy, which is
+                # what the earlier round actually needed:
+                # `provision-ledger --migrate-continuity` verifies row/mark
+                # agreement before and after, and is an explicit operator act
+                # rather than something an authorization silently performs.
+                # READ TO CLASSIFY, never to adopt. Telling an operator
+                # WHICH fault they have is the whole point of coded refusals;
+                # what must not happen is this integer deciding anything.
+                if self._looks_like_a_plaintext_mark():
+                    raise LedgerContinuityMigrationRequired(
+                        f"{LEDGER_CONTINUITY_MIGRATION_REQUIRED}: the "
+                        f"continuity witness at {self.watermark_path} is not a "
+                        "database. It is most likely a pre-database plain-text "
+                        "mark from an earlier version."
+                        + chr(10) + chr(10) +
+                        "TO RECOVER: run `nornyx-forge provision-ledger "
+                        "--migrate-continuity`, which converts it after "
+                        "checking that it agrees with the consumption rows. "
+                        "Outstanding approvals are preserved; nothing is "
+                        "discarded. This conversion is deliberately NOT "
+                        "performed by an authorization, because the mark it "
+                        "reads is unauthenticated and whoever can write it "
+                        "would otherwise choose the replay high-water mark."
                     ) from exc
+                # A witness that cannot be attached is a WITNESS fault, and the
+                # refusal must say so. Left to the generic handler it surfaced
+                # as "action approval ledger is unusable ... file is not a
+                # database", naming the wrong store -- the misdirection coded
+                # refusals exist to prevent.
+                if _is_contention(exc):
+                    raise LedgerBusy(_busy_refusal("continuity witness", exc)) from exc
+                raise LedgerContinuityUnknown(
+                    f"{self.watermark_path} exists and cannot be opened "
+                    f"as the continuity witness: {exc}"
+                ) from exc
             self._assert_commit_atomicity_available(conn)
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -2021,6 +2164,19 @@ class ApprovalLedger:
                 "fresh epoch instead, and every outstanding grant then predates "
                 "it and is refused."
             )
+
+    def _looks_like_a_plaintext_mark(self) -> bool:
+        """Is the witness a pre-database mark rather than a corrupt file?
+
+        Purely diagnostic. The value is read to choose between two refusals --
+        "this is a legacy mark, run the migration" and "this is not a witness
+        at all" -- and is never used as a count. Both answers refuse.
+        """
+        try:
+            value = int(self.watermark_path.read_bytes().decode("utf-8").strip())
+        except (OSError, UnicodeDecodeError, ValueError):
+            return False
+        return value >= 0
 
     def _adopt_plaintext_mark(self) -> int | None:
         """Migrate a pre-database mark ONCE, atomically, or return None.
@@ -2414,7 +2570,53 @@ class ApprovalLedger:
 #: set by parsing the ledger for reasons of the form `f"{CODE}: ..."` and
 #: compares it against this tuple in both directions, so a code added later
 #: cannot be silently dropped the way these three were.
+#: Refusals a NEW human approval can actually clear.
+#:
+#: DECLARED POSITIVELY, so a code added later defaults to "an approval cannot
+#: clear this" and no misleading artifact is written for it. The predecessor
+#: was a two-code blocklist -- `APPROVAL_ALREADY_CONSUMED` and
+#: `ACTION_ALREADY_RELEASED` -- and it left six refusals writing a pending
+#: request that says "Sign this exact request_digest".
+#:
+#: `_commit_consumption` refuses LEDGER_ROLLED_BACK, LEDGER_CONTINUITY_UNKNOWN,
+#: LEDGER_CONTINUITY_MIGRATION_REQUIRED and the three APPROVAL_LEDGER_* faults
+#: BEFORE the insert and independently of the grant. No signature clears any of
+#: them. Measured: release one grant, restore the ledger from a backup, present
+#: a fresh valid grant for attempt 2 -> DENY LEDGER_ROLLED_BACK, and a pending
+#: artifact instructing an operator to sign it.
+#:
+#: Worse for LEDGER_ROLLED_BACK specifically: the real remedy mints a LATER
+#: epoch, so an approval signed in response to that artifact is then refused a
+#: second time as GRANT_PREDATES_LEDGER. The artifact named neither the remedy
+#: nor the ordering.
+#:
+#: GRANT_PREDATES_LEDGER is on this list because a fresh approval issued after
+#: the epoch genuinely does release -- that one is worth a ceremony.
+#: A transient lock, not a fault. Retrying is the remedy.
+#:
+#: SQLite reports contention as `OperationalError: database is locked`, which
+#: reached the operator as APPROVAL_LEDGER_UNREADABLE or, on the witness,
+#: LEDGER_CONTINUITY_UNKNOWN -- the tamper and lost-history codes, whose
+#: documented recovery is `provision-ledger --reset-replay-history`. That
+#: discards the replay history and mints a later epoch, invalidating every
+#: outstanding human approval, for a lock that would have cleared on its own.
+#:
+#: Measured, both on live paths, with legitimate never-spent grants:
+#:   another connection holding the witness  -> DENY LEDGER_CONTINUITY_UNKNOWN
+#:   two consequential requests in flight    -> DENY APPROVAL_LEDGER_UNREADABLE
+#: Neither ledger was unusable and neither had lost history.
+LEDGER_BUSY = "LEDGER_BUSY"
+
+#: The code a decision carries when NOBODY has approved yet.
+HUMAN_APPROVAL_REQUIRED = "HUMAN_APPROVAL_REQUIRED"
+
+APPROVAL_CLEARABLE_CODES = (
+    HUMAN_APPROVAL_REQUIRED,
+    GRANT_PREDATES_LEDGER,
+)
+
 LEDGER_DECISION_CODES = (
+    LEDGER_BUSY,
     LEDGER_ROLLED_BACK,
     GRANT_PREDATES_LEDGER,
     LEDGER_CONTINUITY_UNKNOWN,
@@ -3001,7 +3203,7 @@ class NornyxActionBoundary:
         # on its own release an external effect, and an approval obtained for one
         # action can never release another. This only ever narrows the decision.
         release_reason = "not evaluated"
-        withheld_code = "HUMAN_APPROVAL_REQUIRED"
+        withheld_code = HUMAN_APPROVAL_REQUIRED
         authentication_evidence: dict[str, Any] = {}
         if high_risk and decision.allowed:
             # The tree-identity question used to be asked here by comparing a
@@ -3195,10 +3397,11 @@ class NornyxActionBoundary:
         # DENY, "this action was already released ... a further approval
         # cannot release it again". A real human approval ceremony spent on a
         # request that cannot work.
-        spent_already = release_reason.startswith(
-            (APPROVAL_ALREADY_CONSUMED, ACTION_ALREADY_RELEASED)
-        )
-        if withheld and request is not None and not spent_already:
+        # A DECLARED SET, not a blocklist of the two cases someone noticed.
+        # `withheld_code` is what the decision actually carries, so this asks
+        # the same question an operator reading the evidence would.
+        an_approval_would_help = withheld_code in APPROVAL_CLEARABLE_CODES
+        if withheld and request is not None and an_approval_would_help:
             # Emit the exact request an approver would be signing. Without this
             # an operator has to reconstruct mission, attempt, capability and
             # digest by hand — a second implementation of canonicalization, and

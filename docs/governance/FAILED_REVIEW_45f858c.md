@@ -204,7 +204,7 @@ ACCEPTED_NON_BLOCKING_WITH_RATIONALE before any freeze.
 | B: `expect`/`severity`/`side_effects` recorded and never compared | FIXED — severity drawn from a closed vocabulary, expect required present and distinct, and each declared side effect mapped to a token its killing test must actually assert |
 | B: H13–H19 have no attack representation in the "authoritative" inventory | FIXED by making the claim honest rather than by inventing attacks. `delegated_to` was one field doing two jobs: H11/H12 point at mutation catalogues, H13–H19 at ordinary test modules, and both read as "re-proved elsewhere". `COVERED_BUT_UNATTACKED` now names the seven, so "19 classes" and "35 attacks" can no longer be read as the same ground |
 | A: `governance_approval_trust`, `reviewer_store`, `builder_identities` are bootstrap state with no consumer | PARTIALLY FIXED — `governance_approval_trust` gained a consumer via P1-1. `reviewer_store` and `builder_identities` remain, and the standing decision not to add `ReviewerTrustStore` to `RuntimeSecurityContext` for structural symmetry is unchanged |
-| A: the trust-domain guard is opt-in for unlabelled stores | ACCEPTED_NON_BLOCKING_WITH_RATIONALE, on measured evidence. Making the clause total was implemented and reverted: it broke thirteen call sites across five modules, and two were security proofs whose MECHANISM it changed — removing the frozen store to show a decision moves stops proving that if a domain refusal arrives first. Trading a latent affordance for a real reduction in what two H01 proofs measure is a bad trade. Bounded instead by asserting the property the clause relies on:  takes the domain as a required keyword, and no site under  builds a store without one. That test immediately found the single production site that did — the authenticator's own fallback store — which is now labelled with the asking authority. Two independently correct changes were kept: absence is decided before domain, so an unprovisioned store refuses as ABSENT rather than as a mismatch; and the shared boundary fixture names ACTION explicitly |
+| A: the trust-domain guard is opt-in for unlabelled stores | ACCEPTED_NON_BLOCKING_WITH_RATIONALE, on measured evidence. Making the clause total was implemented and reverted: it broke thirteen call sites across five modules, and two were security proofs whose MECHANISM it changed — removing the frozen store to show a decision moves stops proving that if a domain refusal arrives first. Trading a latent affordance for a real reduction in what two H01 proofs measure is a bad trade. Bounded instead by asserting the property the clause relies on: `ReviewerTrustStore.load` takes the domain as a required keyword, and no site under `src/` builds a store without one. (Both identifiers were MISSING from this sentence — deleted outright, committed already broken in `9629830`, and surviving every review since. This is the only disposition in the document that accepts a residual risk rather than fixing it, and its entire justification is the named bound; with the names absent a reviewer could not check it, so the row read as assurance and carried none.) That test immediately found the single production site that did — the authenticator's own fallback store — which is now labelled with the asking authority. Two independently correct changes were kept: absence is decided before domain, so an unprovisioned store refuses as ABSENT rather than as a mismatch; and the shared boundary fixture names ACTION explicitly |
 | A: the "trust resolved once" closure is not total on the unresolvable-root branch | FIXED - that branch left both approval domains as None while the rooted branch froze two stores, so the closure held on one path out of two. None is the absence of a field, indistinguishable from never-established. The domains never depended on the root, so the branch now resolves them and a consumer gets a store that says it is unavailable and why. The control asserts nothing was granted by doing so |
 
 **Open AT THAT HEAD -- SUPERSEDED, and kept as the record of what the review
@@ -351,9 +351,19 @@ truthfulness defect and is **not** reported as an action-release bypass.
 One sub-question is left explicitly open rather than closed quietly:
 `load_authorizer` re-reads the runtime contract and lock at every boundary
 construction. Three attempts to measure whether that can change what is
-permitted all produced INVALID_BASELINE — the authorizer does not load in a
+permitted were all **`HUMAN_BLOCKED`** — the authorizer does not load in a
 copied tree (no lock, no generated evidence) and the current runtime contract
-does not pass governance validation. No classification was made. It is deferred
+does not pass governance validation, and both preconditions are a human
+approval this repository must never manufacture.
+
+> This paragraph said `INVALID_BASELINE` and said, in the same sentence,
+> that no classification was made — which cannot both hold, since
+> `INVALID_BASELINE` is a classification in the outcome vocabulary. The
+> reclassification landed in `16aed3e` and this paragraph was missed. It is
+> the fourth document to have carried the wrong term for the same
+> measurement, which is why the agreement is now checked by
+> `test_no_two_documents_classify_the_same_measurement_differently`
+> rather than by hand. It is deferred
 to the gate that regenerates evidence in causal order, and recorded in
 [AUTHORITY_VALUE_FLOW.md](AUTHORITY_VALUE_FLOW.md) §4.
 

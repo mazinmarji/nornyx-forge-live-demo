@@ -168,8 +168,15 @@ def test_the_mismatch_reason_reaches_the_evidence(tmp_path: Path):
     binding = decision.evidence["action_binding"]
     assert "mission_id" in binding, binding
     assert MISSION_A in binding and MISSION_B in binding, binding
-    assert "action_withheld" in decision.evidence["observations"]
-    assert "tool_invoked" not in decision.evidence["observations"]
+    # READ THROUGH `counts_by_type`, which is what the real
+    # `EvidenceRecorder.validate()` emits. These read `evidence["observations"]`
+    # -- a key that exists only in the test double, so the assertion was about
+    # the double rather than about anything production writes.
+    counts = decision.evidence["counts_by_type"]
+    assert counts.get("action_withheld"), decision.evidence
+    assert not counts.get("tool_invoked"), (
+        "a high-risk act was released; the evidence records the effect running"
+    )
 
 
 @pytest.mark.parametrize(

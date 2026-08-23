@@ -186,7 +186,17 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
     # The docstring on `_diagnostics` already states the rule this violated:
     # output the gate cannot account for is a reason to fail, not to skip. An
     # unexplained non-zero exit is the emptiest such output there is.
-    if completed.returncode != 0 and not diagnostics:
+    # AN EXIT EXPLAINED ONLY BY WARNINGS IS NOT EXPLAINED.
+    #
+    # The first repair required at least one PARSED diagnostic. A review then
+    # pointed at the neighbouring vacuity: a checker exiting non-zero having
+    # emitted only `warning`-level items leaves `offending` empty for the same
+    # reason, and `not offending` is true again. Today's `nornyx check` returns
+    # non-zero only when it has errors, so this is latent rather than live --
+    # and "latent because of what another program happens to do" is the
+    # property that stops holding without anyone noticing.
+    explained = [item for item in diagnostics if item.get("level") == "error"]
+    if completed.returncode != 0 and not explained:
         return {
             "contract": contract,
             "returncode": completed.returncode,
@@ -195,7 +205,8 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
             "unexpected_diagnostics": [{
                 "unexplained_failure":
                     f"the checker exited {completed.returncode} and emitted no "
-                    "diagnostic at all. Nothing was observed to be absent, so "
+                    f"error-level diagnostic ({len(diagnostics)} non-error "
+                    "item(s) seen). Nothing was observed to be absent, so "
                     "nothing licenses calling this an approval gap.",
             }],
         }

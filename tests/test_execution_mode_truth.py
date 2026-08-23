@@ -257,12 +257,25 @@ def test_static_the_bootstrap_launch_is_unreachable_once_the_demo_refuses():
 
     main_fn = next(n for n in ast.walk(tree)
                    if isinstance(n, ast.FunctionDef) and n.name == "main")
+    # MATCHED STRUCTURALLY, not by substring against a dumped tree. `<literal>
+    # in ast.dump(...)` renders the tree as text and asks whether a name appears
+    # in it, which cannot tell an identifier from a string constant -- FG21's
+    # own class, and the spelling that credited `io.StringIO("raises.txt")` as
+    # an expected-refusal block elsewhere in this suite.
+    def _mentions(call: ast.AST, needle: str) -> bool:
+        return any(
+            (isinstance(node, ast.Name) and needle in node.id)
+            or (isinstance(node, ast.Constant)
+                and isinstance(node.value, str) and needle in node.value)
+            for node in ast.walk(call)
+        )
+
     demo_call = next(n.lineno for n in ast.walk(main_fn)
                      if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "run"
-                     and "demo_command" in ast.dump(n))
+                     and _mentions(n, "demo_command"))
     url_prints = [n.lineno for n in ast.walk(main_fn)
                   if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "print"
-                  and "localhost:8000" in ast.dump(n)]
+                  and _mentions(n, "localhost:8000")]
     assert url_prints, "the URL prints are gone; this test pins nothing"
     assert min(url_prints) > demo_call, (
         "the URL prints no longer follow the demo call, so the unreachability "

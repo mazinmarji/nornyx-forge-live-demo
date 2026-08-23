@@ -30,6 +30,8 @@ the field the lookup actually uses.
 from __future__ import annotations
 
 import ast
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -185,10 +187,22 @@ def _ledger_codes_in_source() -> set:
 
     source = Path(nornyx_runtime.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
-    ledger = next(
+    # THE CLASS AND THE MODULE-LEVEL HELPERS THAT BUILD ITS REFUSALS.
+    #
+    # Scoped to `ApprovalLedger` alone, this reported LEDGER_BUSY as "carried
+    # but never emitted" -- because contention's refusal is built by
+    # `_busy_refusal`, a module-level helper shared by the ledger path and the
+    # witness path. A derivation that cannot see where a refusal is built
+    # reports the boundary as having drifted when it has not.
+    ledger_class = next(
         node for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "ApprovalLedger"
     )
+    helpers = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name.endswith("_refusal")
+    ]
+    ledger = ast.Module(body=[ledger_class, *helpers], type_ignores=[])
 
     def named(expr):
         if isinstance(expr, ast.IfExp):
@@ -368,6 +382,25 @@ def _leads_with_a_code(expression, module, cls, handlers) -> bool:
         func = expression.func
         if isinstance(func, ast.Name) and func.id in {"_ledger_code_in", "_with_code"}:
             return True
+        if isinstance(func, ast.Name):
+            # A MODULE-LEVEL HELPER, resolved the same way a method is. The
+            # resolver handled `self._x(...)` and not `_x(...)`, so moving a
+            # refusal into a shared helper -- which is what stopped contention
+            # being diagnosed as damage -- read as a refusal with no code.
+            helper = next(
+                (node for node in ast.walk(module)
+                 if isinstance(node, ast.FunctionDef) and node.name == func.id),
+                None,
+            )
+            if helper is not None:
+                returns = [
+                    node.value for node in ast.walk(helper)
+                    if isinstance(node, ast.Return) and node.value is not None
+                ]
+                return bool(returns) and all(
+                    _leads_with_a_code(value, module, cls, handlers)
+                    for value in returns
+                )
         if isinstance(func, ast.Name) and func.id == "str" and expression.args:
             # THE ENCLOSING HANDLER, not a name -> type map. Nearly every
             # handler in this class binds `exc`, so a map keyed on the bound
@@ -562,12 +595,21 @@ def _reports(root: Path) -> list:
 
 
 def _records_a_release(path: Path) -> bool:
-    import json  # noqa: PLC0415
+    """THE PRODUCTION PREDICATE, not a copy of it.
 
-    body = json.loads(path.read_text(encoding="utf-8"))
-    if body.get("effect_release"):
-        return True
-    return "tool_invoked" in (body.get("observations") or [])
+    This was a reimplementation reading `body["observations"]` -- a key the
+    real recorder never emits -- so the test agreed with the production
+    function only by coincidence, and kept agreeing after production was fixed
+    to read `counts_by_type`. A test that reimplements the rule it is checking
+    measures the reimplementation.
+
+    `_reports_a_release` is the function `_emit_evidence` actually consults
+    before it decides whether truncating an artifact is safe, so asking it is
+    the only way this test is about the shipped decision.
+    """
+    from nornyx_forge.nornyx_runtime import _reports_a_release  # noqa: PLC0415
+
+    return _reports_a_release(path)
 
 
 @pytest.mark.parametrize("effect_type", ["raises", "returns"])
@@ -720,4 +762,208 @@ def test_no_pending_request_is_written_for_a_digest_that_cannot_be_consumed(
         "a pending request was written or rewritten for a digest "
         "UNIQUE(request_digest) can never accept again, telling an operator "
         "to spend a human approval ceremony that cannot work: " + str(changed)
+    )
+
+
+def _production_validate_keys() -> set:
+    """Every key the REAL `validate_runtime_events` can put in a report.
+
+    Extracted from the installed package by AST rather than by calling it,
+    because calling it needs an authorizer this checkout cannot load.
+    """
+    import ast as _ast  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
+
+    from nornyx.agentic import validate_runtime_events  # noqa: PLC0415
+
+    tree = _ast.parse(inspect.getsource(validate_runtime_events))
+    keys: set = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Dict):
+            keys |= {
+                key.value for key in node.keys
+                if isinstance(key, _ast.Constant) and isinstance(key.value, str)
+            }
+    return keys
+
+
+#: Keys `_emit_evidence` merges into the report itself, on top of `validate()`.
+FORGE_ADDED_KEYS = frozenset({
+    "nornyx_decision", "action_approval_present", "action_binding",
+    "approval_authentication", "effect_release",
+})
+
+
+def test_the_evidence_double_produces_the_shape_production_produces():
+    """A double that drifts from its contract turns every test into a test of
+    the double.
+
+    MEASURED: `_Recorder.validate()` returned `{"status", "observations"}`.
+    `observations` appears NOWHERE in the installed `nornyx.agentic` -- the
+    real `validate_runtime_events` returns `counts_by_type`, `tools_executed`,
+    `event_count` and sixteen others. `_Recorder` is the only recorder any test
+    installs, so:
+
+      * `_reports_a_release` read `observations` and `events`, neither of which
+        production emits, and its "returns" case was green against a shape that
+        cannot occur;
+      * on the real path a retry of the same attempt TRUNCATED the report
+        recording that a consequential effect had run, leaving one artifact
+        saying the act was withheld. It ran.
+
+    So the double's keys must be producible by production. This does not
+    require the double to be complete -- a double may emit a subset -- only
+    that every key it emits is one production could emit, plus the keys the
+    Forge merges in itself.
+    """
+    from test_governance_failure import _Recorder  # noqa: PLC0415
+
+    double = _Recorder()
+    double.record_observation("tool_invoked")
+    produced = set(double.validate())
+    allowed = _production_validate_keys() | FORGE_ADDED_KEYS
+    invented = sorted(produced - allowed)
+    assert invented == [], (
+        "the evidence double emits keys the production recorder never does, so "
+        "every assertion reading them is about the double: " + repr(invented)
+    )
+
+
+def test_the_release_detector_reads_only_keys_production_can_emit():
+    """The consumer side of the same contract.
+
+    `_reports_a_release` decides whether `_emit_evidence` may TRUNCATE an
+    artifact. Reading a key production never emits means the answer is "no
+    release recorded" on every real report, and the record of a released
+    effect is destroyed by the next retry.
+
+    Read from the source rather than by exercising it, so a key that is only
+    consulted on an unusual branch is still caught.
+    """
+    import ast as _ast  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    tree = _ast.parse(inspect.getsource(nornyx_runtime._reports_a_release))
+    consulted: set = set()
+    for node in _ast.walk(tree):
+        if (isinstance(node, _ast.Call)
+                and isinstance(node.func, _ast.Attribute)
+                and node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], _ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            consulted.add(node.args[0].value)
+    assert consulted, "the detector consults no key at all, so it decides nothing"
+    allowed = _production_validate_keys() | FORGE_ADDED_KEYS
+    invented = sorted(consulted - allowed)
+    assert invented == [], (
+        "the release detector consults keys production never emits, so a real "
+        "report never looks like a release and the next retry truncates it: "
+        + repr(invented)
+    )
+
+
+#: (label, the code the decision carries, may a pending request be written?)
+#:
+#: A pending artifact says "Sign this exact request_digest with
+#: scripts/issue_action_approval.py", and its note adds "Approving a different
+#: attempt releases nothing" -- which asserts that approving THIS one does. For
+#: six of these that assertion is false: `_commit_consumption` refuses them
+#: before the insert and independently of the grant, so no signature clears
+#: them.
+#:
+#: Worse for LEDGER_ROLLED_BACK: the real remedy mints a LATER epoch, so an
+#: approval signed in response to the artifact is then refused a second time as
+#: GRANT_PREDATES_LEDGER. The artifact named neither the remedy nor the order.
+PENDING_REQUEST_CASES = [
+    ("nobody has approved", "HUMAN_APPROVAL_REQUIRED", True),
+    ("the grant predates the epoch", "GRANT_PREDATES_LEDGER", True),
+    ("already consumed", "APPROVAL_ALREADY_CONSUMED", False),
+    ("already released", "ACTION_ALREADY_RELEASED", False),
+    ("history was rolled back", "LEDGER_ROLLED_BACK", False),
+    ("continuity unknown", "LEDGER_CONTINUITY_UNKNOWN", False),
+    ("continuity migration required", "LEDGER_CONTINUITY_MIGRATION_REQUIRED", False),
+    ("the ledger is missing", "APPROVAL_LEDGER_MISSING", False),
+    ("the ledger is unreadable", "APPROVAL_LEDGER_UNREADABLE", False),
+    ("the ledger is unwritable", "APPROVAL_LEDGER_UNWRITABLE", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "code", "may_write"), PENDING_REQUEST_CASES,
+    ids=[case[0] for case in PENDING_REQUEST_CASES],
+)
+def test_a_pending_request_is_written_only_when_an_approval_would_clear_it(
+    label: str, code: str, may_write: bool,
+):
+    """Six refusals invited a human approval ceremony that cannot work.
+
+    The predecessor was a two-code blocklist -- the two cases someone had
+    noticed -- so every ledger fault wrote "Sign this exact request_digest".
+    A declared POSITIVE set means a code added later defaults to "an approval
+    cannot clear this", which is the safe direction: the cost of being wrong
+    is a missing convenience artifact, not a wasted approval ceremony.
+
+    Asserted against the production tuple rather than by driving ten ledger
+    faults, because what decides the artifact IS this membership test -- the
+    boundary reads `withheld_code in APPROVAL_CLEARABLE_CODES`. The end-to-end
+    case below drives the real boundary for the one that matters most.
+    """
+    from nornyx_forge.nornyx_runtime import APPROVAL_CLEARABLE_CODES  # noqa: PLC0415
+
+    assert (code in APPROVAL_CLEARABLE_CODES) is may_write, (
+        label + ": a pending request "
+        + ("is not written when an approval WOULD release the act"
+           if may_write else
+           "tells an operator to sign a digest this refusal will never accept")
+    )
+
+
+def test_a_rolled_back_ledger_does_not_invite_a_signing_ceremony(tmp_path: Path):
+    """The end-to-end case, through the real boundary.
+
+    Measured before the repair: release one grant, restore the ledger from a
+    backup, then present a FRESH, never-presented, valid grant for attempt 2.
+
+        attempt 2 : DENY LEDGER_ROLLED_BACK, effect ran 0 times
+        pending   : REQ-...attempt-2.request.json written
+                    note: "Sign this exact request_digest ..."
+
+    The operator signs it. The remedy for a rolled-back ledger mints a later
+    epoch, so that approval is then refused again as GRANT_PREDATES_LEDGER.
+    Two ceremonies, no release, and the artifact named neither the remedy nor
+    the ordering.
+    """
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    pending = root / "evidence/runtime/pending"
+
+    first = _release(boundary, _Effect(), signed_grant(_request(boundary)))
+    assert first.effect == "ALLOW", first
+
+    ledger = root / "evidence/runtime/action_approvals.sqlite3"
+    with closing(sqlite3.connect(ledger)) as conn:
+        conn.execute("DELETE FROM consumed_approvals")
+        conn.commit()
+
+    before = sorted(path.name for path in pending.glob("*")) if pending.is_dir() else []
+    effect = _Effect()
+    # THE GRANT AND THE RELEASE MUST NAME THE SAME ATTEMPT, or the boundary
+    # refuses on the binding first and never reaches the ledger -- which is
+    # a correct refusal measuring the wrong thing.
+    decision = _release(boundary, effect,
+                        signed_grant(_request(boundary, attempt=2)),
+                        attempt=2)
+    after = sorted(path.name for path in pending.glob("*")) if pending.is_dir() else []
+
+    assert decision.effect == "DENY", decision
+    assert effect.runs == 0, "a rolled-back ledger released an effect"
+    assert decision.code == "LEDGER_ROLLED_BACK", decision.code
+    assert after == before, (
+        "a rolled-back ledger wrote a pending request. An operator following "
+        "it spends a human approval ceremony on a digest the ledger refuses "
+        f"before it ever reads the grant: {sorted(set(after) - set(before))}"
     )

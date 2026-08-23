@@ -144,9 +144,13 @@ def _cited_guards() -> dict:
         check=True, encoding="utf-8", errors="replace",
     )
     cited: dict = {}
-    for name in listing.stdout.split():
+    # SPLIT ON NEWLINES, not whitespace: a tracked path containing a
+    # space was fragmented into two names that resolve to nothing, so
+    # the scan silently skipped the file it was meant to read.
+    for name in listing.stdout.splitlines():
         path = ROOT / name
-        if path.suffix not in {".py", ".md", ".nyx", ".json", ".toml", ".yml"}:
+        if path.suffix not in {".py", ".md", ".nyx", ".json", ".toml",
+                               ".yml", ".yaml", ".cfg", ".ini", ".txt"}:
             continue
         if not path.is_file():
             continue
@@ -154,9 +158,23 @@ def _cited_guards() -> dict:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for match in re.finditer(r"`(test_[a-z0-9_]+)`", text):
+        # ACROSS A LINE BREAK, and case-sensitively complete. The pattern was
+        # `` `(test_[a-z0-9_]+)` `` on one line: three real citations are
+        # wrapped by markdown and were invisible to it, and six defined tests
+        # carry uppercase letters (`test_A_an_action_only_principal...`) so a
+        # document citing one would be neither resolved nor flagged. All nine
+        # resolve today, which is exactly why they were latent.
+        for match in re.finditer(
+            # `\s` already matches a newline, so one class covers the
+            # wrap. Written without an explicit escape for the newline
+            # itself: a tool along the way turns that escape into the
+            # character it names, which is how a pattern in this very
+            # module came to match nothing at all.
+            r"`(test_[A-Za-z0-9_]+(?:\s+[A-Za-z0-9_]+)?)`", text
+        ):
             line = text.count(chr(10), 0, match.start()) + 1
-            cited.setdefault(match.group(1), []).append(f"{name}:{line}")
+            wrapped = "".join(match.group(1).split())
+            cited.setdefault(wrapped, []).append(f"{name}:{line}")
     return cited
 
 
@@ -165,7 +183,7 @@ def _defined_guards() -> set:
     found: set = set()
     for module in sorted((ROOT / "tests").glob("test_*.py")):
         found.update(re.findall(
-            r"^def (test_[a-z0-9_]+)\(", module.read_text(encoding="utf-8"),
+            r"^def (test_[A-Za-z0-9_]+)\(", module.read_text(encoding="utf-8"),
             re.MULTILINE,
         ))
     return found
@@ -316,6 +334,83 @@ def test_the_commit_pin_rule_fires_and_stops_where_it_says(document, expected):
     )
 
 
+#: Characters that are invisible in an editor and change what code means.
+#:
+#: THE RULE USED TO BE "byte < 32", and that is one range out of several. The
+#: historical defect was U+0008 inside a regex, and every character below does
+#: the same thing to a raw string -- the pattern silently stops matching, the
+#: file looks identical, and the guard reports nothing forever.
+#:
+#: Measured against the rule as written, with planted specimens:
+#:
+#:     U+0008 BACKSPACE   caught      the one that actually happened
+#:     U+007F DELETE      MISSED
+#:     U+0085 NEL         MISSED      a C1 control
+#:     U+200B ZWSP        MISSED
+#:     U+00A0 NBSP        MISSED
+#:     U+202E RTL OVERRIDE MISSED
+#:
+#: NBSP and ZWSP are the likeliest of all of them: they are what survives a
+#: copy-paste through a rendered document, which is exactly how an invisible
+#: character reaches a source file in practice.
+#:
+#: TAB and LF are absent because they are legitimate. CR is present because the
+#: governed-content digest is canonical-LF and a stray CR changes it.
+INVISIBLE_CHARACTERS = {
+    chr(0x00): "NUL", chr(0x07): "BEL", chr(0x08): "BACKSPACE",
+    chr(0x0B): "VERTICAL TAB", chr(0x0C): "FORM FEED", chr(0x0D): "CARRIAGE RETURN",
+    chr(0x1B): "ESCAPE", chr(0x7F): "DELETE",
+    chr(0x85): "NEXT LINE (C1)", chr(0x8D): "REVERSE LINE FEED (C1)",
+    chr(0xA0): "NO-BREAK SPACE", chr(0xAD): "SOFT HYPHEN",
+    chr(0x200B): "ZERO WIDTH SPACE", chr(0x200C): "ZERO WIDTH NON-JOINER",
+    chr(0x200D): "ZERO WIDTH JOINER", chr(0x2028): "LINE SEPARATOR",
+    chr(0x2029): "PARAGRAPH SEPARATOR",
+    chr(0x202A): "LEFT-TO-RIGHT EMBEDDING",
+    chr(0x202B): "RIGHT-TO-LEFT EMBEDDING",
+    chr(0x202D): "LEFT-TO-RIGHT OVERRIDE",
+    chr(0x202E): "RIGHT-TO-LEFT OVERRIDE",
+    chr(0xFEFF): "ZERO WIDTH NO-BREAK SPACE",
+}
+
+
+@pytest.mark.parametrize(
+    ("label", "character"),
+    sorted((why, char) for char, why in INVISIBLE_CHARACTERS.items()),
+)
+def test_every_invisible_character_in_the_table_is_actually_detected(
+    label: str, character: str, tmp_path: Path,
+):
+    """The rule and its table cannot drift apart.
+
+    A table naming twenty-two characters and a scan checking one byte range is
+    how the previous version read: complete in prose, one range in code.
+    """
+    # NO NEWLINE TRANSLATION IN EITHER DIRECTION. `write_text` on Windows
+    # turns LF into CRLF and `read_text` turns it back, which plants extra
+    # carriage returns and then hides them -- so the CR specimen measured the
+    # platform rather than the rule. The production scan reads BYTES and
+    # decodes, so this has to as well.
+    planted = tmp_path / "specimen.md"
+    planted.write_bytes(("before" + character + "after" + chr(10)).encode("utf-8"))
+    text = planted.read_bytes().decode("utf-8")
+    found = [
+        ord(inner) for inner in text if inner in INVISIBLE_CHARACTERS
+    ]
+    assert found == [ord(character)], (
+        label + " is in the table and the scan does not find it"
+    )
+
+
+def test_the_characters_a_source_file_needs_are_not_refused():
+    """TAB, LF and ordinary text must never be flagged.
+
+    Over-strictness here fails every file in the repository, which is the one
+    way this guard could be worse than absent.
+    """
+    for legitimate in (chr(9), chr(10), " ", "a", "-", chr(0x2014), chr(0x00E9)):
+        assert legitimate not in INVISIBLE_CHARACTERS, repr(legitimate)
+
+
 def test_no_tracked_text_file_carries_an_injected_control_character():
     """U+0008 in a regex is how the guard above came to match nothing.
 
@@ -335,20 +430,27 @@ def test_no_tracked_text_file_carries_an_injected_control_character():
         ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
         check=True, encoding="utf-8", errors="replace",
     )
-    allowed = {9, 10}
     offenders = []
-    for name in listing.stdout.split():
+    # SPLIT ON NEWLINES, not whitespace: a tracked path containing a
+    # space was fragmented into two names that resolve to nothing, so
+    # the scan silently skipped the file it was meant to read.
+    for name in listing.stdout.splitlines():
         path = ROOT / name
         if not path.is_file():
             continue
         raw = path.read_bytes()
         try:
-            raw.decode("utf-8")
+            text = raw.decode("utf-8")
         except UnicodeDecodeError:
             continue  # genuinely binary; not a text file this rule is about
-        for code in sorted({byte for byte in raw if byte < 32 and byte not in allowed}):
-            line = raw[: raw.find(bytes([code]))].count(b"" + chr(10).encode()) + 1
-            offenders.append(f"{name}:{line} U+{code:04X}")
+        for index, character in enumerate(text):
+            if character not in INVISIBLE_CHARACTERS:
+                continue
+            line = text.count(chr(10), 0, index) + 1
+            offenders.append(
+                f"{name}:{line} U+{ord(character):04X} "
+                f"({INVISIBLE_CHARACTERS[character]})"
+            )
     assert offenders == [], (
         "a tracked text file carries a control character that no editor shows "
         "and no reviewer sees. In a regex this makes the pattern inert; in "
@@ -2240,3 +2342,118 @@ def test_the_fence_rule_hides_records_and_not_prose(label, body, flagged):
     document = "# Report" + chr(10) * 2 + body + chr(10)
     hits = [match.group() for match in find_overclaims(_prose_only(document))]
     assert bool(hits) is flagged, f"{label}: {hits}"
+
+
+#: The authoritative terminal classification for each measurement that has one.
+#:
+#: ONE PLACE. Four documents carried a classification for the D1/D2 question and
+#: three of them agreed; the fourth said the opposite, in a live remediation
+#: section, with no supersession marker, and its very next sentence cited the
+#: document that corrects it. Each previous round closed this by hand-editing
+#: the document a reviewer happened to be reading, and each following round
+#: found another copy -- three rounds, three hand edits, three recurrences.
+#:
+#: The distinction is not bookkeeping. `INVALID_BASELINE` means an attack
+#: entered the protocol and its harness broke: an engineering problem, closable
+#: by machine work, and a reader goes looking for the fix. `HUMAN_BLOCKED`
+#: means the precondition is a human approval this repository must never
+#: manufacture -- the one category no autonomous run can close. Labelling it as
+#: the closable one points a reader at work that does not exist.
+AUTHORITATIVE_CLASSIFICATIONS = {
+    "D1": "HUMAN_BLOCKED",
+    "D2": "HUMAN_BLOCKED",
+}
+
+#: The outcome vocabulary. A term outside this set is not a classification.
+OUTCOME_TERMS = frozenset({
+    "HUMAN_BLOCKED", "INVALID_BASELINE", "SURVIVED", "KILLED",
+    "ADMITTED_ATTACK_INVALID_BASELINE", "OBSOLETE_HISTORICAL_ATTACK",
+})
+
+#: Phrases that make an occurrence a DENIAL of the term rather than an
+#: assertion of it, or mark the passage as history.
+#:
+#: This repository quotes wrong classifications in order to refute them, and
+#: says so: "**They are not `INVALID_BASELINE`.**" A scan that cannot tell a
+#: refutation from an assertion would force those sentences to be deleted,
+#: losing the reasoning -- which is the failure mode one level up.
+NOT_AN_ASSERTION = (
+    "not ", "rather than", "instead of", "used to", "superseded", "withdrawn",
+    "renamed", "no longer", "was missed", "cannot both", "would have been",
+    "this paragraph said", "this sentence used to", "deliberately refuses",
+)
+
+
+def _classification_claims() -> dict:
+    """subject -> {term: [where]} for every assertion in tracked documents."""
+    import subprocess  # noqa: PLC0415
+
+    listing = subprocess.run(  # noqa: S603
+        ["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True,
+        check=True, encoding="utf-8", errors="replace",
+    )
+    claims: dict = {}
+    # SPLIT ON NEWLINES, not whitespace: a tracked path containing a
+    # space was fragmented into two names that resolve to nothing, so
+    # the scan silently skipped the file it was meant to read.
+    for name in listing.stdout.splitlines():
+        path = ROOT / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for subject in AUTHORITATIVE_CLASSIFICATIONS:
+            for term in OUTCOME_TERMS:
+                for match in re.finditer(re.escape(term), text):
+                    window = " ".join(
+                        _sentence_around(text, match.start()).lower().split()
+                    )
+                    # The subject has to be in the same sentence, or the term is
+                    # being used about something else entirely.
+                    if subject.lower() not in window:
+                        continue
+                    if any(phrase in window for phrase in NOT_AN_ASSERTION):
+                        continue
+                    line = text.count(chr(10), 0, match.start()) + 1
+                    claims.setdefault(subject, {}).setdefault(term, []).append(
+                        f"{name}:{line}"
+                    )
+    return claims
+
+
+def test_no_two_documents_classify_the_same_measurement_differently():
+    """Three rounds closed this by hand and three rounds found it again.
+
+    The recurrence is the finding. `INVALID_BASELINE` vs `HUMAN_BLOCKED` for
+    the D1/D2 question was corrected in a dedicated commit, then found again in
+    a second document, then in a third, then in a fourth -- each time by a human
+    reading that particular file. Nothing prevented it, so it kept happening.
+
+    WHAT THIS MEASURES, exactly: every tracked `.md` sentence that names a
+    classified subject AND an outcome term, minus those that deny the term or
+    mark the passage as superseded. Each subject must end up with exactly one
+    term asserted about it, and it must be the authoritative one.
+
+    WHAT IT DOES NOT MEASURE, said plainly: prose that classifies a measurement
+    without naming it in the same sentence, and subjects absent from
+    `AUTHORITATIVE_CLASSIFICATIONS`. The denial vocabulary is a bounded list,
+    not an understanding of English -- this repository has already spent a
+    review cycle learning that a regex cannot be taught what a sentence means,
+    and the answer there was the same as here: a closed, declared surface.
+    """
+    claims = _classification_claims()
+    missing = sorted(set(AUTHORITATIVE_CLASSIFICATIONS) - set(claims))
+    assert missing == [], (
+        "no document asserts a classification for these subjects, so this "
+        f"guard measured nothing about them: {missing}"
+    )
+    wrong = []
+    for subject, expected in AUTHORITATIVE_CLASSIFICATIONS.items():
+        for term, where in sorted(claims.get(subject, {}).items()):
+            if term != expected:
+                wrong.append(f"{subject} is {expected}; {where} assert {term}")
+    assert wrong == [], (
+        "documents disagree about how a measurement was classified. One of "
+        "these terms means an engineering problem someone can fix and the "
+        "other means a human approval no autonomous run may manufacture, so a "
+        "reader is sent to work that does not exist: " + repr(wrong)
+    )

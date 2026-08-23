@@ -140,7 +140,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 28,
-    "tests/test_documented_claims.py": 116,
+    "tests/test_documented_claims.py": 137,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
@@ -175,8 +175,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 32,
-    "tests/test_false_green_audit.py": 90,
-    "tests/test_xfail_strictness.py": 17,
+    "tests/test_false_green_audit.py": 109,
+    "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
     "tests/test_architecture_security.py": 7,
@@ -208,7 +208,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
     # crash boundary rather than reasoning about it.
-    "tests/test_ledger_atomicity.py": 20,
+    "tests/test_ledger_atomicity.py": 23,
     # R2: the authoritative-property contract and the terminal
     # classification of every registered attack.
     "tests/test_attack_attribution_contract.py": 9,
@@ -217,7 +217,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_approval_structure_refusals.py": 10,
     # R6: the four consequential-authority properties composed on the
     # real boundary, with the EFFECT counted rather than the decision read.
-    "tests/test_consequential_authority_path.py": 14,
+    "tests/test_consequential_authority_path.py": 26,
     # Discovers every trust store structurally and requires the registry
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
@@ -296,12 +296,12 @@ EXPECTED_SKIP_CASES = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     1793   (88 modules)
-#     sum of the module floors    1656
-#     band(1793) = ceil(0.9*n)    1614
-#     MINIMUM_COLLECTED           1671
+#     collected across tests/     1858   (88 modules)
+#     sum of the module floors    1712
+#     band(1858) = ceil(0.9*n)    1673
+#     MINIMUM_COLLECTED           1727
 #     above the module sum        15
-#     below what collects         122
+#     below what collects         131
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -314,7 +314,7 @@ EXPECTED_SKIP_CASES = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 137 in total, and the aggregate refuses
+# per-module bands already grant 146 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -335,7 +335,7 @@ EXPECTED_SKIP_CASES = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1671
+MINIMUM_COLLECTED = 1727
 
 
 def band(collected: int) -> int:
