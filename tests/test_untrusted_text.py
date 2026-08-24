@@ -35,6 +35,10 @@ from check_pre_approval_baseline import (  # noqa: E402
 from signing import LEDGER_ESTABLISHED  # noqa: E402
 from test_governance_failure import _permissive_boundary  # noqa: E402
 
+from nornyx_forge.governed_subject import (  # noqa: E402
+    INTEGRITY_INTACT,
+    GovernanceIntegrityState,
+)
 from nornyx_forge.nornyx_runtime import (  # noqa: E402
     RISK_LEVEL_UNKNOWN,
     RISK_LEVELS,
@@ -198,8 +202,19 @@ def test_the_vocabulary_is_closed_and_has_no_aliases():
 
 
 def test_the_unknown_risk_code_is_distinct_from_missing_approval(tmp_path: Path):
-    """Different facts, different remedies."""
+    """Different facts, different remedies.
+
+    The integrity observation is supplied because this test is about
+    ATTRIBUTION. A boundary handed none refuses for THAT reason instead,
+    and the high-risk arm would report GOVERNANCE_INTEGRITY_COMPROMISED --
+    still a denial, still distinct from the unknown-risk code, and no
+    longer the fact this test names. The assertion would have stayed
+    green on the last line while the middle one measured something else.
+    """
     boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_INTACT, verified_claims=8,
+    )
     unknown, _ = boundary.evaluate_and_execute(
         mission_id="A", risk="severe", action=lambda: "ran"
     )

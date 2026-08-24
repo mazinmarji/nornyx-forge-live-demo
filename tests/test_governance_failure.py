@@ -20,6 +20,7 @@ from nornyx_forge.governed_subject import (
     RuntimeSubject,
 )
 from nornyx_forge.nornyx_runtime import (
+    GOVERNANCE_INTEGRITY_COMPROMISED,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     RuntimeContext,
@@ -35,7 +36,7 @@ def test_strict_boundary_refuses_instead_of_crashing(tmp_path: Path) -> None:
 
 def test_fallback_boundary_denies_high_risk_without_executing(tmp_path: Path) -> None:
     """The fallback is allowed to run, but must still deny high-risk actions."""
-    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary = _fallback_boundary(tmp_path)
     executed: list[str] = []
 
     def action() -> str:
@@ -52,12 +53,38 @@ def test_fallback_boundary_denies_high_risk_without_executing(tmp_path: Path) ->
 
 
 def test_fallback_boundary_allows_low_risk(tmp_path: Path) -> None:
-    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary = _fallback_boundary(tmp_path)
     decision, result = boundary.evaluate_and_execute(
         mission_id="TEST-LOW", risk="low", action=lambda: "done"
     )
     assert decision.effect == "ALLOW"
     assert result == "done"
+
+def test_a_fallback_boundary_with_no_observation_refuses(tmp_path: Path) -> None:
+    """Nobody looked is not the same as sound, on this path too.
+
+    The integrity gate used to live only in `_official`, which the shipped
+    configuration never enters. With it on both paths, a boundary handed no
+    observation refuses here exactly as it does there -- and this is the
+    control that keeps `_fallback_boundary` above from being a way of
+    turning the gate off.
+    """
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    assert boundary.governance_integrity is None
+    executed: list[str] = []
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="TEST-UNOBSERVED", risk="low",
+        action=lambda: executed.append("ran") or "ran",
+    )
+    assert decision.effect == "DENY"
+    assert decision.code == GOVERNANCE_INTEGRITY_COMPROMISED
+    assert result is None
+    assert executed == [], (
+        "a low-risk effect ran on a boundary whose governance state nobody "
+        "had observed"
+    )
+    assert "no integrity observation was established" in decision.reason
+
 
 
 class _Effect:
@@ -168,6 +195,29 @@ TEST_SUBJECT = RuntimeSubject(
     governed_subject_digest="sha256:" + "f" * 64,
     subject_verified=True,
 )
+
+
+def _fallback_boundary(root: Path) -> NornyxActionBoundary:
+    """A fallback boundary whose governance integrity WAS observed and is intact.
+
+    The same prerequisite `_permissive_boundary` states for the official
+    path, now that the fallback asks the question too. A bare
+    `NornyxActionBoundary(root, allow_fallback=True)` is handed no
+    observation, and "nobody looked" must not read as "sound" -- so these
+    tests would refuse for the integrity reason while claiming to measure
+    approval semantics, and every assertion below would pass for the wrong
+    reason.
+
+    Production never produces the bare shape: `run_case` establishes a
+    security context and the flow injects its observation. That the
+    unobserved shape refuses is asserted on its own, in
+    `test_a_fallback_boundary_with_no_observation_refuses`.
+    """
+    boundary = NornyxActionBoundary(root, allow_fallback=True)
+    boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_INTACT, verified_claims=8,
+    )
+    return boundary
 
 
 def _permissive_boundary(
@@ -384,7 +434,7 @@ def test_fallback_denies_high_risk_even_with_an_action_approval(tmp_path: Path) 
     not a substitute for it. With no authorization path established, nothing may
     execute.
     """
-    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary = _fallback_boundary(tmp_path)
     executed: list[str] = []
     decision, result = boundary.evaluate_and_execute(
         mission_id="TEST-HIGH-APPROVED",

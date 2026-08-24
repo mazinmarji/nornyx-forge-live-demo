@@ -208,7 +208,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_demo_flow.py": 1,
     "tests/test_dirty_tree_gate.py": 31,
     "tests/test_evidence.py": 8,
-    "tests/test_governance_failure.py": 17,
+    "tests/test_governance_failure.py": 18,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
     "tests/test_probe_containment.py": 18,
@@ -316,10 +316,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     2016   (88 modules)
-#     sum of the module floors    1856
-#     band(2016) = ceil(0.9*n)    1815
-#     MINIMUM_COLLECTED           1871
+#     collected across tests/     2017   (88 modules)
+#     sum of the module floors    1857
+#     band(2017) = ceil(0.9*n)    1816
+#     MINIMUM_COLLECTED           1872
 #     above the module sum        15
 #     below what collects         145
 #
@@ -355,7 +355,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1871
+MINIMUM_COLLECTED = 1872
 
 
 def band(collected: int) -> int:

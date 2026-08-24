@@ -33,7 +33,11 @@ from typing import Any
 import pytest
 
 import demo_app.agentic as agentic
-from demo_app.agentic import CustomerCaseFlow, run_case
+from demo_app.agentic import (
+    CustomerCaseFlow,
+    application_security_context,
+    run_case,
+)
 from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -172,8 +176,16 @@ def test_entering_the_execution_stage_twice_is_refused(tmp_path: Path, no_kickof
     Nothing consumes an approval on the low-risk path, so the ledger cannot be
     what stops a second callable invocation.
     """
+    # The security context the application establishes, because this test
+    # needs the effect to be RELEASED before it can show a second entry
+    # being refused. A flow built without one is handed no governance
+    # integrity observation, and the boundary now refuses that on the
+    # fallback path as it always did on the official one -- so the first
+    # execution would be prevented and the replay guard would never be
+    # the thing under test.
     flow = CustomerCaseFlow(_case(), root=tmp_path, worker_mode="deterministic",
-                             allow_policy_fallback=True)
+                             allow_policy_fallback=True,
+                             security_context=application_security_context())
     flow.intake()
     flow.knowledge()
     flow.resolution()
