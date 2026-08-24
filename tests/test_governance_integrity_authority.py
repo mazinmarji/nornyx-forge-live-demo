@@ -611,3 +611,118 @@ def test_a10_a_sound_runtime_still_reaches_the_authorizer(tmp_path: Path):
         "the authorizer was never consulted on a runtime whose governance "
         "state is sound, so the gate now refuses everything"
     )
+
+
+#: The demonstration case the shipped path runs first, and its risk.
+#:
+#: LOW, deliberately. The gate's own comment says `high_risk` is not a
+#: precondition -- "a compromised governance state is not more acceptable for a
+#: low-risk act, it simply has less to release" -- and the fallback already
+#: denies high and critical for a different reason, so a high-risk specimen
+#: would have gone green whether this gate ran or not.
+SHIPPED_CASE = {
+    "id": "CASE-INTEGRITY",
+    "customer": "Amina",
+    "summary": "Update delivery instructions",
+    "risk": "low",
+    "requested_action": "send guidance",
+}
+
+
+def _shipped_run(root: Path, integrity: GovernanceIntegrityState | None):
+    """Drive `CustomerCaseFlow` the way `run_case` does, on the fallback path.
+
+    Not a boundary in isolation: the point of this pair is that the gate is
+    reached by the configuration that SHIPS, and the shipped configuration is
+    `deterministic_fallback` because the authorizer cannot load without a human
+    approval.
+    """
+    from demo_app.agentic import (  # noqa: PLC0415
+        CustomerCaseFlow,
+        application_security_context,
+    )
+
+    flow = CustomerCaseFlow(
+        dict(SHIPPED_CASE), root=root, worker_mode="deterministic",
+        allow_policy_fallback=True,
+        security_context=application_security_context(),
+    )
+    assert flow.boundary.mode == "deterministic_fallback", (
+        "this specimen is about the fallback path and the boundary took "
+        f"another one: {flow.boundary.mode}"
+    )
+    if integrity is not None:
+        flow.boundary.governance_integrity = integrity
+    flow.run_sequential()
+    refusals = sorted((root / "evidence/runtime/refused").glob("*.json"))
+    return flow.case, refusals
+
+
+def test_the_shipped_fallback_refuses_under_compromised_governance(tmp_path: Path):
+    """The gate lived only where the shipped configuration never goes.
+
+    `_official` carries this check, and `_official` is entered only when the
+    Nornyx authorizer loaded -- which needs the human approval this repository
+    does not have. So on every path a reader can actually run, the property the
+    gate's comment states in as many words was dead code.
+
+    Measured on `CustomerCaseFlow.run_sequential` before the repair, with the
+    integrity state injected as compromised and again as unavailable:
+
+        fallback, integrity=compromised   ALLOW/ALLOWED, callable ran, 0 records
+        fallback, integrity=unavailable   ALLOW/ALLOWED, callable ran, 0 records
+
+    No refusal record either, so an operator could not find the attempt.
+    """
+    case, refusals = _shipped_run(
+        tmp_path,
+        GovernanceIntegrityState(
+            status=INTEGRITY_COMPROMISED,
+            verified_claims=8,
+            problems=("architecture_governance.nyx records X",),
+        ),
+    )
+    assert case["action_status"] == "prevented", (
+        "a low-risk effect was released against a runtime whose own governance "
+        f"evidence does not match its contracts: {case['decision']}"
+    )
+    assert case["decision"]["code"] == GOVERNANCE_INTEGRITY_COMPROMISED
+    assert len(refusals) == 1, (
+        "the attempt left no refusal record, so an operator cannot see that a "
+        "consequential act was attempted against a compromised runtime"
+    )
+    record = json.loads(refusals[0].read_text(encoding="utf-8"))
+    assert record["schema"] == "nornyx.forge.refused_action_attempt.v1"
+    assert record["effect_released"] is False
+    assert record["approval_consumed"] is False
+    assert record["integrity_status"] == INTEGRITY_COMPROMISED
+
+
+def test_an_unavailable_observation_also_refuses_on_the_shipped_path(tmp_path: Path):
+    """`unavailable` is not `intact`, on this path as on the other one."""
+    case, refusals = _shipped_run(
+        tmp_path,
+        GovernanceIntegrityState(
+            status=INTEGRITY_UNAVAILABLE,
+            problems=("the governance surface could not be read",),
+        ),
+    )
+    assert case["action_status"] == "prevented", case["decision"]
+    assert case["decision"]["code"] == GOVERNANCE_INTEGRITY_COMPROMISED
+    assert len(refusals) == 1
+
+
+def test_the_shipped_fallback_still_releases_when_integrity_is_intact(tmp_path: Path):
+    """The benign control, and it carries the two refusals above.
+
+    Both are satisfied by a gate that refuses everything, and a gate that
+    refused everything would have stopped the demonstration this repository
+    ships. The observation is the one the application really establishes --
+    nothing is injected here.
+    """
+    case, refusals = _shipped_run(tmp_path, None)
+    assert case["action_status"] == "executed", (
+        "the shipped low-risk demonstration no longer runs: " + repr(case["decision"])
+    )
+    assert case["decision"]["effect"] == "ALLOW"
+    assert refusals == [], "an intact runtime wrote a refusal record"

@@ -380,6 +380,47 @@ INVENTORY = (
          '"demo_command" in ast.dump(n)', 1, "dumped AST"),
     ),
     FalseGreen(
+        "FG41", "a screen, when it refused a GENUINE guard",
+        "the screen deciding whether a guard executes anything that can fail "
+        "is documented to resolve every undecided case toward 'this is a real "
+        "assertion' -- it may miss a vacuous guard, it may never fail a live "
+        "one. It failed live ones in two places: a module name whose literal "
+        "binding was not its only binding stayed a constant and folded the "
+        "branch under it, and `break`/`continue` inside a loop were read as "
+        "ending the block AROUND the loop, so every assertion after "
+        "`while True: break` was judged dead",
+        "a second binding of any kind disqualifies a module constant, and "
+        "`inside_loop` tells a loop exit from a block exit; both directions "
+        "are pinned by specimens, including the cases a naive fix would break",
+        "tests/test_false_green_audit.py"
+        "::test_a_module_name_bound_twice_is_not_a_constant",
+        # Put the old module pass back: skip a statement that is not a
+        # literal assignment WITHOUT disqualifying the names it binds.
+        ("tests/guard_evidence.py",
+         "disqualified.update(bound_names(node))",
+         "continue", 1, "executes nothing"),
+    ),
+    FalseGreen(
+        "FG42", "a swallowing rule, when ONE alias line renamed the exception",
+        "`SWALLOWING` lists three exception classes and the rule asked whether "
+        "the handler was SPELLED one of them. Measured end to end on a real "
+        "audited guard: adding `_Swallow = AssertionError` and wrapping the "
+        "body in `try: ... except _Swallow: pass` took its subject from 5 "
+        "FAILED to 8 passed, with the screen reporting `exercised` 1 both "
+        "times -- and `constant_bindings`, in the same file, already resolved "
+        "aliases to a fixed point for the folding axis",
+        "the handler type and the `suppress` callee are resolved to the names "
+        "they DENOTE, through module and local aliases to a fixed point, so a "
+        "rename catches what the original caught",
+        "tests/test_false_green_audit.py"
+        "::test_a_swallowing_handler_is_found_however_the_class_is_named",
+        # Stop resolving a bare name through its aliases, which is
+        # exactly what the rule did before: ask for the spelling.
+        ("tests/guard_evidence.py",
+         "return aliases.get(expression.id, {expression.id})",
+         "return {expression.id}", 1, "failing thing(s)"),
+    ),
+    FalseGreen(
         "FG39", "single use, when two durable stores were committed separately",
         "the consumption row and the continuity witness were written to two "
         "files in sequence, so a process death between them left the row "
@@ -447,6 +488,9 @@ EXPECTED_FALSE_GREEN_CLASSES = frozenset({
     "FG38",
     "FG39",
     "FG40",
+    # Round 7: the two directions a fresh lens found in the screen itself.
+    "FG41",
+    "FG42",
 })
 
 #: Mechanisms learned across the whole remediation, mapped to the class that
@@ -684,6 +728,30 @@ TERMINATION_SPECIMENS = [
     ("match value:" + NL + "    case 1:" + NL + "        return" + NL
      + "assert real", 1),
     ("while cond:" + NL + "    return" + NL + "assert real", 1),
+
+    # `break` AND `continue` LEAVE THE LOOP, NOT THE BLOCK AROUND IT, and this
+    # screen said otherwise for one round. Teaching `_terminates` to recurse
+    # through `for` and `while` -- so a loop whose body always returns can end
+    # a block -- carried `break` and `continue` out with it, and every
+    # assertion after such a loop was judged dead. That is the screen FAILING A
+    # GENUINE GUARD, the one direction this module says it never can.
+    #
+    # The rows above pin the loop clauses with `return` only, so both of them
+    # pointed the same way and nothing held the other side down. These do.
+    ("while True:" + NL + "    break" + NL + "assert real", 1),
+    ("for _ in [1]:" + NL + "    continue" + NL + "assert real", 1),
+    ("for _ in (1,):" + NL + "    break" + NL + "assert real" + NL
+     + "assert other", 2),
+    ("while True:" + NL + "    if cond:" + NL + "        break" + NL
+     + "    step()" + NL + "assert real", 1),
+    ("with ctx():" + NL + "    while True:" + NL + "        break" + NL
+     + "assert real", 1),
+    # A `break` that is NOT inside a loop still ends its block: the flag has to
+    # distinguish the two, and a rule that simply stopped counting `break`
+    # would pass every row above while losing this one.
+    ("break" + NL + "assert real", 0),
+    ("continue" + NL + "assert real", 0),
+    ("with ctx():" + NL + "    break" + NL + "assert real", 0),
     ("for _ in rows:" + NL + "    return" + NL + "assert real", 1),
     ("if cond:" + NL + "    return" + NL + "assert real", 1),
 ]
@@ -1220,6 +1288,77 @@ SCOPED_BINDING_SPECIMENS = [
 ]
 
 
+#: (label, module-level source, guard body, exercised assertions).
+#:
+#: FG42. Every one of the zeros catches exactly what `except AssertionError:`
+#: catches, and every one of them was invisible to a rule that asked how the
+#: class was SPELLED. The ones are the over-reach control: a narrow handler, an
+#: alias to a narrow class, a handler that re-raises, and `suppress` of
+#: something that is not an assertion are all REAL, and a screen that called
+#: them swallowed would refuse genuine guards -- which is FG41, one row over.
+SWALLOWING_ALIAS_SPECIMENS = [
+    ("the pinned spelling", "",
+     "try:" + NL + "    assert real" + NL + "except AssertionError:" + NL
+     + "    pass", 0),
+    ("a module-level alias", "_Err = AssertionError",
+     "try:" + NL + "    assert real" + NL + "except _Err:" + NL + "    pass", 0),
+    ("a chain of two aliases", "_A = AssertionError" + NL + "_B = _A",
+     "try:" + NL + "    assert real" + NL + "except _B:" + NL + "    pass", 0),
+    ("an alias to a tuple", "_S = (AssertionError,)",
+     "try:" + NL + "    assert real" + NL + "except _S:" + NL + "    pass", 0),
+    ("a tuple built by a constructor", "",
+     "try:" + NL + "    assert real" + NL + "except tuple([AssertionError]):"
+     + NL + "    pass", 0),
+    ("an alias bound inside the guard", "",
+     "_L = Exception" + NL + "try:" + NL + "    assert real" + NL
+     + "except _L:" + NL + "    pass", 0),
+    ("an alias of contextlib.suppress", "_Q = contextlib.suppress",
+     "with _Q(AssertionError):" + NL + "    assert real", 0),
+    ("suppress splatting an aliased tuple", "_S = (AssertionError,)",
+     "with contextlib.suppress(*_S):" + NL + "    assert real", 0),
+    ("suppress imported bare", "",
+     "with suppress(AssertionError):" + NL + "    assert real", 0),
+
+    # ---- and the direction that must NOT change -------------------------
+    ("a narrow handler does not swallow", "",
+     "try:" + NL + "    assert real" + NL + "except ValueError:" + NL
+     + "    pass", 1),
+    ("an alias to a narrow class does not", "_N = ValueError",
+     "try:" + NL + "    assert real" + NL + "except _N:" + NL + "    pass", 1),
+    ("suppressing a narrow class does not", "",
+     "with contextlib.suppress(ValueError):" + NL + "    assert real", 1),
+    # The assertion AND the re-raise both count, which is why this is 2.
+    ("a handler that re-raises does not", "",
+     "try:" + NL + "    assert real" + NL + "except Exception:" + NL
+     + "    raise", 2),
+]
+
+
+@pytest.mark.false_green("FG42")
+@pytest.mark.parametrize(
+    ("label", "module_source", "body", "expected"), SWALLOWING_ALIAS_SPECIMENS,
+    ids=[case[0] for case in SWALLOWING_ALIAS_SPECIMENS],
+)
+def test_a_swallowing_handler_is_found_however_the_class_is_named(
+    label: str, module_source: str, body: str, expected: int,
+):
+    """A rename must not turn a swallowed assertion back into a proof.
+
+    The screen already resolves aliases to a fixed point for the FOLDING axis
+    and says, in its own docstring, that a rule catching the pinned spelling
+    and not its synonyms is a rule about the spelling. It did not apply that to
+    the SWALLOWING axis, and every specimen in the tables that reached this
+    code spelled the class literally -- so the escape had no case pointing at
+    it in a module built out of exactly such cases.
+    """
+    counted = exercised_assertions(*_guard(body, module_source))
+    assert counted == expected, (
+        label + ": the screen says this guard executes " + str(counted)
+        + " failing thing(s); it executes " + str(expected) + ":" + NL
+        + (module_source + NL if module_source else "") + body
+    )
+
+
 #: A module-level name whose literal binding is not its ONLY binding.
 #:
 #: Every one of these was reported DEAD -- indistinguishable from the genuinely
@@ -1257,6 +1396,7 @@ REBOUND_MODULE_SPECIMENS = [
 ]
 
 
+@pytest.mark.false_green("FG41")
 @pytest.mark.parametrize(
     ("label", "module_source", "body"), REBOUND_MODULE_SPECIMENS,
     ids=[case[0] for case in REBOUND_MODULE_SPECIMENS],
@@ -1433,6 +1573,110 @@ def test_the_screen_answers_the_shapes_a_third_round_demonstrated(
     )
 
 
+#: String operations that ask "does this text contain that text".
+#:
+#: `in` was the only one the scan knew. All of these answer the same question
+#: about a rendered tree, and each is one edit from the next.
+_SUBSTRING_METHODS = frozenset({
+    "count", "endswith", "find", "index", "rfind", "rindex", "startswith",
+})
+
+#: `re` entry points that take the haystack as their SECOND argument.
+_REGEX_SEARCHES = frozenset({"findall", "finditer", "fullmatch", "match",
+                             "search", "split", "sub", "subn"})
+
+
+def _dumped_tree_names(tree: ast.AST) -> set:
+    """Names bound to the text of a dumped AST, to a fixed point.
+
+    `rendered = ast.dump(node)` then `"x" in rendered` is the same test one
+    line apart, and the scan that named the property saw only the one-line
+    form. Chains are followed because `a = ast.dump(n); b = a` is not a
+    different idea.
+    """
+    bound: set = set()
+    for _ in range(3):
+        widened = set(bound)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            if not _is_dumped_tree(node.value, widened):
+                continue
+            widened |= {
+                target.id for target in node.targets
+                if isinstance(target, ast.Name)
+            }
+        if widened == bound:
+            break
+        bound = widened
+    return bound
+
+
+def _is_dumped_tree(expression, bound: set) -> bool:
+    """Is this expression the TEXT of a dumped AST?"""
+    if isinstance(expression, ast.Name):
+        return expression.id in bound
+    if isinstance(expression, ast.Call):
+        callee = expression.func
+        named = (callee.attr if isinstance(callee, ast.Attribute)
+                 else getattr(callee, "id", ""))
+        if named == "dump":
+            return True
+        # `ast.dump(n).lower()`, `...strip()`, `f"{ast.dump(n)}"` -- still the
+        # rendered tree, one method call further away.
+        if isinstance(callee, ast.Attribute):
+            return _is_dumped_tree(callee.value, bound)
+    if isinstance(expression, ast.JoinedStr):
+        return any(
+            _is_dumped_tree(part.value, bound)
+            for part in expression.values
+            if isinstance(part, ast.FormattedValue)
+        )
+    if isinstance(expression, ast.BinOp):
+        return (_is_dumped_tree(expression.left, bound)
+                or _is_dumped_tree(expression.right, bound))
+    return False
+
+
+def substring_tests_against_a_dumped_tree(tree: ast.AST) -> list:
+    """Line numbers where this module asks a text question about a dumped AST.
+
+    ONE implementation, because the specimens below and the scan over `tests/`
+    must be the same rule. A specimen table checking a private copy of a rule
+    is FG40 -- "a repaired rule, when a second copy of it was left standing" --
+    and that is the class this very scan exists to enforce.
+    """
+    bound = _dumped_tree_names(tree)
+    found: list = []
+    for node in ast.walk(tree):
+        # `<literal> in <a dumped tree>` -- a membership test against text,
+        # standing in for a question about structure.
+        if isinstance(node, ast.Compare):
+            if any(
+                isinstance(op, (ast.In, ast.NotIn)) for op in node.ops
+            ) and any(_is_dumped_tree(side, bound) for side in node.comparators):
+                found.append(node.lineno)
+            continue
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        if not isinstance(callee, ast.Attribute):
+            continue
+        # `.find(...)`, `.count(...)`, `.startswith(...)` ask the same question
+        # with a method instead of an operator.
+        if (callee.attr in _SUBSTRING_METHODS
+                and _is_dumped_tree(callee.value, bound)):
+            found.append(node.lineno)
+            continue
+        # `re.search(pattern, ast.dump(n))` -- the haystack is the SECOND
+        # argument, and the first is a pattern, which is a legitimate use.
+        if callee.attr in _REGEX_SEARCHES and any(
+            _is_dumped_tree(argument, bound) for argument in node.args[1:2]
+        ):
+            found.append(node.lineno)
+    return sorted(found)
+
+
 @pytest.mark.false_green("FG40")
 def test_no_module_reimplements_the_evidence_screen():
     """The rule has ONE home, because three rounds found it repaired in one
@@ -1448,7 +1692,21 @@ def test_no_module_reimplements_the_evidence_screen():
     created a canonical implementation and left the old copy standing, which is
     FG40 -- "a repaired rule, when a second copy of it was left standing".
 
-    WHAT THIS MEASURES, exactly: a substring test against a dumped AST. That is
+    WHAT THIS MEASURES, exactly: a substring test against a dumped AST, in
+    whatever form it is written. It used to measure ONE form -- `x in
+    <expr>.dump(...)` as a single expression -- so all of these passed while
+    being the same test:
+
+        rendered = ast.dump(n); "demo_command" in rendered
+        from ast import dump; "demo_command" in dump(n)
+        ast.dump(n).find("demo_command") >= 0
+        ast.dump(n).count("demo_command") > 0
+        re.search("demo_command", ast.dump(n))
+
+    The local-variable form is the same clause one line apart, and this
+    module's own subject is that a rule naming a spelling is a rule about the
+    spelling. The three limits below are deliberate; that was not one of them.
+    That is
     the one retired spelling with no legitimate reading -- `ast.dump` renders a
     tree as text and asking whether a name appears in that text cannot tell
     executable code from a string constant, which is FG21's own class. It
@@ -1471,24 +1729,130 @@ def test_no_module_reimplements_the_evidence_screen():
     for module in sorted((ROOT / "tests").glob("*.py")):
         if module.name == "guard_evidence.py":
             continue
-        text = module.read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(text)):
-            # `<literal> in ast.dump(...)` -- a membership test against text
-            # that is standing in for a question about structure.
-            if not isinstance(node, ast.Compare):
-                continue
-            if not any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
-                continue
-            for right in node.comparators:
-                if (isinstance(right, ast.Call)
-                        and isinstance(right.func, ast.Attribute)
-                        and right.func.attr == "dump"):
-                    offenders.append(module.name + ":" + str(node.lineno))
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        offenders += [
+            module.name + ":" + str(line)
+            for line in substring_tests_against_a_dumped_tree(tree)
+        ]
     assert offenders == [], (
         "a substring test against a dumped AST is executable outside "
         "tests/guard_evidence.py. It cannot tell code from a string constant, "
         "and it credited `io.StringIO('raises.txt')` as an expected-refusal "
         "block the last time it was written: " + repr(offenders)
+    )
+
+
+#: (label, whole module source, exercised assertions in `guard`).
+#:
+#: HALF A REPAIR. `is_pytest_call` once matched any attribute call named
+#: `fail`, so `record.fail(reason)` counted as a proof. That was fixed by
+#: requiring a `pytest` receiver -- and the BARE-NAME branch, which exists so
+#: `from pytest import raises` still works, was left matching any function of
+#: that name at all. A locally defined `fail` or `raises` was credited as a
+#: thing that can fail, and a locally defined `skip` truncated the block.
+#:
+#: The four ones are why the branch cannot simply be deleted: `from pytest
+#: import raises` is real, and refusing it would fail genuine guards, which is
+#: FG41.
+PYTEST_NAME_SPECIMENS = [
+    ("a locally defined fail is not pytest.fail",
+     "def fail(msg):" + NL + "    pass" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL + "    fail('nothing')", 0),
+    ("a locally defined raises is not pytest.raises",
+     "import contextlib" + NL + NL + "@contextlib.contextmanager" + NL
+     + "def raises(kind):" + NL + "    yield" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL
+     + "    with raises(ValueError):" + NL + "        pass", 0),
+    ("a locally defined skip does not end the block",
+     "def skip(reason):" + NL + "    pass" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL + "    skip('later')" + NL
+     + "    assert real", 1),
+
+    # ---- and the direction the branch exists for ------------------------
+    ("pytest.fail through the module", "import pytest" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL + "    pytest.fail('real')", 1),
+    ("fail imported from pytest", "from pytest import fail" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL + "    fail('real')", 1),
+    ("raises imported from pytest", "from pytest import raises" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL
+     + "    with raises(ValueError):" + NL + "        pass", 1),
+    ("skip imported from pytest DOES end the block",
+     "from pytest import skip" + NL + NL
+     + "def guard():" + NL + '    """d."""' + NL + "    skip('later')" + NL
+     + "    assert real", 0),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "expected"), PYTEST_NAME_SPECIMENS,
+    ids=[case[0] for case in PYTEST_NAME_SPECIMENS],
+)
+def test_a_bare_name_counts_only_when_it_came_from_pytest(
+    label: str, source: str, expected: int,
+):
+    """Whole modules, because the import is what decides the question."""
+    module = ast.parse(source + NL)
+    guard = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "guard"
+    )
+    counted = exercised_assertions(guard, module)
+    assert counted == expected, (
+        label + ": the screen says this guard executes " + str(counted)
+        + " failing thing(s); it executes " + str(expected)
+    )
+
+
+#: (label, source, is it a text question about a dumped tree).
+#:
+#: The twelve TRUE rows are all the same test; the scan knew one of them, and
+#: the local-variable form is that one clause exactly one line apart. The five
+#: FALSE rows are the over-reach control, and the first of them matters most:
+#: `ast.dump(a) == ast.dump(b)` is tree COMPARISON, it is correct, and it is
+#: live in `tests/mutation_validity.py`. A scan that flagged it would be
+#: matching text and calling it structure -- the substitution this module
+#: refuses -- so widening the rule had to leave it alone.
+DUMPED_TREE_SPECIMENS = [
+    ("the pinned spelling", '"demo_command" in ast.dump(n)', True),
+    ("a local variable",
+     "rendered = ast.dump(n)" + NL + 'x = "demo_command" in rendered', True),
+    ("a chain of two locals",
+     "a = ast.dump(n)" + NL + "b = a" + NL + 'x = "demo_command" in b', True),
+    ("dump imported bare",
+     "from ast import dump" + NL + 'x = "demo_command" in dump(n)', True),
+    ("find", 'x = ast.dump(n).find("demo_command") >= 0', True),
+    ("index", 'x = ast.dump(n).index("demo_command")', True),
+    ("count", 'x = ast.dump(n).count("demo_command") > 0', True),
+    ("startswith", 'x = ast.dump(n).startswith("Call")', True),
+    ("re.search", 'x = re.search("demo_command", ast.dump(n))', True),
+    ("re.findall", 'x = re.findall("demo_command", ast.dump(n))', True),
+    ("one method further away", 'x = "demo_command" in ast.dump(n).lower()', True),
+    ("inside an f-string", 'x = "demo_command" in f"{ast.dump(n)}"', True),
+    ("not in", 'x = "demo_command" not in ast.dump(n)', True),
+
+    # ---- and the direction that must NOT change -------------------------
+    ("tree comparison, which is correct", "x = ast.dump(a) == ast.dump(b)", False),
+    ("two dumps bound and compared",
+     "a = ast.dump(x)" + NL + "b = ast.dump(y)" + NL + "z = a == b", False),
+    ("a substring of ordinary text", 'x = "demo_command" in source', False),
+    ("re.search over ordinary text", 'x = re.search("demo_command", source)', False),
+    ("a dump used as the PATTERN, not the haystack",
+     "x = re.search(ast.dump(n), source)", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "is_a_text_question"), DUMPED_TREE_SPECIMENS,
+    ids=[case[0] for case in DUMPED_TREE_SPECIMENS],
+)
+def test_a_text_question_about_a_dumped_tree_is_found_however_it_is_written(
+    label: str, source: str, is_a_text_question: bool,
+):
+    """Driven through the scan the gate runs, not through a copy of its rule."""
+    found = substring_tests_against_a_dumped_tree(ast.parse(source))
+    assert bool(found) is is_a_text_question, (
+        label + ": the scan " + ("missed" if is_a_text_question else "flagged")
+        + " this:" + NL + source
     )
 
 
@@ -1848,7 +2212,15 @@ PENDING_REPRODUCTION = frozenset(
 #: class with everything green -- which is how a bogus triple was demonstrated
 #: passing. Membership is now a diff, the same way `EXPECTED_FALSE_GREEN_CLASSES`
 #: is.
-EXPECTED_REPRODUCED = frozenset({"FG22", "FG33", "FG40"})
+EXPECTED_REPRODUCED = frozenset({
+    "FG22", "FG33", "FG40",
+    # Round 7. Both are defects in the screen itself, so both reproductions
+    # are single-line reverts inside `tests/guard_evidence.py` -- one puts
+    # the old module pass back, one stops resolving a name through its
+    # aliases. Adding to this set is the progress the assertion below asks
+    # to be argued with rather than absorbed.
+    "FG41", "FG42",
+})
 
 
 def test_the_reproduction_contract_asks_for_attribution():

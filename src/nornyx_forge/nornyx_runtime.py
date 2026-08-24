@@ -636,8 +636,14 @@ def approval_fingerprint(approval: Mapping[str, Any]) -> str:
     but keying replay protection on an encoding rather than on meaning is the
     kind of assumption that quietly stops holding.
 
-    Only ever computed from a grant that has already passed authentication and
-    ``validate_action_approval``.
+    Only ever computed from a grant that has already passed :func:`verify_action_approval`,
+    which authenticates the signature AND binds the grant to this exact
+    request. Traced rather than asserted: `_official` calls it before the
+    ledger claim, and this function is not reached on any path that skips
+    it. The name here read ``validate_action_approval`` until a review
+    looked for it -- a safety precondition resting on a symbol that does
+    not exist anywhere in this repository. The mechanism was sound; the
+    sentence naming it was not checkable.
     """
 
     material = canonical_grant_payload(approval)
@@ -2699,7 +2705,7 @@ def verify_action_approval(
     passed the repository's structural guard while defeating the control:
 
         authentic, _, _ = verify_signed_approval(...)   # discard the validator
-        if False: validate_action_approval(...)         # unreachable branch
+        if False: verify_action_approval(...)           # unreachable branch
         released = authentic                            # authentication as authority
 
     Only the behavioural boundary test caught them. Now there is nothing to
@@ -2846,7 +2852,9 @@ def _action_approval_present(approval: Mapping[str, Any] | None) -> bool:
     """Return whether a usable action-specific human approval was supplied.
 
     Kept for the shape checks that do not depend on a specific request. Binding
-    to an exact request is done by :func:`validate_action_approval`.
+    to an exact request is done by :func:`verify_action_approval`, which is
+    what that function is called. This said ``validate_action_approval``,
+    which names nothing.
     """
 
     if not isinstance(approval, Mapping):
@@ -3080,53 +3088,33 @@ class NornyxActionBoundary:
     def mode(self) -> str:
         return "nornyx.agentic" if self.authorizer is not None else "deterministic_fallback"
 
-    def _official(
+    def _integrity_refusal(
         self,
         *,
         mission_id: str,
         risk: str,
-        action: Callable[[], str],
-        action_approval: Mapping[str, Any] | None = None,
-        action_request: ActionRequest | None = None,
-        action_descriptor: ActionDescriptor | None = None,
-        attempt: int = 1,
-    ) -> RuntimeDecision:
-        assert self.authorizer is not None and self.context is not None
-        high_risk = normalize_risk(risk) in HIGH_RISK_LEVELS
-        # Proposal and effect are separate capabilities. The agent may always
-        # request; only the effect capability carries execution authority, so the
-        # evidence never shows an `execute_*` capability allowed before the
-        # authority for it exists.
-        capability_name = exercised_capability(risk)
-        CapabilityRequest = self._imports["CapabilityRequest"]
-        ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
-        EvidenceRecorder = self._imports["EvidenceRecorder"]
-        recorder = EvidenceRecorder(
-            self.authorizer,
-            self.context,
-            producer_id="nornyx-forge-live-demo",
-            producer_version=__version__,
-            producer_type="external_runtime",
-        )
-        # INTEGRITY IS ASKED FIRST, WHICH IS WHAT THIS COMMENT ALWAYS SAID.
-        # The block below used to sit inside `if high_risk and
-        # decision.allowed:`, AFTER three `authorizer.evaluate` calls, while
-        # stating it ran "before the authorizer is consulted, because a
-        # compromised contract is what the authorizer would be reading". A
-        # review measured the authorizer reading it three times first.
-        #
-        # Worse, the guard made the refusal conditional on the compromised
-        # material's own verdict. When tampering made the contract DENY, the
-        # branch was never entered and the `refused_action_attempt.v1` record
-        # -- added precisely so an operator could see a consequential act
-        # attempted against a compromised runtime -- was never written.
-        # Measured: contract allows -> 1 refusal record; contract denies -> 0.
-        # Whether the operator learned of the compromise was decided BY the
-        # compromised material.
-        #
-        # Now unconditional and first. `high_risk` is not a precondition
-        # either: a compromised governance state is not more acceptable for a
-        # low-risk act, it simply has less to release.
+        attempt: int,
+        action_approval: dict | None,
+    ) -> "RuntimeDecision | None":
+        """The refusal a compromised governance state requires, or None.
+
+        ONE implementation, called from BOTH paths. This lived inside
+        `_official`, which the shipped configuration never enters: the
+        demonstration runs in `deterministic_fallback` because the
+        authorizer cannot load without a human approval. Measured on the
+        production boundary with the integrity state injected as
+        compromised:
+
+            fallback, integrity=compromised   ALLOW/ALLOWED, callable ran
+            fallback, integrity=unavailable   ALLOW/ALLOWED, callable ran
+
+        No refusal record was written either, so an operator could not
+        see that an act had been attempted against a runtime whose own
+        governance state was compromised -- the attempt most worth being
+        able to find afterwards. The comment below already stated the
+        intended property in as many words, and the path that actually
+        executes did not implement it.
+        """
         # Integrity, immediately after subject and before any decision.
         #
         # Derived governance state -- an evidence record's `status`, a
@@ -3204,6 +3192,62 @@ class NornyxActionBoundary:
                 source=self.mode,
                 evidence=record,
             )
+        return None
+
+
+    def _official(
+        self,
+        *,
+        mission_id: str,
+        risk: str,
+        action: Callable[[], str],
+        action_approval: Mapping[str, Any] | None = None,
+        action_request: ActionRequest | None = None,
+        action_descriptor: ActionDescriptor | None = None,
+        attempt: int = 1,
+    ) -> RuntimeDecision:
+        assert self.authorizer is not None and self.context is not None
+        high_risk = normalize_risk(risk) in HIGH_RISK_LEVELS
+        # Proposal and effect are separate capabilities. The agent may always
+        # request; only the effect capability carries execution authority, so the
+        # evidence never shows an `execute_*` capability allowed before the
+        # authority for it exists.
+        capability_name = exercised_capability(risk)
+        CapabilityRequest = self._imports["CapabilityRequest"]
+        ZoneCrossingRequest = self._imports["ZoneCrossingRequest"]
+        EvidenceRecorder = self._imports["EvidenceRecorder"]
+        recorder = EvidenceRecorder(
+            self.authorizer,
+            self.context,
+            producer_id="nornyx-forge-live-demo",
+            producer_version=__version__,
+            producer_type="external_runtime",
+        )
+        # INTEGRITY IS ASKED FIRST, WHICH IS WHAT THIS COMMENT ALWAYS SAID.
+        # The block below used to sit inside `if high_risk and
+        # decision.allowed:`, AFTER three `authorizer.evaluate` calls, while
+        # stating it ran "before the authorizer is consulted, because a
+        # compromised contract is what the authorizer would be reading". A
+        # review measured the authorizer reading it three times first.
+        #
+        # Worse, the guard made the refusal conditional on the compromised
+        # material's own verdict. When tampering made the contract DENY, the
+        # branch was never entered and the `refused_action_attempt.v1` record
+        # -- added precisely so an operator could see a consequential act
+        # attempted against a compromised runtime -- was never written.
+        # Measured: contract allows -> 1 refusal record; contract denies -> 0.
+        # Whether the operator learned of the compromise was decided BY the
+        # compromised material.
+        #
+        # Now unconditional and first. `high_risk` is not a precondition
+        # either: a compromised governance state is not more acceptable for a
+        # low-risk act, it simply has less to release.
+        refusal = self._integrity_refusal(
+            mission_id=mission_id, risk=risk, attempt=attempt,
+            action_approval=action_approval,
+        )
+        if refusal is not None:
+            return refusal
 
         if high_risk:
             # Recorded so the stream distinguishes "may propose" from "may act".
@@ -3705,6 +3749,26 @@ class NornyxActionBoundary:
             return decision, result
         if not self.allow_fallback:
             raise NornyxRuntimeUnavailable(self.load_error or "Nornyx runtime unavailable")
+        # THE SAME INTEGRITY GATE, on the path that actually ships.
+        #
+        # This gate lived only in `_official`, which the shipped
+        # configuration never enters -- the demonstration runs in
+        # `deterministic_fallback` because the authorizer cannot load
+        # without a human approval. So the property `_official` states
+        # in as many words was dead code wherever it mattered, and a
+        # low-risk effect was released against a compromised runtime
+        # with no refusal record written.
+        #
+        # Asked BEFORE the high-risk denial below, deliberately: the
+        # two refusals are different facts, and an operator reading
+        # HUMAN_APPROVAL_REQUIRED would not learn that the governance
+        # state was compromised as well.
+        refusal = self._integrity_refusal(
+            mission_id=mission_id, risk=risk, attempt=attempt,
+            action_approval=action_approval,
+        )
+        if refusal is not None:
+            return refusal, None
         # The fallback denies every high-risk action unconditionally. An
         # action-specific approval is an additional requirement on top of Nornyx
         # authorization, never a substitute for it, so it cannot release an

@@ -187,14 +187,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_action_binding.py": 35,
     "tests/test_untrusted_text.py": 53,
     "tests/test_subject_completeness.py": 9,
-    "tests/test_governance_integrity_authority.py": 18,
+    "tests/test_governance_integrity_authority.py": 21,
     "tests/test_artifact_authority.py": 16,
     "tests/test_collection_completeness.py": 9,
     "tests/test_absence_is_not_success.py": 20,
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
-    "tests/test_false_green_audit.py": 161,
+    "tests/test_false_green_audit.py": 204,
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
@@ -207,7 +207,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_contract_generator.py": 1,
     "tests/test_demo_flow.py": 1,
     "tests/test_dirty_tree_gate.py": 31,
-    "tests/test_evidence.py": 1,
+    "tests/test_evidence.py": 8,
     "tests/test_governance_failure.py": 17,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
@@ -316,12 +316,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     1958   (88 modules)
-#     sum of the module floors    1803
-#     band(1958) = ceil(0.9*n)    1763
-#     MINIMUM_COLLECTED           1818
+#     collected across tests/     2016   (88 modules)
+#     sum of the module floors    1856
+#     band(2016) = ceil(0.9*n)    1815
+#     MINIMUM_COLLECTED           1871
 #     above the module sum        15
-#     below what collects         140
+#     below what collects         145
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -355,7 +355,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1818
+MINIMUM_COLLECTED = 1871
 
 
 def band(collected: int) -> int:

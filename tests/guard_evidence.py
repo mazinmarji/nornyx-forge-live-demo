@@ -654,21 +654,51 @@ def cannot_fail(test: ast.expr, function: ast.AST,
     return False
 
 
-def is_pytest_call(node: ast.AST, attribute: str) -> bool:
+def is_pytest_call(
+    node: ast.AST, attribute: str, module: ast.AST | None = None,
+) -> bool:
     """`pytest.<attribute>(...)`, matched as a SHAPE rather than as text.
 
     The `.fail()` clause once matched ANY attribute call named `fail` on any
-    object, so `record.fail(reason)` counted as a proof.
+    object, so `record.fail(reason)` counted as a proof. That was repaired by
+    requiring a `pytest` receiver -- and the BARE-NAME branch below, which
+    exists for `from pytest import raises`, was left matching any function of
+    that name at all:
+
+        def fail(msg): ...          ... fail("nothing happened")   -> counted
+        @contextmanager
+        def raises(kind): ...       ... with raises(ValueError):   -> counted
+
+    Half a repair is how this rule has failed before. When the module is
+    supplied the bare name must actually have been imported FROM pytest;
+    without it the old, permissive answer stands, because refusing every bare
+    name would fail the genuine `from pytest import raises` this branch was
+    added for.
     """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr == attribute:
         return isinstance(func.value, ast.Name) and func.value.id == "pytest"
-    return isinstance(func, ast.Name) and func.id == attribute
+    if not (isinstance(func, ast.Name) and func.id == attribute):
+        return False
+    if module is None:
+        return True
+    return attribute in _imported_from_pytest(module)
 
 
-def is_expected_refusal(expr: ast.expr) -> bool:
+def _imported_from_pytest(module: ast.AST) -> set:
+    """Names this module bound by importing them from pytest."""
+    found: set = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.ImportFrom) and node.module == "pytest":
+            found |= {alias.asname or alias.name for alias in node.names}
+    return found
+
+
+def is_expected_refusal(
+    expr: ast.expr, module: ast.AST | None = None,
+) -> bool:
     """`pytest.raises(...)`, matched structurally.
 
     THIS WAS `"raises" in ast.dump(context_expr)` -- a substring scan over a
@@ -677,7 +707,7 @@ def is_expected_refusal(expr: ast.expr) -> bool:
     string constant, so `with io.StringIO("raises.txt") as handle:` was
     credited as an expected-refusal block.
     """
-    return is_pytest_call(expr, "raises")
+    return is_pytest_call(expr, "raises", module)
 
 
 def _is_non_empty(value) -> bool:
@@ -767,15 +797,23 @@ def _handlers_can_intercept(node) -> bool:
     return bool(node.handlers)
 
 
-def _body_exit_is_an_exception(block: list, bindings: dict) -> bool:
+def _body_exit_is_an_exception(
+    block: list, bindings: dict, *, inside_loop: bool = False,
+    module: ast.AST | None = None,
+) -> bool:
     """Does this block leave only by raising?"""
     for statement in block:
-        if _terminates(statement, bindings):
+        if _terminates(
+            statement, bindings, inside_loop=inside_loop, module=module,
+        ):
             return isinstance(statement, ast.Raise)
     return False
 
 
-def _terminates(statement: ast.AST, bindings: dict) -> bool:
+def _terminates(
+    statement: ast.AST, bindings: dict, *, inside_loop: bool = False,
+    module: ast.AST | None = None,
+) -> bool:
     """Does control provably leave the block at this statement?
 
     Anything after an unconditional `return`, `raise`, `continue`, `break`, or
@@ -792,11 +830,29 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
     Only branches this module can DECIDE are followed; an undecidable `if` may
     fall through, so it never terminates.
     """
-    if isinstance(statement, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+    if isinstance(statement, (ast.Return, ast.Raise)):
         return True
+    if isinstance(statement, (ast.Continue, ast.Break)):
+        # THESE LEAVE THE LOOP, NOT THE BLOCK AROUND IT.
+        #
+        # `inside_loop` is what tells the two apart, and getting it wrong cost
+        # a real guard. When this screen learned to recurse through `for` and
+        # `while` -- so that a loop whose body always returns could end a block
+        # -- `break` and `continue` came along for the ride, and
+        #
+        #     while True:
+        #         break
+        #     assert real()
+        #
+        # was judged dead from the `assert` down. Python resumes on the next
+        # statement after the loop; the assertion runs. That is the screen
+        # FAILING A GENUINE GUARD, which the note at the top of this module
+        # says it can never do -- so the note was false for three statement
+        # types, in the direction that matters.
+        return not inside_loop
     if isinstance(statement, ast.Expr) and (
-        is_pytest_call(statement.value, "skip")
-        or is_pytest_call(statement.value, "xfail")
+        is_pytest_call(statement.value, "skip", module)
+        or is_pytest_call(statement.value, "xfail", module)
     ):
         return True
     if isinstance(statement, ast.If):
@@ -804,25 +860,40 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
         if decided is UNDECIDED:
             # BOTH branches terminating is still termination, whatever the test.
             return bool(statement.orelse) and all(
-                any(_terminates(inner, bindings) for inner in branch)
+                any(_terminates(inner, bindings, inside_loop=inside_loop, module=module)
+                    for inner in branch)
                 for branch in (statement.body, statement.orelse)
             )
         taken = statement.body if decided else statement.orelse
-        return any(_terminates(inner, bindings) for inner in taken)
+        return any(
+            _terminates(inner, bindings, inside_loop=inside_loop, module=module)
+            for inner in taken
+        )
     if isinstance(statement, (ast.With, ast.AsyncWith)):
-        return any(_terminates(inner, bindings) for inner in statement.body)
+        return any(
+            _terminates(inner, bindings, inside_loop=inside_loop, module=module)
+            for inner in statement.body
+        )
     if isinstance(statement, TRY_NODES):
         # `finally` that leaves wins outright: it runs on every path.
-        if any(_terminates(inner, bindings) for inner in statement.finalbody):
+        if any(
+            _terminates(inner, bindings, inside_loop=inside_loop, module=module)
+            for inner in statement.finalbody
+        ):
             return True
-        if not any(_terminates(inner, bindings) for inner in statement.body):
+        if not any(
+            _terminates(inner, bindings, inside_loop=inside_loop, module=module)
+            for inner in statement.body
+        ):
             # A handler that returns only runs if something raised, so the
             # block may still fall through. `try: risky() / except: return`
             # must stay counted, and this is why.
             return False
         # The body leaves. Handlers cannot intercept a `return`, `break` or
         # `continue` -- only a `raise`.
-        if _body_exit_is_an_exception(statement.body, bindings):
+        if _body_exit_is_an_exception(
+            statement.body, bindings, inside_loop=inside_loop, module=module,
+        ):
             return not _handlers_can_intercept(statement)
         return True
     if MATCH_NODE is not None and isinstance(statement, MATCH_NODE):
@@ -833,20 +904,128 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
             for case in statement.cases
         )
         return exhaustive and all(
-            any(_terminates(inner, bindings) for inner in case.body)
+            any(_terminates(inner, bindings, inside_loop=inside_loop, module=module)
+                for inner in case.body)
             for case in statement.cases
         )
     if isinstance(statement, ast.While):
         decided = fold(statement.test, bindings)
         if decided is UNDECIDED or not decided:
             return False
-        return any(_terminates(inner, bindings) for inner in statement.body)
+        # `inside_loop=True`: a `break` in here ends THIS loop and control
+        # continues below it, so it cannot end the block this loop sits in.
+        return any(
+            _terminates(inner, bindings, inside_loop=True, module=module)
+            for inner in statement.body
+        )
     if isinstance(statement, (ast.For, ast.AsyncFor)):
         decided = fold(statement.iter, bindings)
         if decided is UNDECIDED or not _is_non_empty(decided):
             return False
-        return any(_terminates(inner, bindings) for inner in statement.body)
+        return any(
+            _terminates(inner, bindings, inside_loop=True, module=module)
+            for inner in statement.body
+        )
     return False
+
+
+#: Container constructors that pass their contents straight through.
+#:
+#: `except tuple([AssertionError]):` catches exactly what
+#: `except AssertionError:` catches, and reads as neither.
+_PASS_THROUGH = frozenset({"frozenset", "list", "set", "tuple"})
+
+
+def denoted_names(expression, aliases: dict) -> set:
+    """Every bare name this expression can denote, aliases resolved.
+
+    THE SWALLOWING AXIS ASKED FOR A SPELLING, and this is what it should have
+    asked. `SWALLOWING` lists three exception classes; the rule tested whether
+    the handler type node was literally spelled one of them, so every one of
+    these escaped it while catching exactly the same thing:
+
+        _Err = AssertionError        ... except _Err:
+        _S = (AssertionError,)       ... except _S:
+        except tuple([AssertionError]):
+        _Q = contextlib.suppress     ... with _Q(AssertionError):
+
+    Measured end to end: one added line, `_Swallow = AssertionError`, wrapping a
+    real audited guard body in `try: ... except _Swallow: pass` took its subject
+    from 5 FAILED to 8 passed, with `exercised_assertions` reporting 1 both
+    times. `constant_bindings` in this same file already resolves aliases to a
+    fixed point for the FOLDING axis, and says in its own docstring that a rule
+    catching the pinned spelling and not its synonyms is a rule about the
+    spelling. That resolution was never applied here.
+
+    Over-resolving is the safe direction: a name wrongly treated as an
+    exception class makes a guard look swallowed, the audit calls it a false
+    green, and a person looks. Under-resolving is what let a gutted guard pass.
+    """
+    if isinstance(expression, ast.Name):
+        return aliases.get(expression.id, {expression.id})
+    if isinstance(expression, ast.Attribute):
+        return aliases.get(expression.attr, {expression.attr})
+    if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
+        found: set = set()
+        for element in expression.elts:
+            found |= denoted_names(element, aliases)
+        return found
+    if isinstance(expression, ast.Starred):
+        return denoted_names(expression.value, aliases)
+    if isinstance(expression, ast.Call):
+        callee = expression.func
+        named = (callee.attr if isinstance(callee, ast.Attribute)
+                 else getattr(callee, "id", ""))
+        if named in _PASS_THROUGH and len(expression.args) == 1:
+            return denoted_names(expression.args[0], aliases)
+    return set()
+
+
+def name_aliases(function: ast.AST, module: ast.AST | None = None) -> dict:
+    """Names bound to other names, resolved to a fixed point.
+
+    Deliberately NOT restricted to things that look like exception classes: the
+    same map answers `_Q = contextlib.suppress`, and a rule that decided in
+    advance which names were interesting would be one more rule about spelling.
+
+    Module scope is read first and the function own bindings override it, which
+    is the scoping Python has. Only plain `name = <expression>` is followed;
+    anything computed denotes nothing here, and denoting nothing leaves the
+    original spelling in place rather than inventing one.
+    """
+    direct: dict = {}
+
+    def record(node) -> None:
+        if not isinstance(node, ast.Assign):
+            return
+        targets = [t for t in node.targets if isinstance(t, ast.Name)]
+        if len(targets) != len(node.targets):
+            return
+        denoted = denoted_names(node.value, {})
+        for target in targets:
+            if denoted:
+                direct.setdefault(target.id, set()).update(denoted)
+
+    if module is not None:
+        for node in module_scope_statements(module):
+            record(node)
+    for node in ast.walk(function):
+        record(node)
+
+    # CHAINS, to a fixed point. `_A = AssertionError; _B = _A` binds `_B` just
+    # as surely, and bounded by the number of bindings so it terminates.
+    for _ in range(len(direct) + 1):
+        changed = False
+        for name, denoted in direct.items():
+            widened = set()
+            for entry in denoted:
+                widened |= direct.get(entry, {entry})
+            if widened != denoted:
+                direct[name] = widened
+                changed = True
+        if not changed:
+            break
+    return direct
 
 
 def executed_nodes(function: ast.AST, module: ast.AST | None = None) -> list:
@@ -855,12 +1034,13 @@ def executed_nodes(function: ast.AST, module: ast.AST | None = None) -> list:
     CONTAINMENT IS NOT EXECUTION, and `ast.walk` only answers containment.
     """
     bindings = constant_bindings(function, module)
+    aliases = name_aliases(function, module)
     found: list = []
 
     def statements(block: list, swallowed: bool) -> None:
         for statement in block:
             visit(statement, swallowed)
-            if _terminates(statement, bindings):
+            if _terminates(statement, bindings, module=module):
                 return
 
     def executes_a_raise(block: list) -> bool:
@@ -881,18 +1061,15 @@ def executed_nodes(function: ast.AST, module: ast.AST | None = None) -> list:
             found.clear()
             found.extend(outer)
         return any(
-            isinstance(node, ast.Raise) or is_pytest_call(node, "fail")
+            isinstance(node, ast.Raise) or is_pytest_call(node, "fail", module)
             for node, _ in probe
         )
 
     def swallows(node: ast.Try) -> bool:
         for handler in node.handlers:
             caught = handler.type
-            names = caught.elts if isinstance(caught, ast.Tuple) else [caught]
-            catches = caught is None or any(
-                (isinstance(name, ast.Name) and name.id in SWALLOWING)
-                or (isinstance(name, ast.Attribute) and name.attr in SWALLOWING)
-                for name in names if name is not None
+            catches = caught is None or bool(
+                denoted_names(caught, aliases) & SWALLOWING
             )
             if catches and not executes_a_raise(handler.body):
                 return True
@@ -906,16 +1083,15 @@ def executed_nodes(function: ast.AST, module: ast.AST | None = None) -> list:
             call = item.context_expr
             if not isinstance(call, ast.Call):
                 continue
-            func = call.func
-            named = (func.attr if isinstance(func, ast.Attribute)
-                     else getattr(func, "id", ""))
-            if named != "suppress":
+            # THE CALLEE IS RESOLVED TOO. `_Q = contextlib.suppress`
+            # then `with _Q(AssertionError):` suppresses exactly the
+            # same way, and a check on the spelling never saw it.
+            if "suppress" not in denoted_names(call.func, aliases):
                 continue
-            if any(
-                (isinstance(arg, ast.Name) and arg.id in SWALLOWING)
-                or (isinstance(arg, ast.Attribute) and arg.attr in SWALLOWING)
-                for arg in call.args
-            ):
+            caught: set = set()
+            for argument in call.args:
+                caught |= denoted_names(argument, aliases)
+            if caught & SWALLOWING:
                 return True
         return False
 
@@ -1017,7 +1193,7 @@ def exercised_assertions(function: ast.AST, module: ast.AST | None = None) -> in
              and not cannot_fail(node.test, function, module))
             or isinstance(node, ast.Raise)
             or (isinstance(node, ast.withitem)
-                and is_expected_refusal(node.context_expr))
-            or is_pytest_call(node, "fail")
+                and is_expected_refusal(node.context_expr, module))
+            or is_pytest_call(node, "fail", module)
         )
     )

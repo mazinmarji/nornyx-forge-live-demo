@@ -95,8 +95,25 @@ declares that it did, and the resulting evidence is indistinguishable from an
 honest run.
 
 Determinism for tests comes from `RuntimeContext.for_test(root, at=...)`, an
-argument a caller must name at the construction site. A repository test fails if
-`RuntimeContext.for_test(` appears anywhere under `src/`.
+argument a caller must name at the construction site.
+
+`test_no_production_source_constructs_a_test_context` fails if any file under
+`src/` CALLS it -- a call node whose callee is named `for_test`, wherever the
+receiver comes from.
+
+This used to read "a repository test fails if `RuntimeContext.for_test(`
+appears anywhere under `src/`", which is a claim about TEXT and is false: the
+string appears at `src/nornyx_forge/nornyx_runtime.py:3070`, inside a
+docstring explaining why production must not use the seam, and the guard
+passes. An auditor checking the sentence as written finds a hit in shipped
+source and concludes the control is broken.
+
+The guard is AST-based on purpose, and stronger than the sentence it replaces
+on the axis that matters -- it catches an aliased receiver, which a substring
+scan for `RuntimeContext.for_test(` would miss -- and weaker only on
+mentions, which are not uses. Its own comment says so: a substring "cannot
+tell a CALL from a docstring that names the seam while explaining why
+production must not use it".
 
 ## Governed revision
 

@@ -7,7 +7,15 @@
 > `OBSOLETE_HISTORICAL_ATTACK`. The catalogue is the authority.
 >
 > The reasoning below -- why ordinary-test coverage is not mutation coverage --
-> stands unchanged and is why the attacks were built. Only the inventory is stale.
+> stands unchanged and is why the attacks were built.
+>
+> **The inventory is stale AND SO ARE THE TOTALS.** This marker used to say
+> "only the inventory is stale", which exempted the campaign figures below
+> from staleness -- and those figures are withdrawn. MUTATION_CAMPAIGN.md
+> withdraws every total predating the corrected proof kernel as unsound,
+> and LENS_C_CLOSURE.md says they are not to be adjusted, carried forward,
+> **or cited**. A marker that narrows staleness to the part that happens
+> not to be quoted is the same defect one level up.
 
 Ordinary-test coverage is not hostile-mutation coverage. An ordinary test shows
 the system behaves correctly on a hostile INPUT. A mutation shows the named
@@ -103,11 +111,20 @@ None of them is claimed as mutation-proved.
 
 **MUTATION REQUIRED = YES for all seven.**
 
-**Task 11 therefore REMAINS OPEN for H13–H19.**
+**Task 11 therefore REMAINS OPEN for H13–H19.** *(It does not. See the
+marker above: TASK11_REPLAY.md records every catalogue attack reaching a
+terminal classification, and the live constants in
+`tests/test_mutation_catalogue.py` are 41 attacks across 17 root
+properties with `NOT_YET_KILLED` empty. The paragraph is kept as the record
+of the condition that was set.)*
 
-The campaign result stands as reported for the 35 admitted attacks across 11
-root properties. It does not extend to these seven classes, and no statement in
-this repository should be read as claiming it does.
+~~The campaign result stands as reported for the 35 admitted attacks across~~
+~~11 root properties.~~ **Withdrawn.** That total predates the corrected
+proof kernel, and the root-property figure was the required MINIMUM set
+(`REQUIRED_ROOT_PROPERTIES`, 11) rather than the catalogue's own count.
+The second half of the sentence -- that the campaign does not extend to
+these seven classes -- was true when written and is now contradicted by the
+replay, which covers them. Neither half should be cited.
 
 Every one of the seven has a named control in production source and a
 single-edit reversion available, so there is no class here where a mutation
