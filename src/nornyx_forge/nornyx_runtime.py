@@ -80,10 +80,16 @@ def _reports_a_release(path: Path) -> bool:
     `nornyx.agentic.validate_runtime_events` return shape mechanically gives:
 
         contract_digest, counts_by_type, diagnostics, event_count,
-        events_schema, events_schema_version, external_connectors_used,
-        limitations, mission_count, models_called, network_id,
-        network_lock_digest, network_used, producers_executed, safety,
-        schema, status, subject_revision, tools_executed
+        events_schema, events_schema_version, limitations, mission_count,
+        network_id, network_lock_digest, safety, schema, status,
+        subject_revision
+
+    FOURTEEN, not nineteen. The list above once carried five more --
+    `external_connectors_used`, `models_called`, `network_used`,
+    `producers_executed`, `tools_executed` -- because the extraction walked
+    every dict literal in the function and credited the keys of the NESTED
+    `safety` sub-dict as top-level. `tools_executed` is not a top-level key at
+    all; it lives under `safety` and is a BOOL, not a list.
 
     No `observations`. No `events`. Those two keys exist in exactly one place
     in this repository: `_Recorder`, the test double -- which is the only
@@ -112,9 +118,11 @@ def _reports_a_release(path: Path) -> bool:
     counts = body.get("counts_by_type")
     if isinstance(counts, dict) and counts.get(EFFECT_RAN_EVENT):
         return True
-    executed = body.get("tools_executed")
-    if isinstance(executed, (list, tuple)) and executed:
-        return True
+    # A `tools_executed` clause used to sit here and was DEAD on every real
+    # report, for the reason above. Removed rather than repaired: `safety`'s
+    # `tools_executed` is a boolean about the run as a whole, not a record that
+    # THIS attempt released an effect, and reading it would be the same
+    # substitution one level down.
     return False
 
 
@@ -2607,6 +2615,23 @@ class ApprovalLedger:
 #: Neither ledger was unusable and neither had lost history.
 LEDGER_BUSY = "LEDGER_BUSY"
 
+#: The supplied request does not describe this execution.
+#:
+#: NO SIGNATURE CLEARS THIS. `_request_context_mismatch` runs BEFORE approval
+#: validation and before the ledger claim, precisely so a mismatched request
+#: cannot spend a grant belonging to the request it is imitating. The branch
+#: set `released` and `release_reason` and never touched `withheld_code`, so it
+#: kept its `HUMAN_APPROVAL_REQUIRED` default -- the MOST clearable code there
+#: is -- and a pending "Sign this exact request_digest" artifact was written
+#: for a refusal an approval can never clear.
+#:
+#: Measured: a caller passing `action_request` for mission OTHER while
+#: executing mission M got DENY / HUMAN_APPROVAL_REQUIRED with a pending
+#: artifact; signing that exact digest with a NEW valid grant gave the same
+#: refusal again. The positive declaration in `APPROVAL_CLEARABLE_CODES` was
+#: defeated by a branch that never assigned.
+REQUEST_CONTEXT_MISMATCH = "REQUEST_CONTEXT_MISMATCH"
+
 #: The code a decision carries when NOBODY has approved yet.
 HUMAN_APPROVAL_REQUIRED = "HUMAN_APPROVAL_REQUIRED"
 
@@ -3263,8 +3288,15 @@ class NornyxActionBoundary:
                 # Refused before approval validation and before the ledger claim,
                 # so a mismatched request can neither be judged releasable nor
                 # spend a grant that belongs to the request it is imitating.
+                #
+                # THE CODE, not only the prose. This branch assigned `released`
+                # and `release_reason` and left `withheld_code` at its
+                # HUMAN_APPROVAL_REQUIRED default, so the decision told an
+                # operator to obtain an approval for a check that runs before
+                # any approval is read.
                 released = False
-                release_reason = mismatch
+                withheld_code = REQUEST_CONTEXT_MISMATCH
+                release_reason = f"{REQUEST_CONTEXT_MISMATCH}: {mismatch}"
             else:
                 # ONE authority call. Not authentication composed with a
                 # validator: composing them here is what let a self-issued grant
@@ -3332,12 +3364,40 @@ class NornyxActionBoundary:
         else:
             withheld = False
         if withheld:
-            recorder.record_observation(
-                "action_withheld",
-                mission_id=mission_id,
-                actor_ref="identity.execution",
-                capability_ref=capability_name,
-            )
+            # NOT `record_observation("action_withheld", ...)`. That RAISED.
+            #
+            # The real `nornyx.agentic.authz.EvidenceRecorder.record_observation`
+            # refuses any type outside `PHASE_OBSERVATION`:
+            #
+            #     agent_invoked, data_shared, handoff_completed,
+            #     handoff_initiated, identity_revoked, runtime_failed,
+            #     tool_invoked, trust_zone_crossed
+            #
+            # `action_withheld` is not in it. `tool_invoked` -- the SUCCESS
+            # terminal -- is. So the release path recorded a legal event and the
+            # refusal path raised `ValueError` past this boundary: an unhandled
+            # 500 instead of a governed DENY, and NO artifact at all. No report,
+            # no events, no pending request. That is the "the ledger row and
+            # nothing else" failure `_emit_evidence` was extracted to close.
+            #
+            # It was invisible because the test double appended any string. A
+            # previous round repaired the double's `validate()` OUTPUT shape and
+            # left its INPUT contract unchecked, so the vocabulary drifted in
+            # the one direction still unguarded.
+            #
+            # The withholding is not an observation in Nornyx's vocabulary, and
+            # inventing one would be asserting a term the contract does not
+            # define. It is recorded where the rest of this boundary's own facts
+            # are recorded -- in the report `_emit_evidence` merges -- as
+            # `effect_withheld`, parallel to `effect_release`.
+            effect_withheld = {
+                "withheld": True,
+                "code": withheld_code,
+                "capability_ref": capability_name,
+                "reason": release_reason,
+            }
+        else:
+            effect_withheld = None
 
         allowed = decision.allowed and not withheld
         #: Set when the effect was released and then raised. Not a decision --
@@ -3375,6 +3435,7 @@ class NornyxActionBoundary:
                     release_reason=release_reason,
                     authentication_evidence=authentication_evidence,
                     release_failure=release_failure,
+                    effect_withheld=effect_withheld,
                 )
                 raise
             recorder.record_observation(
@@ -3434,6 +3495,7 @@ class NornyxActionBoundary:
             action_approval=action_approval,
             release_reason=release_reason,
             authentication_evidence=authentication_evidence,
+            effect_withheld=effect_withheld,
         )
         if withheld:
             return RuntimeDecision(
@@ -3468,6 +3530,7 @@ class NornyxActionBoundary:
         release_reason: str,
         authentication_evidence,
         release_failure: str = "",
+        effect_withheld: dict | None = None,
     ) -> dict:
         """Write the event stream and the report. The ONLY place either is written.
 
@@ -3491,6 +3554,11 @@ class NornyxActionBoundary:
                 "action_binding": release_reason,
                 "approval_authentication": authentication_evidence,
             }
+            if effect_withheld is not None:
+                # The counterpart to `effect_release`. Recorded here because
+                # Nornyx's observation vocabulary has no term for withholding
+                # and inventing one raised on the real recorder.
+                report["effect_withheld"] = effect_withheld
             if release_failure:
                 # SUCCESS and FAILURE-AFTER-RELEASE are different states, and
                 # neither is a denial. The decision was ALLOW and it stands;

@@ -139,6 +139,9 @@ verdict and any classification would have been harness evidence rather than
 security evidence.
 
 The recorded outcome is **`HUMAN_BLOCKED`**, not `INVALID_BASELINE`, and not
+
+<!-- classification: D1 = HUMAN_BLOCKED -->
+<!-- classification: D2 = HUMAN_BLOCKED -->
 SURVIVED or KILLED. This paragraph said `INVALID_BASELINE` while
 [HUMAN_BLOCKED_MEASUREMENTS.md](HUMAN_BLOCKED_MEASUREMENTS.md) said, of the
 identical three attempts, "**They are not `INVALID_BASELINE`.** That outcome

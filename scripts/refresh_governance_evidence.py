@@ -570,11 +570,42 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
             # authority.
             "self_reported_builder_independence": False,
             "reviewers": reviewers,
+            # CONDITIONED ON WHETHER AN INSPECTION ACTUALLY HAPPENED.
+            #
+            # This was a fixed string emitted on every path -- not conditioned
+            # on `reviews.json` existing, on any inspector having run, or on
+            # `authenticated` being non-empty. A reader of the governed
+            # evidence set saw three passing inspectors and a sentence
+            # asserting the inspection happened and was independent, while
+            # `authenticated_inspections` in the same object was `{}`.
+            #
+            # "did not author this record's verdict on their own behalf" is
+            # precisely the self-certification `ASSURANCE_BOUNDARY.md` records
+            # retiring `builder_self_approval` for: the builder certifying
+            # their own independence in a file anyone could write. Restoring it
+            # as an unconditional string restores the thing that was retired.
+            #
+            # `reviewers` is sourced from `.nornyx/in-session/reviews.json`,
+            # which `.gitignore` excludes, so on a clean clone the three
+            # `status: pass` rows have no source in the repository at all. The
+            # statement now says which of those two worlds produced it.
             "statement": (
-                "Architecture conformance was inspected by read-only inspectors that "
-                "cannot modify the implementation and did not author this record's "
-                "verdict on their own behalf. This is an independent machine review, "
-                "not a human review and not an approval."
+                (
+                    "Architecture conformance was inspected by read-only "
+                    "inspectors that cannot modify the implementation and did "
+                    "not author this record's verdict on their own behalf. "
+                    "This is an independent machine review, not a human review "
+                    "and not an approval."
+                )
+                if authenticated
+                else (
+                    "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any "
+                    "reviewer rows below come from an in-session report that is "
+                    "not part of the governed content and decides nothing. This "
+                    "record asserts no independence: an unauthenticated file "
+                    "cannot establish that the party who produced it was "
+                    "independent of it."
+                )
             ),
             "verdict_basis": verdict_basis,
             # Who actually signed, per role. Reviewer identities rather than a

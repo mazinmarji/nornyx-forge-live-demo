@@ -50,8 +50,25 @@ def governance_docs() -> list[Path]:
     # hole was in both sweeps at once.
     #
     # Vendored trees keep component matching because they genuinely nest
-    # (`node_modules` inside a package). GENERATED governance evidence is at one
-    # known location and is excluded by prefix.
+    # (`node_modules` inside a package).
+    #
+    # `.nornyx/` IS EXCLUDED FOR TWO DIFFERENT REASONS, and this comment used
+    # to give one. `.nornyx/contracts/evidence/*.json` is GENERATED, so nobody
+    # authored its claims here. `.nornyx/contracts/*.nyx` is HAND-AUTHORED and
+    # is the governance source of truth -- a different case entirely, and one
+    # this sentence silently covered.
+    #
+    # It stays excluded, and the reason is measured rather than asserted: the
+    # contracts are a STRUCTURED surface defended by content-hash binding, not
+    # by wording. Running the prose sweep over them produces eleven hits and
+    # every one is a field VALUE -- `status: authorized` six times,
+    # `require_evidence_independence: true` -- not a claim anyone made in
+    # prose. A sweep that reports a contract field as an overclaim is matching
+    # text and calling it meaning, which is the substitution this module
+    # exists to refuse.
+    #
+    # `test_the_excluded_contracts_are_covered_by_hash_binding` checks that the
+    # defence actually applies, so the exclusion rests on a measured fact.
     vendored = {".venv", "node_modules", ".git", "site-packages", "__pycache__"}
     generated = (".nornyx/",)
     found = []
@@ -2370,87 +2387,211 @@ OUTCOME_TERMS = frozenset({
     "ADMITTED_ATTACK_INVALID_BASELINE", "OBSOLETE_HISTORICAL_ATTACK",
 })
 
-#: Phrases that make an occurrence a DENIAL of the term rather than an
-#: assertion of it, or mark the passage as history.
+#: A document declares a classification with a marker, not with a sentence.
 #:
-#: This repository quotes wrong classifications in order to refute them, and
-#: says so: "**They are not `INVALID_BASELINE`.**" A scan that cannot tell a
-#: refutation from an assertion would force those sentences to be deleted,
-#: losing the reasoning -- which is the failure mode one level up.
-NOT_AN_ASSERTION = (
-    "not ", "rather than", "instead of", "used to", "superseded", "withdrawn",
-    "renamed", "no longer", "was missed", "cannot both", "would have been",
-    "this paragraph said", "this sentence used to", "deliberately refuses",
+#:     <!-- classification: D1 = HUMAN_BLOCKED -->
+#:
+#: PROSE SCANNING CANNOT DO THIS, and two attempts measured why. Scoped to the
+#: sentence, the guard reached ONE line -- inside a fenced block in a document
+#: whose header says nothing in it is a current claim -- because neither the
+#: wrong statement ("Three attempts ... all produced INVALID_BASELINE") nor the
+#: right one ("were all HUMAN_BLOCKED") names D1 or D2 in the same sentence as
+#: the term. Widened to the section, it flagged the vocabulary DEFINITIONS: a
+#: section that discusses D1 and also explains what KILLED and SURVIVED mean
+#: read as asserting all three.
+#:
+#: This repository has already spent a review cycle learning that a regex
+#: cannot be taught what a sentence asserts, and the answer there is the answer
+#: here: a closed, declared surface. A marker is unambiguous, cheap to write,
+#: and impossible to produce by accident -- and what it does NOT cover is
+#: stated rather than implied.
+_CLASSIFICATION_MARKER = re.compile(
+    r"<!--\s*classification:\s*([A-Za-z0-9_-]+)\s*=\s*([A-Z_]+)\s*-->"
 )
 
+#: Documents that are superseded in their own header. A marker there records
+#: history and is not a current claim.
+_WITHDRAWN = ("TASK11_CLOSURE",)
 
-def _classification_claims() -> dict:
-    """subject -> {term: [where]} for every assertion in tracked documents."""
+
+def _declared_classifications() -> dict:
+    """subject -> {term: [where]}, from declared markers in tracked documents."""
     import subprocess  # noqa: PLC0415
 
     listing = subprocess.run(  # noqa: S603
         ["git", "ls-files", "*.md"], cwd=ROOT, capture_output=True, text=True,
         check=True, encoding="utf-8", errors="replace",
     )
-    claims: dict = {}
-    # SPLIT ON NEWLINES, not whitespace: a tracked path containing a
-    # space was fragmented into two names that resolve to nothing, so
-    # the scan silently skipped the file it was meant to read.
+    found: dict = {}
     for name in listing.stdout.splitlines():
         path = ROOT / name
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        for subject in AUTHORITATIVE_CLASSIFICATIONS:
-            for term in OUTCOME_TERMS:
-                for match in re.finditer(re.escape(term), text):
-                    window = " ".join(
-                        _sentence_around(text, match.start()).lower().split()
-                    )
-                    # The subject has to be in the same sentence, or the term is
-                    # being used about something else entirely.
-                    if subject.lower() not in window:
-                        continue
-                    if any(phrase in window for phrase in NOT_AN_ASSERTION):
-                        continue
-                    line = text.count(chr(10), 0, match.start()) + 1
-                    claims.setdefault(subject, {}).setdefault(term, []).append(
-                        f"{name}:{line}"
-                    )
-    return claims
+        for match in _CLASSIFICATION_MARKER.finditer(text):
+            subject, term = match.group(1), match.group(2)
+            line = text.count(chr(10), 0, match.start()) + 1
+            found.setdefault(subject, {}).setdefault(term, []).append(
+                f"{name}:{line}"
+            )
+    return found
+
+
+def test_the_inspection_record_does_not_assert_an_inspection_that_did_not_happen():
+    """The statement was a fixed string on every path.
+
+    Emitted unconditionally -- not on `reviews.json` existing, not on any
+    inspector having run, not on `authenticated_inspections` being non-empty.
+    A reader of the governed evidence set saw three passing inspectors and a
+    sentence saying the inspection happened and was independent, while
+    `authenticated_inspections` in the same object was `{}`.
+
+    "did not author this record's verdict on their own behalf" is exactly the
+    self-certification `ASSURANCE_BOUNDARY.md` records retiring
+    `builder_self_approval` for -- the builder certifying their own
+    independence in a file anyone could write. As an unconditional string it
+    was that, restored.
+
+    The `reviewers` rows come from `.nornyx/in-session/reviews.json`, which
+    `.gitignore` excludes, so on a clean clone their source is not in the
+    repository at all.
+
+    This is the ONE surface where a false independence claim would be worst,
+    because it is inside the governed evidence set rather than in prose beside
+    it -- and `governance_docs()` deliberately does not read `.nornyx/`, so no
+    prose sweep covers it.
+    """
+    import json as _json  # noqa: PLC0415
+
+    record = _json.loads(
+        (ROOT / ".nornyx/contracts/evidence/architecture_independent_review.json")
+        .read_text(encoding="utf-8")
+    )
+    authenticated = record.get("authenticated_inspections") or {}
+    statement = record.get("statement", "")
+    assert statement, "the record carries no statement at all"
+    if authenticated:
+        assert "independent machine review" in statement, (
+            "an authenticated inspection exists and the record does not say so"
+        )
+        return
+    for asserted in (
+        "was inspected by read-only inspectors",
+        "did not author this record's verdict on their own behalf",
+        "This is an independent machine review",
+    ):
+        assert asserted not in statement, (
+            "no authenticated inspection exists and the record asserts one: "
+            + repr(asserted) + " appears in the statement"
+        )
+    assert "NO AUTHENTICATED INSPECTION" in statement, (
+        "the record neither asserts an inspection nor states its absence, so a "
+        "reader cannot tell which: " + statement[:120]
+    )
+
+
+def test_the_excluded_contracts_are_covered_by_hash_binding():
+    """`.nornyx/` is skipped by the prose sweep. Something must still cover it.
+
+    The exclusion is correct -- the contracts are a structured surface, and
+    running a prose sweep over them reports field values like
+    `status: authorized` as overclaims. But "correct because it is structured"
+    is an argument, and the argument only holds while the structured defence
+    genuinely applies.
+
+    MY FIRST VERSION OF THIS GUARD NAMED THE WRONG MECHANISM. It asserted the
+    contracts were inside `GOVERNED_INPUT_PATHS`, and they are not -- that
+    tuple covers `src`, `scripts`, `tests`, `docs`, `.github` and a handful of
+    root files. Running it said so immediately, which is the only reason the
+    error did not ship: the contracts are bound by their OWN digests in
+    `review_binding.json`, a different mechanism entirely.
+
+    So this measures the mechanism that actually applies: every contract's
+    bytes hash to the digest the binding records for it. If a contract were
+    edited without regenerating, this is red -- and `--verify` reports
+    `EVIDENCE_ARTIFACT_HASH_MISMATCH` on the same fact.
+    """
+    import hashlib  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+
+    binding = _json.loads(
+        (ROOT / ".nornyx/contracts/evidence/review_binding.json")
+        .read_text(encoding="utf-8")
+    )
+    digests = binding.get("digests") or {}
+    bound_to = {
+        "architecture_governance.nyx": "architecture_contract",
+        "forge_control.nyx": "forge_control_contract",
+        "runtime_network.nyx": "runtime_contract",
+    }
+    contracts = sorted(
+        path.name for path in (ROOT / ".nornyx/contracts").glob("*.nyx")
+    )
+    assert contracts, "no contracts exist, so this guard measured nothing"
+    undeclared = sorted(name for name in contracts if name not in bound_to)
+    assert undeclared == [], (
+        "these contracts are excluded from the prose sweep and this guard does "
+        "not know which digest binds them, so nothing here covers them: "
+        + repr(undeclared)
+    )
+    unbound = []
+    for name in contracts:
+        raw = (ROOT / ".nornyx/contracts" / name).read_bytes()
+        actual = "sha256:" + hashlib.sha256(raw).hexdigest()
+        if digests.get(bound_to[name]) != actual:
+            unbound.append(
+                name + " hashes to " + actual[:23] + "... and the binding "
+                "records " + str(digests.get(bound_to[name]))[:23] + "..."
+            )
+    assert unbound == [], (
+        "these contracts are excluded from the prose sweep AND their recorded "
+        "digest does not match their content, so the structured defence the "
+        "exclusion relies on is not applying: " + repr(unbound)
+    )
 
 
 def test_no_two_documents_classify_the_same_measurement_differently():
-    """Three rounds closed this by hand and three rounds found it again.
+    """Four documents carried a classification for D1/D2 and one disagreed.
 
-    The recurrence is the finding. `INVALID_BASELINE` vs `HUMAN_BLOCKED` for
-    the D1/D2 question was corrected in a dedicated commit, then found again in
-    a second document, then in a third, then in a fourth -- each time by a human
-    reading that particular file. Nothing prevented it, so it kept happening.
+    Three rounds closed that by hand -- each time correcting the file a
+    reviewer happened to be reading -- and each following round found another
+    copy. The fourth was in a LIVE remediation section, with no supersession
+    marker, and its very next sentence cited the document that corrects it.
 
-    WHAT THIS MEASURES, exactly: every tracked `.md` sentence that names a
-    classified subject AND an outcome term, minus those that deny the term or
-    mark the passage as superseded. Each subject must end up with exactly one
-    term asserted about it, and it must be the authoritative one.
+    WHAT THIS MEASURES: every declared `<!-- classification: ... -->` marker in
+    a tracked document agrees with `AUTHORITATIVE_CLASSIFICATIONS`, and at
+    least one LIVE document declares each subject.
 
-    WHAT IT DOES NOT MEASURE, said plainly: prose that classifies a measurement
-    without naming it in the same sentence, and subjects absent from
-    `AUTHORITATIVE_CLASSIFICATIONS`. The denial vocabulary is a bounded list,
-    not an understanding of English -- this repository has already spent a
-    review cycle learning that a regex cannot be taught what a sentence means,
-    and the answer there was the same as here: a closed, declared surface.
+    WHAT IT DOES NOT MEASURE, said plainly: unmarked prose. Neither the wrong
+    statement nor the right one named the subject in the same sentence as the
+    term, so no sentence-scoped rule can find them, and a section-scoped one
+    flags the vocabulary definitions instead. The marker is the surface; prose
+    beside it is not checked, and a document that classifies in prose without a
+    marker is invisible here.
     """
-    claims = _classification_claims()
-    missing = sorted(set(AUTHORITATIVE_CLASSIFICATIONS) - set(claims))
+    declared = _declared_classifications()
+    missing = sorted(set(AUTHORITATIVE_CLASSIFICATIONS) - set(declared))
     assert missing == [], (
-        "no document asserts a classification for these subjects, so this "
-        f"guard measured nothing about them: {missing}"
+        "no document declares a classification marker for these subjects, so "
+        f"nothing here is being checked about them: {missing}"
     )
+    for subject in AUTHORITATIVE_CLASSIFICATIONS:
+        live = [
+            where
+            for term in declared.get(subject, {})
+            for where in declared[subject][term]
+            if not any(mark in where for mark in _WITHDRAWN)
+        ]
+        assert live, (
+            f"only withdrawn documents declare {subject}, so this guard is "
+            "satisfied by text that says of itself that nothing in it is a "
+            "current claim"
+        )
     wrong = []
     for subject, expected in AUTHORITATIVE_CLASSIFICATIONS.items():
-        for term, where in sorted(claims.get(subject, {}).items()):
+        for term, where in sorted(declared.get(subject, {}).items()):
             if term != expected:
-                wrong.append(f"{subject} is {expected}; {where} assert {term}")
+                wrong.append(f"{subject} is {expected}; {where} declare {term}")
     assert wrong == [], (
         "documents disagree about how a measurement was classified. One of "
         "these terms means an engineering problem someone can fix and the "

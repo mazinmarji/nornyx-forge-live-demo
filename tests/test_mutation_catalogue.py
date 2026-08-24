@@ -956,6 +956,43 @@ def test_a_cumulative_attack_cannot_be_recorded_as_non_compound():
     )
 
 
+def padded_edit(edits: list, attempt) -> str:
+    """Which edit is unnecessary, or "" if every one of them is required.
+
+    EXTRACTED so both of its behaviours can be exercised on injected data.
+    H05 is the only live compound with edits here and it has exactly two, both
+    genuinely required -- so reverting either repair below left the guard GREEN
+    against the real catalogue. A control that the live data cannot distinguish
+    is not a control, whatever it is named.
+
+    `attempt(kept)` runs the attack with `kept` applied and returns the
+    `Outcome`, or None when the attack still killed.
+
+    TWO RULES, and each was wrong before:
+
+      * LEAVE ONE OUT, every edit in turn. Dropping only the last proves the
+        last is required and says nothing about the others, while the docstring
+        said "each".
+      * ONLY `SURVIVED` proves an edit was needed. `INVALID_MUTATION` (the
+        partial mutant did not import) and `INVALID_TEST_TARGET` (the node was
+        not there to run) are measurements that did not happen -- FG29 and
+        FG11, committed inside FG25's own guard.
+    """
+    from mutation_workspace import Outcome  # noqa: PLC0415
+
+    for dropped in range(len(edits)):
+        kept = [edit for index, edit in enumerate(edits) if index != dropped]
+        outcome = attempt(kept)
+        if outcome is None:
+            return f"edit {dropped} is not required: the attack still kills"
+        if outcome is not Outcome.SURVIVED:
+            return (
+                f"dropping edit {dropped} produced {outcome.value}, not "
+                "SURVIVED, so nothing was measured about whether it is needed"
+            )
+    return ""
+
+
 @pytest.mark.false_green("FG25")
 def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
     """FG25. MINIMALITY MEASURED, not inferred from the edit count.
@@ -970,6 +1007,33 @@ def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
     named proof PASSING, because FileNotFoundError IS an OSError and the second
     handler still catches it. Both are required before the verifier crashes
     instead of refusing.
+
+    THREE DEFECTS WERE MEASURED IN THIS GUARD, and all three made it weaker
+    than its own name.
+
+    1. IT EXAMINED ONE OF THE TWO COMPOUNDS IT NAMES. The loop iterated
+       `historical.DIRECT`, and `SURFACE-WHOLE-CHAIN` -- a four-route chain
+       appended directly in `_historical_attacks()` with `compound=True` -- is
+       not in `DIRECT`. Measured: compounds in the catalogue
+       `['H05-DIRECT', 'SURFACE-WHOLE-CHAIN']`, items this loop examined
+       `['H05']`. A decorative route in that chain, which is exactly the padded
+       inventory FG25 is about, was invisible.
+
+    2. IT DROPPED ONLY THE LAST EDIT while the docstring said "each". For
+       H05's two edits that proves edit #2 is required and says nothing at all
+       about edit #1. Leave-one-out over every edit is what "each" means.
+
+    3. IT CREDITED THREE OUTCOMES AS ONE. `except AttackNotAdmissible:
+       continue` treated "the edit was required" as proven by any refusal, and
+       only `SURVIVED` supports that:
+
+           node ERRORED (partial mutant did not import) -> INVALID_MUTATION
+           node ABSENT from the report                  -> INVALID_TEST_TARGET
+           node SURVIVED (passed)                       -> SURVIVED
+
+       The first is FG29 and the second is FG11, both committed inside FG25's
+       own guard. The repository's correct spelling is two files over:
+       `assert refusal.value.outcome is Outcome.INVALID_BASELINE`.
     """
     import test_historical_reproof as historical  # noqa: PLC0415
     from mutation_validity import check_mutation  # noqa: PLC0415
@@ -980,31 +1044,152 @@ def test_every_compound_attack_is_proven_minimal(tmp_path: Path):
         run_node,
     )
 
-    for item in historical.DIRECT:
-        if not item.extra_mutations:
-            continue
-        # Drop the LAST edit. If the attack still kills, that edit was not
-        # necessary and the compound is padded.
-        edits = [item.mutation, *item.extra_mutations][:-1]
-        tree = faithful_copy(tmp_path / item.ident.split()[0])
-        for relative, anchor, replacement, count in edits:
-            target = tree / relative
-            before = target.read_text(encoding="utf-8")
-            after = before.replace(anchor, replacement)
-            check_mutation(relative, before, after, anchor, count)
-            target.write_text(after, encoding="utf-8", newline="")
+    compounds = [item for item in historical.INVENTORY if item.extra_mutations]
+    assert compounds, (
+        "no inventory item carries extra mutations, so this guard measured "
+        "nothing about minimality"
+    )
+    examined = 0
+    for item in compounds:
+        edits = [item.mutation, *item.extra_mutations]
+        slug = item.ident.split()[0]
 
-        report = tmp_path / f"{item.ident.split()[0]}.xml"
-        completed = run_node(tree, item.test, report=report)
-        try:
-            require_caused_failure(report, item.test, completed.stdout + completed.stderr)
-        except AttackNotAdmissible:
-            continue  # did not kill without the final edit: the edit is required
-        raise AssertionError(
-            f"{item.ident}: the attack still kills without its last edit, so "
-            "that edit is not an independently required route and this compound "
-            "is padded rather than minimal"
+        def attempt(kept, _item=item, _slug=slug):
+            nonlocal examined
+            examined += 1
+            tree = faithful_copy(tmp_path / f"{_slug}-{examined}")
+            for relative, anchor, replacement, count in kept:
+                target = tree / relative
+                before = target.read_text(encoding="utf-8")
+                after = before.replace(anchor, replacement)
+                check_mutation(relative, before, after, anchor, count)
+                target.write_text(after, encoding="utf-8", newline="")
+
+            report = tmp_path / f"{_slug}-{examined}.xml"
+            completed = run_node(tree, _item.test, report=report)
+            try:
+                require_caused_failure(
+                    report, _item.test, completed.stdout + completed.stderr,
+                )
+            except AttackNotAdmissible as refusal:
+                return refusal.outcome
+            return None
+
+        padded = padded_edit(edits, attempt)
+        assert padded == "", f"{item.ident}: {padded}. This compound is padded "            "rather than minimal: it looks like defence in depth and is one "            "route plus decoration"
+    assert examined >= len(compounds) * 2, (
+        f"only {examined} leave-one-out runs happened across {len(compounds)} "
+        "compounds; a compound with fewer than two edits is not a compound"
+    )
+
+
+#: Which leave-one-out proof covers each compound attack's minimality.
+#:
+#: A COMPOUND IS ONLY DEFENCE IN DEPTH IF EACH COMPONENT IS SEPARATELY
+#: NECESSARY, and the guard above can only measure compounds whose edits it
+#: holds. `SURFACE-WHOLE-CHAIN` is appended directly by `_historical_attacks()`
+#: with no `extra_mutations`; its four routes live in
+#: `GOVERNANCE_SURFACE_CHAIN` and their leave-one-out proof is the
+#: per-route defence-in-depth test. That was true and unstated, so the guard
+#: above read as covering both compounds while examining one.
+COMPOUND_MINIMALITY_PROOFS = {
+    "H05-DIRECT": "test_every_compound_attack_is_proven_minimal",
+    "SURFACE-WHOLE-CHAIN": "test_removing_one_guard_leaves_the_property_protected",
+}
+
+
+#: (label, what each leave-one-out attempt returns, is the compound padded).
+#:
+#: INJECTED, because the live catalogue cannot distinguish these. H05 is the
+#: only compound carrying edits and it has exactly two, both genuinely
+#: required -- so reverting either rule left the guard green against the real
+#: data. A control the live corpus cannot exercise is not a control.
+MINIMALITY_SPECIMENS = [
+    ("every edit required", ["SURVIVED", "SURVIVED", "SURVIVED"], False),
+    ("the first edit is decoration", [None, "SURVIVED", "SURVIVED"], True),
+    ("the middle edit is decoration", ["SURVIVED", None, "SURVIVED"], True),
+    ("the last edit is decoration", ["SURVIVED", "SURVIVED", None], True),
+    ("a partial mutant did not import", ["INVALID_MUTATION", "SURVIVED"], True),
+    ("the node was not there to run", ["INVALID_TEST_TARGET", "SURVIVED"], True),
+    ("an invalid environment", ["INVALID_MUTATION_ENVIRONMENT", "SURVIVED"], True),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "outcomes", "padded"), MINIMALITY_SPECIMENS,
+    ids=[case[0] for case in MINIMALITY_SPECIMENS],
+)
+def test_minimality_requires_every_edit_and_a_real_measurement(
+    label: str, outcomes: list, padded: bool,
+):
+    """Both rules, on data that distinguishes them.
+
+    `the first edit is decoration` fails only under leave-one-out: dropping
+    the LAST edit would return SURVIVED and the compound would pass while its
+    first edit does nothing. The three invalid-outcome rows fail only when the
+    exact outcome is required -- swallowing them credits "the edit was needed"
+    for a measurement that never happened, which is FG29 and FG11 inside
+    FG25's own guard.
+    """
+    from mutation_workspace import Outcome  # noqa: PLC0415
+
+    # THE FAKE IS INDEX-AWARE, and it has to be. My first version returned the
+    # outcomes in call order regardless of which edit was dropped, so a mutant
+    # that always dropped the LAST edit consumed the same sequence and the
+    # control could not fail. Distinguishable edits make "which one was left
+    # out" observable, which is the property under test.
+    edits = [("f", f"anchor-{index}", "b", 1) for index in range(len(outcomes))]
+
+    def attempt(kept):
+        missing = [edit for edit in edits if edit not in kept]
+        assert len(missing) == 1, (
+            "the guard dropped " + str(len(missing)) + " edits, not exactly one"
         )
+        value = outcomes[edits.index(missing[0])]
+        return None if value is None else Outcome(value)
+
+    verdict = padded_edit(edits, attempt)
+    assert bool(verdict) is padded, (
+        label + ": padded_edit returned " + repr(verdict)
+        + " for outcomes " + repr(outcomes)
+    )
+
+
+def test_every_compound_attack_has_a_leave_one_out_proof():
+    """The coverage claim, checked rather than implied.
+
+    Measured before: compounds in the catalogue
+    `['H05-DIRECT', 'SURFACE-WHOLE-CHAIN']`; items the minimality loop examined
+    `['H05']`. A decorative route in the four-route chain -- the padded
+    inventory FG25 exists to catch -- was invisible to the guard named for it.
+    """
+    import test_historical_reproof as historical  # noqa: PLC0415
+
+    declared = set(COMPOUND_MINIMALITY_PROOFS)
+    assert declared == COMPOUND_ATTACKS, (
+        "the compounds and their declared proofs have drifted apart: "
+        + repr(sorted(declared ^ COMPOUND_ATTACKS))
+    )
+    defined = set()
+    for module in ("tests/test_mutation_catalogue.py",
+                   "tests/test_historical_reproof.py"):
+        source = (ROOT / module).read_text(encoding="utf-8")
+        defined.update(
+            node.name for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+        )
+    missing = sorted(
+        name for name in COMPOUND_MINIMALITY_PROOFS.values() if name not in defined
+    )
+    assert missing == [], (
+        "these declared minimality proofs do not exist: " + repr(missing)
+    )
+    # The chain proof is parametrised per route, so it covers each component
+    # exactly when it runs over every route the compound removes.
+    assert len(historical.GOVERNANCE_SURFACE_CHAIN) >= 2, (
+        "the governance-surface chain has fewer than two routes, so calling it "
+        "a compound is the padding this guard refuses"
+    )
 
 
 @pytest.mark.false_green("FG38")

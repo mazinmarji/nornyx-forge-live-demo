@@ -91,7 +91,31 @@ class _Recorder:
     def record_decision(self, *_args: object, **_kwargs: object) -> None:
         return None
 
+    #: The vocabulary the REAL recorder accepts, copied from
+    #: `nornyx.agentic.authz.PHASE_OBSERVATION` and pinned against it by
+    #: `test_the_double_refuses_every_event_type_production_refuses`.
+    PRODUCTION_OBSERVATIONS = frozenset({
+        "agent_invoked", "data_shared", "handoff_completed",
+        "handoff_initiated", "identity_revoked", "runtime_failed",
+        "tool_invoked", "trust_zone_crossed",
+    })
+
     def record_observation(self, name: str, **_kwargs: object) -> None:
+        """Refuses exactly what production refuses.
+
+        THIS APPENDED ANY STRING. The real recorder raises `ValueError` for any
+        type outside `PHASE_OBSERVATION`, and the boundary was calling it with
+        `action_withheld` -- not in that set. So on the real recorder the
+        WITHHELD path raised past the boundary: an unhandled 500 instead of a
+        governed DENY, and no artifact at all.
+
+        A previous round repaired this double's `validate()` OUTPUT shape and
+        left the INPUT contract unchecked, so the vocabulary drifted in the one
+        direction still unguarded. A double that accepts what production
+        rejects makes every test using it a test of the double.
+        """
+        if name not in self.PRODUCTION_OBSERVATIONS:
+            raise ValueError(f"{name!r} is not a post-action observation")
         self.observations.append(name)
 
     def stream(self) -> list[dict[str, object]]:
@@ -119,10 +143,11 @@ class _Recorder:
             "status": "pass",
             "counts_by_type": counts,
             "event_count": len(self.observations),
-            "tools_executed": [
-                name for name in self.observations if name == "tool_invoked"
-            ],
         }
+        # NO `tools_executed`. It was added here believing it was a top-level
+        # production key; it is not -- it lives under `safety` and is a bool.
+        # The guard that should have caught this invented key was itself
+        # flattening nested dicts, so it credited the invention.
 
 
 #: A pinned revision for tests whose subject is the action binding, not the
@@ -239,8 +264,13 @@ def test_high_risk_is_withheld_even_when_nornyx_allows(tmp_path: Path) -> None:
     # `EvidenceRecorder.validate()` emits. These read `evidence["observations"]`
     # -- a key that exists only in the test double, so the assertion was about
     # the double rather than about anything production writes.
+    # `effect_withheld`, the counterpart to `effect_release`. This read
+    # `counts_by_type["action_withheld"]` -- a term Nornyx's observation
+    # vocabulary does not define, which RAISED on the real recorder.
+    withheld = decision.evidence["effect_withheld"]
+    assert withheld["withheld"] is True, decision.evidence
+    assert withheld["code"], "the withholding carries no code"
     counts = decision.evidence["counts_by_type"]
-    assert counts.get("action_withheld"), decision.evidence
     assert not counts.get("tool_invoked"), (
         "a high-risk act was released; the evidence records the effect running"
     )

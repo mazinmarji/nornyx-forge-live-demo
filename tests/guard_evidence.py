@@ -14,8 +14,11 @@ applied where the reviewer was pointing:
 
 The second round's fix made the third round's defect worse rather than better:
 extracting `exercised_assertions` created a canonical implementation and left
-the old copy standing, which is FG26 -- "a guard and its owner test two
-different copies of the same rule" -- a class this repository already names.
+the old copy standing, which is FG40 -- "a repaired rule, when a second copy of it was left
+standing". That class did not exist when this was written: the sentence said
+"a class this repository already names" and named FG26, which is about a probe
+mutating the governed tree it measures. The class is real -- three rounds found
+it -- so it was added to the inventory rather than the sentence being softened.
 
 So the rule has ONE home. `test_no_module_reimplements_the_evidence_screen`
 refuses the discredited spellings anywhere else in `tests/`, because a rule with
@@ -85,6 +88,70 @@ ARITHMETIC = {
 }
 MAX_OPERAND = 2 ** 32
 
+#: `ast.TryStar` exists from 3.11; on older interpreters it does not.
+TRY_NODES = tuple(
+    node for node in (ast.Try, getattr(ast, "TryStar", None)) if node is not None
+)
+
+#: `ast.Match` exists from 3.10.
+MATCH_NODE = getattr(ast, "Match", None)
+
+#: Statement types the walker does not dispatch on, and why that is safe.
+#:
+#: DERIVED AGAINST THE GRAMMAR, not against what a reviewer happened to name.
+#: Three consecutive review rounds found a shape the screen missed, and each
+#: time I added that shape and believed the list complete. `ast.TryStar` and
+#: `ast.Match` were missing for exactly as long as they have existed in Python,
+#: and would have been red the day this module was written if the question had
+#: been asked of the grammar instead of of me.
+#:
+#: A statement here falls through to the generic child walk, which is correct
+#: when it neither introduces a scope, nor a conditional body, nor a way to
+#: swallow a failure.
+UNDISPATCHED_STATEMENTS = {
+    "AnnAssign": "an annotation or a plain binding; no body",
+    "Assert": "counted, not walked into",
+    "Assign": "no body",
+    "AugAssign": "no body",
+    "Break": "no body; handled as a terminator",
+    "ClassDef": "a body that executes at definition time and holds no guard",
+    "Continue": "no body; handled as a terminator",
+    "Delete": "no body",
+    "Expr": "a bare expression; its call is inspected in place",
+    "Global": "a declaration",
+    "Import": "no body",
+    "ImportFrom": "no body",
+    "Nonlocal": "a declaration",
+    "Pass": "no body",
+    "Raise": "counted, not walked into",
+    "Return": "no body; handled as a terminator",
+    "TypeAlias": "a declaration",
+}
+
+#: Expression types `_decide` does not fold, and why.
+#:
+#: Same derivation, same reason. `JoinedStr` and `Subscript` were on this list
+#: in spirit and in neither table in fact, which is how `assert f"{1} == {2}"`
+#: -- fixed at parse time, one character from a real assertion -- was credited.
+UNFOLDED_EXPRESSIONS = {
+    "Attribute": "reads state",
+    "Await": "reads state",
+    "Call": "reads state",
+    "DictComp": "iterates; folding it is interpreting",
+    "Ellipsis": "deprecated alias of Constant",
+    "FormattedValue": "folded only as part of its JoinedStr",
+    "GeneratorExp": "iterates; folding it is interpreting",
+    "Lambda": "a callable, not a value",
+    "ListComp": "iterates; folding it is interpreting",
+    "NamedExpr": "binds as a side effect; out of scope for a pure folder",
+    "SetComp": "iterates; folding it is interpreting",
+    "Slice": "folded only as part of its Subscript",
+    "Starred": "unpacking, not a value",
+    "Yield": "suspends",
+    "YieldFrom": "suspends",
+}
+
+
 #: Handler types that stop an assertion failing the test.
 SWALLOWING = frozenset({"AssertionError", "Exception", "BaseException"})
 
@@ -132,8 +199,20 @@ def _literal_or_none(node: ast.expr):
     return value
 
 
-def constant_bindings(function: ast.AST) -> dict:
-    """Names whose EVERY binding in this guard is a constant literal.
+def constant_bindings(function: ast.AST, module: ast.AST | None = None) -> dict:
+    """Names whose EVERY binding is an immutable constant literal.
+
+    THREE SPELLINGS ESCAPED THIS, and one of them was demonstrated end to end
+    on a real guard -- FG21's owner went from pristine RED to gutted GREEN by
+    adding ONE module-level line and indenting the body under it:
+
+        _OFF = False                      module-level, not seen at all
+        dead = False; gone = dead         an alias, not seen
+        first, second = False, True       tuple unpacking, not seen
+
+    All three are `dead = False; if dead:` with a rename, and that shape is
+    pinned as a specimen. A rule that catches the pinned spelling and not its
+    synonyms is a rule about the spelling.
 
     A NAME REBOUND FROM ANYTHING ELSE IS NOT IN HERE. If a guard computes a
     value and asserts it, that is a real assertion whatever its first binding
@@ -143,6 +222,22 @@ def constant_bindings(function: ast.AST) -> dict:
     """
     constants: dict = {}
     rebound: set = set()
+
+    # MODULE-LEVEL CONSTANTS ARE IN SCOPE INSIDE THE GUARD. Seeing only the
+    # function's own assignments meant a module-level `_OFF = False` was
+    # invisible, so `if _OFF:` was undecidable and both branches were credited.
+    # Read first, so a name the guard rebinds locally still disqualifies it.
+    if module is not None:
+        for node in getattr(module, "body", []):
+            if not isinstance(node, ast.Assign):
+                continue
+            literal = _literal_or_none(node.value)
+            if literal is _NOT_LITERAL:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = literal
+
     for node in ast.walk(function):
         if isinstance(node, ast.Assign):
             targets = [t for t in node.targets if isinstance(t, ast.Name)]
@@ -153,11 +248,27 @@ def constant_bindings(function: ast.AST) -> dict:
                 # rule that folds one but not the other is one rename away from
                 # useless. `literal_eval` decides membership of the class; it
                 # executes nothing.
-                literal = _literal_or_none(node.value) if not complex_target else None
+                # `... if not complex_target else None` MEANT to disqualify
+                # and did the opposite: `None is not _NOT_LITERAL`, so a
+                # chained assignment bound a COMPUTED name to the constant
+                # `None`. Measured: `results = report['x'] = run()` gave
+                # `{'results': None}`, and `assert results == expected` was
+                # then judged fixed at parse time -- a genuine guard refused.
+                literal = (
+                    _literal_or_none(node.value)
+                    if not complex_target else _NOT_LITERAL
+                )
                 if literal is not _NOT_LITERAL:
                     if target.id in constants and constants[target.id] != literal:
                         rebound.add(target.id)
                     constants[target.id] = literal
+                elif isinstance(node.value, ast.Name) and not complex_target:
+                    # AN ALIAS IS DEFERRED, not disqualified. `gone = dead`
+                    # binds a constant when `dead` does, and marking it rebound
+                    # here meant the alias pass below could never rescue it --
+                    # which is the whole shape: `dead = False; if dead:` with
+                    # one extra line.
+                    pass
                 else:
                     rebound.add(target.id)
         elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
@@ -172,8 +283,69 @@ def constant_bindings(function: ast.AST) -> dict:
             for name in ast.walk(node.optional_vars):
                 if isinstance(name, ast.Name):
                     rebound.add(name.id)
-    return {name: value for name, value in constants.items()
-            if name not in rebound}
+
+    # TUPLE UNPACKING OF A LITERAL TUPLE. `first, second = False, True` binds
+    # two constants and was recorded as neither, because the target is a Tuple
+    # rather than a Name.
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Tuple):
+                continue
+            values = _literal_or_none(node.value)
+            names = [inner for inner in target.elts if isinstance(inner, ast.Name)]
+            if (values is _NOT_LITERAL
+                    or not isinstance(values, tuple)
+                    or len(names) != len(target.elts)
+                    or len(values) != len(names)):
+                for inner in ast.walk(target):
+                    if isinstance(inner, ast.Name):
+                        rebound.add(inner.id)
+                continue
+            for inner, value in zip(names, values):
+                if inner.id in constants and constants[inner.id] != value:
+                    rebound.add(inner.id)
+                constants[inner.id] = value
+
+    settled = {name: value for name, value in constants.items()
+               if name not in rebound}
+
+    # ALIASES, to a fixed point. `dead = False; gone = dead` binds `gone` to a
+    # constant just as surely, and the alias was the cheapest of the three
+    # escapes: one extra line in the guard being gutted.
+    #
+    # Bounded by the number of assignments, so it terminates: each pass can
+    # only add names, and there are finitely many.
+    for _ in range(len(list(ast.walk(function)))):
+        added = False
+        for node in ast.walk(function):
+            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+                continue
+            source = node.value.id
+            if source not in settled:
+                continue
+            for target in node.targets:
+                if (isinstance(target, ast.Name)
+                        and target.id not in rebound
+                        and target.id not in settled):
+                    settled[target.id] = settled[source]
+                    added = True
+        if not added:
+            break
+
+    # AN ALIAS OF SOMETHING UNKNOWN IS UNKNOWN. Deferring above means an alias
+    # whose source never resolves must be disqualified here, or a computed
+    # value would be treated as absent rather than as real.
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+            continue
+        if node.value.id in settled:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                rebound.add(target.id)
+    return {name: value for name, value in settled.items() if name not in rebound}
 
 
 def fold(node: ast.expr, bindings: dict | None = None):
@@ -254,6 +426,31 @@ def _decide(node: ast.expr, bindings: dict):
         if bool(body) != bool(orelse):
             raise Undecidable
         return body
+    if isinstance(node, ast.JoinedStr):
+        # AN F-STRING WITH NOTHING TO INTERPOLATE IS A LITERAL, and one with
+        # decidable parts is decidable. `assert f"a message"` is `assert
+        # "a message"` with an f in front, and the plain form WAS caught while
+        # this was not -- a one-character edit from a real assertion, reading
+        # exactly like one.
+        parts = []
+        for piece in node.values:
+            if isinstance(piece, ast.Constant):
+                parts.append(str(piece.value))
+                continue
+            if not isinstance(piece, ast.FormattedValue):
+                raise Undecidable
+            inner = fold(piece.value, bindings)
+            if inner is UNDECIDED or piece.format_spec is not None:
+                raise Undecidable
+            parts.append(str(inner))
+        return "".join(parts)
+    if isinstance(node, ast.Subscript):
+        # A literal indexed by a literal is a literal. `assert (1, 2)[0]` and
+        # `assert 'abc'[0] == 'a'` sat inside the folder's own vocabulary and
+        # were credited as real assertions.
+        container = _decide(node.value, bindings)
+        index = _decide(node.slice, bindings)
+        return container[index]
     if isinstance(node, ast.Compare):
         left = _decide(node.left, bindings)
         for operation, right_node in zip(node.ops, node.comparators):
@@ -274,7 +471,8 @@ def _decide(node: ast.expr, bindings: dict):
     raise Undecidable
 
 
-def cannot_fail(test: ast.expr, function: ast.AST) -> bool:
+def cannot_fail(test: ast.expr, function: ast.AST,
+                module: ast.AST | None = None) -> bool:
     """Is this assertion's subject fixed before the suite runs?
 
     `assert True` is the one everybody names and it is not the interesting one.
@@ -282,7 +480,7 @@ def cannot_fail(test: ast.expr, function: ast.AST) -> bool:
     the audit reported the class proven: every certification node passed, rc 0,
     collection identical to pristine.
     """
-    folded = fold(test, constant_bindings(function))
+    folded = fold(test, constant_bindings(function, module))
     if folded is not UNDECIDED:
         return bool(folded)
     if isinstance(test, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
@@ -319,6 +517,18 @@ def is_expected_refusal(expr: ast.expr) -> bool:
     credited as an expected-refusal block.
     """
     return is_pytest_call(expr, "raises")
+
+
+def _is_non_empty(value) -> bool:
+    """Does this folded value iterate at least once?
+
+    Anything without a length is treated as iterating, which is the permissive
+    direction: an undecidable loop body must be credited, never crashed on.
+    """
+    try:
+        return len(value) > 0
+    except TypeError:
+        return True
 
 
 def _cannot_raise(block: list) -> bool:
@@ -375,12 +585,12 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
     return False
 
 
-def executed_nodes(function: ast.AST) -> list:
+def executed_nodes(function: ast.AST, module: ast.AST | None = None) -> list:
     """(node, swallowed) for every node the guard's own body actually runs.
 
     CONTAINMENT IS NOT EXECUTION, and `ast.walk` only answers containment.
     """
-    bindings = constant_bindings(function)
+    bindings = constant_bindings(function, module)
     found: list = []
 
     def statements(block: list, swallowed: bool) -> None:
@@ -468,11 +678,27 @@ def executed_nodes(function: ast.AST) -> list:
         if isinstance(node, (ast.For, ast.AsyncFor)):
             visit(node.iter, swallowed)
             decided = fold(node.iter, bindings)
-            if decided is UNDECIDED or len(decided) > 0:
+            # `len()` ON A FOLDED NON-SEQUENCE RAISES, and this module's own
+            # docstring says the screen "can never fail a genuine one". There
+            # was a third outcome it did not admit to: crash. `for _ in rows`
+            # where `rows` folds to None, an int, or a bool raised `TypeError`
+            # straight out of the screen, so every consumer ERRORED rather than
+            # reaching a verdict.
+            if decided is UNDECIDED or _is_non_empty(decided):
                 statements(node.body, swallowed)
             statements(node.orelse, swallowed)
             return
-        if isinstance(node, ast.Try):
+        if isinstance(node, TRY_NODES):
+            # `ast.TryStar` IS A DIFFERENT NODE. `except*` arrived in 3.11 and
+            # this dispatched on `ast.Try` alone, so an exception group handler
+            # fell to the generic walk with `swallowed=False`:
+            #
+            #     try: assert real
+            #     except* AssertionError: pass      counted 1, executes 0
+            #
+            # Measured end to end on a copy of a kill-bearing guard carrying 14
+            # domain-collapse attacks: pristine 4, gutted 4, both audit guards
+            # green. Nothing in the repository mentioned `TryStar` at all.
             statements(node.body, swallowed or swallows(node))
             # A HANDLER FOR A BODY THAT CANNOT RAISE NEVER RUNS.
             # `try: pass / except Exception: raise AssertionError('never')`
@@ -482,6 +708,21 @@ def executed_nodes(function: ast.AST) -> list:
                     statements(handler.body, swallowed)
             statements(node.orelse, swallowed)
             statements(node.finalbody, swallowed)
+            return
+        if MATCH_NODE is not None and isinstance(node, MATCH_NODE):
+            # EVERY CASE BODY WAS WALKED AS IF TAKEN. `match` arrived in 3.10
+            # and had no dispatch, so it fell to the generic walk and a guard
+            # whose assertions sit in an unreachable `case` counted them.
+            #
+            # A case is credited unless its pattern is one this module can
+            # decide is unmatched -- which today means none of them, so every
+            # case is credited and the subject expression is visited. That is
+            # the permissive direction, and it is written down rather than
+            # implied: what it closes is the `swallowed` flag being lost, not
+            # pattern reachability.
+            visit(node.subject, swallowed)
+            for case in node.cases:
+                statements(case.body, swallowed)
             return
         if isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
@@ -495,7 +736,7 @@ def executed_nodes(function: ast.AST) -> list:
     return found
 
 
-def exercised_assertions(function: ast.AST) -> int:
+def exercised_assertions(function: ast.AST, module: ast.AST | None = None) -> int:
     """How many things this guard EXECUTES that can fail the test.
 
     THE ONE IMPLEMENTATION. Every consumer calls this; a second copy is refused
@@ -505,10 +746,11 @@ def exercised_assertions(function: ast.AST) -> int:
     """
     return sum(
         1
-        for node, swallowed in executed_nodes(function)
+        for node, swallowed in executed_nodes(function, module)
         if not swallowed
         and (
-            (isinstance(node, ast.Assert) and not cannot_fail(node.test, function))
+            (isinstance(node, ast.Assert)
+             and not cannot_fail(node.test, function, module))
             or isinstance(node, ast.Raise)
             or (isinstance(node, ast.withitem)
                 and is_expected_refusal(node.context_expr))

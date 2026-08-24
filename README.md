@@ -21,7 +21,14 @@ This repository is a public reference implementation for demonstrating three Nor
 - **Nornyx** checks the generated BRD contract, the architecture contract, the
   runtime network, and the control/evidence boundary. Today `forge_control.nyx`
   and the generated BRD contract PASS; `architecture_governance.nyx` and
-  `runtime_network.nyx` do NOT, because no human approval record exists. Reading
+  `runtime_network.nyx` do NOT. `runtime_network.nyx` fails because no human
+  approval record exists. `architecture_governance.nyx` fails for that reason
+  AND for a second, different external one: it additionally requires an
+  AUTHENTICATED INDEPENDENT INSPECTION, reported as `CHANGE_EVIDENCE_MISSING`
+  and `SOD_EVIDENCE_PRODUCER_UNKNOWN`. This sentence gave ONE cause for both,
+  so a reader was told a single human signature clears them; it does not.
+  `CLAUDE.md` and `scripts/check_pre_approval_baseline.py` both draw the same
+  distinction. Reading
   an approval-blocked result as "validates" is the substitution this repository
   keeps finding, so the word is not used for it here.
 - **FastAPI** serves the live governed customer-operations application and dashboard.

@@ -777,13 +777,43 @@ def _production_validate_keys() -> set:
     from nornyx.agentic import validate_runtime_events  # noqa: PLC0415
 
     tree = _ast.parse(inspect.getsource(validate_runtime_events))
+    outer = tree.body[0]
+
+    # TOP-LEVEL KEYS OF THE RETURNED DICT, not every `Dict` in the function.
+    #
+    # This used to `ast.walk` the whole source and union every dict literal's
+    # keys, so the NESTED `safety` sub-dict was credited as top-level. Measured
+    # against a report from the genuine recorder: 19 derived names against 14
+    # actual top-level keys, and `tools_executed` is not top-level at all -- it
+    # lives under `safety` and is a BOOL, not a list.
+    #
+    # Consequences, all three of which this guard exists to prevent:
+    #   * the double emitted a top-level `tools_executed` LIST production never
+    #     emits, and the drift test credited it;
+    #   * `_reports_a_release` grew a clause reading that key, dead on every
+    #     real report;
+    #   * both guards stayed green either way.
+    #
+    # An anti-drift guard that flattens the shape it is comparing has the
+    # defect it was built to catch.
+    nested = {
+        node
+        for outer_node in _ast.walk(outer)
+        if isinstance(outer_node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+        and outer_node is not outer
+        for node in _ast.walk(outer_node)
+    }
     keys: set = set()
-    for node in _ast.walk(tree):
-        if isinstance(node, _ast.Dict):
-            keys |= {
-                key.value for key in node.keys
-                if isinstance(key, _ast.Constant) and isinstance(key.value, str)
-            }
+    for node in _ast.walk(outer):
+        if not isinstance(node, _ast.Return) or node in nested:
+            continue
+        if not isinstance(node.value, _ast.Dict):
+            continue
+        keys |= {
+            key.value for key in node.value.keys
+            if isinstance(key, _ast.Constant) and isinstance(key.value, str)
+        }
+    assert keys, "no report shape could be derived; the extraction is broken"
     return keys
 
 
@@ -792,6 +822,48 @@ FORGE_ADDED_KEYS = frozenset({
     "nornyx_decision", "action_approval_present", "action_binding",
     "approval_authentication", "effect_release",
 })
+
+
+#: Keys that live INSIDE the report's nested `safety` object.
+#:
+#: Named so the flattening defect has a direct assertion. Widening the derived
+#: set only ever makes the two drift guards MORE permissive, so neither of them
+#: can fail when the derivation flattens -- I measured exactly that: restoring
+#: the flatten left both green, because with the invented key removed there was
+#: nothing left to violate a larger allowance.
+KEYS_NESTED_UNDER_SAFETY = frozenset({
+    "tools_executed", "network_used", "models_called",
+    "producers_executed", "external_connectors_used",
+})
+
+
+def test_the_report_shape_is_the_top_level_keys_and_not_the_nested_ones():
+    """The derivation must not flatten the shape it is comparing.
+
+    It used to `ast.walk` the whole function and union every dict literal's
+    keys, so the nested `safety` sub-dict was credited as top-level: 19 derived
+    names against 14 real ones. `tools_executed` is not a top-level key at all
+    -- it is a BOOL under `safety` -- and on the strength of that credit the
+    double grew a top-level `tools_executed` LIST and `_reports_a_release` grew
+    a clause reading it, dead on every real report.
+
+    An anti-drift guard that flattens has the defect it was built to catch.
+    """
+    derived = _production_validate_keys()
+    assert "safety" in derived, (
+        "the derivation no longer sees the report's own `safety` key, so it is "
+        "not reading the returned dict at all"
+    )
+    leaked = sorted(derived & KEYS_NESTED_UNDER_SAFETY)
+    assert leaked == [], (
+        "these keys live inside the nested `safety` object and the derivation "
+        "credits them as top-level, which is how a key production never emits "
+        f"came to be allowed: {leaked}"
+    )
+    assert len(derived) == 14, (
+        "the production report has 14 top-level keys; the derivation returns "
+        f"{len(derived)}: {sorted(derived)}"
+    )
 
 
 def test_the_evidence_double_produces_the_shape_production_produces():
@@ -966,4 +1038,132 @@ def test_a_rolled_back_ledger_does_not_invite_a_signing_ceremony(tmp_path: Path)
         "a rolled-back ledger wrote a pending request. An operator following "
         "it spends a human approval ceremony on a digest the ledger refuses "
         f"before it ever reads the grant: {sorted(set(after) - set(before))}"
+    )
+
+
+def _production_observation_vocabulary() -> set:
+    """`PHASE_OBSERVATION` from the installed package."""
+    from nornyx.agentic import authz  # noqa: PLC0415
+
+    return set(authz.PHASE_OBSERVATION)
+
+
+def test_the_boundary_only_records_event_types_production_accepts():
+    """The INPUT contract, which is the half that was still unguarded.
+
+    A previous round repaired the double's `validate()` OUTPUT shape and left
+    its input alone. `_Recorder.record_observation` appended any string, and
+    the boundary was calling it with `action_withheld` -- a term the real
+    `EvidenceRecorder` refuses, because `PHASE_OBSERVATION` does not contain
+    it. `tool_invoked`, the SUCCESS terminal, does.
+
+    So the release path recorded a legal event and the REFUSAL path raised
+    `ValueError` past the boundary: an unhandled 500 rather than a governed
+    DENY, and no artifact at all -- no report, no events, no pending request.
+
+    Read from the source, so a type recorded only on a rare branch is caught.
+    """
+    import inspect  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    tree = ast.parse(inspect.getsource(nornyx_runtime))
+    recorded = {
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "record_observation"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    assert recorded, "the boundary records no observation at all"
+    accepted = _production_observation_vocabulary()
+    invented = sorted(recorded - accepted)
+    assert invented == [], (
+        "the boundary records event types the production recorder REFUSES, so "
+        "these branches raise instead of producing evidence: " + repr(invented)
+    )
+
+
+def test_the_double_refuses_every_event_type_production_refuses():
+    """The double's vocabulary must be production's, not a superset.
+
+    A double that accepts what production rejects makes every test using it a
+    test of the double -- which is exactly how the withheld branch shipped
+    raising.
+    """
+    from test_governance_failure import _Recorder  # noqa: PLC0415
+
+    accepted = _production_observation_vocabulary()
+    assert set(_Recorder.PRODUCTION_OBSERVATIONS) == accepted, (
+        "the double's vocabulary has drifted from "
+        "`nornyx.agentic.authz.PHASE_OBSERVATION`: "
+        + repr(sorted(set(_Recorder.PRODUCTION_OBSERVATIONS) ^ accepted))
+    )
+    double = _Recorder()
+    with pytest.raises(ValueError, match="not a post-action observation"):
+        double.record_observation("action_withheld")
+    double.record_observation("tool_invoked")
+    assert double.observations == ["tool_invoked"]
+
+
+def test_a_request_context_mismatch_does_not_invite_a_signing_ceremony(
+    tmp_path: Path,
+):
+    """A check that runs before any approval is read cannot be cleared by one.
+
+    `_request_context_mismatch` runs BEFORE approval validation and before the
+    ledger claim, deliberately, so a mismatched request cannot spend a grant
+    belonging to the request it is imitating. The branch assigned `released`
+    and `release_reason` and never touched `withheld_code`, so it kept its
+    `HUMAN_APPROVAL_REQUIRED` default -- the most clearable code there is.
+
+    Measured before the repair: a caller passing `action_request` for mission
+    OTHER while executing mission M got
+
+        DENY / HUMAN_APPROVAL_REQUIRED, effect ran 0 times
+        pending: REQ-M_attempt-1--<digest>.request.json
+                 "Sign this exact request_digest..."
+
+    and signing that exact digest with a NEW valid grant returned the same
+    refusal. Two ceremonies, no release. `APPROVAL_CLEARABLE_CODES` was minted
+    to remove exactly this, and was defeated by a branch that never assigned.
+
+    `action_request` is a public parameter of `evaluate_and_execute` that no
+    in-repo caller supplies, so this is reachable by a consumer of the boundary
+    API rather than by the shipped app. That is a reason to state the reach
+    precisely, not a reason to leave the code wrong.
+    """
+    root = tmp_path / "repo"
+    root.mkdir(parents=True, exist_ok=True)
+    boundary = _permissive_boundary(root, as_of=NOW)
+    pending = root / "evidence/runtime/pending"
+
+    subject = boundary.runtime_subject
+    foreign = canonical_action_request(
+        mission_id="OTHER-MISSION", risk="high",
+        subject_revision=subject.governed_subject_digest if subject else "",
+        descriptor=DESCRIPTOR, attempt=1,
+    )
+    effect = _Effect()
+    decision = boundary.evaluate_and_execute(
+        mission_id="CASE-R6", risk="high", action=effect,
+        action_descriptor=DESCRIPTOR, attempt=1,
+        action_approval=signed_grant(foreign),
+        action_request=foreign,
+    )[0]
+
+    assert decision.effect == "DENY", decision
+    assert effect.runs == 0, "a mismatched request released an effect"
+    assert decision.code == "REQUEST_CONTEXT_MISMATCH", (
+        "a request that does not describe this execution reports "
+        + str(decision.code) + ", which tells an operator to obtain an "
+        "approval for a check that runs before any approval is read"
+    )
+    written = sorted(path.name for path in pending.glob("*")) if pending.is_dir() else []
+    assert written == [], (
+        "a pending request was written for a refusal no signature can clear: "
+        + repr(written)
     )

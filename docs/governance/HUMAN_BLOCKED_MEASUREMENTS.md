@@ -5,6 +5,9 @@ authorizer they depend on will not load until a genuine human approval has been
 adopted. They are recorded here rather than counted anywhere else.
 
 **They are not `INVALID_BASELINE`.** That outcome describes an attack that
+
+<!-- classification: D1 = HUMAN_BLOCKED -->
+<!-- classification: D2 = HUMAN_BLOCKED -->
 entered the admission protocol and failed step 2. These never entered it: the
 precondition is external, and no amount of machine work changes that.
 

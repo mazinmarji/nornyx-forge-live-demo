@@ -97,8 +97,8 @@ def _defensive_evidence(source: str, name: str) -> int:
     Each is named as repaired in `tests/guard_evidence.py`, and each survived
     here because the repair was applied where the reviewer was pointing.
 
-    That is FG26 -- a guard and its owner testing two different copies of the
-    same rule -- so there is no copy any more. `require_*` admission calls stay
+    That is FG40 -- a repaired rule with a second copy left standing -- so there
+    is no copy any more. `require_*` admission calls stay
     local, because they are this module's own vocabulary and not part of the
     shared screen.
     """
@@ -109,15 +109,19 @@ def _defensive_evidence(source: str, name: str) -> int:
     ]
     if len(found) != 1:
         return 0
+    # THE MODULE IS PASSED. Without it a module-level `_OFF = False` is
+    # invisible, and a guard indented under `if _OFF:` counts every assertion
+    # it no longer executes -- demonstrated end to end on a copy of a
+    # kill-bearing body carrying 14 domain-collapse attacks.
     admission = sum(
         1
-        for node, swallowed in executed_nodes(found[0])
+        for node, swallowed in executed_nodes(found[0], tree)
         if not swallowed
         and isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id.startswith("require_")
     )
-    return exercised_assertions(found[0]) + admission
+    return exercised_assertions(found[0], tree) + admission
 
 
 @pytest.mark.parametrize(("label", "template"), SPECIMENS, ids=[s[0] for s in SPECIMENS])

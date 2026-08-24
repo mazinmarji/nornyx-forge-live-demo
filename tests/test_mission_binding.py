@@ -172,8 +172,13 @@ def test_the_mismatch_reason_reaches_the_evidence(tmp_path: Path):
     # `EvidenceRecorder.validate()` emits. These read `evidence["observations"]`
     # -- a key that exists only in the test double, so the assertion was about
     # the double rather than about anything production writes.
+    # `effect_withheld`, the counterpart to `effect_release`. This read
+    # `counts_by_type["action_withheld"]` -- a term Nornyx's observation
+    # vocabulary does not define, which RAISED on the real recorder.
+    withheld = decision.evidence["effect_withheld"]
+    assert withheld["withheld"] is True, decision.evidence
+    assert withheld["code"], "the withholding carries no code"
     counts = decision.evidence["counts_by_type"]
-    assert counts.get("action_withheld"), decision.evidence
     assert not counts.get("tool_invoked"), (
         "a high-risk act was released; the evidence records the effect running"
     )

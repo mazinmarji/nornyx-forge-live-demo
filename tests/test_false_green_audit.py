@@ -361,6 +361,25 @@ INVENTORY = (
         "::test_every_killing_test_is_actually_collected_by_pytest",
     ),
     FalseGreen(
+        "FG40", "a repaired rule, when a second copy of it was left standing",
+        "the screen deciding whether a guard executes anything that can fail "
+        "had four implementations. Repairing the one a reviewer was pointing "
+        "at left the others intact, and the mutation catalogue consumed the "
+        "weakest: measured accepting `assert 1 == 1`, `record.fail(reason)` "
+        "and `io.StringIO('raises.txt')` as evidence for a node carrying 14 "
+        "of the 41 attacks",
+        "ONE implementation in `tests/guard_evidence.py`, every consumer "
+        "importing it, and a guard refusing the retired spellings elsewhere",
+        "tests/test_false_green_audit.py"
+        "::test_no_module_reimplements_the_evidence_screen",
+        # Put a retired spelling back where the guard can see it. The anchor is
+        # a real repair from the round that installed the guard: two sites in
+        # this module were substring-matching a dumped AST to identify a call.
+        ("tests/test_execution_mode_truth.py",
+         '_mentions(n, "demo_command")',
+         '"demo_command" in ast.dump(n)', 1, "dumped AST"),
+    ),
+    FalseGreen(
         "FG39", "single use, when two durable stores were committed separately",
         "the consumption row and the continuity witness were written to two "
         "files in sequence, so a process death between them left the row "
@@ -427,6 +446,7 @@ EXPECTED_FALSE_GREEN_CLASSES = frozenset({
     "FG37",
     "FG38",
     "FG39",
+    "FG40",
 })
 
 #: Mechanisms learned across the whole remediation, mapped to the class that
@@ -539,6 +559,200 @@ DELIBERATELY_UNFOLDED_OPERATORS = {
 }
 
 
+def _dispatched_statement_names() -> set:
+    """Statement types `executed_nodes` names in an `isinstance` check."""
+    import inspect  # noqa: PLC0415
+
+    import guard_evidence  # noqa: PLC0415
+
+    tree = ast.parse(inspect.getsource(guard_evidence.executed_nodes))
+    named: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id == "ast":
+                named.add(node.attr)
+        if isinstance(node, ast.Name) and node.id in {"TRY_NODES", "MATCH_NODE"}:
+            named.update(
+                {"Try", "TryStar"} if node.id == "TRY_NODES" else {"Match"}
+            )
+    return named
+
+
+def _folded_expression_names() -> set:
+    """Expression types `_decide` names in an `isinstance` check."""
+    import inspect  # noqa: PLC0415
+
+    import guard_evidence  # noqa: PLC0415
+
+    tree = ast.parse(inspect.getsource(guard_evidence._decide))
+    return {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "ast"
+    }
+
+
+#: Every place that asks the screen how many failing things a REAL guard
+#: executes, as (module path, function name).
+SCREEN_CONSUMERS = (
+    ("tests/test_false_green_audit.py",
+     "test_every_false_green_class_has_a_self_attack_that_trips_its_guard"),
+    ("tests/test_killed_by_validation.py", "_defensive_evidence"),
+)
+
+
+def test_every_consumer_of_the_screen_passes_the_module():
+    """A module-level constant is invisible to a screen not given the module.
+
+    Measured: dropping the module argument at either consumer left every
+    specimen table GREEN, because the tables construct their own module and
+    pass it. The tables prove the SCREEN; only this proves the CALLERS.
+
+    Without it, one deleted argument restores the escape a review demonstrated
+    end to end -- `_OFF = False` at module level, the guard body indented under
+    `if _OFF:`, pristine RED to gutted GREEN with the marker intact.
+    """
+    unwired = []
+    for relative, name in SCREEN_CONSUMERS:
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            (node for node in ast.walk(tree)
+             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+             and node.name == name),
+            None,
+        )
+        assert function is not None, relative + " no longer defines " + name
+        calls = [
+            node for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"exercised_assertions", "executed_nodes"}
+        ]
+        assert calls, relative + "::" + name + " no longer asks the screen"
+        for call in calls:
+            if len(call.args) < 2 and not any(
+                keyword.arg == "module" for keyword in call.keywords
+            ):
+                unwired.append(
+                    relative + "::" + name + " line " + str(call.lineno)
+                )
+    assert unwired == [], (
+        "these consumers ask the screen without giving it the module, so a "
+        "module-level constant is invisible and a guard indented under one "
+        "counts assertions it does not execute: " + repr(unwired)
+    )
+
+
+def test_every_statement_type_is_dispatched_or_declared():
+    """Three rounds of enumerating shapes by hand, three rounds of missing one.
+
+        round 2   taught the screen `1 == 1`, `not False`, `'a' in 'abc'`
+        round 3   the walker credited `if False:` bodies
+        round 4   `except*` and `match` had no dispatch at all
+
+    Each time I added the shape a reviewer named and believed the list
+    complete. `ast.TryStar` (3.11) and `ast.Match` (3.10) were missing for
+    exactly as long as they have existed, and a guard measured a real
+    kill-bearing body gutted under `except* AssertionError: pass` as still
+    carrying four proofs.
+
+    THE QUESTION IS ASKED OF THE GRAMMAR NOW. Every `ast.stmt` subclass must be
+    either dispatched by `executed_nodes` or listed in
+    `UNDISPATCHED_STATEMENTS` with the reason falling through is safe. A new
+    statement type in a future Python is a red test on the day the interpreter
+    ships it, not a finding three review rounds later.
+
+    This is the technique `DELIBERATELY_UNFOLDED_OPERATORS` already applied to
+    `ast.operator`, where it holds. It was applied to one axis out of three.
+    """
+    from guard_evidence import UNDISPATCHED_STATEMENTS  # noqa: PLC0415
+
+    every = {
+        node.__name__ for node in vars(ast).values()
+        if isinstance(node, type) and issubclass(node, ast.stmt)
+        and node is not ast.stmt
+    }
+    dispatched = _dispatched_statement_names() & every
+    declared = set(UNDISPATCHED_STATEMENTS) & every
+    unaccounted = sorted(every - dispatched - declared)
+    assert unaccounted == [], (
+        "these statement types are neither dispatched by the walker nor "
+        "declared safe to fall through, so the screen's behaviour on them is "
+        "an accident rather than a decision: " + repr(unaccounted)
+    )
+    phantom = sorted(set(UNDISPATCHED_STATEMENTS) - every)
+    assert phantom == [], (
+        "these declared statement types do not exist in this Python, so the "
+        "declaration is stale: " + repr(phantom)
+    )
+
+
+def test_every_expression_type_is_folded_or_declared():
+    """The same question, on the expression axis.
+
+    `JoinedStr` and `Subscript` were in neither table, which is how
+    `assert f"{1} == {2}"` -- fixed at parse time, one character from a real
+    assertion, and reading exactly like one -- was credited as real while the
+    identical `assert "1 == 2"` was caught.
+    """
+    from guard_evidence import UNFOLDED_EXPRESSIONS  # noqa: PLC0415
+
+    every = {
+        node.__name__ for node in vars(ast).values()
+        if isinstance(node, type) and issubclass(node, ast.expr)
+        and node is not ast.expr
+    }
+    folded = _folded_expression_names() & every
+    declared = set(UNFOLDED_EXPRESSIONS) & every
+    unaccounted = sorted(every - folded - declared)
+    assert unaccounted == [], (
+        "these expression types are neither folded nor declared as a gap, so "
+        "the folder's stated limits are not its real limits: "
+        + repr(unaccounted)
+    )
+    phantom = sorted(set(UNFOLDED_EXPRESSIONS) - every)
+    assert phantom == [], (
+        "these declared expression types do not exist in this Python: "
+        + repr(phantom)
+    )
+
+
+def test_the_screen_never_raises_on_any_guard_in_the_suite():
+    """The third outcome the module denied having.
+
+    `guard_evidence` says undecided "always resolves toward 'this is a real
+    assertion' -- the screen can miss a vacuous guard, it can never fail a
+    genuine one." There was a third: crash. `len()` on a folded non-sequence
+    raised `TypeError` straight out, so every consumer ERRORED rather than
+    reaching a verdict, and `for _ in rows` with `rows` bound to `None`, an
+    int, or a bool was enough.
+
+    Run over every top-level test function in `tests/`, which is the corpus the
+    screen is actually pointed at.
+    """
+    checked = 0
+    for module in sorted((ROOT / "tests").glob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in tree.body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            checked += 1
+            try:
+                exercised_assertions(node)
+            except Exception as exc:  # noqa: BLE001 - the point of the test
+                raise AssertionError(
+                    "the screen raised on " + module.name + "::" + node.name
+                    + " -- " + type(exc).__name__ + ": " + str(exc)
+                ) from exc
+    assert checked > 500, (
+        "only " + str(checked) + " functions were screened; the corpus is "
+        "smaller than the suite, so this measured almost nothing"
+    )
+
+
 def test_the_folders_gaps_are_exactly_the_ones_it_declares():
     """A list of examples cannot say whether the list is complete.
 
@@ -620,9 +834,9 @@ def test_a_name_bound_only_to_literals_is_as_fixed_as_a_literal(body: str, fixed
     target, a `with` target, an augmented assignment -- disqualifies it
     outright rather than merely being overwritten.
     """
-    guard = _guard(body)
+    guard, module = _guard(body)
     test = next(node for node in ast.walk(guard) if isinstance(node, ast.Assert)).test
-    assert _cannot_fail(test, guard) is fixed, (
+    assert _cannot_fail(test, guard, module) is fixed, (
         "this guard body was judged " + ("fixed" if not fixed else "real")
         + " at parse time:" + NL + body
     )
@@ -737,11 +951,21 @@ EXECUTION_SPECIMENS = [
 ]
 
 
-def _guard(body: str) -> ast.AST:
-    """A collected guard whose body is `body`."""
+def _guard(body: str, module_source: str = "") -> tuple:
+    """(guard, module) for `body`, optionally under module-level source.
+
+    Returns BOTH, because a module-level constant is in scope inside the guard
+    and the screen cannot see one it is not given. A review added a single
+    `_OFF = False` above a real guard and indented the body under `if _OFF:`;
+    it went from pristine RED to gutted GREEN.
+    """
     lines = ["def guard():", '    """A docstring."""']
     lines += ["    " + line if line.strip() else line for line in body.split(NL)]
-    return ast.parse(NL.join(lines) + NL).body[0]
+    source = module_source + (NL if module_source else "") + NL.join(lines) + NL
+    module = ast.parse(source)
+    guard = next(node for node in module.body
+                 if isinstance(node, ast.FunctionDef) and node.name == "guard")
+    return guard, module
 
 
 @pytest.mark.parametrize(("body", "expected"), EXECUTION_SPECIMENS)
@@ -759,7 +983,7 @@ def test_the_counter_measures_what_a_guard_executes(body: str, expected: int):
     collected, its marker in place, its name unchanged, and the audit reporting
     its class proven.
     """
-    counted = exercised_assertions(_guard(body))
+    counted = exercised_assertions(*_guard(body))
     assert counted == expected, (
         "the counter says this guard executes " + str(counted) + " failing "
         "thing(s); it executes " + str(expected) + ":" + NL + body
@@ -819,6 +1043,117 @@ ROUND_THREE_SPECIMENS = [
 ]
 
 
+#: Shapes a FOURTH review round demonstrated, each verified on a copy.
+#:
+#: Two of them are exception-group and match statements, which had no dispatch
+#: for as long as they have existed in Python. Two more are inside the folder's
+#: own literal vocabulary. One CRASHED the screen outright, in a module whose
+#: docstring says it "can never fail a genuine one".
+ROUND_FOUR_SPECIMENS = [
+    # `except*` is `ast.TryStar`, a different node from `ast.Try`.
+    ("try:" + NL + "    assert real" + NL + "except* AssertionError:" + NL
+     + "    pass", 0),
+    ("try:" + NL + "    assert real" + NL + "except* Exception:" + NL
+     + "    pass", 0),
+    # ... and a handler that does NOT swallow still counts.
+    ("try:" + NL + "    assert real" + NL + "except* ValueError:" + NL
+     + "    pass", 1),
+
+    # An f-string with nothing to interpolate is a literal. The identical
+    # `assert "a message"` was caught; this was not.
+    ("assert f'a message'", 0),
+    ("assert f'{1} == {2}'", 0),
+    ("assert f'{value}'", 1),
+
+    # A literal indexed by a literal is a literal.
+    ("assert (1, 2)[0]", 0),
+    ("assert 'abc'[0] == 'a'", 0),
+    ("assert [1, 2][0]", 0),
+    ("assert {1: 2}[1]", 0),
+    ("assert rows[0]", 1),
+
+    # THE CRASH. `len()` on a folded non-sequence raised `TypeError` out of the
+    # screen, so consumers errored rather than reaching a verdict.
+    ("rows = None" + NL + "for _ in rows:" + NL + "    assert real", 1),
+    ("count = 3" + NL + "for _ in count:" + NL + "    assert real", 1),
+
+    # A chained assignment bound a COMPUTED name to the constant `None`,
+    # because the disqualifying branch returned `None` rather than the
+    # not-a-literal sentinel -- and a genuine guard was refused.
+    ("results = report['x'] = run()" + NL + "if results:" + NL
+     + "    assert results == expected", 1),
+]
+
+
+#: (module-level source, guard body, failing things executed).
+#:
+#: A CONSTANT ONE SCOPE, ONE ALIAS OR ONE UNPACK AWAY. `dead = False; if dead:`
+#: was pinned and its three synonyms were not, so a rule about the shape was in
+#: fact a rule about the spelling. The module-level form was demonstrated end
+#: to end: ONE added line and an indent took FG21's owner from pristine RED to
+#: gutted GREEN, marker intact, node intact, collection identical.
+SCOPED_BINDING_SPECIMENS = [
+    ("_OFF = False", "if _OFF:" + NL + "    assert real", 0),
+    ("_ON = True", "if _ON:" + NL + "    pass" + NL + "else:" + NL
+     + "    assert real", 0),
+    ("", "dead = False" + NL + "gone = dead" + NL + "if gone:" + NL
+     + "    assert real", 0),
+    ("", "dead = False" + NL + "gone = dead" + NL + "far = gone" + NL
+     + "if far:" + NL + "    assert real", 0),
+    ("", "first, second = False, True" + NL + "if first:" + NL
+     + "    assert real", 0),
+
+    # --- and the other direction, which must stay credited ---------------
+    ("_ON = True", "if _ON:" + NL + "    assert real", 1),
+    ("", "first, second = False, True" + NL + "if second:" + NL
+     + "    assert real", 1),
+    ("", "src = compute()" + NL + "alias = src" + NL + "if alias:" + NL
+     + "    assert real", 1),
+    # A local rebinding disqualifies the module-level constant.
+    ("_OFF = False", "_OFF = compute()" + NL + "if _OFF:" + NL
+     + "    assert real", 1),
+    ("_LIMIT = 3", "assert rows == _LIMIT", 1),
+]
+
+
+@pytest.mark.parametrize(
+    ("module_source", "body", "expected"), SCOPED_BINDING_SPECIMENS,
+)
+def test_a_constant_in_any_scope_is_as_fixed_as_a_local_one(
+    module_source: str, body: str, expected: int,
+):
+    """The pinned spelling and its synonyms must answer the same.
+
+    The five expecting 1 are the guard against over-reach: an alias of a
+    computed value, the true half of an unpack, and a name the guard rebinds
+    locally are all REAL, and folding them would fail a genuine guard.
+    """
+    counted = exercised_assertions(*_guard(body, module_source))
+    assert counted == expected, (
+        "the screen says this guard executes " + str(counted) + " failing "
+        "thing(s); it executes " + str(expected) + ":" + NL
+        + (module_source + NL if module_source else "") + body
+    )
+
+
+@pytest.mark.parametrize(("body", "expected"), ROUND_FOUR_SPECIMENS)
+def test_the_screen_answers_the_shapes_a_fourth_round_demonstrated(
+    body: str, expected: int,
+):
+    """Every zero was credited, and two of these crashed the screen.
+
+    The ones expecting 1 are the louder half: a genuine guard refused for a
+    property it has. The `report['x'] = run()` row is exactly that, and it is
+    here because the disqualifying branch of a binding rule returned `None`
+    where it meant "not a literal".
+    """
+    counted = exercised_assertions(*_guard(body))
+    assert counted == expected, (
+        "the screen says this guard executes " + str(counted) + " failing "
+        "thing(s); it executes " + str(expected) + ":" + NL + body
+    )
+
+
 @pytest.mark.parametrize(("body", "expected"), ROUND_THREE_SPECIMENS)
 def test_the_screen_answers_the_shapes_a_third_round_demonstrated(
     body: str, expected: int,
@@ -833,13 +1168,14 @@ def test_the_screen_answers_the_shapes_a_third_round_demonstrated(
     the louder wrong answer, and the mutable-container row is there because
     this screen briefly did exactly that to the FG39 atomicity sweep.
     """
-    counted = exercised_assertions(_guard(body))
+    counted = exercised_assertions(*_guard(body))
     assert counted == expected, (
         "the screen says this guard executes " + str(counted) + " failing "
         "thing(s); it executes " + str(expected) + ":" + NL + body
     )
 
 
+@pytest.mark.false_green("FG40")
 def test_no_module_reimplements_the_evidence_screen():
     """The rule has ONE home, because three rounds found it repaired in one
     place and intact in another.
@@ -852,7 +1188,7 @@ def test_no_module_reimplements_the_evidence_screen():
 
     Extracting the rule in round 2 made this worse rather than better: it
     created a canonical implementation and left the old copy standing, which is
-    FG26 -- "a guard and its owner test two different copies of the same rule".
+    FG40 -- "a repaired rule, when a second copy of it was left standing".
 
     WHAT THIS MEASURES, exactly: a substring test against a dumped AST. That is
     the one retired spelling with no legitimate reading -- `ast.dump` renders a
@@ -1254,7 +1590,7 @@ PENDING_REPRODUCTION = frozenset(
 #: class with everything green -- which is how a bogus triple was demonstrated
 #: passing. Membership is now a diff, the same way `EXPECTED_FALSE_GREEN_CLASSES`
 #: is.
-EXPECTED_REPRODUCED = frozenset({"FG22", "FG33"})
+EXPECTED_REPRODUCED = frozenset({"FG22", "FG33", "FG40"})
 
 
 def test_the_reproduction_contract_asks_for_attribution():
@@ -1512,7 +1848,11 @@ def test_every_false_green_class_has_a_self_attack_that_trips_its_guard():
             "assertions below it never execute. A guard that returns early "
             "asserts nothing, whatever its body still contains."
         )
-        exercised = exercised_assertions(found[0])
+        # THE MODULE, so a module-level constant is in scope. A review added
+        # ONE line -- `_OFF = False` -- and indented FG21's owner body under
+        # `if _OFF:`; the guard went from pristine RED to gutted GREEN with the
+        # marker intact, the node intact, and collection identical.
+        exercised = exercised_assertions(found[0], tree)
         assert exercised >= 1, (
             f"{item.ident}: {node} contains no assertion that can fail. A "
             "self-attack that asserts nothing is the defect this inventory "

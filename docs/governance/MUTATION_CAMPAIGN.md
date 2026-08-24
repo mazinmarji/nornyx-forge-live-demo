@@ -162,6 +162,9 @@ then does a contract exist that a mutation could move.
 
 ### Resolution attempted. They are HUMAN_BLOCKED, not INVALID_BASELINE.
 
+<!-- classification: D1 = HUMAN_BLOCKED -->
+<!-- classification: D2 = HUMAN_BLOCKED -->
+
 The evidence set was regenerated in causal order — build, `--sync-contracts`,
 `--review-binding`. What `--verify` returned is recorded below as a MEASUREMENT
 AT A NAMED COMMIT, never as a standing claim about the current head.
