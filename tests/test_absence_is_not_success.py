@@ -274,9 +274,38 @@ def test_every_classification_still_names_a_real_site():
 
 
 def test_each_classification_states_a_reason():
-    """An allowlist without reasons becomes a place to hide things."""
+    """An allowlist without reasons becomes a place to hide things.
+
+    `len(reason) > 80` was the whole of it, and eighty-one characters of
+    anything satisfies that -- an assertion about LENGTH reported as one
+    about explanation, in the module whose subject is exactly that
+    substitution. The analogous check in the false-green audit is
+    backstopped by parsing the function it names; this one had no
+    backstop at all.
+
+    A reason now has to NAME the site it exempts and say what happens
+    instead, which is a claim a reader can check against the code rather
+    than a quantity of prose.
+    """
     for key, reason in CLASSIFIED_EMPTY_RETURNS.items():
         assert reason.startswith(("OPTIONAL.", "CONDITIONAL.")), key
+        relative, _, function = key.partition(":")
+        assert function and function in reason, (
+            key + " is exempted by a reason that never names the function "
+            "it exempts, so nobody can tell which site it was written for"
+        )
+        assert Path(relative).name in reason or relative in reason, (
+            key + " is exempted by a reason that never names its module"
+        )
+        # The clause that says why absence cannot increase authority.
+        assert any(
+            phrase in reason
+            for phrase in ("caller", "refus", "denie", "closed", "authority")
+        ), (
+            key + " is exempted without saying what the caller does with "
+            "the empty result, which is the only thing that makes an "
+            "absence safe"
+        )
         assert len(reason) > 80, f"{key} is exempted without a real explanation"
 
 

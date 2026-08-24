@@ -103,9 +103,12 @@ receiver comes from.
 
 This used to read "a repository test fails if `RuntimeContext.for_test(`
 appears anywhere under `src/`", which is a claim about TEXT and is false: the
-string appears at `src/nornyx_forge/nornyx_runtime.py:3070`, inside a
+string appears in `src/nornyx_forge/nornyx_runtime.py`, inside a
 docstring explaining why production must not use the seam, and the guard
-passes. An auditor checking the sentence as written finds a hit in shipped
+passes. (A line number stood here and was wrong at the commit that wrote
+it, so the paragraph correcting a sentence falsifiable in one grep was
+itself falsifiable in one grep. A coordinate into a file that moves under
+it is not evidence; the string and the guard's name are.) An auditor checking the sentence as written finds a hit in shipped
 source and concludes the control is broken.
 
 The guard is AST-based on purpose, and stronger than the sentence it replaces

@@ -2947,11 +2947,25 @@ class NornyxActionBoundary:
         # things -- the governing contract and lock, and where evidence and the
         # ledger are written -- and that conflation is the real defect here.
         # Refusing every differing root would also refuse writing evidence to a
-        # scratch directory, which supplies no policy from anywhere: with no
-        # contract present the boundary falls back and denies high-risk outright,
-        # so no authority conclusion spans two trees. What must not happen is
-        # tree A's contract judging tree B's identity, and that requires tree A
-        # to have a contract.
+        # scratch directory, which supplies no policy from anywhere. What must
+        # not happen is tree A's contract judging tree B's identity, and that
+        # requires tree A to have a contract.
+        #
+        # THIS USED TO SAY the exemption was free because "with no contract
+        # present the boundary falls back and denies high-risk outright, so no
+        # authority conclusion spans two trees". That stopped being true when
+        # the governance-integrity gate was put on the fallback path: the
+        # fallback now DOES reach an authority conclusion, from an integrity
+        # verdict observed against the established root while `root` is
+        # somewhere else. Measured on `nornyx-forge demo --offline` with a
+        # scratch root: `intact` over the repository's contracts, gating a
+        # low-risk ALLOW executed against the scratch tree.
+        #
+        # It still fails safe -- the only thing such a verdict can permit is
+        # the same low-risk demonstration callable, and high risk is denied
+        # unconditionally either way -- so the exemption stands. What does not
+        # stand is the sentence that justified it, and a justification that has
+        # gone false is how an exemption outlives its reason.
         if (
             established_root
             and Path(root).resolve() != Path(established_root)

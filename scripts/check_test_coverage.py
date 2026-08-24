@@ -194,7 +194,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
-    "tests/test_false_green_audit.py": 204,
+    "tests/test_false_green_audit.py": 224,
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
@@ -207,7 +207,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_contract_generator.py": 1,
     "tests/test_demo_flow.py": 1,
     "tests/test_dirty_tree_gate.py": 31,
-    "tests/test_evidence.py": 8,
+    "tests/test_evidence.py": 14,
     "tests/test_governance_failure.py": 18,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
@@ -316,12 +316,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     2017   (88 modules)
-#     sum of the module floors    1857
-#     band(2017) = ceil(0.9*n)    1816
-#     MINIMUM_COLLECTED           1872
+#     collected across tests/     2046   (88 modules)
+#     sum of the module floors    1883
+#     band(2046) = ceil(0.9*n)    1842
+#     MINIMUM_COLLECTED           1898
 #     above the module sum        15
-#     below what collects         145
+#     below what collects         148
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -355,7 +355,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1872
+MINIMUM_COLLECTED = 1898
 
 
 def band(collected: int) -> int:

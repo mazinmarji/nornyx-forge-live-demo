@@ -115,7 +115,8 @@ None of them is claimed as mutation-proved.
 marker above: TASK11_REPLAY.md records every catalogue attack reaching a
 terminal classification, and the live constants in
 `tests/test_mutation_catalogue.py` are 41 attacks across 17 root
-properties with `NOT_YET_KILLED` empty. The paragraph is kept as the record
+properties with `NOT_YET_KILLED` -- which lives in
+`tests/test_historical_reproof.py` and is read from there -- empty. The paragraph is kept as the record
 of the condition that was set.)*
 
 ~~The campaign result stands as reported for the 35 admitted attacks across~~

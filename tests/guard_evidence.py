@@ -944,27 +944,34 @@ def denoted_names(expression, aliases: dict) -> set:
     the handler type node was literally spelled one of them, so every one of
     these escaped it while catching exactly the same thing:
 
-        _Err = AssertionError        ... except _Err:
-        _S = (AssertionError,)       ... except _S:
+        _Err = AssertionError                      ... except _Err:
+        from builtins import AssertionError as _E  ... except _E:
+        _S = (AssertionError,)                     ... except _S:
         except tuple([AssertionError]):
-        _Q = contextlib.suppress     ... with _Q(AssertionError):
+        _Q = contextlib.suppress                   ... with _Q(AssertionError):
+        from contextlib import suppress as quiet   ... with quiet(...):
 
     Measured end to end: one added line, `_Swallow = AssertionError`, wrapping a
     real audited guard body in `try: ... except _Swallow: pass` took its subject
     from 5 FAILED to 8 passed, with `exercised_assertions` reporting 1 both
-    times. `constant_bindings` in this same file already resolves aliases to a
-    fixed point for the FOLDING axis, and says in its own docstring that a rule
-    catching the pinned spelling and not its synonyms is a rule about the
-    spelling. That resolution was never applied here.
+    times.
 
-    Over-resolving is the safe direction: a name wrongly treated as an
-    exception class makes a guard look swallowed, the audit calls it a false
-    green, and a person looks. Under-resolving is what let a gutted guard pass.
+    AN ATTRIBUTE IS NOT RESOLVED THROUGH THE BARE-NAME MAP, and the first
+    version of this function did exactly that. `contextlib.suppress` denotes
+    `suppress` whatever a module-level `suppress = _fallback` says, because the
+    attribute is not that name. Reading it through the map -- with `.get(k,
+    default)`, which REPLACES rather than widens -- let two lines that never
+    touch a guard move `suppress` OUT of the set and make a real suppression
+    invisible. Measured on three audited guards: pristine and gutted both
+    reported the same count. That is the exact inverse of the direction this
+    docstring claimed, so the claim is now the code: resolution here can only
+    map a NAME to what it was bound to, and an attribute denotes itself.
     """
     if isinstance(expression, ast.Name):
         return aliases.get(expression.id, {expression.id})
     if isinstance(expression, ast.Attribute):
-        return aliases.get(expression.attr, {expression.attr})
+        # `x.suppress` denotes `suppress`. Not a bare name, so not the map's.
+        return {expression.attr}
     if isinstance(expression, (ast.Tuple, ast.List, ast.Set)):
         found: set = set()
         for element in expression.elts:
@@ -981,6 +988,45 @@ def denoted_names(expression, aliases: dict) -> set:
     return set()
 
 
+def _scope_aliases(nodes) -> tuple[dict, set]:
+    """(name -> what it denotes, names too complicated to resolve) in ONE scope.
+
+    Assignment and `import ... as` both bind a name to something with another
+    name, and both are renames. Following only `ast.Assign` was a rule about
+    one of the two spellings of the thing FG42 is about -- `_stored_names` in
+    this same module already reads `ast.alias`, so the grammar was there and
+    was not used.
+
+    A name bound by anything else in this scope -- a loop target, a `with`
+    target, an augmented assignment, a `global` -- is DISQUALIFIED rather than
+    resolved, and keeps whatever it is spelled. Resolving it would be guessing
+    which binding reached the handler, and guessing wrong in the direction that
+    refuses a genuine guard is the failure this module's opening note forbids.
+    That leaves an alias hidden behind such a binding unresolved, which is a
+    disclosed residual, not a claim of completeness.
+    """
+    direct: dict = {}
+    disqualified: set = set()
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            if len(targets) == len(node.targets):
+                denoted = denoted_names(node.value, {})
+                for target in targets:
+                    if denoted:
+                        direct.setdefault(target.id, set()).update(denoted)
+                    else:
+                        disqualified.add(target.id)
+                continue
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                direct.setdefault(bound, set()).add(alias.name.split(".")[-1])
+            continue
+        disqualified |= bound_names(node)
+    return direct, disqualified
+
+
 def name_aliases(function: ast.AST, module: ast.AST | None = None) -> dict:
     """Names bound to other names, resolved to a fixed point.
 
@@ -988,29 +1034,42 @@ def name_aliases(function: ast.AST, module: ast.AST | None = None) -> dict:
     same map answers `_Q = contextlib.suppress`, and a rule that decided in
     advance which names were interesting would be one more rule about spelling.
 
-    Module scope is read first and the function own bindings override it, which
-    is the scoping Python has. Only plain `name = <expression>` is followed;
-    anything computed denotes nothing here, and denoting nothing leaves the
-    original spelling in place rather than inventing one.
+    THE FUNCTION'S BINDINGS OVERRIDE THE MODULE'S, which is the scoping Python
+    has. This docstring said so while the code UNIONED the two, so a guard that
+    rebound a module alias locally --
+
+        _E = AssertionError          (module)
+        def guard():
+            _E = ValueError          ... except _E: ...
+
+    -- resolved `_E` to both, matched `AssertionError`, and the guard was
+    reported as executing nothing. Measured: `exercised` 0, while running the
+    function raises AssertionError. A live guard called dead, by the repair
+    that closed the opposite hole in the same round.
     """
-    direct: dict = {}
+    module_direct, module_out = (
+        _scope_aliases(module_scope_statements(module))
+        if module is not None else ({}, set())
+    )
+    # STATEMENTS ONLY. `ast.walk` also yields the bare `ast.Name` nodes
+    # inside a target, and `bound_names` on a Store-context name returns
+    # that name -- so every local alias disqualified itself and none was
+    # ever resolved. `module_scope_statements` already yields statements,
+    # which is why the module side did not have this.
+    local_direct, local_out = _scope_aliases(
+        node for node in ast.walk(function) if isinstance(node, ast.stmt)
+    )
 
-    def record(node) -> None:
-        if not isinstance(node, ast.Assign):
-            return
-        targets = [t for t in node.targets if isinstance(t, ast.Name)]
-        if len(targets) != len(node.targets):
-            return
-        denoted = denoted_names(node.value, {})
-        for target in targets:
-            if denoted:
-                direct.setdefault(target.id, set()).update(denoted)
-
-    if module is not None:
-        for node in module_scope_statements(module):
-            record(node)
-    for node in ast.walk(function):
-        record(node)
+    direct = {
+        name: set(denoted) for name, denoted in module_direct.items()
+        if name not in module_out
+    }
+    # LOCAL WINS OUTRIGHT -- replaced, not merged.
+    for name in local_out:
+        direct.pop(name, None)
+    for name, denoted in local_direct.items():
+        if name not in local_out:
+            direct[name] = set(denoted)
 
     # CHAINS, to a fixed point. `_A = AssertionError; _B = _A` binds `_B` just
     # as surely, and bounded by the number of bindings so it terminates.

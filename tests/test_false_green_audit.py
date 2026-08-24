@@ -640,11 +640,67 @@ def _folded_expression_names() -> set:
 
 #: Every place that asks the screen how many failing things a REAL guard
 #: executes, as (module path, function name).
+#: The two consumers this check was written for, kept as the floor.
+#:
+#: A HAND-MAINTAINED LIST OF CONSUMERS IS THE THING IT GUARDS AGAINST.
+#: A third module importing the screen and calling it without the module
+#: argument was invisible here, and would have restored the escape this
+#: check exists to close. `screen_consumers()` finds them by reading the
+#: imports, so a new one is checked the moment it is written; these two
+#: are still named so that DELETING a consumer is also a red test.
 SCREEN_CONSUMERS = (
     ("tests/test_false_green_audit.py",
      "test_every_false_green_class_has_a_self_attack_that_trips_its_guard"),
     ("tests/test_killed_by_validation.py", "_defensive_evidence"),
 )
+
+
+def screen_consumers() -> list:
+    """Every module under `tests/` that imports the shared screen."""
+    found = []
+    for module in sorted((ROOT / "tests").glob("*.py")):
+        if module.name == "guard_evidence.py":
+            continue
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            imported = (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "guard_evidence"
+            ) or (
+                isinstance(node, ast.Import)
+                and any(a.name == "guard_evidence" for a in node.names)
+            )
+            if imported:
+                found.append("tests/" + module.name)
+                break
+    return found
+
+
+def test_the_named_consumers_are_all_the_consumers():
+    """A list of callers typed by hand is the defect it guards against.
+
+    `SCREEN_CONSUMERS` is two entries somebody wrote down. A third module
+    importing the screen and calling it WITHOUT the module argument would
+    have restored the escape the check below exists to close -- a
+    module-level `_OFF = False` folding a guard to nothing -- and no test
+    would have looked at it.
+
+    Discovery is by import, so a new consumer is covered the moment it is
+    written. The named pair is kept as a floor: a consumer DISAPPEARING is
+    also a diff to argue with, and set equality catches both directions.
+    """
+    discovered = set(screen_consumers())
+    named = {relative for relative, _ in SCREEN_CONSUMERS}
+    assert named <= discovered, (
+        "a module named as a consumer no longer imports the screen: "
+        + repr(sorted(named - discovered))
+    )
+    unnamed = discovered - named
+    assert unnamed == set(), (
+        "these modules import the shared screen and are not named in "
+        "SCREEN_CONSUMERS, so nothing checks that they pass the module: "
+        + repr(sorted(unnamed))
+    )
 
 
 def test_every_consumer_of_the_screen_passes_the_module():
@@ -1331,6 +1387,51 @@ SWALLOWING_ALIAS_SPECIMENS = [
     ("a handler that re-raises does not", "",
      "try:" + NL + "    assert real" + NL + "except Exception:" + NL
      + "    raise", 2),
+    # ---- round 9: the escapes the FG42 repair itself left open ----------
+    #
+    # THE FIRST TWO ARE THE REPAIR'S OWN HOLES, found by a fresh lens after
+    # FG42 was closed. Both were measured gutting real audited guards with the
+    # screen reporting identical counts pristine and gutted.
+    #
+    # An ATTRIBUTE was resolved through the BARE-NAME map, and `.get(k,
+    # default)` replaces rather than widens -- so two module lines that never
+    # touch the guard moved `suppress` OUT of the set. That is resolution
+    # working in the unsafe direction, which is the opposite of what
+    # `denoted_names` claimed.
+    ("an attribute is not the bare name it ends with",
+     "import contextlib" + NL + "_fallback = object" + NL + "suppress = _fallback",
+     "with contextlib.suppress(AssertionError):" + NL + "    assert real", 0),
+    # `import ... as` IS a rename, and FG42 is the class about a rename. Every
+    # row above spells its alias `name = expr`, the one spelling that had been
+    # repaired -- a table built entirely out of the fixed case.
+    ("except through an import alias",
+     "from builtins import AssertionError as _Err",
+     "try:" + NL + "    assert real" + NL + "except _Err:" + NL + "    pass", 0),
+    ("suppress through an import alias",
+     "from contextlib import suppress as quiet",
+     "with quiet(AssertionError):" + NL + "    assert real", 0),
+    ("a module imported under another name",
+     "import contextlib as ctx",
+     "with ctx.suppress(AssertionError):" + NL + "    assert real", 0),
+    ("an aliased alias, two imports deep",
+     "from contextlib import suppress as quiet" + NL + "hush = quiet",
+     "with hush(AssertionError):" + NL + "    assert real", 0),
+
+    # ---- and the direction that must NOT change -------------------------
+    # THE LOCAL BINDING WINS, which is the scoping Python has. The first
+    # version of `name_aliases` said so and UNIONED the two instead, so this
+    # guard -- which really does fail -- was reported as executing nothing.
+    ("a local rebind of a module alias is a genuine guard",
+     "_E = AssertionError",
+     "_E = ValueError" + NL + "try:" + NL + "    assert real" + NL
+     + "except _E:" + NL + "    pass", 1),
+    ("and the same shape pointing the other way still swallows",
+     "_E = ValueError",
+     "_E = Exception" + NL + "try:" + NL + "    assert real" + NL
+     + "except _E:" + NL + "    pass", 0),
+    ("an attribute of an unrelated object is not a suppression",
+     "",
+     "with recorder.suppress(AssertionError):" + NL + "    assert real", 0),
 ]
 
 
@@ -1573,21 +1674,147 @@ def test_the_screen_answers_the_shapes_a_third_round_demonstrated(
     )
 
 
-#: String operations that ask "does this text contain that text".
+#: `ast` functions that render a tree as TEXT.
 #:
-#: `in` was the only one the scan knew. All of these answer the same question
-#: about a rendered tree, and each is one edit from the next.
-_SUBSTRING_METHODS = frozenset({
-    "count", "endswith", "find", "index", "rfind", "rindex", "startswith",
-})
+#: `unparse` was missing and carries the identical defect: `"raises" in
+#: ast.unparse(node)` matches inside a string constant exactly as the dumped
+#: form does, so `io.StringIO("raises.txt")` reads as an expected-refusal block
+#: -- the false green FG40 records, one function name away from the one that
+#: was checked.
+RENDERING_FUNCTIONS = frozenset({"dump", "unparse"})
 
-#: `re` entry points that take the haystack as their SECOND argument.
+#: Public `str` methods that do NOT answer "does this text contain that text",
+#: each with the reason it cannot.
+#:
+#: THE COMPLETENESS AXIS FOR THIS RULE, and the reason it is written as an
+#: exemption table rather than as a list of the dangerous ones. The scan used
+#: to name seven methods it knew about; `.partition`, `.removeprefix`,
+#: `.split` and `.replace` are the same question and none was listed, and
+#: nothing could have told anyone that. Derived against `dir(str)` by
+#: `test_every_string_method_is_a_question_or_declared_not_to_be`, so a method
+#: added to `str` is a red test rather than a silent hole.
+#:
+#: The transformations are safe because they PRODUCE text rather than
+#: interrogate it -- and `_is_dumped_tree` follows them, so the question they
+#: feed is still caught one call later.
+SAFE_STRING_METHODS = {
+    "capitalize":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "casefold":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "center":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "encode":
+        "produces bytes and takes no needle; a question asked of the result "
+        "is caught where it is asked",
+    "expandtabs":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "format":
+        "substitutes into a template it is called on, and the template is "
+        "not the rendered tree being interrogated",
+    "format_map":
+        "substitutes into a template it is called on, and the template is "
+        "not the rendered tree being interrogated",
+    "isalnum":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isalpha":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isascii":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isdecimal":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isdigit":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isidentifier":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "islower":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isnumeric":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isprintable":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isspace":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "istitle":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "isupper":
+        "asks about the characters of the whole string, never whether a "
+        "given substring occurs in it",
+    "join":
+        "combines the argument sequence and takes no needle of its own",
+    "ljust":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "lower":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "lstrip":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "maketrans":
+        "builds a translation table and inspects nothing",
+    "rjust":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "rstrip":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "splitlines":
+        "splits on line boundaries and takes no needle, so no substring can "
+        "be looked for",
+    "strip":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "swapcase":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "title":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "upper":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+    "zfill":
+        "returns text and takes no needle, so it cannot answer a "
+        "containment question; the rendered tree is followed through it",
+}
+
+#: Everything else `str` offers takes a needle and answers a question about it.
+_SUBSTRING_METHODS = frozenset(
+    name for name in dir(str)
+    if not name.startswith("_") and name not in SAFE_STRING_METHODS
+)
+
+#: `re` entry points that take a haystack.
+#:
+#: Module-level (`re.search(pattern, text)`) the haystack is the SECOND
+#: argument; on a compiled pattern (`re.compile(p).search(text)`) it is the
+#: FIRST. The scan only ever looked at the second, so the compiled form walked
+#: through.
 _REGEX_SEARCHES = frozenset({"findall", "finditer", "fullmatch", "match",
                              "search", "split", "sub", "subn"})
 
+#: Callables that ask containment without being a method of the text.
+_CONTAINMENT_FUNCTIONS = frozenset({"contains"})
+
 
 def _dumped_tree_names(tree: ast.AST) -> set:
-    """Names bound to the text of a dumped AST, to a fixed point.
+    """Names bound to the text of a rendered AST, to a fixed point.
 
     `rendered = ast.dump(node)` then `"x" in rendered` is the same test one
     line apart, and the scan that named the property saw only the one-line
@@ -1613,17 +1840,20 @@ def _dumped_tree_names(tree: ast.AST) -> set:
 
 
 def _is_dumped_tree(expression, bound: set) -> bool:
-    """Is this expression the TEXT of a dumped AST?"""
+    """Is this expression the TEXT of a rendered AST?"""
     if isinstance(expression, ast.Name):
         return expression.id in bound
     if isinstance(expression, ast.Call):
         callee = expression.func
         named = (callee.attr if isinstance(callee, ast.Attribute)
                  else getattr(callee, "id", ""))
-        if named == "dump":
+        if named in RENDERING_FUNCTIONS:
             return True
-        # `ast.dump(n).lower()`, `...strip()`, `f"{ast.dump(n)}"` -- still the
-        # rendered tree, one method call further away.
+        # `str(ast.dump(n))` is the rendered tree wearing a conversion.
+        if named == "str" and len(expression.args) == 1:
+            return _is_dumped_tree(expression.args[0], bound)
+        # `ast.dump(n).lower()`, `...strip()` -- still the rendered tree, one
+        # transformation further away.
         if isinstance(callee, ast.Attribute):
             return _is_dumped_tree(callee.value, bound)
     if isinstance(expression, ast.JoinedStr):
@@ -1638,8 +1868,15 @@ def _is_dumped_tree(expression, bound: set) -> bool:
     return False
 
 
+def _is_the_re_module(expression) -> bool:
+    """Is this the `re` module itself, rather than a compiled pattern?"""
+    if isinstance(expression, ast.Name):
+        return expression.id == "re"
+    return isinstance(expression, ast.Attribute) and expression.attr == "re"
+
+
 def substring_tests_against_a_dumped_tree(tree: ast.AST) -> list:
-    """Line numbers where this module asks a text question about a dumped AST.
+    """Line numbers where this module asks a text question about a rendered AST.
 
     ONE implementation, because the specimens below and the scan over `tests/`
     must be the same rule. A specimen table checking a private copy of a rule
@@ -1649,7 +1886,7 @@ def substring_tests_against_a_dumped_tree(tree: ast.AST) -> list:
     bound = _dumped_tree_names(tree)
     found: list = []
     for node in ast.walk(tree):
-        # `<literal> in <a dumped tree>` -- a membership test against text,
+        # `<literal> in <a rendered tree>` -- a membership test against text,
         # standing in for a question about structure.
         if isinstance(node, ast.Compare):
             if any(
@@ -1661,19 +1898,28 @@ def substring_tests_against_a_dumped_tree(tree: ast.AST) -> list:
             continue
         callee = node.func
         if not isinstance(callee, ast.Attribute):
+            # `operator.contains(haystack, needle)` as a bare name.
+            if (getattr(callee, "id", "") in _CONTAINMENT_FUNCTIONS
+                    and node.args and _is_dumped_tree(node.args[0], bound)):
+                found.append(node.lineno)
             continue
-        # `.find(...)`, `.count(...)`, `.startswith(...)` ask the same question
+        # `.find(...)`, `.count(...)`, `.partition(...)` ask the same question
         # with a method instead of an operator.
         if (callee.attr in _SUBSTRING_METHODS
                 and _is_dumped_tree(callee.value, bound)):
             found.append(node.lineno)
             continue
-        # `re.search(pattern, ast.dump(n))` -- the haystack is the SECOND
-        # argument, and the first is a pattern, which is a legitimate use.
-        if callee.attr in _REGEX_SEARCHES and any(
-            _is_dumped_tree(argument, bound) for argument in node.args[1:2]
-        ):
+        if (callee.attr in _CONTAINMENT_FUNCTIONS and node.args
+                and _is_dumped_tree(node.args[0], bound)):
             found.append(node.lineno)
+            continue
+        if callee.attr in _REGEX_SEARCHES:
+            # Module-level: the haystack is the second argument and the first
+            # is a pattern, which is a legitimate use of a rendered tree.
+            # Compiled: the pattern is already bound and the haystack is first.
+            haystack = node.args[1:2] if _is_the_re_module(callee.value) else node.args[0:1]
+            if any(_is_dumped_tree(argument, bound) for argument in haystack):
+                found.append(node.lineno)
     return sorted(found)
 
 
@@ -1838,6 +2084,32 @@ DUMPED_TREE_SPECIMENS = [
     ("re.search over ordinary text", 'x = re.search("demo_command", source)', False),
     ("a dump used as the PATTERN, not the haystack",
      "x = re.search(ast.dump(n), source)", False),
+    # ---- round 9: forms a fresh lens walked straight through -------------
+    #
+    # `ast.unparse` carries the IDENTICAL defect and was simply not named:
+    # `"raises" in ast.unparse(io.StringIO("raises.txt"))` is True, which is
+    # the exact false green FG40 records. The rest are one method call apart
+    # from rows already above them, in a rule whose docstring says it measures
+    # the question "in whatever form it is written".
+    ("unparse instead of dump", 'x = "demo_command" in ast.unparse(n)', True),
+    ("a str() conversion in between",
+     'x = "demo_command" in str(ast.dump(n))', True),
+    ("split", 'x = len(ast.dump(n).split("demo_command")) > 1', True),
+    ("partition", 'x = ast.dump(n).partition("demo_command")[1]', True),
+    ("removeprefix", 'x = ast.dump(n).removeprefix("demo_command")', True),
+    ("replace", 'x = ast.dump(n).replace("demo_command", "") != ast.dump(n)', True),
+    # The haystack moves to the FIRST argument once the pattern is compiled,
+    # and the scan only ever looked at the second.
+    ("a compiled pattern", 'x = re.compile("demo_command").search(ast.dump(n))', True),
+    ("operator.contains", 'x = operator.contains(ast.dump(n), "demo_command")', True),
+    ("unparse reached through a local",
+     "rendered = ast.unparse(n)" + NL + 'x = "demo_command" in rendered', True),
+
+    # ---- and the direction that must NOT change -------------------------
+    ("unparse compared, which is correct",
+     "x = ast.unparse(a) == ast.unparse(b)", False),
+    ("a transformation with no question after it", "x = ast.dump(n).lower()", False),
+    ("join takes no needle", 'x = ", ".join(parts)', False),
 ]
 
 
@@ -1854,6 +2126,41 @@ def test_a_text_question_about_a_dumped_tree_is_found_however_it_is_written(
         label + ": the scan " + ("missed" if is_a_text_question else "flagged")
         + " this:" + NL + source
     )
+
+
+def test_every_string_method_is_a_question_or_declared_not_to_be():
+    """The completeness axis this rule did not have.
+
+    `_SUBSTRING_METHODS` was seven names somebody thought of. `.partition`,
+    `.removeprefix`, `.split` and `.replace` ask exactly the same question and
+    none was listed; nothing in the repository could have said so. The four
+    vocabularies in `tests/guard_evidence.py` are each derived against the
+    grammar for precisely this reason, and this one was not derived against
+    anything.
+
+    It is now an EXEMPTION table checked against `dir(str)`, so a method added
+    to `str` -- or removed from the exemptions without a reason -- is a red
+    test rather than a silent hole.
+    """
+    public = {name for name in dir(str) if not name.startswith("_")}
+    classified = set(SAFE_STRING_METHODS) | set(_SUBSTRING_METHODS)
+    assert public - classified == set(), (
+        "these `str` methods are neither treated as a text question nor "
+        "declared safe, so a rendered tree could be interrogated with one and "
+        f"nothing would notice: {sorted(public - classified)}"
+    )
+    assert classified - public == set(), (
+        "these are classified and are not `str` methods, so the table has "
+        f"drifted from the type it is about: {sorted(classified - public)}"
+    )
+    assert not (set(SAFE_STRING_METHODS) & set(_SUBSTRING_METHODS)), (
+        "a method is both a question and declared not to be"
+    )
+    for name, reason in SAFE_STRING_METHODS.items():
+        assert len(reason) > 10, (
+            name + " is exempted without a reason that says why it cannot ask "
+            "a containment question"
+        )
 
 
 def test_the_inventory_is_exactly_the_known_classes():

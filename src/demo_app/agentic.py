@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from nornyx_forge.claude_worker import ClaudeCodeWorker
-from nornyx_forge.evidence import EvidenceLedger
+from nornyx_forge.evidence import WATERMARK_SUFFIX, EvidenceLedger
 from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 from nornyx_forge.nornyx_runtime import (
     EXTERNAL_TRUST_ZONE,
@@ -656,7 +656,16 @@ def run_demo_scenarios(
     authority = config if config is not None else RuntimeAuthorityConfig()
     worker_mode = worker_mode or "deterministic"
     runtime_dir = root / "evidence/runtime"
-    for file in (runtime_dir / "events.jsonl", runtime_dir / "report.json"):
+    # THE MARK GOES WITH THE STREAM IT MARKS. Removing the events and
+    # leaving the high-water file behind orphaned the pair: the mark
+    # still recorded that N records had been written, beside a stream
+    # that no longer held any -- the application decoupling its own
+    # completeness control.
+    for file in (
+        runtime_dir / "events.jsonl",
+        runtime_dir / ("events.jsonl" + WATERMARK_SUFFIX),
+        runtime_dir / "report.json",
+    ):
         if file.exists():
             file.unlink()
     low = run_case(

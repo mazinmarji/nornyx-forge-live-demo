@@ -20,6 +20,16 @@ import threading
 from pathlib import Path
 
 from nornyx_forge.evidence import EvidenceLedger
+from nornyx_forge.util import digest
+
+#: A record cut off mid-write, as an interrupted append leaves it.
+TORN_RECORD = (
+    chr(123) + chr(34) + "sequence" + chr(34) + ": 5, "
+    + chr(34) + "timestam"
+)
+
+#: A high-water mark left behind by a previous run.
+STALE_MARK = json.dumps({"sequence": 99, "digest": "sha256:dead"})
 
 
 def _stream(path: Path) -> list[dict]:
@@ -206,3 +216,178 @@ def test_an_untouched_stream_still_validates(tmp_path: Path):
     assert report["diagnostics"] == []
     # And re-read from disk by a ledger that appended nothing.
     assert EvidenceLedger(path).validate()["status"] == "pass"
+
+
+def test_emptying_the_stream_entirely_is_reported(tmp_path: Path):
+    """Removing HALF was caught; removing ALL was not.
+
+    `_completeness_diagnostics` began `if not durable: return []`, so the
+    completeness control was inverted on the one case an adversary who wants no
+    record at all would choose. The mark beside the stream still recorded that
+    six had been written.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(6):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+    assert ledger.validate()["status"] == "pass"
+
+    path.write_text("", encoding="utf-8", newline="")
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert report["event_count"] == 0
+    assert any("the stream was removed or emptied" in item
+               for item in report["diagnostics"]), report["diagnostics"]
+
+
+def test_deleting_the_stream_file_is_reported(tmp_path: Path):
+    """The same fact, one syscall further."""
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    ledger.append("only", mission_id="M", actor="agent.test")
+    path.unlink()
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("removed or emptied" in item for item in report["diagnostics"])
+
+
+def test_a_stream_that_was_never_written_is_not_an_alarm(tmp_path: Path):
+    """The over-reach control for the two above.
+
+    Both are satisfied by a validator that refuses every empty stream, and a
+    ledger nobody has appended to yet is empty for an innocent reason. With no
+    mark and no records, nothing was written and nothing is claimed.
+    """
+    report = EvidenceLedger(tmp_path / "events.jsonl").validate()
+    assert report["status"] == "pass", report
+    assert report["event_count"] == 0
+    assert report["diagnostics"] == []
+
+
+def test_a_torn_line_is_reported_rather_than_raised(tmp_path: Path):
+    """One partial write must not take the whole application down.
+
+    The re-read happens on every APPEND as well as every validate, so letting
+    `json.loads` escape turned one damaged line into an unhandled 500 for every
+    later governed request in the process -- from `CustomerCaseFlow._stage` at
+    intake, before anything had been decided. The class docstring already
+    promised the other outcome: it "would then REPORT that rather than certify
+    it".
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(4):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(TORN_RECORD)
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("is not a record" in item for item in report["diagnostics"]), (
+        report["diagnostics"]
+    )
+    # And the ledger still accepts records, so the damage is visible rather
+    # than terminal.
+    EvidenceLedger(path, subject_revision="git:test").append(
+        "after", mission_id="M", actor="agent.test",
+    )
+
+
+def test_a_correctly_chained_append_past_the_mark_is_caught(tmp_path: Path):
+    """The forgery only the mark can see, and the direction it is named by.
+
+    A record added with a correctly computed `previous_digest` leaves the chain
+    intact -- linkage cannot help. The mark can, and the diagnostic used to say
+    "records were removed from the end" for a record that had been ADDED,
+    because one equality test served both directions.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(3):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test",
+                      decision="DENY")
+
+    records = _stream(path)
+    mark_text = ledger.watermark_path.read_text(encoding="utf-8")
+    forged = dict(records[-1])
+    forged["sequence"] = 4
+    forged["decision"] = "ALLOW"
+    forged["event_type"] = "action_executed"
+    forged["previous_digest"] = digest(records[-1])
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(json.dumps(forged, sort_keys=True) + chr(10))
+    ledger.watermark_path.write_text(mark_text, encoding="utf-8", newline="")
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("APPENDED after the mark" in item
+               for item in report["diagnostics"]), report["diagnostics"]
+    assert not any("removed from the end" in item
+                   for item in report["diagnostics"]), (
+        "a record was added and the report says records were removed"
+    )
+
+
+def test_validating_while_writers_run_never_reports_a_sound_stream_as_tampered(
+    tmp_path: Path,
+):
+    """`append` took the lock and `validate` took nothing.
+
+    The reader saw the stream and the mark at two different instants with the
+    whole validation loop in between, and the mark's write truncated before it
+    wrote. Measured before the repair: 89 false `fail` verdicts in 1516
+    validations of a stream that was in fact sound.
+    """
+    path = tmp_path / "events.jsonl"
+    verdicts: list[str] = []
+
+    def writer() -> None:
+        ledger = EvidenceLedger(path, subject_revision="git:test")
+        for _ in range(40):
+            ledger.append("event", mission_id="M", actor="agent.test")
+
+    def reader() -> None:
+        ledger = EvidenceLedger(path)
+        for _ in range(120):
+            verdicts.append(ledger.validate()["status"])
+
+    threads = [threading.Thread(target=writer) for _ in range(4)]
+    threads += [threading.Thread(target=reader) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert set(verdicts) == {"pass"}, (
+        "a sound stream was reported as tampered while it was being written: "
+        + repr({verdict: verdicts.count(verdict) for verdict in set(verdicts)})
+    )
+    assert EvidenceLedger(path).validate()["status"] == "pass"
+
+
+def test_the_demonstration_removes_the_mark_with_the_stream(tmp_path: Path):
+    """The application decoupled its own completeness control.
+
+    `run_demo_scenarios` unlinked `events.jsonl` and `report.json` and left the
+    `.highwater` file behind, so the next run began beside a mark recording
+    records that no longer existed.
+    """
+    from demo_app.agentic import run_demo_scenarios  # noqa: PLC0415
+    from nornyx_forge.evidence import WATERMARK_SUFFIX  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    runtime = tmp_path / "evidence" / "runtime"
+    runtime.mkdir(parents=True)
+    stale = runtime / ("events.jsonl" + WATERMARK_SUFFIX)
+    stale.write_text(STALE_MARK, encoding="utf-8", newline="")
+
+    result = run_demo_scenarios(
+        tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig(
+            policy_backend="deterministic_demo", execution_backend="sequential",
+        ),
+    )
+    assert result["evidence"]["status"] == "pass", (
+        "a stale mark from a previous run survived into this one: "
+        + repr(result["evidence"]["diagnostics"])
+    )
