@@ -391,3 +391,186 @@ def test_the_demonstration_removes_the_mark_with_the_stream(tmp_path: Path):
         "a stale mark from a previous run survived into this one: "
         + repr(result["evidence"]["diagnostics"])
     )
+
+
+def test_the_lock_key_does_not_change_when_the_file_appears(tmp_path: Path):
+    """A "per-path" lock that was two locks.
+
+    `Path.resolve()` looks at the filesystem, and on Windows it expands an 8.3
+    short name only when the path EXISTS. The temporary directories these tests
+    and the demo run in are short-named, so the same stream produced one key
+    before its first append and another afterwards -- and appends that were
+    supposed to serialise took different locks.
+    """
+    from nornyx_forge.evidence import _lock_key, _path_lock  # noqa: PLC0415
+
+    path = tmp_path / "nested" / "events.jsonl"
+    before_key = _lock_key(path)
+    before_lock = _path_lock(path)
+
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8", newline="")
+    after_key = _lock_key(path)
+
+    assert after_key == before_key, (
+        "the lock key changed when the file was created, so writers before and "
+        f"after the first append hold different locks: {before_key} then "
+        f"{after_key}"
+    )
+    assert _path_lock(path) is before_lock
+    # And it survives the file going away again, which is the whole lifetime a
+    # reset walks through.
+    path.unlink()
+    assert _lock_key(path) == before_key
+    assert _path_lock(path) is before_lock
+
+
+def test_resetting_while_another_case_is_running_stays_consistent(tmp_path: Path):
+    """The application reset its own ledger outside the lock.
+
+    `run_demo_scenarios` unlinked the stream, the mark and the report with bare
+    `unlink()` calls while `CustomerCaseFlow._stage` appended in the threadpool
+    FastAPI dispatches its handlers into. Measured over 300 iterations before
+    the repair: 5 legitimate runs reported `fail`, and 172 OSErrors escaped
+    `append` as unhandled 500s.
+
+    Both are gone only because BOTH halves were wrong: the reset had to take the
+    lock, and the lock had to be one lock.
+    """
+    runtime = tmp_path / "evidence" / "runtime"
+    runtime.mkdir(parents=True)
+    path = runtime / "events.jsonl"
+    rounds = 60
+    verdicts: list[str] = []
+    escaped: list[str] = []
+
+    def resetter() -> None:
+        for _ in range(rounds):
+            try:
+                EvidenceLedger(path).reset(runtime / "report.json")
+                ledger = EvidenceLedger(path, subject_revision="git:test")
+                for index in range(3):
+                    ledger.append(f"r{index}", mission_id="R", actor="agent.test")
+                verdicts.append(EvidenceLedger(path).validate()["status"])
+            except Exception as exc:  # noqa: BLE001 - the point of the test
+                escaped.append(type(exc).__name__)
+
+    def writer() -> None:
+        for _ in range(rounds):
+            try:
+                ledger = EvidenceLedger(path, subject_revision="git:test")
+                for index in range(6):
+                    ledger.append(f"w{index}", mission_id="W", actor="agent.test")
+            except Exception as exc:  # noqa: BLE001 - the point of the test
+                escaped.append(type(exc).__name__)
+
+    threads = [threading.Thread(target=resetter), threading.Thread(target=writer)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert escaped == [], (
+        "the reset raced a concurrent append and the exception escaped to the "
+        f"caller, which is an unhandled 500 from `_stage`: {escaped[:5]}"
+    )
+    assert set(verdicts) == {"pass"}, (
+        "a run that nothing tampered with was reported as tampered: "
+        + repr({verdict: verdicts.count(verdict) for verdict in set(verdicts)})
+    )
+
+
+def test_removing_the_stream_and_its_mark_together_is_the_disclosed_limit(
+    tmp_path: Path,
+):
+    """Stated rather than implied, because the docstring once implied otherwise.
+
+    With both files gone there is nothing local left to disagree with. That is
+    a real limit of a sidecar held beside the thing it marks, and the class
+    says so in the same words the approval ledger uses about an adversary with
+    write access. This test exists so the limit is a MEASURED, named fact
+    rather than a gap someone later mistakes for a control.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(6):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+
+    path.unlink()
+    ledger.watermark_path.unlink()
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "pass", report
+    assert report["event_count"] == 0
+    # And each half ALONE is still caught, which is what makes this a limit
+    # rather than an absence of control.
+    for keep in ("stream", "mark"):
+        again = tmp_path / (keep + ".jsonl")
+        second = EvidenceLedger(again, subject_revision="git:test")
+        second.append("only", mission_id="M", actor="agent.test")
+        (again if keep == "mark" else second.watermark_path).unlink()
+        assert EvidenceLedger(again).validate()["status"] == "fail", keep
+
+
+def test_a_line_that_parses_but_is_not_an_event_is_reported(tmp_path: Path):
+    """Valid JSON, wrong shape: `__init__` and `validate` tolerated it, `append`
+    subscripted it and raised `KeyError` from `_stage` at intake."""
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    ledger.append("first", mission_id="M", actor="agent.test")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(json.dumps({"not": "an event"}) + chr(10))
+
+    EvidenceLedger(path, subject_revision="git:test").append(
+        "after", mission_id="M", actor="agent.test",
+    )
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("missing required identity fields" in item
+               for item in report["diagnostics"]), report["diagnostics"]
+
+
+def test_a_torn_line_does_not_make_the_report_name_a_direction(tmp_path: Path):
+    """The sequence jumps because a record could not be read, not because one
+    was removed, and telling an operator otherwise sends them somewhere else."""
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(3):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write(TORN_RECORD)
+    EvidenceLedger(path, subject_revision="git:test").append(
+        "after", mission_id="M", actor="agent.test",
+    )
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert not any("removed from the end" in item
+                   for item in report["diagnostics"]), report["diagnostics"]
+    assert any("cannot be attributed" in item
+               for item in report["diagnostics"]), report["diagnostics"]
+
+
+def test_the_report_describes_the_whole_case(tmp_path: Path):
+    """`report.json` was permanently one record behind on the single-case path.
+
+    `audit` validated and then appended its own `stage_completed`, so the
+    artifact and the stream it names disagreed about how long the evidence was
+    for every `POST /api/cases`.
+    """
+    from demo_app.agentic import CustomerCaseFlow, application_security_context  # noqa: PLC0415
+
+    flow = CustomerCaseFlow(
+        {"id": "CASE-SEAL", "customer": "Amina", "risk": "low",
+         "summary": "Update delivery instructions",
+         "requested_action": "send guidance"},
+        root=tmp_path, worker_mode="deterministic", allow_policy_fallback=True,
+        security_context=application_security_context(),
+    )
+    case = flow.run_sequential()
+    stream = _stream(tmp_path / "evidence" / "runtime" / "events.jsonl")
+    assert case["evidence"]["event_count"] == len(stream), (
+        "the report names " + str(case["evidence"]["event_count"])
+        + " events and the stream it describes holds " + str(len(stream))
+    )
+    assert case["evidence"]["status"] == "pass", case["evidence"]["diagnostics"]
+    assert any(entry["stage"] == "audit" for entry in case["timeline"])

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from nornyx_forge.claude_worker import ClaudeCodeWorker
-from nornyx_forge.evidence import WATERMARK_SUFFIX, EvidenceLedger
+from nornyx_forge.evidence import EvidenceLedger
 from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 from nornyx_forge.nornyx_runtime import (
     EXTERNAL_TRUST_ZONE,
@@ -524,14 +524,26 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
     @listen(execution)
     def audit(self, _previous: Any = None) -> dict[str, Any]:
         self.case["orchestration_status"] = "completed"
-        report = self.ledger.validate(report_path=self.root / "evidence/runtime/report.json")
+        # THE STAGE RECORD IS APPENDED FIRST, so the report describes the
+        # whole stream. Validating before the final append left
+        # `report.json` permanently one record behind the stream it names
+        # on the single-case path -- two artifacts disagreeing about how
+        # long the evidence is.
+        self._stage("audit", "Evidence stream sealed.")
+        report = self.ledger.validate(
+            report_path=self.root / "evidence/runtime/report.json",
+        )
         self.case["evidence"] = report
         self.case["framework"] = (
             "CrewAI Flow kickoff"
             if self.execution_backend == "crewai"
             else "CrewAI Flow-compatible sequential execution"
         )
-        return self._stage("audit", f"Evidence status: {report['status']}.")
+        for entry in reversed(self.case.get("timeline", [])):
+            if entry["stage"] == "audit":
+                entry["summary"] = "Evidence status: " + report["status"] + "."
+                break
+        return self.case
 
     def run_sequential(self) -> dict[str, Any]:
         self._sequential_driver = True
@@ -656,18 +668,19 @@ def run_demo_scenarios(
     authority = config if config is not None else RuntimeAuthorityConfig()
     worker_mode = worker_mode or "deterministic"
     runtime_dir = root / "evidence/runtime"
-    # THE MARK GOES WITH THE STREAM IT MARKS. Removing the events and
-    # leaving the high-water file behind orphaned the pair: the mark
-    # still recorded that N records had been written, beside a stream
-    # that no longer held any -- the application decoupling its own
-    # completeness control.
-    for file in (
-        runtime_dir / "events.jsonl",
-        runtime_dir / ("events.jsonl" + WATERMARK_SUFFIX),
+    # THROUGH THE LEDGER, under the lock every reader and writer holds.
+    #
+    # Three bare `unlink()` calls here raced `EvidenceLedger.append` in the
+    # threadpool FastAPI dispatches these handlers into: measured over 300
+    # iterations against a concurrent case, 5 legitimate runs reported
+    # `fail` and 172 OSErrors escaped `append` as unhandled 500s. The mark
+    # still goes with the stream it marks -- removing the events and leaving
+    # the high-water file behind orphaned the pair -- but both now happen
+    # where nothing else can be mid-write.
+    EvidenceLedger(runtime_dir / "events.jsonl").reset(
         runtime_dir / "report.json",
-    ):
-        if file.exists():
-            file.unlink()
+    )
+
     low = run_case(
         {
             "id": "DEMO-LOW",

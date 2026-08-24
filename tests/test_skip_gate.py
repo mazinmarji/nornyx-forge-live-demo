@@ -266,7 +266,7 @@ def test_the_floor_sits_below_the_current_suite_and_above_nothing():
         f"the dated table beside MINIMUM_COLLECTED says {documented} tests "
         f"collect across tests/; {collected} do. That comment has gone stale "
         "twice already and both times a human found it. Re-measure it and "
-        "update the four rows together -- the band row depends on this one."
+        "update the rows together -- the band row depends on this one."
     )
 
 
@@ -358,7 +358,7 @@ def test_the_floor_refusal_actually_runs(tmp_path, capsys):
     assert "collection below floor" in captured
 
 
-#: The four rows of the dated table above `MINIMUM_COLLECTED`.
+#: The six rows of the dated table above `MINIMUM_COLLECTED`.
 _DOCUMENTED_ROW = re.compile(
     r"^#\s{4,}(collected across tests/|sum of the module floors|"
     r"band\(\d+\) = ceil\(0\.9\*n\)|MINIMUM_COLLECTED|"
@@ -397,8 +397,8 @@ def test_the_aggregate_floor_comment_states_the_measured_numbers():
     second stated three numbers of which none was true and whose arithmetic
     did not hold between them either.
 
-    This reads the four rows and checks the three that are pure source facts.
-    The fourth -- what actually collects -- costs a collection, so it is
+    This reads all six rows and checks the five that are pure source facts.
+    The sixth -- what actually collects -- costs a collection, so it is
     checked by `test_the_floor_sits_below_the_current_suite_and_above_nothing`,
     which was already paying for one.
     """

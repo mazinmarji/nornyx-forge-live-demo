@@ -194,7 +194,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
-    "tests/test_false_green_audit.py": 224,
+    "tests/test_false_green_audit.py": 240,
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
@@ -207,7 +207,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_contract_generator.py": 1,
     "tests/test_demo_flow.py": 1,
     "tests/test_dirty_tree_gate.py": 31,
-    "tests/test_evidence.py": 14,
+    "tests/test_evidence.py": 19,
     "tests/test_governance_failure.py": 18,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
@@ -316,25 +316,28 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     2046   (88 modules)
-#     sum of the module floors    1883
-#     band(2046) = ceil(0.9*n)    1842
-#     MINIMUM_COLLECTED           1898
+#     collected across tests/     2070   (88 modules)
+#     sum of the module floors    1904
+#     band(2070) = ceil(0.9*n)    1863
+#     MINIMUM_COLLECTED           1919
 #     above the module sum        15
-#     below what collects         148
+#     below what collects         151
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
 # "116 below what actually collects" -- both then wrong by 38 -- and every
-# guard stayed green, because the guard checked the four rows and nothing
-# read the three hand-derived numbers beside them. In the comment whose
+# guard stayed green, because the guard checked the rows and nothing
+# read the three hand-derived numbers beside them. Two of those three are
+# rows now. The third stayed in prose and went stale anyway -- it said 152
+# where the bands grant 163 -- which is a fourth rot in the comment whose
+# whole subject is that prose beside a constant is not a measurement of it. In the comment whose
 # repair had just been committed for exactly that.
 #
 # Being above the module sum is the only thing that makes the aggregate a
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 152 in total, and the aggregate refuses
+# per-module bands already grant 163 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -343,7 +346,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # them used to read this comment, which is why it could rot twice while both
 # stayed green: prose beside a constant is not a measurement of it.
 #
-# THAT IS NOW CLOSED. The guard named next parses the four rows above and
+# THAT IS NOW CLOSED. The guard named next parses the SIX rows above and
 # compares each against the live value, and the collection test compares the
 # first row against what it actually collected. A third rot is a red test,
 # not a review finding. The guard is
@@ -355,7 +358,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1898
+MINIMUM_COLLECTED = 1919
 
 
 def band(collected: int) -> int:

@@ -132,7 +132,10 @@ jobs:
           PY
           nornyx check .nornyx/generated/brd_contract.nyx
 
-      - name: Governance contracts are blocked only by the missing human approval
+      # Two external authorities are missing, not one: a human approval AND an
+      # authenticated independent inspection. This step was named for the
+      # approval alone, which is the string a reader sees in the checks UI.
+      - name: Governance contracts are blocked only by absent external authority
         run: python scripts/check_pre_approval_baseline.py
 
       - name: Governance evidence artifacts match their declared digests
@@ -176,6 +179,12 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e '.[demo,dev]'
 
+      # NOTE: this detects the APPROVAL only. A contract set that validates
+      # outright also needs an authenticated independent inspection, so an
+      # approval turning this on is necessary and not sufficient -- the
+      # steps below will then fail on the inspection diagnostics rather
+      # than pass. That is the correct outcome and not a defect: it is what
+      # a second missing authority looks like.
       - name: Detect whether a human approval exists
         id: approval
         run: |

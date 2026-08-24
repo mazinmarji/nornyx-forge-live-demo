@@ -658,7 +658,7 @@ SCREEN_CONSUMERS = (
 def screen_consumers() -> list:
     """Every module under `tests/` that imports the shared screen."""
     found = []
-    for module in sorted((ROOT / "tests").glob("*.py")):
+    for module in sorted((ROOT / "tests").rglob("*.py")):
         if module.name == "guard_evidence.py":
             continue
         tree = ast.parse(module.read_text(encoding="utf-8"))
@@ -700,6 +700,67 @@ def test_the_named_consumers_are_all_the_consumers():
         "these modules import the shared screen and are not named in "
         "SCREEN_CONSUMERS, so nothing checks that they pass the module: "
         + repr(sorted(unnamed))
+    )
+
+
+def screen_call_sites(relative: str) -> list:
+    """Every call to the screen in a module, with the function it sits in.
+
+    NOT just the one function named in `SCREEN_CONSUMERS`. That list pairs a
+    module with a single function, so a SECOND function in an already-named
+    module could ask the screen without the module argument and be
+    discovered, named, and never looked at -- restoring the escape by the
+    one route the discovery check made look covered.
+    """
+    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    sites = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for call in ast.walk(node):
+            if (isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id in {"exercised_assertions",
+                                         "executed_nodes"}):
+                sites.append((node.name, call))
+    return sites
+
+
+def _supplies_the_module(call: ast.Call) -> bool:
+    """Does this call hand the screen a module?
+
+    A starred argument counts: `exercised_assertions(*_guard(body, source))`
+    unpacks the (guard, module) pair the helper returns, and refusing it
+    would fail every specimen in this file for supplying the module the
+    correct way.
+    """
+    if any(isinstance(argument, ast.Starred) for argument in call.args):
+        return True
+    if any(keyword.arg == "module" or keyword.arg is None
+           for keyword in call.keywords):
+        return True
+    return len(call.args) >= 2
+
+
+def test_no_call_anywhere_asks_the_screen_without_the_module():
+    """Every call site in every consumer, not one function in each.
+
+    `test_every_consumer_of_the_screen_passes_the_module` reads the single
+    function `SCREEN_CONSUMERS` names per module. This reads them all, so a
+    new call written anywhere in a consumer is covered the moment it is
+    written rather than when someone remembers to add it to a list.
+    """
+    unwired = []
+    for relative in screen_consumers():
+        for function, call in screen_call_sites(relative):
+            if not _supplies_the_module(call):
+                unwired.append(
+                    relative + "::" + function + " line " + str(call.lineno)
+                )
+    assert unwired == [], (
+        "these calls ask the screen without the module, so a module-level "
+        "constant is invisible to them and a guard folded by one can be "
+        "credited with executing something: " + repr(unwired)
     )
 
 
@@ -969,7 +1030,12 @@ def test_the_screen_never_raises_on_any_guard_in_the_suite():
                 continue
             checked += 1
             try:
-                exercised_assertions(node)
+                # WITH THE MODULE, which is how every consumer calls it.
+                # Without it this proved the property only for the
+                # module-less path -- the one production does not use --
+                # and left `module_constants`, `name_aliases` and the
+                # whole scoping pass out of the sweep entirely.
+                exercised_assertions(node, tree)
             except Exception as exc:  # noqa: BLE001 - the point of the test
                 raise AssertionError(
                     "the screen raised on " + module.name + "::" + node.name
@@ -1460,6 +1526,119 @@ def test_a_swallowing_handler_is_found_however_the_class_is_named(
     )
 
 
+#: (label, module-level source, guard body, exercised assertions).
+#:
+#: ONE INDENT WAS ENOUGH TO ESCAPE BOTH ROUND-9 REPAIRS. `module_scope_statements`
+#: yields a compound statement AND the statements inside it, so a rule that
+#: walked the whole subtree recorded a binding from the `Assign` and then
+#: disqualified it from the enclosing `If` in the same pass. Measured on a real
+#: audited guard: the identical gut passed or failed purely on whether the added
+#: line sat at column 0.
+#:
+#: `module_scope_statements` exists for exactly this -- its docstring says a
+#: constant under `if TYPE_CHECKING:` or inside `try: ... except ImportError:`
+#: was invisible -- and every specimen written for it put the binding at column
+#: 0, so the one case it was built for was the one case unpinned.
+NESTED_MODULE_SPECIMENS = [
+    ("a constant at column 0, as every earlier specimen spelled it",
+     "_OFF = False",
+     "if _OFF:" + NL + "    assert real" + NL + "    assert other", 0),
+    ("the same constant one indent deep",
+     "if True:" + NL + "    _OFF = False",
+     "if _OFF:" + NL + "    assert real" + NL + "    assert other", 0),
+    ("under the conditional import the docstring names",
+     "if TYPE_CHECKING:" + NL + "    _OFF = False",
+     "if _OFF:" + NL + "    assert real", 0),
+    ("under try/except ImportError, the other case it names",
+     "try:" + NL + "    _OFF = False" + NL + "except ImportError:" + NL
+     + "    _OFF = False",
+     "if _OFF:" + NL + "    assert real", 0),
+    ("an alias one indent deep",
+     "if True:" + NL + "    _Swallow = AssertionError",
+     "try:" + NL + "    assert real" + NL + "except _Swallow:" + NL + "    pass", 0),
+    ("an alias under a guarded import",
+     "try:" + NL + "    _Swallow = AssertionError" + NL + "except ImportError:"
+     + NL + "    _Swallow = Exception",
+     "try:" + NL + "    assert real" + NL + "except _Swallow:" + NL + "    pass", 0),
+
+    # ---- and the direction that must NOT change -------------------------
+    # A NESTED STATEMENT STILL DISQUALIFIES WHAT IT BINDS. The repair is
+    # "visit each statement once", not "stop disqualifying" -- and a rule that
+    # simply dropped the enclosing statement would lose these.
+    ("a loop target still disqualifies the constant",
+     "_OFF = False" + NL + "for _OFF in candidates():" + NL + "    pass",
+     "if _OFF:" + NL + "    assert real" + NL + "    assert other", 2),
+    ("a nested loop target too",
+     "if True:" + NL + "    _OFF = False" + NL + "for _OFF in candidates():" + NL
+     + "    pass",
+     "if _OFF:" + NL + "    assert real" + NL + "    assert other", 2),
+    ("a with-target nested under a conditional",
+     "_OFF = False" + NL + "if ready():" + NL + "    with open('f') as _OFF:" + NL
+     + "        pass",
+     "if _OFF:" + NL + "    assert real" + NL + "    assert other", 2),
+    ("a live constant still credits its branch", "_ON = True",
+     "if _ON:" + NL + "    assert real", 1),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "module_source", "body", "expected"), NESTED_MODULE_SPECIMENS,
+    ids=[case[0] for case in NESTED_MODULE_SPECIMENS],
+)
+def test_a_module_binding_is_seen_wherever_it_sits(
+    label: str, module_source: str, body: str, expected: int,
+):
+    """Column 0 and one indent deep must answer the same.
+
+    Both axes at once -- the folding axis and the alias axis -- because both
+    read the same statement walk and both had the same hole.
+    """
+    counted = exercised_assertions(*_guard(body, module_source))
+    assert counted == expected, (
+        label + ": the screen says this guard executes " + str(counted)
+        + " failing thing(s); it executes " + str(expected) + ":" + NL
+        + (module_source + NL if module_source else "") + body
+    )
+
+
+def test_a_parameter_shadowing_a_module_alias_is_not_that_alias():
+    """The repair `constant_bindings` has, on the axis that lacked it.
+
+    `constant_bindings` disqualifies parameters and says so; `name_aliases` was
+    written later for the same scoping question and never read `function.args`.
+    Measured: module `_E = AssertionError` with `def guard(_E=ValueError)`
+    resolved `_E` to AssertionError and reported a guard that really does raise
+    as executing nothing.
+    """
+    module = ast.parse(
+        "_E = AssertionError" + NL + NL
+        + "def guard(_E=ValueError):" + NL
+        + '    """A docstring."""' + NL
+        + "    try:" + NL
+        + "        assert real" + NL
+        + "    except _E:" + NL
+        + "        pass" + NL
+    )
+    guard = next(node for node in module.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(guard, module) == 1, (
+        "a parameter was resolved to the module-level alias it shadows, and a "
+        "live guard was reported as executing nothing"
+    )
+    # The control: WITHOUT the parameter the same source really is swallowed,
+    # so the specimen is decided by the shadowing and not by anything else.
+    shadowless = ast.parse(
+        "_E = AssertionError" + NL + NL
+        + "def guard():" + NL
+        + '    """A docstring."""' + NL
+        + "    try:" + NL
+        + "        assert real" + NL
+        + "    except _E:" + NL
+        + "        pass" + NL
+    )
+    bare = next(node for node in shadowless.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(bare, shadowless) == 0
+
+
 #: A module-level name whose literal binding is not its ONLY binding.
 #:
 #: Every one of these was reported DEAD -- indistinguishable from the genuinely
@@ -1695,8 +1874,12 @@ RENDERING_FUNCTIONS = frozenset({"dump", "unparse"})
 #: added to `str` is a red test rather than a silent hole.
 #:
 #: The transformations are safe because they PRODUCE text rather than
-#: interrogate it -- and `_is_dumped_tree` follows them, so the question they
-#: feed is still caught one call later.
+#: interrogate it, and `_is_dumped_tree` follows them, so the question they
+#: feed is still caught one call later. That was stated before it was true
+#: of `format`, `format_map` and `join`: following happened through the
+#: RECEIVER, and for those three the rendered tree is an argument while the
+#: receiver is the template or the separator. `_TEXT_FROM_ARGUMENTS` is the
+#: half that was missing.
 SAFE_STRING_METHODS = {
     "capitalize":
         "returns text and takes no needle, so it cannot answer a "
@@ -1809,6 +1992,18 @@ _SUBSTRING_METHODS = frozenset(
 _REGEX_SEARCHES = frozenset({"findall", "finditer", "fullmatch", "match",
                              "search", "split", "sub", "subn"})
 
+#: Text-producing methods that take the rendered tree as an ARGUMENT.
+#:
+#: `format`, `format_map` and `join` are exempted from being QUESTIONS
+#: because they produce text rather than interrogate it -- which is true,
+#: and the exemption's stated ground was that `_is_dumped_tree` follows
+#: them so the question they feed is caught one call later. It followed
+#: receivers only, and for these three the rendered tree is an argument
+#: while the receiver is the template or the separator. Measured: all
+#: three carried FG21's retired spelling straight past the scan.
+_TEXT_FROM_ARGUMENTS = frozenset({"format", "format_map", "join"})
+
+
 #: Callables that ask containment without being a method of the text.
 _CONTAINMENT_FUNCTIONS = frozenset({"contains"})
 
@@ -1852,6 +2047,22 @@ def _is_dumped_tree(expression, bound: set) -> bool:
         # `str(ast.dump(n))` is the rendered tree wearing a conversion.
         if named == "str" and len(expression.args) == 1:
             return _is_dumped_tree(expression.args[0], bound)
+        # `"{}".format(ast.dump(n))`, `"".join([ast.dump(n)])` -- the
+        # rendered tree reached as an ARGUMENT, with the template or the
+        # separator as receiver. The exemption table justified these three
+        # by saying `_is_dumped_tree` follows them, and it followed only
+        # RECEIVERS, so all three were a way to ask the question with the
+        # rule looking the other way.
+        if named in _TEXT_FROM_ARGUMENTS:
+            # ANYWHERE IN THE ARGUMENT, because `join` takes a list and
+            # `format_map` takes a dict -- the tree is one container
+            # deep, and checking only the argument itself missed both.
+            supplied = [*expression.args,
+                        *(keyword.value for keyword in expression.keywords)]
+            return any(
+                _is_dumped_tree(inner, bound)
+                for argument in supplied for inner in ast.walk(argument)
+            )
         # `ast.dump(n).lower()`, `...strip()` -- still the rendered tree, one
         # transformation further away.
         if isinstance(callee, ast.Attribute):
@@ -2110,6 +2321,16 @@ DUMPED_TREE_SPECIMENS = [
      "x = ast.unparse(a) == ast.unparse(b)", False),
     ("a transformation with no question after it", "x = ast.dump(n).lower()", False),
     ("join takes no needle", 'x = ", ".join(parts)', False),
+    ("through format", 'x = "demo_command" in "{}".format(ast.dump(n))', True),
+    ("through join of a list", 'x = "demo_command" in "".join([ast.dump(n)])', True),
+    ("through format_map of a dict",
+     'x = "demo_command" in "{a}".format_map({"a": ast.dump(n)})', True),
+    ("through join of a comprehension",
+     'x = "demo_command" in "".join(ast.dump(k) for k in ns)', True),
+    ("a join of ordinary parts is not a question",
+     'x = ", ".join(parts)', False),
+    ("a format of ordinary text is not a question",
+     'x = "{}".format(name)', False),
 ]
 
 

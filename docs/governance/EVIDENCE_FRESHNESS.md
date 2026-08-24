@@ -62,7 +62,10 @@ python scripts/check_pre_approval_baseline.py --regenerate
 ```
 
 That rebuilds the evidence artifacts, rebinds the contracts to them, and then
-asserts the contracts fail *only* for want of a human approval. It works at any
+asserts the contracts fail *only* for want of an external authority -- a
+human approval, or the authenticated independent inspection that two of the
+five accepted diagnostics are about. This said "a human approval" for all
+five, which reads as though one signature would clear them. It works at any
 instant; `--as-of` evaluates at an explicit one:
 
 ```bash
@@ -71,8 +74,11 @@ python scripts/check_pre_approval_baseline.py --regenerate --as-of 2200-01-01T00
 
 `tests/test_expiry_semantics.py` proves this at 2100 and 2200: after
 regeneration the only remaining diagnostics are those in
-`EXPECTED_PRE_APPROVAL_DIAGNOSTICS` -- the set that says a human has
-not approved the contracts, identical to the set produced today.
+`EXPECTED_PRE_APPROVAL_DIAGNOSTICS` -- the set that says an external
+authority has not acted, identical to the set produced today. THREE of its
+five members say a human has not approved; the other two say no
+authenticated independent inspection exists, which is a different
+authority and is not cleared by an approval.
 
 ## The commit discipline, and why it is written down
 

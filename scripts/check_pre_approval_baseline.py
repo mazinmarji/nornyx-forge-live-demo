@@ -1,15 +1,38 @@
-"""Assert the governance contracts fail only for want of a human approval.
+"""Assert the governance contracts fail only for want of an EXTERNAL AUTHORITY.
 
 The invariant this gate protects is narrow and deliberate: a governance contract
-may be blocked *only* because an accountable human has not approved it. Any other
-diagnostic — a schema break, a stale revision, expired or mismatched evidence — is
-a defect and fails this check.
+may be blocked *only* because an authority outside this repository has not acted.
+Any other diagnostic — a schema break, a stale revision, expired or mismatched
+evidence — is a defect and fails this check.
 
-It holds in both directions. Before approval the contracts fail with approval
-diagnostics only; after a real human approval record is supplied they validate
-outright. Either is acceptable; anything else is not.
+TWO AUTHORITIES, NOT ONE, and this docstring said "a human approval" for both.
+`EXPECTED_PRE_APPROVAL_DIAGNOSTICS` has five members and they divide:
 
-The check never creates, infers, or backdates an approval.
+    AN_APPROVAL_RECORD_MISSING   an accountable human has not approved
+    APPROVAL_EVIDENCE_MISSING    an accountable human has not approved
+    EVIDENCE_REQUIRED_MISSING    an accountable human has not approved
+
+    CHANGE_EVIDENCE_MISSING        no AUTHENTICATED INDEPENDENT INSPECTION
+    SOD_EVIDENCE_PRODUCER_UNKNOWN  no AUTHENTICATED INDEPENDENT INSPECTION
+
+So the both-directions claim that stood here -- "after a real human approval
+record is supplied they validate outright" -- was false. A human approval alone
+leaves `architecture_governance.nyx` failing, because it also needs an inspection
+signed by a reviewer whose key is in a trust store this repository does not have.
+A reader who believed the old sentence would conclude that one signature is all
+that stands between this repository and validating governance contracts, and that
+the independent-inspection control is already satisfied. It is not, and never was.
+
+CLAUDE.md corrected exactly this substitution in ITSELF and recorded doing so.
+The correction did not reach this file, the CI step that runs it, or
+docs/governance/EVIDENCE_FRESHNESS.md, which is why a fresh lens found it here
+three rounds later.
+
+It still holds in both directions, stated correctly: before either authority acts
+the contracts fail with those five diagnostics only; once both have acted they
+validate outright. Either is acceptable; anything else is not.
+
+The check never creates, infers, or backdates an approval or an inspection.
 """
 
 from __future__ import annotations

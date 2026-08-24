@@ -237,6 +237,31 @@ def module_scope_statements(module: ast.AST):
             stack.extend(case.body)
 
 
+def own_nodes(statement: ast.AST):
+    """Every node belonging to this statement, and to no nested statement.
+
+    `module_scope_statements` yields a compound statement AND its children,
+    so a rule that walked the whole subtree saw the same binding twice --
+    once as the `Assign` that records it, once as the enclosing `If` that
+    disqualifies it. Measured: a constant at column 0 was folded and the
+    identical constant one level under `if True:` was not, so the escape
+    `module_scope_statements` exists to close survived a single indent.
+
+    Nested statements are skipped because they are yielded in their own
+    right. Everything else belongs here: a `for` target, a `with ... as`,
+    an `except ... as`, a match capture and a walrus in a test are all
+    children of the compound statement rather than statements themselves.
+    """
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.stmt):
+                continue
+            stack.append(child)
+
+
 def bound_names(node: ast.AST) -> set:
     """Every name this statement binds.
 
@@ -251,6 +276,14 @@ def bound_names(node: ast.AST) -> set:
     misses stays a "constant", its `if` folds, and the branch below it is judged
     dead -- which is how five genuine guards were refused. A name this collects
     wrongly is merely undecidable, and an undecidable branch is credited.
+
+    THAT SAFE DIRECTION HAS A LIMIT, and it was reached. Walking the whole
+    subtree meant a compound statement collected the bindings of every
+    statement inside it -- and since `module_scope_statements` yields those
+    statements too, the name an `Assign` had just recorded was disqualified
+    by its own enclosing `if`. Over-collection there is not undecidability;
+    it is the binding erasing itself. `own_nodes` stops at nested
+    statements, which are visited on their own.
     `test_symtable_agrees_that_these_are_all_the_module_bindings` checks the
     dangerous direction against CPython's own binding analysis rather than
     against a table maintained here.
@@ -284,13 +317,18 @@ def bound_names(node: ast.AST) -> set:
         for expression in surrounding:
             names |= _stored_names(expression)
         return names
-    return _stored_names(node)
+    return _stored_names(node, own_nodes(node))
 
 
-def _stored_names(node: ast.AST) -> set:
-    """Every name bound anywhere inside this subtree."""
+def _stored_names(node: ast.AST, nodes=None) -> set:
+    """Every name bound in this subtree, or in the nodes supplied.
+
+    `nodes` is how a caller says "this statement only, not the ones
+    nested in it". Without it the whole subtree is walked, which is what
+    a decorator or a default expression needs.
+    """
     names: set = set()
-    for inner in ast.walk(node):
+    for inner in (ast.walk(node) if nodes is None else nodes):
         if isinstance(inner, ast.Name) and isinstance(inner.ctx, (ast.Store, ast.Del)):
             names.add(inner.id)
         elif isinstance(inner, ast.alias):
@@ -1059,6 +1097,24 @@ def name_aliases(function: ast.AST, module: ast.AST | None = None) -> dict:
     local_direct, local_out = _scope_aliases(
         node for node in ast.walk(function) if isinstance(node, ast.stmt)
     )
+
+    # A PARAMETER IS THE BINDING IN SCOPE, whatever the module says.
+    #
+    # `constant_bindings` learned this and said so; this function, added
+    # later for the same scoping question, never read `function.args`.
+    # Measured: module `_E = AssertionError` with `def guard(_E=ValueError)`
+    # resolved `_E` to AssertionError, and a guard that really does raise
+    # was reported as executing nothing -- the direction this module's
+    # opening note forbids outright.
+    arguments = getattr(function, "args", None)
+    if isinstance(arguments, ast.arguments):
+        for group in (arguments.posonlyargs, arguments.args,
+                      arguments.kwonlyargs):
+            for argument in group:
+                local_out.add(argument.arg)
+        for solo in (arguments.vararg, arguments.kwarg):
+            if solo is not None:
+                local_out.add(solo.arg)
 
     direct = {
         name: set(denoted) for name, denoted in module_direct.items()
