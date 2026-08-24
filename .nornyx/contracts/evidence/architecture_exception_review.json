@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-08-24T01:53:05Z",
-  "governed_input_digest": "sha256:62da2d56030e5124fafea6d57bfb2ebc1056cc0d7252937afa1d0aaec0d66463",
+  "generated_at": "2026-08-24T13:34:33Z",
+  "governed_input_digest": "sha256:5d651d0b0ababb9ec657d7ecaf70d851930cb49bf7d171de01a4dca158adbfc1",
   "open_exceptions": [],
   "schema": "nornyx.forge.exception_review_record.v1",
   "statement": "No architecture exceptions were requested or granted.",
-  "subject_revision": "git:b2173a64dcd560c2153a93b73330f575c62b0b86"
+  "subject_revision": "git:ef533a0839162dd42752be2b2c5ae03a374e6143"
 }

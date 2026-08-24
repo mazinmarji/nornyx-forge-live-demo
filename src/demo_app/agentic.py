@@ -14,6 +14,7 @@ from nornyx_forge.nornyx_runtime import (
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     canonical_action_request,
+    exercised_capability,
 )
 from nornyx_forge.subject_bootstrap import (
     RuntimeSecurityContext,
@@ -461,6 +462,34 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         }
         self.case["nornyx_evidence"] = decision.evidence
         self.case["governance_mode"] = self.boundary.mode
+        # The capability the act EXERCISED, from the single derivation the
+        # runtime authorizes against -- never from the branch we are in.
+        #
+        # These two appends used to name the capability from `decision.allowed`:
+        # `execute_low_risk_action` when the effect was released and
+        # `execute_high_risk_action` when it was withheld. Measured on the
+        # production flow, with a real signed grant releasing a high-value
+        # external refund:
+        #
+        #     act risk               high
+        #     decision               ALLOW / ALLOWED, effect released
+        #     recorded capability    execute_low_risk_action
+        #
+        # The contract declares `execute_low_risk_action` as `risk: low` with no
+        # required gates and NO REQUIRED APPROVALS. So the one record of a
+        # released high-risk effect said the capability in play was the one that
+        # needs no human -- at the exact moment a human approval was spent.
+        # This module's own suite, `tests/test_capability_binding.py`, exists
+        # because a caller once labelled a high-risk REQUEST that way; the
+        # boundary refuses that now, and the record was still free to say it
+        # afterwards.
+        #
+        # `execute_high_risk_action` was not the right name for the other branch
+        # either: it is an action class, and no capability by that name exists in
+        # this system. The declared one is `execute_high_risk_effect`, and the
+        # shipped demonstration wrote the non-existent name on every high-risk
+        # case.
+        exercised = exercised_capability(str(self.case.get("risk", "low")))
         # What happened to the *act*, recorded separately from what happened to
         # the workflow. An orchestration failure later must not be able to erase
         # the fact that an effect was released, and an effect being released must
@@ -473,7 +502,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 "action_executed",
                 mission_id=self.mission_id,
                 actor="agent.execution",
-                capability="execute_low_risk_action",
+                capability=exercised,
                 decision=decision.effect,
                 reason=decision.reason,
                 governance_source=decision.source,
@@ -484,7 +513,7 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 "action_prevented",
                 mission_id=self.mission_id,
                 actor="agent.execution",
-                capability="execute_high_risk_action",
+                capability=exercised,
                 decision=decision.effect,
                 reason=decision.reason,
                 code=decision.code,

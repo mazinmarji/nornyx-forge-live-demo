@@ -63,15 +63,25 @@ Nothing verified this before. `parse_brd` reads headings only, and no test
 referenced a real BRD id -- the requirements suite runs on synthetic fixtures.
 `tests/test_brd_evidence_shape.py` pins the measured shape.
 
-**What that test can and cannot do for YOU, stated because the first version of
-this paragraph overstated it.** Nine of its ten cases run the shipped
-demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock` --
-gitignored, and `prepare_runtime.py` exits 2 without a human approval. So those
-nine SKIP for every reader and for CI, and a review measured the consequence:
-nine undeclared skips turned the census red on every clean checkout while this
-repository was claiming all gates green. The skips are now declared as
-human-blocked, and "the gap cannot widen silently" was true only in a tree that
-already holds the lock.
+**What that test can and cannot do for YOU, stated because two earlier versions
+of this paragraph were wrong in opposite directions.** All TEN of its cases run
+the shipped demonstration, and it does NOT need
+`.nornyx/runtime/nornyx.agentic_network.lock`.
+
+The first version overstated what the test proved. The second, correcting it,
+said nine cases SKIP for every reader because the lock is gitignored and
+`prepare_runtime.py` exits 2 without a human approval, and declared those nine
+HUMAN-BLOCKED. Measured on a copy of the tracked files alone -- exactly what a
+clean clone holds, with no `.nornyx/runtime/` -- `demo --offline` exits 0 and
+the lock's absence lands in the deterministic fallback as
+`RUNTIME_LOCK_MISSING`, so the run completes and the stream is produced. Running
+the module with the lock moved aside: ten passed, none skipped.
+
+So the correction over-corrected. `HUMAN_BLOCKED` is the one category no
+autonomous run may close, which makes declaring it falsely the mirror image of
+the substitution this repository exists to police -- a blocker that is not
+there, rather than a control that is not there. The precondition is gone and
+the ten cases measure the shipped stream on any checkout.
 
 What runs everywhere is the tenth:
 `test_the_disclosed_table_is_well_formed_without_a_runtime_lock` checks that

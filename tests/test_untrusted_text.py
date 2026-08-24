@@ -465,3 +465,119 @@ def test_the_real_contracts_still_classify_as_approval_blocked():
         result = gate._check(contract, shutil.which("nornyx"))
         assert result["validates"] or result["approval_blocked"], result
         assert result["unexpected_diagnostics"] == [], result
+
+
+#: (label, what the fake checker prints, its exit code, does it validate).
+#:
+#: THE SECOND DIRECTION, which nothing tested. This module's docstring says the
+#: property "holds in both directions ... after a real human approval record is
+#: supplied they validate outright", and every existing case presents a FAILING
+#: contract. `tests/test_pre_approval_baseline.py` asserts
+#: `validates or approval_blocked`, satisfied today by `approval_blocked`
+#: alone, so a broken `validates` was invisible.
+VALIDATION_OUTPUTS = [
+    ("the checker's real success line", "Nornyx check passed", 0, True),
+    ("success with surrounding blank lines",
+     chr(10) + " Nornyx check passed " + chr(10), 0, True),
+
+    # THE SUBSTRING TRAP. "passed" inside a diagnostic must not read as
+    # success: that is the substitution this gate exists to refuse, one level
+    # down.
+    ("a diagnostic mentioning passed",
+     '{"level":"error","code":"X","path":"p","source_id":"s",'
+     '"message":"the approval check passed nothing"}', 1, False),
+    ("prose claiming success on a failing exit", "Nornyx check passed", 1, False),
+    # THE SUBSTRING TRAP ON A ZERO EXIT, which is where the success check is
+    # actually consulted. The row above exits 1, so it never reaches it -- and
+    # a control that cannot reach the code it targets is not a control.
+    ("the success line buried in other output",
+     "WARNING: the lock is stale" + chr(10) + "Nornyx check passed", 0, False),
+    ("unparseable noise on a zero exit", "INTERNAL VALIDATOR CRASHED", 0, False),
+    ("silence on a zero exit", "", 0, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "output", "code", "validates"), VALIDATION_OUTPUTS,
+    ids=[case[0] for case in VALIDATION_OUTPUTS],
+)
+def test_a_contract_that_validates_is_reported_as_validating(
+    label: str, output: str, code: int, validates: bool, tmp_path: Path,
+):
+    """A PASSING contract was reported as not validating, and that inverts the gate.
+
+    `nornyx check` on a contract that validates prints the plain line
+    "Nornyx check passed" and exits 0 -- no JSON. `_diagnostics` refuses it, and
+    the handler hardcoded `validates: False`, discarding the return code.
+
+    MEASURED on this checkout against `forge_control.nyx`, the one contract that
+    passes today:
+
+        raw          rc 0, stdout "Nornyx check passed"
+        _check(...)  validates False, approval_blocked False
+
+    `healthy = all(validates or approval_blocked)`, so the gate exits 2.
+    SUPPLYING THE REAL HUMAN APPROVAL -- the event that makes both governance
+    contracts validate -- WOULD HAVE TURNED THIS GATE FROM PASS TO FAIL.
+    `--has-approval` could never return 0, so CI took the "no approval" branch
+    permanently and the strict-authorization job was unreachable even after a
+    genuine approval. `human_approval_present`, computed as `all(validates)`,
+    would have reported false at the exact moment every contract validated.
+
+    The last four rows keep the strictness that was right: a non-zero exit is
+    never talked out of by prose, and "passed" inside a diagnostic is not a
+    verdict.
+    """
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    if sys.platform == "win32":
+        lines = [f"@echo {line}" if line.strip() else "@echo."
+                 for line in output.split(chr(10))]
+        lines = lines or ["@echo."]
+        fake.write_text(
+            (chr(13) + chr(10)).join([*lines, f"@exit /b {code}"])
+            + chr(13) + chr(10),
+            encoding="utf-8",
+        )
+    else:
+        fake.write_text(
+            "#!/bin/sh" + chr(10) + "cat <<'OUT'" + chr(10) + output + chr(10)
+            + "OUT" + chr(10) + f"exit {code}" + chr(10),
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["validates"] is validates, (
+        label + ": the gate reports validates=" + str(result["validates"])
+        + " for a checker that exited " + str(code) + " saying " + repr(output[:60])
+    )
+    if not validates and code == 0:
+        assert result["unexpected_diagnostics"], (
+            label + ": output the gate cannot classify was accepted silently"
+        )
+
+
+def test_the_real_passing_contract_reads_as_validating():
+    """The end-to-end direction, on the contract that actually passes.
+
+    Driven through the shipped checker rather than a fake, because the defect
+    was in how the gate reads what the REAL checker prints -- and no fake would
+    have told me what that is.
+    """
+    import shutil  # noqa: PLC0415
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    executable = shutil.which("nornyx")
+    if executable is None:
+        pytest.skip("the nornyx CLI is not on PATH in this environment")
+    result = gate._check(".nornyx/contracts/forge_control.nyx", executable)
+    assert result["returncode"] == 0, result
+    assert result["validates"] is True, (
+        "a contract that passes is reported as not validating, so obtaining "
+        "the human approval would turn this gate from pass to fail: "
+        + repr(result)
+    )
+    assert result["unexpected_diagnostics"] == [], result

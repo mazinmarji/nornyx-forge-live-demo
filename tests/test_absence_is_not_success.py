@@ -45,6 +45,8 @@ from nornyx_forge.governed_subject import INTEGRITY_UNAVAILABLE  # noqa: E402
 from nornyx_forge.subject_observer import observe_governance_integrity  # noqa: E402
 
 #: Modules where absence can change an authority answer.
+NL = chr(10)
+
 SURFACES = (
     "src/nornyx_forge/approval_trust.py",
     "src/nornyx_forge/reviewer_trust.py",
@@ -76,6 +78,65 @@ CLASSIFIED_EMPTY_RETURNS: dict[str, str] = {
 }
 
 
+#: Zero-argument builtin constructors that produce an empty value.
+#:
+#: `frozenset` and `bytearray` were absent from the four this used to list, and
+#: `str`/`bytes` were never considered. They are here for completeness rather
+#: than because anything returns them: the point is that the rule no longer
+#: depends on which of them a handler happens to spell.
+EMPTY_CONSTRUCTORS = frozenset({
+    "bytearray", "bytes", "dict", "frozenset", "list", "set", "str", "tuple",
+})
+
+
+def _is_empty_value(value: ast.expr, empty_names: set) -> bool:
+    """Is this expression an empty collection or string?
+
+    STRUCTURE, NOT SPELLING. The rule this replaced tested for `ast.List` with
+    no elements, `ast.Dict` with no keys, and a call to one of four names.
+    Measured against it, every one of these was invisible:
+
+        return ()                a tuple displays as neither List nor Dict
+        return frozenset()       a fifth constructor
+        return ''                emptiness is not only about containers
+        return b''
+        except ...:              the scan read only the handler's top level
+            if partial:
+                return []
+        except ...:              and only the returned expression itself
+            rows = []
+            return rows
+
+    In a module whose whole subject is that a rule naming four spellings is a
+    rule about the spellings. `literal_eval` decides the class and executes
+    nothing.
+
+    `return None` IS NOT COVERED, deliberately and after measuring it: adding it
+    finds 13 further sites across these eight surfaces, and it is a different
+    construct. An empty collection reads to a caller as "I looked and there was
+    nothing"; `None` reads as "no answer", and callers branch on it. Widening
+    this rule to cover it would put 13 sites in front of a classification table
+    whose entries must each state why absence cannot increase authority --
+    which is worth doing on its own evidence, not as a side effect of a fix to
+    the spelling problem. Recorded in the ledger as its own exposure.
+    """
+    if isinstance(value, ast.Name):
+        return value.id in empty_names
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        return (
+            value.func.id in EMPTY_CONSTRUCTORS
+            and not value.args
+            and not value.keywords
+        )
+    try:
+        literal = ast.literal_eval(value)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        # Anything computed is not an empty literal, and `literal_eval` says so
+        # by refusing rather than by returning a value.
+        return False
+    return literal is not None and hasattr(literal, "__len__") and len(literal) == 0
+
+
 def _empty_return_sites(relative: str) -> list[tuple[str, int]]:
     """Every `except ...: return <empty>` in a module, with its function."""
     source = (ROOT / relative).read_text(encoding="utf-8")
@@ -88,23 +149,91 @@ def _empty_return_sites(relative: str) -> list[tuple[str, int]]:
         for inner in ast.walk(node):
             if not isinstance(inner, ast.ExceptHandler):
                 continue
-            for statement in inner.body:
-                if not isinstance(statement, ast.Return) or statement.value is None:
-                    continue
-                value = statement.value
-                empty = (
-                    isinstance(value, ast.List) and not value.elts
-                ) or (
-                    isinstance(value, ast.Dict) and not value.keys
-                ) or (
-                    isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Name)
-                    and value.func.id in {"list", "dict", "set", "tuple"}
-                    and not value.args
-                )
-                if empty:
+            # Names the handler itself binds to something empty, so
+            # `rows = []` followed by `return rows` is the same site as
+            # `return []` -- one rename apart, and the rename hid it.
+            empty_names: set = set()
+            for statement in ast.walk(inner):
+                if isinstance(statement, ast.Assign) and _is_empty_value(
+                    statement.value, empty_names
+                ):
+                    empty_names |= {
+                        target.id for target in statement.targets
+                        if isinstance(target, ast.Name)
+                    }
+            # ANYWHERE IN THE HANDLER, not only its top level: a return under
+            # an `if` inside the handler is the same swallowed failure.
+            for statement in ast.walk(inner):
+                if (
+                    isinstance(statement, ast.Return)
+                    and statement.value is not None
+                    and _is_empty_value(statement.value, empty_names)
+                ):
                     found.append((node.name, statement.lineno))
     return found
+
+
+#: (label, handler body, is it a swallowed failure).
+#:
+#: The five that expect True were all invisible to the rule that named four
+#: spellings, in the module whose subject is that naming spellings is not a
+#: rule. The four that expect False are the over-reach control: a handler that
+#: returns something, or re-raises, is not a swallowed failure, and a screen
+#: that flagged those would put real code in front of a classification table
+#: for no reason.
+EMPTY_RETURN_SPECIMENS = [
+    ("an empty tuple display", "    return ()", True),
+    ("a fifth constructor", "    return frozenset()", True),
+    ("an empty string", "    return ''", True),
+    ("empty bytes", "    return b''", True),
+    ("returned from inside the handler",
+     "    if partial:" + NL + "        return []", True),
+    ("bound to a name first",
+     "    rows = []" + NL + "    return rows", True),
+    ("the spelling the old rule did catch", "    return []", True),
+
+    # --- and the other direction, which must stay unflagged -------------
+    ("a non-empty literal", "    return [1]", False),
+    ("a computed value", "    return _recover()", False),
+    ("a constructor with an argument", "    return list(rows)", False),
+    ("a name bound to something real",
+     "    rows = _recover()" + NL + "    return rows", False),
+    ("a re-raise", "    raise", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "handler", "swallowed"), EMPTY_RETURN_SPECIMENS,
+    ids=[case[0] for case in EMPTY_RETURN_SPECIMENS],
+)
+def test_the_scan_answers_emptiness_and_not_a_list_of_spellings(
+    label: str, handler: str, swallowed: bool, tmp_path: Path, monkeypatch,
+):
+    """Every synonym of "I looked and there was nothing" is the same site.
+
+    Driven through `_empty_return_sites` itself rather than a copy of its rule,
+    so this cannot pass against a second implementation that agrees with the
+    specimens and not with the scan the gate runs.
+    """
+    module = tmp_path / "surface.py"
+    module.write_text(
+        "def probe():" + NL
+        + "    try:" + NL
+        + "        return _work()" + NL
+        + "    except Exception:" + NL
+        + NL.join("    " + line for line in handler.split(NL)) + NL,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "test_absence_is_not_success.ROOT", tmp_path, raising=True,
+    )
+    found = _empty_return_sites("surface.py")
+    assert bool(found) is swallowed, (
+        label + ": the scan " + ("missed" if swallowed else "flagged")
+        + " this handler:" + NL + handler
+    )
+    if swallowed:
+        assert found[0][0] == "probe", found
 
 
 def test_every_empty_return_from_a_handler_is_classified():

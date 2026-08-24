@@ -141,6 +141,20 @@ def _diagnostics(output: str) -> list[dict]:
     return found
 
 
+#: What the checker prints when a contract validates.
+#:
+#: An exact set, not a substring search. "passed" appearing anywhere in a
+#: diagnostic would otherwise read as success, which is the substitution this
+#: gate exists to refuse -- one level down.
+CHECKER_SUCCESS_LINES = frozenset({"Nornyx check passed"})
+
+
+def _is_success_output(output: str) -> bool:
+    """Is this the checker's plain-text success report, and nothing else?"""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return bool(lines) and all(line in CHECKER_SUCCESS_LINES for line in lines)
+
+
 def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
     command = [executable, "check", contract]
     if as_of:
@@ -162,6 +176,44 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
     try:
         diagnostics = _diagnostics(completed.stdout + completed.stderr)
     except UnstructuredCheckerOutput as exc:
+        # A CONTRACT THAT PASSES PRINTS PROSE, AND THIS READ THAT AS FAILURE.
+        #
+        # `nornyx check` on a VALIDATING contract writes the plain line
+        # "Nornyx check passed" and exits 0 -- no JSON at all. `_diagnostics`
+        # refuses it, correctly by its own strictness rule, and this handler
+        # then hardcoded `validates: False`, discarding `returncode` entirely.
+        # The normal return path computes `validates` from the return code;
+        # only this early exit threw it away.
+        #
+        # Measured on this checkout, against the one contract that passes:
+        #
+        #     raw            rc 0, stdout "Nornyx check passed"
+        #     _check(...)    validates False, approval_blocked False
+        #
+        # `healthy = all(validates or approval_blocked)`, so the gate exits 2.
+        # WHICH MEANS SUPPLYING THE REAL HUMAN APPROVAL -- the event that makes
+        # both governance contracts validate -- WOULD TURN THIS GATE FROM PASS
+        # TO FAIL. `--has-approval` could never return 0, so CI took the "no
+        # approval" branch permanently and the strict-authorization path was
+        # unreachable even after a genuine approval. And
+        # `human_approval_present`, which is `all(validates)`, would report
+        # false at the exact moment every contract validated.
+        #
+        # The strictness rule stands for a NON-ZERO exit: output the gate
+        # cannot account for is a reason to fail. A ZERO exit is the checker
+        # asserting success, and unstructured output there is not evidence of
+        # failure. Narrowly: exit 0 plus a RECOGNISED success line validates;
+        # anything else is still refused.
+        if completed.returncode == 0 and _is_success_output(
+            completed.stdout + completed.stderr
+        ):
+            return {
+                "contract": contract,
+                "returncode": completed.returncode,
+                "validates": True,
+                "approval_blocked": False,
+                "unexpected_diagnostics": [],
+            }
         return {
             "contract": contract,
             "returncode": completed.returncode,
@@ -234,6 +286,34 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
         )
         not in EXPECTED_PRE_APPROVAL_DIAGNOSTICS
     ]
+    # A ZERO EXIT MUST BE EXPLAINED TOO, and this is the symmetric half of the
+    # rule above. A checker that exits 0 having printed NOTHING leaves
+    # `_diagnostics("")` empty without raising, and `returncode == 0` alone was
+    # then read as "this contract validates" -- absence taken as confirmation,
+    # the same class as the unexplained failure this gate already refuses.
+    #
+    # It is not hypothetical in shape: a checker that silently no-ops on a
+    # contract path it cannot read exits 0 and says nothing, and the gate would
+    # credit a pass for a check that never ran.
+    #
+    # Positive evidence means the recognised success line, or at least one
+    # parsed diagnostic. Today's checker always supplies one or the other.
+    explained_pass = _is_success_output(
+        completed.stdout + completed.stderr
+    ) or bool(diagnostics)
+    if completed.returncode == 0 and not explained_pass:
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{
+                "unexplained_pass":
+                    "the checker exited 0 and said nothing this gate "
+                    "recognises, so nothing observed says the contract was "
+                    "checked at all.",
+            }],
+        }
     return {
         "contract": contract,
         "returncode": completed.returncode,

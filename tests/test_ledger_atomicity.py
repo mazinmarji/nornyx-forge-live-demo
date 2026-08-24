@@ -749,3 +749,75 @@ def test_a_busy_ledger_does_not_spend_the_grant(tmp_path: Path):
         "the retry the refusal recommends does not work: the grant was spent "
         f"by a refusal that released nothing: {reason}"
     )
+
+
+@pytest.mark.parametrize("held", ["ledger", "witness"])
+def test_contention_on_a_long_lived_ledger_is_not_diagnosed_as_damage(
+    held: str, tmp_path: Path,
+) -> None:
+    """THE PRODUCTION OBJECT LIFETIME: construct first, then the lock arrives.
+
+    `test_lock_contention_is_not_diagnosed_as_lost_history` constructs
+    `ApprovalLedger(path)` INSIDE the lock window, so contention is caught in
+    `__init__`, `unavailable_reason` is set, and `consume` returns at the
+    `if not self.available` early exit. It never reaches the structural re-read
+    that runs before the claim.
+
+    Production never does that. `NornyxActionBoundary.__init__` builds the
+    ledger once and `_official` calls `consume` later, so a lock taken AFTER
+    construction -- a backup, an antivirus scan, `provision-ledger
+    --migrate-continuity` run while traffic is served -- lands at the re-read.
+
+    Measured on that lifetime before the repair, with a legitimate, never-spent
+    grant:
+
+        baseline, no lock          released True, "approval A1 consumed"
+        under BEGIN EXCLUSIVE      released False, APPROVAL_LEDGER_UNREADABLE
+                                   "... could not be re-read before the claim"
+
+    `APPROVAL_LEDGER_UNREADABLE` is the TAMPER code, whose documented recovery
+    is `--reset-replay-history` -- which discards the replay history and
+    invalidates every outstanding human approval, to cure a lock that clears on
+    its own. The same script holding the lock on the WITNESS gave `LEDGER_BUSY`
+    with the warning against that remedy. Same lifetime, same fault class, two
+    different codes: the asymmetry is what showed which handler was wrong.
+
+    A control that cannot reach the line it is about is not a control, however
+    accurate its name.
+    """
+    path, side = _ledger(tmp_path, spends=0)
+
+    # CONSTRUCTED BEFORE THE LOCK, which is the whole point.
+    ledger = ApprovalLedger(path)
+    assert ledger.available, ledger.unavailable_reason
+
+    target = path if held == "ledger" else side
+    blocker = sqlite3.connect(target, timeout=1, isolation_level=None)
+    try:
+        blocker.execute("BEGIN EXCLUSIVE")
+        claimed, reason = ledger.consume(
+            "fp-late", "rd-late", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id="ACT-LATE",
+        )
+    finally:
+        blocker.close()
+
+    assert claimed is False, "a consumption was recorded against a locked store"
+    assert reason.startswith(LEDGER_BUSY), (
+        "contention on a long-lived ledger was diagnosed as "
+        + reason.split(":")[0] + ", a damage or lost-history code. The operator "
+        "response differs: one is 'retry', the other is 'discard every approval'"
+    )
+    assert "Do NOT run" in reason, (
+        "the refusal does not warn against the destructive remedy"
+    )
+
+    # And the grant survives, so the advice to retry is true.
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-late", "rd-late", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-LATE",
+    )
+    assert claimed is True, (
+        "the retry the refusal recommends does not work: the grant was spent "
+        f"by a refusal that released nothing: {reason}"
+    )

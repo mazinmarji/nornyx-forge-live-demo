@@ -96,6 +96,16 @@ TRY_NODES = tuple(
 #: `ast.Match` exists from 3.10.
 MATCH_NODE = getattr(ast, "Match", None)
 
+#: Pattern nodes that CAPTURE a name. `case [first, *rest]` binds both, and
+#: neither appears as an `ast.Name` anywhere in the tree.
+_MATCH_CAPTURES = tuple(
+    node for node in (
+        getattr(ast, "MatchAs", None),
+        getattr(ast, "MatchStar", None),
+        getattr(ast, "MatchMapping", None),
+    ) if node is not None
+)
+
 #: Statement types the walker does not dispatch on, and why that is safe.
 #:
 #: DERIVED AGAINST THE GRAMMAR, not against what a reviewer happened to name.
@@ -199,6 +209,142 @@ def _literal_or_none(node: ast.expr):
     return value
 
 
+#: Statements whose body is a DIFFERENT scope. A name bound inside one of these
+#: is not a module-level binding, so the module walk yields the statement and
+#: stops.
+NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def module_scope_statements(module: ast.AST):
+    """Every statement in the MODULE's own scope, and no other scope.
+
+    `module.body` alone was what the earlier pass read, so a constant declared
+    under `if TYPE_CHECKING:` or inside a `try: ... except ImportError:` was
+    invisible; walking the whole module instead would have collected the locals
+    of every function in the file, which are not in scope at all.
+    """
+    stack = list(getattr(module, "body", []))
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, NESTED_SCOPES):
+            continue
+        for field in ("body", "orelse", "finalbody"):
+            stack.extend(getattr(node, field, None) or [])
+        for handler in getattr(node, "handlers", None) or []:
+            stack.extend(handler.body)
+        for case in getattr(node, "cases", None) or []:
+            stack.extend(case.body)
+
+
+def bound_names(node: ast.AST) -> set:
+    """Every name this statement binds.
+
+    Store and Del contexts carry almost all of it -- the grammar puts an
+    `ast.Name` in target position for plain assignment, augmented assignment,
+    annotated assignment, walrus, loop targets, `with ... as`, comprehension
+    targets and `del`, however deeply nested in tuples or starred targets. The
+    rest bind without a `Name` node at all, and are listed because there is
+    nowhere else to read them from.
+
+    Over-collecting here is SAFE and under-collecting is the defect: a name this
+    misses stays a "constant", its `if` folds, and the branch below it is judged
+    dead -- which is how five genuine guards were refused. A name this collects
+    wrongly is merely undecidable, and an undecidable branch is credited.
+    `test_symtable_agrees_that_these_are_all_the_module_bindings` checks the
+    dangerous direction against CPython's own binding analysis rather than
+    against a table maintained here.
+    """
+    if isinstance(node, NESTED_SCOPES):
+        # The def binds its own name; its BODY is another scope entirely. Its
+        # decorators, defaults, annotations and bases are not -- they are
+        # evaluated where the def appears, so a binding in one of them is a
+        # binding here.
+        #
+        # `symtable` found this on real code and I had not thought of it:
+        # `ids=[case[0] for case in SPECIMENS]` inside a `@parametrize`
+        # decorator binds `case` AT MODULE LEVEL from Python 3.12, because
+        # PEP 709 inlines list comprehensions into the enclosing scope.
+        # Returning only `{node.name}` missed it.
+        surrounding = [*node.decorator_list]
+        arguments = getattr(node, "args", None)
+        if isinstance(arguments, ast.arguments):
+            surrounding += [d for d in arguments.defaults if d is not None]
+            surrounding += [d for d in arguments.kw_defaults if d is not None]
+            for group in (arguments.posonlyargs, arguments.args,
+                          arguments.kwonlyargs):
+                surrounding += [a.annotation for a in group if a.annotation]
+        for extra in ("returns", "bases", "keywords"):
+            value = getattr(node, extra, None)
+            if isinstance(value, list):
+                surrounding += value
+            elif value is not None:
+                surrounding.append(value)
+        names = {node.name}
+        for expression in surrounding:
+            names |= _stored_names(expression)
+        return names
+    return _stored_names(node)
+
+
+def _stored_names(node: ast.AST) -> set:
+    """Every name bound anywhere inside this subtree."""
+    names: set = set()
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Name) and isinstance(inner.ctx, (ast.Store, ast.Del)):
+            names.add(inner.id)
+        elif isinstance(inner, ast.alias):
+            names.add(inner.asname or inner.name.split(".")[0])
+        elif isinstance(inner, NESTED_SCOPES):
+            names.add(inner.name)
+        elif isinstance(inner, (ast.Global, ast.Nonlocal)):
+            names.update(inner.names)
+        elif isinstance(inner, ast.ExceptHandler) and inner.name:
+            names.add(inner.name)
+        elif isinstance(inner, ast.arg):
+            names.add(inner.arg)
+        elif MATCH_NODE is not None:
+            captured = getattr(inner, "name", None) or getattr(inner, "rest", None)
+            if isinstance(inner, _MATCH_CAPTURES) and isinstance(captured, str):
+                names.add(captured)
+    return names
+
+
+def module_constants(module: ast.AST) -> dict:
+    """Module-level names whose EVERY module-level binding is a literal.
+
+    The earlier pass read only `ast.Assign` statements in `module.body` and
+    `continue`d past anything else, so a second, non-literal binding of the same
+    name did not disqualify it. Measured, every one of these reported the guard
+    below it DEAD -- identically to a guard that really was dead:
+
+        FLAG = False ; FLAG = _detect()        recomputed after the literal
+        COUNT = 0 ; COUNT += 1                 augmented
+        STATE = False ; for STATE in ...       rebound by a loop
+        enabled = False ; from config import enabled
+
+    The docstring above said such a name was "excluded outright". It was not.
+    """
+    constants: dict = {}
+    disqualified: set = set()
+    for node in module_scope_statements(module):
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            literal = (
+                _literal_or_none(node.value)
+                if len(targets) == len(node.targets) else _NOT_LITERAL
+            )
+            if literal is not _NOT_LITERAL:
+                for target in targets:
+                    if target.id in constants and constants[target.id] != literal:
+                        disqualified.add(target.id)
+                    constants[target.id] = literal
+                continue
+        disqualified.update(bound_names(node))
+    return {name: value for name, value in constants.items()
+            if name not in disqualified}
+
+
 def constant_bindings(function: ast.AST, module: ast.AST | None = None) -> dict:
     """Names whose EVERY binding is an immutable constant literal.
 
@@ -218,7 +364,15 @@ def constant_bindings(function: ast.AST, module: ast.AST | None = None) -> dict:
     value and asserts it, that is a real assertion whatever its first binding
     was -- so a name assigned from a call, a subscript, a loop target, a `with`
     target, a comprehension, or an augmented assignment is excluded outright,
-    not merely overwritten.
+    not merely overwritten. THAT SENTENCE WAS TRUE OF THE FUNCTION AND FALSE OF
+    THE MODULE: the module pass read `ast.Assign` and skipped every other
+    statement without disqualifying anything, so `FLAG = False` followed by
+    `FLAG = _detect()` left `FLAG` a constant. See `module_constants`.
+
+    A PARAMETER SHADOWING THE NAME, and a `global` declaration, are the two
+    other ways the module binding is not the one the guard reads. Both are
+    disqualified here rather than in `module_constants`, because both are facts
+    about this function and not about the module.
     """
     constants: dict = {}
     rebound: set = set()
@@ -228,15 +382,18 @@ def constant_bindings(function: ast.AST, module: ast.AST | None = None) -> dict:
     # invisible, so `if _OFF:` was undecidable and both branches were credited.
     # Read first, so a name the guard rebinds locally still disqualifies it.
     if module is not None:
-        for node in getattr(module, "body", []):
-            if not isinstance(node, ast.Assign):
-                continue
-            literal = _literal_or_none(node.value)
-            if literal is _NOT_LITERAL:
-                continue
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    constants[target.id] = literal
+        constants.update(module_constants(module))
+
+    # A PARAMETER IS THE BINDING IN SCOPE, whatever the module says. Measured:
+    # module `ready = False` with `def test_g(ready):` folded `if ready:` to
+    # False and reported the guard dead.
+    arguments = getattr(function, "args", None)
+    if isinstance(arguments, ast.arguments):
+        for group in (arguments.posonlyargs, arguments.args, arguments.kwonlyargs):
+            rebound.update(argument.arg for argument in group)
+        for solo in (arguments.vararg, arguments.kwarg):
+            if solo is not None:
+                rebound.add(solo.arg)
 
     for node in ast.walk(function):
         if isinstance(node, ast.Assign):
@@ -271,6 +428,10 @@ def constant_bindings(function: ast.AST, module: ast.AST | None = None) -> dict:
                     pass
                 else:
                     rebound.add(target.id)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            # The guard says out loud that it may rebind this name, and where
+            # from is out of view.
+            rebound.update(node.names)
         elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
             target = getattr(node, "target", None)
             if isinstance(target, ast.Name):
@@ -554,6 +715,66 @@ def _cannot_raise(block: list) -> bool:
     return True
 
 
+#: Statement types that cannot end a block, and why.
+#:
+#: THE FOURTH VOCABULARY AXIS. `executed_nodes` dispatch and `_decide` folding
+#: are both derived against the grammar; `_terminates` was not, and it decided
+#: two compound statements out of six while its docstring said "RECURSIVE
+#: THROUGH COMPOUND STATEMENTS".
+#:
+#: Measured cost of that gap: four lines at the top of any guard, every
+#: assertion left in place --
+#:
+#:     try:
+#:         return
+#:     except Exception:
+#:         pass
+#:     <the entire real body>
+#:
+#: -- gutted 40 of 40 FG owners with identical `exercised` counts pristine and
+#: gutted, and 4 of the 5 bodies carrying all 41 catalogue kills. Collection
+#: unchanged, markers unchanged, census blind, no unreachable-code lint.
+#:
+#: A statement listed here falls through as "does not terminate", which is the
+#: permissive direction: it can only leave a dead statement counted, never
+#: refuse a live one.
+NON_TERMINATING_STATEMENTS = {
+    "AnnAssign": "binds; control continues",
+    "Assert": "may raise, but a passing assertion continues",
+    "Assign": "binds; control continues",
+    "AsyncFunctionDef": "defines; control continues",
+    "AugAssign": "binds; control continues",
+    "ClassDef": "defines; control continues",
+    "Delete": "unbinds; control continues",
+    "FunctionDef": "defines; control continues",
+    "Global": "a declaration",
+    "Import": "binds; control continues",
+    "ImportFrom": "binds; control continues",
+    "Nonlocal": "a declaration",
+    "Pass": "does nothing",
+    "TypeAlias": "a declaration",
+}
+
+
+def _handlers_can_intercept(node) -> bool:
+    """Can an `except` clause here stop the body's exit from leaving the block?
+
+    No: handlers catch EXCEPTIONS, and `return`/`break`/`continue` are not
+    exceptions. `try: return / except Exception: pass` executes the return and
+    never enters the handler. A `raise` in the body IS interceptable, which is
+    why `_body_exit_is_an_exception` is asked separately.
+    """
+    return bool(node.handlers)
+
+
+def _body_exit_is_an_exception(block: list, bindings: dict) -> bool:
+    """Does this block leave only by raising?"""
+    for statement in block:
+        if _terminates(statement, bindings):
+            return isinstance(statement, ast.Raise)
+    return False
+
+
 def _terminates(statement: ast.AST, bindings: dict) -> bool:
     """Does control provably leave the block at this statement?
 
@@ -563,9 +784,13 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
     assertions, and `if True: return` followed by real assertions, both counted
     the assertions below them.
 
-    RECURSIVE THROUGH COMPOUND STATEMENTS, because `if True: return` leaves the
-    block exactly as `return` does. Only branches this module can DECIDE are
-    followed; an undecidable `if` may fall through, so it never terminates.
+    RECURSIVE THROUGH EVERY COMPOUND STATEMENT `executed_nodes` DISPATCHES, and
+    using the same decisions. It used to recurse through `if` and `with` only,
+    so `try: return / except Exception: pass` left the whole body below it dead
+    and fully counted -- see `NON_TERMINATING_STATEMENTS` for what that cost.
+
+    Only branches this module can DECIDE are followed; an undecidable `if` may
+    fall through, so it never terminates.
     """
     if isinstance(statement, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
         return True
@@ -577,10 +802,49 @@ def _terminates(statement: ast.AST, bindings: dict) -> bool:
     if isinstance(statement, ast.If):
         decided = fold(statement.test, bindings)
         if decided is UNDECIDED:
-            return False
+            # BOTH branches terminating is still termination, whatever the test.
+            return bool(statement.orelse) and all(
+                any(_terminates(inner, bindings) for inner in branch)
+                for branch in (statement.body, statement.orelse)
+            )
         taken = statement.body if decided else statement.orelse
         return any(_terminates(inner, bindings) for inner in taken)
     if isinstance(statement, (ast.With, ast.AsyncWith)):
+        return any(_terminates(inner, bindings) for inner in statement.body)
+    if isinstance(statement, TRY_NODES):
+        # `finally` that leaves wins outright: it runs on every path.
+        if any(_terminates(inner, bindings) for inner in statement.finalbody):
+            return True
+        if not any(_terminates(inner, bindings) for inner in statement.body):
+            # A handler that returns only runs if something raised, so the
+            # block may still fall through. `try: risky() / except: return`
+            # must stay counted, and this is why.
+            return False
+        # The body leaves. Handlers cannot intercept a `return`, `break` or
+        # `continue` -- only a `raise`.
+        if _body_exit_is_an_exception(statement.body, bindings):
+            return not _handlers_can_intercept(statement)
+        return True
+    if MATCH_NODE is not None and isinstance(statement, MATCH_NODE):
+        # Only when some case is a catch-all, or nothing is guaranteed to run.
+        exhaustive = any(
+            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+            and case.guard is None
+            for case in statement.cases
+        )
+        return exhaustive and all(
+            any(_terminates(inner, bindings) for inner in case.body)
+            for case in statement.cases
+        )
+    if isinstance(statement, ast.While):
+        decided = fold(statement.test, bindings)
+        if decided is UNDECIDED or not decided:
+            return False
+        return any(_terminates(inner, bindings) for inner in statement.body)
+    if isinstance(statement, (ast.For, ast.AsyncFor)):
+        decided = fold(statement.iter, bindings)
+        if decided is UNDECIDED or not _is_non_empty(decided):
+            return False
         return any(_terminates(inner, bindings) for inner in statement.body)
     return False
 

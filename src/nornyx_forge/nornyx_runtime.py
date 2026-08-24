@@ -1593,6 +1593,28 @@ class ApprovalLedger:
                 f"established, so a claim cannot be trusted: {exc}",
             )
         except sqlite3.Error as exc:
+            # CONTENTION IS NOT DAMAGE -- THE FOURTH SITE.
+            #
+            # Three handlers were taught this and this one was not, and it is
+            # the one PRODUCTION reaches. The boundary builds its ledger once
+            # in `__init__` and calls `consume` later, so a lock taken AFTER
+            # construction lands here, at the structural re-read that runs
+            # before the claim. Measured on that exact lifetime: a legitimate,
+            # never-spent grant against a ledger held under BEGIN EXCLUSIVE
+            # gave APPROVAL_LEDGER_UNREADABLE after 43 s -- the TAMPER code,
+            # whose documented recovery discards every outstanding approval.
+            #
+            # The asymmetry was the proof: the same script holding the lock on
+            # the WITNESS instead gave LEDGER_BUSY, warning against exactly
+            # that remedy. Same object lifetime, same fault class, two codes.
+            #
+            # My own regression could not see it. It constructs
+            # `ApprovalLedger(path)` INSIDE the lock window, so contention is
+            # caught at construction and `consume` returns at the
+            # `if not self.available` exit without ever reaching this line.
+            # Production never constructs a ledger inside the lock.
+            if _is_contention(exc):
+                return False, _busy_refusal("action approval ledger", exc)
             # "unusable" is the established vocabulary for this refusal, and a
             # test asserts on it. Inventing a second phrase for the same state
             # would leave two ways to say one thing and one of them unchecked.

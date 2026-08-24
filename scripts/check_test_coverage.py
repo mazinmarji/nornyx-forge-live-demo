@@ -67,18 +67,37 @@ EXPECTED_SKIPS = {
     # module and its skip were introduced together and EXPECTED_SKIPS was edited
     # twice without an entry.
     #
-    # These are NOT like the four above. Docker and POSIX skips are covered by
-    # another CI job; this one is covered by nothing, because the lock needs a
-    # human approval that does not exist. Saying 'CI runs it' here would be
-    # false, so it does not say that.
-    "tests/test_brd_evidence_shape.py::test_the_stream_is_not_empty":
-        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
-    "tests/test_brd_evidence_shape.py::test_the_universally_recorded_fields_stay_universal":
-        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
-    "tests/test_brd_evidence_shape.py::test_the_partially_recorded_fields_do_not_get_worse":
-        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
-    "tests/test_brd_evidence_shape.py::test_the_disclosure_in_the_brd_matches_what_is_measured":
-        "This measurement runs the shipped demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored and `prepare_runtime.py` exits 2 without a human approval, so NO reader and NO CI job can produce one -- the `test` job has no prepare-runtime step. HUMAN-BLOCKED, not platform-blocked: unlike the Docker and POSIX exemptions above, there is no other job that covers it. What runs everywhere instead is test_the_disclosed_table_is_well_formed_without_a_runtime_lock, which checks the disclosure's shape and field set against BRD-F-005 with no lock at all, so the part of the claim that CAN be checked by a reader is.",
+    # FOUR HUMAN-BLOCKED EXEMPTIONS WERE REMOVED HERE, and the reason is worth
+    # keeping. They read, verbatim and four times over:
+    #
+    #   "This measurement runs the shipped demonstration, which needs
+    #    `.nornyx/runtime/nornyx.agentic_network.lock`. That lock is gitignored
+    #    and `prepare_runtime.py` exits 2 without a human approval, so NO
+    #    reader and NO CI job can produce one ... HUMAN-BLOCKED, not
+    #    platform-blocked"
+    #
+    # The shipped demonstration does not need the lock. Measured on a copy of
+    # the 216 tracked files -- exactly a clean clone, no `.nornyx/runtime/`:
+    #
+    #     demo --offline   EXIT 0, status pass
+    #     nornyx_evidence  {"status": "fallback",
+    #                       "load_error": "RUNTIME_LOCK_MISSING"}
+    #
+    # The absence lands in the deterministic fallback, as CLAUDE.md documents,
+    # and the run completes. With the lock present the only change is the
+    # `load_error` string; both paths fall back, because without an approval
+    # the authorizer does not load either way.
+    #
+    # Removing the precondition took `test_brd_evidence_shape.py` from 9 skips
+    # and 1 test to 10 tests, all passing. Nine cases had been declared
+    # permanently unobtainable by a human dependency that was not there.
+    #
+    # `HUMAN_BLOCKED` is the ONE category this repository says no autonomous
+    # run may close. Inflating it is the mirror image of the substitution the
+    # rest of this file polices: claiming a blocker that does not exist rather
+    # than a control that does not exist. A reviewer auditing the skip census
+    # was told the strongest check of BRD-F-005 was unavailable, and accepted
+    # nine permanent skips instead of spending a minute disproving it.
     "tests/test_container_launch.py::test_compose_up_build_starts_the_application":
         "The live container build downloads packages, which BRD-004 forbids for the default offline run. CI exercises it in the container-launch job instead, so it is covered — just not here.",
 }
@@ -139,7 +158,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_security_context.py": 10,
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
-    "tests/test_skip_gate.py": 28,
+    "tests/test_skip_gate.py": 29,
     "tests/test_documented_claims.py": 139,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
@@ -166,23 +185,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_expiry_semantics.py": 8,
     "tests/test_pre_approval_baseline.py": 6,
     "tests/test_action_binding.py": 35,
-    "tests/test_untrusted_text.py": 45,
+    "tests/test_untrusted_text.py": 53,
     "tests/test_subject_completeness.py": 9,
     "tests/test_governance_integrity_authority.py": 18,
     "tests/test_artifact_authority.py": 16,
     "tests/test_collection_completeness.py": 9,
-    "tests/test_absence_is_not_success.py": 9,
+    "tests/test_absence_is_not_success.py": 20,
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
-    "tests/test_false_green_audit.py": 135,
+    "tests/test_false_green_audit.py": 161,
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
     "tests/test_architecture_security.py": 7,
     "tests/test_authority_config.py": 12,
     "tests/test_brd_evidence_shape.py": 9,
-    "tests/test_capability_binding.py": 3,
+    "tests/test_capability_binding.py": 9,
     "tests/test_console_encoding.py": 3,
     "tests/test_container_launch.py": 6,
     "tests/test_contract_generator.py": 1,
@@ -208,7 +227,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
     # crash boundary rather than reasoning about it.
-    "tests/test_ledger_atomicity.py": 23,
+    "tests/test_ledger_atomicity.py": 25,
     # R2: the authoritative-property contract and the terminal
     # classification of every registered attack.
     "tests/test_attack_attribution_contract.py": 9,
@@ -268,9 +287,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 #: drove forty skipping parameter sets of one declared identity through the
 #: real `classify` and measured `unexpected=[]` with both floors padded by
 #: forty.
-EXPECTED_SKIP_CASES = {
-    "tests/test_brd_evidence_shape.py::test_the_partially_recorded_fields_do_not_get_worse": 4,
-    "tests/test_brd_evidence_shape.py::test_the_universally_recorded_fields_stay_universal": 3,
+EXPECTED_SKIP_CASES: dict[str, int] = {
+    # EMPTY, because the four identities this held caps for no longer skip:
+    # their premise was that the shipped demonstration needs a runtime lock,
+    # and it does not. See the note in EXPECTED_SKIPS above.
 }
 
 # Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the
@@ -296,12 +316,12 @@ EXPECTED_SKIP_CASES = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     1901   (88 modules)
-#     sum of the module floors    1749
-#     band(1901) = ceil(0.9*n)    1711
-#     MINIMUM_COLLECTED           1764
+#     collected across tests/     1958   (88 modules)
+#     sum of the module floors    1803
+#     band(1958) = ceil(0.9*n)    1763
+#     MINIMUM_COLLECTED           1818
 #     above the module sum        15
-#     below what collects         137
+#     below what collects         140
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -335,7 +355,7 @@ EXPECTED_SKIP_CASES = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 1764
+MINIMUM_COLLECTED = 1818
 
 
 def band(collected: int) -> int:

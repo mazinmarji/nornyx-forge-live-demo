@@ -646,6 +646,110 @@ def test_every_consumer_of_the_screen_passes_the_module():
     )
 
 
+#: (guard body, failing things executed) for the TERMINATION axis.
+#:
+#: Four lines at the top of any guard, every assertion left in place --
+#: `try: / return / except Exception: / pass` -- gutted 40 of 40 FG owners
+#: with identical counts pristine and gutted, and 4 of the 5 bodies carrying
+#: all 41 catalogue kills. `_terminates` said it was "RECURSIVE THROUGH
+#: COMPOUND STATEMENTS" and recursed through two of six.
+TERMINATION_SPECIMENS = [
+    ("try:" + NL + "    return" + NL + "except Exception:" + NL + "    pass" + NL
+     + "assert real", 0),
+    ("try:" + NL + "    return" + NL + "finally:" + NL + "    pass" + NL
+     + "assert real", 0),
+    # `finally` TERMINATING IS THE ONLY REASON THIS TRY TERMINATES. Every
+    # other zero above leaves via the body, so the `finalbody` rule was never
+    # the deciding factor and removing it left the suite green -- a rule no
+    # specimen could exercise.
+    ("try:" + NL + "    risky()" + NL + "finally:" + NL + "    return" + NL
+     + "assert real", 0),
+    ("match value:" + NL + "    case _:" + NL + "        return" + NL
+     + "assert real", 0),
+    ("while True:" + NL + "    return" + NL + "assert real", 0),
+    ("for _ in [1]:" + NL + "    return" + NL + "assert real", 0),
+    ("if cond:" + NL + "    return" + NL + "else:" + NL + "    return" + NL
+     + "assert real", 0),
+
+    # ---- and the direction that must NOT change -------------------------
+    # `finally` runs on every path, so its assertion executes.
+    ("try:" + NL + "    return" + NL + "finally:" + NL + "    assert real", 1),
+    # A handler runs only if something raised, so the block may fall through.
+    ("try:" + NL + "    risky()" + NL + "except Exception:" + NL + "    return" + NL
+     + "assert real", 1),
+    # A `raise` IS interceptable, unlike a `return`.
+    ("try:" + NL + "    raise Boom()" + NL + "except Exception:" + NL + "    pass" + NL
+     + "assert real", 1),
+    # No catch-all case, so the match may fall through.
+    ("match value:" + NL + "    case 1:" + NL + "        return" + NL
+     + "assert real", 1),
+    ("while cond:" + NL + "    return" + NL + "assert real", 1),
+    ("for _ in rows:" + NL + "    return" + NL + "assert real", 1),
+    ("if cond:" + NL + "    return" + NL + "assert real", 1),
+]
+
+
+@pytest.mark.parametrize(("body", "expected"), TERMINATION_SPECIMENS)
+def test_the_screen_knows_which_statements_end_a_block(body: str, expected: int):
+    """Every zero gutted 40 of 40 FG owners with every gate green.
+
+    The seven expecting 1 are the half that makes this a rule rather than a
+    blunt instrument: `finally` runs on every path, a handler runs only if
+    something raised, a `raise` is interceptable where a `return` is not, and a
+    `match` without a catch-all may fall through.
+    """
+    counted = exercised_assertions(*_guard(body))
+    assert counted == expected, (
+        "the screen says this guard executes " + str(counted) + " failing "
+        "thing(s); it executes " + str(expected) + ":" + NL + body
+    )
+
+
+def test_every_statement_type_can_be_asked_whether_it_terminates():
+    """The FOURTH vocabulary axis, and the only one that had no completeness check.
+
+    `executed_nodes` dispatch, `_decide` folding and `ARITHMETIC` operators are
+    all derived against the grammar. `_terminates` was not, and it decided two
+    compound statements out of six while claiming to be recursive through all
+    of them. `TryStar` and `Match` were missing from it for as long as they
+    have existed, exactly as they were missing from the dispatch axis before
+    that axis was derived.
+
+    So the same question is asked here: every `ast.stmt` subclass is either
+    handled by `_terminates` or listed in `NON_TERMINATING_STATEMENTS` with the
+    reason it cannot end a block.
+    """
+    import inspect  # noqa: PLC0415
+
+    import guard_evidence  # noqa: PLC0415
+    from guard_evidence import NON_TERMINATING_STATEMENTS  # noqa: PLC0415
+
+    source = inspect.getsource(guard_evidence._terminates)
+    handled = {
+        node.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name) and node.value.id == "ast"
+    }
+    handled |= {"Try", "TryStar", "Match"}  # reached via TRY_NODES / MATCH_NODE
+    every = {
+        node.__name__ for node in vars(ast).values()
+        if isinstance(node, type) and issubclass(node, ast.stmt)
+        and node is not ast.stmt
+    }
+    unaccounted = sorted(every - handled - set(NON_TERMINATING_STATEMENTS))
+    assert unaccounted == [], (
+        "these statement types are neither decided by `_terminates` nor "
+        "declared unable to end a block, so whether code after them counts is "
+        "an accident: " + repr(unaccounted)
+    )
+    phantom = sorted(set(NON_TERMINATING_STATEMENTS) - every)
+    assert phantom == [], (
+        "these declared statement types do not exist in this Python: "
+        + repr(phantom)
+    )
+
+
 def test_every_statement_type_is_dispatched_or_declared():
     """Three rounds of enumerating shapes by hand, three rounds of missing one.
 
@@ -1114,6 +1218,160 @@ SCOPED_BINDING_SPECIMENS = [
      + "    assert real", 1),
     ("_LIMIT = 3", "assert rows == _LIMIT", 1),
 ]
+
+
+#: A module-level name whose literal binding is not its ONLY binding.
+#:
+#: Every one of these was reported DEAD -- indistinguishable from the genuinely
+#: dead `_OFF = False` control above -- because the module pass read `ast.Assign`
+#: and `continue`d past every other statement without disqualifying anything.
+#: The docstring said such a name was "excluded outright"; the function pass did
+#: that, the module pass did not, and no specimen crossed the two.
+#:
+#: FG41. The direction matters: this is the screen refusing a GENUINE guard, not
+#: crediting a gutted one. It cannot let a false green through, which is why it
+#: survived four rounds of specimens that were all aimed the other way.
+REBOUND_MODULE_SPECIMENS = [
+    ("recomputed after the literal", "FLAG = False" + NL + "FLAG = _detect()",
+     "if FLAG:" + NL + "    assert real"),
+    ("augmented", "COUNT = 0" + NL + "COUNT += 1",
+     "if COUNT:" + NL + "    assert real"),
+    ("rebound by a loop", "STATE = False" + NL + "for STATE in candidates():"
+     + NL + "    pass", "if STATE:" + NL + "    assert real"),
+    ("annotated later", "READY = False" + NL + "READY: bool = _detect()",
+     "if READY:" + NL + "    assert real"),
+    ("shadowed by an import", "enabled = False" + NL
+     + "from config import enabled", "if enabled:" + NL + "    assert real"),
+    ("shadowed by a def", "handler = False" + NL + "def handler():" + NL
+     + "    return True", "if handler:" + NL + "    assert real"),
+    ("bound again by a with", "session = False" + NL + "with open('f') as session:"
+     + NL + "    pass", "if session:" + NL + "    assert real"),
+    ("bound again by a walrus", "seen = False" + NL + "print(seen := _detect())",
+     "if seen:" + NL + "    assert real"),
+    ("caught into the name", "err = False" + NL + "try:" + NL + "    _boot()"
+     + NL + "except Exception as err:" + NL + "    pass",
+     "if err:" + NL + "    assert real"),
+    ("declared under a conditional import", "FAST = False" + NL
+     + "if _has_c_extension():" + NL + "    FAST = _load()",
+     "if FAST:" + NL + "    assert real"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "module_source", "body"), REBOUND_MODULE_SPECIMENS,
+    ids=[case[0] for case in REBOUND_MODULE_SPECIMENS],
+)
+def test_a_module_name_bound_twice_is_not_a_constant(
+    label: str, module_source: str, body: str,
+):
+    """A second binding disqualifies the name, whatever statement performs it.
+
+    Each specimen is a REAL guard: the branch can be taken, so the assertion
+    under it must be credited. The last one is the shape that makes this more
+    than theoretical -- a module-level feature flag set once at import time
+    under a conditional is ordinary Python, and its literal default is not its
+    value.
+    """
+    counted = exercised_assertions(*_guard(body, module_source))
+    assert counted == 1, (
+        label + ": the screen says this guard executes nothing, so a real "
+        "assertion would be reported as a false green:" + NL
+        + module_source + NL + body
+    )
+
+
+def test_a_parameter_shadowing_a_module_constant_is_not_that_constant():
+    """The name the guard reads is its own parameter, not the module's.
+
+    Separate from the table because `_guard` builds a guard with no parameters,
+    and this defect is only visible on one that has them.
+    """
+    module = ast.parse(
+        "ready = False" + NL + NL
+        + "def guard(ready):" + NL
+        + '    """A docstring."""' + NL
+        + "    if ready:" + NL
+        + "        assert real" + NL
+    )
+    guard = next(node for node in module.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(guard, module) == 1, (
+        "a parameter was folded to the module-level default that it shadows"
+    )
+    # The control: WITHOUT the parameter the same source is genuinely dead, so
+    # the specimen is decided by the shadowing and not by anything else.
+    shadowless = ast.parse(
+        "ready = False" + NL + NL
+        + "def guard():" + NL
+        + '    """A docstring."""' + NL
+        + "    if ready:" + NL
+        + "        assert real" + NL
+    )
+    bare = next(node for node in shadowless.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(bare, shadowless) == 0
+
+
+def test_a_guard_that_declares_global_is_not_folded_to_the_module_value():
+    """`global X` says the guard may rebind X, and the screen must believe it."""
+    module = ast.parse(
+        "STATE = False" + NL + NL
+        + "def guard():" + NL
+        + '    """A docstring."""' + NL
+        + "    global STATE" + NL
+        + "    STATE = _detect()" + NL
+        + "    if STATE:" + NL
+        + "        assert real" + NL
+    )
+    guard = next(node for node in module.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(guard, module) == 1
+
+
+def test_symtable_agrees_that_these_are_all_the_module_bindings():
+    """`bound_names` is checked against CPython's own binding analysis.
+
+    THE COMPLETENESS AXIS FOR THIS SCREEN, and deliberately not another table
+    maintained by hand. Four hand-maintained vocabularies already sit in this
+    module; a fifth would have the same failure mode as the first four, which is
+    that a grammar change nobody notices leaves it silently short.
+
+    `symtable` is the binding analysis the interpreter itself performs. Any name
+    it reports as bound in a module's own scope that `bound_names` does not
+    collect is a name that could stay a "constant" while something rebinds it --
+    the exact direction that refuses a genuine guard.
+
+    Run over every module in `tests/` and `src/`, so the corpus is real code
+    rather than specimens chosen to pass.
+    """
+    import symtable  # noqa: PLC0415
+
+    from guard_evidence import bound_names, module_scope_statements  # noqa: PLC0415
+
+    checked = 0
+    for path in sorted([*(ROOT / "tests").rglob("*.py"), *(ROOT / "src").rglob("*.py")]):
+        source = path.read_text(encoding="utf-8")
+        try:
+            table = symtable.symtable(source, str(path), "exec")
+        except SyntaxError:  # pragma: no cover - the corpus parses
+            continue
+        module = ast.parse(source)
+        collected: set = set()
+        for node in module_scope_statements(module):
+            collected |= bound_names(node)
+        reported = {
+            symbol.get_name() for symbol in table.get_symbols()
+            if symbol.is_assigned() or symbol.is_imported()
+        }
+        missing = reported - collected
+        assert not missing, (
+            str(path.relative_to(ROOT)) + ": CPython binds " + repr(sorted(missing))
+            + " in this module's own scope and `bound_names` does not collect "
+            "it, so such a name would keep a stale literal value and fold a "
+            "branch that is live"
+        )
+        checked += 1
+    assert checked > 100, (
+        "the corpus collapsed to " + str(checked) + " modules, so this proves "
+        "much less than it reads as proving"
+    )
 
 
 @pytest.mark.parametrize(

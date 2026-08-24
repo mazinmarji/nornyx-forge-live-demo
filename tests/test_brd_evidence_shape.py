@@ -62,17 +62,39 @@ def _shipped_events(tmp_path: Path) -> list[dict]:
     from mutation_workspace import faithful_copy, isolated_env  # noqa: PLC0415
 
     tree = faithful_copy(tmp_path)
-    lock = ROOT / ".nornyx/runtime"
-    if not (lock / "nornyx.agentic_network.lock").exists():
-        pytest.skip(
-            "no runtime lock in this tree, so the shipped demonstration path "
-            "cannot reach the boundary. The lock needs a human approval and is "
-            "gitignored; this measurement is unavailable to a reader, which is "
-            "itself the honest state rather than something to work around"
-        )
-    import shutil  # noqa: PLC0415
 
-    shutil.copytree(lock, tree / ".nornyx/runtime", dirs_exist_ok=True)
+    # NO LOCK PRECONDITION. This used to `pytest.skip` when
+    # `.nornyx/runtime/nornyx.agentic_network.lock` was absent, saying "the
+    # shipped demonstration path cannot reach the boundary ... this measurement
+    # is unavailable to a reader". Nine cases skipped on that, and three
+    # documents called it HUMAN-BLOCKED.
+    #
+    # IT IS NOT TRUE. Measured on a copy of the 216 tracked files -- exactly
+    # what a clean clone holds, no `.nornyx/runtime/` at all:
+    #
+    #     demo --offline    EXIT 0, status pass, complete
+    #     nornyx_evidence   {"status": "fallback",
+    #                        "load_error": "RUNTIME_LOCK_MISSING"}
+    #
+    # The lock's absence lands in the deterministic fallback, exactly as
+    # CLAUDE.md documents, and the run completes. Copying the lock in when one
+    # exists changes only the `load_error` string
+    # (RUNTIME_LOCK_MISSING -> AuthorizerLoadError: CONTRACT_INVALID); both
+    # land in the same fallback, because without an approval the authorizer
+    # does not load either way.
+    #
+    # `HUMAN_BLOCKED` is the one category no autonomous run may close, and
+    # inflating it with a conservative skip predicate is the mirror image of
+    # the substitution this repository exists to police: claiming a blocker
+    # that is not there rather than a control that is not there.
+    #
+    # The lock is still copied when one happens to exist, so a deployment that
+    # HAS an approval measures the governed path rather than the fallback.
+    lock = ROOT / ".nornyx/runtime"
+    if (lock / "nornyx.agentic_network.lock").exists():
+        import shutil  # noqa: PLC0415
+
+        shutil.copytree(lock, tree / ".nornyx/runtime", dirs_exist_ok=True)
 
     completed = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "nornyx_forge.cli", "demo", "--offline"],

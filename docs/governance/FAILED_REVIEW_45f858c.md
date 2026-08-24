@@ -170,7 +170,7 @@ At least three of those kills were invalid.
 | B-P2-3 | CLOSED - the verdict reads a JUnit report, so an errored mutant is INVALID_MUTATION rather than a kill |
 | B-P2-4 | CLOSED - `executable_projection` refuses a mutant that is byte-identical once comments and docstrings are removed |
 | B-P2-5 | CLOSED - mutant origin is measured from `__file__`; the grep is gone. The property held, so this replaced a vacuous proof rather than closing a bypass |
-| B-P2-6 | CLOSED - `DEFENCE_IN_DEPTH_ATTACKS` names which attacks carry the claim; 34/31/3 are asserted against written constants instead of a tautology |
+| B-P2-6 | CLOSED - `DEFENCE_IN_DEPTH_ATTACKS` names which attacks carry the claim; the totals are asserted against written constants instead of a tautology. (This cited **34/31/3**, which no longer exist -- the catalogue moved 39 to 41 in the same remediation and the constants read **41/37/4**. `34/31/3` survives only in a comment describing the defect, so a reviewer verifying this closure found it as history and could not tell whether the fix had regressed. The mechanism is real; the figures naming it were stale.) |
 | C-P2-1 | CLOSED - every route that yields a module answers the acquisition question |
 | C-P2-2 | CLOSED - `api_no_commands` is the AST capability analysis, not a substring test |
 | A-P2-1 | CLOSED - the context records `established_root` and the boundary refuses a root that carries its own contract and is not it. Scoped: a scratch root supplies no policy, and the scoping has its own test |

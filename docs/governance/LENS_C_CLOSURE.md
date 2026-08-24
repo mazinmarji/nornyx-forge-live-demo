@@ -109,7 +109,18 @@ above. A race against the concurrent edit was hypothesised and never
 demonstrated, so it is recorded here as an untested hypothesis and NOT as the
 cause. The honest statement is: observed once, not reproduced, cause unknown.
 
-**Task 11.** Every historical mutation total predating the corrected proof
-kernel is dead evidence, including `41 = 37 + 4`. They are not adjusted, carried
-forward, or cited. A new aggregate may exist only after every attack has been
-replayed through the full admission protocol to a terminal classification.
+**Task 11 -- SUPERSEDED by [TASK11_REPLAY.md](TASK11_REPLAY.md), which
+predates this document's own last edit by four days.** Two LIVE documents gave
+opposite answers to "is Task 11 open", and a reader who grepped the total this
+section calls dead evidence found it as the live catalogue's central assertion
+(`EXPECTED_TOTAL_ATTACKS = 41`, `EXPECTED_KILLS = 37`,
+`EXPECTED_DEFENCE_IN_DEPTH = 4`, with `NOT_YET_KILLED` and
+`COVERED_BUT_UNATTACKED` both empty). The replay records "every catalogue
+attack reached a terminal classification" and says out loud that the number
+matches the withdrawn one. What follows is kept as the record of the condition
+that was set, and it was met.
+
+> **Task 11.** Every historical mutation total predating the corrected proof
+> kernel is dead evidence, including `41 = 37 + 4`. They are not adjusted, carried
+> forward, or cited. A new aggregate may exist only after every attack has been
+> replayed through the full admission protocol to a terminal classification.

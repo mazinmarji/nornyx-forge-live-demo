@@ -957,20 +957,82 @@ def test_the_module_band_guard_would_notice_a_drifted_floor():
     )
 
 
+#: Skip exemptions permitted to claim a HUMAN dependency, with the authority
+#: that is missing. EMPTY, and that is the finding rather than an oversight.
+#:
+#: Four entries claimed HUMAN-BLOCKED on the premise that the shipped
+#: demonstration needs a runtime lock. It does not -- measured on a clean
+#: tracked-files copy, `demo --offline` exits 0 with the absence landing in the
+#: deterministic fallback. Removing the precondition took the module from 9
+#: skips to 10 passing tests.
+DECLARED_HUMAN_BLOCKED_SKIPS: dict[str, str] = {}
+
+
+def test_no_exemption_may_declare_itself_human_blocked_without_saying_so():
+    """`HUMAN_BLOCKED` is the one category no autonomous run may close.
+
+    Which makes over-declaring it the mirror image of the substitution this
+    repository exists to police: claiming a blocker that is not there rather
+    than a control that is not there. A reviewer auditing the census was told
+    the strongest check of BRD-F-005 was permanently unobtainable, and accepted
+    nine permanent skips instead of spending a minute disproving it.
+
+    `EXPECTED_SKIPS` requires only that a reason exceed sixty characters, so
+    its content is unbound and the phrase could be written back in tomorrow.
+    A reason claiming a human dependency must now name it in
+    `DECLARED_HUMAN_BLOCKED_SKIPS` -- a diff someone has to argue for, rather
+    than a sentence anyone can type.
+
+    This does not verify that a declared blocker is REAL; nothing mechanical
+    can, since the authority is external by definition. It makes the claim
+    visible and countable, which is what let four copies of a false one sit
+    unexamined.
+    """
+    claiming = sorted(
+        marker for marker, reason in EXPECTED_SKIPS.items()
+        if "human-blocked" in reason.lower() or "human approval" in reason.lower()
+    )
+    undeclared = [
+        marker for marker in claiming
+        if marker not in DECLARED_HUMAN_BLOCKED_SKIPS
+    ]
+    assert undeclared == [], (
+        "these skip exemptions claim a human dependency in prose without "
+        "declaring it, so the claim is unbound and uncounted. If the blocker "
+        "is real, name it in DECLARED_HUMAN_BLOCKED_SKIPS with the authority "
+        f"that is missing: {undeclared}"
+    )
+    stale = sorted(set(DECLARED_HUMAN_BLOCKED_SKIPS) - set(EXPECTED_SKIPS))
+    assert stale == [], (
+        "these declared human-blocked skips are no longer exempted at all, so "
+        f"the declaration is stale: {stale}"
+    )
+
+
 def test_the_brd_f_005_exemption_still_describes_the_ci_workflow():
-    """Nine skips rest on a sentence about CI. Bind the sentence.
+    """CI must never mint a runtime lock unguarded.
 
-    `EXPECTED_SKIPS` requires only that a reason be longer than sixty
-    characters, so its CONTENT is unbound. BRD-F-005's entries assert that "NO
-    reader and NO CI job can produce one -- the `test` job has no
-    prepare-runtime step". A reviewer confirmed that is TRUE today and observed
-    that it would go stale silently: someone adding an ungated
-    `prepare_runtime.py` step to CI would make nine declared skips describe a
-    workflow that no longer exists, with every gate green.
+    THE NINE SKIPS THIS WAS WRITTEN FOR ARE GONE, and the reason matters more
+    than the guard. Those entries said "This measurement runs the shipped
+    demonstration, which needs `.nornyx/runtime/nornyx.agentic_network.lock`
+    ... HUMAN-BLOCKED". This guard bound the CI half of that sentence -- true
+    then and true now -- and nothing bound the load-bearing half, which was
+    false: the demonstration runs without the lock, measured on a copy of the
+    216 tracked files, EXIT 0 with the absence landing in the deterministic
+    fallback. Nine cases now run and pass.
 
-    So the claim is measured. Either the workflow never runs
-    `prepare_runtime.py`, or every step that does is conditional on an approval
-    being present -- which is the state the sentence describes.
+    That is the shape worth recording: the repository noticed the sentence was
+    unbound, bound the clause that was already true, and left the clause that
+    was false. `EXPECTED_SKIPS` still requires only that a reason exceed sixty
+    characters, so reason CONTENT remains unbound in general --
+    `test_no_exemption_may_declare_itself_human_blocked_without_saying_so`
+    closes the specific case that matters.
+
+    The property here survives its original motivation and is kept on its own
+    merit: a `prepare_runtime.py` step added to CI without an approval guard
+    would attempt to mint a lock in an environment that has no authority to
+    hold one. Either the workflow never runs it, or every step that does is
+    conditional on an approval being present.
     """
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"

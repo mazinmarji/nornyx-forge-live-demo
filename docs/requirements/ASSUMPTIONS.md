@@ -92,8 +92,17 @@ not the builder*; it does not mean a human reviewed the work.
 least one named human approver.
 
 **Resolution.** Declared the role separation the project intends
-(`human:repository_maintainer` authors, `human:architect` approves). This
-declares *who would be accountable*; it does not assert that either party acted.
+(`human:repository_maintainer` authors, `human:architecture_reviewer`
+approves). This declares *who would be accountable*; it does not assert that
+either party acted.
+
+The approver read `human:architect` until this correction: a principal that
+appeared nowhere else in the repository, in the one document a reader consults
+to find out who may approve. The contract declares `architecture_reviewer`, and
+records that requiring `architect` while listing `architecture_reviewer` as
+eligible once left a reviewer-signed approval readable two ways. Naming the
+retired term here restored exactly that ambiguity, in prose, where nothing
+resolves an identifier and no test would have caught it.
 No evidence record claims an approval occurred.
 
 **Serves.** BRD-004.
