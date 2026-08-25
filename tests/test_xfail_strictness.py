@@ -28,7 +28,16 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+# `tomllib` IS 3.11+. `requires-python` allows 3.10 and the CI matrix runs
+# it, so a bare import here is a COLLECTION ERROR on the oldest supported
+# interpreter -- the whole module, not one test. `check_architecture.py`
+# already carried a fallback for exactly this; the test suite did not,
+# because nothing measured the suite against the range it declares.
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - only on Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))

@@ -176,6 +176,23 @@ ATTACK_CLASSES = (
             "FG10: `returncode != 0` credited a kill for a workspace defect, three times",
         ),
     ),
+    AttackClass(
+        "AC07",
+        "a support range declared, and measured at one point in it",
+        "The repository declares a range it supports -- `requires-python` is machine-read by pip, and the CI matrix runs every version in it -- and then every local measurement is taken on ONE interpreter. The gates go green, the census goes green, and none of them has asked anything about the other three versions. This is not AC03: the declaration IS parsed. Nothing compares the repository to it.",
+        "The floor is DERIVED from `requires-python` rather than typed again, and three axes are measured against it: every module parses at the floor, every specimen source the suite feeds to `ast.parse` parses at the floor, and no module imports a stdlib module newer than the floor without a guarded fallback. The first two are decided by CPython's own parser through `feature_version`, not by a table kept here.",
+        (
+            "tests/test_attack_classes.py::test_every_module_parses_at_the_declared_floor",
+            "tests/test_attack_classes.py::test_every_specimen_source_parses_at_the_declared_floor",
+            "tests/test_attack_classes.py::test_no_module_imports_stdlib_newer_than_the_floor",
+            "tests/test_attack_classes.py::test_the_floor_is_read_from_the_declaration",
+        ),
+        (
+            "tests/test_xfail_strictness.py imported tomllib (3.11+) at module level: a COLLECTION ERROR on 3.10, losing the module rather than a test",
+            "tests/test_false_green_audit.py imported tomllib inside a test",
+            "three ROUND_FOUR_SPECIMENS rows are `except*` source, which `ast.parse` rejects on 3.10",
+        ),
+    ),
 )
 
 

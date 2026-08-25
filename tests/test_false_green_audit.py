@@ -1637,15 +1637,29 @@ ROUND_THREE_SPECIMENS = [
 #: for as long as they have existed in Python. Two more are inside the folder's
 #: own literal vocabulary. One CRASHED the screen outright, in a module whose
 #: docstring says it "can never fail a genuine one".
+#: `except*` IS 3.11+ SYNTAX. These three rows are source text that
+#: `ast.parse` REJECTS on Python 3.10 -- which `requires-python` allows and
+#: the CI matrix runs -- so they are declared skips there rather than
+#: errors. The property is not weakened: `TRY_NODES` already degrades via
+#: `getattr(ast, 'TryStar', None)`, so on 3.10 there is no such node to
+#: miscount, and three CI jobs still execute these rows.
+_NEEDS_EXCEPT_STAR = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="except* is 3.11+ syntax; ast.parse rejects it on 3.10",
+)
+
 ROUND_FOUR_SPECIMENS = [
     # `except*` is `ast.TryStar`, a different node from `ast.Try`.
-    ("try:" + NL + "    assert real" + NL + "except* AssertionError:" + NL
-     + "    pass", 0),
-    ("try:" + NL + "    assert real" + NL + "except* Exception:" + NL
-     + "    pass", 0),
+    pytest.param("try:" + NL + "    assert real" + NL
+                 + "except* AssertionError:" + NL + "    pass", 0,
+                 marks=_NEEDS_EXCEPT_STAR),
+    pytest.param("try:" + NL + "    assert real" + NL
+                 + "except* Exception:" + NL + "    pass", 0,
+                 marks=_NEEDS_EXCEPT_STAR),
     # ... and a handler that does NOT swallow still counts.
-    ("try:" + NL + "    assert real" + NL + "except* ValueError:" + NL
-     + "    pass", 1),
+    pytest.param("try:" + NL + "    assert real" + NL
+                 + "except* ValueError:" + NL + "    pass", 1,
+                 marks=_NEEDS_EXCEPT_STAR),
 
     # An f-string with nothing to interpolate is a literal. The identical
     # `assert "a message"` was caught; this was not.
@@ -3517,7 +3531,11 @@ def test_fg12_an_undeclared_expected_failure_fails_the_census(tmp_path: Path):
     assert census.evaluate(report, 0) != 0, "the gate accepted a silenced proof"
 
     # And strictness itself is configured, parsed rather than asserted about.
-    import tomllib  # noqa: PLC0415
+    # 3.11+; see the module-level note in tests/test_xfail_strictness.py.
+    try:
+        import tomllib  # noqa: PLC0415
+    except ModuleNotFoundError:  # pragma: no cover - only on Python 3.10
+        import tomli as tomllib  # noqa: PLC0415
 
     options = tomllib.loads(
         (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -4204,7 +4222,8 @@ def test_the_specification_only_guards_are_declared_as_such():
         "platform", "zipfile", "tarfile", "socket",
         # Stdlib the first version of this set missed, which made
         # `dataclasses`, `tomllib` and `__future__` read as repository names.
-        "dataclasses", "tomllib", "__future__", "functools", "inspect",
+        "dataclasses", "tomllib", "tomli", "__future__", "functools",
+        "inspect",
         "textwrap", "string", "warnings", "traceback", "enum", "abc",
     }
     source = (ROOT / "tests" / "test_false_green_audit.py").read_text(

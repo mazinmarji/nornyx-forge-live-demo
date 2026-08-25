@@ -8,6 +8,9 @@ consequences rather than a label.
 
 from __future__ import annotations
 
+import ast
+import importlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -332,37 +335,72 @@ def test_the_observer_answers_synonyms_identically(
 # AC02 — the class probe: a fix nothing fails without
 # --------------------------------------------------------------------------
 
-#: (label, file, the fix as written, the fix removed, the specimen node).
+#: (label, file, fix as written, fix removed, specimen file, specimen node).
 #:
 #: THE CLASS PROBE FOR AC02. Each row reverts ONE fix on a copy of the tree and
 #: requires its named specimen to go RED. A fix added without a row here is a
 #: fix nobody has shown to be load-bearing, which is the class.
+#:
+#: THE SPECIMEN FILE IS ITS OWN COLUMN because it is not always the mutated
+#: one. A class probe lives with its class, so the AC07 rows revert a fix in
+#: one module and are answered by a specimen in this one. Deriving the node id
+#: from the mutated file, which is what this table did, cannot express that --
+#: and the shape it could not express is exactly the shape a class probe has.
 REVERTIBLE_FIXES = [
     ("the module check reduced to an arity check",
      "tests/test_false_green_audit.py",
      "    return not isinstance(argument, CANNOT_BE_A_MODULE)",
      "    return True",
-     "test_a_star_is_not_proof_that_a_module_was_supplied"),
+     "tests/test_false_green_audit.py", "test_a_star_is_not_proof_that_a_module_was_supplied"),
     ("the screen filter reduced to two literal spellings",
      "tests/test_false_green_audit.py",
      "    known = SCREEN_ENTRY_POINTS if local_names is None else local_names",
      "    known = SCREEN_ENTRY_POINTS",
-     "test_the_screen_is_recognised_however_it_is_named"),
+     "tests/test_false_green_audit.py", "test_the_screen_is_recognised_however_it_is_named"),
     ("the pair helper reduced to counting elements",
      "tests/test_false_green_audit.py",
      "                assert pair and _could_be_a_module(node.value.elts[1]), (",
      "                assert pair, (",
-     "test_a_pair_helper_must_return_something_that_could_be_a_module"),
+     "tests/test_false_green_audit.py", "test_a_pair_helper_must_return_something_that_could_be_a_module"),
+    # ---- AC07: reverting a version fix must redden the floor probe -------
+    ("the module-level tomllib fallback removed",
+     "tests/test_xfail_strictness.py",
+     "try:"
+     + NL + "    import tomllib"
+     + NL + "except ModuleNotFoundError:  # pragma: no cover - only on Python 3.10"
+     + NL + "    import tomli as tomllib",
+     "import tomllib",
+     "tests/test_attack_classes.py",
+     "test_no_module_imports_stdlib_newer_than_the_floor"),
+    ("the in-test tomllib fallback removed",
+     "tests/test_false_green_audit.py",
+     "    try:"
+     + NL + "        import tomllib  # noqa: PLC0415"
+     + NL + "    except ModuleNotFoundError:  # pragma: no cover - only on Python 3.10"
+     + NL + "        import tomli as tomllib  # noqa: PLC0415",
+     "    import tomllib  # noqa: PLC0415",
+     "tests/test_attack_classes.py",
+     "test_no_module_imports_stdlib_newer_than_the_floor"),
+    ("the skipif guarding except* source removed",
+     "tests/test_false_green_audit.py",
+     "    pytest.param(\"try:\" + NL + \"    assert real\" + NL"
+     + NL + "                 + \"except* AssertionError:\" + NL + \"    pass\", 0,"
+     + NL + "                 marks=_NEEDS_EXCEPT_STAR),",
+     "    (\"try:\" + NL + \"    assert real\" + NL + \"except* AssertionError:\" + NL"
+     + NL + "     + \"    pass\", 0),",
+     "tests/test_attack_classes.py",
+     "test_every_specimen_source_parses_at_the_declared_floor"),
 ]
 
 
 @pytest.mark.parametrize(
-    ("label", "relative", "before", "after", "node"), REVERTIBLE_FIXES,
+    ("label", "relative", "before", "after", "specimen", "node"),
+    REVERTIBLE_FIXES,
     ids=[case[0] for case in REVERTIBLE_FIXES],
 )
 def test_reverting_one_fix_reddens_its_own_specimen(
-    label: str, relative: str, before: str, after: str, node: str,
-    tmp_path: Path,
+    label: str, relative: str, before: str, after: str, specimen: str,
+    node: str, tmp_path: Path,
 ):
     """AC02: a fix nothing fails without is not a fix that has been tested.
 
@@ -398,7 +436,14 @@ def test_reverting_one_fix_reddens_its_own_specimen(
 
     workspace = tmp_path / "tree"
     workspace.mkdir()
-    for name in ("tests", "src", "scripts"):
+    # `.nornyx` TOO. A specimen that imports the test modules -- which the
+    # AC07 floor probe does, because the tables it reads are module
+    # attributes -- reaches modules that read the contracts at import time,
+    # and a workspace without them fails BEFORE any mutation. That is not a
+    # kill, and `require_pristine_baseline` correctly refused to call it one.
+    for name in ("tests", "src", "scripts", ".nornyx"):
+        if not (ROOT / name).is_dir():  # pragma: no cover - all present
+            continue
         shutil.copytree(
             ROOT / name, workspace / name,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
@@ -425,7 +470,7 @@ def test_reverting_one_fix_reddens_its_own_specimen(
 
     # GREEN HERE FIRST. Not at ROOT -- in this workspace, under this
     # interpreter, with this conftest.
-    node_id = relative + "::" + node
+    node_id = specimen + "::" + node
     require_pristine_baseline(workspace, node_id)
 
     reverted = pristine.replace(before, after)
@@ -457,13 +502,13 @@ def test_the_revert_probe_refuses_a_revert_that_changes_nothing(tmp_path: Path):
     stayed green rather than because anything else went wrong.
     """
     row = REVERTIBLE_FIXES[0]
-    label, relative, before, _after, node = row
+    label, relative, before, _after, specimen, node = row
     inert = "    return (not isinstance(argument, CANNOT_BE_A_MODULE))"
     assert inert != before
 
     with pytest.raises(Exception) as raised:  # noqa: PT011 - several types qualify
         test_reverting_one_fix_reddens_its_own_specimen(
-            label, relative, before, inert, node, tmp_path,
+            label, relative, before, inert, specimen, node, tmp_path,
         )
     message = str(raised.value)
     # THREE WAYS A NO-OP CAN BE CAUGHT, and all three are the probe
@@ -479,3 +524,334 @@ def test_the_revert_probe_refuses_a_revert_that_changes_nothing(tmp_path: Path):
         "the probe rejected a no-op revert for some other reason, so it is "
         "not the no-op it detected: " + message[:400]
     )
+
+
+def _specimen_sources(value, depth: int = 0):
+    """Yield (source, guarded) for every string reachable in a specimen table.
+
+    `guarded` is True when the string arrived inside a `pytest.param` carrying a
+    `skipif` mark, because such a row does not run on the interpreter the mark
+    excludes and so cannot error there.
+    """
+    if depth > 6:
+        return
+    if isinstance(value, str):
+        if len(value) > 6 and NL in value:
+            yield value, False
+        return
+    if hasattr(value, "values") and hasattr(value, "marks"):
+        guarded = any(mark.name == "skipif" for mark in value.marks)
+        for item in value.values:
+            for text, _ in _specimen_sources(item, depth + 1):
+                yield text, guarded
+        return
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _specimen_sources(item, depth + 1)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from _specimen_sources(key, depth + 1)
+            yield from _specimen_sources(item, depth + 1)
+
+
+def _handler_catches_import(handler: ast.ExceptHandler) -> bool:
+    kind = handler.type
+    if kind is None:
+        return True
+    names = []
+    for element in (kind.elts if isinstance(kind, ast.Tuple) else [kind]):
+        if isinstance(element, ast.Name):
+            names.append(element.id)
+    return any(
+        name in ("ImportError", "ModuleNotFoundError", "Exception")
+        for name in names
+    )
+
+
+def _unguarded_imports(tree: ast.AST):
+    """Every import statement NOT inside a try that catches an import failure."""
+    guarded: set = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not any(_handler_catches_import(h) for h in node.handlers):
+            continue
+        # THE HANDLER BODY COUNTS TOO. The fallback lives there --
+        # `except ModuleNotFoundError: import tomli as tomllib` -- so
+        # collecting only `node.body` reported the remediation for this
+        # class AS an instance of it. The over-reach control caught that.
+        branches = [*node.body, *node.orelse]
+        for handler in node.handlers:
+            branches.extend(handler.body)
+        for statement in branches:
+            for inner in ast.walk(statement):
+                if isinstance(inner, (ast.Import, ast.ImportFrom)):
+                    guarded.add(id(inner))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in guarded:
+            yield node
+
+
+def _imported_roots(node) -> list:
+    if isinstance(node, ast.Import):
+        return [alias.name.split(".")[0] for alias in node.names]
+    if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+        return [node.module.split(".")[0]]
+    return []
+
+
+# ---------------------------------------------------------------------------
+# AC07 -- a support range declared, and measured at one point in it
+# ---------------------------------------------------------------------------
+
+#: Stdlib modules that do not exist at every version `requires-python` allows.
+#:
+#: A HAND-MAINTAINED VOCABULARY, and the only one in this section. The two parse
+#: axes below are decided by CPython own parser; this one cannot be, because the
+#: stdlib exposes no "introduced in" metadata to derive it from. The limit is
+#: therefore stated rather than implied: a module absent on an old interpreter
+#: and missing from this table is NOT caught here, and the 3.10 CI job is what
+#: catches it. That is a backstop after a push, which is the cost this class
+#: exists to REDUCE, not to eliminate.
+STDLIB_INTRODUCED = {
+    "tomllib": (3, 11),
+    "graphlib": (3, 9),
+    "zoneinfo": (3, 9),
+}
+
+
+def declared_floor() -> tuple:
+    """The oldest interpreter `requires-python` admits, read from it.
+
+    DERIVED, not typed again here. A floor restated in this file would go stale
+    against the declaration the moment the declaration moved, and the probe
+    would keep passing -- measuring a version nobody supports while reading as
+    though it measured the range.
+    """
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    line = next(
+        (row for row in text.splitlines()
+         if row.strip().startswith("requires-python")),
+        None,
+    )
+    assert line, "pyproject.toml declares no requires-python"
+    lower = re.search(r">=\s*(\d+)\.(\d+)", line)
+    assert lower, "requires-python declares no lower bound: " + line
+    return (int(lower.group(1)), int(lower.group(2)))
+
+
+def repository_modules() -> list:
+    return sorted(
+        [*(ROOT / "tests").rglob("*.py"), *(ROOT / "src").rglob("*.py"),
+         *(ROOT / "scripts").rglob("*.py")]
+    )
+
+
+def test_the_floor_is_read_from_the_declaration():
+    """The probes below are only as honest as where they get the floor.
+
+    If `declared_floor` returned a constant, every assertion in this section
+    would still pass while measuring an interpreter the project no longer
+    supports. So it is read from the same file pip reads, and the value is
+    checked to be a real lower bound rather than whatever a regex happened to
+    find.
+    """
+    floor = declared_floor()
+    assert floor[0] == 3 and 6 <= floor[1] <= 20, floor
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert ">=" + str(floor[0]) + "." + str(floor[1]) in text, (
+        "the floor " + repr(floor) + " is not the one pyproject declares"
+    )
+    assert floor <= sys.version_info[:2], (
+        "the floor is newer than the interpreter running this suite, so the "
+        "suite is not running on a version the project claims to support"
+    )
+
+
+def test_every_module_parses_at_the_declared_floor():
+    """Every module must be PARSEABLE on the oldest supported interpreter.
+
+    A module that is not is a collection error there -- the whole module lost,
+    not one test. `feature_version` is CPython own parser answering the
+    question, so this is not a vocabulary of banned syntax maintained here.
+    """
+    floor = declared_floor()
+    broken = []
+    for path in repository_modules():
+        source = path.read_text(encoding="utf-8")
+        try:
+            ast.parse(source, feature_version=floor)
+        except SyntaxError as exc:
+            broken.append(
+                path.relative_to(ROOT).as_posix() + ":" + str(exc.lineno)
+                + " " + str(exc.msg)
+            )
+    assert not broken, (
+        "these modules do not parse on Python " + ".".join(map(str, floor))
+        + ", which pyproject declares supported: " + repr(broken)
+    )
+
+
+def test_every_specimen_source_parses_at_the_declared_floor():
+    """And so must every specimen the suite hands to `ast.parse`.
+
+    THE ASSEMBLED STRING, not the literals it is built from. The three
+    `except*` rows that provoked this class are written as fragments joined by
+    `+ NL +`, so no single literal in the file is a parseable statement and a
+    scan of `ast.Constant` nodes -- which is what I wrote first -- returned a
+    confident zero. The tables are read from the imported modules instead, so
+    the value examined is the one the parametrisation actually receives.
+
+    A row already marked `skipif` is not a finding: it is the remediation. That
+    is read off the mark rather than named here, so removing the mark makes this
+    test fail rather than silently exempting the row.
+    """
+    floor = declared_floor()
+    offenders = []
+    for path in sorted((ROOT / "tests").glob("test_*.py")):
+        module = importlib.import_module(path.stem)
+        for attr in dir(module):
+            if attr.startswith("__"):
+                continue
+            for text, guarded in _specimen_sources(getattr(module, attr, None)):
+                if guarded:
+                    continue
+                try:
+                    ast.parse(text)
+                except SyntaxError:
+                    continue
+                try:
+                    ast.parse(text, feature_version=floor)
+                except SyntaxError as exc:
+                    offenders.append(path.name + "::" + attr + " " + str(exc.msg))
+    assert not offenders, (
+        "these specimen sources are fed to `ast.parse` and are rejected on "
+        "Python " + ".".join(map(str, floor)) + ", so the test carrying them "
+        "errors there rather than proving anything: "
+        + repr(sorted(set(offenders)))
+    )
+
+
+def test_no_module_imports_stdlib_newer_than_the_floor():
+    """An unguarded import of a module that does not exist yet.
+
+    Guarded means wrapped in a `try` whose handler catches `ImportError` or
+    `ModuleNotFoundError` -- the shape `scripts/check_architecture.py` already
+    used and the test suite did not.
+    """
+    floor = declared_floor()
+    offenders = []
+    for path in repository_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in _unguarded_imports(tree):
+            for name in _imported_roots(node):
+                introduced = STDLIB_INTRODUCED.get(name)
+                if introduced and introduced > floor:
+                    offenders.append(
+                        path.relative_to(ROOT).as_posix() + ":" + str(node.lineno)
+                        + " imports " + name + " ("
+                        + ".".join(map(str, introduced)) + "+)"
+                    )
+    assert not offenders, (
+        "these imports are of stdlib newer than the declared floor and are not "
+        "guarded by a fallback: " + repr(offenders)
+    )
+
+
+def test_the_floor_probe_sees_a_violation_that_is_really_there():
+    """The over-reach control, both directions, on real inputs.
+
+    Every assertion above is a "no offenders" shape, which a broken derivation
+    satisfies by finding nothing. So: a specimen that genuinely cannot parse at
+    the floor must be seen, a guarded import must NOT be reported, and an
+    unguarded one must be.
+    """
+    floor = declared_floor()
+    star = "try:" + NL + "    pass" + NL + "except* ValueError:" + NL + "    pass"
+    ast.parse(star)
+    assert floor <= (3, 10), (
+        "the floor moved to " + repr(floor) + "; this control asserts that 3.10 "
+        "rejects except*, which is the right control only while 3.10 is supported"
+    )
+    with pytest.raises(SyntaxError):
+        ast.parse(star, feature_version=(3, 10))
+
+    guarded = ast.parse(
+        "try:" + NL + "    import tomllib" + NL
+        + "except ModuleNotFoundError:" + NL + "    import tomli as tomllib"
+    )
+    assert not list(_unguarded_imports(guarded)), (
+        "a fallback-guarded import was reported as unguarded, so the fix for "
+        "this class would be reported as the defect"
+    )
+    bare = ast.parse("import tomllib")
+    assert [_imported_roots(n) for n in _unguarded_imports(bare)] == [["tomllib"]], (
+        "a bare import of a 3.11-only module was not seen"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The freeze -- Forge Hardening v1
+# ---------------------------------------------------------------------------
+
+#: The attack corpus, frozen for v1. See `docs/governance/RELEASE_CONTRACT_V1.md`.
+#:
+#: A SET, compared in both directions, because "frozen" stated in a document is
+#: AC03 and the document says so itself. The false-green inventory has had this
+#: check since it was written; the attack classes did not, so for seven classes
+#: the word "frozen" rested on nobody editing the tuple.
+FROZEN_ATTACK_CLASSES = frozenset(
+    {"AC01", "AC02", "AC03", "AC04", "AC05", "AC06", "AC07"}
+)
+
+
+def test_the_attack_corpus_is_exactly_the_frozen_set():
+    """Both directions, so neither adding nor dropping a class is silent.
+
+    Adding a class to `ATTACK_CLASSES` without amending the contract makes the
+    release contract describe a corpus that is not the one in force. Dropping
+    one makes the contract claim coverage that no longer exists. Under the
+    bounded protocol the second is the dangerous direction: the whole point of
+    freezing is that a later reviewer meets a probe rather than the defect, and
+    a class deleted to make a suite green would remove exactly that.
+
+    Changing the set is a deliberate act between versions, and it fails here
+    until the contract is amended with it.
+    """
+    live = {item.ident for item in ATTACK_CLASSES}
+    assert live == FROZEN_ATTACK_CLASSES, (
+        "the live attack corpus and the frozen set disagree; added "
+        + repr(sorted(live - FROZEN_ATTACK_CLASSES)) + ", missing "
+        + repr(sorted(FROZEN_ATTACK_CLASSES - live))
+    )
+    assert len(ATTACK_CLASSES) == len(FROZEN_ATTACK_CLASSES), (
+        "a class identifier appears twice, so the corpus is smaller than it counts"
+    )
+
+
+def test_the_release_contract_names_exactly_the_frozen_classes():
+    """The contract document is parsed, not trusted.
+
+    `RELEASE_CONTRACT_V1.md` restates the seven identifiers for a reader, and
+    says in its own text that the restatement is not authoritative. That
+    sentence is worth nothing on its own -- it is the same shape as every stale
+    comment this repository has found beside a live constant -- so the
+    restatement is compared against the live corpus here, in both directions.
+    """
+    contract = ROOT / "docs" / "governance" / "RELEASE_CONTRACT_V1.md"
+    assert contract.is_file(), str(contract) + " does not exist"
+    text = contract.read_text(encoding="utf-8")
+    named = set(re.findall(r"\bAC\d{2}\b", text))
+    live = {item.ident for item in ATTACK_CLASSES}
+    assert named == live, (
+        "the release contract names " + repr(sorted(named)) + " and the live "
+        "corpus is " + repr(sorted(live)) + "; the contract must be amended "
+        "with the corpus, not after it"
+    )
+    for item in ATTACK_CLASSES:
+        assert item.title in text, (
+            item.ident + " is named in the contract but its title is not the "
+            "live one, so the reader is told a different class was frozen: "
+            + repr(item.title)
+        )

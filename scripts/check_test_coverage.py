@@ -34,6 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 #: counted both as expected and said nothing. Under identity keying, borrowing a
 #: reason string buys nothing, because the exemption names the test.
 EXPECTED_SKIPS = {
+    # Three rows of ROUND_FOUR_SPECIMENS are `except*` source text.
+    "tests/test_false_green_audit.py::test_the_screen_answers_the_shapes_a_fourth_round_demonstrated":
+        "except* is 3.11+ syntax and ast.parse REJECTS it on 3.10, which requires-python allows and the CI matrix runs. The property is not weakened: TRY_NODES already degrades via getattr(ast, 'TryStar', None), so on 3.10 there is no such node to miscount, and the 3.11, 3.12 and 3.13 jobs all execute these three rows.",
     # Symlink and FIFO fixtures cannot be built on a Windows workstation without
     # elevation. The property is not weakened: every CI test job runs Linux and
     # executes these, and test_the_refusals_are_reachable_on_every_platform
@@ -141,12 +144,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The class probes. A class whose specimens stop being collected is a
     # class held down by nothing, so this module has a floor like any
     # other -- the registry is only as real as the tests it names.
-    "tests/test_attack_classes.py": 29,
+    "tests/test_attack_classes.py": 38,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 151,
+    "tests/test_recorded_measurements.py": 155,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -292,9 +295,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 #: real `classify` and measured `unexpected=[]` with both floors padded by
 #: forty.
 EXPECTED_SKIP_CASES: dict[str, int] = {
-    # EMPTY, because the four identities this held caps for no longer skip:
-    # their premise was that the shipped demonstration needs a runtime lock,
-    # and it does not. See the note in EXPECTED_SKIPS above.
+    # The four identities this once held caps for no longer skip: their
+    # premise was that the shipped demonstration needs a runtime lock, and
+    # it does not. See the note in EXPECTED_SKIPS above.
+    #
+    # THREE, not the default one: three rows of ROUND_FOUR_SPECIMENS are
+    # `except*` source. A cap of one would let a fourth parameter start
+    # skipping on 3.10 behind a permission granted for these three.
+    "tests/test_false_green_audit.py::test_the_screen_answers_the_shapes_a_fourth_round_demonstrated": 3,
 }
 
 # Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the
@@ -318,14 +326,19 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # So the numbers below are dated and measured, and nothing here is derived by
 # hand. Measured at 41c5ce2 (+ this working round) by a full
-# `--collect-only` over tests/:
+# `--collect-only` over tests/. Re-measured for the AC07 probe, which added
+# ten collected cases to tests/test_attack_classes.py and pushed its
+# declared floor below the band -- caught by
+# `test_no_module_floor_drifts_far_below_its_module`, not by a reader:
 #
-#     collected across tests/     2203   (89 modules)
-#     sum of the module floors    2025
-#     band(2203) = ceil(0.9*n)    1983
-#     MINIMUM_COLLECTED           2040
+# (rows below):
+#
+#     collected across tests/     2218   (89 modules)
+#     sum of the module floors    2038
+#     band(2218) = ceil(0.9*n)    1997
+#     MINIMUM_COLLECTED           2053
 #     above the module sum        15
-#     below what collects         163
+#     below what collects         165
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -346,7 +359,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 178 in total, and the aggregate refuses
+# per-module bands already grant 180 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -367,7 +380,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2040
+MINIMUM_COLLECTED = 2053
 
 
 def band(collected: int) -> int:
