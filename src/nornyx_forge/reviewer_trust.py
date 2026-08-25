@@ -321,6 +321,33 @@ def verify_signed_attestation(
         return False, f"ATTESTATION_NOT_AUTHENTICATED: {type(exc).__name__}", evidence
     evidence["signature_verified"] = True
 
+    # THE SIGNED DIGEST IS NOW COMPARED AGAINST THE FINDINGS IT COVERS.
+    # `findings_digest` was computed at issue time, signed, and read by
+    # nobody: a review measured `findings` scrubbed to `[]` and replaced
+    # with "no issues found", and both returned authenticated=True. The
+    # comment above SIGNED_FIELDS said findings 'cannot be edited after
+    # review', and `test_findings_cannot_be_edited_after_review` passed
+    # while they could -- it recomputed the digest ITSELF and compared two
+    # values, which proves a property of this function rather than of the
+    # verifier a consumer calls. Its own comment said 'which is what a
+    # consumer checks'. No consumer checked it.
+    #
+    # Placed AFTER signature verification on purpose: an unauthenticated
+    # digest is not a fact about anything, so comparing against it first
+    # would let an unsigned artifact choose its own binding.
+    signed_digest = attestation.get("findings_digest")
+    carried = findings_digest(attestation.get("findings"))
+    if carried != signed_digest:
+        return (
+            False,
+            "ATTESTATION_FINDINGS_UNBOUND: the signed findings_digest "
+            + str(signed_digest) + " does not cover the findings carried "
+            "alongside it (" + carried + "), so the findings have been "
+            "edited since the reviewer signed them",
+            evidence,
+        )
+    evidence["findings_bound"] = True
+
     claimed = str(attestation.get("reviewer", ""))
     if claimed != reviewer.reviewer:
         return (

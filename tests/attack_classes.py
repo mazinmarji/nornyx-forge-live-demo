@@ -85,6 +85,7 @@ ATTACK_CLASSES = (
         (
             "`_could_be_a_module` reverted to `return True`: all five wiring controls green",
             "`capability=exercised` reverted: the released high-risk effect filed as low-risk",
+            "a signed `findings_digest` that no consumer recomputed: findings scrubbed to [] and a P1 rewritten as `no issues found` both authenticated, while `test_findings_cannot_be_edited_after_review` passed by recomputing the digest ITSELF",
         ),
     ),
     AttackClass(

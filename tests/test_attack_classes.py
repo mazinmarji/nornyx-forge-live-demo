@@ -390,6 +390,13 @@ REVERTIBLE_FIXES = [
      + NL + "     + \"    pass\", 0),",
      "tests/test_attack_classes.py",
      "test_every_specimen_source_parses_at_the_declared_floor"),
+    # ---- AC02: a signed field that no consumer evaluates ----------------
+    ("the findings binding weakened to a condition that never holds",
+     "src/nornyx_forge/reviewer_trust.py",
+     "    if carried != signed_digest:",
+     "    if carried is None and signed_digest is None:",
+     "tests/test_reviewer_authentication.py",
+     "test_findings_cannot_be_edited_after_review"),
 ]
 
 
@@ -675,6 +682,14 @@ def test_every_module_parses_at_the_declared_floor():
     A module that is not is a collection error there -- the whole module lost,
     not one test. `feature_version` is CPython own parser answering the
     question, so this is not a vocabulary of banned syntax maintained here.
+
+    WHAT `feature_version` DOES NOT MODEL, stated because the sentence above
+    reads as though it covered the whole grammar and a review measured that
+    it does not. It gates the features CPython guards explicitly -- `except*`
+    and pattern matching among them -- but NOT PEP 701, so an f-string using
+    3.12-only nesting or quote reuse parses here and breaks the 3.10 and 3.11
+    jobs. There are none at this head. CI is the backstop for that shape, as
+    it is for the import table.
     """
     floor = declared_floor()
     broken = []
@@ -849,6 +864,29 @@ def test_the_release_contract_names_exactly_the_frozen_classes():
         "corpus is " + repr(sorted(live)) + "; the contract must be amended "
         "with the corpus, not after it"
     )
+    # THE COUNTS TOO. The freeze table writes `(7)` and `(42)` beside the
+    # corpora, under a sentence claiming each freeze is mechanical rather
+    # than declared. The `(7)` was pinned by the comparison above; the
+    # `(42)` was parsed by nothing -- a count typed beside a corpus, which
+    # is AC03 and which CLOSURE_PROTOCOL.md refuses to do for exactly this
+    # reason. A review found it in the document that names the class.
+    from test_false_green_audit import INVENTORY  # noqa: PLC0415
+
+    counts = {
+        "attack classes": (r"Attack classes \((\d+)\)", len(ATTACK_CLASSES)),
+        "false-green corpus": (r"False-green corpus \((\d+)\)", len(INVENTORY)),
+    }
+    for label, (pattern, live_count) in counts.items():
+        stated = re.search(pattern, text)
+        assert stated, (
+            "the freeze table no longer states a count for " + label
+            + ", so the row cannot be checked against the corpus"
+        )
+        assert int(stated.group(1)) == live_count, (
+            "the contract says " + stated.group(1) + " " + label + " and there "
+            "are " + str(live_count)
+        )
+
     for item in ATTACK_CLASSES:
         assert item.title in text, (
             item.ident + " is named in the contract but its title is not the "

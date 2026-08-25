@@ -352,11 +352,65 @@ def test_findings_cannot_be_edited_after_review():
     ok, _, _ = verify_signed_attestation(signed, store=store, builder_identity=BUILDER)
     assert ok is True
 
-    # But the digest no longer describes them, which is what a consumer checks.
-    from nornyx_forge.reviewer_trust import findings_digest
-
+    # THE VERIFIER IS ASKED, not a recomputation standing in for it. This
+    # block used to call `findings_digest` itself and compare two values,
+    # under a comment reading "which is what a consumer checks". No
+    # consumer checked it: a review scrubbed the findings and measured
+    # authenticated=True. A test that recomputes the property proves the
+    # recomputation.
     scrubbed = {**signed, "findings": []}
-    assert findings_digest(scrubbed["findings"]) != scrubbed["findings_digest"]
+    ok, reason, evidence = verify_signed_attestation(
+        scrubbed, store=store, builder_identity=BUILDER
+    )
+    assert ok is False, (
+        "the findings were scrubbed to [] and the attestation still authenticated"
+    )
+    assert "ATTESTATION_FINDINGS_UNBOUND" in reason, reason
+    assert evidence["signature_verified"] is True, (
+        "the refusal must come from the findings binding, not from a signature "
+        "that failed for some unrelated reason"
+    )
+
+
+def test_a_fabricated_findings_list_is_refused_too():
+    """Scrubbing is not the only edit. Replacing them must fail as well."""
+    private, public = _keypair()
+    store = _store(_reviewer("rev-1", "reviewer.security", ["security-inspector"], public))
+    signed = _attest(
+        private, reviewer="reviewer.security", key_id="rev-1",
+        role="security-inspector",
+        findings=[{"severity": "P1", "summary": "a real problem"}],
+    )
+    forged = {
+        **signed,
+        "findings": [{"severity": "P3", "summary": "no issues found"}],
+    }
+    ok, reason, _ = verify_signed_attestation(
+        forged, store=store, builder_identity=BUILDER
+    )
+    assert ok is False, (
+        "a P1 finding was rewritten as `no issues found` and the attestation "
+        "still authenticated"
+    )
+    assert "ATTESTATION_FINDINGS_UNBOUND" in reason, reason
+
+
+def test_untouched_findings_still_authenticate():
+    """The over-reach control: refusing every attestation would satisfy
+    both tests above, and would make an authenticated inspection
+    unreachable rather than honest."""
+    private, public = _keypair()
+    store = _store(_reviewer("rev-1", "reviewer.security", ["security-inspector"], public))
+    signed = _attest(
+        private, reviewer="reviewer.security", key_id="rev-1",
+        role="security-inspector",
+        findings=[{"severity": "P1", "summary": "a real problem"}],
+    )
+    ok, reason, evidence = verify_signed_attestation(
+        signed, store=store, builder_identity=BUILDER
+    )
+    assert ok is True, reason
+    assert evidence["findings_bound"] is True, evidence
 
 
 # --------------------------------------------------------------------------

@@ -144,7 +144,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The class probes. A class whose specimens stop being collected is a
     # class held down by nothing, so this module has a floor like any
     # other -- the registry is only as real as the tests it names.
-    "tests/test_attack_classes.py": 38,
+    "tests/test_attack_classes.py": 39,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -157,7 +157,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # regression for the reachability probe were both deletable.
     "tests/test_evidence_binding.py": 19,
     "tests/test_clause_reachability.py": 7,
-    "tests/test_reviewer_authentication.py": 23,
+    "tests/test_reviewer_authentication.py": 25,
     "tests/test_independent_inspection.py": 16,
     "tests/test_trust_directionality.py": 9,
     "tests/test_content_binding.py": 19,
@@ -333,10 +333,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2218   (89 modules)
-#     sum of the module floors    2038
-#     band(2218) = ceil(0.9*n)    1997
-#     MINIMUM_COLLECTED           2053
+#     collected across tests/     2221   (89 modules)
+#     sum of the module floors    2041
+#     band(2221) = ceil(0.9*n)    1999
+#     MINIMUM_COLLECTED           2056
 #     above the module sum        15
 #     below what collects         165
 #
@@ -380,7 +380,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2053
+MINIMUM_COLLECTED = 2056
 
 
 def band(collected: int) -> int:
