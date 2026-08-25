@@ -416,7 +416,23 @@ def _filler_cases(count: int) -> str:
 
 def _complete_report_cases(count: int) -> str:
     """Every required module at its floor, and enough total to clear the floor."""
-    return _module_cases(REQUIRED_MODULES) + _filler_cases(count - _required_total())
+    # EVERY MODULE WITH A FLOOR, not just the required ones. This built
+    # cases for `REQUIRED_MODULES` alone, so a module that had a floor
+    # and was not required contributed zero -- and a helper called
+    # `_complete_report_cases` produced a report the gate refuses, making
+    # every test built on it fail for a clause it was not about.
+    floored = tuple(sorted(
+        set(REQUIRED_MODULES) | set(census.REQUIRED_MODULE_MINIMUMS)
+    ))
+    return _module_cases(floored) + _filler_cases(count - _floored_total(floored))
+
+
+def _floored_total(modules) -> int:
+    """How many testcases `_module_cases(modules)` emits."""
+    return sum(
+        max(census.REQUIRED_MODULE_MINIMUMS.get(name, 1), 1)
+        for name in modules
+    )
 
 
 def test_the_missing_module_refusal_actually_runs(tmp_path, capsys):

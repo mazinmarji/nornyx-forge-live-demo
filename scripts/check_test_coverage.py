@@ -138,6 +138,10 @@ NEWLINE = chr(10)
 #: removing a third of a security module does not, and lowering the number has
 #: to happen in the diff where it can be argued with.
 REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
+    # The class probes. A class whose specimens stop being collected is a
+    # class held down by nothing, so this module has a floor like any
+    # other -- the registry is only as real as the tests it names.
+    "tests/test_attack_classes.py": 19,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -316,12 +320,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     2166   (88 modules)
-#     sum of the module floors    1991
-#     band(2166) = ceil(0.9*n)    1950
-#     MINIMUM_COLLECTED           2006
+#     collected across tests/     2187   (89 modules)
+#     sum of the module floors    2010
+#     band(2187) = ceil(0.9*n)    1969
+#     MINIMUM_COLLECTED           2025
 #     above the module sum        15
-#     below what collects         160
+#     below what collects         162
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -342,7 +346,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 175 in total, and the aggregate refuses
+# per-module bands already grant 177 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -363,7 +367,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2006
+MINIMUM_COLLECTED = 2025
 
 
 def band(collected: int) -> int:
@@ -394,6 +398,10 @@ def band(collected: int) -> int:
 #: been made to protect it while the census could not see it at all.
 #: `test_every_test_module_is_named_in_the_census` keeps this exhaustive.
 REQUIRED_MODULES = (
+    # The class probes. A registry of root mechanisms is only as real
+    # as the tests it names, so the module holding them is required
+    # like any other control: losing it loses every class at once.
+    "tests/test_attack_classes.py",
     "tests/test_brd_evidence_shape.py",
     "tests/test_approval_authentication.py",
     "tests/test_killed_by_validation.py",
