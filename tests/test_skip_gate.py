@@ -219,6 +219,86 @@ def test_every_required_module_exists_and_is_a_test_file():
         )
 
 
+def collected_per_module() -> dict:
+    """{module: collected} from a real collection, not from counting `def test_`.
+
+    That count missed every parametrised case -- 426 definitions against 645
+    collected -- so anything derived from it measured a different suite than the
+    floors are compared against.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q",
+         "-p", "no:cacheprovider"],
+        cwd=ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    counts: dict = {}
+    for line in completed.stdout.splitlines():
+        if not line.startswith("tests/"):
+            continue
+        name, _, tail = line.rpartition(":")
+        if tail.strip().isdigit():
+            counts[name] = int(tail)
+    assert counts, (
+        "collection produced no per-module counts:" + chr(10)
+        + completed.stdout[-500:]
+    )
+    return counts
+
+
+def documented_band_slack() -> int:
+    """The one derived census number that lived in prose rather than a row."""
+    text = (ROOT / "scripts" / "check_test_coverage.py").read_text(encoding="utf-8")
+    found = re.findall(r"per-module bands already grant (\d+) in total", text)
+    assert len(found) == 1, (
+        "the sentence naming the slack the per-module bands grant is gone or "
+        f"doubled, so this guard measures nothing: {found}"
+    )
+    return int(found[0])
+
+
+def test_the_slack_the_bands_grant_is_the_measured_sum():
+    """The last hand-derived number in that comment, now read by something.
+
+    It has gone stale FIVE times. It said 152 when the bands granted 163; the
+    commit that corrected it to 163 also raised two module floors and made the
+    answer 166; two independent reviews then found 163 again. Every other
+    derived quantity in that block was promoted to a row and stopped rotting,
+    and this one is the last, so it gets the same treatment: parsed out of the
+    prose and compared against the sum the floors actually permit.
+
+    Derived twice over on purpose. `collected - floor` summed per module and
+    `total - sum(floors)` are the same quantity by different routes, and a
+    guard that computed it once the way the comment does would be agreeing with
+    itself.
+    """
+    from check_test_coverage import REQUIRED_MODULE_MINIMUMS, band  # noqa: PLC0415
+
+    counts = collected_per_module()
+    missing = sorted(set(REQUIRED_MODULE_MINIMUMS) - set(counts))
+    assert missing == [], (
+        "a module with a declared floor collects nothing, so the slack cannot "
+        f"be computed: {missing}"
+    )
+    per_module = sum(
+        counts[name] - floor for name, floor in REQUIRED_MODULE_MINIMUMS.items()
+    )
+    by_band = sum(
+        counts[name] - band(counts[name]) for name in REQUIRED_MODULE_MINIMUMS
+    )
+    assert per_module == by_band, (
+        "a declared floor is not the band of what its module collects, so "
+        f"'the slack the bands grant' is two different numbers: {per_module} "
+        f"and {by_band}. Recompute the floors."
+    )
+    assert documented_band_slack() == per_module, (
+        "the comment says the per-module bands grant "
+        + str(documented_band_slack()) + " in total; they grant "
+        + str(per_module) + ". This number has gone stale five times, which is "
+        "why it is read here instead of trusted."
+    )
+
+
 def test_the_floor_sits_below_the_current_suite_and_above_nothing():
     """A floor at zero is decoration; a floor above the suite blocks every run."""
     # Counted by COLLECTING, not by counting `def test_` strings. That count

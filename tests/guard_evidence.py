@@ -365,6 +365,22 @@ def module_constants(module: ast.AST) -> dict:
     """
     constants: dict = {}
     disqualified: set = set()
+    # A `global` DECLARED IN ANY FUNCTION rebinds a module name from a
+    # scope this walk never visits, so the literal assignment is not the
+    # only binding and the name is not a constant. Measured:
+    #
+    #     _ON = True
+    #     def _arm():
+    #         global _ON
+    #         _ON = False
+    #
+    # gave `{'_ON': True}`, so `if _ON:` folded live and its body was
+    # credited whether or not `_arm()` had run. `ast.walk` rather than
+    # `module_scope_statements`, precisely because the declaration is
+    # inside another scope.
+    for node in ast.walk(module):
+        if isinstance(node, ast.Global):
+            disqualified.update(node.names)
     for node in module_scope_statements(module):
         if isinstance(node, ast.Assign):
             targets = [t for t in node.targets if isinstance(t, ast.Name)]

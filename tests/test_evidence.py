@@ -574,3 +574,39 @@ def test_the_report_describes_the_whole_case(tmp_path: Path):
     )
     assert case["evidence"]["status"] == "pass", case["evidence"]["diagnostics"]
     assert any(entry["stage"] == "audit" for entry in case["timeline"])
+
+
+def test_a_sequence_that_is_not_a_number_is_reported_not_raised(tmp_path: Path):
+    """`validate` is the only one of the three that is a GATE, and the only one
+    that did not check the type it does arithmetic on.
+
+    `append` guards it with `isinstance(last_sequence, int)` and `__init__`
+    tolerates a wrong-shaped record by design. `validate` ran
+    `(sequence or expected) + 1`, which CONCATENATES when a record carries
+    `"sequence": "3"`. Measured on the shipped path: TypeError out of
+    `CustomerCaseFlow.audit`, so the records were appended, the low-risk effect
+    was released, and the report was never written -- leaving the previous
+    `pass` artifact on disk describing 7 events beside a file holding 14.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(3):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    record = json.loads(lines[1])
+    record["sequence"] = str(record["sequence"])
+    lines[1] = json.dumps(record, sort_keys=True)
+    path.write_text(chr(10).join(lines) + chr(10), encoding="utf-8", newline="")
+
+    report = tmp_path / "report.json"
+    verdict = EvidenceLedger(path).validate(report_path=report)
+    assert verdict["status"] == "fail", verdict
+    assert any("not a whole number" in item for item in verdict["diagnostics"]), (
+        verdict["diagnostics"]
+    )
+    assert report.exists(), (
+        "validate died before writing the report, so the artifact an operator "
+        "reads is the previous run's verdict"
+    )
+    assert json.loads(report.read_text(encoding="utf-8"))["status"] == "fail"

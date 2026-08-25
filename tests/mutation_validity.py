@@ -120,14 +120,22 @@ def inert_spans(source: str) -> list[tuple[int, int]]:
         pass
 
     tree = ast.parse(source)
-    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-    for node in ast.walk(tree):
-        if not isinstance(node, holders):
-            continue
-        body = getattr(node, "body", None)
-        if not body:
-            continue
-        first = body[0]
+    # EVERY BARE STRING STATEMENT, not only a leading one.
+    #
+    # Only `body[0]` was treated as prose, so a string expression one
+    # statement further down -- a PEP-224 attribute docstring, a
+    # free-standing note -- was in neither `inert_spans` nor
+    # `executable_projection`. An anchor inside one cleared TARGET IS
+    # INERT, cleared TARGET UNCHANGED (a string constant is an AST node)
+    # and cleared PROSE-ONLY MUTATION (the projection does not blank it),
+    # so a prose-only edit would have been credited as a real change to
+    # executable Python -- the class this module exists to refuse, one
+    # statement position away.
+    #
+    # A bare string is never load-bearing: its value is computed and
+    # discarded wherever it appears, so treating them all as prose
+    # cannot hide a real change.
+    for first in ast.walk(tree):
         if (
             isinstance(first, ast.Expr)
             and isinstance(first.value, ast.Constant)

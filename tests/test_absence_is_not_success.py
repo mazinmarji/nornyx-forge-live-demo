@@ -112,10 +112,10 @@ def _is_empty_value(value: ast.expr, empty_names: set) -> bool:
     nothing.
 
     `return None` IS NOT COVERED, deliberately and after measuring it: adding it
-    finds 13 further sites across these eight surfaces, and it is a different
+    finds 8 further sites across these eight surfaces, and it is a different
     construct. An empty collection reads to a caller as "I looked and there was
     nothing"; `None` reads as "no answer", and callers branch on it. Widening
-    this rule to cover it would put 13 sites in front of a classification table
+    this rule to cover it would put 8 sites in front of a classification table
     whose entries must each state why absence cannot increase authority --
     which is worth doing on its own evidence, not as a side effect of a fix to
     the spelling problem. Recorded in the ledger as its own exposure.
@@ -175,8 +175,8 @@ def _empty_return_sites(relative: str) -> list[tuple[str, int]]:
 
 #: (label, handler body, is it a swallowed failure).
 #:
-#: The five that expect True were all invisible to the rule that named four
-#: spellings, in the module whose subject is that naming spellings is not a
+#: SEVEN expect True and FIVE expect False, and this said five and four.
+#: Six of the seven were invisible to the rule that named four spellings, in the module whose subject is that naming spellings is not a
 #: rule. The four that expect False are the over-reach control: a handler that
 #: returns something, or re-raises, is not a swallowed failure, and a screen
 #: that flagged those would put real code in front of a classification table
@@ -297,15 +297,22 @@ def test_each_classification_states_a_reason():
         assert Path(relative).name in reason or relative in reason, (
             key + " is exempted by a reason that never names its module"
         )
-        # The clause that says why absence cannot increase authority.
-        assert any(
-            phrase in reason
-            for phrase in ("caller", "refus", "denie", "closed", "authority")
-        ), (
-            key + " is exempted without saying what the caller does with "
-            "the empty result, which is the only thing that makes an "
-            "absence safe"
-        )
+        # NO CLAUSE HERE PRETENDS TO CHECK THAT THE REASON EXPLAINS.
+        #
+        # There was one: `any(phrase in reason for phrase in ("caller",
+        # "refus", "denie", "closed", "authority"))`, under a failure
+        # message reading "is exempted without saying what the caller does
+        # with the empty result". A reason containing the word `caller` and
+        # nothing about the caller satisfied it -- a five-stem substring
+        # scan reported as a semantic check, which is the substitution this
+        # module is about, committed inside the module.
+        #
+        # What CAN be checked mechanically is checked above: the reason
+        # declares its class, names its module, and names its function, so
+        # it cannot be a reason written for somewhere else. Whether it
+        # explains anything is a judgement, and the honest place for it is
+        # a person at review time -- said here rather than simulated with a
+        # word list.
         assert len(reason) > 80, f"{key} is exempted without a real explanation"
 
 
@@ -540,3 +547,34 @@ def test_a_non_governed_import_failure_keeps_its_traceback(tmp_path: Path):
         "the function contains no `raise` STATEMENT, so a non-governed "
         "ModuleNotFoundError is no longer re-raised -- whatever the comments say"
     )
+
+
+def test_a_string_statement_anywhere_is_prose(tmp_path: Path):
+    """`inert_spans` treated only a FIRST statement string as a docstring.
+
+    A bare string one statement further down -- a PEP-224 attribute docstring,
+    a free-standing note -- was in neither `inert_spans` nor
+    `executable_projection`. An anchor inside one cleared TARGET IS INERT,
+    cleared TARGET UNCHANGED (a string constant is an AST node) and cleared
+    PROSE-ONLY MUTATION, so a prose-only edit would have been credited as a
+    real change to executable Python -- the class that module exists to refuse,
+    one statement position away.
+    """
+    from mutation_validity import InvalidMutation, check_python_mutation  # noqa: PLC0415
+
+    before = (
+        "VALUE = 1" + chr(10)
+        + '"a note that is not the module docstring, mentioning TARGET"' + chr(10)
+        + "def go():" + chr(10)
+        + "    return VALUE" + chr(10)
+    )
+    after = before.replace("TARGET", "OTHER")
+    try:
+        check_python_mutation("probe.py", before, after, "TARGET", 1)
+    except InvalidMutation as exc:
+        assert "INERT" in str(exc).upper(), str(exc)
+    else:
+        raise AssertionError(
+            "a prose-only edit to a non-leading string statement was accepted "
+            "as a real change to executable Python"
+        )

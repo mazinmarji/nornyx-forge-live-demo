@@ -596,3 +596,59 @@ def test_the_real_passing_contract_reads_as_validating():
         + repr(result)
     )
     assert result["unexpected_diagnostics"] == [], result
+
+
+UNRECOGNISED_RISKS = ["severe", "HIGH-RISK", "", "  ", "elevated"]
+
+
+@pytest.mark.parametrize("label", UNRECOGNISED_RISKS)
+def test_an_unrecognised_risk_is_refused_where_a_reader_can_see_it(
+    label: str, tmp_path: Path,
+):
+    """The boundary refused correctly and the flow crashed one statement later.
+
+    `canonical_action_request` and `exercised_capability` both derive a
+    capability, and an unrecognised label has none -- so both raised AFTER the
+    boundary had already answered `RISK_LEVEL_UNKNOWN`. The refusal existed and
+    could not be observed: no case, no ledger record, no response, just an
+    exception out of `run_case`. A guard that refuses correctly and then
+    crashes before anyone can see it has not refused anything a reader can act
+    on.
+    """
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    case = run_case(
+        {"id": "CASE-RISK", "customer": "Amina", "risk": label,
+         "summary": "s", "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig(
+            policy_backend="deterministic_demo", execution_backend="sequential",
+        ),
+        security_context=application_security_context(),
+    )
+    assert case["action_status"] == "prevented", case["decision"]
+    assert case["decision"]["code"] == RISK_LEVEL_UNKNOWN, case["decision"]
+    assert case["evidence"]["status"] == "pass", case["evidence"]["diagnostics"]
+    # No capability is claimed for an act that exercised none.
+    assert "action_request" not in case
+
+
+def test_the_recognised_levels_are_unaffected(tmp_path: Path):
+    """The over-reach control: refusing everything would satisfy the above."""
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    for label, expected in (("low", "executed"), ("medium", "executed"),
+                            ("high", "prevented"), ("critical", "prevented")):
+        case = run_case(
+            {"id": "CASE-OK", "customer": "Amina", "risk": label,
+             "summary": "s", "requested_action": "a"},
+            root=tmp_path / label, worker_mode="deterministic",
+            config=RuntimeAuthorityConfig(
+                policy_backend="deterministic_demo", execution_backend="sequential",
+            ),
+            security_context=application_security_context(),
+        )
+        assert case["action_status"] == expected, (label, case["decision"])
+        assert case["decision"]["code"] != RISK_LEVEL_UNKNOWN

@@ -319,11 +319,35 @@ class EvidenceLedger:
             previous: dict[str, Any] | None = None
             for record in durable:
                 sequence = record.get("sequence")
-                if sequence != expected:
+                # THE TYPE, BEFORE THE ARITHMETIC. `append` guards this and
+                # `__init__` tolerates it; `validate` -- the only one of the
+                # three that is a GATE -- did neither, and
+                # `(sequence or expected) + 1` concatenates when a record
+                # carries `"sequence": "3"`. Measured: TypeError out of
+                # `CustomerCaseFlow.audit`, so the effect was released, the
+                # records were appended, and the report never written --
+                # leaving the previous `pass` artifact on disk describing 7
+                # events beside a file holding 14. Two code paths disagreed
+                # about the same fact and the one that decides was the
+                # unguarded one.
+                numbered = (isinstance(sequence, int)
+                            and not isinstance(sequence, bool))
+                if not numbered:
+                    diagnostics.append(
+                        "a record carries a sequence that is not a whole "
+                        "number: " + repr(sequence)
+                    )
+                elif sequence != expected:
                     diagnostics.append(
                         f"sequence gap: expected {expected}, got {sequence}"
                     )
-                expected = (sequence or expected) + 1
+                # EVERY CHECK STILL RUNS. Skipping ahead on a bad sequence
+                # meant a record that was both unnumbered AND missing its
+                # identity fields reported only the first, so an operator
+                # fixing the number would meet the next problem one run
+                # later instead of seeing both at once.
+                if numbered:
+                    expected = sequence + 1
                 if (not record.get("mission_id") or not record.get("actor")
                         or not record.get("event_type")):
                     diagnostics.append(
@@ -407,6 +431,12 @@ class EvidenceLedger:
             ]
         last = durable[-1]
         present = last.get("sequence")
+        if not isinstance(present, int) or isinstance(present, bool):
+            return [
+                "the last record carries a sequence that is not a whole "
+                "number, so it cannot be compared with the mark: "
+                + repr(present)
+            ]
         if written != present and self._read_stream()[1]:
             # A torn line makes the next append skip a number, so the
             # mismatch says nothing about removal or addition. Naming a

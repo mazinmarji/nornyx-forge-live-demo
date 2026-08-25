@@ -671,7 +671,17 @@ def screen_consumers() -> list:
                 and any(a.name == "guard_evidence" for a in node.names)
             )
             if imported:
-                found.append("tests/" + module.name)
+                # THE PATH IT WAS FOUND AT, not its basename. The widening
+                # from `glob` to `rglob` discovered nested modules and then
+                # threw the subdirectory away, so `tests/nested/test_x.py`
+                # was reported as `tests/test_x.py` and
+                # `screen_call_sites` opened a DIFFERENT FILE -- the flat
+                # one -- while the nested module's unchecked calls went
+                # uninspected. Set equality then hid it too, because the
+                # duplicated flat name collapsed into an already-named
+                # entry. Half of a widening is how the escape it closed
+                # came back.
+                found.append(module.relative_to(ROOT).as_posix())
                 break
     return found
 
@@ -726,6 +736,13 @@ def screen_call_sites(relative: str) -> list:
     return sites
 
 
+#: Helpers that return the `(guard, module)` pair the screen wants.
+#:
+#: Named rather than inferred from the `*`, because the star says only
+#: that something is unpacked and not that it unpacks to two things.
+PAIR_HELPERS = frozenset({"_guard"})
+
+
 def _supplies_the_module(call: ast.Call) -> bool:
     """Does this call hand the screen a module?
 
@@ -734,10 +751,25 @@ def _supplies_the_module(call: ast.Call) -> bool:
     would fail every specimen in this file for supplying the module the
     correct way.
     """
-    if any(isinstance(argument, ast.Starred) for argument in call.args):
-        return True
-    if any(keyword.arg == "module" or keyword.arg is None
-           for keyword in call.keywords):
+    # A STARRED ARGUMENT IS NOT PROOF ON ITS OWN. The justification for
+    # accepting one was the ARITY of a particular helper -- `*_guard(body,
+    # source)` unpacks a (guard, module) pair -- and the rule was written
+    # about the `*`. `exercised_assertions(*sites)` with a one-element
+    # `sites` supplies no module and was accepted. So the helper is named:
+    # a starred call passes only when what is starred is a call to
+    # something declared to return the pair.
+    for argument in call.args:
+        if not isinstance(argument, ast.Starred):
+            continue
+        inner = argument.value
+        if (isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id in PAIR_HELPERS):
+            return True
+        return False
+    # `**kw` was auto-accepted for the same reason and with as little
+    # evidence; only an explicit `module=` counts.
+    if any(keyword.arg == "module" for keyword in call.keywords):
         return True
     return len(call.args) >= 2
 
@@ -1748,7 +1780,7 @@ def test_a_guard_that_declares_global_is_not_folded_to_the_module_value():
 def test_symtable_agrees_that_these_are_all_the_module_bindings():
     """`bound_names` is checked against CPython's own binding analysis.
 
-    THE COMPLETENESS AXIS FOR THIS SCREEN, and deliberately not another table
+    THE COMPLETENESS AXIS FOR `bound_names`, and deliberately not another table
     maintained by hand. Four hand-maintained vocabularies already sit in this
     module; a fifth would have the same failure mode as the first four, which is
     that a grammar change nobody notices leaves it silently short.
@@ -1760,6 +1792,15 @@ def test_symtable_agrees_that_these_are_all_the_module_bindings():
 
     Run over every module in `tests/` and `src/`, so the corpus is real code
     rather than specimens chosen to pass.
+
+    WHAT IT CANNOT REACH, because "the completeness axis for this screen"
+    claimed more than a set difference can do. `collected` is the union of
+    `bound_names` over every module statement, and that union INCLUDES the
+    literal `Assign` -- so a name that is bound literally here AND rebound
+    invisibly elsewhere is never in `reported - collected`. A `global`
+    declaration inside a function is exactly that shape; it is handled in
+    `module_constants` directly rather than caught here, and this test
+    would not have noticed if it were not.
     """
     import symtable  # noqa: PLC0415
 
@@ -3929,3 +3970,106 @@ def test_the_specification_only_guards_are_declared_as_such():
             "the set -- do not leave the inventory calling a measurement a "
             "specification, or the reverse."
         )
+
+
+def test_a_consumer_in_a_subdirectory_keeps_its_path(tmp_path: Path, monkeypatch):
+    """Discovery widened to `rglob` and the result was still a basename.
+
+    `tests/nested/test_x.py` was reported as `tests/test_x.py`, so
+    `screen_call_sites` opened a DIFFERENT FILE and the nested module's
+    unchecked calls were never inspected -- while set equality hid it, because
+    the duplicated flat name collapsed into an already-named entry. Half of a
+    widening is how the escape it closed came back.
+    """
+    tests = tmp_path / "tests"
+    (tests / "nested").mkdir(parents=True)
+    (tests / "guard_evidence.py").write_text("", encoding="utf-8", newline="")
+    (tests / "test_flat.py").write_text(
+        "from guard_evidence import exercised_assertions" + chr(10)
+        + "def test_ok():" + chr(10)
+        + "    exercised_assertions(node, module)" + chr(10),
+        encoding="utf-8", newline="",
+    )
+    (tests / "nested" / "test_flat.py").write_text(
+        "from guard_evidence import exercised_assertions" + chr(10)
+        + "def test_unwired():" + chr(10)
+        + "    exercised_assertions(node)" + chr(10),
+        encoding="utf-8", newline="",
+    )
+    monkeypatch.setattr("test_false_green_audit.ROOT", tmp_path, raising=True)
+
+    discovered = screen_consumers()
+    assert "tests/nested/test_flat.py" in discovered, discovered
+    unwired = [
+        relative + "::" + function
+        for relative in discovered
+        for function, call in screen_call_sites(relative)
+        if not _supplies_the_module(call)
+    ]
+    assert unwired == ["tests/nested/test_flat.py::test_unwired"], unwired
+
+
+UNSTARRED_CALLS = [
+    ("a bare star of something that is not the pair", "f(*sites)", False),
+    ("a star of an unknown call", "f(*collect())", False),
+    ("keyword splat", "f(**options)", False),
+    ("the helper that returns the pair", "f(*_guard(body, source))", True),
+    ("both arguments given", "f(guard, module)", True),
+    ("the module by keyword", "f(guard, module=module)", True),
+    ("one argument and nothing else", "f(guard)", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "supplies"), UNSTARRED_CALLS,
+    ids=[case[0] for case in UNSTARRED_CALLS],
+)
+def test_a_star_is_not_proof_that_a_module_was_supplied(
+    label: str, source: str, supplies: bool,
+):
+    """The rule was written about the `*` and justified by a helper's arity.
+
+    `exercised_assertions(*sites)` with a one-element `sites` supplies no
+    module and was accepted; `f(**kw)` was accepted for the same reason and
+    with as little evidence. What is starred now has to be a call to something
+    declared to return the (guard, module) pair.
+    """
+    call = ast.parse(source).body[0].value
+    assert _supplies_the_module(call) is supplies, label
+
+
+def test_a_global_declaration_disqualifies_a_module_constant():
+    """A `global` rebinds from a scope the module walk never visits.
+
+    Measured: `_ON = True` with `def _arm(): global _ON; _ON = False` left
+    `_ON` a constant, so `if _ON:` folded live and its body was credited
+    whether or not `_arm()` had run.
+    """
+    module = ast.parse(
+        "_ON = True" + NL + NL
+        + "def _arm():" + NL
+        + "    global _ON" + NL
+        + "    _ON = False" + NL + NL
+        + "def guard():" + NL
+        + '    """A docstring."""' + NL
+        + "    if _ON:" + NL
+        + "        assert real" + NL
+    )
+    from guard_evidence import module_constants  # noqa: PLC0415
+
+    assert "_ON" not in module_constants(module)
+    guard = next(
+        node for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "guard"
+    )
+    assert exercised_assertions(guard, module) == 1
+    # The control: without the `global`, the constant folds as it always did.
+    settled = ast.parse(
+        "_ON = False" + NL + NL
+        + "def guard():" + NL
+        + '    """A docstring."""' + NL
+        + "    if _ON:" + NL
+        + "        assert real" + NL
+    )
+    bare = next(node for node in settled.body if isinstance(node, ast.FunctionDef))
+    assert exercised_assertions(bare, settled) == 0

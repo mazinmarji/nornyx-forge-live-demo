@@ -13,6 +13,7 @@ from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
+    UnknownRiskLevel,
     canonical_action_request,
     exercised_capability,
 )
@@ -183,6 +184,20 @@ def assurance_state() -> dict[str, Any]:
         "approver_trust_authentication": "available" if loaded else "unavailable",
         "consequential_authority": "not_derived_here",
     }
+
+
+def _canonical_request_or_none(**arguments: Any):
+    """The request the runtime authorized, or None when there is no such thing.
+
+    An unrecognised risk label has no capability, so there is no canonical
+    request to report -- and the boundary has already refused it by the time
+    this is reached. Returning None lets the refusal be recorded and
+    returned; raising made a correct refusal unobservable.
+    """
+    try:
+        return canonical_action_request(**arguments)
+    except UnknownRiskLevel:
+        return None
 
 
 class CustomerCaseFlow(Flow):  # type: ignore[misc]
@@ -423,7 +438,20 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         )
         # Reported from the runtime's own canonical request, so the evidence
         # describes what was actually authorized rather than what was asked for.
-        request = canonical_action_request(
+        #
+        # BUILT ONLY IF THERE IS ONE TO BUILD. `canonical_action_request`
+        # derives the capability, and an unrecognised risk label has no
+        # capability -- so it raised here, one statement after the boundary
+        # had already REFUSED that label with `RISK_LEVEL_UNKNOWN`. The
+        # refusal was constructed and could not be observed: no case, no
+        # ledger record, no response, just an exception out of `run_case`.
+        # A guard that refuses correctly and then crashes before anyone can
+        # see it has not refused anything a reader can act on.
+        #
+        # Not reachable from the HTTP surface today -- `CaseInput.risk`
+        # rejects anything outside the four levels -- but reachable from the
+        # library API, which is how the boundary's own guard is reached too.
+        request = _canonical_request_or_none(
             mission_id=self.mission_id,
             risk=str(self.case.get("risk", "low")),
             # The boundary's own subject, not a second lookup that could
@@ -448,12 +476,13 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             descriptor=descriptor,
             attempt=self.attempt,
         )
-        self.case["action_request"] = {
-            "request_id": request.request_id,
-            "attempt_id": request.attempt_id,
-            "payload_digest": request.payload_digest,
-            "request_digest": request.digest,
-        }
+        if request is not None:
+            self.case["action_request"] = {
+                "request_id": request.request_id,
+                "attempt_id": request.attempt_id,
+                "payload_digest": request.payload_digest,
+                "request_digest": request.digest,
+            }
         self.case["decision"] = {
             "effect": decision.effect,
             "code": decision.code,
@@ -489,7 +518,16 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # this system. The declared one is `execute_high_risk_effect`, and the
         # shipped demonstration wrote the non-existent name on every high-risk
         # case.
-        exercised = exercised_capability(str(self.case.get("risk", "low")))
+        # AND NONE WHEN THERE IS NO CAPABILITY. An unrecognised risk label
+        # exercises nothing -- the boundary has already refused it -- so
+        # the record says so rather than the derivation raising and taking
+        # the refusal down with it. The ledger's `capability` is already
+        # optional; `None` is the honest value for an act that was
+        # refused before any capability was in play.
+        try:
+            exercised = exercised_capability(str(self.case.get("risk", "low")))
+        except UnknownRiskLevel:
+            exercised = None
         # What happened to the *act*, recorded separately from what happened to
         # the workflow. An orchestration failure later must not be able to erase
         # the fact that an effect was released, and an effect being released must

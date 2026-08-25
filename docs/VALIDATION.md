@@ -44,8 +44,13 @@ modules, including all FOURTEEN `test_removing_the_control_revives_the_defect`
 cases, the mutation catalogue, and three false-green guards. (This said
 "nineteen" and was never true of the node it names: the inventory holds
 nineteen classes, and that node is parametrised over the FOURTEEN with a
-single mutation each. H03, H04 and H13 are excluded on purpose -- two are
-compound-only, one is an obsolete historical attack -- so the sentence
+single mutation each. FIVE of the nineteen are excluded, and this named three.
+H03, H04 and H13 are PENDING -- two are
+compound-only, one is an obsolete historical attack. H11 and H12 are
+DELEGATED: they carry no mutation of their own at all, so they were never
+candidates for this runner and were simply not mentioned. 19 - 3 - 2 = 14,
+which is what collects; a reader doing the arithmetic the passage invited
+landed on 16. So the sentence
 credited that runner with five classes the repository elsewhere takes care
 to say it does not prove. `TASK11_CLOSURE.md` recorded the right figure the
 whole time.) Those are the
