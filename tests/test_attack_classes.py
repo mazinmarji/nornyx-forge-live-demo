@@ -85,8 +85,12 @@ def test_every_attack_class_names_specimens_that_exist():
                 )
                 continue
             # Parametrised nodes collect as `node[id]`, so a prefix match on
-            # the bare id is the right question -- but anchored, so
-            # `test_x` cannot be satisfied by `test_x_and_more`.
+            # the bare id is the right question -- but anchored, so a
+            # shorter name cannot be satisfied by a longer one that starts
+            # with it. (Spelled out rather than shown: in this repository
+            # backticks around a test_ name mean it resolves, so a
+            # backticked placeholder is a citation of a guard that does not
+            # exist -- which the citation check duly refused.)
             if not any(
                 found == node or found.startswith(node + "[")
                 for found in collected
