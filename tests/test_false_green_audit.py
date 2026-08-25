@@ -717,8 +717,42 @@ def test_the_named_consumers_are_all_the_consumers():
 SCREEN_ENTRY_POINTS = frozenset({"exercised_assertions", "executed_nodes"})
 
 
-def _asks_the_screen(call: ast.Call) -> bool:
-    """Is this a call to the shared screen, bare name or attribute?
+def screen_local_names(tree: ast.AST) -> set:
+    """Every local name bound to a screen entry point in this module.
+
+    `from guard_evidence import exercised_assertions as _screen` binds the
+    screen to `_screen`, and a filter that knew two spellings walked past
+    `_screen(fn)` entirely. Measured inside the real consumer
+    `_defensive_evidence`: the alias added, the module argument dropped,
+    all five wiring controls green, and the screen's answer on an
+    `_OFF = False` guard moving from 0 to 2.
+
+    The previous repair closed a spelling class by adding a spelling,
+    which leaves the class open. This reads the imports instead: whatever
+    the entry point is called HERE is what a call to it is called.
+    """
+    names = set(SCREEN_ENTRY_POINTS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "guard_evidence":
+            for alias in node.names:
+                if alias.name in SCREEN_ENTRY_POINTS:
+                    names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Assign):
+            # `_screen = exercised_assertions` is the same rename without
+            # an import statement.
+            denoted = node.value
+            named = (denoted.attr if isinstance(denoted, ast.Attribute)
+                     else getattr(denoted, "id", ""))
+            if named in SCREEN_ENTRY_POINTS:
+                names.update(
+                    target.id for target in node.targets
+                    if isinstance(target, ast.Name)
+                )
+    return names
+
+
+def _asks_the_screen(call: ast.Call, local_names: set | None = None) -> bool:
+    """Is this a call to the shared screen, however it is named here?
 
     The filter required `ast.Name`, so `import guard_evidence` followed by
     `guard_evidence.exercised_assertions(node)` was invisible -- two
@@ -727,11 +761,12 @@ def _asks_the_screen(call: ast.Call) -> bool:
     the same half-widening that let a nested consumer be read from the
     wrong file one round earlier.
     """
+    known = SCREEN_ENTRY_POINTS if local_names is None else local_names
     callee = call.func
     if isinstance(callee, ast.Name):
-        return callee.id in SCREEN_ENTRY_POINTS
+        return callee.id in known
     if isinstance(callee, ast.Attribute):
-        return callee.attr in SCREEN_ENTRY_POINTS
+        return callee.attr in known
     return False
 
 
@@ -745,12 +780,15 @@ def screen_call_sites(relative: str) -> list:
     one route the discovery check made look covered.
     """
     tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    local_names = screen_local_names(tree)
     sites = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for call in ast.walk(node):
-            if isinstance(call, ast.Call) and _asks_the_screen(call):
+            if isinstance(call, ast.Call) and _asks_the_screen(
+                call, local_names,
+            ):
                 sites.append((node.name, call))
     return sites
 
@@ -771,20 +809,38 @@ def screen_call_sites(relative: str) -> list:
 PAIR_HELPERS = frozenset({"_guard"})
 
 
+#: Expression shapes that syntactically CANNOT be a module.
+#:
+#: Listed rather than described, because the description drifted from the
+#: code the moment it was written: it said "a literal of any other kind"
+#: while an f-string walked through, and "an empty container" while
+#: non-empty ones were refused too.
+CANNOT_BE_A_MODULE = (
+    ast.Constant,      # None, a number, a string, a bool
+    ast.JoinedStr,     # an f-string is a literal too
+    ast.List, ast.Tuple, ast.Set, ast.Dict,
+    ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+    ast.Lambda,
+    ast.UnaryOp, ast.BoolOp, ast.Compare,
+)
+
+
 def _could_be_a_module(argument: ast.expr) -> bool:
     """Could this expression be a module, or is it plainly not one?
 
     Statically the value is unknowable, and this does not pretend
-    otherwise -- what it refuses is the shapes that CANNOT be a module:
-    `None`, a literal of any other kind, and an empty container. That is
-    the whole distance between an arity check and a module check, and it
-    is the distance a one-token edit travelled.
+    otherwise: `f(guard, whatever())` is admitted, because a call could
+    return a module. What it refuses is `CANNOT_BE_A_MODULE` -- the shapes
+    that syntactically cannot be one. That is the whole distance between an
+    arity check and a module check, and it is the distance a one-token edit
+    travelled.
+
+    THIS DOCSTRING SAID "a literal of any other kind" and admitted an
+    f-string, a lambda and a comprehension -- none of which can be a module,
+    and an f-string of which is a literal. It also said "an empty container"
+    while refusing non-empty ones too. Both halves are now the table below.
     """
-    if isinstance(argument, ast.Constant):
-        return False
-    if isinstance(argument, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
-        return False
-    return True
+    return not isinstance(argument, CANNOT_BE_A_MODULE)
 
 
 def _supplies_the_module(call: ast.Call) -> bool:
@@ -857,12 +913,110 @@ def test_every_pair_helper_really_returns_a_pair():
                 "starred call on it supplies no module"
             )
             for node in returns:
-                assert (isinstance(node.value, ast.Tuple)
-                        and len(node.value.elts) == 2), (
+                # ARITY IS NOT A MODULE HERE EITHER. This counted elements
+                # under a message reading "does not supply a module", so
+                # `return function, None` passed -- the identical defect
+                # repaired fourteen lines above in `_supplies_the_module`,
+                # with `_could_be_a_module` sitting between them unused.
+                pair = (isinstance(node.value, ast.Tuple)
+                        and len(node.value.elts) == 2)
+                assert pair and _could_be_a_module(node.value.elts[1]), (
                     str(module.name) + "::" + name + " line "
                     + str(node.lineno) + " does not return a two-element "
-                    "tuple, so `*" + name + "(...)` does not supply a module"
+                    "tuple whose second element could be a module, so "
+                    "`*" + name + "(...)` does not supply one"
                 )
+
+
+SCREEN_NAMING = [
+    ("the bare entry point",
+     "from guard_evidence import exercised_assertions" + NL
+     + "def t():" + NL + "    exercised_assertions(fn)", True),
+    ("through the module",
+     "import guard_evidence" + NL
+     + "def t():" + NL + "    guard_evidence.executed_nodes(fn)", True),
+    ("renamed at the import",
+     "from guard_evidence import exercised_assertions as _screen" + NL
+     + "def t():" + NL + "    _screen(fn)", True),
+    ("renamed by assignment",
+     "from guard_evidence import exercised_assertions" + NL
+     + "S = exercised_assertions" + NL
+     + "def t():" + NL + "    S(fn)", True),
+
+    # ---- and the direction that must NOT change ---------------------
+    ("an unrelated function of a similar name",
+     "def t():" + NL + "    exercise(fn)", False),
+    ("an attribute of something else",
+     "def t():" + NL + "    recorder.count(fn)", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "seen"), SCREEN_NAMING,
+    ids=[case[0] for case in SCREEN_NAMING],
+)
+def test_the_screen_is_recognised_however_it_is_named(
+    label: str, source: str, seen: bool,
+):
+    """A rename is not a different function.
+
+    The filter knew two spellings, so
+    `from guard_evidence import exercised_assertions as _screen` followed
+    by `_screen(fn)` was invisible. Measured inside the real consumer:
+    the alias added, the module argument dropped, all five wiring controls
+    green, and the screen's answer on an `_OFF = False` guard moving from
+    0 to 2. The previous repair closed a spelling class by adding a
+    spelling, which leaves the class open.
+    """
+    tree = ast.parse(source + NL)
+    local_names = screen_local_names(tree)
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    assert calls, label
+    found = any(_asks_the_screen(call, local_names) for call in calls)
+    assert found is seen, (
+        label + ": the filter " + ("missed" if seen else "flagged")
+        + " this call:" + NL + source
+    )
+
+
+PAIR_SHAPES = [
+    ("the pair", "def _p(b, s):" + NL + "    return guard, module", True),
+    ("a pair whose second element is None",
+     "def _p(b, s):" + NL + "    return guard, None", False),
+    ("a pair of literals", "def _p(b, s):" + NL + "    return 1, 2", False),
+    ("a single value", "def _p(b, s):" + NL + "    return guard", False),
+    ("a three-tuple",
+     "def _p(b, s):" + NL + "    return guard, module, extra", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source", "supplies"), PAIR_SHAPES,
+    ids=[case[0] for case in PAIR_SHAPES],
+)
+def test_a_pair_helper_must_return_something_that_could_be_a_module(
+    label: str, source: str, supplies: bool, tmp_path: Path, monkeypatch,
+):
+    """The helper check counted elements under a message about modules.
+
+    `return function, None` passed -- arity two, second element a value
+    that cannot be a module -- which is the identical defect repaired
+    fourteen lines above in `_supplies_the_module`, with
+    `_could_be_a_module` sitting between them and unused.
+    """
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "guard_evidence.py").write_text("", encoding="utf-8", newline="")
+    (tests / "test_helper.py").write_text(
+        source.replace("_p", "_guard") + NL, encoding="utf-8", newline="",
+    )
+    monkeypatch.setattr("test_false_green_audit.ROOT", tmp_path, raising=True)
+
+    if supplies:
+        test_every_pair_helper_really_returns_a_pair()
+        return
+    with pytest.raises(AssertionError, match="could be a module|two-element"):
+        test_every_pair_helper_really_returns_a_pair()
 
 
 def test_no_call_anywhere_asks_the_screen_without_the_module():
@@ -909,18 +1063,21 @@ def test_every_consumer_of_the_screen_passes_the_module():
             None,
         )
         assert function is not None, relative + " no longer defines " + name
-        # ONE filter, shared with `screen_call_sites`. A second copy here
-        # is how the attribute form stayed invisible after the first was
-        # widened, which is FG40's class inside FG40's own module.
+        # ONE filter AND ONE MODULE RULE, both shared with
+        # `screen_call_sites`. Removing the duplicated call detector left
+        # the module-supply rule duplicated and DIVERGENT: this one did not
+        # understand `*` at all, so a starred call was always flagged, and
+        # the two controls gave opposite verdicts on the same construct.
+        # One of them was right by accident of crudeness, which is not the
+        # same as being right.
+        local_names = screen_local_names(tree)
         calls = [
             node for node in ast.walk(function)
-            if isinstance(node, ast.Call) and _asks_the_screen(node)
+            if isinstance(node, ast.Call) and _asks_the_screen(node, local_names)
         ]
         assert calls, relative + "::" + name + " no longer asks the screen"
         for call in calls:
-            if len(call.args) < 2 and not any(
-                keyword.arg == "module" for keyword in call.keywords
-            ):
+            if not _supplies_the_module(call):
                 unwired.append(
                     relative + "::" + name + " line " + str(call.lineno)
                 )
@@ -2016,27 +2173,40 @@ RENDERING_FUNCTIONS = frozenset({"dump", "unparse"})
 #:
 #: The transformations are safe because they PRODUCE text rather than
 #: interrogate it, and `_is_dumped_tree` follows them, so the question they
-#: feed is still caught one call later. That was stated before it was true
+#: feed is still caught one call later.
+#:
+#: FIVE OF THESE REASONS SAID "takes no needle" AND WERE FALSE.
+#: `str.strip`, `lstrip`, `rstrip`, `splitlines` and `join` all accept an
+#: argument, and `rstrip` discriminates on it -- `'abca'.rstrip(x)` differs
+#: by `x`. They are safe for the OTHER reason in that sentence, which is
+#: the one that is actually load-bearing, and they now say so.
+#:
+#: The only check over these reasons was `len(reason) > 10`, under a
+#: message reading "is exempted without a reason that says why it cannot
+#: ask a containment question" -- a length test named as a semantic one, in
+#: this module. `test_every_safe_method_still_leads_to_a_caught_question`
+#: replaces the pretence with the measurement: for each exempted method,
+#: a question asked after it must still be caught. That was stated before it was true
 #: of `format`, `format_map` and `join`: following happened through the
 #: RECEIVER, and for those three the rendered tree is an argument while the
 #: receiver is the template or the separator. `_TEXT_FROM_ARGUMENTS` is the
 #: half that was missing.
 SAFE_STRING_METHODS = {
     "capitalize":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "casefold":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "center":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "encode":
         "produces bytes and takes no needle; a question asked of the result "
         "is caught where it is asked",
     "expandtabs":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "format":
         "substitutes into a template it is called on, and the template is "
         "not the rendered tree being interrogated",
@@ -2082,40 +2252,40 @@ SAFE_STRING_METHODS = {
     "join":
         "combines the argument sequence and takes no needle of its own",
     "ljust":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "lower":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "lstrip":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "maketrans":
         "builds a translation table and inspects nothing",
     "rjust":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "rstrip":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "splitlines":
-        "splits on line boundaries and takes no needle, so no substring can "
-        "be looked for",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "strip":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "swapcase":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "title":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "upper":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
     "zfill":
-        "returns text and takes no needle, so it cannot answer a "
-        "containment question; the rendered tree is followed through it",
+        "returns text, and `_is_dumped_tree` follows the receiver through "
+        "it, so a question asked of the result is caught one call later",
 }
 
 #: Everything else `str` offers takes a needle and answers a question about it.
@@ -2519,10 +2689,51 @@ def test_every_string_method_is_a_question_or_declared_not_to_be():
         "a method is both a question and declared not to be"
     )
     for name, reason in SAFE_STRING_METHODS.items():
-        assert len(reason) > 10, (
-            name + " is exempted without a reason that says why it cannot ask "
-            "a containment question"
+        # A LENGTH, NAMED AS AN EXPLANATION -- so it says what it is.
+        # Whether a reason explains is not decidable here; that a method
+        # is genuinely safe IS, and
+        # `test_every_safe_method_still_leads_to_a_caught_question`
+        # measures it.
+        assert reason.strip(), name + " is exempted with no reason at all"
+
+
+#: Exempted methods that take the rendered tree as an ARGUMENT rather than
+#: as a receiver, so the specimen below has to be built the other way up.
+_ARGUMENT_SHAPED = _TEXT_FROM_ARGUMENTS
+
+#: An exempted method that inspects nothing and takes no text at all.
+STATIC_STRING_METHODS = frozenset({"maketrans"})
+
+
+@pytest.mark.parametrize(
+    "method", sorted(set(SAFE_STRING_METHODS) - STATIC_STRING_METHODS),
+)
+def test_every_safe_method_still_leads_to_a_caught_question(method: str):
+    """Exempting a method is a claim that the question survives it.
+
+    That claim was prose, and five of the reasons giving it were false.
+    Here it is the measurement: for every exempted method, a rendered tree
+    put through it and then asked a text question is still flagged. A
+    method for which that stops being true is a hole, and this goes red
+    rather than a reviewer having to re-derive the reasons.
+    """
+    if method in _ARGUMENT_SHAPED:
+        source = (
+            'x = "demo_command" in "{}".' + method + "([ast.dump(n)])"
+            if method == "join"
+            else 'x = "demo_command" in "{}".' + method + "(ast.dump(n))"
         )
+    else:
+        source = 'x = "demo_command" in ast.dump(n).' + method + "()"
+        try:
+            ast.parse(source)
+        except SyntaxError:  # pragma: no cover - every name parses
+            pytest.fail(method + " produced unparseable specimen source")
+    found = substring_tests_against_a_dumped_tree(ast.parse(source))
+    assert found, (
+        method + " is exempted as a transformation the question survives, "
+        "and a question asked after it is NOT caught: " + source
+    )
 
 
 def test_the_inventory_is_exactly_the_known_classes():
@@ -4117,6 +4328,27 @@ UNSTARRED_CALLS = [
     ("both arguments given", "f(guard, module)", True),
     ("the module by keyword", "f(guard, module=module)", True),
     ("one argument and nothing else", "f(guard)", False),
+
+    # THE ROWS THAT MAKE THE VALUE CHECK LOAD-BEARING. Without these,
+    # every row above is decided by the star/keyword/arity logic alone --
+    # measured, by replacing `_could_be_a_module` with `return True` and
+    # watching all five wiring controls and all seven original rows stay
+    # green while the round-12 P1 came back. A fix nothing fails without
+    # is not a fix that has been tested; it is one that happened to be
+    # written.
+    ("a second argument that is None", "f(guard, None)", False),
+    ("the module keyword given None", "f(guard, module=None)", False),
+    ("a number in the module slot", "f(guard, 0)", False),
+    ("an empty list in the module slot", "f(guard, [])", False),
+    ("a string in the module slot", 'f(guard, "")', False),
+    ("an f-string, which is a literal too", 'f(guard, f"")', False),
+    ("a lambda", "f(guard, lambda: 1)", False),
+    ("a comprehension", "f(guard, [x for x in y])", False),
+    ("a boolean expression", "f(guard, not m)", False),
+    # And the concession, stated as a row: a CALL could return a module,
+    # so it is admitted, and this table says so rather than leaving a
+    # reader to infer how far the check reaches.
+    ("a call, whose value is unknowable here", "f(guard, build())", True),
 ]
 
 

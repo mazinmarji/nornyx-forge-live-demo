@@ -726,3 +726,81 @@ def test_the_shipped_fallback_still_releases_when_integrity_is_intact(tmp_path: 
     )
     assert case["decision"]["effect"] == "ALLOW"
     assert refusals == [], "an intact runtime wrote a refusal record"
+
+
+#: (label, the artifact payload, does it contradict a `pass` verdict).
+#:
+#: The first check required an empty DICT and the second the exact string
+#: `"not_granted"`, so the identical tamper -- flipping an independent review
+#: from `observed` to `pass` while the artifact still reports nobody inspected
+#: it -- yielded `intact` merely by writing the absence as a LIST. Measured:
+#: `{}` gave `compromised`; `[]` gave `intact` with eight verified claims and
+#: no problem reported, from the same write access the caught spelling needs.
+#:
+#: Narrow was the intent and is fine. Spelling-bound was not, and the two were
+#: the same code.
+CONTRADICTION_SPECIMENS = [
+    ("an empty dict of inspections", {"authenticated_inspections": {}}, True),
+    ("an empty list of inspections", {"authenticated_inspections": []}, True),
+    ("a null inspections field", {"authenticated_inspections": None}, True),
+    ("an empty string", {"authenticated_inspections": ""}, True),
+    ("approval as the string", {"approval": "not_granted"}, True),
+    ("approval as a record", {"approval": {"granted": False}}, True),
+    ("approval with a nested status", {"approval": {"status": "not_granted"}}, True),
+    ("approval spelled with a space", {"approval": "Not Granted"}, True),
+
+    # ---- and the direction that must NOT change ------------------------
+    ("a real inspection", {"authenticated_inspections": [{"by": "reviewer"}]}, False),
+    ("a granted approval", {"approval": {"granted": True}}, False),
+    ("an approval that says granted", {"approval": "granted"}, False),
+    ("an artifact stating neither", {"schema": "something.else.v1"}, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "payload", "contradicts"), CONTRADICTION_SPECIMENS,
+    ids=[case[0] for case in CONTRADICTION_SPECIMENS],
+)
+def test_a_recorded_pass_is_refused_however_the_artifact_says_otherwise(
+    label: str, payload: dict, contradicts: bool, tmp_path: Path,
+):
+    """What the artifact SAYS, not how it says it.
+
+    A status is derived, so it is checked against the derivation -- and the
+    derivation was matched by spelling: an empty dict but not an empty list, an
+    exact string but not the same statement as a structure. Both evasions need
+    exactly the write access the caught spelling needs.
+
+    The four rows expecting False are the over-reach control: an artifact that
+    reports a real inspection, or a granted approval, or says nothing on the
+    subject, must not be called a contradiction.
+    """
+    from nornyx_forge.subject_observer import _status_contradictions  # noqa: PLC0415
+
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8", newline="")
+    found = _status_contradictions(
+        "architecture_governance.nyx", "artifact.json",
+        {"status": "pass"}, artifact,
+    )
+    assert bool(found) is contradicts, (
+        label + ": " + ("missed" if contradicts else "flagged")
+        + " -- " + repr(found)
+    )
+
+
+def test_a_recorded_observation_is_not_checked_for_contradiction(tmp_path: Path):
+    """The control that keeps the above from being "refuses everything".
+
+    A record that does not claim `pass` makes no claim to contradict, and the
+    artifacts in this repository legitimately report no inspection today.
+    """
+    from nornyx_forge.subject_observer import _status_contradictions  # noqa: PLC0415
+
+    artifact = tmp_path / "artifact.json"
+    artifact.write_text(
+        json.dumps({"authenticated_inspections": []}), encoding="utf-8", newline="",
+    )
+    assert _status_contradictions(
+        "c.nyx", "artifact.json", {"status": "observed"}, artifact,
+    ) == []

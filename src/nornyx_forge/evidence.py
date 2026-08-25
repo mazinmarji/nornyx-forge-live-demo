@@ -385,7 +385,23 @@ class EvidenceLedger:
                 # the next record no longer points at it. Every verdict in a
                 # stream was flipped from ALLOW to DENY and the old check
                 # called it "pass".
-                expected_link = digest(previous) if previous else ""
+                # A DIGEST THAT CANNOT BE COMPUTED IS REPORTED TOO. The
+                # guard added at `append` stops THIS build writing an
+                # undigestable record; `events.jsonl` is gitignored
+                # generated state that survives an in-place upgrade, so a
+                # stream an older build wrote still reaches here -- and
+                # raising leaves the gate unable to report anything at all,
+                # which is the outcome that repair was for.
+                try:
+                    expected_link = digest(previous) if previous else ""
+                except (UnicodeEncodeError, ValueError, TypeError) as exc:
+                    diagnostics.append(
+                        "event " + str(sequence) + " cannot be linked: the "
+                        "record before it does not survive the canonical "
+                        "encoding -- " + str(exc)
+                    )
+                    previous = record
+                    continue
                 if record.get("previous_digest", "") != expected_link:
                     diagnostics.append(
                         f"event {sequence} does not follow the record before "
@@ -401,7 +417,7 @@ class EvidenceLedger:
                 "status": "pass" if not diagnostics else "fail",
                 "event_count": len(durable),
                 "diagnostics": diagnostics,
-                "stream_digest": digest(durable),
+                "stream_digest": self._digest_or_none(durable),
                 "assurance_mode": "autonomous_demonstration",
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
@@ -497,9 +513,21 @@ class EvidenceLedger:
                 f"the stream ends at event {present} and {written} were "
                 f"written: {direction}"
             ]
-        if mark.get("digest") != digest(last):
+        if mark.get("digest") != self._digest_or_none(last):
             return ["the last record is not the one that was written there"]
         return []
+
+    @staticmethod
+    def _digest_or_none(records: list) -> str | None:
+        """The stream digest, or None when the stream cannot be encoded.
+
+        Reported rather than raised, for the same reason as the linkage
+        above: a gate that dies cannot say what is wrong.
+        """
+        try:
+            return digest(records)
+        except (UnicodeEncodeError, ValueError, TypeError):
+            return None
 
     def _read_watermark(self) -> dict[str, Any] | str | None:
         """The mark, a diagnostic string if it is unreadable, or None if absent."""

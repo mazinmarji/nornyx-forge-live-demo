@@ -191,10 +191,23 @@ def test_the_disclosure_in_the_brd_matches_what_is_measured(tmp_path: Path):
 def test_the_disclosed_table_is_well_formed_without_a_runtime_lock():
     """The part of BRD-F-005's claim a READER can check, with no lock at all.
 
-    Every other test in this module needs the shipped demonstration to run,
-    which needs a runtime lock, which needs a human approval. A review measured
-    the consequence: nine undeclared skips turning the census red on every
-    clean checkout while this repository claimed all gates green.
+    THIS DOCSTRING SAID THE OPPOSITE OF WHAT THE MODULE DOES, and it said it
+    in the direction that matters most. It read: every other test here needs
+    the shipped demonstration, which needs a runtime lock, which needs a
+    human approval.
+
+    None of that is true at this head. There is no `pytest.skip` anywhere in
+    this module and no lock precondition; all ten cases run on any checkout,
+    including the one that runs the demonstration and compares its counts
+    against BRD-F-005's published table. The paragraph thirty lines above
+    says so under the heading NO LOCK PRECONDITION -- IT IS NOT TRUE, and so
+    do BRD.md, `scripts/check_test_coverage.py` and CLAUDE.md.
+
+    It survived the removal it describes, and it re-asserted HUMAN_BLOCKED
+    for a measurement that is not blocked -- the category this repository
+    calls the mirror image of the substitution it exists to police. A reader
+    of this test's own docstring was told the BRD-F-005 measurement was
+    unavailable to them. It is not.
 
     Declaring the skips is honest but not sufficient -- BRD.md said the module
     "pins the measured shape, so the gap cannot widen silently", and a test
@@ -203,8 +216,9 @@ def test_the_disclosed_table_is_well_formed_without_a_runtime_lock():
     exists, that it names EXACTLY the seven fields BRD-F-005 requires, and that
     each row's count is a fraction of one consistent total.
 
-    It cannot tell whether the numbers match a real run -- that is what the
-    lock-bound sibling does, and its limits are stated rather than implied.
+    It cannot tell whether the numbers match a real run -- that is what
+    `test_the_disclosure_in_the_brd_matches_what_is_measured` does, in this
+    same module, on any checkout. There is no lock-bound sibling.
     """
     text = (ROOT / "BRD.md").read_text(encoding="utf-8")
     assert "PARTIALLY MET" in text, (

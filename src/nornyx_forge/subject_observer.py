@@ -325,6 +325,15 @@ def _status_contradictions(
     passing approval record. Narrow on purpose -- it asserts only what the
     artifacts actually state about themselves, rather than guessing a general
     rule from two examples.
+
+    NARROW IS NOT THE SAME AS SPELLING-BOUND, and this was both. The first
+    check required an empty DICT and the second the exact string
+    `"not_granted"`, so the identical tamper written as `[]`, or as
+    `{"granted": false}`, produced `intact` with eight verified claims and
+    no problem reported -- from the same write access the caught spellings
+    need, plus refreshing a `content_hash` this observer recomputes rather
+    than trusts. The property is what the artifact SAYS, not how it says
+    it.
     """
     if str(record.get("status")) != "pass":
         return []
@@ -336,18 +345,56 @@ def _status_contradictions(
         return []
 
     found: list[str] = []
-    inspections = payload.get("authenticated_inspections")
-    if isinstance(inspections, dict) and not inspections:
-        found.append(
-            f"{contract} records {artifact} as passing, but the artifact "
-            "reports no authenticated inspection"
-        )
-    if payload.get("approval") == "not_granted":
+    # EMPTY IN ANY CONTAINER, not an empty dict. `{}` was caught and `[]`
+    # was not, so the same tamper -- flipping an independent review from
+    # `observed` to `pass` while the artifact still reports nobody inspected
+    # it -- yielded `intact` merely by writing the absence as a list.
+    # Measured: `{}` gave `compromised`; `[]` gave `intact` with 8 verified
+    # claims and no problem reported, from the same write access the dict
+    # form needs.
+    if "authenticated_inspections" in payload:
+        inspections = payload["authenticated_inspections"]
+        if _reports_nothing(inspections):
+            found.append(
+                f"{contract} records {artifact} as passing, but the artifact "
+                "reports no authenticated inspection"
+            )
+    # AND THE APPROVAL IN ANY SHAPE. This compared against the exact string
+    # `"not_granted"`, so `{"granted": false}` -- the same statement as a
+    # structure -- passed. An artifact that says approval was not granted
+    # cannot be a passing approval record however it says it.
+    if _reports_no_approval(payload.get("approval")):
         found.append(
             f"{contract} records {artifact} as passing, but the artifact "
             "reports approval was not granted"
         )
     return found
+
+
+def _reports_nothing(value: object) -> bool:
+    """Does this field state that there is nothing, in any shape it can?"""
+    if value is None:
+        return True
+    if isinstance(value, (dict, list, tuple, set, str)):
+        return len(value) == 0
+    return False
+
+
+def _reports_no_approval(value: object) -> bool:
+    """Does this field state that approval was not granted?
+
+    Three shapes, because the artifacts use three and a rule that knew one
+    of them was an evasion away from useless: the string `not_granted`, a
+    record carrying `granted: false`, and a record carrying a status that
+    is itself `not_granted`.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in {"not_granted", "not granted", "none"}
+    if isinstance(value, dict):
+        if value.get("granted") is False:
+            return True
+        return _reports_no_approval(value.get("status"))
+    return _reports_nothing(value) and value is not None
 
 
 def _evidence_records(document: object) -> list[dict]:
