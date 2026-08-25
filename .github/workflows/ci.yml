@@ -43,10 +43,25 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # EVERY VERSION REPORTS. With fail-fast the first failing
+      # interpreter cancels the other three, so a run proves nothing
+      # about them -- and the release gate requires 3.10, 3.11, 3.12 and
+      # 3.13 each to pass, not one of them to fail first. Measured: 3.11
+      # failed and cancelled 3.10, 3.12 and 3.13 mid-run.
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # FULL HISTORY, for the reason demo-contract already states:
+          # a shallow clone cannot confirm that an ancestor named by the
+          # evidence binding is a real commit in this history. The test
+          # job carries the anchor and evidence-binding proofs too, and
+          # under depth-1 they failed on ALL FOUR interpreters -- 3.12
+          # included, which passes locally. Not a version defect; the
+          # environment could not answer the question.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

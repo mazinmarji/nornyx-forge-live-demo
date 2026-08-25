@@ -145,7 +145,17 @@ def test_compose_up_build_starts_the_application():
         # image, started for real, reporting what it can actually do.
         assert payload["trusted_approvers_loaded"] is False
         assert payload["action_approval_authentication"] == "unavailable"
-        assert payload["consequential_authority"] == "unavailable"
+        # THE FIELD THAT MEASURES IT. `consequential_authority` was
+        # renamed to `approver_trust_authentication` because it read one
+        # of the five inputs the boundary consults, while its name
+        # promised all five. This assertion kept the old name and the old
+        # value, and nothing caught it: the rename was validated by unit
+        # tests on a workstation, and THIS test only runs where a Docker
+        # daemon exists, which is a declared expected skip locally.
+        assert payload["approver_trust_authentication"] == "unavailable"
+        # And the retired name must keep refusing to answer rather than
+        # quietly starting to claim again.
+        assert payload["consequential_authority"] == "not_derived_here"
 
         # And it must not disclose where trust would come from.
         body = json.dumps(payload)
