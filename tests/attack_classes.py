@@ -65,6 +65,7 @@ ATTACK_CLASSES = (
             "`_supplies_the_module` counted arity; `f(guard, None)` escaped",
             "`_status_contradictions` again: an ABSENT key, `0`, `false` "
             "and `{'granted': 0}` all escaped the repaired version",
+            "the approval-ledger continuity witness: a one-byte plain-text mark was classified by whether SQLite ACCEPTED the file, so Windows answered MIGRATION_REQUIRED and Linux answered CONTINUITY_UNKNOWN and pointed the operator at --reset-replay-history, which discards approvals",
         ),
     ),
     AttackClass(
@@ -126,6 +127,7 @@ ATTACK_CLASSES = (
         (
             "`screen_consumers` rglob'd and reported `tests/` + basename",
             "`screen_call_sites` required `ast.Name` after discovery was widened",
+            "check_architecture: `sys.modules[...]` was understood by the process-capability scan and not by the dependency scan, so an interface module reaching the governance domain that way passed with violations: [] while the same spelling reaching subprocess was caught",
         ),
     ),
     AttackClass(

@@ -149,7 +149,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The class probes. A class whose specimens stop being collected is a
     # class held down by nothing, so this module has a floor like any
     # other -- the registry is only as real as the tests it names.
-    "tests/test_attack_classes.py": 39,
+    "tests/test_attack_classes.py": 42,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -183,7 +183,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_domain_immutability.py": 9,
     "tests/test_domain_collapse_mutations.py": 24,
     "tests/test_execution_mode_truth.py": 21,
-    "tests/test_architecture_vocabulary.py": 10,
+    "tests/test_architecture_vocabulary.py": 18,
     "tests/test_inspection_subject_matrix.py": 5,
     "tests/test_subject_layer_matrix.py": 15,
     "tests/test_semantic_projection_exclusions.py": 15,
@@ -234,7 +234,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 45,
+    "tests/test_ledger_continuity.py": 49,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
@@ -340,12 +340,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2221   (89 modules)
-#     sum of the module floors    2041
-#     band(2221) = ceil(0.9*n)    1999
-#     MINIMUM_COLLECTED           2056
+#     collected across tests/     2237   (89 modules)
+#     sum of the module floors    2056
+#     band(2237) = ceil(0.9*n)    2014
+#     MINIMUM_COLLECTED           2071
 #     above the module sum        15
-#     below what collects         165
+#     below what collects         166
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -366,7 +366,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 180 in total, and the aggregate refuses
+# per-module bands already grant 181 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -387,7 +387,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2056
+MINIMUM_COLLECTED = 2071
 
 
 def band(collected: int) -> int:

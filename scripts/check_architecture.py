@@ -38,6 +38,95 @@ def _module_path(dotted: str) -> Path:
     return SOURCE_ROOT / (dotted.replace(".", "/") + ".py")
 
 
+#: A module name this checker cannot read, because it is assembled at
+#: runtime. DEFINED HERE rather than beside its other user: this module
+#: runs its checks at import time, and `_computed_dynamic_imports` is
+#: called at module level well before the old definition site executed.
+_COMPUTED = "<computed>"
+
+
+def _sys_module_aliases(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Names bound to `sys`, and names bound to `sys.modules` itself.
+
+    Two passes, because `ast.walk` does not promise imports before
+    assignments and `m = sys.modules` can only be recognised once `sys`
+    is known.
+    """
+    sys_aliases: set[str] = set()
+    modules_aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "sys":
+                    sys_aliases.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module == "sys":
+            for alias in node.names:
+                if alias.name == "modules":
+                    modules_aliases.add(alias.asname or alias.name)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        value = node.value
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr == "modules"
+            and isinstance(value.value, ast.Name)
+            and value.value.id in sys_aliases
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    modules_aliases.add(target.id)
+    return sys_aliases, modules_aliases
+
+
+def _sys_modules_target(
+    node: ast.AST, sys_aliases: set[str], modules_aliases: set[str],
+) -> str | None:
+    """The module a `sys.modules` lookup names, `_COMPUTED`, or None.
+
+    THE ONE RECOGNISER, deliberately. `sys.modules` was already understood
+    by the process-capability scan and not by the dependency scan, so a
+    first-party edge written this way was invisible to the graph while an
+    exec module written the same way was caught. Measured on this
+    repository at 032ca63: `sys.modules["nornyx_forge.nornyx_runtime"]`
+    appended to `src/demo_app/main.py` -- an interface module reaching the
+    governance domain, which the gate refuses unconditionally when spelled
+    `import` -- produced `status: pass, violations: [], exit 0`. The same
+    for `store.py` reaching `subprocess` under `persistence_isolation`, and
+    for the explicit forbidden edge `agentic.py` -> `demo_app.store`.
+
+    A widening applied to one analysis and not the other is AC04, and
+    writing a second recogniser here would have been the same defect once
+    more. Both callers use this function.
+
+    Covers the subscript and the `.get` spellings, `sys` under any alias,
+    and `modules` bound directly by `from sys import modules` or by
+    assignment -- all of which hand back the identical module object.
+    """
+    if isinstance(node, ast.Subscript):
+        owner, key = node.value, node.slice
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    ):
+        owner = node.func.value
+        key = node.args[0] if node.args else None
+    else:
+        return None
+    is_map = (
+        isinstance(owner, ast.Attribute)
+        and owner.attr == "modules"
+        and isinstance(owner.value, ast.Name)
+        and owner.value.id in sys_aliases
+    ) or (isinstance(owner, ast.Name) and owner.id in modules_aliases)
+    if not is_map:
+        return None
+    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+        return key.value
+    return _COMPUTED
+
+
 def _imports(path: Path, relative: str, dotted: str | None = None) -> set[str]:
     """Return the module names imported by one file.
 
@@ -48,6 +137,7 @@ def _imports(path: Path, relative: str, dotted: str | None = None) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
     package = dotted.rsplit(".", 1)[0] if dotted and "." in dotted else ""
     names: set[str] = set()
+    sys_aliases, modules_aliases = _sys_module_aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -70,6 +160,14 @@ def _imports(path: Path, relative: str, dotted: str | None = None) -> set[str]:
                 names.add(f"{base}.{alias.name}")
         elif isinstance(node, ast.Call):
             names.update(_dynamic_import_targets(node))
+        # A MODULE OBJECT ARRIVES HERE TOO, with no import statement
+        # anywhere in the file. Computed keys are not modelled as edges --
+        # they are unknowable -- and are refused by
+        # `_computed_dynamic_imports` instead, so they cannot pass quietly.
+        target = _sys_modules_target(node, sys_aliases, modules_aliases)
+        if target is not None and target != _COMPUTED:
+            names.add(target)
+            names.add(target.split(".")[0])
     return names
 
 
@@ -87,7 +185,7 @@ def _dynamic_import_targets(node: ast.Call) -> set[str]:
     """Module names a dynamic import call names literally.
 
     Only literal arguments are resolved: a computed name is unknowable here, and
-    is refused separately by `_dynamic_import_is_literal` so it cannot become a
+    is refused separately by `_computed_dynamic_imports` so it cannot become a
     silent hole. Better to be exact about what static analysis can see than to
     guess at what it cannot.
     """
@@ -118,7 +216,14 @@ def _computed_dynamic_imports(path: Path, relative: str) -> list[str]:
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
     unknown: list[str] = []
+    sys_aliases, modules_aliases = _sys_module_aliases(tree)
     for node in ast.walk(tree):
+        # `sys.modules[name]` with a key assembled at runtime is exactly
+        # the hazard this function exists for, by a route that is not a
+        # call at all.
+        if _sys_modules_target(node, sys_aliases, modules_aliases) == _COMPUTED:
+            unknown.append(f"{relative}:{node.lineno}")
+            continue
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -410,7 +515,6 @@ OPAQUE_ACCESSORS = {"getattr"}
 
 #: Returned when a dynamic import names a module that cannot be read
 #: statically. Distinct from None, which means "not a dynamic import at all".
-_COMPUTED = "<computed>"
 
 
 def _dynamically_imported_module(
@@ -552,8 +656,10 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
     #: `__import__` is a builtin, so it needs no import to be in scope and is
     #: seeded here rather than discovered.
     dynamic_importers: set[str] = {"__import__"}
-    #: Local names bound to `sys`, for `sys.modules[...]` lookups.
-    sys_aliases: set[str] = set()
+    #: Local names bound to `sys` and to `sys.modules`, shared with the
+    #: dependency scan so the two cannot understand different
+    #: spellings of one thing.
+    sys_aliases, modules_aliases = _sys_module_aliases(tree)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -664,20 +770,16 @@ def _process_capability_markers(path: Path, relative: str) -> set[str]:
 
         elif isinstance(node, ast.Subscript):
             # `sys.modules["subprocess"]` -- no import node anywhere, and the
-            # module object it yields is the capability.
-            owner = node.value
-            if (
-                isinstance(owner, ast.Attribute)
-                and isinstance(owner.value, ast.Name)
-                and owner.value.id in sys_aliases
-                and owner.attr == "modules"
-            ):
-                key = node.slice
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    if key.value.split(".")[0] in EXEC_ONLY_MODULES:
-                        markers.add(f"sys.modules[{key.value!r}]")
-                else:
-                    markers.add("sys.modules[<computed>] (opaque module access)")
+            # module object it yields is the capability. THE SHARED
+            # RECOGNISER, so this scan and the dependency scan cannot drift
+            # into understanding different spellings of one thing; they
+            # already had, and a first-party edge walked through the gap.
+            target = _sys_modules_target(node, sys_aliases, modules_aliases)
+            if target == _COMPUTED:
+                markers.add("sys.modules[<computed>] (opaque module access)")
+            elif target is not None:
+                if target.split(".")[0] in EXEC_ONLY_MODULES:
+                    markers.add(f"sys.modules[{target!r}]")
 
         elif isinstance(node, ast.Call):
             func = node.func

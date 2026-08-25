@@ -407,6 +407,33 @@ REVERTIBLE_FIXES = [
      "    if carried is None and signed_digest is None:",
      "tests/test_reviewer_authentication.py",
      "test_findings_cannot_be_edited_after_review"),
+    # ---- AC04: a widening applied to one analysis and not its sibling ---
+    ("the sys.modules recogniser disabled",
+     "scripts/check_architecture.py",
+     "    if not is_map:",
+     "    if True:",
+     "tests/test_architecture_vocabulary.py",
+     "test_an_undeclared_edge_is_refused_however_it_is_spelled"),
+    # ---- AC01: a decision taken from an incidental failure mode ---------
+    #
+    # THE SHARED PARSE, not the branch that consults it. Reverting only the
+    # `_looks_like_a_plaintext_mark` call in `_assert_witness_structure`
+    # leaves the DatabaseError route answering correctly on whichever
+    # platform takes it -- which is exactly why the repair shipped green on
+    # Windows with no specimen at all, and a review had to find that. The
+    # single parse is what both routes depend on.
+    ("the plain-text witness parse reduced to None",
+     "src/nornyx_forge/nornyx_runtime.py",
+     "        return value if value >= 0 else None",
+     "        return None",
+     "tests/test_ledger_continuity.py",
+     "test_a_plaintext_witness_is_classified_for_migration_on_every_route"),
+    ("the migration that converts a plain-text witness removed",
+     "src/nornyx_forge/cli.py",
+     "        if legacy_mark is not None:",
+     "        if False:",
+     "tests/test_ledger_continuity.py",
+     "test_the_named_remedy_converts_the_artifact_it_names"),
 ]
 
 
@@ -477,7 +504,15 @@ def test_reverting_one_fix_reddens_its_own_specimen(
             ROOT / name, workspace / name,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
-    for name in ("pyproject.toml", ".gitignore"):
+    # THE FILES A SPECIMEN'S OWN FIXTURE COPIES. `tests/test_architecture_vocabulary.py`
+    # builds its gate workspace from README.md, BRD.md and Dockerfile as well,
+    # and a revert row naming a specimen in that module fails at the pristine
+    # baseline without them -- INVALID_BASELINE, which is the machinery
+    # correctly refusing to call an environment defect a kill.
+    for name in ("pyproject.toml", ".gitignore", "README.md", "BRD.md",
+                 "Dockerfile"):
+        if not (ROOT / name).is_file():  # pragma: no cover - all present
+            continue
         shutil.copy2(ROOT / name, workspace / name)
     # A GIT REPOSITORY, so the tree guard reports a state instead of refusing
     # to answer -- which is what turned every exit code in here into a 1.

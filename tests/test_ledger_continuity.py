@@ -50,6 +50,7 @@ from nornyx_forge.nornyx_runtime import (
     NornyxRuntimeUnavailable,
 )
 
+NL = chr(10)
 NOW = "2026-08-03T00:00:00Z"
 
 
@@ -1239,4 +1240,179 @@ def test_a_whole_directory_restore_is_the_disclosed_limit(tmp_path: Path) -> Non
         "LEDGER_WATERMARK_SUFFIX is now wrong: rewrite it with the new "
         "measurement rather than leaving a weakness described that this "
         "system does not have."
+    )
+
+
+def test_a_plaintext_witness_is_classified_for_migration_on_every_route(
+    tmp_path: Path,
+) -> None:
+    """The classification must not depend on how SQLite happened to fail.
+
+    A pre-database plain-text mark reaches `_assert_witness_structure` by two
+    routes, and which one depends on the SQLite build:
+
+        ATTACH REJECTS the file      DatabaseError handler, asks
+                                     `_looks_like_a_plaintext_mark`
+        ATTACH ACCEPTS it and        the "no high_water table" branch, which
+        reports no objects           did NOT ask, and answered
+                                     LEDGER_CONTINUITY_UNKNOWN
+
+    Measured before the repair: Windows took the first route and answered
+    MIGRATION_REQUIRED; Linux CI took the second and told the operator their
+    store had been TRUNCATED OR REPLACED, pointing at
+    `--reset-replay-history`, which discards approvals, when the
+    non-destructive `--migrate-continuity` was correct. Same artifact, two
+    verdicts, decided by the environment.
+
+    This asserts the ANSWER, so it holds on whichever route the running SQLite
+    takes. The revert control that makes it red is
+    `plaintext_witness_value returning None`, which is the single parse both
+    routes consult -- reverting only the branch leaves the other route
+    answering correctly on the platform that takes it, which is precisely why
+    the repair shipped without a specimen and a review had to find that.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"1")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-2", "rd-2", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-2",
+    )
+    assert claimed is False, "a plain-text mark released an effect"
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+    assert "--migrate-continuity" in reason, reason
+    assert "--reset-replay-history" not in reason, (
+        "the refusal routes the operator to the remedy that DISCARDS approvals, "
+        "for a store whose history can be preserved: " + reason
+    )
+
+
+def test_a_witness_that_is_not_a_mark_is_still_unknown(tmp_path: Path) -> None:
+    """The over-reach control: not every unreadable witness is a legacy mark.
+
+    A rule that answered MIGRATION_REQUIRED for anything it could not read
+    would satisfy the test above and would tell an operator to convert a store
+    that has genuinely been truncated or replaced.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"not a number and not a database")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-2", "rd-2", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-2",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_MIGRATION_REQUIRED not in reason, (
+        "an unreadable witness was offered a conversion it cannot survive: " + reason
+    )
+
+
+def test_the_named_remedy_converts_the_artifact_it_names(tmp_path: Path) -> None:
+    """The refusal names `--migrate-continuity`; it must RUN on that artifact.
+
+    Measured before the repair: the command read the witness as SQLite and
+    raised `DatabaseError: file is not a database` out of `provision_ledger`,
+    converting nothing, so the only command that cleared the state was
+    `--reset-replay-history` -- which discards every outstanding approval. The
+    refusal therefore routed the operator to the destructive remedy by making
+    the non-destructive one inoperative, while
+    `test_a_legacy_plain_text_mark_refuses_and_names_the_non_destructive_remedy`
+    stayed green because it measures the STRING and not the remedy.
+
+    So this drives the command and then drives the ledger, because a migration
+    that reports success and leaves the store refusing is not a migration.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"3")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert "Traceback" not in result.output, (
+        "the named remedy crashed on the artifact the refusal sends it:"
+        + NL + result.output[-800:]
+    )
+    assert result.exit_code == 0, result.output
+
+    # AND THE STORE WORKS AFTERWARDS. The promise is that outstanding approvals
+    # are preserved and nothing is discarded, so a fourth grant must release
+    # and the three spent ones must stay spent.
+    migrated = ApprovalLedger(location)
+    claimed, reason = migrated.consume(
+        "fp-9", "rd-9", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-9",
+    )
+    assert claimed is True, (
+        "the migration reported success and the ledger still refuses: " + reason
+    )
+    replayed, reason = ApprovalLedger(location).consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert replayed is False, (
+        "a consumption spent before the migration was released again after it, "
+        "so history was not preserved: " + reason
+    )
+
+
+def test_a_mark_that_disagrees_with_the_rows_is_not_converted(tmp_path: Path) -> None:
+    """The over-reach control for the migration.
+
+    A disagreement between the mark and the rows is what continuity exists to
+    detect. Converting it would launder that disagreement into a store the
+    command has just called migrated, so the command must refuse -- and refuse
+    in the governed way, not as a traceback.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"99")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code != 0, result.output
+    assert "Traceback" not in result.output, result.output[-800:]
+    assert ledger.watermark_path.read_bytes() == b"99", (
+        "a witness that disagrees with the rows was converted anyway"
     )

@@ -2234,6 +2234,44 @@ class ApprovalLedger:
                 "it and is refused."
             )
 
+    def plaintext_witness_value(self) -> int | None:
+        """The integer a pre-database plain-text witness holds, or None.
+
+        THE ONLY PLACE THIS IS PARSED. `_looks_like_a_plaintext_mark` is
+        this question asked for a yes/no, and the maintenance command that
+        converts such a witness asks it for the value. A second parse would
+        be free to disagree with the first about what counts as a mark, and
+        the two answers steer an operator to different commands.
+
+        NEVER AN AUTHORIZATION INPUT. The value is unauthenticated -- it is
+        an integer in a directory the governed process writes to -- so it may
+        choose between two REFUSALS and may be converted by an explicit
+        operator act, and it may never decide a high-water mark inside
+        `consume`. Whoever can write one byte would otherwise choose how much
+        replay history to forget.
+        """
+        try:
+            value = int(self.watermark_path.read_bytes().decode("utf-8").strip())
+        except (OSError, UnicodeDecodeError, ValueError):
+            return None
+        return value if value >= 0 else None
+
+    def adopt_plaintext_witness(self) -> int | None:
+        """Convert a plain-text witness to a database one, or return None.
+
+        The public face of `_adopt_plaintext_mark`, for the maintenance
+        command. Provided because the refusal that names
+        `provision-ledger --migrate-continuity` was, until this was wired,
+        naming a remedy that CRASHED on the artifact it identified: the
+        command read the witness as SQLite and got `DatabaseError: file is
+        not a database`, converting nothing, so the only command that
+        cleared the state was `--reset-replay-history`, which discards
+        approvals. A refusal that routes an operator to the destructive
+        remedy by making the non-destructive one inoperative is worse than
+        one that says nothing.
+        """
+        return self._adopt_plaintext_mark()
+
     def _looks_like_a_plaintext_mark(self) -> bool:
         """Is the witness a pre-database mark rather than a corrupt file?
 
@@ -2241,11 +2279,7 @@ class ApprovalLedger:
         "this is a legacy mark, run the migration" and "this is not a witness
         at all" -- and is never used as a count. Both answers refuse.
         """
-        try:
-            value = int(self.watermark_path.read_bytes().decode("utf-8").strip())
-        except (OSError, UnicodeDecodeError, ValueError):
-            return False
-        return value >= 0
+        return self.plaintext_witness_value() is not None
 
     def _adopt_plaintext_mark(self) -> int | None:
         """Migrate a pre-database mark ONCE, atomically, or return None.

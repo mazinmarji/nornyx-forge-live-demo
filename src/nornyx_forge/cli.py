@@ -283,6 +283,39 @@ def provision_ledger(
         # This is the ordering-dependent read that `_assert_witness_structure`
         # and the consumption re-read were each repaired for; the migration
         # path kept the original shape.
+        # A PLAIN-TEXT WITNESS IS CONVERTED FIRST, because it is not a
+        # database and the read below cannot ask it anything. This command
+        # is what `LEDGER_CONTINUITY_MIGRATION_REQUIRED` tells the operator
+        # to run, and on exactly that artifact it raised
+        # `DatabaseError: file is not a database` and converted nothing --
+        # leaving `--reset-replay-history`, which DISCARDS APPROVALS, as the
+        # only command that cleared the state. The refusal named a remedy
+        # that did not run, so the destructive one was the real advice.
+        #
+        # Agreement is checked BEFORE the conversion, against the same rule
+        # the database path uses below: a mark that disagrees with the rows
+        # is what continuity exists to detect, and converting it would
+        # launder the disagreement into a store that looks migrated.
+        ledger = ApprovalLedger(location)
+        legacy_mark = ledger.plaintext_witness_value()
+        if legacy_mark is not None:
+            if before_rows != legacy_mark:
+                raise typer.BadParameter(
+                    f"the ledger holds {before_rows} consumptions and the "
+                    f"pre-database mark records {legacy_mark}. They must "
+                    "agree before they can be migrated; a disagreement is "
+                    "what continuity exists to detect, and this command must "
+                    "not paper over it. Use --reset-replay-history to "
+                    "establish a fresh epoch."
+                )
+            if ledger.adopt_plaintext_witness() is None:
+                raise typer.BadParameter(
+                    f"the pre-database mark at {witness} could not be "
+                    "converted to a continuity witness. Nothing was changed. "
+                    "Use --reset-replay-history to establish a fresh epoch."
+                )
+        # The result is verified by the same read either way, which is what
+        # the refusal promises: "converts it after checking that it agrees".
         with closing(sqlite3.connect(witness)) as conn:
             marks = conn.execute("SELECT id, value FROM high_water").fetchall()
         if len(marks) != 1:

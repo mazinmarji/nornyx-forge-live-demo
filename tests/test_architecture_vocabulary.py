@@ -178,6 +178,74 @@ UNDECLARED_EDGES = [
         None,
         "undeclared dependency",
     ),
+    # ---- sys.modules: a module object with no import statement --------
+    #
+    # THE GATE UNDERSTOOD THIS SPELLING ALREADY -- in its process-capability
+    # scan, and not in its dependency scan. So `sys.modules['subprocess']`
+    # was caught while `sys.modules['nornyx_forge.nornyx_runtime']` in the
+    # HTTP surface was not: measured at 032ca63 as `status: pass,
+    # violations: [], exit 0` against the rule the checker annotates as
+    # unconditional. One analysis widened, its sibling not: AC04.
+    #
+    # Every row hands back the identical module object by a different
+    # spelling, which is the point: a rule that reads one of them is a
+    # naming convention.
+    (
+        "the interface layer reaching governance through sys.modules",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "undeclared dependency nornyx_forge.nornyx_runtime",
+    ),
+    (
+        "the same, through sys.modules.get",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules.get('nornyx_forge.nornyx_runtime')\n",
+        None,
+        "undeclared dependency nornyx_forge.nornyx_runtime",
+    ),
+    (
+        "the same, through a directly bound modules map",
+        "src/demo_app/main.py",
+        "\nfrom sys import modules\n_R = modules['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "undeclared dependency nornyx_forge.nornyx_runtime",
+    ),
+    (
+        "the same, through an aliased sys",
+        "src/demo_app/main.py",
+        "\nimport sys as _s\n_R = _s.modules['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "undeclared dependency nornyx_forge.nornyx_runtime",
+    ),
+    (
+        "the same, through a modules map bound by assignment",
+        "src/demo_app/main.py",
+        "\nimport sys\n_M = sys.modules\n_R = _M['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "undeclared dependency nornyx_forge.nornyx_runtime",
+    ),
+    (
+        "a key assembled at runtime, which cannot be modelled at all",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules['nornyx' + '_forge.nornyx_runtime']\n",
+        None,
+        "imports a module named at runtime",
+    ),
+    (
+        "persistence acquiring subprocess through sys.modules",
+        "src/demo_app/store.py",
+        "\nimport sys\n_R = sys.modules['subprocess']\n",
+        None,
+        "forbidden dependency subprocess",
+    ),
+    (
+        "a declared-leaf domain module reaching persistence through sys.modules",
+        "src/demo_app/agentic.py",
+        "\nimport sys\n_R = sys.modules['demo_app.store']\n",
+        None,
+        "undeclared dependency demo_app.store",
+    ),
 ]
 
 
@@ -214,6 +282,33 @@ def test_an_undeclared_edge_is_refused_however_it_is_spelled(
     assert expected in completed.stdout, (
         f"{label} was refused, but not for the reason under test:\n"
         f"{completed.stdout[-600:]}"
+    )
+
+
+def test_binding_the_modules_map_without_a_lookup_is_not_refused(
+    workspace: Path,
+):
+    """The over-reach control for the sys.modules rows above.
+
+    A rule that refused every mention of `sys.modules` would satisfy all
+    eight of them and would also refuse code that acquires nothing:
+    binding the map names no module, and the gate must not invent an edge
+    that is not there. `_M = sys.modules` followed by `_M['x']` IS refused
+    -- that row is in the table -- so this pins the boundary rather than
+    weakening it.
+    """
+    path = workspace / "src/demo_app/main.py"
+    original = path.read_bytes()
+    path.write_bytes(
+        original + b"\nimport sys\n_M = sys.modules\n"
+    )
+    try:
+        completed = _gate(workspace)
+    finally:
+        path.write_bytes(original)
+    assert completed.returncode == 0, (
+        "binding the modules map acquires no module and names none, and the "
+        "gate refused it anyway:\n" + completed.stdout[-600:]
     )
 
 

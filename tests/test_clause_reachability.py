@@ -169,17 +169,39 @@ def test_reachability_survives_output_that_shows_the_marker_nowhere(
     require_baseline_clause_reached(tree, node, "tool.py", "    value = 'ok'",
                                     timeout=600)
 
-    # And the premise is checked rather than assumed: the marker really is
-    # absent from the output, so this cannot have passed on corroboration.
-    completed = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
-         "-q", "-p", "no:warnings", "--tb=long"],
-        cwd=tree, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=600,
+    # AND THE PREMISE IS CHECKED WITH THE PROBE PLANTED, which is the only
+    # moment it can be false. This block used to run pytest AFTER
+    # `require_baseline_clause_reached` returned -- and that helper restores
+    # the file byte-exactly in its `finally`, so the tree it measured had no
+    # probe in it at all and `marker not in output` could not fail. A review
+    # demonstrated it by running the identical assertion against the
+    # NON-swallowing project, where the marker IS visible under the probe,
+    # and watching it pass. An inert self-check on a specimen whose whole
+    # subject is inert self-checks.
+    target = tree / "tool.py"
+    pristine = target.read_bytes()
+    anchor = "    value = 'ok'"
+    planted = target.read_text(encoding="utf-8").replace(
+        anchor, '    raise RuntimeError("' + CLAUSE_MARKER + '")' + NL + anchor, 1
+    )
+    target.write_text(planted, encoding="utf-8", newline="")
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
+             "-q", "-p", "no:warnings", "--tb=long"],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=600,
+        )
+    finally:
+        target.write_bytes(pristine)
+    assert completed.returncode != 0, (
+        "the planted raise did not even fail the test, so this project does "
+        "not exercise the clause and proves nothing about the sentinel"
     )
     assert CLAUSE_MARKER not in completed.stdout + completed.stderr, (
-        "the swallowed-exception project shows the marker after all, so this "
-        "specimen no longer isolates the sentinel from corroboration"
+        "the swallowing project shows the marker after all, so the call "
+        "above could have succeeded on output corroboration rather than on "
+        "the sentinel:" + NL + completed.stdout[-600:]
     )
 
 
