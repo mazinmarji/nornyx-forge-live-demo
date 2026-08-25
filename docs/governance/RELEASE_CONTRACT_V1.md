@@ -32,7 +32,7 @@ exempt from the classes it names.
 | Frozen | Where it lives | What checks it |
 |---|---|---|
 | Claims, and explicit non-claims | `docs/ASSURANCE_BOUNDARY.md`, `README.md` | `tests/test_documented_claims.py` |
-| False-green corpus (42) | `tests/test_false_green_audit.py` `INVENTORY` | `test_the_inventory_is_exactly_the_declared_set`, both directions |
+| False-green corpus (42) | `tests/test_false_green_audit.py` `INVENTORY` | `test_the_inventory_is_exactly_the_known_classes`, both directions |
 | Attack classes (7) | `tests/attack_classes.py` `ATTACK_CLASSES` | `test_the_attack_corpus_is_exactly_the_frozen_set`, both directions |
 | Human-blocked preconditions | `docs/governance/HUMAN_BLOCKED_MEASUREMENTS.md` | `scripts/check_pre_approval_baseline.py` |
 
@@ -158,3 +158,30 @@ The distinction that matters: **hardening Forge** is a project that finishes.
 **Researching near-formal assurance for governed agentic software** is a project
 that does not. The second produced most of the value of these fifteen rounds and
 should continue — but it is not a precondition for the first.
+
+## Known P3s at the freeze
+
+Recorded here rather than fixed, because the bounded protocol says a P3 is
+backlog and because fixing them now is how the previous programme kept
+restarting. Each is a real observation, none violates a property this contract
+names.
+
+**Two discovery mechanisms for "the repository's content."**
+`governance_docs()` walks the filesystem with `rglob`; `_cited_guards()` reads
+`git ls-files`. So a newly authored document is swept by the claim guards
+immediately, and by the citation guard only once it is tracked. Observed
+directly: the release contract passed the full documented-claims suite while
+untracked, then failed the citation guard in the census after being committed,
+on identical text — it cited a guard name that does not exist.
+
+The asymmetry has a defensible reason: a commit-time guard reading tracked
+content will not fail a suite over an author's untracked scratch file. And the
+escape closes before anything leaves the machine, because
+`docs/governance/EVIDENCE_FRESHNESS.md` already prescribes `git add -A` FIRST.
+What actually happened was an operator running a gate ahead of that step, not a
+control failing to decide its property. Its cost is a fixup commit, not a
+shipped defect.
+
+Worth revisiting in v1.1, because the guards that read `origin/main...HEAD`
+treat history as permanent, and a class of defect first visible AFTER the commit
+that introduces it is more expensive there than elsewhere.
