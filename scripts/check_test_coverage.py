@@ -34,6 +34,11 @@ ROOT = Path(__file__).resolve().parents[1]
 #: counted both as expected and said nothing. Under identity keying, borrowing a
 #: reason string buys nothing, because the exemption names the test.
 EXPECTED_SKIPS = {
+    # The two AC07 controls that cannot speak on the floor interpreter.
+    "tests/test_attack_classes.py::test_the_floor_probe_sees_a_violation_that_is_really_there":
+        "On Python 3.10 -- the floor `requires-python` declares -- there is no post-floor syntax that also parses on the running interpreter, so these two AC07 controls have nothing to demonstrate there. `except*` does not parse on 3.10 at all. Both execute on 3.11, 3.12 and 3.13, which is where the property they pin is observable.",
+    "tests/test_attack_classes.py::test_reverting_one_fix_reddens_its_own_specimen":
+        "On Python 3.10 -- the floor `requires-python` declares -- there is no post-floor syntax that also parses on the running interpreter, so these two AC07 controls have nothing to demonstrate there. `except*` does not parse on 3.10 at all. Both execute on 3.11, 3.12 and 3.13, which is where the property they pin is observable.",
     # Three rows of ROUND_FOUR_SPECIMENS are `except*` source text.
     "tests/test_false_green_audit.py::test_the_screen_answers_the_shapes_a_fourth_round_demonstrated":
         "except* is 3.11+ syntax and ast.parse REJECTS it on 3.10, which requires-python allows and the CI matrix runs. The property is not weakened: TRY_NODES already degrades via getattr(ast, 'TryStar', None), so on 3.10 there is no such node to miscount, and the 3.11, 3.12 and 3.13 jobs all execute these three rows.",
@@ -303,6 +308,8 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # `except*` source. A cap of one would let a fourth parameter start
     # skipping on 3.10 behind a permission granted for these three.
     "tests/test_false_green_audit.py::test_the_screen_answers_the_shapes_a_fourth_round_demonstrated": 3,
+    # ONE of the seven revert rows skips on 3.10, not the whole identity.
+    "tests/test_attack_classes.py::test_reverting_one_fix_reddens_its_own_specimen": 1,
 }
 
 # Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the

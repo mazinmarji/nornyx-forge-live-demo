@@ -118,6 +118,46 @@ _MATCH_CAPTURES = tuple(
 #: A statement here falls through to the generic child walk, which is correct
 #: when it neither introduces a scope, nor a conditional body, nor a way to
 #: swallow a failure.
+def _only_existing(table: dict) -> dict:
+    """Keep the entries naming a node type THIS interpreter actually has.
+
+    THE VOCABULARY IS VERSION-DEPENDENT and these tables are checked in
+    both directions: every real node must be accounted for, and no
+    declaration may name a node that does not exist. Those two checks
+    cannot both pass across a range of interpreters from a fixed list.
+    `ast.TypeAlias` arrived in 3.12, so declaring it made the tables
+    phantom on 3.10 and 3.11; `Num`, `Str`, `Bytes` and `NameConstant`
+    are deprecated aliases that EXIST up to 3.11 and were removed in
+    3.12, so omitting them left them unaccounted for there. Measured on
+    CI: three vocabulary tests red on 3.10 and 3.11, green on 3.12 and
+    3.13, from a vocabulary written and checked on 3.12 alone -- AC07.
+
+    Filtering by `hasattr` means each table describes the interpreter it
+    is running on, which is the only interpreter whose grammar it can
+    speak for. The same shape `TRY_NODES` and `MATCH_NODE` already use.
+    """
+    # THE SAME DERIVATION THE CHECKERS USE, which is neither `hasattr` nor
+    # key membership in `vars(ast)`. Both were tried and both were wrong,
+    # in opposite directions:
+    #
+    #   hasattr(ast, "Num")        True on 3.12 -- a module __getattr__
+    #                              shim still serves the removed alias,
+    #                              with a DeprecationWarning
+    #   "Ellipsis" in vars(ast)    False on 3.12 -- yet the class is there
+    #                              under the private key `_ast_Ellipsis`,
+    #                              and the checkers enumerate by __name__
+    #
+    # So the filter asks exactly what `test_every_expression_type_is_folded_or_declared`
+    # and its siblings ask: the __name__ of every AST class reachable in
+    # the module namespace. Asking a different question than the checker
+    # asks is how a filter passes here and leaves a table phantom there.
+    present = {
+        value.__name__ for value in vars(ast).values()
+        if isinstance(value, type) and issubclass(value, ast.AST)
+    }
+    return {name: why for name, why in table.items() if name in present}
+
+
 UNDISPATCHED_STATEMENTS = {
     "AnnAssign": "an annotation or a plain binding; no body",
     "Assert": "counted, not walked into",
@@ -137,6 +177,7 @@ UNDISPATCHED_STATEMENTS = {
     "Return": "no body; handled as a terminator",
     "TypeAlias": "a declaration",
 }
+UNDISPATCHED_STATEMENTS = _only_existing(UNDISPATCHED_STATEMENTS)
 
 #: Expression types `_decide` does not fold, and why.
 #:
@@ -144,6 +185,14 @@ UNDISPATCHED_STATEMENTS = {
 #: in spirit and in neither table in fact, which is how `assert f"{1} == {2}"`
 #: -- fixed at parse time, one character from a real assertion -- was credited.
 UNFOLDED_EXPRESSIONS = {
+    # DEPRECATED ALIASES, present up to 3.11 and removed in 3.12. The
+    # parser has not produced any of them since 3.8 -- it emits
+    # `Constant` -- so they cannot appear in a tree the folder is asked
+    # about, and folding them would be folding something unreachable.
+    "Num": "a pre-3.8 alias of Constant; the parser never emits it",
+    "Str": "a pre-3.8 alias of Constant; the parser never emits it",
+    "Bytes": "a pre-3.8 alias of Constant; the parser never emits it",
+    "NameConstant": "a pre-3.8 alias of Constant; the parser never emits it",
     "Attribute": "reads state",
     "Await": "reads state",
     "Call": "reads state",
@@ -160,6 +209,7 @@ UNFOLDED_EXPRESSIONS = {
     "Yield": "suspends",
     "YieldFrom": "suspends",
 }
+UNFOLDED_EXPRESSIONS = _only_existing(UNFOLDED_EXPRESSIONS)
 
 
 #: Handler types that stop an assertion failing the test.
@@ -838,6 +888,7 @@ NON_TERMINATING_STATEMENTS = {
     "Pass": "does nothing",
     "TypeAlias": "a declaration",
 }
+NON_TERMINATING_STATEMENTS = _only_existing(NON_TERMINATING_STATEMENTS)
 
 
 def _handlers_can_intercept(node) -> bool:

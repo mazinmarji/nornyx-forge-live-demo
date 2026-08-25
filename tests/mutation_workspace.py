@@ -163,14 +163,46 @@ def faithful_copy(destination: Path) -> Path:
     return tree
 
 
+def purge_bytecode(tree: Path) -> None:
+    """Remove every cached `.pyc` under `tree` before the tree is measured.
+
+    A MUTANT THAT DID NOT TAKE EFFECT. CPython invalidates a source-based
+    `.pyc` on `(mtime, size)`, so a file rewritten inside the same mtime
+    second to the SAME LENGTH keeps running the previous bytecode. Every
+    edit this module makes is exactly that shape: the clause probe swaps
+    one nonce for another of identical length, and a revert row often
+    swaps one expression for another the same width.
+
+    Measured on CI: the clause probe planted token A, then token B, and
+    the child raised token A from stale bytecode while the source on disk
+    read B -- so reachability could not be established and the attack was
+    refused as INVALID_MUTATION_ENVIRONMENT. It fails closed rather than
+    to a false verdict, which is why it surfaced as flakiness rather than
+    as a wrong answer, and why it survived a suite that is green here.
+
+    `PYTHONDONTWRITEBYTECODE` alone is not enough: it stops new caches
+    being written and does nothing about one already on disk.
+    """
+    import shutil  # noqa: PLC0415
+
+    for cached in tree.rglob("__pycache__"):
+        shutil.rmtree(cached, ignore_errors=True)
+
+
 def isolated_env(tree: Path) -> dict:
     """PYTHONPATH ahead of the editable .pth, so the mutant is what loads."""
     import os  # noqa: PLC0415
 
-    return {**os.environ, "PYTHONPATH": str(tree / "src")}
+    return {
+        **os.environ,
+        "PYTHONPATH": str(tree / "src"),
+        # No new caches, so nothing this run writes can mislead the next.
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
 
 
 def run_node(tree: Path, node: str, *, timeout: int = 1800, report: Path | None = None):
+    purge_bytecode(tree)
     command = [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
                "-q", "-p", "no:warnings", "--tb=line"]
     if report is not None:
@@ -486,6 +518,7 @@ def require_baseline_clause_reached(
         # offending SOURCE LINE, marker and all, into the output. Measured: this
         # reported CLAUSE REACHED for a file that would not compile. A probe
         # that cannot run cannot report reachability.
+        purge_bytecode(tree)
         try:
             compile(target.read_text(encoding="utf-8"), str(target), "exec")
         except SyntaxError as exc:

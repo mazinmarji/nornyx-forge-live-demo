@@ -36,6 +36,8 @@ from mutation_workspace import (  # noqa: E402
     require_baseline_clause_reached,
 )
 
+NL = chr(10)
+
 #: The clause the probe will target, inside the child.
 ANCHOR = "        raise RuntimeError('the tool refused')"
 
@@ -120,39 +122,64 @@ def test_the_probe_reverts_the_file_byte_exactly(tmp_path: Path):
     assert CLAUSE_MARKER not in (tree / "tool.py").read_text(encoding="utf-8")
 
 
-def test_a_truncating_traceback_flag_would_hide_the_marker(tmp_path: Path):
-    """The exact defect, reproduced, so restoring `--tb=line` fails here.
+def test_reachability_survives_output_that_shows_the_marker_nowhere(
+    tmp_path: Path,
+):
+    """The sentinel decides, so no formatting choice can hide a reached clause.
 
-    Not a claim about pytest's behaviour -- both flags are run and compared.
+    WHAT THIS REPLACES, and why the replacement is not a retreat. The
+    predecessor asserted that `--tb=line` HIDES the marker, by running the
+    probe under both flags and comparing. That is a claim about pytest's
+    output formatter, and it held only where the workspace path was long
+    enough to push the marker past the truncation point: green on a Windows
+    workstation, RED on all four CI interpreters, where `/tmp/...` is short
+    and the marker survived at the tail of the truncated line. Its own
+    failure message said it should be re-derived rather than kept as
+    decoration, and this is that re-derivation.
+
+    The hazard it was built for is real and is now closed at the root:
+    `require_baseline_clause_reached` writes a SENTINEL FILE carrying this
+    run's nonce, and treats it as authoritative, precisely so reachability
+    does not depend on which stream anything lands on or how a traceback is
+    rendered. Pinning the formatter pinned the symptom; this pins the
+    property.
+
+    THE HARDEST CASE THE OUTPUT CAN OFFER: the named test swallows the
+    probe's exception entirely and fails for an unrelated reason, so the
+    marker appears NOWHERE in stdout or stderr. Corroboration is impossible
+    and the sentinel is the only thing that can answer. This is not
+    contrived: a test that wraps the call it exercises is ordinary, and the
+    production comment names a swallowed exception as exactly what the
+    sentinel exists to survive.
     """
-    tree, node = _workspace(tmp_path, reached=True)
-    target = tree / "tool.py"
-    original = target.read_text(encoding="utf-8")
-    target.write_text(
-        original.replace(
-            ANCHOR, '        raise RuntimeError("' + CLAUSE_MARKER + '")\n' + ANCHOR, 1
-        ),
-        encoding="utf-8",
-        newline="",
+    tree, node = _probe_project(
+        tmp_path,
+        "import tool" + NL + NL + NL
+        + "def test_case():" + NL
+        + "    try:" + NL
+        + "        tool.run()" + NL
+        + "    except RuntimeError:" + NL
+        + "        pass" + NL
+        + "    assert False, 'unrelated failure carrying no marker'" + NL,
+        tool="def run():" + NL + "    value = 'ok'" + NL + "    return value" + NL,
     )
 
-    def _run(tb: str) -> str:
-        completed = subprocess.run(  # noqa: S603
-            [sys.executable, "-m", "pytest", node, "-q", "-p", "no:cacheprovider",
-             "-p", "no:warnings", "--tb=" + tb],
-            cwd=tree, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=600,
-        )
-        return completed.stdout + completed.stderr
+    # No exception here means the probe established reachability. The only
+    # evidence available to it was the sentinel.
+    require_baseline_clause_reached(tree, node, "tool.py", "    value = 'ok'",
+                                    timeout=600)
 
-    assert CLAUSE_MARKER in _run("long"), (
-        "the marker is invisible even with a full traceback, so the probe "
-        "cannot work at all"
+    # And the premise is checked rather than assumed: the marker really is
+    # absent from the output, so this cannot have passed on corroboration.
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, "-m", "pytest", node, "-p", "no:cacheprovider",
+         "-q", "-p", "no:warnings", "--tb=long"],
+        cwd=tree, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=600,
     )
-    assert CLAUSE_MARKER not in _run("line"), (
-        "`--tb=line` no longer truncates the marker away, so this regression no "
-        "longer describes a real hazard and should be re-derived rather than "
-        "kept as decoration"
+    assert CLAUSE_MARKER not in completed.stdout + completed.stderr, (
+        "the swallowed-exception project shows the marker after all, so this "
+        "specimen no longer isolates the sentinel from corroboration"
     )
 
 

@@ -381,7 +381,12 @@ REVERTIBLE_FIXES = [
      "    import tomllib  # noqa: PLC0415",
      "tests/test_attack_classes.py",
      "test_no_module_imports_stdlib_newer_than_the_floor"),
-    ("the skipif guarding except* source removed",
+    # SKIPPED ON THE FLOOR ITSELF. `except*` source does not parse on 3.10
+    # at all, so the specimen filters it out before it can be an offender
+    # and removing the mark cannot redden anything. The row proves the mark
+    # is load-bearing on every interpreter that can see past the floor.
+    pytest.param(
+    "the skipif guarding except* source removed",
      "tests/test_false_green_audit.py",
      "    pytest.param(\"try:\" + NL + \"    assert real\" + NL"
      + NL + "                 + \"except* AssertionError:\" + NL + \"    pass\", 0,"
@@ -389,7 +394,12 @@ REVERTIBLE_FIXES = [
      "    (\"try:\" + NL + \"    assert real\" + NL + \"except* AssertionError:\" + NL"
      + NL + "     + \"    pass\", 0),",
      "tests/test_attack_classes.py",
-     "test_every_specimen_source_parses_at_the_declared_floor"),
+     "test_every_specimen_source_parses_at_the_declared_floor",
+     marks=pytest.mark.skipif(
+         sys.version_info < (3, 11),
+         reason="except* does not parse on the floor interpreter, so the "
+                "specimen cannot see it with or without the mark",
+     )),
     # ---- AC02: a signed field that no consumer evaluates ----------------
     ("the findings binding weakened to a condition that never holds",
      "src/nornyx_forge/reviewer_trust.py",
@@ -400,10 +410,22 @@ REVERTIBLE_FIXES = [
 ]
 
 
+def _row_label(case) -> str:
+    """The label of a revert row, whether or not it carries marks.
+
+    A `pytest.param` is a NamedTuple whose first element is the VALUES
+    tuple, so `case[0]` returns the whole row once a row acquires a mark,
+    and pytest refuses a tuple as an id -- a collection error for every
+    case in the table, not just the marked one.
+    """
+    values = getattr(case, "values", case)
+    return values[0]
+
+
 @pytest.mark.parametrize(
     ("label", "relative", "before", "after", "specimen", "node"),
     REVERTIBLE_FIXES,
-    ids=[case[0] for case in REVERTIBLE_FIXES],
+    ids=[_row_label(case) for case in REVERTIBLE_FIXES],
 )
 def test_reverting_one_fix_reddens_its_own_specimen(
     label: str, relative: str, before: str, after: str, specimen: str,
@@ -774,6 +796,11 @@ def test_no_module_imports_stdlib_newer_than_the_floor():
     )
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="on the floor interpreter itself there is no post-floor syntax "
+           "that parses here, so this control has nothing to demonstrate",
+)
 def test_the_floor_probe_sees_a_violation_that_is_really_there():
     """The over-reach control, both directions, on real inputs.
 

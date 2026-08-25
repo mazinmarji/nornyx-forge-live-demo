@@ -1880,6 +1880,39 @@ class ApprovalLedger:
                 "accumulate."
             )
         if not any(kind == "table" and name == "high_water" for kind, name in objects):
+            # CLASSIFIED FROM THE ARTIFACT, not from the way SQLite failed.
+            #
+            # A pre-database plain-text mark reaches this method by two
+            # different routes depending on the SQLite build. Where ATTACH
+            # rejects the file outright the DatabaseError handler below asks
+            # `_looks_like_a_plaintext_mark` and answers MIGRATION_REQUIRED.
+            # Where ATTACH accepts it and simply reports no objects --
+            # measured on Linux CI for a one-byte b"2", against a Windows
+            # workstation that took the other route -- control arrived here
+            # instead and answered CONTINUITY_UNKNOWN, telling the operator
+            # their store was truncated or replaced and pointing them at
+            # `--reset-replay-history`, which DISCARDS approvals, when the
+            # non-destructive `--migrate-continuity` was the right remedy.
+            #
+            # Same artifact, two verdicts, decided by a detail of the
+            # environment. The classification is content-based and already
+            # existed; it simply was not consulted on this path.
+            if self._looks_like_a_plaintext_mark():
+                raise LedgerContinuityMigrationRequired(
+                    f"{LEDGER_CONTINUITY_MIGRATION_REQUIRED}: the "
+                    f"continuity witness at {self.watermark_path} is not a "
+                    "database. It is most likely a pre-database plain-text "
+                    "mark from an earlier version."
+                    + chr(10) + chr(10) +
+                    "TO RECOVER: run `nornyx-forge provision-ledger "
+                    "--migrate-continuity`, which converts it after "
+                    "checking that it agrees with the consumption rows. "
+                    "Outstanding approvals are preserved; nothing is "
+                    "discarded. This conversion is deliberately NOT "
+                    "performed by an authorization, because the mark it "
+                    "reads is unauthenticated and whoever can write it "
+                    "would otherwise choose the replay high-water mark."
+                )
             raise LedgerContinuityUnknown(
                 f"{self.watermark_path} carries no high_water table. It is "
                 "created when the ledger is provisioned, so a store without "
