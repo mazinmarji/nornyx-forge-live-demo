@@ -141,7 +141,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The class probes. A class whose specimens stop being collected is a
     # class held down by nothing, so this module has a floor like any
     # other -- the registry is only as real as the tests it names.
-    "tests/test_attack_classes.py": 19,
+    "tests/test_attack_classes.py": 29,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -191,7 +191,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_action_binding.py": 35,
     "tests/test_untrusted_text.py": 65,
     "tests/test_subject_completeness.py": 9,
-    "tests/test_governance_integrity_authority.py": 33,
+    "tests/test_governance_integrity_authority.py": 36,
     "tests/test_artifact_authority.py": 16,
     "tests/test_collection_completeness.py": 9,
     "tests/test_absence_is_not_success.py": 21,
@@ -211,7 +211,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_contract_generator.py": 1,
     "tests/test_demo_flow.py": 1,
     "tests/test_dirty_tree_gate.py": 31,
-    "tests/test_evidence.py": 24,
+    "tests/test_evidence.py": 26,
     "tests/test_governance_failure.py": 18,
     "tests/test_in_session_reviews.py": 3,
     "tests/test_mission_binding.py": 11,
@@ -320,12 +320,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # hand. Measured at 41c5ce2 (+ this working round) by a full
 # `--collect-only` over tests/:
 #
-#     collected across tests/     2187   (89 modules)
-#     sum of the module floors    2010
-#     band(2187) = ceil(0.9*n)    1969
-#     MINIMUM_COLLECTED           2025
+#     collected across tests/     2203   (89 modules)
+#     sum of the module floors    2025
+#     band(2203) = ceil(0.9*n)    1983
+#     MINIMUM_COLLECTED           2040
 #     above the module sum        15
-#     below what collects         162
+#     below what collects         163
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -346,7 +346,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 177 in total, and the aggregate refuses
+# per-module bands already grant 178 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -367,7 +367,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2025
+MINIMUM_COLLECTED = 2040
 
 
 def band(collected: int) -> int:

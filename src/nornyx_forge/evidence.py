@@ -422,8 +422,25 @@ class EvidenceLedger:
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
             }
+            # THE VERDICT SURVIVES A FAILURE TO PUBLISH IT. Every READ
+            # path here was hardened to report rather than raise, and
+            # the write of the verdict was left unguarded -- so a
+            # `report.json` replaced by a directory raised out of
+            # `CustomerCaseFlow.audit` after the effect had been
+            # released, no verdict was written at all, and the prior
+            # `pass` stayed on disk. A gate that dies cannot say what is
+            # wrong, and that is as true of its last statement as its
+            # first.
             if report_path:
-                write_json(report_path, payload)
+                try:
+                    write_json(report_path, payload)
+                except OSError as exc:
+                    payload["diagnostics"] = [
+                        *payload["diagnostics"],
+                        "the report could not be written to "
+                        + str(report_path) + ": " + str(exc),
+                    ]
+                    payload["status"] = "fail"
             return payload
 
     def _completeness_diagnostics(self, durable: list) -> list[str]:

@@ -136,7 +136,16 @@ def bootstrap_security_context(
     authority_config = config if config is not None else RuntimeAuthorityConfig()
     try:
         resolved = root if root is not None else resolve_packaged_root()
-    except GovernedSubjectError as exc:
+    # ANY OBSERVATION ERROR, which is what the docstring says. This named
+    # `GovernedSubjectError` alone, so a contract with one invalid UTF-8
+    # byte raised `UnicodeDecodeError` straight out of module import --
+    # and since `demo_app.main` imports `demo_app.agentic` at module
+    # level, the documented outcome ('the application may still start and
+    # serve low-risk work') became 'the application does not start'. The
+    # sibling `observe_governance_integrity` already caught all three on
+    # the identical read: two paths in one module disagreeing about one
+    # fact.
+    except (OSError, UnicodeDecodeError, GovernedSubjectError) as exc:
         return RuntimeSecurityContext(
             runtime_subject=RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id),
             authority_config=authority_config,
@@ -329,7 +338,16 @@ def establish_subject(
         input_digest = digest_of(manifest)
         semantics = observe_contract_semantics_digest(directory)
         settled = digest_of(observe_settled_contracts(root, directory, scope))
-    except GovernedSubjectError as exc:
+    # ANY OBSERVATION ERROR, which is what the docstring says. This named
+    # `GovernedSubjectError` alone, so a contract with one invalid UTF-8
+    # byte raised `UnicodeDecodeError` straight out of module import --
+    # and since `demo_app.main` imports `demo_app.agentic` at module
+    # level, the documented outcome ('the application may still start and
+    # serve low-risk work') became 'the application does not start'. The
+    # sibling `observe_governance_integrity` already caught all three on
+    # the identical read: two paths in one module disagreeing about one
+    # fact.
+    except (OSError, UnicodeDecodeError, GovernedSubjectError) as exc:
         return RuntimeSubject.unavailable(str(exc), scope_id=scope.scope_id)
 
     return RuntimeSubject(

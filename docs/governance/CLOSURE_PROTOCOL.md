@@ -53,14 +53,21 @@ an unpinned opposite.
 When a new finding arrives, decide first which of these it is:
 
 1. **A genuinely new root mechanism.** Add the class to
-   `tests/attack_classes.py`, with its executable class probe.
+   `tests/attack_classes.py`, and its executable class probe to
+   `tests/test_attack_classes.py`. The registry module is not collected by
+   pytest, so a table placed there is parsed by nothing -- this document
+   said otherwise, and a contributor following it would have produced
+   exactly the local patch this protocol exists to prevent.
 2. **Another un-specimenized member of a class already known.** Do NOT write a
    local patch. Expand the class: widen the probe so it enumerates the new
    member and every sibling the same reasoning reaches, and fix them together.
 
-The second is the common case. Nine of the fifteen rounds' findings were
-members of one class — a rule matching a spelling rather than the property —
-discovered nine separate times because each was repaired locally.
+The second is the common case. The largest single class — a rule matching a
+spelling rather than the property — was rediscovered round after round
+because each instance was repaired where it was found. Its instances are
+listed in the registry; no count is stated here, because a count typed
+beside a list nobody parses is AC03, and this document is not exempt from
+the classes it names.
 
 ## Measuring progress
 
@@ -73,7 +80,8 @@ reuse of prior conclusions, all returning P1=0 and P2=0.
 | Corpus | Where |
 |---|---|
 | False-green classes and their executable reproductions | `tests/test_false_green_audit.py` (`INVENTORY`) |
-| Attack classes and their class probes | `tests/attack_classes.py` |
+| Attack classes, their mechanisms and instances | `tests/attack_classes.py` |
+| The class probes themselves | `tests/test_attack_classes.py` |
 | Historical defect reproofs | `tests/test_historical_reproof.py` |
 | Mutation catalogue | `tests/test_mutation_catalogue.py` |
 | Screen specimens | `tests/test_false_green_audit.py` specimen tables |

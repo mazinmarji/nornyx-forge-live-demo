@@ -41,9 +41,10 @@ ATTACK_CLASSES = (
         "a rule that matches a SPELLING rather than deciding the property",
         "A control names the shapes it refuses. Every synonym of those shapes "
         "walks through it, and the control keeps its name. Repairing one "
-        "spelling leaves the class open, which is why this was found nine "
-        "times in fifteen rounds -- twice by ADDING a spelling to close a "
-        "spelling class.",
+        "spelling leaves the class open, which is why it kept returning "
+        "round after round -- twice by ADDING a spelling to close a "
+        "spelling class. The instances below are what has been found, not "
+        "a count of what there was.",
         "The rule resolves what the expression DENOTES -- through imports, "
         "aliases, container shapes and type -- and the synonym table below "
         "requires semantically identical inputs to be answered identically.",
@@ -62,6 +63,8 @@ ATTACK_CLASSES = (
             "the dumped-tree detector knew `in`; `.find`, `.split`, `ast.unparse` escaped",
             "`_status_contradictions` knew `{}`; `[]` and `{'granted': false}` escaped",
             "`_supplies_the_module` counted arity; `f(guard, None)` escaped",
+            "`_status_contradictions` again: an ABSENT key, `0`, `false` "
+            "and `{'granted': 0}` all escaped the repaired version",
         ),
     ),
     AttackClass(
@@ -147,18 +150,48 @@ ATTACK_CLASSES = (
             "an invalid UTF-8 byte and 60000 nested arrays both escaped the guard",
         ),
     ),
+    AttackClass(
+        "AC06",
+        "a coarse process exit read as the named subject's verdict",
+        "A control runs something in a subprocess and reads `returncode != 0` "
+        "as proof that the thing it named failed. A non-zero exit is also a "
+        "collection error, a missing fixture, an unrelated import failure, or "
+        "a teardown guard -- and when the environment supplies one "
+        "unconditionally, every run is a pass. Measured on the AC02 probe "
+        "itself: the copied tree was not a git repository, the working-tree "
+        "guard raised at teardown on EVERY run, and a semantics-preserving "
+        "reformat supplied as a revert made the probe pass.",
+        "The workspace is made answerable, the specimen is proven GREEN in "
+        "THAT workspace before anything is broken, the edit is proven to "
+        "change executable code, and the failure is attributed to the exact "
+        "node in the call phase by reading the JUnit report -- never by the "
+        "exit code alone.",
+        (
+            "tests/test_attack_classes.py::test_the_revert_probe_refuses_a_revert_that_changes_nothing",
+            "tests/test_false_green_audit.py::test_fg10_a_workspace_whose_baseline_already_fails_is_refused",
+            "tests/test_historical_reproof.py::test_removing_the_control_revives_the_defect",
+        ),
+        (
+            "the AC02 probe: rc=1 on every run, from the conftest teardown",
+            "FG10: `returncode != 0` credited a kill for a workspace defect, three times",
+        ),
+    ),
 )
 
 
 #: Rules that decide a PROPERTY, with pairs that mean the same thing.
 #:
-#: THE CLASS PROBE FOR AC01. Each row is (rule, label, input A, input B): two
-#: expressions that state the same thing differently, which the rule must
-#: answer identically. A new rule of this kind belongs here with its synonyms;
-#: a new synonym of an existing rule belongs here rather than in a local patch.
+#: THE HELPERS THE AC01 CLASS PROBE DRIVES. The synonym TABLES, and the
+#: tests over them, live in `tests/test_attack_classes.py` -- pytest
+#: collects nothing from this module, so a table here would be parsed by
+#: nothing. The protocol document and the note that stood here both said
+#: the tables were "below", and a contributor following that literally
+#: would have added a synonym where no parametrize reads it: the local
+#: patch the protocol exists to prevent, produced by the protocol's own
+#: prose.
 #:
-#: This is what "expand the class rather than adding another local patch"
-#: means mechanically.
+#: A new rule of this kind belongs in that module with its synonyms, and
+#: so does a new synonym of an existing rule.
 def _screen_says(module_source: str, body: str) -> int:
     from guard_evidence import exercised_assertions  # noqa: PLC0415
 
@@ -182,12 +215,20 @@ def _detector_says(source: str) -> bool:
     return bool(substring_tests_against_a_dumped_tree(ast.parse(source)))
 
 
-def _contradiction_says(payload: dict, location: Path) -> bool:
+def _contradiction_says(
+    payload: dict, location: Path,
+    schema: str = "nornyx.forge.independent_review_record.v1",
+) -> bool:
     import json  # noqa: PLC0415
 
     from nornyx_forge.subject_observer import _status_contradictions  # noqa: PLC0415
 
-    location.write_text(json.dumps(payload), encoding="utf-8", newline="")
+    # THE SCHEMA IS THE ARTIFACT SAYING WHAT IT IS. A filename is a label
+    # someone chose, and reading one to decide an artifact's KIND flagged a
+    # machine review that had never claimed an inspection.
+    location.write_text(
+        json.dumps({"schema": schema, **payload}), encoding="utf-8", newline="",
+    )
     return bool(
         _status_contradictions("c.nyx", "a.json", {"status": "pass"}, location)
     )

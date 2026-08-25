@@ -195,7 +195,7 @@ def observe_contract_documents(contracts_dir: Path) -> dict[str, object]:
     for path in sorted(contracts_dir.glob("*.nyx")):
         try:
             documents[path.name] = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
             raise GovernedSubjectError(
                 f"{path.name} is not parseable, so its semantics cannot be described: {exc}"
             ) from exc
@@ -352,18 +352,39 @@ def _status_contradictions(
     # Measured: `{}` gave `compromised`; `[]` gave `intact` with 8 verified
     # claims and no problem reported, from the same write access the dict
     # form needs.
-    if "authenticated_inspections" in payload:
-        inspections = payload["authenticated_inspections"]
-        if _reports_nothing(inspections):
+    # WHAT THE ARTIFACT IS, then what it says. Keying on the PRESENCE of a
+    # field meant the simplest way to say "nothing inspected" -- delete the
+    # field -- was excluded from the check by the condition guarding it.
+    # Measured on the same tamper: `{}` and `[]` were caught, the key DELETED
+    # gave intact with 8 verified claims and 0 problems, and the boundary then
+    # released the effect.
+    #
+    # An independent review that reports no inspection is not a passing
+    # independent review, whether it reports that as `{}`, as `[]`, as `null`,
+    # as `0`, or by not mentioning inspections at all. Same for an approval
+    # record and its approval. An artifact of neither kind is judged only on
+    # what it does say, because a change record legitimately carries neither
+    # field and must not be called a contradiction for it.
+    if _declares_kind(payload, INSPECTION_SCHEMAS):
+        if not _reports_an_inspection(payload.get("authenticated_inspections")):
             found.append(
                 f"{contract} records {artifact} as passing, but the artifact "
                 "reports no authenticated inspection"
             )
-    # AND THE APPROVAL IN ANY SHAPE. This compared against the exact string
-    # `"not_granted"`, so `{"granted": false}` -- the same statement as a
-    # structure -- passed. An artifact that says approval was not granted
-    # cannot be a passing approval record however it says it.
-    if _reports_no_approval(payload.get("approval")):
+    elif "authenticated_inspections" in payload and _reports_nothing(
+        payload["authenticated_inspections"]
+    ):
+        found.append(
+            f"{contract} records {artifact} as passing, but the artifact "
+            "reports no authenticated inspection"
+        )
+    if _declares_kind(payload, APPROVAL_SCHEMAS):
+        if not _reports_an_approval(payload.get("approval")):
+            found.append(
+                f"{contract} records {artifact} as passing, but the artifact "
+                "reports approval was not granted"
+            )
+    elif "approval" in payload and _reports_no_approval(payload["approval"]):
         found.append(
             f"{contract} records {artifact} as passing, but the artifact "
             "reports approval was not granted"
@@ -371,12 +392,68 @@ def _status_contradictions(
     return found
 
 
+#: Schemas whose whole subject is an authenticated inspection.
+#:
+#: THE ARTIFACT'S OWN DECLARATION, not its filename. Keying on the name
+#: containing "contract_review" flagged
+#: `runtime_network_contract_review.json`, which declares itself
+#: `reviewer_type: deterministic_tool`, `human_review: not_performed` and
+#: says in its own statement "This is a machine review". It has no
+#: `authenticated_inspections` field because it never claimed one, so it
+#: cannot contradict one -- and a rule reading the filename to decide what
+#: an artifact IS was AC01, committed while repairing AC01.
+INSPECTION_SCHEMAS = (
+    "independent_review_record",
+    "inspection_record",
+    "inspection_attestation",
+)
+
+#: Schemas whose whole subject is a human approval.
+APPROVAL_SCHEMAS = ("approval_record",)
+
+
+def _declares_kind(payload: dict, schemas: tuple) -> bool:
+    """Does this artifact declare itself to be one of these kinds?
+
+    Read from `schema`, which every governed artifact carries and which
+    names what the record IS. A filename is a label someone chose; a
+    schema is the artifact saying so.
+    """
+    declared = str(payload.get("schema", ""))
+    return any(token in declared for token in schemas)
+
+
+def _reports_an_inspection(value: object) -> bool:
+    """Does this artifact positively state that an inspection happened?
+
+    The question asked of an artifact whose KIND is an independent review, so
+    absence is an answer rather than silence. Everything else is left to
+    `_reports_nothing`, which decides only what is there.
+    """
+    return not _reports_nothing(value)
+
+
+def _reports_an_approval(value: object) -> bool:
+    """Does this artifact positively state that approval was granted?"""
+    if _reports_nothing(value):
+        return False
+    return not _reports_no_approval(value)
+
+
 def _reports_nothing(value: object) -> bool:
-    """Does this field state that there is nothing, in any shape it can?"""
+    """Does this field state that there is nothing, in any shape it can?
+
+    A container that is empty, a null, and a falsy scalar all say the same
+    thing. `return False` for any non-container meant `0` and `false` were
+    not "nothing", so an artifact could report zero inspections as a number
+    and pass.
+    """
     if value is None:
         return True
-    if isinstance(value, (dict, list, tuple, set, str)):
+    if isinstance(value, (dict, list, tuple, set, str, bytes)):
         return len(value) == 0
+    if isinstance(value, (int, float, bool)):
+        return not value
     return False
 
 
@@ -391,7 +468,9 @@ def _reports_no_approval(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"not_granted", "not granted", "none"}
     if isinstance(value, dict):
-        if value.get("granted") is False:
+        # `is False` is an identity test against one literal, so
+        # `{"granted": 0}` -- the same statement -- walked past it.
+        if "granted" in value and _reports_nothing(value["granted"]):
             return True
         return _reports_no_approval(value.get("status"))
     return _reports_nothing(value) and value is not None

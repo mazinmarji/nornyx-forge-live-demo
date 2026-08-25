@@ -711,3 +711,36 @@ def test_a_mark_whose_sequence_is_not_a_number_names_no_direction(tmp_path: Path
     assert not any("APPENDED" in item for item in report["diagnostics"]), (
         "a direction was claimed from a mark that cannot be compared"
     )
+
+
+def test_a_report_that_cannot_be_written_still_produces_a_verdict(tmp_path: Path):
+    """AC05. Every READ path here was hardened and the WRITE was left open.
+
+    `report.json` replaced by a directory raised `PermissionError` out of
+    `CustomerCaseFlow.audit` AFTER the effect had been released, so no verdict
+    was written at all and the previous run's `pass` stayed on disk. A gate
+    that dies cannot say what is wrong, and that is as true of its last
+    statement as of its first.
+    """
+    runtime = tmp_path / "evidence" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "report.json").mkdir()
+    ledger = EvidenceLedger(runtime / "events.jsonl", subject_revision="git:test")
+    ledger.append("a", mission_id="M", actor="agent.test")
+
+    report = ledger.validate(report_path=runtime / "report.json")
+    assert report["status"] == "fail", report
+    assert any("could not be written" in item for item in report["diagnostics"]), (
+        report["diagnostics"]
+    )
+
+
+def test_a_writable_report_still_passes(tmp_path: Path):
+    """The over-reach control: refusing every report would satisfy the above."""
+    runtime = tmp_path / "evidence" / "runtime"
+    runtime.mkdir(parents=True)
+    ledger = EvidenceLedger(runtime / "events.jsonl", subject_revision="git:test")
+    ledger.append("a", mission_id="M", actor="agent.test")
+    report = ledger.validate(report_path=runtime / "report.json")
+    assert report["status"] == "pass", report["diagnostics"]
+    assert (runtime / "report.json").is_file()

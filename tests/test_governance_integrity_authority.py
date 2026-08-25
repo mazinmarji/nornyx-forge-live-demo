@@ -804,3 +804,90 @@ def test_a_recorded_observation_is_not_checked_for_contradiction(tmp_path: Path)
     assert _status_contradictions(
         "c.nyx", "artifact.json", {"status": "observed"}, artifact,
     ) == []
+
+
+def test_a_refusal_that_cannot_be_recorded_is_still_returned(tmp_path: Path):
+    """AC05. The refusal was computed and then lost, along with the process.
+
+    `refusals.mkdir()` and `write_json` were unguarded, so an occupied path
+    raised out of `evaluate_and_execute` AFTER the DENY had been computed: the
+    refusal was neither recorded nor returned, `run_case` died, and the
+    previous `report.json` -- reading `pass` -- was what an operator saw for a
+    runtime whose governance state is compromised.
+
+    Losing both is strictly worse than losing one, so the decision is returned
+    either way and the failure to record becomes part of its reason.
+    """
+    from demo_app.agentic import CustomerCaseFlow, application_security_context  # noqa: PLC0415
+
+    runtime = tmp_path / "evidence" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "refused").write_text("occupied", encoding="utf-8", newline="")
+
+    flow = CustomerCaseFlow(
+        {"id": "CASE-REC", "customer": "Amina", "risk": "low", "summary": "s",
+         "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic", allow_policy_fallback=True,
+        security_context=application_security_context(),
+    )
+    flow.boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_COMPROMISED, verified_claims=8,
+        problems=("architecture_governance.nyx records X",),
+    )
+    case = flow.run_sequential()
+    assert case["action_status"] == "prevented", case["decision"]
+    assert case["decision"]["code"] == GOVERNANCE_INTEGRITY_COMPROMISED
+    assert "could NOT be written" in case["decision"]["reason"], (
+        "the refusal was returned without saying that recording it failed, so "
+        "an operator would look for a record that is not there"
+    )
+
+
+def test_a_recordable_refusal_says_nothing_about_recording(tmp_path: Path):
+    """The over-reach control: the note must appear only when recording failed."""
+    from demo_app.agentic import CustomerCaseFlow, application_security_context  # noqa: PLC0415
+
+    flow = CustomerCaseFlow(
+        {"id": "CASE-REC-OK", "customer": "Amina", "risk": "low", "summary": "s",
+         "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic", allow_policy_fallback=True,
+        security_context=application_security_context(),
+    )
+    flow.boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_COMPROMISED, verified_claims=8,
+        problems=("architecture_governance.nyx records X",),
+    )
+    case = flow.run_sequential()
+    assert case["action_status"] == "prevented"
+    assert "could NOT be written" not in case["decision"]["reason"]
+    assert list((tmp_path / "evidence" / "runtime" / "refused").glob("*.json"))
+
+
+def test_a_contract_that_cannot_be_decoded_yields_an_unavailable_subject(
+    tmp_path: Path,
+):
+    """AC05. `establish_subject` promises any observation error yields an
+    unavailable subject; it named one exception class.
+
+    A contract with one invalid UTF-8 byte raised `UnicodeDecodeError` straight
+    out of module import, and `demo_app.main` imports `demo_app.agentic` at
+    module level -- so the documented outcome, "the application may still start
+    and serve low-risk work", became "the application does not start". The
+    sibling `observe_governance_integrity` already caught all three on the
+    identical read.
+    """
+    import shutil  # noqa: PLC0415
+
+    from nornyx_forge.subject_bootstrap import establish_subject  # noqa: PLC0415
+
+    work = tmp_path / "repo"
+    work.mkdir()
+    shutil.copytree(ROOT / ".nornyx", work / ".nornyx")
+    target = work / ".nornyx" / "contracts" / "runtime_network.nyx"
+    with target.open("ab") as handle:
+        handle.write(bytes([0xFF]))
+
+    subject = establish_subject(work, contracts_dir=work / ".nornyx" / "contracts")
+    assert subject.subject_verified is False, (
+        "a contract that cannot be decoded produced a verified subject"
+    )

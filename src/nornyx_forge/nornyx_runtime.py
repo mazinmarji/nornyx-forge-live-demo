@@ -3191,14 +3191,35 @@ class NornyxActionBoundary:
                 "effect_released": False,
                 "refused_at": self.as_of,
             }
+            # THE REFUSAL SURVIVES A FAILURE TO RECORD IT. `mkdir` and
+            # `write_json` were unguarded, so an occupied path or a
+            # read-only directory raised out of `evaluate_and_execute`
+            # AFTER the DENY had been computed: the refusal was neither
+            # recorded nor returned, `run_case` died, and the previous
+            # `report.json` -- reading `pass` -- was what an operator saw
+            # for a runtime whose governance state is compromised.
+            #
+            # This docstring says the refusal is 'Recorded, not just
+            # returned ... the attempt most worth being able to find
+            # afterwards'. Losing both was strictly worse than losing one,
+            # so the decision is returned either way and the failure to
+            # record becomes part of it.
             refusals = self.root / "evidence/runtime/refused"
-            refusals.mkdir(parents=True, exist_ok=True)
-            write_json(
-                refusals
-                / (evidence_storage_key(mission_id + "#attempt-" + str(attempt))
-                   + ".refused.json"),
-                record,
-            )
+            try:
+                refusals.mkdir(parents=True, exist_ok=True)
+                write_json(
+                    refusals
+                    / (evidence_storage_key(
+                        mission_id + "#attempt-" + str(attempt))
+                       + ".refused.json"),
+                    record,
+                )
+            except OSError as exc:
+                record["recording_error"] = str(exc)
+                reason = (
+                    reason + " This refusal could NOT be written to evidence/"
+                    "runtime/refused: " + str(exc) + "."
+                )
             return RuntimeDecision(
                 effect="DENY",
                 code=GOVERNANCE_INTEGRITY_COMPROMISED,
