@@ -19,6 +19,8 @@ import json
 import threading
 from pathlib import Path
 
+import pytest
+
 from nornyx_forge.evidence import EvidenceLedger
 from nornyx_forge.util import digest
 
@@ -610,3 +612,102 @@ def test_a_sequence_that_is_not_a_number_is_reported_not_raised(tmp_path: Path):
         "reads is the previous run's verdict"
     )
     assert json.loads(report.read_text(encoding="utf-8"))["status"] == "fail"
+
+
+def test_a_stream_that_cannot_be_decoded_is_reported(tmp_path: Path):
+    """The read boundary guarded one exception class.
+
+    `read_text` sat OUTSIDE the try and the try named `ValueError`, so an
+    invalid UTF-8 byte raised `UnicodeDecodeError` and 60000 nested arrays
+    raised `RecursionError` -- both straight out of `_stage` at intake, leaving
+    the previous `pass` report on disk beside a longer stream. The repair was
+    being made one exception class at a time; a reader cannot enumerate the
+    ways bytes go wrong, which is why the guard belongs at the boundary.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    ledger.append("first", mission_id="M", actor="agent.test")
+    with path.open("ab") as handle:
+        handle.write(bytes([0x7B, 0x22, 0x61, 0x22, 0x3A, 0x22, 0xFF, 0x22, 0x7D, 0x0A]))
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("could not be read" in item for item in report["diagnostics"]), (
+        report["diagnostics"]
+    )
+
+
+def test_a_deeply_nested_line_is_reported(tmp_path: Path):
+    """Valid JSON that `json.loads` cannot finish is still a damaged line."""
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    ledger.append("first", mission_id="M", actor="agent.test")
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        handle.write("[" * 60000 + "]" * 60000 + chr(10))
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("is not a record" in item for item in report["diagnostics"]), (
+        report["diagnostics"]
+    )
+
+
+def test_a_record_that_cannot_be_digested_never_reaches_the_stream(tmp_path: Path):
+    """The digest was computed AFTER the write, and that ordering was the bug.
+
+    A lone surrogate in a summary -- the shape `resolution` builds straight from
+    `requested_action` -- left the stream one line ahead of the mark
+    permanently, and poisoned every later append IN EVERY PROCESS, because the
+    next `digest(previous)` re-reads it. `validate` then raised too, so the gate
+    could no longer report anything at all.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    ledger.append("first", mission_id="M", actor="agent.test")
+    before = len(_stream(path))
+
+    with pytest.raises(ValueError, match="cannot be recorded"):
+        EvidenceLedger(path, subject_revision="git:test").append(
+            "stage_completed", mission_id="M", actor="agent.test",
+            summary="Proposed action: ab" + chr(0xD800) + "cd.",
+        )
+
+    assert len(_stream(path)) == before, "the undigestable record reached the stream"
+    mark = json.loads(ledger.watermark_path.read_text(encoding="utf-8"))
+    assert mark["sequence"] == before, "the mark and the stream disagree"
+    # And the ledger still works, so one bad input is not permanent poison.
+    following = EvidenceLedger(path, subject_revision="git:test").append(
+        "after", mission_id="M", actor="agent.test",
+    )
+    assert following.sequence == before + 1
+    assert EvidenceLedger(path).validate()["status"] == "pass"
+
+
+def test_a_mark_whose_sequence_is_not_a_number_names_no_direction(tmp_path: Path):
+    """The record's sequence was type-checked and the mark's was not.
+
+    A mark reading `"2"` beside a stream ending at 2 produced "the stream ends
+    at event 2 and 2 were written: records were APPENDED after the mark was
+    last written" -- self-contradictory, and an accusation of tampering where
+    nothing had been appended. `isinstance(written, int)` was silently
+    selecting APPENDED as the fallback for cannot-tell.
+    """
+    path = tmp_path / "events.jsonl"
+    ledger = EvidenceLedger(path, subject_revision="git:test")
+    for index in range(2):
+        ledger.append(f"e{index}", mission_id="M", actor="agent.test")
+
+    mark = json.loads(ledger.watermark_path.read_text(encoding="utf-8"))
+    mark["sequence"] = str(mark["sequence"])
+    ledger.watermark_path.write_text(
+        json.dumps(mark), encoding="utf-8", newline="",
+    )
+
+    report = EvidenceLedger(path).validate()
+    assert report["status"] == "fail", report
+    assert any("cannot be compared" in item for item in report["diagnostics"]), (
+        report["diagnostics"]
+    )
+    assert not any("APPENDED" in item for item in report["diagnostics"]), (
+        "a direction was claimed from a mark that cannot be compared"
+    )

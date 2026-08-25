@@ -175,11 +175,21 @@ def _empty_return_sites(relative: str) -> list[tuple[str, int]]:
 
 #: (label, handler body, is it a swallowed failure).
 #:
-#: SEVEN expect True and FIVE expect False, and this said five and four.
-#: Six of the seven were invisible to the rule that named four spellings, in the module whose subject is that naming spellings is not a
-#: rule. The four that expect False are the over-reach control: a handler that
-#: returns something, or re-raises, is not a swallowed failure, and a screen
-#: that flagged those would put real code in front of a classification table
+#: NO COUNTS ARE STATED HERE, and that is the repair rather than a better
+#: count. This block said "five and four" against a seven/five table; the
+#: correction updated the headline and left the dependent sentence at the
+#: old value, so the comment gave two different answers to its own
+#: question -- and a third review found that. Three rounds, three stale
+#: numbers, in the module next to the one whose census comment documents
+#: exactly this at length. A count typed beside a table nobody parses is a
+#: liability; the table is immediately below, and pytest prints its ids.
+#:
+#: The rows expecting True were invisible to the rule that named four
+#: spellings -- all but one, which is the spelling it did catch, kept so
+#: the repair reads as a widening rather than a replacement. The rows
+#: expecting False are the over-reach control: a handler that returns
+#: something, or re-raises, is not a swallowed failure, and a screen that
+#: flagged those would put real code in front of a classification table
 #: for no reason.
 EMPTY_RETURN_SPECIMENS = [
     ("an empty tuple display", "    return ()", True),

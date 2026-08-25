@@ -125,8 +125,15 @@ production must not use it".
 refusal codes, `GOVERNED_REVISION_MISMATCH` and
 `GOVERNED_REVISION_UNVERIFIED`. None of them is defined anywhere in `src/`
 or `scripts/` -- `nornyx_runtime.py` records that the model is "gone, not
-deprecated in place", and `tests/test_subject_provenance.py` BANS a
-re-introduction. Authority is content-digest bound: `governed_subject_digest`
+deprecated in place", and `test_the_runtime_holds_no_git_revision_vocabulary`
+in `tests/test_subject_provenance.py` refuses FOUR SPELLINGS --
+`def actual_revision`, `def runtime_revision`, `rev-parse` and `import
+subprocess` -- in ONE file, `src/nornyx_forge/nornyx_runtime.py`. That is a
+ban on re-introducing the mechanism where it lived, not a ban on the model,
+and this sentence said "BANS a re-introduction" without saying which. The
+broader claim above -- that none of the five names is defined anywhere in
+`src/` or `scripts/` -- is true today and is held by nothing but this
+sentence, so read it as a statement of fact rather than of enforcement. Authority is content-digest bound: `governed_subject_digest`
 and `governed_revision_digest`. Git provenance is observed by
 `subject_observer.observe_source_commit` and reaches no decision.
 

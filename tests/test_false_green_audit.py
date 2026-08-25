@@ -713,6 +713,28 @@ def test_the_named_consumers_are_all_the_consumers():
     )
 
 
+#: The screen's entry points, however the call is spelled.
+SCREEN_ENTRY_POINTS = frozenset({"exercised_assertions", "executed_nodes"})
+
+
+def _asks_the_screen(call: ast.Call) -> bool:
+    """Is this a call to the shared screen, bare name or attribute?
+
+    The filter required `ast.Name`, so `import guard_evidence` followed by
+    `guard_evidence.exercised_assertions(node)` was invisible -- two
+    module-less calls in a DISCOVERED consumer, uninspected. Discovery had
+    been widened to attribute-form imports and inspection had not, which is
+    the same half-widening that let a nested consumer be read from the
+    wrong file one round earlier.
+    """
+    callee = call.func
+    if isinstance(callee, ast.Name):
+        return callee.id in SCREEN_ENTRY_POINTS
+    if isinstance(callee, ast.Attribute):
+        return callee.attr in SCREEN_ENTRY_POINTS
+    return False
+
+
 def screen_call_sites(relative: str) -> list:
     """Every call to the screen in a module, with the function it sits in.
 
@@ -728,10 +750,7 @@ def screen_call_sites(relative: str) -> list:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for call in ast.walk(node):
-            if (isinstance(call, ast.Call)
-                    and isinstance(call.func, ast.Name)
-                    and call.func.id in {"exercised_assertions",
-                                         "executed_nodes"}):
+            if isinstance(call, ast.Call) and _asks_the_screen(call):
                 sites.append((node.name, call))
     return sites
 
@@ -740,7 +759,32 @@ def screen_call_sites(relative: str) -> list:
 #:
 #: Named rather than inferred from the `*`, because the star says only
 #: that something is unpacked and not that it unpacks to two things.
+#:
+#: AND THE NAME IS NOT THE PROPERTY EITHER. This was `frozenset({"_guard"})`
+#: under a comment claiming a starred call passes only when what is starred
+#: is a call to something DECLARED TO RETURN THE PAIR -- and nothing
+#: declared or checked that: `f(*_guard())` with zero arguments passed, and
+#: any consumer defining its own one-tuple `_guard` would have too. A rule
+#: about a name, in the module whose subject is that a rule about a
+#: spelling is not a rule. `test_every_pair_helper_really_returns_a_pair`
+#: reads each named helper's `return` and requires a two-element tuple.
 PAIR_HELPERS = frozenset({"_guard"})
+
+
+def _could_be_a_module(argument: ast.expr) -> bool:
+    """Could this expression be a module, or is it plainly not one?
+
+    Statically the value is unknowable, and this does not pretend
+    otherwise -- what it refuses is the shapes that CANNOT be a module:
+    `None`, a literal of any other kind, and an empty container. That is
+    the whole distance between an arity check and a module check, and it
+    is the distance a one-token edit travelled.
+    """
+    if isinstance(argument, ast.Constant):
+        return False
+    if isinstance(argument, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        return False
+    return True
 
 
 def _supplies_the_module(call: ast.Call) -> bool:
@@ -768,10 +812,57 @@ def _supplies_the_module(call: ast.Call) -> bool:
             return True
         return False
     # `**kw` was auto-accepted for the same reason and with as little
-    # evidence; only an explicit `module=` counts.
-    if any(keyword.arg == "module" for keyword in call.keywords):
-        return True
-    return len(call.args) >= 2
+    # evidence; only an explicit `module=` counts, and only when what it
+    # is given could be a module.
+    for keyword in call.keywords:
+        if keyword.arg == "module":
+            return _could_be_a_module(keyword.value)
+    # AN ARITY IS NOT A MODULE. `len(call.args) >= 2` was the whole test,
+    # so `exercised_assertions(fn, None)` -- a one-token edit at either
+    # consumer -- passed every wiring check while restoring the escape they
+    # exist to close. Measured: the real consumer edited from `tree` to
+    # `None`, all four wiring tests green, and the screen's answer moving
+    # from 0 to 2 on the `_OFF = False` specimen.
+    return len(call.args) >= 2 and _could_be_a_module(call.args[1])
+
+
+def test_every_pair_helper_really_returns_a_pair():
+    """`PAIR_HELPERS` is a list of names; this binds it to the property.
+
+    The comment beside it says a starred call passes only when what is
+    starred returns the (guard, module) pair. Nothing checked that, so
+    `f(*_guard())` passed and so would any consumer's own one-tuple
+    `_guard`. Each named helper is read here: it must exist, and every
+    `return` it makes must be a two-element tuple.
+    """
+    for name in sorted(PAIR_HELPERS):
+        found = []
+        for module in sorted((ROOT / "tests").rglob("*.py")):
+            tree = ast.parse(module.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name == name):
+                    found.append((module, node))
+        assert found, (
+            name + " is named as a helper returning the (guard, module) "
+            "pair and is defined nowhere under tests/"
+        )
+        for module, function in found:
+            returns = [
+                node for node in ast.walk(function)
+                if isinstance(node, ast.Return) and node.value is not None
+            ]
+            assert returns, (
+                str(module.name) + "::" + name + " returns nothing, so a "
+                "starred call on it supplies no module"
+            )
+            for node in returns:
+                assert (isinstance(node.value, ast.Tuple)
+                        and len(node.value.elts) == 2), (
+                    str(module.name) + "::" + name + " line "
+                    + str(node.lineno) + " does not return a two-element "
+                    "tuple, so `*" + name + "(...)` does not supply a module"
+                )
 
 
 def test_no_call_anywhere_asks_the_screen_without_the_module():
@@ -818,11 +909,12 @@ def test_every_consumer_of_the_screen_passes_the_module():
             None,
         )
         assert function is not None, relative + " no longer defines " + name
+        # ONE filter, shared with `screen_call_sites`. A second copy here
+        # is how the attribute form stayed invisible after the first was
+        # widened, which is FG40's class inside FG40's own module.
         calls = [
             node for node in ast.walk(function)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in {"exercised_assertions", "executed_nodes"}
+            if isinstance(node, ast.Call) and _asks_the_screen(node)
         ]
         assert calls, relative + "::" + name + " no longer asks the screen"
         for call in calls:
@@ -910,10 +1002,18 @@ TERMINATION_SPECIMENS = [
 def test_the_screen_knows_which_statements_end_a_block(body: str, expected: int):
     """Every zero gutted 40 of 40 FG owners with every gate green.
 
-    The seven expecting 1 are the half that makes this a rule rather than a
+    THE ROWS EXPECTING A LIVE COUNT are the half that makes this a rule
+    rather than a
     blunt instrument: `finally` runs on every path, a handler runs only if
-    something raised, a `raise` is interceptable where a `return` is not, and a
-    `match` without a catch-all may fall through.
+    something raised, a `raise` is interceptable where a `return` is not, a
+    `match` without a catch-all may fall through, and `break`/`continue`
+    leave the LOOP rather than the block around it.
+
+    THE COUNT THAT STOOD HERE SAID SEVEN and the table had grown to twelve
+    non-zero rows, because the loop specimens were added later and the
+    sentence was not. It is gone rather than corrected: a number typed
+    beside a table nobody parses has now rotted in three separate comments
+    in this repository, and the reasons are the part worth stating anyway.
     """
     counted = exercised_assertions(*_guard(body))
     assert counted == expected, (

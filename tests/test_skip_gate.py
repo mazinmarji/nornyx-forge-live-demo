@@ -267,10 +267,19 @@ def test_the_slack_the_bands_grant_is_the_measured_sum():
     and this one is the last, so it gets the same treatment: parsed out of the
     prose and compared against the sum the floors actually permit.
 
-    Derived twice over on purpose. `collected - floor` summed per module and
-    `total - sum(floors)` are the same quantity by different routes, and a
-    guard that computed it once the way the comment does would be agreeing with
-    itself.
+    Two routes, and they are NOT independent -- said plainly, because
+    "derived twice over" was the claim and `total - sum(floors)` is
+    algebraically the same as summing `collected - floor`, which is not
+    what the code computes either. What the two routes actually catch is a
+    declared floor that is not the band of what its module collects: they
+    agree only when every floor equals `band(collected)`.
+
+    That comparison is over SUMS, so compensating deviations would pass it.
+    Per-module drift below the band is caught separately by
+    `test_no_module_floor_drifts_far_below_its_module`, leaving only the
+    harmless above-band direction unpinned here -- stated rather than left
+    for a reader to discover, because the failure message below names a
+    per-module fact and the assertion is over a total.
     """
     from check_test_coverage import REQUIRED_MODULE_MINIMUMS, band  # noqa: PLC0415
 

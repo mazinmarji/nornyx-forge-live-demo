@@ -652,3 +652,55 @@ def test_the_recognised_levels_are_unaffected(tmp_path: Path):
         )
         assert case["action_status"] == expected, (label, case["decision"])
         assert case["decision"]["code"] != RISK_LEVEL_UNKNOWN
+
+
+RISK_STAGE_AGREEMENT = [
+    ("bogus", "unclassified", RISK_LEVEL_UNKNOWN),
+    ("  ", "unclassified", RISK_LEVEL_UNKNOWN),
+    ("HIGH-RISK", "unclassified", RISK_LEVEL_UNKNOWN),
+    # `normalize_risk` strips, so this IS high -- and the stage used to call it
+    # bounded-low-risk while the boundary named the high-risk effect capability.
+    (" high ", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+    ("low", "bounded-low-risk", "ALLOWED"),
+    ("medium", "bounded-low-risk", "ALLOWED"),
+    ("high", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+    ("critical", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "classification", "code"), RISK_STAGE_AGREEMENT,
+    ids=[case[0] or "blank" for case in RISK_STAGE_AGREEMENT],
+)
+def test_the_risk_stage_and_the_boundary_agree(
+    label: str, classification: str, code: str, tmp_path: Path,
+):
+    """One mission's evidence must not contain two verdicts about one act.
+
+    The stage did bare `.lower()` membership and the boundary uses
+    `normalize_risk`, so `"bogus"` and `" high "` were both written into the
+    stream as `bounded-low-risk` -- while the boundary answered
+    RISK_LEVEL_UNKNOWN, whose own text reads "An unclassified act is not a
+    low-risk act", and for `" high "` named `execute_high_risk_effect`. A
+    stage record calling the act bounded-low-risk sat beside an
+    `action_prevented` record naming the high-risk capability, in one stream.
+    """
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    case = run_case(
+        {"id": "CASE-AGREE", "customer": "Amina", "risk": label,
+         "summary": "s", "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig(
+            policy_backend="deterministic_demo", execution_backend="sequential",
+        ),
+        security_context=application_security_context(),
+    )
+    assert case["risk_decision"] == classification, case["risk_decision"]
+    assert case["decision"]["code"] == code, case["decision"]
+    summary = next(entry["summary"] for entry in case["timeline"]
+                   if entry["stage"] == "risk")
+    if classification == "unclassified":
+        assert "could not be classified" in summary, summary
+        assert "low-risk" not in summary.replace("not a low-risk act", ""), summary

@@ -10,12 +10,14 @@ from nornyx_forge.evidence import EvidenceLedger
 from nornyx_forge.governed_subject import RuntimeAuthorityConfig
 from nornyx_forge.nornyx_runtime import (
     EXTERNAL_TRUST_ZONE,
+    HIGH_RISK_LEVELS,
     ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     UnknownRiskLevel,
     canonical_action_request,
     exercised_capability,
+    normalize_risk,
 )
 from nornyx_forge.subject_bootstrap import (
     RuntimeSecurityContext,
@@ -376,9 +378,30 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
 
     @listen(resolution)
     def risk(self, _previous: Any = None) -> dict[str, Any]:
-        risk = str(self.case.get("risk", "low")).lower()
+        # THE SAME VOCABULARY THE BOUNDARY USES. This did bare `.lower()`
+        # membership, so `"bogus"` and `" high "` both classified as
+        # `bounded-low-risk` and that classification went into the evidence
+        # stream -- while the boundary answered RISK_LEVEL_UNKNOWN, whose
+        # own text reads "An unclassified act is not a low-risk act", and
+        # for `" high "` named the high-risk effect capability. One
+        # mission's stream carried a stage record calling the act
+        # bounded-low-risk beside an `action_prevented` record naming
+        # `execute_high_risk_effect`. `normalize_risk` exists precisely to
+        # end that fall-through and its docstring names `"High" + newline`
+        # by hand; it was simply not used one stage upstream.
+        raw = str(self.case.get("risk", "low"))
+        try:
+            level = normalize_risk(raw)
+        except UnknownRiskLevel:
+            self.case["risk_decision"] = "unclassified"
+            return self._stage(
+                "risk",
+                "Risk could not be classified: " + repr(raw) + " is not a "
+                "declared level, and an unclassified act is not a low-risk "
+                "act.",
+            )
         self.case["risk_decision"] = (
-            "high-impact" if risk in {"high", "critical"} else "bounded-low-risk"
+            "high-impact" if level in HIGH_RISK_LEVELS else "bounded-low-risk"
         )
         return self._stage("risk", f"Risk classified as {self.case['risk_decision']}.")
 

@@ -173,14 +173,23 @@ class EvidenceLedger:
             return [], [], 0
         records: list[dict[str, Any]] = []
         problems: list[str] = []
-        lines = [
-            line for line in self.path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        # THE WHOLE READ, not the parse alone. `read_text` sat outside the
+        # guard and the guard named `ValueError`, so a line with an invalid
+        # UTF-8 byte raised `UnicodeDecodeError` and a line of 60000 nested
+        # arrays raised `RecursionError` -- both straight out of `_stage` at
+        # intake, leaving the previous `pass` report on disk. The repair was
+        # being made exception class by exception class; it belongs at the
+        # boundary, because the heading above says a damaged stream is
+        # REPORTED and a reader cannot enumerate the ways bytes go wrong.
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except (OSError, ValueError) as exc:
+            return [], [f"the stream could not be read: {exc}"], 0
+        lines = [line for line in text.splitlines() if line.strip()]
         for number, line in enumerate(lines, start=1):
             try:
                 parsed = json.loads(line)
-            except ValueError as exc:
+            except (ValueError, RecursionError) as exc:
                 problems.append(
                     f"line {number} of the stream is not a record: {exc}"
                 )
@@ -257,6 +266,25 @@ class EvidenceLedger:
                 previous_digest=digest(previous) if previous is not None else "",
             )
             record = asdict(event)
+            # DIGESTED BEFORE IT IS WRITTEN, and this ordering is the
+            # control. `digest(record)` was computed AFTER the stream write,
+            # so a record the digest cannot process -- a lone surrogate in a
+            # summary, which `resolution` builds straight from
+            # `requested_action` -- left the stream one line ahead of the
+            # mark permanently, and poisoned every later append IN EVERY
+            # PROCESS, because the next `digest(previous)` re-reads it.
+            # `validate` then raised too, so the gate could no longer report
+            # anything at all. A record that cannot be digested is now never
+            # written.
+            try:
+                record_digest = digest(record)
+            except (UnicodeEncodeError, ValueError, TypeError) as exc:
+                raise ValueError(
+                    "this event cannot be recorded: it does not survive the "
+                    "canonical encoding the stream is digested with, and a "
+                    "record that cannot be digested would break the chain "
+                    "for every record after it -- " + str(exc)
+                ) from exc
             self._events.append(event)
             self.path.parent.mkdir(parents=True, exist_ok=True)
             # newline="" so a record is the bytes this line built. Text mode
@@ -268,7 +296,7 @@ class EvidenceLedger:
                     json.dumps(record, sort_keys=True) + _RECORD_SEPARATOR
                 )
             # BESIDE the stream, so a truncation cannot carry it away.
-            self._write_watermark(event.sequence, digest(record))
+            self._write_watermark(event.sequence, record_digest)
             return event
 
     def reset(self, *also: Path) -> None:
@@ -429,6 +457,19 @@ class EvidenceLedger:
                 f"that {written} record(s) were written: the stream was removed "
                 "or emptied"
             ]
+        # THE MARK'S OWN SEQUENCE IS CHECKED TOO. The record's was, and the
+        # mark's was not, so a mark reading `"2"` beside a stream ending at
+        # 2 produced "the stream ends at event 2 and 2 were written: records
+        # were APPENDED after the mark was last written" -- self-
+        # contradictory, and an accusation of tampering where nothing was
+        # appended. `isinstance(written, int)` was silently selecting
+        # APPENDED as the fallback for cannot-tell.
+        if not isinstance(written, int) or isinstance(written, bool):
+            return [
+                "the high-water mark carries a sequence that is not a whole "
+                "number, so what was written cannot be compared with what "
+                "is here: " + repr(written)
+            ]
         last = durable[-1]
         present = last.get("sequence")
         if not isinstance(present, int) or isinstance(present, bool):
@@ -449,9 +490,7 @@ class EvidenceLedger:
             ]
         if written != present:
             direction = (
-                "records were removed from the end"
-                if isinstance(written, int) and isinstance(present, int)
-                and present < written
+                "records were removed from the end" if present < written
                 else "records were APPENDED after the mark was last written"
             )
             return [
