@@ -652,6 +652,11 @@ SCREEN_CONSUMERS = (
     ("tests/test_false_green_audit.py",
      "test_every_false_green_class_has_a_self_attack_that_trips_its_guard"),
     ("tests/test_killed_by_validation.py", "_defensive_evidence"),
+    # The AC01 class probe drives the screen to compare synonyms, so it
+    # is a consumer like any other and is declared like any other. The
+    # discovery check found it the first time it was collected, which is
+    # the check doing exactly what it is for.
+    ("tests/attack_classes.py", "_screen_says"),
 )
 
 
