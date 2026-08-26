@@ -234,7 +234,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # shipped with ZERO executing tests -- the handler, both raise
     # sites and the whole migration path unreached under a green
     # suite -- which is why the P1 it was meant to close survived it.
-    "tests/test_ledger_continuity.py": 51,
+    "tests/test_ledger_continuity.py": 52,
+    #: The v1 boundary of architecture-check, pinned from both sides:
+    #: five disclosed routes and three controls that must stay decided.
+    "tests/test_module_acquisition_limits.py": 9,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
@@ -342,10 +345,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2258   (89 modules)
-#     sum of the module floors    2076
-#     band(2258) = ceil(0.9*n)    2033
-#     MINIMUM_COLLECTED           2091
+#     collected across tests/     2268   (90 modules)
+#     sum of the module floors    2086
+#     band(2268) = ceil(0.9*n)    2042
+#     MINIMUM_COLLECTED           2101
 #     above the module sum        15
 #     below what collects         167
 #
@@ -389,7 +392,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2091
+MINIMUM_COLLECTED = 2101
 
 
 def band(collected: int) -> int:
@@ -424,6 +427,7 @@ REQUIRED_MODULES = (
     # as the tests it names, so the module holding them is required
     # like any other control: losing it loses every class at once.
     "tests/test_attack_classes.py",
+    "tests/test_module_acquisition_limits.py",
     "tests/test_brd_evidence_shape.py",
     "tests/test_approval_authentication.py",
     "tests/test_killed_by_validation.py",

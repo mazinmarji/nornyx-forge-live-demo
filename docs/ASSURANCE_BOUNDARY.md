@@ -13,7 +13,15 @@ It does not establish:
   signatures against them without establishing how the keys inside were vetted;
 - proof that every recorded runtime observation is true;
 - production readiness, regulatory compliance, or human approval;
-- permission to modify or deploy third-party repositories.
+- permission to modify or deploy third-party repositories;
+- that a governed module cannot obtain a module object it did not declare.
+  `architecture-check` is a STATIC, side-effect-free reader: it decides the
+  declared, statically visible dependency structure and refuses the dynamic
+  acquisition constructs it can name. It does not execute governed code, so
+  a module object reached through an expression whose value is known only at
+  runtime is outside what it establishes. Five such routes are named and
+  pinned in `docs/governance/MODULE_ACQUISITION.md`; closing them is v1.1
+  research, not a v1 claim.
 
 Autonomous demonstration mode automatically continues through local acceptance gates. Its final evidence must state that human review was not performed and production approval was not granted.
 

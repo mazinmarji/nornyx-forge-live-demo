@@ -90,6 +90,29 @@ REQUIRES `importlib.import_module('json')` to pass, because a literal dynamic
 import is resolvable and is modelled as an ordinary edge. A document
 contradicting the frozen corpus is AC03, in the file that names AC03.
 
+## The decision taken
+
+**The claim is narrowed. `check_architecture` stays static and
+side-effect-free.**
+
+The alternative -- importing governed modules to observe what they bound --
+would decide the property, and would turn a gate that reads text into one
+that executes it, bringing import side effects, ordering and third-party
+code inside the control. That was rejected for v1.
+
+So the five routes below are **disclosed limitations of a v1 claim**, not
+open defects against it. `docs/ASSURANCE_BOUNDARY.md` states the non-claim,
+and `architecture-check` in `architecture_governance.nyx` carries the scope
+it verifies. No parser heuristic was added for any of them, deliberately:
+each such heuristic is one more spelling in a set that cannot be closed, and
+three attempts to close it are what produced this document.
+
+They are pinned as **v1.1 research specimens** by
+`tests/test_module_acquisition_limits.py`, which measures the CURRENT
+behaviour and fails if it changes in either direction -- so a route that is
+later closed forces this disclosure to be updated rather than leaving the
+boundary claiming less than the code delivers.
+
 ## The classification
 
 Three distinct approaches have failed. Per the operating goal's LOOP-ESCAPE

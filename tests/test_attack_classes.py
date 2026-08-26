@@ -447,7 +447,7 @@ REVERTIBLE_FIXES = [
      "                for done in sorted(converted):",
      "                for done in sorted(()):",
      "tests/test_ledger_continuity.py",
-     "test_a_busy_store_is_reported_and_nothing_is_half_converted"),
+     "test_a_failure_midway_restores_what_was_already_converted"),
     # NOT A ROW: the distinctness clause in
     # `scripts/refresh_governance_evidence.py`. Its specimen,
     # `test_one_reviewer_cannot_cover_every_role`, builds its own workspace

@@ -1567,3 +1567,140 @@ def test_an_uncontended_pair_still_migrates(tmp_path: Path) -> None:
         "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
     )
     assert replayed is False, "a spent consumption was released after migration"
+
+
+def test_a_failure_midway_restores_what_was_already_converted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore path, exercised DETERMINISTICALLY.
+
+    Its sibling `test_a_busy_store_is_reported_and_nothing_is_half_converted`
+    holds a real reader on the witness, and whether that reaches the restore
+    depends on the platform: where the EXCLUSIVE pre-check catches the holder
+    first, nothing has been converted yet and the restore is never entered. A
+    revert control pointed at it therefore bound on some interpreters and not
+    others -- green on 3.10, 3.12 and 3.13 in CI and RED on 3.11, which is a
+    control that reports the weather rather than the property.
+
+    So the failure is injected instead of raced for. The ledger converts
+    normally; the witness raises on its conversion; the restore must put the
+    ledger back. No lock, no timing, no platform.
+
+    The injected error is a real `sqlite3.OperationalError` raised from the
+    same call the loop makes, so the handler under test sees exactly what a
+    genuine mid-loop failure would present.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import approval_ledger_path  # noqa: PLC0415
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    witness = ledger.watermark_path
+    for target in (location, witness):
+        with sqlite3.connect(target) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    def modes() -> list:
+        seen = []
+        for target in (location, witness):
+            with sqlite3.connect(target) as conn:
+                seen.append(
+                    str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                )
+        return seen
+
+    before = modes()
+    assert before == ["wal", "wal"], before
+
+    real_connect = sqlite3.connect
+    attempted = {"convert": 0}
+    resolved_witness = witness.resolve()
+
+    class _FailsTheConversion:
+        """Delegates everything, except SETTING the witness journal mode.
+
+        KEYED ON THE OPERATION, not on a call count. Counting witness
+        connections was brittle and wrong: the command touches the witness
+        for a structure check, a pre-check probe, the mode survey, the
+        conversion and the verify-after, so the ordinal of the conversion is
+        an implementation detail that a later edit would silently move --
+        and the first version of this injection failed the SURVEY instead,
+        which aborts before anything is converted and proves nothing.
+
+        The survey reads `PRAGMA journal_mode`; the conversion writes
+        `PRAGMA journal_mode=<mode>`. The `=` is the difference, and it is
+        the thing being targeted.
+        """
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args, **kwargs):
+            flat = " ".join(str(sql).split()).lower()
+            if flat.startswith("pragma journal_mode="):
+                attempted["convert"] += 1
+                raise sqlite3.OperationalError("database is locked")
+            return self._inner.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def __enter__(self):
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._inner.__exit__(*exc)
+
+    def failing_connect(target, *args, **kwargs):
+        inner = real_connect(target, *args, **kwargs)
+        try:
+            where = Path(str(target).split("?")[0].replace("file:", "")).resolve()
+        except (OSError, ValueError):  # pragma: no cover - defensive
+            return inner
+        # RESOLVED, because the command resolves its paths and this
+        # workspace sits under a short-name temp root on Windows; comparing
+        # the raw strings matched nothing at all when first written.
+        return _FailsTheConversion(inner) if where == resolved_witness else inner
+
+    # THE STDLIB MODULE, because `cli.py` imports sqlite3 inside the
+    # function -- there is no module attribute to patch. Safe here: both
+    # mode surveys run outside the patched window, `before` above and
+    # `modes()` after `undo`, so only the command under test sees it.
+    monkeypatch.setattr(sqlite3, "connect", failing_connect)
+    result = CliRunner().invoke(
+        app,
+        ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"],
+    )
+    monkeypatch.undo()
+
+    assert attempted["convert"] >= 1, (
+
+        "the witness conversion was never attempted, so the restore path "
+        "was not reached and this control measured nothing"
+    )
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a mid-loop failure raised out of the command: " + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code)
+    )
+    assert modes() == before, (
+        "the ledger was converted, the witness failed, and the ledger was NOT "
+        "put back -- the pair is half-converted after a refusal: " + repr(modes())
+    )
+    assert "Restored: ledger" in result.output, (
+        "the restore happened but the operator was not told which stores were "
+        "put back: " + result.output[-400:]
+    )
