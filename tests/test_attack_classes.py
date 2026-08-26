@@ -521,7 +521,7 @@ def test_reverting_one_fix_reddens_its_own_specimen(
     # and a workspace without them fails BEFORE any mutation. That is not a
     # kill, and `require_pristine_baseline` correctly refused to call it one.
     # THE UNION OF WHAT THE SPECIMEN FIXTURES COPY, read off them rather
-    # than guessed one failure at a time: `test_independent_inspection`
+    # than guessed one failure at a time: `tests/test_independent_inspection.py`
     # builds its workspace from scripts, src, docs, .nornyx, tests and
     # .github. A revert row naming a specimen there fails at the pristine
     # baseline without them -- INVALID_BASELINE, which is the machinery
