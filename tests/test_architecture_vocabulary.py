@@ -246,6 +246,92 @@ UNDECLARED_EDGES = [
         None,
         "undeclared dependency demo_app.store",
     ),
+    # ---- refused because UNRESOLVABLE, not because recognised ----------
+    #
+    # Two candidates were invalidated by this class. Each repair enumerated
+    # the spellings a reviewer had just used, and each was reopened by one
+    # nobody had used yet -- eleven of them the second time. The rule now
+    # REFUSES the construct instead of resolving its target, so these rows
+    # are not the boundary of what is caught; they are witnesses that the
+    # construct rule reaches every route a review demonstrated.
+    # See docs/governance/MODULE_ACQUISITION.md.
+    (
+        "the modules map through vars",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = vars(sys)['modules']['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "the modules map through getattr",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = getattr(sys, 'modules')['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "the modules map through __dict__",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.__dict__['modules']['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "the modules map mutated by pop",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules.pop('nornyx_forge.nornyx_runtime')\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "the modules map mutated by setdefault",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules.setdefault('nornyx_forge.nornyx_runtime', None)\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "sys itself bound by assignment",
+        "src/demo_app/main.py",
+        "\nimport sys\n_A = sys\n_R = _A.modules['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "a copy of the modules map",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = dict(sys.modules)['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "the modules map through __getitem__",
+        "src/demo_app/main.py",
+        "\nimport sys\n_R = sys.modules.__getitem__('nornyx_forge.nornyx_runtime')\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "a star-import binding the modules map",
+        "src/demo_app/main.py",
+        "\nfrom sys import *\n_R = modules['nornyx_forge.nornyx_runtime']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "persistence reaching subprocess through vars",
+        "src/demo_app/store.py",
+        "\nimport sys\n_R = vars(sys)['modules']['subprocess']\n",
+        None,
+        "obtains a module namespace",
+    ),
+    (
+        "a domain leaf reaching persistence through getattr",
+        "src/demo_app/agentic.py",
+        "\nimport sys\n_R = getattr(sys, 'modules')['demo_app.store']\n",
+        None,
+        "obtains a module namespace",
+    ),
 ]
 
 
@@ -285,30 +371,79 @@ def test_an_undeclared_edge_is_refused_however_it_is_spelled(
     )
 
 
-def test_binding_the_modules_map_without_a_lookup_is_not_refused(
+def test_ordinary_reflection_on_ordinary_objects_is_not_refused(
     workspace: Path,
 ):
-    """The over-reach control for the sys.modules rows above.
+    """The over-reach control for the construct refusal.
 
-    A rule that refused every mention of `sys.modules` would satisfy all
-    eight of them and would also refuse code that acquires nothing:
-    binding the map names no module, and the gate must not invent an edge
-    that is not there. `_M = sys.modules` followed by `_M['x']` IS refused
-    -- that row is in the table -- so this pins the boundary rather than
-    weakening it.
+    Refusing every `getattr` and every `__dict__` would satisfy every row
+    above and would also refuse this repository's own governed source: it
+    holds five `getattr` calls with literal names on dataclass instances and
+    streams, and eight bare `instance.__dict__` uses for serialisation. The
+    rule is about reaching a MODULE NAMESPACE, not about reflection, and a
+    gate that could not tell the difference would be unusable rather than
+    strict.
     """
     path = workspace / "src/demo_app/main.py"
     original = path.read_bytes()
     path.write_bytes(
-        original + b"\nimport sys\n_M = sys.modules\n"
+        original
+        + b"\nimport sys\n"
+        + b"_WHERE = sys.executable\n"
+        + b"class _Row:\n    pass\n"
+        + b"_ROW = _Row()\n"
+        + b"_SEEN = getattr(_ROW, 'missing', None)\n"
+        + b"_FLAT = _ROW.__dict__\n"
     )
     try:
         completed = _gate(workspace)
     finally:
         path.write_bytes(original)
     assert completed.returncode == 0, (
-        "binding the modules map acquires no module and names none, and the "
-        "gate refused it anyway:\n" + completed.stdout[-600:]
+        "ordinary reflection on ordinary objects was refused, so the rule "
+        "cannot tell a namespace from an attribute lookup:\n"
+        + completed.stdout[-800:]
+    )
+
+
+def test_binding_the_modules_map_is_itself_refused(workspace: Path):
+    """THE PROPERTY CHANGED, deliberately, and this records the change.
+
+    This test used to assert the opposite -- that `_M = sys.modules` with no
+    lookup is NOT refused -- and under the rule in force then, that was
+    right: the gate resolved which module an expression yielded, and a bare
+    binding yields none.
+
+    That rule was replaced after it was reopened twice, by eleven spellings
+    the second time. The gate no longer resolves targets; it refuses
+    constructs whose target cannot be resolved. Binding the modules map is
+    acquiring the means to reach ANY module without declaring one, so under
+    the new property it is a violation -- and it has to be, because every
+    alias, copy, wrapper and re-export in that table of eleven begins with
+    exactly this line.
+
+    The expectation was not flipped to make an implementation pass: it now
+    refuses MORE than before, and the over-reach direction is held by
+    `test_ordinary_reflection_on_ordinary_objects_is_not_refused`, which
+    proves ordinary `getattr` and `__dict__` on ordinary objects still pass.
+    """
+    path = workspace / "src/demo_app/main.py"
+    original = path.read_bytes()
+    planted = (
+        b"\nimport sys\n_M = sys.modules\n"
+    )
+    path.write_bytes(original + planted)
+    try:
+        completed = _gate(workspace)
+    finally:
+        path.write_bytes(original)
+    assert completed.returncode != 0, (
+        "binding the modules map was accepted, so every spelling that starts "
+        "by binding it is reachable again"
+    )
+    assert "obtains a module namespace" in completed.stdout, (
+        "it was refused, but not as an unresolvable acquisition:\n"
+        + completed.stdout[-600:]
     )
 
 

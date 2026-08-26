@@ -149,7 +149,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The class probes. A class whose specimens stop being collected is a
     # class held down by nothing, so this module has a floor like any
     # other -- the registry is only as real as the tests it names.
-    "tests/test_attack_classes.py": 42,
+    "tests/test_attack_classes.py": 43,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -183,7 +183,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_domain_immutability.py": 9,
     "tests/test_domain_collapse_mutations.py": 24,
     "tests/test_execution_mode_truth.py": 21,
-    "tests/test_architecture_vocabulary.py": 18,
+    "tests/test_architecture_vocabulary.py": 29,
     "tests/test_inspection_subject_matrix.py": 5,
     "tests/test_subject_layer_matrix.py": 15,
     "tests/test_semantic_projection_exclusions.py": 15,
@@ -308,7 +308,9 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # `except*` source. A cap of one would let a fourth parameter start
     # skipping on 3.10 behind a permission granted for these three.
     "tests/test_false_green_audit.py::test_the_screen_answers_the_shapes_a_fourth_round_demonstrated": 3,
-    # ONE of the seven revert rows skips on 3.10, not the whole identity.
+    # ONE revert row skips on 3.10, not the whole identity. No count of the
+    # rows is written here: it said seven while the table held ten, in the
+    # block whose subject is stale prose beside a live constant.
     "tests/test_attack_classes.py::test_reverting_one_fix_reddens_its_own_specimen": 1,
 }
 
@@ -340,12 +342,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2237   (89 modules)
-#     sum of the module floors    2056
-#     band(2237) = ceil(0.9*n)    2014
-#     MINIMUM_COLLECTED           2071
+#     collected across tests/     2250   (89 modules)
+#     sum of the module floors    2068
+#     band(2250) = ceil(0.9*n)    2025
+#     MINIMUM_COLLECTED           2083
 #     above the module sum        15
-#     below what collects         166
+#     below what collects         167
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -366,7 +368,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 181 in total, and the aggregate refuses
+# per-module bands already grant 182 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -387,7 +389,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2071
+MINIMUM_COLLECTED = 2083
 
 
 def band(collected: int) -> int:

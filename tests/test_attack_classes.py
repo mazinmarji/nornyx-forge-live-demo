@@ -434,6 +434,13 @@ REVERTIBLE_FIXES = [
      "        if False:",
      "tests/test_ledger_continuity.py",
      "test_the_named_remedy_converts_the_artifact_it_names"),
+    # ---- the construct refusal that replaced two enumerations ----------
+    ("the unresolvable-access refusal reduced to nothing",
+     "scripts/check_architecture.py",
+     "    sites: list[tuple[int, str]] = []",
+     "    return []",
+     "tests/test_architecture_vocabulary.py",
+     "test_an_undeclared_edge_is_refused_however_it_is_spelled"),
 ]
 
 

@@ -296,8 +296,28 @@ def provision_ledger(
         # the database path uses below: a mark that disagrees with the rows
         # is what continuity exists to detect, and converting it would
         # launder the disagreement into a store that looks migrated.
-        ledger = ApprovalLedger(location)
-        legacy_mark = ledger.plaintext_witness_value()
+        # CONSTRUCTED BEHIND A GUARD. `ApprovalLedger(...)` runs the witness
+        # structure check, which RAISES on a hostile witness -- so this line
+        # reintroduced, in the sibling branch, exactly the traceback-instead-
+        # of-status defect that `--reset-replay-history` below documents as
+        # repaired. A review measured it: a witness carrying a trigger gave
+        # exit 1 and a Python stack trace where this surface's stated
+        # property is A GOVERNED REFUSAL, NOT A TRACEBACK.
+        #
+        # The plain-text reader is asked FIRST, because it needs no
+        # structural check to answer: it reads bytes. A witness that is
+        # neither a mark nor a usable database then falls through to the
+        # database path below, which reports rather than raises.
+        try:
+            ledger = ApprovalLedger(location)
+            legacy_mark = ledger.plaintext_witness_value()
+        except NornyxRuntimeUnavailable as exc:
+            raise typer.BadParameter(
+                f"the continuity witness at {witness} cannot be read as a "
+                f"store this command can convert: {exc}. Nothing was "
+                "changed. Use --reset-replay-history to establish a fresh "
+                "epoch."
+            ) from exc
         if legacy_mark is not None:
             if before_rows != legacy_mark:
                 raise typer.BadParameter(

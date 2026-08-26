@@ -45,6 +45,89 @@ def _module_path(dotted: str) -> Path:
 _COMPUTED = "<computed>"
 
 
+#: Reflection primitives that hand back a namespace without naming a module.
+#:
+#: `vars` and `getattr` are refused only in the shapes that can yield one; a
+#: literal attribute on an ordinary object is ordinary code and stays legal.
+_NAMESPACE_BUILTINS = {"vars", "globals", "locals", "eval", "exec", "__import__"}
+
+
+def _unresolvable_module_access(tree: ast.AST) -> list[tuple[int, str]]:
+    """Constructs that can obtain a module namespace without a static import.
+
+    REFUSED, NOT RESOLVED, and that is the whole difference from what came
+    before. Two earlier attempts tried to decide WHICH module an expression
+    yields by recognising the shape of the expression, and each was reopened by
+    a shape nobody had used yet:
+
+        attempt 1   read Import, ImportFrom and dynamic-import calls
+                    reopened by `sys.modules["x"]`, a subscript
+        attempt 2   add a sys.modules recogniser for subscript and `.get`
+                    reopened by vars(sys)['modules'], getattr(sys,'modules'),
+                    sys.__dict__['modules'], importlib.sys.modules,
+                    `from sys import *`, dict(sys.modules), .copy(),
+                    __getitem__, .pop, .setdefault, a dict subclass, and a
+                    two-file re-export
+
+    Both are the same strategy, and its assumption is false: `sys.modules` is an
+    ordinary dict reachable through every reflection primitive Python has, and
+    any expression evaluating to it can be aliased, copied, wrapped or
+    re-exported. A rule that resolves targets is always one spelling behind,
+    which is AC01 -- and attempt 2 committed AC01 while repairing AC04.
+    See `docs/governance/MODULE_ACQUISITION.md` for the matrix.
+
+    So this asks a decidable question instead: CAN this be resolved at all? The
+    precedent is `_computed_dynamic_imports`, which never guesses what
+    `import_module(name)` loads -- it refuses, because no declared dependency
+    graph can model a name assembled at runtime.
+
+    Aliasing does not help an attacker here: to alias `sys.modules` you must
+    first write `.modules`, and that write is in governed source.
+
+    WHAT THIS STILL DOES NOT DECIDE, stated rather than implied. A class is not
+    a module: `object.__subclasses__()` reaches `Popen` without touching a
+    module namespace at all. That is a different acquisition route and refusing
+    the class graph is a new product requirement, filed for v1.1 and NOT
+    claimed here. Nor does any static rule see a module object passed in as an
+    argument from outside governed source.
+    """
+    sites: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        # `X.modules`, on ANY expression. Every route above writes this at
+        # least once -- including the re-export, which is refused in the file
+        # that writes `MODMAP = sys.modules`, not the one that reads it.
+        if isinstance(node, ast.Attribute) and node.attr == "modules":
+            sites.append((node.lineno, "a module map reached by attribute"))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name in _NAMESPACE_BUILTINS:
+                sites.append((node.lineno, name + "() yields a namespace"))
+            elif name == "getattr":
+                # A LITERAL name on an ordinary object is ordinary code. A
+                # computed name is unknowable, and the literal "modules" is the
+                # thing itself spelled as a string.
+                second = node.args[1] if len(node.args) > 1 else None
+                literal = (
+                    isinstance(second, ast.Constant)
+                    and isinstance(second.value, str)
+                )
+                if not literal:
+                    sites.append((node.lineno, "getattr with a computed name"))
+                elif second.value == "modules":
+                    sites.append((node.lineno, "getattr(..., 'modules')"))
+        elif isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                sites.append((node.lineno, "a star-import binds unknown names"))
+        # `X.__dict__` INDEXED OR CALLED INTO. A bare `instance.__dict__` is
+        # ordinary serialisation and this repository uses it eight times; it is
+        # `__dict__['modules']` and `__dict__.get(...)` that reach a namespace.
+        elif isinstance(node, (ast.Subscript, ast.Attribute)):
+            inner = node.value
+            if isinstance(inner, ast.Attribute) and inner.attr == "__dict__":
+                sites.append((node.lineno, "a namespace reached through __dict__"))
+    return sorted(set(sites))
+
+
 def _sys_module_aliases(tree: ast.AST) -> tuple[set[str], set[str]]:
     """Names bound to `sys`, and names bound to `sys.modules` itself.
 
@@ -84,7 +167,21 @@ def _sys_modules_target(
 ) -> str | None:
     """The module a `sys.modules` lookup names, `_COMPUTED`, or None.
 
-    THE ONE RECOGNISER, deliberately. `sys.modules` was already understood
+    ONE OF TWO RECOGNISERS, and that is a disclosure rather than a design.
+    This docstring used to claim it was the only one and that `Both callers
+    use this function`; a review measured both halves false. The capability
+    scan routes `ast.Call` to `_dynamically_imported_module`, which carries
+    its own `sys.modules` recogniser and covers MORE mutators than this one
+    -- `get`, `pop`, `setdefault`, under a comment saying that listing them
+    is not thoroughness but that each evaluates to the module. So the
+    narrower recogniser was the one wearing the label.
+
+    Neither is load-bearing against a determined spelling any more:
+    `_unresolvable_module_access` refuses the constructs instead of
+    resolving them, and this function now only enriches the dependency
+    graph for the spellings it can name exactly.
+
+    `sys.modules` was already understood
     by the process-capability scan and not by the dependency scan, so a
     first-party edge written this way was invisible to the graph while an
     exec module written the same way was caught. Measured on this
@@ -371,6 +468,15 @@ for module_id, module in sorted(declared_modules.items()):
     # A declared dependency graph means nothing if a module can import a name
     # assembled at runtime. Literal dynamic imports are modelled as ordinary
     # dependencies by `_imports`; computed ones cannot be, so they are refused.
+    # REFUSED BECAUSE UNRESOLVABLE, the same principle as the loop below.
+    for lineno, why in _unresolvable_module_access(
+        ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+    ):
+        violations.append(
+            f"{relative}:{lineno} obtains a module namespace by {why}, "
+            "which no declared dependency graph can model. A governed "
+            "module acquires a module only by static import."
+        )
     for site in _computed_dynamic_imports(path, relative):
         violations.append(
             f"{site} imports a module named at runtime, which no declared "
