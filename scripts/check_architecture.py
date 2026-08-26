@@ -92,12 +92,43 @@ def _unresolvable_module_access(tree: ast.AST) -> list[tuple[int, str]]:
     argument from outside governed source.
     """
     sites: list[tuple[int, str]] = []
+    sys_aliases, modules_aliases = _sys_module_aliases(tree)
+
+    # THE ONE RESOLVABLE FORM IS EXEMPT, and exempting it is the point rather
+    # than a concession. `sys.modules["json"]` names its target literally, so
+    # `_sys_modules_target` resolves it and the dependency graph MODELS it as
+    # an ordinary edge -- refused when undeclared, accepted when declared.
+    # Refusing it as well would refuse a resolvable dependency for being
+    # spelled unusually, which is over-reach, and
+    # `test_ordinary_module_use_is_not_refused[sys.modules for a benign
+    # module]` measured exactly that when this rule first landed blunt.
+    #
+    # Every OTHER shape reaches the map without naming what it takes from it:
+    # a bare binding, a copy, a mutator, an aliased owner, a re-export. Those
+    # are unresolvable and are refused unresolved.
+    resolvable: set = set()
     for node in ast.walk(tree):
-        # `X.modules`, on ANY expression. Every route above writes this at
-        # least once -- including the re-export, which is refused in the file
-        # that writes `MODMAP = sys.modules`, not the one that reads it.
+        if not isinstance(node, (ast.Subscript, ast.Call)):
+            continue
+        target = _sys_modules_target(node, sys_aliases, modules_aliases)
+        if target is None or target == _COMPUTED:
+            continue
+        owner = (
+            node.value if isinstance(node, ast.Subscript) else node.func.value
+        )
+        resolvable.add(id(owner))
+
+    for node in ast.walk(tree):
+        # `X.modules`, on ANY expression, unless this exact node is the owner
+        # of a lookup that names its target literally. Every route in the
+        # matrix writes this at least once -- including the re-export, which
+        # is refused in the file that writes `MODMAP = sys.modules`, not the
+        # one that reads it.
         if isinstance(node, ast.Attribute) and node.attr == "modules":
-            sites.append((node.lineno, "a module map reached by attribute"))
+            if id(node) not in resolvable:
+                sites.append(
+                    (node.lineno, "a module map reached by attribute")
+                )
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             name = node.func.id
             if name in _NAMESPACE_BUILTINS:
