@@ -185,8 +185,30 @@ def purge_bytecode(tree: Path) -> None:
     """
     import shutil  # noqa: PLC0415
 
-    for cached in tree.rglob("__pycache__"):
-        shutil.rmtree(cached, ignore_errors=True)
+    # NOT THROUGH `.git`, and not assuming the walk is atomic.
+    #
+    # `tree.rglob(...)` from the root descends into `.git/objects`, where
+    # bytecode never lives and where entries disappear underneath a walker:
+    # `faithful_copy` commits, git packs the loose objects away, and the
+    # iterator reaches a directory that no longer exists. Measured on CI as
+    # `FileNotFoundError: .../mutant/tree/.git/objects/0d` in
+    # `test_r2_a_green_helper_cannot_stand_in_for_the_runner` -- green on
+    # 3.10, 3.12 and 3.13 in the same run, because it is a race and not a
+    # version difference. Introduced by this function, which is why it is
+    # recorded here rather than anywhere more flattering.
+    #
+    # Both halves are needed: skipping `.git` removes the only directory
+    # something else rewrites concurrently, and tolerating a vanished entry
+    # keeps a purge from failing a proof for a file it was going to delete.
+    for entry in tree.iterdir():
+        if entry.name == ".git" or not entry.is_dir():
+            continue
+        try:
+            cached_dirs = list(entry.rglob("__pycache__"))
+        except OSError:  # pragma: no cover - a concurrent rewrite
+            continue
+        for cached in cached_dirs:
+            shutil.rmtree(cached, ignore_errors=True)
 
 
 def isolated_env(tree: Path) -> dict:
