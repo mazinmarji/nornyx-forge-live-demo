@@ -69,15 +69,26 @@ demonstrated it on the exact head, on the HTTP surface reaching the
 governance domain -- the edge this checker annotates as refused
 unconditionally, whatever the contract later says.
 
-Four further routes were demonstrated at the same head, each with
-`exit=0, violations: []` and the module object confirmed live at runtime:
+Further routes were demonstrated at the same head, each with
+`exit=0, violations: []` and the module object confirmed live at runtime.
 
-| route | why it is invisible |
-|---|---|
-| `func.__globals__["subprocess"]` | the module dict under another attribute name |
-| an `__init__.py` classified inert | never scanned; the refusals run only over DECLARED modules |
-| `__builtins__["__import__"](...)` | a Subscript callee; the attribute form IS caught |
-| `pkgutil` / `runpy` / `inspect` / loaders | outside the four-name importer list |
+Each carries an **id**, and `tests/test_module_acquisition_limits.py` pins
+exactly this set of ids -- compared in both directions, because the first
+version of that file pinned five rows that were a DIFFERENT five: it split
+`pkgutil`/`runpy` in two and omitted `inert-init` altogether, so closing that
+route left every pinned row green while this document went on claiming a
+limitation the code no longer had. That is the failure this table exists to
+prevent, in the file that names it.
+
+| id | route | why it is invisible |
+|---|---|---|
+| `func-globals` | `func.__globals__["subprocess"]` | the module dict under another attribute name |
+| `inert-init` | an `__init__.py` classified inert | never scanned; the refusals run only over DECLARED modules |
+| `subscript-callee` | `__builtins__["__import__"](...)` | a Subscript callee; the attribute form IS caught |
+| `from-import-hop` | `from sys import modules as _m` then one hop | the alias writes no `.modules` attribute to key on |
+| `pkgutil-resolve` | `pkgutil.resolve_name(...)` | outside the four-name importer list |
+| `runpy-run-module` | `runpy.run_module(...)` | as above, by a different stdlib entry point |
+| `inspect-getmodule` | `inspect.getmodule(...)` | as above, from an object rather than a name |
 
 So this document no longer claims that a governed module acquires a module
 only by static import. It claims exactly what the code does: **the constructs

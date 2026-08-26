@@ -237,7 +237,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_ledger_continuity.py": 52,
     #: The v1 boundary of architecture-check, pinned from both sides:
     #: five disclosed routes and three controls that must stay decided.
-    "tests/test_module_acquisition_limits.py": 9,
+    "tests/test_module_acquisition_limits.py": 11,
     # A7-P1-2: the crash sweep, both restore directions, and the
     # concurrency controls. The sweep spawns 60 children per node, so
     # this module is slow by construction -- the price of MEASURING a
@@ -345,12 +345,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2268   (90 modules)
-#     sum of the module floors    2086
-#     band(2268) = ceil(0.9*n)    2042
-#     MINIMUM_COLLECTED           2101
+#     collected across tests/     2271   (90 modules)
+#     sum of the module floors    2088
+#     band(2271) = ceil(0.9*n)    2044
+#     MINIMUM_COLLECTED           2103
 #     above the module sum        15
-#     below what collects         167
+#     below what collects         168
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -371,7 +371,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 182 in total, and the aggregate refuses
+# per-module bands already grant 183 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -392,7 +392,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2101
+MINIMUM_COLLECTED = 2103
 
 
 def band(collected: int) -> int:

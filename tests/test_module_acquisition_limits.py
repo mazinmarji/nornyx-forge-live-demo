@@ -40,42 +40,55 @@ ROOT = Path(__file__).resolve().parents[1]
 
 RUNTIME = "nornyx_forge.nornyx_runtime"
 
-#: (label, file, payload that ACQUIRES a module, why the parser cannot see it).
+#: (id, file, payload that ACQUIRES a module, why the parser cannot see it).
 #:
 #: Every payload was verified at the head that recorded them to hand back the
 #: live module object, not merely to parse.
 UNDECIDED_ROUTES = [
     (
-        "a function's __globals__",
+        "func-globals",
         "src/demo_app/agentic.py",
         "\n_SP = ClaudeCodeWorker.run.__globals__['subprocess']\n",
         "the module dict under an attribute name the refusal does not read",
     ),
     (
-        "the modules map bound by from-import, then one hop",
+        "from-import-hop",
         "src/demo_app/main.py",
         "\nfrom sys import modules as _m\n_H = _m\n_R = _H.pop('" + RUNTIME + "')\n",
         "`from sys import modules` writes no `.modules` attribute to key on",
     ),
     (
-        "a Subscript callee",
+        "subscript-callee",
         "src/demo_app/store.py",
         "\n_SP = __builtins__['__import__']('subprocess')\n",
         "the callee is neither a Name nor an Attribute",
     ),
     (
-        "pkgutil.resolve_name",
+        "inert-init",
+        "src/demo_app/__init__.py",
+        "\n__version__ = __import__('subprocess')\n",
+        "an __init__.py classified inert is never scanned; `_is_inert_package_init` reads assignment TARGET names and never the assigned value",
+    ),
+    (
+        "pkgutil-resolve",
         "src/demo_app/agentic.py",
         "\nimport pkgutil\n_SP = pkgutil.resolve_name('subprocess')\n",
         "a module-acquisition API outside the declared importer list",
     ),
     (
-        "runpy.run_module",
+        "runpy-run-module",
         "src/demo_app/agentic.py",
         "\nimport runpy\n_SP = runpy.run_module('subprocess')\n",
-        "as above, by a different stdlib entry point",
+        "as above, by a different stdlib entry point. This one yields the module's NAMESPACE DICT rather than a module object -- capability-equivalent, and named precisely because the first draft of this table said otherwise",
+    ),
+    (
+        "inspect-getmodule",
+        "src/demo_app/agentic.py",
+        "\nimport inspect\n_M = inspect.getmodule(canonical_action_request)\n",
+        "as above, reached from an object rather than from a name",
     ),
 ]
+
 
 #: (label, file, payload) the gate DOES decide. The contrast that keeps the
 #: table above from being satisfied by a gate that refuses nothing.
@@ -132,11 +145,11 @@ def test_the_baseline_is_clean(workspace: Path):
 
 
 @pytest.mark.parametrize(
-    ("label", "relative", "payload", "why"), UNDECIDED_ROUTES,
+    ("route_id", "relative", "payload", "why"), UNDECIDED_ROUTES,
     ids=[case[0] for case in UNDECIDED_ROUTES],
 )
 def test_a_disclosed_route_is_still_outside_the_static_claim(
-    workspace: Path, label: str, relative: str, payload: str, why: str,
+    workspace: Path, route_id: str, relative: str, payload: str, why: str,
 ):
     """Measured, not asserted: this route is NOT refused, and that is disclosed.
 
@@ -148,7 +161,7 @@ def test_a_disclosed_route_is_still_outside_the_static_claim(
     """
     completed = _with(workspace, relative, payload)
     assert completed.returncode == 0, (
-        label + ": this route is now REFUSED. " + why + ". The claim in "
+        route_id + ": this route is now REFUSED. " + why + ". The claim in "
         "docs/ASSURANCE_BOUNDARY.md and the `scope` on architecture-check are "
         "now narrower than the gate; update them and remove this row:\n"
         + completed.stdout[-800:]
@@ -173,4 +186,35 @@ def test_what_the_gate_does_decide_is_still_decided(
     assert completed.returncode != 0, (
         label + ": a spelling inside the v1 claim was accepted, so the "
         "disclosed limits above are not a boundary -- the gate is not deciding"
+    )
+
+def test_the_pinned_routes_are_exactly_the_documented_ones():
+    """Both directions, because the first version of this file was a
+    DIFFERENT five from the document's.
+
+    It split `pkgutil`/`runpy` into two rows and omitted `inert-init`, so the
+    document promised that closing any listed route would redden this file
+    and, for that route, it would not have: a final review closed it and
+    measured every pinned row still green. A frozen set with no guard is the
+    one shape this repository has a mechanical check for everywhere else --
+    the attack corpus, the release contract's counts, the accepted
+    pre-approval diagnostics. This set is now in that family.
+    """
+    import re  # noqa: PLC0415
+
+    text = (ROOT / "docs" / "governance" / "MODULE_ACQUISITION.md").read_text(
+        encoding="utf-8"
+    )
+    documented = set(
+        re.findall(r"^\| `([a-z-]+)` \|", text, re.MULTILINE)
+    )
+    pinned = {case[0] for case in UNDECIDED_ROUTES}
+    assert documented, (
+        "no route ids parsed out of MODULE_ACQUISITION.md, so this guard "
+        "would pass against an empty document"
+    )
+    assert documented == pinned, (
+        "the document and the pin disagree; documented-only "
+        + repr(sorted(documented - pinned))
+        + ", pinned-only " + repr(sorted(pinned - documented))
     )
