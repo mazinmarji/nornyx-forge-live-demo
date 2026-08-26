@@ -154,7 +154,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 155,
+    "tests/test_recorded_measurements.py": 160,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -342,10 +342,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2250   (89 modules)
-#     sum of the module floors    2068
-#     band(2250) = ceil(0.9*n)    2025
-#     MINIMUM_COLLECTED           2083
+#     collected across tests/     2255   (89 modules)
+#     sum of the module floors    2073
+#     band(2255) = ceil(0.9*n)    2030
+#     MINIMUM_COLLECTED           2088
 #     above the module sum        15
 #     below what collects         167
 #
@@ -389,7 +389,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2083
+MINIMUM_COLLECTED = 2088
 
 
 def band(collected: int) -> int:

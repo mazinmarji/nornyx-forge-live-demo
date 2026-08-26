@@ -51,6 +51,9 @@ CONTRACTS = Path(".nornyx/contracts")
 REFRESH = "scripts/refresh_governance_evidence.py"
 ATTESTATIONS = CONTRACTS / "evidence" / "attestations"
 
+#: Where the generator writes the independent-review verdict.
+RECORD_RELATIVE = ".nornyx/contracts/evidence/architecture_independent_review.json"
+INDEX_RELATIVE = ".nornyx/contracts/evidence/INDEX.json"
 REQUIRED = ("test-inspector", "architecture-inspector", "security-inspector")
 BUILDER = "builder.nornyx_forge"
 
@@ -334,6 +337,46 @@ def test_one_reviewer_cannot_cover_every_role(tmp_path: Path):
         "inspections"
     )
     assert state["assurance_state"] == "not_independently_inspected"
+
+    # AND THE EMITTED RECORD MUST SAY THE SAME THING.
+    #
+    # This test used to stop at the line above, and the defect it could not
+    # see lived one file away: the record generator applied the COVERAGE
+    # clause and not the DISTINCTNESS clause, so the same three attestations
+    # produced `status: pass` in
+    # `evidence/architecture_independent_review.json` -- and, through
+    # `--sync-contracts`, in the contract -- while the control above refused
+    # them. A review measured `verdict_basis: attested by reviewer.solo,
+    # reviewer.solo, reviewer.solo` beside a statement calling it an
+    # independent machine review.
+    #
+    # Enforcement was never wrong. What was wrong is that a governed artifact
+    # asserted a passing independent review over an inspection the deciding
+    # control rejects, which is the disagreement the generator's own comment
+    # says it exists to prevent.
+    assert _run(work, reviewers, REFRESH).returncode == 0
+    # THE INDEX ENTRY CARRIES THE VERDICT, not the record body. The first
+    # draft of this block read `status` off the record file, where the key
+    # does not exist at all -- so `!= "pass"` was true whatever the
+    # generator decided, and reverting the fix left it green. Measured
+    # before this correction: revert applied, test still passed.
+    index = json.loads(
+        (work / INDEX_RELATIVE).read_text(encoding="utf-8")
+    )
+    entry = index["entries"]["architecture_independent_review"]
+    record = json.loads(
+        (work / RECORD_RELATIVE).read_text(encoding="utf-8")
+    )
+    assert entry.get("status") != "pass", (
+        "the evidence index claims a passing independent review over an "
+        "inspection derive_assurance_state refuses: "
+        + json.dumps({"status": entry.get("status"),
+                      "verdict_basis": record.get("verdict_basis")})
+    )
+    assert "not independent" in str(record.get("verdict_basis", "")), (
+        "the record withheld the verdict without saying why: "
+        + str(record.get("verdict_basis"))
+    )
 
 
 def test_a_duplicate_role_cannot_be_resolved_by_ordering(settled):

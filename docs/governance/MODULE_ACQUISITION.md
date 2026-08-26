@@ -49,23 +49,77 @@ governed source, without resolving what they evaluate to:
     the globals, locals, eval, exec and __import__ builtins
       (named without call syntax here on purpose: this document is
        scanned for dynamic-execution patterns, and it should be)
-    importlib, in any form
+    (importlib is NOT in this set -- see below)
 
 Every one of the eleven bypasses in the table above touches at least one of
 these **in governed source**, at the point where the module namespace first
 enters the file — including the two-file re-export, which is refused in the file
 that writes `MODMAP = sys.modules`, not in the file that reads it.
 
-**Why this is decidable where the other was not.** The refused set is a property
-of the *syntax being written*, not of the *value it produces*. Aliasing does not
-help an attacker: to alias `sys.modules` you must first write `.modules`.
+**THIS CLAIM WAS FALSE AND IS WITHDRAWN.** It read: *the refused set is a
+property of the syntax being written, not of the value it produces; aliasing
+does not help an attacker, because to alias `sys.modules` you must first
+write `.modules`.*
 
-**Measured against the current tree, this refuses nothing that is there.**
-Governed `src/` contains zero `vars`, `globals`, `locals`, `eval`, `exec`,
-`__import__`, `importlib`, `__subclasses__`, and zero `.modules` accesses. Its
-five `getattr` calls all pass literal names on dataclass instances and streams;
-its eight `__dict__` uses are all `<dataclass>.__dict__` for serialisation and
-none is subscripted. `sys` is used for `executable`, `stdout` and `stderr` only.
+You need not. `from sys import modules as _m` aliases the map with no
+attribute access at all, and `_m.pop(...)`, `_m.setdefault(...)`,
+`_m.__getitem__(...)`, `dict(_m)[...]` and `_m.copy()[...]` then fall between
+the two analyses: not resolvable, and not refused. Two independent reviews
+demonstrated it on the exact head, on the HTTP surface reaching the
+governance domain -- the edge this checker annotates as refused
+unconditionally, whatever the contract later says.
+
+Four further routes were demonstrated at the same head, each with
+`exit=0, violations: []` and the module object confirmed live at runtime:
+
+| route | why it is invisible |
+|---|---|
+| `func.__globals__["subprocess"]` | the module dict under another attribute name |
+| an `__init__.py` classified inert | never scanned; the refusals run only over DECLARED modules |
+| `__builtins__["__import__"](...)` | a Subscript callee; the attribute form IS caught |
+| `pkgutil` / `runpy` / `inspect` / loaders | outside the four-name importer list |
+
+So this document no longer claims that a governed module acquires a module
+only by static import. It claims exactly what the code does: **the constructs
+listed above are refused where they appear in a DECLARED governed module, and
+that set is not closed.**
+
+`importlib` is NOT refused, and the list above said it was. A frozen specimen
+-- `test_ordinary_module_use_is_not_refused[dynamic import of json]` --
+REQUIRES `importlib.import_module('json')` to pass, because a literal dynamic
+import is resolvable and is modelled as an ordinary edge. A document
+contradicting the frozen corpus is AC03, in the file that names AC03.
+
+## The classification
+
+Three distinct approaches have failed. Per the operating goal's LOOP-ESCAPE
+rule this is classified rather than attempted a fourth time:
+
+**ARCHITECTURE_DECISION_REQUIRED.**
+
+Not UNMEASURABLE. The property IS measurable, by a mechanism this gate does
+not have: a governed module either holds a module object or it does not, and
+that is observable by importing it in isolation and inspecting what it bound.
+Every route above is visible to such an observation and invisible to a parser,
+precisely because each reaches the object through an expression whose value is
+known only at runtime.
+
+Adopting that turns a gate that reads text into one that executes it, bringing
+import side effects, ordering and third-party code inside the control. The
+alternative is to narrow what Forge claims about this gate. Both are decisions
+with consequences past this defect, and neither belongs to an autonomous run
+inside a release freeze. Evidence preserved; open.
+
+## The over-reach direction, measured
+
+**This refuses nothing that is in the tree today.** Governed `src/` contains
+zero `vars`, `globals`, `locals`, `eval`, `exec`, `__import__`,
+`__subclasses__`, and zero `.modules` accesses. Its SIX `getattr` calls --
+the count read five here until a review counted them -- all pass literal
+names on dataclass instances and streams; its eight `__dict__` uses are all
+`<dataclass>.__dict__` for serialisation and none is subscripted. `sys` is
+used for `executable`, `stdout` and `stderr` only. Pinned by
+`test_ordinary_reflection_on_ordinary_objects_is_not_refused`.
 
 ## What this still does not decide, stated rather than implied
 

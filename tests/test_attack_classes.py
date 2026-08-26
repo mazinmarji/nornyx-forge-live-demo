@@ -441,6 +441,22 @@ REVERTIBLE_FIXES = [
      "    return []",
      "tests/test_architecture_vocabulary.py",
      "test_an_undeclared_edge_is_refused_however_it_is_spelled"),
+    # NOT A ROW: the distinctness clause in
+    # `scripts/refresh_governance_evidence.py`. Its specimen,
+    # `test_one_reviewer_cannot_cover_every_role`, builds its own workspace
+    # and settles contracts inside it, which cannot run nested in this
+    # harness's workspace -- `require_pristine_baseline` refused it as
+    # INVALID_BASELINE rather than letting a workspace defect read as a kill.
+    #
+    # The revert was measured IN PLACE instead, and the result is recorded
+    # here because a measurement that lives only in a commit message is what
+    # CLOSURE_PROTOCOL forbids. Reverting
+    #     review_status = "pass" if not absent and not shared else "observed"
+    # to `"pass" if not absent else "observed"` fails that specimen with:
+    #     the evidence index claims a passing independent review over an
+    #     inspection derive_assurance_state refuses:
+    #     {"status": "pass", "verdict_basis": "authenticated inspection is
+    #      not independent: 3 inspector roles are covered by 1 reviewer(s)"}
 ]
 
 
@@ -504,7 +520,16 @@ def test_reverting_one_fix_reddens_its_own_specimen(
     # attributes -- reaches modules that read the contracts at import time,
     # and a workspace without them fails BEFORE any mutation. That is not a
     # kill, and `require_pristine_baseline` correctly refused to call it one.
-    for name in ("tests", "src", "scripts", ".nornyx"):
+    # THE UNION OF WHAT THE SPECIMEN FIXTURES COPY, read off them rather
+    # than guessed one failure at a time: `test_independent_inspection`
+    # builds its workspace from scripts, src, docs, .nornyx, tests and
+    # .github. A revert row naming a specimen there fails at the pristine
+    # baseline without them -- INVALID_BASELINE, which is the machinery
+    # correctly refusing to call a missing fixture a kill.
+    # governance documents, and a workspace without them fails at the
+    # pristine baseline -- INVALID_BASELINE, the machinery correctly
+    # refusing to call a missing fixture a kill.
+    for name in ("tests", "src", "scripts", ".nornyx", "docs", ".github"):
         if not (ROOT / name).is_dir():  # pragma: no cover - all present
             continue
         shutil.copytree(

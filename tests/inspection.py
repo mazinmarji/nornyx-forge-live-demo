@@ -88,6 +88,54 @@ class Reviewers:
         )
 
 
+
+class OneReviewerForEveryRole(Reviewers):
+    """A trust store an operator can plausibly build, and must not be assured.
+
+    `ASSURANCE_BOUNDARY.md` requires each inspector role to be signed by a
+    DISTINCT reviewer. Nothing stops an operator authorising one identity for
+    all three, so the interesting case is not whether it can be built -- it
+    can -- but whether every consumer of the result says the same thing about
+    it. One did not: the emitted record applied the coverage clause and not
+    the distinctness clause, and displayed `status: pass` over an inspection
+    `derive_assurance_state` refused.
+    """
+
+    def __init__(self, store_dir: Path) -> None:
+        key = Ed25519PrivateKey.generate()
+        private = key.private_bytes(
+            Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
+        )
+        name = "reviewer.omni"
+        self.private = {role: private for role in REQUIRED_ROLES}
+        self.names = {role: name for role in REQUIRED_ROLES}
+        self.key_ids = {role: "rev-omni" for role in REQUIRED_ROLES}
+        store_dir.mkdir(parents=True, exist_ok=True)
+        self.store = store_dir / "reviewer_trust.json"
+        self.store.write_text(
+            json.dumps(
+                {
+                    "schema": "nornyx.forge.reviewer_trust_store.v1",
+                    "reviewers": [
+                        {
+                            "key_id": "rev-omni",
+                            "reviewer": name,
+                            "roles": list(REQUIRED_ROLES),
+                            "public_key": key.public_key()
+                            .public_bytes(
+                                Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+                            )
+                            .decode("utf-8"),
+                            "status": "active",
+                        }
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+            newline="",
+        )
+
 def inspection_env(work: Path, reviewers: Reviewers | None) -> dict[str, str]:
     """Environment for a subprocess run against this workspace.
 
@@ -125,14 +173,18 @@ def current_subject(work: Path) -> str:
     return completed.stdout.strip()
 
 
-def authenticate_inspection(work: Path, store_dir: Path) -> Reviewers:
+def authenticate_inspection(
+    work: Path, store_dir: Path, *, one_reviewer: bool = False
+) -> Reviewers:
     """Sign a passing attestation per role over this workspace's subject.
 
     Returns the reviewer set so the caller can pass its store to later runs.
     The attestations are written into the workspace's evidence directory, which
     is where the evidence tooling looks for them.
     """
-    reviewers = Reviewers(store_dir)
+    reviewers = (
+        OneReviewerForEveryRole(store_dir) if one_reviewer else Reviewers(store_dir)
+    )
     subject = current_subject(work)
     target = work / ATTESTATION_RELATIVE
     target.mkdir(parents=True, exist_ok=True)

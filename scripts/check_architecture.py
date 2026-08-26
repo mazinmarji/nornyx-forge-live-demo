@@ -81,8 +81,18 @@ def _unresolvable_module_access(tree: ast.AST) -> list[tuple[int, str]]:
     `import_module(name)` loads -- it refuses, because no declared dependency
     graph can model a name assembled at runtime.
 
-    Aliasing does not help an attacker here: to alias `sys.modules` you must
-    first write `.modules`, and that write is in governed source.
+    THAT REASONING WAS WRONG AND THE CLAIM IS WITHDRAWN. It said aliasing
+    does not help, because to alias `sys.modules` you must first write
+    `.modules`. `from sys import modules as _m` does not, and `_m.pop(...)`
+    then reaches the governance domain from the HTTP surface with
+    `violations: []`. Two reviews demonstrated it independently.
+
+    This function refuses the constructs it lists, in DECLARED governed
+    modules, and that set is NOT closed: `func.__globals__`, an inert
+    `__init__.py`, a Subscript callee, and `pkgutil`/`runpy`/`inspect` each
+    reach a module object past it. See docs/governance/MODULE_ACQUISITION.md
+    for the matrix, the classification, and why a fourth enumeration was not
+    attempted.
 
     WHAT THIS STILL DOES NOT DECIDE, stated rather than implied. A class is not
     a module: `object.__subclasses__()` reaches `Popen` without touching a

@@ -538,7 +538,26 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
         role: entry for role, entry in authenticated.items() if entry["verdict"] == "pass"
     }
     absent = REQUIRED_INSPECTORS - set(passing)
-    review_status = "pass" if not absent else "observed"
+    # DISTINCTNESS TOO, not only coverage.
+    #
+    # `derive_assurance_state` applies both clauses: every required role
+    # covered, AND the covering reviewers distinct. This site applied only
+    # the first, so one reviewer authorised for all three roles produced
+    # `status: pass` in the emitted record and, through --sync-contracts, in
+    # the contract -- while the deciding control refused the same content
+    # with `one reviewer covers several inspector roles`. A review measured
+    # exactly that: verdict_basis read `attested by reviewer.omni,
+    # reviewer.omni, reviewer.omni` beside a statement calling it an
+    # independent review.
+    #
+    # The comment four lines above named this anti-goal -- `a written claim
+    # disagreeing with the control that decides` -- and the code below it
+    # did not meet it. ASSURANCE_BOUNDARY.md requires each role `signed by a
+    # DISTINCT reviewer`, so a record that says pass on three hats worn by
+    # one head asserts something this repository explicitly does not claim.
+    covering = {entry["reviewer"] for entry in passing.values()}
+    shared = bool(passing) and len(covering) != len(passing)
+    review_status = "pass" if not absent and not shared else "observed"
     if not authenticated:
         verdict_basis = (
             "no authenticated inspection of the current subject; the in-session "
@@ -549,6 +568,13 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
         verdict_basis = (
             "authenticated inspection incomplete; missing or failing inspectors: "
             + ", ".join(sorted(absent))
+        )
+    elif shared:
+        verdict_basis = (
+            "authenticated inspection is not independent: "
+            + str(len(passing)) + " inspector roles are covered by "
+            + str(len(covering)) + " reviewer(s) -- "
+            + ", ".join(sorted(covering))
         )
     else:
         verdict_basis = "attested by " + ", ".join(

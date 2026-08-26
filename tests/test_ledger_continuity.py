@@ -1411,8 +1411,28 @@ def test_a_mark_that_disagrees_with_the_rows_is_not_converted(tmp_path: Path) ->
     result = CliRunner().invoke(
         app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
     )
-    assert result.exit_code != 0, result.output
-    assert "Traceback" not in result.output, result.output[-800:]
+    # THE EXCEPTION, NOT THE OUTPUT. `CliRunner` puts an unhandled exception
+    # in `result.exception` and leaves `output` EMPTY, so the assertion this
+    # replaces -- `"Traceback" not in result.output` -- could not fire.
+    # Measured by a review: with the plain-text reader disabled the command
+    # raised an uncaught `sqlite3.DatabaseError` and this test stayed GREEN.
+    # An assertion that cannot fail, in the suite whose subject is assertions
+    # that cannot fail.
+    #
+    # `exit_code == 2` rather than `!= 0`, which is what the siblings on this
+    # surface assert: 1 is the code an unhandled exception produces, so
+    # `!= 0` accepts precisely the failure mode "a governed refusal, not a
+    # traceback" exists to forbid.
+    assert result.exception is None or isinstance(
+        result.exception, SystemExit
+    ), (
+        "the command raised instead of reporting a governed refusal: "
+        + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code) + NL + result.output[-800:]
+    )
     assert ledger.watermark_path.read_bytes() == b"99", (
         "a witness that disagrees with the rows was converted anyway"
     )
