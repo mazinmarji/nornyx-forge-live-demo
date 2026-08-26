@@ -1436,3 +1436,134 @@ def test_a_mark_that_disagrees_with_the_rows_is_not_converted(tmp_path: Path) ->
     assert ledger.watermark_path.read_bytes() == b"99", (
         "a witness that disagrees with the rows was converted anyway"
     )
+
+
+def test_a_busy_store_is_reported_and_nothing_is_half_converted(
+    tmp_path: Path,
+) -> None:
+    """AC05, on the command a refusal names as the non-destructive remedy.
+
+    The conversion loop took the ledger first and the witness second with no
+    guard. A review held ONE ordinary reader on the witness and ran the remedy
+    that `LEDGER_CONTINUITY_MIGRATION_REQUIRED` names: the ledger was converted,
+    the witness raised `OperationalError: database is locked` out of
+    `provision_ledger`, the verify-after never ran, and the command emitted no
+    status at all -- exit 1, empty stdout, journal modes left `['delete', 'wal']`.
+
+    Nothing was released, because the ledger goes on refusing. But it refuses
+    while naming a command that is inoperative whenever anything else holds the
+    file open, which leaves `--reset-replay-history` -- the one that DISCARDS
+    approvals -- as the only escape. The runtime treats contention as a
+    first-class state at four sites and calls it NOT DAMAGE; a maintenance
+    command that turns it into a stack trace disagrees with the runtime about
+    the same condition.
+
+    Two properties, because fixing only the first would still corrupt: the
+    command REPORTS, and it converts NEITHER store when it cannot convert both.
+
+    The pre-check takes an EXCLUSIVE lock deliberately. `BEGIN IMMEDIATE` takes
+    RESERVED, which a plain reader does not block, so the first version of this
+    guard passed the pre-check and raised in the conversion anyway -- probing at
+    a weaker lock level than the operation needs answers a different question.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    witness = ledger.watermark_path
+    for target in (location, witness):
+        with sqlite3.connect(target) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    def modes() -> list:
+        seen = []
+        for target in (location, witness):
+            with sqlite3.connect(target) as conn:
+                seen.append(
+                    str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                )
+        return seen
+
+    before = modes()
+    assert before == ["wal", "wal"], before
+
+    holder = sqlite3.connect(f"file:{witness}?mode=rw", uri=True)
+    holder.execute("SELECT value FROM high_water").fetchone()
+    try:
+        result = CliRunner().invoke(
+            app,
+            ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"],
+        )
+    finally:
+        holder.close()
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a busy store raised out of the command instead of being reported: "
+        + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code)
+    )
+    assert modes() == before, (
+        "the command converted one store and not the other, so the pair is "
+        "half-converted after a refusal: " + repr(modes())
+    )
+
+
+def test_an_uncontended_pair_still_migrates(tmp_path: Path) -> None:
+    """The over-reach control: refusing every migration would satisfy the above.
+
+    Same starting state, no holder. The command must convert both stores, and
+    the ledger must work afterwards -- a migration that reports success and
+    leaves the store refusing is not a migration.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+    for target in (location, ledger.watermark_path):
+        with sqlite3.connect(target) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 0, result.output
+
+    migrated = ApprovalLedger(location)
+    claimed, reason = migrated.consume(
+        "fp-9", "rd-9", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-9",
+    )
+    assert claimed is True, (
+        "the migration reported success and the ledger still refuses: " + reason
+    )
+    replayed, _ = ApprovalLedger(location).consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert replayed is False, "a spent consumption was released after migration"

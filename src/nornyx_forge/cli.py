@@ -356,16 +356,84 @@ def provision_ledger(
                 "--reset-replay-history to establish a fresh epoch."
             )
 
-        converted = {}
-        for label, path in (("ledger", location), ("witness", witness)):
-            with closing(sqlite3.connect(path, timeout=30)) as conn:
-                conn.execute("PRAGMA busy_timeout=30000")
-                conn.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
-                conn.execute("PRAGMA synchronous=FULL")
-                conn.commit()
-                converted[label] = str(
+        # NEITHER STORE IS LEFT CONVERTED IF BOTH CANNOT BE.
+        #
+        # The loop below took the ledger first and the witness second with no
+        # guard. A review held ONE ordinary reader on the witness and ran the
+        # remedy that LEDGER_CONTINUITY_MIGRATION_REQUIRED names: the ledger
+        # converted, the witness raised `OperationalError: database is
+        # locked` out of this function, the verify-after never ran, and the
+        # command emitted no status at all -- exit 1, empty stdout, modes left
+        # ['delete', 'wal'].
+        #
+        # A LOCK PRE-CHECK DOES NOT WORK HERE, and two versions of one were
+        # written before this. `BEGIN IMMEDIATE` takes RESERVED, which a
+        # reader does not block; `BEGIN EXCLUSIVE` does not conflict with a
+        # reader in WAL at all. Both passed while the journal-mode change --
+        # which must checkpoint and take the database file exclusively --
+        # still failed. Probing at a different lock level than the operation
+        # uses answers a different question, which is the same mistake as
+        # measuring a property by a proxy for it.
+        #
+        # So the modes are RECORDED and RESTORED instead. That needs no
+        # prediction about locks: whatever the first conversion did, the
+        # second's failure undoes it, and the operator is told the state the
+        # stores are actually in rather than left to infer it.
+        stores = (("ledger", location), ("witness", witness))
+        original_modes = {}
+        for label, target in stores:
+            with closing(sqlite3.connect(target, timeout=30)) as conn:
+                original_modes[label] = str(
                     conn.execute("PRAGMA journal_mode").fetchone()[0]
                 ).lower()
+        converted = {}
+        for label, target in stores:
+            # GUARDED TOO, not only pre-checked. The pre-check and the
+            # conversion are separate moments and a connection can arrive
+            # between them; reporting both ways costs one handler and means
+            # no interleaving turns this command into a stack trace.
+            try:
+                with closing(sqlite3.connect(target, timeout=30)) as conn:
+                    conn.execute("PRAGMA busy_timeout=30000")
+                    conn.execute(f"PRAGMA journal_mode={REQUIRED_JOURNAL_MODE}")
+                    conn.execute("PRAGMA synchronous=FULL")
+                    conn.commit()
+                    converted[label] = str(
+                        conn.execute("PRAGMA journal_mode").fetchone()[0]
+                    ).lower()
+            except sqlite3.Error as exc:
+                restored, stranded = [], []
+                for done in sorted(converted):
+                    was = original_modes[done]
+                    where = dict(stores)[done]
+                    try:
+                        with closing(
+                            sqlite3.connect(where, timeout=30)
+                        ) as undo:
+                            undo.execute("PRAGMA busy_timeout=30000")
+                            undo.execute(f"PRAGMA journal_mode={was}")
+                            undo.commit()
+                        restored.append(done)
+                    except sqlite3.Error:  # pragma: no cover - rare
+                        stranded.append(done)
+                detail = (
+                    " Restored: " + ", ".join(restored) + "."
+                    if restored
+                    else " Nothing had been converted yet."
+                )
+                if stranded:
+                    detail += (
+                        " COULD NOT RESTORE: " + ", ".join(stranded)
+                        + " -- these are left converted and the pair is not"
+                        " consistent. Run this command again."
+                    )
+                raise typer.BadParameter(
+                    f"the {label} at {target} could not be converted: {exc}."
+                    + detail
+                    + " Run this command again once nothing else holds these"
+                    " files open; the ledger keeps refusing until it"
+                    " succeeds, and no approval is discarded by waiting."
+                ) from exc
 
         # VERIFY AFTER, and by reading the file back rather than trusting the
         # statement that was just issued.

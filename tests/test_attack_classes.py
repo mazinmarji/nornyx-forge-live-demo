@@ -441,6 +441,13 @@ REVERTIBLE_FIXES = [
      "    return []",
      "tests/test_architecture_vocabulary.py",
      "test_an_undeclared_edge_is_refused_however_it_is_spelled"),
+    # ---- AC05: a maintenance command that raises where it must report ----
+    ("the half-conversion restore removed",
+     "src/nornyx_forge/cli.py",
+     "                for done in sorted(converted):",
+     "                for done in sorted(()):",
+     "tests/test_ledger_continuity.py",
+     "test_a_busy_store_is_reported_and_nothing_is_half_converted"),
     # NOT A ROW: the distinctness clause in
     # `scripts/refresh_governance_evidence.py`. Its specimen,
     # `test_one_reviewer_cannot_cover_every_role`, builds its own workspace
