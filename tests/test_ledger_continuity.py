@@ -1485,13 +1485,20 @@ def test_a_busy_store_is_reported_and_nothing_is_half_converted(
 
     witness = ledger.watermark_path
     for target in (location, witness):
-        with sqlite3.connect(target) as conn:
+        with closing(sqlite3.connect(target)) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
 
+    # `closing`, NOT the bare connection context manager. `with
+    # sqlite3.connect(...) as conn` manages a TRANSACTION and leaves the
+    # connection OPEN, so this helper leaked one handle per call. In
+    # isolation the collector closed them before the command ran; in the
+    # full suite they survived, the EXCLUSIVE pre-check saw contention
+    # that was this test's own, and the command refused before converting
+    # anything -- `attempted == 0`, the restore path never reached.
     def modes() -> list:
         seen = []
         for target in (location, witness):
-            with sqlite3.connect(target) as conn:
+            with closing(sqlite3.connect(target)) as conn:
                 seen.append(
                     str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
                 )
@@ -1548,7 +1555,7 @@ def test_an_uncontended_pair_still_migrates(tmp_path: Path) -> None:
             grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
         )[0]
     for target in (location, ledger.watermark_path):
-        with sqlite3.connect(target) as conn:
+        with closing(sqlite3.connect(target)) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
 
     result = CliRunner().invoke(
@@ -1607,13 +1614,13 @@ def test_a_failure_midway_restores_what_was_already_converted(
 
     witness = ledger.watermark_path
     for target in (location, witness):
-        with sqlite3.connect(target) as conn:
+        with closing(sqlite3.connect(target)) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
 
     def modes() -> list:
         seen = []
         for target in (location, witness):
-            with sqlite3.connect(target) as conn:
+            with closing(sqlite3.connect(target)) as conn:
                 seen.append(
                     str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
                 )
