@@ -33,7 +33,7 @@ exempt from the classes it names.
 |---|---|---|
 | Claims, and explicit non-claims | `docs/ASSURANCE_BOUNDARY.md`, `README.md` | `tests/test_documented_claims.py` |
 | False-green corpus (42) | `tests/test_false_green_audit.py` `INVENTORY` | `test_the_inventory_is_exactly_the_known_classes`, both directions |
-| Attack classes (7) | `tests/attack_classes.py` `ATTACK_CLASSES` | `test_the_attack_corpus_is_exactly_the_frozen_set`, both directions |
+| Attack classes (7) | `tests/attack_classes.py` `ATTACK_CLASSES` | `test_the_release_contract_names_exactly_the_frozen_classes`, both directions |
 | Human-blocked preconditions | `docs/governance/HUMAN_BLOCKED_MEASUREMENTS.md` | `scripts/check_pre_approval_baseline.py` |
 
 The claims are referenced, not restated. A second copy of the claim list in this

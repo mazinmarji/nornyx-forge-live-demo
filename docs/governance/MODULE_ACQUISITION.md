@@ -111,7 +111,7 @@ would decide the property, and would turn a gate that reads text into one
 that executes it, bringing import side effects, ordering and third-party
 code inside the control. That was rejected for v1.
 
-So the five routes below are **disclosed limitations of a v1 claim**, not
+So the routes in the table above are **disclosed limitations of a v1 claim**, not
 open defects against it. `docs/ASSURANCE_BOUNDARY.md` states the non-claim,
 and `architecture-check` in `architecture_governance.nyx` carries the scope
 it verifies. No parser heuristic was added for any of them, deliberately:
@@ -166,6 +166,23 @@ used for `executable`, `stdout` and `stderr` only. Pinned by
 - **Third-party code.** The rule governs first-party modules the contract
   declares. It says nothing about what a dependency does internally.
 
-The gate therefore claims exactly this and no more: *within governed
-first-party source, a module namespace is acquired only by static import, and
-every construct that could acquire one otherwise is refused unresolved.*
+THE SENTENCE THAT STOOD HERE WAS THE WITHDRAWN CLAIM, RESTATED AS THIS
+DOCUMENT'S LAST WORD. It read: *the gate therefore claims exactly this and
+no more -- within governed first-party source, a module namespace is acquired
+only by static import, and every construct that could acquire one otherwise
+is refused unresolved.* The section above withdraws precisely that, and a
+final review measured the closing version FALSE on a declared governed
+module: `pkgutil.resolve_name('subprocess')` appended to
+`src/demo_app/agentic.py` gives `exit 0, violations: []`, and the module is
+live. Four more of the pinned routes land the same way.
+
+A reader who stopped at the bottom line would have taken away a completeness
+claim the table disproves. So the claim is stated once, here, and it is the
+narrow one:
+
+> **`architecture-check` decides the declared, statically visible dependency
+> structure of governed first-party modules, and refuses the dynamic
+> module-acquisition constructs it can name. It does NOT establish that a
+> governed module has not acquired a module object by some other means. The
+> routes in the table above are the known such means, and that set is not
+> closed.**

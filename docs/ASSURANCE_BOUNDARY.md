@@ -19,9 +19,13 @@ It does not establish:
   declared, statically visible dependency structure and refuses the dynamic
   acquisition constructs it can name. It does not execute governed code, so
   a module object reached through an expression whose value is known only at
-  runtime is outside what it establishes. Five such routes are named and
-  pinned in `docs/governance/MODULE_ACQUISITION.md`; closing them is v1.1
-  research, not a v1 claim.
+  runtime is outside what it establishes. Those routes are named, and each
+  is pinned by `tests/test_module_acquisition_limits.py`, in
+  `docs/governance/MODULE_ACQUISITION.md`; closing them is v1.1 research,
+  not a v1 claim. NO COUNT IS WRITTEN HERE: this sentence said `five` while
+  the table held seven, because the repair that grew the table did not touch
+  the prose beside it. The table and the pin are compared to each other
+  mechanically; a number in this paragraph would be compared to nothing.
 
 Autonomous demonstration mode automatically continues through local acceptance gates. Its final evidence must state that human review was not performed and production approval was not granted.
 

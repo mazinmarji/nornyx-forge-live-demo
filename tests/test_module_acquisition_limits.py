@@ -206,7 +206,10 @@ def test_the_pinned_routes_are_exactly_the_documented_ones():
         encoding="utf-8"
     )
     documented = set(
-        re.findall(r"^\| `([a-z-]+)` \|", text, re.MULTILINE)
+        # WIDER THAN THE NAMING CONVENTION. `[a-z-]+` made a documented id
+        # containing a digit or underscore invisible to the parse, so the
+        # doc-only direction rested on nobody choosing such a name.
+        re.findall(r"^\| `([A-Za-z0-9_.-]+)` \|", text, re.MULTILINE)
     )
     pinned = {case[0] for case in UNDECIDED_ROUTES}
     assert documented, (
