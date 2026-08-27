@@ -109,7 +109,29 @@ _METHODOLOGY_ONLY = re.compile(
 )
 
 
-def classify_document(text: str) -> str:
+#: Artifacts that are assessment RECORDS rather than claim surfaces.
+#:
+#: RECORDED HERE, OUTSIDE THE DOCUMENTS THEMSELVES, and that is the whole
+#: point. The first version of `classify_document` read the declaration out
+#: of the file and nothing else, which meant a current governance document
+#: could leave the claim surface by adding one line of prose to itself.
+#: Measured: `README.md` plus `Target commit: db5089e8...` classified
+#: `historical_assessment`, and the same for ASSURANCE_BOUNDARY.md and
+#: RELEASE_CONTRACT_V1.md. Content authorising its own exemption from the
+#: control that reads it is the failure class this repository exists to
+#: catch, and it was reintroduced here by the fix for a different one.
+#:
+#: This is NOT an exemption list: a path here is still classified
+#: `current_claim` unless the document ALSO declares what it assessed. Both
+#: halves are required, so neither prose alone nor a path alone decides, and
+#: adding a path is a reviewable change to code rather than to prose.
+ASSESSMENT_ARTIFACTS = frozenset({
+    "docs/assessments/NORNYX_FORGE_SELF_ASSESSMENT_G2.md",
+    "docs/assessments/NORNYX_SELF_ASSESSMENT_G2.md",
+    "docs/GOVERNANCE_EVIDENCE_ASSESSMENT.md",
+})
+
+def classify_document(text: str, relative: str | None = None) -> str:
     """`current_claim`, `historical_assessment`, or `methodology`.
 
     DECIDED FROM THE DOCUMENT'S OWN DECLARATION, never from its path or its
@@ -125,6 +147,12 @@ def classify_document(text: str) -> str:
     it: a document full of assessment vocabulary, under an assessments path,
     is still classified `current_claim` without the header.
     """
+    # BOTH HALVES, ALWAYS. The registry says which artifacts are assessment
+    # records; the declaration says what the record covers. A document with
+    # no registered path cannot reclassify itself by asserting either header,
+    # and a registered path with no declaration is still a claim surface.
+    if relative not in ASSESSMENT_ARTIFACTS:
+        return "current_claim"
     if _ASSESSED_COMMIT.search(text):
         return "historical_assessment"
     if _METHODOLOGY_ONLY.search(text):
@@ -158,7 +186,10 @@ def governance_docs() -> list[Path]:
     """
     return [
         path for path in _discovered_docs()
-        if classify_document(path.read_text(encoding="utf-8")) == "current_claim"
+        if classify_document(
+            path.read_text(encoding="utf-8"),
+            path.relative_to(ROOT).as_posix(),
+        ) == "current_claim"
     ]
 
 
@@ -2697,9 +2728,12 @@ def test_assessment_language_alone_does_not_leave_the_claim_surface():
         "",
         "This assessment concludes the build has been independently inspected.",
     ])
-    assert classify_document(sounds_like_one) == "current_claim", (
+    assert classify_document(
+        sounds_like_one, "docs/assessments/INVENTED.md"
+    ) == "current_claim", (
         "a document with no declared target commit left the current-claim "
-        "surface on assessment vocabulary alone, so any document could"
+        "surface on assessment vocabulary alone -- and it was handed a "
+        "registered-looking path too, so neither half may decide by itself"
     )
     assert find_overclaims(sounds_like_one), (
         "and the claim rule itself must still refuse its content -- the "
@@ -2713,14 +2747,19 @@ def test_assessment_language_alone_does_not_leave_the_claim_surface():
         "",
         "This assessed the state at that commit.",
     ])
-    assert classify_document(declares_its_commit) == "historical_assessment"
+    assert classify_document(
+        declares_its_commit,
+        "docs/assessments/NORNYX_FORGE_SELF_ASSESSMENT_G2.md",
+    ) == "historical_assessment"
 
     methodology = _NEWLINE.join([
         "# Governance Evidence Assessment",
         "",
         "**Implementation status:** Methodology only; no engine is provided",
     ])
-    assert classify_document(methodology) == "methodology"
+    assert classify_document(
+        methodology, "docs/GOVERNANCE_EVIDENCE_ASSESSMENT.md"
+    ) == "methodology"
 
 
 def test_the_live_governance_documents_are_still_on_the_claim_surface():
@@ -2745,3 +2784,92 @@ def test_the_live_governance_documents_are_still_on_the_claim_surface():
         "the claim surface collapsed to " + str(len(scanned)) + " documents, so "
         "the guards below prove much less than they read as proving"
     )
+
+
+def test_a_current_document_cannot_declare_itself_out_of_the_claim_surface():
+    """THE SELF-EXEMPTION CONTROL. Content must not authorise its own exclusion.
+
+    `classify_document` first read the declaration out of the file and nothing
+    else. Measured before this control existed: `README.md` with
+    `Target commit: db5089e8...` appended classified `historical_assessment`,
+    and `Implementation status: Methodology only` classified `methodology` --
+    on README, on ASSURANCE_BOUNDARY.md and on RELEASE_CONTRACT_V1.md alike. One
+    line of prose removed a live governance document from every guard that reads
+    the claim surface.
+
+    That is the failure this repository is built to refuse, reintroduced by the
+    repair for a different one. The classification now needs a context the
+    document cannot write: its path must be a registered assessment artifact AND
+    it must declare what it assessed.
+
+    Both exclusion declarations are tried against each authoritative document,
+    and each must remain `current_claim` and remain answerable to the claim rule
+    itself -- the second half matters, because staying on the surface is worth
+    nothing if the rule then reads nothing.
+    """
+    authoritative = (
+        "README.md",
+        "docs/ASSURANCE_BOUNDARY.md",
+        "docs/governance/RELEASE_CONTRACT_V1.md",
+    )
+    declarations = (
+        "Target commit: db5089e8d8373ebaae1c3ff8ca0864fe92c328dc",
+        "**Target commit:** `db5089e8d8373ebaae1c3ff8ca0864fe92c328dc`",
+        "Implementation status: Methodology only",
+        "**Implementation status:** Methodology only; no engine is provided",
+    )
+    forged_claim = "This build has been independently inspected."
+
+    for relative in authoritative:
+        original = (ROOT / relative).read_text(encoding="utf-8")
+        assert classify_document(original, relative) == "current_claim", (
+            relative + " is not on the claim surface to begin with"
+        )
+        for declaration in declarations:
+            planted = original + _NEWLINE + declaration + _NEWLINE
+            assert classify_document(planted, relative) == "current_claim", (
+                relative + " removed itself from the claim surface by adding "
+                + repr(declaration) + " to its own text"
+            )
+            assert find_overclaims(planted + _NEWLINE + forged_claim), (
+                relative + " stayed on the surface with " + repr(declaration)
+                + " but the claim rule no longer read its content, which is the "
+                "same escape by another route"
+            )
+
+
+def test_a_registered_artifact_without_its_declaration_is_still_a_claim_surface():
+    """The other half of the pair: a path alone decides nothing either.
+
+    If a registered assessment file stopped declaring what it assessed -- or
+    were replaced by something that makes live claims -- it would be a claim
+    surface again, and the registry must not keep shielding it.
+    """
+    live_looking = _NEWLINE.join([
+        "# Something",
+        "",
+        "This build has been independently inspected and human review was",
+        "performed.",
+    ])
+    for relative in sorted(ASSESSMENT_ARTIFACTS):
+        assert classify_document(live_looking, relative) == "current_claim", (
+            relative + " kept its assessment classification with no declaration "
+            "of what it assessed, so the registry alone was deciding"
+        )
+
+
+def test_every_registered_assessment_artifact_exists_and_declares_itself():
+    """The registry cannot grow stale or speculative.
+
+    A path listed here that does not exist, or exists and declares nothing,
+    would be a standing permission for a file nobody has checked.
+    """
+    for relative in sorted(ASSESSMENT_ARTIFACTS):
+        document = ROOT / relative
+        assert document.is_file(), relative + " is registered and does not exist"
+        assert classify_document(
+            document.read_text(encoding="utf-8"), relative
+        ) in {"historical_assessment", "methodology"}, (
+            relative + " is registered as an assessment artifact but declares "
+            "neither a target commit nor methodology-only status"
+        )
