@@ -25,7 +25,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def governance_docs() -> list[Path]:
+def _discovered_docs() -> list[Path]:
     """Every markdown document in the repository, discovered rather than listed.
 
     This was a hardcoded five-tuple. An independent review added a new file
@@ -89,6 +89,82 @@ def governance_docs() -> list[Path]:
             continue
         found.append(path)
     return sorted(found)
+
+
+#: A document that declares the single commit it assessed.
+#:
+#: `**Target commit:** <sha>` is the header the G2 sponsor self-assessments
+#: carry. A document that names the commit it looked at is EVIDENCE ABOUT
+#: THAT COMMIT, not a statement of what this repository currently claims --
+#: which is the whole subject of the guards below.
+_ASSESSED_COMMIT = re.compile(
+    r"^\s*\*{0,2}Target commit:?\*{0,2}\s*:?\s*[`\"]?([0-9a-f]{7,40})",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+#: A document that declares itself a method rather than a measurement.
+_METHODOLOGY_ONLY = re.compile(
+    r"^\s*\*{0,2}Implementation status:?\*{0,2}\s*:?\s*Methodology only\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def classify_document(text: str) -> str:
+    """`current_claim`, `historical_assessment`, or `methodology`.
+
+    DECIDED FROM THE DOCUMENT'S OWN DECLARATION, never from its path or its
+    name. A file called `docs/assessments/ANYTHING.md` that does not declare
+    a target commit is a CURRENT claim surface and is scanned like any other;
+    a file anywhere that does declare one is evidence about that commit. This
+    is the same rule the runtime observer uses for artifacts -- keying on the
+    filename was AC01, and it was committed once already while repairing AC01.
+
+    The word `assessment` decides nothing. Neither does the directory. Only
+    the declaration does, and
+    `test_assessment_language_alone_does_not_leave_the_claim_surface` proves
+    it: a document full of assessment vocabulary, under an assessments path,
+    is still classified `current_claim` without the header.
+    """
+    if _ASSESSED_COMMIT.search(text):
+        return "historical_assessment"
+    if _METHODOLOGY_ONLY.search(text):
+        return "methodology"
+    return "current_claim"
+
+
+def governance_docs() -> list[Path]:
+    """The CURRENT Forge governance-claim surface.
+
+    Every guard reached through this helper asks the same kind of question:
+    what does this repository claim about itself NOW -- which revision it
+    is, whether it has been independently inspected, what its runtime does,
+    what its measurements say. A document that declares the commit it
+    assessed, or declares itself a methodology rather than a measurement,
+    is not answering that question and cannot be read as though it were.
+
+    NOT A DOCUMENTATION EXEMPTION. The classification is `classify_document`,
+    which reads the declaration and nothing else, so an ordinary governance
+    document cannot leave this surface by being moved, renamed, or written
+    in assessment vocabulary. The claim rules themselves are unchanged: what
+    narrows is WHICH DOCUMENTS ARE ASKED, not what counts as a violation.
+
+    Introduced when the hardened baseline was integrated with main, which
+    brought in SHA-bound G2 sponsor self-assessments and an assessment
+    methodology. Three attempts to make those documents satisfy the
+    current-claim guards each failed against a stricter adjacent rule; the
+    collision is structural, because `_normalised` deliberately strips
+    presentation and a dated assessment is written in the same shapes a
+    live report uses.
+    """
+    return [
+        path for path in _discovered_docs()
+        if classify_document(path.read_text(encoding="utf-8")) == "current_claim"
+    ]
+
+
+def authored_docs() -> list[Path]:
+    """Every authored markdown document, whatever it declares."""
+    return _discovered_docs()
 
 
 #: Retained for the required-module registration and for tests that want the
@@ -2597,4 +2673,75 @@ def test_no_two_documents_classify_the_same_measurement_differently():
         "these terms means an engineering problem someone can fix and the "
         "other means a human approval no autonomous run may manufacture, so a "
         "reader is sent to work that does not exist: " + repr(wrong)
+    )
+
+
+def test_assessment_language_alone_does_not_leave_the_claim_surface():
+    """The evasion control: neither the path nor the vocabulary decides.
+
+    The narrowing exists so a DATED assessment of one commit is not read as a
+    statement about the current head. It must not become a way for an ordinary
+    governance document to stop being scanned -- by living under
+    `docs/assessments/`, by being renamed, or by talking like an assessment.
+
+    `classify_document` reads only the declaration, so this is provable rather
+    than hoped for.
+    """
+    sounds_like_one = _NEWLINE.join([
+        "# Governance Evidence Assessment — Something",
+        "",
+        "**Status:** G2 sponsor self-assessment",
+        "**Assessor:** project-sponsor self-assessment",
+        "**Assessment date:** 2026-08-21",
+        "**Observation surfaces:** O1 repository content",
+        "",
+        "This assessment concludes the build has been independently inspected.",
+    ])
+    assert classify_document(sounds_like_one) == "current_claim", (
+        "a document with no declared target commit left the current-claim "
+        "surface on assessment vocabulary alone, so any document could"
+    )
+    assert find_overclaims(sounds_like_one), (
+        "and the claim rule itself must still refuse its content -- the "
+        "narrowing changes WHICH documents are asked, not what is a violation"
+    )
+
+    declares_its_commit = _NEWLINE.join([
+        "# Governance Evidence Assessment — Something",
+        "",
+        "**Target commit:** `db5089e8d8373ebaae1c3ff8ca0864fe92c328dc`",
+        "",
+        "This assessed the state at that commit.",
+    ])
+    assert classify_document(declares_its_commit) == "historical_assessment"
+
+    methodology = _NEWLINE.join([
+        "# Governance Evidence Assessment",
+        "",
+        "**Implementation status:** Methodology only; no engine is provided",
+    ])
+    assert classify_document(methodology) == "methodology"
+
+
+def test_the_live_governance_documents_are_still_on_the_claim_surface():
+    """The other direction: the narrowing must not empty the corpus.
+
+    An exclusion that quietly removed the documents that matter would satisfy
+    every guard above by scanning nothing. These four are the repository's live
+    claim surface and must remain on it.
+    """
+    scanned = {path.relative_to(ROOT).as_posix() for path in governance_docs()}
+    for required in (
+        "README.md",
+        "docs/ASSURANCE_BOUNDARY.md",
+        "docs/governance/RELEASE_CONTRACT_V1.md",
+        "docs/governance/MODULE_ACQUISITION.md",
+    ):
+        assert required in scanned, (
+            required + " left the current-claim surface; the narrowing was "
+            "meant to exclude dated assessments, not live governance documents"
+        )
+    assert len(scanned) >= 20, (
+        "the claim surface collapsed to " + str(len(scanned)) + " documents, so "
+        "the guards below prove much less than they read as proving"
     )

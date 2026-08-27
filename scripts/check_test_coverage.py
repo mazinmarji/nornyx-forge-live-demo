@@ -154,7 +154,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
     "tests/test_baseline_discrimination.py": 6,
-    "tests/test_recorded_measurements.py": 160,
+    #: LOWERED, and the reason is recorded because anti-shrink exists to
+    #: catch exactly this shape. Three documents left the current-claim
+    #: surface by declaration when the hardened baseline was integrated with
+    #: main -- two SHA-bound G2 assessments and one methodology -- so this
+    #: module sweeps fewer documents. No test was deleted and no proof was
+    #: weakened; the corpus it quantifies over is smaller by a declared
+    #: scope decision. See `classify_document` in tests/test_documented_claims.py.
+    "tests/test_recorded_measurements.py": 155,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -171,7 +178,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
     "tests/test_skip_gate.py": 30,
-    "tests/test_documented_claims.py": 139,
+    "tests/test_documented_claims.py": 141,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
     "tests/test_approval_artifact_authentication.py": 9,
@@ -345,10 +352,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2271   (90 modules)
-#     sum of the module floors    2088
-#     band(2271) = ceil(0.9*n)    2044
-#     MINIMUM_COLLECTED           2103
+#     collected across tests/     2268   (90 modules)
+#     sum of the module floors    2085
+#     band(2268) = ceil(0.9*n)    2042
+#     MINIMUM_COLLECTED           2100
 #     above the module sum        15
 #     below what collects         168
 #
@@ -392,7 +399,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2103
+MINIMUM_COLLECTED = 2100
 
 
 def band(collected: int) -> int:
