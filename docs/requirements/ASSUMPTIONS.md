@@ -4,7 +4,7 @@ Assumptions recorded during the autonomous demonstration run, as required by
 `CLAUDE.md`. Each entry states the ambiguity, the resolution taken, and the BRD
 requirement it serves. None of these invent a regulatory or business requirement.
 
-Run subject revision: `git:8a8fea6ac5068a6a359dfc407489264576329054`
+Run subject: identified by content, not by commit. See `governed_revision_digest` and `governed_subject_digest` in the current evidence set. A commit hash stood here and went stale the moment the next commit landed, which is a small instance of exactly why A-011 was superseded: a document cannot name the revision it is part of.
 Assurance mode: `autonomous_demonstration` — `human_review: not_performed`.
 
 ## A-001 Foundation selection
@@ -92,8 +92,17 @@ not the builder*; it does not mean a human reviewed the work.
 least one named human approver.
 
 **Resolution.** Declared the role separation the project intends
-(`human:repository_maintainer` authors, `human:architect` approves). This
-declares *who would be accountable*; it does not assert that either party acted.
+(`human:repository_maintainer` authors, `human:architecture_reviewer`
+approves). This declares *who would be accountable*; it does not assert that
+either party acted.
+
+The approver read `human:architect` until this correction: a principal that
+appeared nowhere else in the repository, in the one document a reader consults
+to find out who may approve. The contract declares `architecture_reviewer`, and
+records that requiring `architect` while listing `architecture_reviewer` as
+eligible once left a reviewer-signed approval readable two ways. Naming the
+retired term here restored exactly that ambiguity, in prose, where nothing
+resolves an identifier and no test would have caught it.
 No evidence record claims an approval occurred.
 
 **Serves.** BRD-004.
@@ -111,8 +120,13 @@ the seven-day approval expiry could never actually elapse.
 
 - it defaults to the **real current time**, so approvals and decisions are judged
   against when they actually happen;
-- a run that needs determinism pins the instant with the `FORGE_RUNTIME_AS_OF`
-  environment variable or an explicit argument;
+- a run that needs determinism pins the instant through
+  `RuntimeContext.for_test(root, at=...)`, an explicit argument. The
+  `FORGE_RUNTIME_AS_OF` environment variable this assumption originally
+  described has been **removed**: a review proved it could revive an expired
+  approval and backdate its ledger record. The same applies to
+  `FORGE_RUNTIME_REVISION`, which could re-aim an approval onto a revision it
+  was never issued for;
 - a pinned value must be an explicit timezone-aware ISO-8601 timestamp. A naive
   or malformed value **raises** rather than falling back to the live clock, so a
   bad pin can never widen a validity window;
@@ -127,15 +141,30 @@ installed package.
 
 **Serves.** BRD-F-003 (reproducible demonstrations), BRD-F-005.
 
-## A-011 Subject revision is read from the contract
+## A-011 Subject revision is read from the contract — SUPERSEDED by R1
 
 **Ambiguity.** The governed revision was duplicated as a constant in code and as
 `subject_revision` in the contract, so the two could silently drift — and did.
 
-**Resolution.** `runtime_revision()` reads `subject_revision` from
+**Resolution at the time.** `runtime_revision()` read `subject_revision` from
 `.nornyx/contracts/runtime_network.nyx`, making the contract the single source of
-truth. With no contract present it returns `git:unbound` so evidence is honestly
-labelled instead of claiming a binding that does not exist.
+truth.
+
+**Why it no longer holds.** The resolution was still commit identity, and a
+contract cannot contain the hash of the commit that contains it — so
+`declared == actual` was false at every commit and passed only in an uncommitted
+working tree, which the same system refuses as dirty. Worse, letting the contract
+declare the revision meant the artifact under governance named the identity it
+would be judged against.
+
+`runtime_revision()` is deleted. Identity is now content, not a commit:
+`governed_revision_digest` anchors the revision and `governed_subject_digest`
+covers the complete settled authority state, both computed by
+`nornyx_forge.governed_subject` over a code-owned `SubjectScope`. Git survives
+as provenance only, and reaches no decision.
+
+Retained rather than removed so the reasoning stays traceable: this entry
+records an assumption that was made, acted on, and then found wrong.
 
 **Serves.** BRD-F-005.
 
@@ -160,3 +189,94 @@ block).
 declared goal scope; no gate, rule, or policy was weakened to accommodate them.
 
 **Serves.** BRD-005.
+
+## A-012 Trust stores are operator-supplied and live outside the governed tree
+
+**Ambiguity.** The BRD requires independent review and human approval to be
+verifiable, but does not say where the verifying keys come from. Any answer
+inside the repository is circular: content that authorizes itself.
+
+**Resolution.** Two separate stores, both holding public keys only, both located
+by environment variable and read from outside the governed tree —
+`FORGE_APPROVER_TRUST_STORE` for action approvals and
+`FORGE_REVIEWER_TRUST_STORE` for inspection attestations. Editing the repository
+therefore cannot add a trusted approver or reviewer.
+
+They are deliberately not interchangeable. Each declares its own schema and is
+refused if handed the other, because an approver signs "this effect may be
+released" and a reviewer signs "I inspected this content"; one key satisfying
+both would let whoever authorizes a payment also certify that the code releasing
+it had been reviewed.
+
+Absence is an ordinary state, distinct from malformation. With no store present
+nothing authenticates, and the honest outcome is
+`assurance_state: not_independently_inspected` — which is this repository's
+current position. A malformed store raises rather than degrading into an empty
+one, since "no trusted reviewers" and "the store could not be read" must not
+produce the same silence.
+
+**Not established.** How the keys inside a store were vetted. This repository
+verifies signatures against whatever store the operator supplies; it makes no
+claim about that store's provenance. Recorded in `docs/ASSURANCE_BOUNDARY.md`.
+
+**Serves.** BRD-002, BRD-005.
+
+## A-013 Signing capability is excluded from the runtime image
+
+**Ambiguity.** The BRD requires attestations to be issuable, and also requires
+the running application to be governed. Those pull in opposite directions if the
+same artifact does both.
+
+**Resolution.** Issuers live in `scripts/` (`issue_action_approval.py`,
+`issue_inspection_attestation.py`); the Dockerfile copies `pyproject.toml`,
+`README.md`, `src`, `.nornyx` and `BRD.md`, and never `scripts`. The image
+therefore contains verification material and no signing capability at all.
+Private keys are read from an operator-supplied path at signing time and are
+never written into the repository. A test asserts the Dockerfile still omits
+`scripts/` and that no signing primitive appears in the runtime module.
+
+**Serves.** BRD-002, BRD-005.
+
+## A-014 The approval ledger is provisioned, never self-created
+
+**Ambiguity.** BRD-002 requires a human approval to release a consequential
+effect at most once. It does not say what should happen when the state recording
+that "at most once" is absent.
+
+**Resolution.** Absence is a refusal, not an empty answer. The ledger is created
+by an explicit operator command (`nornyx-forge provision-ledger`); the boundary
+opens it and never creates it. A missing ledger denies consequential acts, a
+corrupt one raises as unavailable, and re-provisioning leaves an existing
+ledger untouched. A ledger whose consumption history has gone BACKWARDS -- a
+restored backup -- is refused as `LEDGER_ROLLED_BACK`, because at-most-once
+cannot be promised by state that a restore can undo.
+
+Two clauses that used to stand here were measured false, and BOTH ARE NOW
+CLOSED. They are kept as history because the paragraph was written in the
+present tense and a review measured it still describing repaired defects as
+live -- a disclosure that outlives its defect misleads in the opposite
+direction to a claim that outruns its evidence, and neither is acceptable.
+
+*Was:* an UNWRITABLE ledger did not raise as unavailable, because
+`BEGIN IMMEDIATE` succeeds on a read-only SQLite database, so the pre-flight
+passed and the refusal arrived at the INSERT carrying no code. **Closed:** the
+pre-flight now performs a real INSERT with an unconditional ROLLBACK, and the
+refusal carries `APPROVAL_LEDGER_UNWRITABLE`. Measured: construction raises,
+coded.
+
+*Was:* "the boundary opens it and never creates it" was true of intent and not
+of effect, because `sqlite3.connect` creates an empty file. **Closed:**
+`_connect` opens with `mode=rw` via a URI, in both places, so consuming against
+a deleted ledger creates nothing. Measured: nothing was created.
+
+Previously `CREATE TABLE IF NOT EXISTS` ran at every construction, so deleting
+the file produced an empty ledger in which nothing had been spent — every grant
+ever consumed became replayable. Deleting a file is not an authorization
+decision.
+
+**Operational consequence.** A fresh deployment must provision the ledger before
+it can release any consequential effect. That is deliberate: the alternative is a
+deployment that silently begins with no replay history and cannot tell the
+difference between "nothing has happened yet" and "the record is gone".
+
+**Serves.** BRD-002.

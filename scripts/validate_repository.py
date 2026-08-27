@@ -27,11 +27,14 @@ def validate() -> list[str]:
         json.loads((ROOT / "schemas/in-session-reviews.schema.json").read_text(encoding="utf-8"))
     except Exception as exc:
         errors.append(f"invalid JSON: {exc}")
-    tracked_text = []
+    # NOT tracked content: this walks ROOT.rglob('*') excluding .git and
+    # .venv, so it includes untracked files. Named `tracked_text` before,
+    # which promised a git-awareness the loop does not have.
+    walked_text = []
     for path in ROOT.rglob("*"):
         if path.is_file() and ".git" not in path.parts and ".venv" not in path.parts:
             try:
-                tracked_text.append((path, path.read_text(encoding="utf-8")))
+                walked_text.append((path, path.read_text(encoding="utf-8")))
             except UnicodeDecodeError:
                 pass
     secret_patterns = [
@@ -39,7 +42,7 @@ def validate() -> list[str]:
         re.compile(r"sk-[A-Za-z0-9]{32,}"),
         re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),
     ]
-    for path, text in tracked_text:
+    for path, text in walked_text:
         for pattern in secret_patterns:
             if pattern.search(text):
                 errors.append(f"possible committed secret in {path.relative_to(ROOT)}")

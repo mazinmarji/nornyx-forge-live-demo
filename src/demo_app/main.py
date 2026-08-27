@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from pathlib import Path
 
@@ -10,7 +9,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .agentic import NornyxRuntimeUnavailable, run_case, run_demo_scenarios
+from .agentic import (
+    NornyxRuntimeUnavailable,
+    application_security_context,
+    demonstration_authority,
+    run_case,
+    run_demo_scenarios,
+)
 from .store import JsonStore
 
 GOVERNANCE_UNAVAILABLE = (
@@ -19,11 +24,58 @@ GOVERNANCE_UNAVAILABLE = (
     "This is a governed refusal, not an application error."
 )
 
-ROOT = Path(os.getenv("FORGE_ROOT", Path.cwd())).resolve()
+def _packaged_root() -> Path:
+    """Where this application is installed. Fixed relationship, not a search.
+
+    Derived here rather than imported from `nornyx_forge`: the HTTP surface may
+    not depend on the governance package, and the architecture gate enforces
+    that by path. `<root>/src/demo_app/main.py` yields `<root>`, in a checkout
+    and under `/app` alike.
+
+    Never the environment and never the launch directory. `FORGE_ROOT` used to
+    choose which tree the application governed, which is authority over subject
+    identity itself; `Path.cwd()` would be the same defect wearing different
+    clothes.
+    """
+    candidate = Path(__file__).resolve().parents[2]
+    missing = [
+        marker
+        for marker in ("src/demo_app", ".nornyx/contracts")
+        if not (candidate / marker).is_dir()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"PACKAGED_ROOT_UNRESOLVED: {candidate} lacks {', '.join(missing)}. "
+            "Refusing to guess which tree this application governs."
+        )
+    return candidate
+
+
+ROOT = _packaged_root()
+
+#: Established once, at startup. Every request reuses this exact object: a
+#: per-request bootstrap would let a file changed between two calls re-aim the
+#: second one, and would re-read the environment each time.
+#:
+#: The mode is named rather than inherited from an ambient default. This is the
+#: demonstration surface, so it runs the deterministic backend and says so; a
+#: deployment wanting governed authorization selects "nornyx" here and gets a
+#: refusal when Nornyx cannot authorize, which is the honest outcome when no
+#: human approval exists.
+AUTHORITY = demonstration_authority()
+
+#: The security context every request runs under, bound here at startup.
+#:
+#: Held explicitly rather than left implicit inside the application layer, so
+#: that the one-per-application property is visible at the surface that serves
+#: requests. Handlers pass this object down; none of them may establish one,
+#: because a request that can cause subject identity to be resolved has a say in
+#: the authority that judges it.
+SECURITY_CONTEXT = application_security_context()
 STATIC = Path(__file__).resolve().parent / "static"
 STORE = JsonStore(ROOT / ".nornyx/demo-data.json")
 
-app = FastAPI(title="Nornyx Forge — Governed Customer Operations", version="0.2.0")
+app = FastAPI(title="Nornyx Forge — Governed Customer Operations", version="0.3.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -55,11 +107,24 @@ def dashboard():
 
 @app.get("/api/health")
 def health():
+    """Report what this deployment can and cannot do, without leaking how.
+
+    A packaged image usually has no approver trust store, so consequential
+    approval authority is unavailable there. Saying so is the point: a reader
+    should be able to tell the difference between "no approval has been sought"
+    and "no approval could be authenticated even if one were".
+
+    Deliberately no store path and no key material — that a deployment is
+    anchored is the operator's business; where its keys live is not.
+    """
+    from demo_app.agentic import assurance_state
+
     return {
         "status": "ok",
         "assurance_mode": "autonomous_demonstration",
         "human_review": "not_performed",
         "production_approval": "not_granted",
+        **assurance_state(),
     }
 
 
@@ -87,14 +152,16 @@ def create_case(payload: CaseInput):
         "timeline": [],
     }
     try:
-        case = run_case(case, root=ROOT)
+        case = run_case(
+            case, root=ROOT, config=AUTHORITY, security_context=SECURITY_CONTEXT
+        )
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,
             {
                 "error": "governance_unavailable",
                 "message": GOVERNANCE_UNAVAILABLE,
-                "detail": exc.detail,
+                "detail": exc.public_detail,
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
             },
@@ -114,14 +181,16 @@ def get_case(case_id: str):
 @app.post("/api/demo/run")
 def run_demo():
     try:
-        result = run_demo_scenarios(ROOT)
+        result = run_demo_scenarios(
+            ROOT, config=AUTHORITY, security_context=SECURITY_CONTEXT
+        )
     except NornyxRuntimeUnavailable as exc:
         raise HTTPException(
             503,
             {
                 "error": "governance_unavailable",
                 "message": GOVERNANCE_UNAVAILABLE,
-                "detail": exc.detail,
+                "detail": exc.public_detail,
                 "human_review": "not_performed",
                 "production_approval": "not_granted",
             },

@@ -21,7 +21,11 @@ class JsonStore:
     def _write(self, data: dict[str, Any]) -> None:
         payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(payload, encoding="utf-8")
+        # newline='' so the payload is written exactly as built. Governed
+        # text in this repository is canonical-LF, and the platform
+        # translation Path.write_text applies by default is what made the
+        # subject observer refuse files this system had just written.
+        temporary.write_text(payload, encoding="utf-8", newline="")
         os.replace(temporary, self.path)
 
     def list_cases(self) -> list[dict[str, Any]]:

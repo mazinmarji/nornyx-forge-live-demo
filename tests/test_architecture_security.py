@@ -23,6 +23,9 @@ def _forge_tree(tmp_path: Path) -> Path:
     workspace = tmp_path / "repo"
     (workspace / "scripts").mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/check_architecture.py", workspace / "scripts")
+    # The gate reads the console entrypoint from packaging metadata, so that
+    # "nothing may depend on the entrypoint" needs no second copy of the fact.
+    shutil.copy2(ROOT / "pyproject.toml", workspace / "pyproject.toml")
     shutil.copytree(ROOT / "src", workspace / "src")
     (workspace / CONTRACT.parent).mkdir(parents=True)
     shutil.copy2(ROOT / CONTRACT, workspace / CONTRACT)
@@ -95,13 +98,22 @@ def test_architecture_gate_detects_unmodelled_first_party_import(tmp_path: Path)
     """An import of a real but unmodelled first-party module is a violation.
 
     Checking only edges between already-declared modules would let a brand-new
-    dependency on an unmodelled module (nornyx_forge.gates, which itself shells
-    out) pass silently.
+    dependency on an unmodelled module pass silently.
+
+    The module has to be created here. This test used to borrow
+    `nornyx_forge.gates`, which was unmodelled at the time; every first-party
+    module is now declared, so the only way to have an unmodelled one is to add
+    it — which is also the realistic shape of the regression, since a module
+    arrives before anyone remembers to declare it.
     """
     workspace = _forge_tree(tmp_path)
+    (workspace / "src/nornyx_forge/unmodelled.py").write_text(
+        "def helper() -> None:\n    return None\n", encoding="utf-8"
+    )
     runtime = workspace / "src/demo_app/agentic.py"
     runtime.write_text(
-        runtime.read_text(encoding="utf-8") + "\nfrom nornyx_forge.gates import default_gates\n",
+        runtime.read_text(encoding="utf-8")
+        + "\nfrom nornyx_forge.unmodelled import helper\n",
         encoding="utf-8",
     )
 
@@ -114,8 +126,7 @@ def test_architecture_gate_detects_unmodelled_first_party_import(tmp_path: Path)
     assert completed.returncode == 2
     report = json.loads(completed.stdout)
     assert any(
-        "first-party module nornyx_forge.gates" in violation
-        for violation in report["violations"]
+        "nornyx_forge.unmodelled" in violation for violation in report["violations"]
     ), report["violations"]
 
 

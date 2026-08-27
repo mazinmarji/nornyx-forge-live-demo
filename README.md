@@ -5,7 +5,7 @@
 Nornyx Forge is a public reference implementation for demonstrating three Nornyx value claims:
 
 1. **Software-development governance** — requirements, goals, permissions, tests, repair budgets, evidence, and release gates are explicit and revision-bound.
-2. **Architecture governance** — target components, layers, interfaces, trust boundaries, and architecture evidence are checked before acceptance.
+2. **Architecture governance** — declared modules and layers, and the architecture evidence set, are checked before acceptance. Interfaces and trust boundaries are DECLARED but not checked: `architecture_governance.nyx` carries `interfaces: []` and empty boundary lists, and `scripts/check_architecture.py` reads only `modules` and `layers`. The previous wording named them as checked.
 3. **Delivery speed** — Repo Scout reuses a suitable foundation, deterministic gates catch defects early, and bounded repair loops reduce uncontrolled re-iteration.
 
 ## Preferred entry point: the Claude Code Skill
@@ -30,8 +30,24 @@ See [`docs/FORGE_SKILL_BOUNDARY.md`](docs/FORGE_SKILL_BOUNDARY.md) for the exact
 
 - **Claude Code** performs repository analysis, architecture, implementation, review, and repair.
 - **Nornyx Forge Skill** orchestrates the engineering workflow and invokes the required deterministic gates.
-- **CrewAI Flow** coordinates the development and live application workflows without requiring a CrewAI model API key in the default mode.
-- **Nornyx** validates the generated BRD contract, architecture contract, runtime network, and control/evidence boundary.
+- **CrewAI Flow** coordinates the development workflow (`nornyx-forge build`)
+  without requiring a CrewAI model API key. The live application runs the
+  SEQUENTIAL backend by default and says so: `demonstration_authority()` names
+  `execution_backend="sequential"`, and the evidence reports `framework:
+  "CrewAI Flow-compatible sequential execution"`. Selecting `crewai` refuses
+  rather than downgrading if CrewAI cannot execute, so the label always
+  describes what actually ran.
+- **Nornyx** checks the generated BRD contract, the architecture contract, the
+  runtime network, and the control/evidence boundary. Today `forge_control.nyx`
+  and the generated BRD contract PASS; `architecture_governance.nyx` and
+  `runtime_network.nyx` do NOT. `runtime_network.nyx` fails because no human
+  approval record exists. `architecture_governance.nyx` fails for that reason
+  AND for a second, different external one: it additionally requires an
+  AUTHENTICATED INDEPENDENT INSPECTION, reported as `CHANGE_EVIDENCE_MISSING`
+  and `SOD_EVIDENCE_PRODUCER_UNKNOWN`. An earlier sentence gave ONE cause for
+  both, so a reader was told a single human signature clears them; it does not.
+  Reading an approval-blocked result as "validates" is the substitution this
+  repository keeps finding, so the word is not used for it here.
 - **FastAPI** serves the live governed customer-operations application and dashboard.
 
 The default is an **autonomous demonstration**, not a production approval. Human review is not performed and the evidence says so explicitly. In-session model reviewers are bounded review evidence; they are not external independent confirmation or human approval.
@@ -73,8 +89,8 @@ If Claude's interpretation conflicts with a deterministic result, the determinis
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -e '.[dev]'
-pytest
+pip install -e '.[demo,dev]'
+python scripts/check_test_coverage.py
 python scripts/validate_repository.py
 ```
 
@@ -93,11 +109,73 @@ Then start Claude Code with the local plugin and invoke:
 /nornyx-forge:build-app BRD.md
 ```
 
-The workflow generates `.nornyx/generated/brd_contract.nyx`, creates evidence under `.nornyx/runs/`, requires strict Nornyx/CrewAI execution in the installed path, launches the application, and prints:
+The current session uses its Agent subagents directly, records their review
+findings, and runs the in-session bootstrap without a separate model API key.
+Those findings are a SELF-REPORTED OBSERVATION, not an independent
+inspection: independence requires an attestation signed by a reviewer who is
+not the builder, verified against a trust store outside this repository.
+Without one the evidence set reports `assurance_state:
+not_independently_inspected`, which is its current state.
+
+The workflow generates `.nornyx/generated/brd_contract.nyx` and creates evidence
+under `.nornyx/runs/`.
+
+**On a fresh clone it then stops, and that is correct.** `scripts/bootstrap.py`
+appends `--strict-nornyx` whenever `--skip-install` is absent, and on this
+branch strict mode refuses, because no human approval record exists. Measured:
+
+```
+$ python -m nornyx_forge.cli demo --offline --strict-nornyx
+{"status": "blocked", "reason": "nornyx_runtime_unavailable",
+ "detail": "AuthorizerLoadError: CONTRACT_INVALID: AN_APPROVAL_RECORD_MISSING,
+            APPROVAL_EVIDENCE_MISSING, EVIDENCE_REQUIRED_MISSING"}
+exit 2
+```
+
+> **What a reader actually sees.** The diagnostic above is what a tree with a
+> prepared runtime lock reports. `.nornyx/runtime/` is gitignored and the lock
+> CANNOT be produced without a human approval (`prepare_runtime.py` exits 2),
+> so on a clean checkout the proximate refusal is
+> `RuntimeError: RUNTIME_LOCK_MISSING`. Same absence, reported at a different
+> depth: no approval exists, so the lock cannot be prepared, so the authorizer
+> cannot load. The exit code (2), `status: blocked` and
+> `reason: nornyx_runtime_unavailable` are identical either way.
+
+`bootstrap.run()` raises `SystemExit` on a nonzero return, so the launch step
+below is **not reached** on the path this section documents. Declining to
+execute governed actions without an approval is the system working; the earlier
+version of this paragraph claimed the workflow "launches the application, and
+prints" the URLs, and that was false.
+
+Where the launch does happen -- with `--skip-install`, so no `--strict-nornyx`,
+and with Docker present and `--no-launch` absent -- `bootstrap.py` runs
+`docker compose up --build -d` and prints:
 
 - Application: `http://localhost:8000`
 - Governance dashboard: `http://localhost:8000/dashboard`
 - API documentation: `http://localhost:8000/docs`
+
+The **`demo` command** runs `sequential`, and reports
+`configured_execution_backend: sequential` alongside
+`observed_execution_backend: sequential`. **CrewAI is not requested by the
+`demo` command**, and the previous wording "strict Nornyx/CrewAI execution"
+said otherwise.
+
+That sentence used to read "sequential on both paths ... `cli.py` requests it
+unconditionally", which is false in two ways a review measured. `cli.py` names
+`execution_backend` exactly once, inside `demo`; and `bootstrap.py` runs
+`cli build` on BOTH paths before the demo, so under either reading of "both
+paths" one of them is `crewai_flow`. The paragraph below says so, and the two
+could not both be true.
+
+The `build` step is different, and this section used to be wrong about it.
+`bootstrap.py` runs `python -m nornyx_forge.cli build` on both paths, and
+`cli.py` constructs `DevelopmentFlow` with NO config -- so
+`RuntimeAuthorityConfig()` applies, whose defaults are
+`execution_backend='crewai'` and `policy_backend='nornyx'`. Measured, that
+path runs a real kickoff: `build-summary.json` records
+`execution_backend: crewai_flow`. A review found this; the AST guard was
+blind to it because it only reads explicit literals.
 
 ## Public repository modes
 

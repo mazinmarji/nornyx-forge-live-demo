@@ -1,0 +1,1713 @@
+"""A spent grant is never released again, whatever the sidecar holds.
+
+WHY THIS MODULE EXISTS, and it is not a pleasant reason.
+
+The high-water sidecar was repaired twice. After the second repair a review
+measured:
+
+    grep -rn "LedgerContinuityUnknown" tests/ scripts/   ->  0
+    grep -rn "LedgerContinuityUnknown" src/              ->  4
+
+and coverage showed the `except LedgerContinuityUnknown` handler, BOTH `raise`
+sites, the whole of `_adopt_plaintext_mark`, and the writer's failure path all
+unexecuted -- under a fully green suite, with 123 tests covering this exact
+subject passing. The remediation for a P1 shipped with no proof it worked and
+no proof it would keep working.
+
+Which is why the P1 survived it. A zero-byte sidecar -- the state
+`sqlite3.connect()` leaves before writing a single page, i.e. what a crash
+during the sidecar's own first write produces -- took the "unmarked, therefore
+bootstrap" branch and returned None. None means compare nothing. Measured end
+to end through the real boundary: one human approval, the ledger restored from
+a backup, and the spent grant RELEASED THE EFFECT AGAIN -- then every other
+forgotten grant in turn, because the mark re-bootstraps at the rolled-back
+count.
+
+So this module drives the SIDECAR STATE SPACE through `consume`, which is the
+production path, and asserts the property rather than the diagnostic: after
+history is lost, a grant that was already spent must not release, whatever the
+sidecar happens to contain. The states are enumerated because the file system
+offers finitely many shapes here; the CONTROLS are the load-bearing part,
+because every assertion below is satisfiable by a ledger that refuses
+everything.
+"""
+
+from __future__ import annotations
+
+import shutil
+import sqlite3
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+from signing import GRANT_ISSUED, LEDGER_ESTABLISHED  # noqa: E402
+
+from nornyx_forge.nornyx_runtime import (
+    LEDGER_CONTINUITY_MIGRATION_REQUIRED,
+    LEDGER_CONTINUITY_UNKNOWN,
+    LEDGER_ROLLED_BACK,
+    ApprovalLedger,
+    NornyxRuntimeUnavailable,
+)
+
+NL = chr(10)
+NOW = "2026-08-03T00:00:00Z"
+
+
+def _spend(ledger: ApprovalLedger, index: int) -> bool:
+    claimed, _reason = ledger.consume(
+        f"fp-{index}", f"rd-{index}", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+    )
+    return claimed
+
+
+def _rows(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as conn:
+        return int(
+            conn.execute("SELECT count(*) FROM consumed_approvals").fetchone()[0]
+        )
+
+
+def _checkpoint(path: Path) -> None:
+    """Fold the WAL in, so copying the main file really is a restore.
+
+    Without this, SQLite replays the `-wal` and the backup silently keeps the
+    history it was supposed to have lost -- the test would then pass while
+    measuring nothing at all.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_name(path.name + suffix)
+        if sibling.exists():
+            sibling.unlink()
+
+
+def _rolled_back_ledger(tmp_path: Path) -> tuple[Path, Path]:
+    """Six grants spent, history restored to one. Returns (ledger, sidecar)."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "the first grant did not release; setup is broken"
+
+    _checkpoint(path)
+    backup = tmp_path / "backup.sqlite3"
+    shutil.copy2(path, backup)
+
+    for index in range(1, 6):
+        assert _spend(ledger, index), f"grant {index} did not release"
+    assert _rows(path) == 6
+
+    _checkpoint(path)
+    shutil.copy2(backup, path)
+    assert _rows(path) == 1, "the restore did not actually lose history"
+    return path, path.with_name(path.name + ".highwater")
+
+
+# --------------------------------------------------------------------------
+# The sidecar state space. Each entry installs one on-disk shape.
+# --------------------------------------------------------------------------
+
+def _absent(side: Path) -> None:
+    if side.exists():
+        side.unlink()
+
+
+def _zero_length(side: Path) -> None:
+    side.write_bytes(b"")
+
+
+def _valid_db_no_table(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    sqlite3.connect(side).close()
+
+
+def _valid_db_no_row(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute(
+            "CREATE TABLE high_water (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"
+        )
+
+
+def _text_value(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("CREATE TABLE high_water (id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, 'lots')")
+        conn.commit()
+
+
+def _null_value(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("CREATE TABLE high_water (id INTEGER PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, NULL)")
+        conn.commit()
+
+
+def _plaintext(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"6")
+
+
+def _plaintext_garbage(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"not a number at all")
+
+
+def _torn_bytes(side: Path) -> None:
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"SQLite format 3\x00" + b"\x00" * 4)
+
+
+def _directory(side: Path) -> None:
+    if side.exists() and side.is_file():
+        side.unlink()
+    side.mkdir(exist_ok=True)
+
+
+def _hostile_trigger(side: Path) -> None:
+    """A trigger that silently discards every advance of the mark.
+
+    The LEDGER's object set is closed by `_assert_ledger_structure` and re-run
+    at claim time, because "the next hostile object is the one nobody
+    enumerated". None of that applied to the sidecar, which carries exactly as
+    much weight for the replay decision. A review froze the mark at 0 across six
+    consumptions this way and then released a spent grant from a restore.
+    """
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute(
+            "CREATE TRIGGER freeze BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+
+def _two_marks(side: Path) -> None:
+    """A `high_water` table rebuilt WITHOUT `CHECK (id = 1)`, holding two rows.
+
+    `fetchone()` answers the first, so `(1, 0)` beside `(2, 6)` reads as 0 --
+    the exact defect `_read_established_at` was repaired for, un-repaired one
+    file over.
+    """
+    with closing(sqlite3.connect(side)) as conn:
+        conn.execute("DROP TABLE IF EXISTS high_water")
+        conn.execute("CREATE TABLE high_water (id INTEGER, value INTEGER)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (1, 0)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (2, 6)")
+        conn.commit()
+
+
+SIDECAR_STATES = [
+    ("absent", _absent),
+    ("zero length", _zero_length),
+    ("valid db, no high_water table", _valid_db_no_table),
+    ("valid db, table but no row", _valid_db_no_row),
+    ("value is TEXT", _text_value),
+    ("value is NULL", _null_value),
+    ("legacy plain-text mark", _plaintext),
+    ("plain text that is not a number", _plaintext_garbage),
+    ("torn SQLite header", _torn_bytes),
+    ("sidecar is a directory", _directory),
+    ("a trigger freezing the mark", _hostile_trigger),
+    ("two high_water rows", _two_marks),
+]
+
+
+@pytest.mark.parametrize(("label", "install"), SIDECAR_STATES, ids=lambda v: v)
+def test_a_spent_grant_is_never_released_again_whatever_the_sidecar_holds(
+    label: str, install, tmp_path: Path
+) -> None:
+    """The property, not the diagnostic.
+
+    WHICH refusal arrives is an operator-facing detail and differs by state:
+    a readable mark above the row count gives LEDGER_ROLLED_BACK, an unreadable
+    one gives LEDGER_CONTINUITY_UNKNOWN, and a grant older than a re-anchored
+    ledger gives GRANT_PREDATES_LEDGER. Asserting a particular code here would
+    make this a test of wording. What may never happen is a release.
+    """
+    path, side = _rolled_back_ledger(tmp_path)
+    install(side)
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-3",
+    )
+    assert claimed is False, (
+        f"sidecar state {label!r}: a grant that was already spent RELEASED THE "
+        "EFFECT AGAIN after replay history was rolled back. One human approval, "
+        f"two effects. Reason given: {reason!r}"
+    )
+
+
+@pytest.mark.parametrize(("label", "install"), SIDECAR_STATES, ids=lambda v: v)
+def test_no_sidecar_state_permanently_bricks_a_healthy_ledger(
+    label: str, install, tmp_path: Path
+) -> None:
+    """Failing closed must not mean failing forever.
+
+    A refusal that cannot be cleared is an availability defect, and this
+    repository has already shipped one: a sidecar shape that could never be
+    written again silently disabled the check it fed. `provision-ledger
+    --reset-replay-history` is the documented route out, so it must actually
+    work from every state -- which is also the only thing that keeps the
+    refusals above from being free.
+    """
+    from nornyx_forge.nornyx_runtime import approval_ledger_path  # noqa: PLC0415
+
+    path = approval_ledger_path(tmp_path.resolve())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+    assert _spend(ApprovalLedger(path), 0)
+    install(side)
+
+    # THE SHIPPED COMMAND, NOT A COPY OF IT.
+    #
+    # This reimplemented the reset inline, under a docstring saying the reset
+    # "must actually work from every state -- which is also the only thing that
+    # keeps the refusals above from being free". A review mutated the real
+    # command three ways -- `rmtree` back to `unlink` only, the `finally`
+    # removed, and the entire body replaced by `pass` -- and this module stayed
+    # at 25 passed for all three. A control that reimplements what it controls
+    # is FG26, and it was committed in the module written to answer "no
+    # executing proof".
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path),
+              "--reset-replay-history"],
+    )
+    assert result.exit_code == 0, (
+        f"sidecar state {label!r}: the documented reset command failed: "
+        + str(result.exit_code) + " " + str(result.output)
+    )
+
+    # A GRANT ISSUED AFTER THE RESET, because the reset mints a NEW EPOCH and
+    # every outstanding grant is supposed to predate it. The previous version
+    # of this test re-provisioned inline with the fixture's pinned
+    # `established_at`, which kept the epoch still and hid that entirely -- the
+    # first thing driving the real command surfaced.
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    later = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-fresh", "rd-fresh", at=later,
+        grant_issued_at=later, approval_id="ACT-FRESH",
+    )
+    assert claimed is True, (
+        f"sidecar state {label!r}: after the documented reset a FRESH grant "
+        f"still could not release, so the ledger is permanently bricked: {reason!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# CONTROLS. Without these, every assertion above is satisfied by a ledger that
+# refuses everything, and the module would prove nothing at all.
+# --------------------------------------------------------------------------
+
+
+def test_the_control_a_healthy_ledger_releases_a_fresh_grant(tmp_path: Path) -> None:
+    """If this fails, the refusals above are not evidence of anything."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0) is True
+
+
+def test_the_control_the_rollback_is_detected_when_the_sidecar_is_intact(
+    tmp_path: Path,
+) -> None:
+    """The setup genuinely loses history AND is genuinely noticed.
+
+    This is the arm that proves `_rolled_back_ledger` builds the state the
+    parametrised tests think it builds. If the WAL checkpoint were wrong the
+    restore would keep its history, every refusal above would arrive for the
+    ordinary already-consumed reason, and the module would be green over a
+    setup that never rolled anything back.
+    """
+    path, _side = _rolled_back_ledger(tmp_path)
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-3",
+    )
+    assert claimed is False
+    assert LEDGER_ROLLED_BACK in reason, (
+        "with an intact sidecar the rollback must be detected as a rollback, "
+        f"not as something else: {reason!r}"
+    )
+
+
+def test_an_unreadable_sidecar_refuses_with_its_own_code(tmp_path: Path) -> None:
+    """The coded refusal exists and is reachable through `consume`.
+
+    Named separately from the property test because an operator acts on the
+    code: LEDGER_CONTINUITY_UNKNOWN says the mark cannot be read, which is a
+    different remedy from LEDGER_ROLLED_BACK. A review found this code had no
+    executing test of any kind -- four assertions elsewhere name the constant,
+    all of them about a missing `established_at`, a different cause entirely.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0)
+    side = path.with_name(path.name + ".highwater")
+    side.unlink(missing_ok=True)
+    side.write_bytes(b"not a database and not a number")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+    assert "--reset-replay-history" in reason, (
+        "the refusal does not name a remedy, and a refusal an operator cannot "
+        "act on is how the previous wording sent people to re-provision, which "
+        "measurably did not clear it"
+    )
+
+
+def test_provisioning_writes_the_mark_so_there_is_no_unmarked_window(
+    tmp_path: Path,
+) -> None:
+    """The invariant, made true by construction instead of by argument.
+
+    The first version of this repair reasoned: "a ledger holding rows
+    necessarily had a mark written, so unmarked-over-non-empty is a
+    contradiction". Running it showed the reasoning has a hole --
+    `_record_consumptions` writes the mark AFTER the insert commits, so between
+    those two moments a used ledger legitimately has none. Six concurrent
+    first-time consumers measured five legitimate grants refused through that
+    window.
+
+    `provision` writing the mark closes it: the mark exists whenever the ledger
+    does, so absence and emptiness stop being ambiguous and become what they
+    look like. This test pins the property the repair now rests on.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+
+    assert side.exists(), "provisioning did not create the mark"
+    assert ApprovalLedger(path)._recorded_consumptions() == 0, (
+        "a freshly provisioned ledger must record zero consumptions, not None; "
+        "None is the ambiguous state this change exists to remove"
+    )
+
+    # And a truncated mark is now tampering even over an empty ledger, because
+    # provisioning already wrote one.
+    side.unlink()
+    sqlite3.connect(side).close()
+    assert side.stat().st_size == 0
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-first", "rd-first", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-FIRST",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+
+
+def test_concurrent_first_time_consumers_are_not_refused(tmp_path: Path) -> None:
+    """The regression that forced the design, driven directly.
+
+    Every one of these is a distinct, legitimate, never-before-seen grant on a
+    freshly provisioned ledger. If the mark is not present from provisioning,
+    the ones that reach `_recorded_consumptions` before the first mark write
+    are refused -- measured as `1 == 6` before this was fixed.
+    """
+    import threading
+
+    path = tmp_path / "race.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+
+    barrier = threading.Barrier(6)
+    granted: list = []
+    lock = threading.Lock()
+
+    def run(index: int) -> None:
+        ledger = ApprovalLedger(path)
+        barrier.wait()
+        claimed, reason = ledger.consume(
+            f"fp-race-{index}", f"rd-race-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-RACE-{index}",
+        )
+        with lock:
+            granted.append((claimed, reason))
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    refused = [reason for claimed, reason in granted if not claimed]
+    assert refused == [], (
+        "distinct first-time grants were refused on a freshly provisioned "
+        f"ledger: {refused}"
+    )
+    assert _rows(path) == 6
+
+
+def test_provisioning_an_existing_ledger_does_not_mint_a_mark(tmp_path: Path) -> None:
+    """The writer must not undo what the reader was taught.
+
+    `_recorded_consumptions` treats an absent mark as REMOVAL. `provision`
+    minted an absent mark at 0 whatever the ledger beside it held, so the state
+    the reader calls tampering was the state the writer called first-time
+    setup -- and the writer runs first.
+
+    A review drove it with no adversary and no deletion, on the legacy-upgrade
+    path the source itself names: a ledger with rows and no mark correctly
+    refused; the DOCUMENTED `provision-ledger` command then reported
+    `"action": "left_unchanged"` and wrote a mark of 0; the next restore
+    released an already-spent grant, and then every other forgotten grant in
+    turn.
+
+    The refusal text warns that deleting the mark by hand would disable the
+    check. The command one flag away did the same thing and reported `pass`.
+    """
+    path = tmp_path / "legacy.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert _spend(ApprovalLedger(path), 0)
+    side = path.with_name(path.name + ".highwater")
+    side.unlink()
+
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+
+    assert not side.exists(), (
+        "re-provisioning an EXISTING ledger created a replay high-water mark. "
+        "This call knows nothing about the history that ledger holds, so a "
+        "mark it writes asserts a history it cannot have measured -- and a "
+        "mark of 0 over a used ledger disables rollback detection entirely."
+    )
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-0", "rd-0", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert claimed is False, (
+        "the already-spent grant released after the documented provisioning "
+        f"command: {reason!r}"
+    )
+    assert LEDGER_CONTINUITY_UNKNOWN in reason, reason
+
+
+def test_provisioning_a_new_ledger_still_mints_its_mark(tmp_path: Path) -> None:
+    """The control. Without it the assertion above is satisfied by never
+    minting at all, which would reopen the concurrent-first-consumer window
+    that minting at provision time exists to close."""
+    path = tmp_path / "fresh.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    side = path.with_name(path.name + ".highwater")
+    assert side.exists(), "a NEW ledger was provisioned without its mark"
+    assert ApprovalLedger(path)._recorded_consumptions() == 0
+    assert _spend(ApprovalLedger(path), 0) is True
+
+
+def test_the_mark_cannot_be_lowered_deterministically(tmp_path: Path) -> None:
+    """The monotonicity guard, proved without a race.
+
+    `test_a21_the_mark_keeps_up_with_overlapping_consumptions` is the only
+    proof this guard had, and a review measured that removing the guard
+    (`UPDATE ... WHERE value < ?` -> `UPDATE ...`) is detected in 3 RUNS OF 10.
+    A security guard whose regression ships green seven times in ten is not
+    proved.
+
+    The concurrent test measures "the mark KEEPS UP", which needs a race. This
+    measures "the mark is NEVER LOWERED", which does not: set it high, ask for
+    lower, require it to refuse. Both are worth having; only one of them has to
+    be nondeterministic.
+    """
+    path = tmp_path / "monotone.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    ledger._record_consumptions(9)
+    assert ledger._recorded_consumptions() == 9
+
+    ledger._record_consumptions(3)
+    assert ledger._recorded_consumptions() == 9, (
+        "the recorded consumption count was LOWERED. A mark that can go down "
+        "is a mark a restore can rewrite, and the rollback check compares "
+        "against it."
+    )
+    ledger._record_consumptions(12)
+    assert ledger._recorded_consumptions() == 12, (
+        "the mark refused to RISE, so the guard above is satisfied by a setter "
+        "that never writes at all"
+    )
+
+
+def test_the_plaintext_mark_helpers_are_not_on_a_production_path():
+    """A9-P2-2. The comment says they are dead; this is what says it.
+
+    `_recorded_consumptions` and `_record_consumptions` are the two-step
+    plaintext-mark path that `_commit_consumption` replaced. A residual beside
+    the writer claimed the reader "is read at the TOP of the next `consume`",
+    which was FALSE and false in the direction of claiming safety -- and it
+    survived because nothing checked it.
+
+    Read from the PARSE TREE of the production module: a call is an
+    `ast.Call`, and neither a comment nor a docstring can be one, which is the
+    whole difference between this and the sentence it replaces.
+
+    If someone wires either into `consume`, this goes red and the note beside
+    them has to be rewritten -- which is the point. It is not an assertion
+    that dead code is good; it is an assertion that the DESCRIPTION and the
+    CODE agree.
+    """
+    import ast  # noqa: PLC0415
+
+    from nornyx_forge import nornyx_runtime  # noqa: PLC0415
+
+    source = Path(nornyx_runtime.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    called = [
+        (node.lineno, name)
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for name in [getattr(node.func, "attr", getattr(node.func, "id", None))]
+        if name in {"_recorded_consumptions", "_record_consumptions"}
+    ]
+    assert called == [], (
+        "the plaintext-mark helpers are called from production source, so the "
+        "note beside them -- which says the single-transaction path replaced "
+        f"them and reaches neither -- is now false: {called}"
+    )
+
+
+def test_the_witness_object_closure_judges_a_wildcard_named_trigger(tmp_path: Path):
+    """A9-P2-2. The THIRD copy of the inverted filter, measured.
+
+    `WHERE name NOT LIKE 'sqlite_%'` is documented twice in the runtime as
+    having produced live bypasses, and the copy inside `_recorded_consumptions`
+    was left carrying it. `_` is a single-character LIKE wildcard, so a trigger
+    named `sqliteXz` was DISCARDED BEFORE BEING JUDGED.
+
+    Driven against the helper rather than argued: a trigger that freezes the
+    mark must be refused, and an ordinary `ANALYZE` must NOT be -- the naive
+    repair (drop the filter, refuse everything unknown) bricks the store on
+    the statistics tables SQLite creates for itself.
+    """
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LedgerContinuityUnknown,
+    )
+
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute(
+            "CREATE TRIGGER sqliteXz BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+    with pytest.raises(LedgerContinuityUnknown) as refusal:
+        ledger._recorded_consumptions()
+    assert "sqliteXz" in str(refusal.value), (
+        "the wildcard-named trigger was not the object named in the refusal, "
+        f"so it was not what the closure judged: {refusal.value}"
+    )
+
+
+def test_the_witness_object_closure_still_tolerates_analyze(tmp_path: Path):
+    """The positive control for the check above.
+
+    Without this, refusing the trigger would be satisfied by a closure that
+    refuses everything -- and that closure BRICKS a healthy ledger, because
+    `ANALYZE` creates `sqlite_stat1` in the witness store.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute("ANALYZE")
+        conn.commit()
+
+    assert ledger._recorded_consumptions() is not None, (
+        "a healthy witness was refused after ANALYZE, so the closure is "
+        "over-inclusive and would brick an ordinary store"
+    )
+    assert _spend(ledger, 1), "a grant was refused after ANALYZE"
+
+
+def _replace_witness_key(ledger: ApprovalLedger, key) -> None:
+    """Re-key the witness row.
+
+    The provisioned column is an INTEGER PRIMARY KEY, so a plain UPDATE is
+    refused with `datatype mismatch` -- the table has to be rebuilt, which is
+    also what a tamper looks like.
+    """
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        held = conn.execute("SELECT value FROM high_water").fetchone()[0]
+        conn.execute("DROP TABLE high_water")
+        conn.execute("CREATE TABLE high_water (id, value INTEGER NOT NULL)")
+        conn.execute("INSERT INTO high_water (id, value) VALUES (?, ?)",
+                     (key, held))
+        conn.commit()
+
+
+def _spent_ledger(tmp_path: Path) -> ApprovalLedger:
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+    return ledger
+
+
+# --------------------------------------------------------------------------
+# A9-P2-1 -- ONE PARAMETER PER MECHANISM, AND THE REFUSAL IS NAMED
+#
+# Three mechanisms guard this witness: the object closure, the `id = 1`
+# assertion, and the post-UPDATE re-read of the VALUE. A review deleted each
+# one individually and ran 51 selected tests: three of the four deletions left
+# ZERO tests red. The four sabotage parameters in use were jointly covered by
+# any one of the three, so no test attributed anything, and the docstring
+# claiming which mechanism caught what was wrong in both directions.
+#
+# A control that cannot say WHICH mechanism caught a thing cannot notice when
+# that mechanism is removed. Each test below drives a parameter only ONE of
+# them catches, and asserts the refusal that mechanism produces.
+# --------------------------------------------------------------------------
+
+
+def test_a_wildcard_named_trigger_is_caught_by_the_object_closure(
+    tmp_path: Path,
+) -> None:
+    """Only the closure sees this: `_` is a single-character LIKE wildcard.
+
+    The filter that used to live in the closure query, `WHERE name NOT LIKE
+    'sqlite_%'`, DISCARDED a trigger named `sqliteXz` before it could be
+    judged -- and such a trigger freezes the witness while `consume` returns
+    True. The id assertion cannot see it (the row is still keyed 1) and the
+    re-read runs after it.
+    """
+    ledger = _spent_ledger(tmp_path)
+    with closing(sqlite3.connect(ledger.watermark_path)) as conn:
+        conn.execute(
+            "CREATE TRIGGER sqliteXz BEFORE UPDATE ON high_water"
+            " BEGIN SELECT RAISE(IGNORE); END"
+        )
+        conn.commit()
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a frozen witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "carries objects" in reason and "sqliteXz" in reason, (
+        "the refusal did not name the object the closure judged, so this "
+        f"cannot attribute the catch to the closure: {reason}"
+    )
+
+
+def test_a_witness_keyed_seven_is_caught_by_the_id_assertion(
+    tmp_path: Path,
+) -> None:
+    """Only the id assertion sees this.
+
+    `_commit_consumption` updates `WHERE id = 1`. A row keyed 7 makes that
+    update match nothing -- and the closure is satisfied, because the object
+    set is unchanged.
+    """
+    ledger = _spent_ledger(tmp_path)
+    _replace_witness_key(ledger, 7)
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a re-keyed witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "holds its witness under id" in reason, (
+        "the refusal did not name the key, so this cannot attribute the catch "
+        f"to the id assertion: {reason}"
+    )
+
+
+def test_a_witness_keyed_as_text_is_caught_only_by_the_value_re_read(
+    tmp_path: Path,
+) -> None:
+    """THE ONE PARAMETER THAT ISOLATES THE RE-READ.
+
+    `int(id) == 1` and `WHERE id = 1` are DIFFERENT PREDICATES under SQLite
+    affinity. A row keyed TEXT `'01'` satisfies the id assertion -- `int('01')`
+    is 1 -- and does NOT match `WHERE id = 1` in a column with no declared
+    type, so the UPDATE silently matches nothing. The closure sees an
+    unchanged object set.
+
+    With the re-read removed, a review measured this releasing the grant and
+    committing the row while the witness stayed behind: `claimed=True, rows=3,
+    witness=[('01', 2)]` -- a COMMITTED DISAGREEMENT, which is the exact state
+    the two-store design exists to make impossible.
+
+    `changes()` cannot substitute here: a `RAISE(IGNORE)` trigger reports a
+    row as changed while discarding the write, so the VALUE is what gets read
+    back.
+    """
+    ledger = _spent_ledger(tmp_path)
+    _replace_witness_key(ledger, "01")
+
+    before = _rows(ledger.path)
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, (
+        "a witness the UPDATE cannot reach released a grant, which is the "
+        "committed-disagreement state this design exists to prevent"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert "did not record this consumption" in reason, (
+        "the refusal did not name the unrecorded advance, so this cannot "
+        f"attribute the catch to the value re-read: {reason}"
+    )
+    assert _rows(ledger.path) == before, (
+        "the transaction was not rolled back: the consumption row is "
+        "committed while the witness did not advance"
+    )
+
+
+def _journal_mode(path: Path) -> str:
+    with closing(sqlite3.connect(path)) as conn:
+        return str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+
+
+# --------------------------------------------------------------------------
+# A9-P2-5 -- TWO REAL REPAIRS THAT NOTHING MEASURED
+#
+# Both held at the head where this was written, and both could be reverted
+# SIMULTANEOUSLY with 194 tests passing and none red. `grep "mode=rw" tests/`
+# returned nothing at all. A repair with no failing witness is indistinguishable
+# from a repair that was never made.
+# --------------------------------------------------------------------------
+
+
+def test_a_missing_witness_refuses_and_nothing_is_created(
+    tmp_path: Path,
+) -> None:
+    """The PROPERTY, stated without attributing it to a mechanism.
+
+    A ledger whose witness is gone must refuse, and the refusal must LEAVE
+    NOTHING BEHIND -- a witness created here would hold 0 beside a ledger
+    holding N, which is exactly the state a rollback produces, except that the
+    code would have manufactured it itself and would believe it on the next
+    call. So the second half is not decoration: it is the difference between
+    "the witness was removed" and "the witness says zero".
+
+    ATTRIBUTION WAS ATTEMPTED AND NOT ACHIEVED. This test was first written
+    claiming the `mode=rw` URI on the ATTACH is what produces it, because the
+    runtime comment beside that URI says a bare ATTACH creates the file. On
+    this head that does not reproduce, measured three ways:
+
+        mode=rw -> bare ATTACH                  refuses, creates nothing
+        the same, with the deletion RACED into
+          the existence-check window            refuses, creates nothing
+        existence check at either site removed  this test stays GREEN
+
+    SQLite defers creating an attached database file until something writes to
+    it, and nothing here does before the refusal. So the property is
+    OVER-DETERMINED at this head and no single mechanism is attributable --
+    the same shape as the finding that produced the three attribution tests
+    above, and it is recorded rather than papered over with a docstring that
+    names a cause this test cannot see.
+
+    What this DOES measure is the property itself, which is what a rollback
+    would exploit and what nothing measured before: `grep "mode=rw" tests/`
+    returned nothing at all, and both repairs in this section could be
+    reverted together with 194 tests passing and none red.
+    """
+    ledger = _spent_ledger(tmp_path)
+    witness = ledger.watermark_path
+    assert witness.exists(), "setup is broken: no witness was provisioned"
+    witness.unlink()
+
+    claimed, reason = ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert claimed is False, "a ledger with no witness released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+    assert not witness.exists(), (
+        "the refusal CREATED the witness file. The next call would read a "
+        "fresh witness holding 0 beside a ledger holding one consumption, and "
+        "treat a store this code just manufactured as evidence of history"
+    )
+
+
+def test_provisioning_a_wal_ledger_does_not_convert_it_or_flip_the_verdict(
+    tmp_path: Path,
+) -> None:
+    """The sequence, end to end: refuse, provision, and refuse the SAME grant.
+
+    A ledger in WAL cannot give the single-transaction guarantee this design
+    rests on, so `consume` refuses with LEDGER_CONTINUITY_MIGRATION_REQUIRED.
+    The danger is the obvious fix: if `provision` quietly converted the
+    journal mode, an operator would run it, the same grant would then release,
+    and an AUTHORIZATION VERDICT would have been flipped by a maintenance
+    command. Conversion is a migration -- it has to be asked for by name.
+
+    Three things measured in one sequence, because the risk is in their order:
+    the mode is unchanged, `provision` refuses rather than converting, and the
+    same grant is refused again afterwards.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.commit()
+    assert _journal_mode(path) == "wal", "setup is broken: the ledger is not WAL"
+
+    first, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert first is False, "a WAL ledger released a grant"
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+
+    with pytest.raises(NornyxRuntimeUnavailable) as refusal:
+        ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    assert LEDGER_CONTINUITY_MIGRATION_REQUIRED in str(refusal.value), (
+        f"provision refused for some other reason: {refusal.value}"
+    )
+    assert _journal_mode(path) == "wal", (
+        "provision CONVERTED the journal mode of an existing ledger. A "
+        "maintenance command must not silently change what the replay store "
+        "can guarantee"
+    )
+
+    second, reason = ApprovalLedger(path).consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-1",
+    )
+    assert second is False, (
+        "the SAME grant was refused, then released after `provision-ledger` "
+        "-- an authorization verdict flipped by a maintenance command"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+
+
+def _constrain_ledger_against(path: Path, approval_id: str) -> None:
+    """Rebuild `consumed_approvals` so one approval_id cannot be recorded.
+
+    The OBJECT SET is unchanged -- same table name, same automatic indexes --
+    so the ledger closure check passes and the INSERT is what fails. That is
+    the point: this produces an `IntegrityError` that is NOT a duplicate.
+    """
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("ALTER TABLE consumed_approvals RENAME TO shadow_ca")
+        conn.execute(
+            "CREATE TABLE consumed_approvals ("
+            " fingerprint TEXT PRIMARY KEY,"
+            " request_digest TEXT NOT NULL UNIQUE,"
+            " approval_id TEXT NOT NULL,"
+            " consumed_at TEXT NOT NULL,"
+            f" CHECK (approval_id <> {approval_id!r}))"
+        )
+        conn.execute("INSERT INTO consumed_approvals SELECT * FROM shadow_ca")
+        conn.execute("DROP TABLE shadow_ca")
+        conn.commit()
+
+
+def test_an_integrity_error_with_no_row_is_not_reported_as_a_replay(
+    tmp_path: Path,
+) -> None:
+    """A9-P3-1. The record said a grant was spent that had never been presented.
+
+    Every `sqlite3.IntegrityError` out of the consumption transaction was read
+    as a replay, and the fallback said so even when the lookup meant to find
+    the earlier consumption found NOTHING -- `when` became the literal string
+    "an earlier run", which reads like a date the ledger does not have.
+
+    Measured before the repair: `rows before 0, after 0`, and the reason "this
+    approval was already consumed at an earlier run" for a grant presented for
+    the first time. A governance record stating a falsehood, sending an
+    operator to look for a duplicate that does not exist.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    _constrain_ledger_against(path, "ACT-never-seen")
+
+    assert _rows(path) == 0, "setup is broken: the ledger is not empty"
+    claimed, reason = ledger.consume(
+        "fp-never-seen", "rd-never-seen", at=NOW,
+        grant_issued_at=GRANT_ISSUED, approval_id="ACT-never-seen",
+    )
+
+    assert claimed is False, "a ledger that refused the record released a grant"
+    assert _rows(path) == 0, "a row was committed despite the integrity error"
+    assert "already consumed" not in reason, (
+        "the ledger holds NO row for this grant and the record still claims it "
+        f"was consumed: {reason}"
+    )
+    assert reason.startswith(ApprovalLedger.UNREADABLE), (
+        "a ledger that cannot record a consumption cannot answer whether the "
+        f"grant was spent, and must say so with its own code: {reason}"
+    )
+
+
+def test_a_genuine_replay_is_still_reported_as_one(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL for the test above.
+
+    Narrowing the replay branch is satisfied by a branch that never reports a
+    replay at all, which would delete the single-use diagnostic entirely. The
+    second presentation of the SAME grant must still name the replay, and name
+    the real timestamp rather than a placeholder.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    assert _spend(ledger, 0), "the first presentation did not release"
+    claimed, reason = ledger.consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-0",
+    )
+    assert claimed is False, "the same grant released twice"
+    assert "already consumed" in reason, reason
+    assert "an earlier run" not in reason, (
+        "the replay is real, so the record must carry the consumption time it "
+        f"actually holds rather than a placeholder: {reason}"
+    )
+
+
+def test_the_same_act_under_a_second_grant_is_still_refused(tmp_path: Path) -> None:
+    """The other positive control: a different fingerprint, the same act."""
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+
+    first, _ = ledger.consume("fp-a", "rd-shared", at=NOW,
+                              grant_issued_at=GRANT_ISSUED, approval_id="ACT-a")
+    assert first is True, "setup is broken: the first grant did not release"
+
+    claimed, reason = ledger.consume("fp-b", "rd-shared", at=NOW,
+                                     grant_issued_at=GRANT_ISSUED,
+                                     approval_id="ACT-b")
+    assert claimed is False, "a second grant released an act already performed"
+    assert "already released" in reason and "ACT-a" in reason, reason
+
+
+def test_provisioning_a_wal_ledger_refuses_in_the_governed_way(tmp_path: Path) -> None:
+    """A9-P3-2. The refusal was correct and arrived as a crash.
+
+    `provision` refuses an existing ledger whose journal mode cannot commit as
+    one unit with its witness, and it is right to: converting would change
+    replay-safety semantics for a caller who asked only to provision. But the
+    refusal reached the operator as an UNHANDLED EXCEPTION -- measured, exit 1
+    with a Python traceback in stderr wrapping the message.
+
+    Every other refusal on this surface is a JSON report and a chosen exit
+    code. An operator parsing this output got a stack trace instead of a
+    status, and a stack trace is not a governed record of a decision.
+    """
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    with closing(sqlite3.connect(location)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.commit()
+    assert _journal_mode(location) == "wal", "setup is broken"
+
+    result = CliRunner().invoke(app, ["provision-ledger", "--root", str(tmp_path)])
+
+    assert result.exit_code == 2, (
+        f"a governed refusal must choose its exit code: {result.exit_code}"
+    )
+    assert "Traceback" not in result.output, (
+        "the refusal arrived as an unhandled exception: " + result.output[-400:]
+    )
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "fail", report
+    assert report["action"] == "refused", report
+    assert "--migrate-continuity" in report["reason"], (
+        "the refusal no longer names the recovery command, which is the only "
+        f"thing that makes it actionable: {report['reason']}"
+    )
+    assert _journal_mode(location) == "wal", (
+        "the refused provision converted the ledger anyway"
+    )
+
+
+def test_provisioning_a_healthy_ledger_still_reports_pass(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL. Catching the refusal is satisfied by a command
+    that refuses everything, which would make provisioning impossible."""
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    result = CliRunner().invoke(app, ["provision-ledger", "--root", str(tmp_path)])
+    assert result.exit_code == 0, result.output[-300:]
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "pass" and report["action"] == "created", report
+
+
+def _two_row_witness(tmp_path: Path, planted) -> Path:
+    """A ledger with two consumptions beside a witness holding two rows."""
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_WATERMARK_SUFFIX,
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert _spend(ledger, 0) and _spend(ledger, 1), "setup is broken"
+
+    witness = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+    with closing(sqlite3.connect(witness)) as conn:
+        conn.execute("DROP TABLE high_water")
+        conn.execute(
+            "CREATE TABLE high_water ("
+            " id INTEGER PRIMARY KEY, value INTEGER NOT NULL)"
+        )
+        for pair in planted:
+            conn.execute(
+                "INSERT INTO high_water (id, value) VALUES (?, ?)", pair
+            )
+        conn.commit()
+    for path in (location, witness):
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
+    return location
+
+
+@pytest.mark.parametrize(
+    ("label", "planted"),
+    [
+        ("the agreeing row comes first", [(1, 2), (2, 99)]),
+        ("the agreeing row comes second", [(1, 99), (2, 2)]),
+    ],
+)
+def test_the_migration_refuses_a_multi_row_witness_whatever_the_order(
+    label: str, planted, tmp_path: Path,
+) -> None:
+    """A9-P3-3. The verdict turned on which row SQLite happened to return.
+
+    The pre-migration check read the witness with `fetchone()[0]`, which takes
+    the first row and never looks at the rest. Against a 2-row ledger, the SAME
+    two witness rows gave OPPOSITE verdicts depending only on their order:
+
+        (1, 99) then (2, 2)   fetchone -> 99   refused
+        (1, 2)  then (2, 99)  fetchone -> 2    status pass,
+                                               action migrated_continuity
+
+    The second left a witness still holding 99 in a store the command had just
+    called migrated. Row order is not a property of the data, so a verdict that
+    turns on it is not a verdict -- and this is the ordering-dependent read
+    that two other sites in this system were already repaired for.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+
+    _two_row_witness(tmp_path, planted)
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 2, (
+        f"{label}: a witness holding two rows was migrated. "
+        + result.output[-300:]
+    )
+    assert "two rows" in result.output or "2 rows" in result.output, (
+        f"{label}: the refusal does not name what was wrong: "
+        + result.output[-300:]
+    )
+
+
+def test_the_migration_still_converts_a_healthy_pair(tmp_path: Path) -> None:
+    """THE POSITIVE CONTROL. Refusing every witness would satisfy the tests
+    above and make the documented recovery command useless."""
+    import json  # noqa: PLC0415
+
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        LEDGER_WATERMARK_SUFFIX,
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert _spend(ledger, 0), "setup is broken"
+    witness = location.with_name(location.name + LEDGER_WATERMARK_SUFFIX)
+    for path in (location, witness):
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.commit()
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 0, result.output[-300:]
+    report = json.loads(result.output[result.output.index("{"):])
+    assert report["status"] == "pass", report
+    assert _journal_mode(location) in {"delete", "truncate", "persist"}, (
+        "the migration reported pass and left the ledger in WAL"
+    )
+
+
+def test_deleting_the_sidecar_after_a_rollback_still_refuses(tmp_path: Path) -> None:
+    """A9-P3-4. The residual claimed this DISABLED the check. It does not.
+
+    `nornyx_runtime.py` stated, as a disclosed limitation, that "anyone who can
+    delete the sidecar disables the check". That was FALSE at the head where it
+    was written, and this file's own note two hundred lines away contradicted
+    it -- calling the same residual "a working replay ... and this one closes".
+
+    A false disclosure is not the harmless direction of wrong. It understates
+    what the system does, and an operator reading it would believe a deleted
+    sidecar silently reopened replay. Measured here: it fails CLOSED.
+    """
+    path, sidecar = _rolled_back_ledger(tmp_path)
+    assert sidecar.exists(), "setup is broken: there is no sidecar to delete"
+    sidecar.unlink()
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-3",
+    )
+    assert claimed is False, (
+        "deleting the sidecar released a grant that was already spent, which "
+        "is what the residual claimed and what this test exists to refute"
+    )
+    assert reason.startswith(LEDGER_CONTINUITY_UNKNOWN), reason
+
+
+def test_a_whole_directory_restore_is_the_disclosed_limit(tmp_path: Path) -> None:
+    """A9-P3-4, the half that IS true, pinned so it cannot go stale either.
+
+    Both stores roll back together and agree at the old count, so nothing is
+    left to disagree with and a grant spent after the backup releases again.
+    That is the honest limit of a two-store design against an adversary who
+    can restore the whole runtime directory -- and it is exactly the property
+    the C-4 review refused to let this system claim it had closed.
+
+    Pinned in the AFFIRMATIVE: if someone later closes this, the correction
+    fails here and the residual beside `LEDGER_WATERMARK_SUFFIX` has to be
+    rewritten rather than left describing a weakness that no longer exists.
+    """
+    import shutil  # noqa: PLC0415
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    path = runtime / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert _spend(ledger, 0), "setup is broken: the first grant did not release"
+
+    backup = tmp_path / "backup"
+    shutil.copytree(runtime, backup)
+    for index in range(1, 6):
+        assert _spend(ledger, index), f"grant {index} did not release"
+
+    shutil.rmtree(runtime)
+    shutil.copytree(backup, runtime)
+
+    claimed, _reason = ApprovalLedger(path).consume(
+        "fp-3", "rd-3", at=NOW, grant_issued_at=GRANT_ISSUED,
+        approval_id="ACT-3",
+    )
+    assert claimed is True, (
+        "a whole-directory restore no longer releases a spent grant. That is "
+        "an IMPROVEMENT, and it means the disclosed limitation beside "
+        "LEDGER_WATERMARK_SUFFIX is now wrong: rewrite it with the new "
+        "measurement rather than leaving a weakness described that this "
+        "system does not have."
+    )
+
+
+def test_a_plaintext_witness_is_classified_for_migration_on_every_route(
+    tmp_path: Path,
+) -> None:
+    """The classification must not depend on how SQLite happened to fail.
+
+    A pre-database plain-text mark reaches `_assert_witness_structure` by two
+    routes, and which one depends on the SQLite build:
+
+        ATTACH REJECTS the file      DatabaseError handler, asks
+                                     `_looks_like_a_plaintext_mark`
+        ATTACH ACCEPTS it and        the "no high_water table" branch, which
+        reports no objects           did NOT ask, and answered
+                                     LEDGER_CONTINUITY_UNKNOWN
+
+    Measured before the repair: Windows took the first route and answered
+    MIGRATION_REQUIRED; Linux CI took the second and told the operator their
+    store had been TRUNCATED OR REPLACED, pointing at
+    `--reset-replay-history`, which discards approvals, when the
+    non-destructive `--migrate-continuity` was correct. Same artifact, two
+    verdicts, decided by the environment.
+
+    This asserts the ANSWER, so it holds on whichever route the running SQLite
+    takes. The revert control that makes it red is
+    `plaintext_witness_value returning None`, which is the single parse both
+    routes consult -- reverting only the branch leaves the other route
+    answering correctly on the platform that takes it, which is precisely why
+    the repair shipped without a specimen and a review had to find that.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"1")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-2", "rd-2", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-2",
+    )
+    assert claimed is False, "a plain-text mark released an effect"
+    assert reason.startswith(LEDGER_CONTINUITY_MIGRATION_REQUIRED), reason
+    assert "--migrate-continuity" in reason, reason
+    assert "--reset-replay-history" not in reason, (
+        "the refusal routes the operator to the remedy that DISCARDS approvals, "
+        "for a store whose history can be preserved: " + reason
+    )
+
+
+def test_a_witness_that_is_not_a_mark_is_still_unknown(tmp_path: Path) -> None:
+    """The over-reach control: not every unreadable witness is a legacy mark.
+
+    A rule that answered MIGRATION_REQUIRED for anything it could not read
+    would satisfy the test above and would tell an operator to convert a store
+    that has genuinely been truncated or replaced.
+    """
+    path = tmp_path / "ledger.sqlite3"
+    ApprovalLedger.provision(path, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(path)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"not a number and not a database")
+
+    claimed, reason = ApprovalLedger(path).consume(
+        "fp-2", "rd-2", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-2",
+    )
+    assert claimed is False
+    assert LEDGER_CONTINUITY_MIGRATION_REQUIRED not in reason, (
+        "an unreadable witness was offered a conversion it cannot survive: " + reason
+    )
+
+
+def test_the_named_remedy_converts_the_artifact_it_names(tmp_path: Path) -> None:
+    """The refusal names `--migrate-continuity`; it must RUN on that artifact.
+
+    Measured before the repair: the command read the witness as SQLite and
+    raised `DatabaseError: file is not a database` out of `provision_ledger`,
+    converting nothing, so the only command that cleared the state was
+    `--reset-replay-history` -- which discards every outstanding approval. The
+    refusal therefore routed the operator to the destructive remedy by making
+    the non-destructive one inoperative, while
+    `test_a_legacy_plain_text_mark_refuses_and_names_the_non_destructive_remedy`
+    stayed green because it measures the STRING and not the remedy.
+
+    So this drives the command and then drives the ledger, because a migration
+    that reports success and leaves the store refusing is not a migration.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"3")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert "Traceback" not in result.output, (
+        "the named remedy crashed on the artifact the refusal sends it:"
+        + NL + result.output[-800:]
+    )
+    assert result.exit_code == 0, result.output
+
+    # AND THE STORE WORKS AFTERWARDS. The promise is that outstanding approvals
+    # are preserved and nothing is discarded, so a fourth grant must release
+    # and the three spent ones must stay spent.
+    migrated = ApprovalLedger(location)
+    claimed, reason = migrated.consume(
+        "fp-9", "rd-9", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-9",
+    )
+    assert claimed is True, (
+        "the migration reported success and the ledger still refuses: " + reason
+    )
+    replayed, reason = ApprovalLedger(location).consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert replayed is False, (
+        "a consumption spent before the migration was released again after it, "
+        "so history was not preserved: " + reason
+    )
+
+
+def test_a_mark_that_disagrees_with_the_rows_is_not_converted(tmp_path: Path) -> None:
+    """The over-reach control for the migration.
+
+    A disagreement between the mark and the rows is what continuity exists to
+    detect. Converting it would launder that disagreement into a store the
+    command has just called migrated, so the command must refuse -- and refuse
+    in the governed way, not as a traceback.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    assert ledger.consume(
+        "fp-1", "rd-1", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-1",
+    )[0]
+
+    ledger.watermark_path.unlink()
+    ledger.watermark_path.write_bytes(b"99")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    # THE EXCEPTION, NOT THE OUTPUT. `CliRunner` puts an unhandled exception
+    # in `result.exception` and leaves `output` EMPTY, so the assertion this
+    # replaces -- `"Traceback" not in result.output` -- could not fire.
+    # Measured by a review: with the plain-text reader disabled the command
+    # raised an uncaught `sqlite3.DatabaseError` and this test stayed GREEN.
+    # An assertion that cannot fail, in the suite whose subject is assertions
+    # that cannot fail.
+    #
+    # `exit_code == 2` rather than `!= 0`, which is what the siblings on this
+    # surface assert: 1 is the code an unhandled exception produces, so
+    # `!= 0` accepts precisely the failure mode "a governed refusal, not a
+    # traceback" exists to forbid.
+    assert result.exception is None or isinstance(
+        result.exception, SystemExit
+    ), (
+        "the command raised instead of reporting a governed refusal: "
+        + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code) + NL + result.output[-800:]
+    )
+    assert ledger.watermark_path.read_bytes() == b"99", (
+        "a witness that disagrees with the rows was converted anyway"
+    )
+
+
+def test_a_busy_store_is_reported_and_nothing_is_half_converted(
+    tmp_path: Path,
+) -> None:
+    """AC05, on the command a refusal names as the non-destructive remedy.
+
+    The conversion loop took the ledger first and the witness second with no
+    guard. A review held ONE ordinary reader on the witness and ran the remedy
+    that `LEDGER_CONTINUITY_MIGRATION_REQUIRED` names: the ledger was converted,
+    the witness raised `OperationalError: database is locked` out of
+    `provision_ledger`, the verify-after never ran, and the command emitted no
+    status at all -- exit 1, empty stdout, journal modes left `['delete', 'wal']`.
+
+    Nothing was released, because the ledger goes on refusing. But it refuses
+    while naming a command that is inoperative whenever anything else holds the
+    file open, which leaves `--reset-replay-history` -- the one that DISCARDS
+    approvals -- as the only escape. The runtime treats contention as a
+    first-class state at four sites and calls it NOT DAMAGE; a maintenance
+    command that turns it into a stack trace disagrees with the runtime about
+    the same condition.
+
+    Two properties, because fixing only the first would still corrupt: the
+    command REPORTS, and it converts NEITHER store when it cannot convert both.
+
+    The pre-check takes an EXCLUSIVE lock deliberately. `BEGIN IMMEDIATE` takes
+    RESERVED, which a plain reader does not block, so the first version of this
+    guard passed the pre-check and raised in the conversion anyway -- probing at
+    a weaker lock level than the operation needs answers a different question.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    witness = ledger.watermark_path
+    for target in (location, witness):
+        with closing(sqlite3.connect(target)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    # `closing`, NOT the bare connection context manager. `with
+    # sqlite3.connect(...) as conn` manages a TRANSACTION and leaves the
+    # connection OPEN, so this helper leaked one handle per call. In
+    # isolation the collector closed them before the command ran; in the
+    # full suite they survived, the EXCLUSIVE pre-check saw contention
+    # that was this test's own, and the command refused before converting
+    # anything -- `attempted == 0`, the restore path never reached.
+    def modes() -> list:
+        seen = []
+        for target in (location, witness):
+            with closing(sqlite3.connect(target)) as conn:
+                seen.append(
+                    str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                )
+        return seen
+
+    before = modes()
+    assert before == ["wal", "wal"], before
+
+    holder = sqlite3.connect(f"file:{witness}?mode=rw", uri=True)
+    holder.execute("SELECT value FROM high_water").fetchone()
+    try:
+        result = CliRunner().invoke(
+            app,
+            ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"],
+        )
+    finally:
+        holder.close()
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a busy store raised out of the command instead of being reported: "
+        + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code)
+    )
+    assert modes() == before, (
+        "the command converted one store and not the other, so the pair is "
+        "half-converted after a refusal: " + repr(modes())
+    )
+
+
+def test_an_uncontended_pair_still_migrates(tmp_path: Path) -> None:
+    """The over-reach control: refusing every migration would satisfy the above.
+
+    Same starting state, no holder. The command must convert both stores, and
+    the ledger must work afterwards -- a migration that reports success and
+    leaves the store refusing is not a migration.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        approval_ledger_path,
+    )
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+    for target in (location, ledger.watermark_path):
+        with closing(sqlite3.connect(target)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    result = CliRunner().invoke(
+        app, ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"]
+    )
+    assert result.exit_code == 0, result.output
+
+    migrated = ApprovalLedger(location)
+    claimed, reason = migrated.consume(
+        "fp-9", "rd-9", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-9",
+    )
+    assert claimed is True, (
+        "the migration reported success and the ledger still refuses: " + reason
+    )
+    replayed, _ = ApprovalLedger(location).consume(
+        "fp-0", "rd-0", at=NOW, grant_issued_at=GRANT_ISSUED, approval_id="ACT-0",
+    )
+    assert replayed is False, "a spent consumption was released after migration"
+
+
+def test_a_failure_midway_restores_what_was_already_converted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore path, exercised DETERMINISTICALLY.
+
+    Its sibling `test_a_busy_store_is_reported_and_nothing_is_half_converted`
+    holds a real reader on the witness, and whether that reaches the restore
+    depends on the platform: where the EXCLUSIVE pre-check catches the holder
+    first, nothing has been converted yet and the restore is never entered. A
+    revert control pointed at it therefore bound on some interpreters and not
+    others -- green on 3.10, 3.12 and 3.13 in CI and RED on 3.11, which is a
+    control that reports the weather rather than the property.
+
+    So the failure is injected instead of raced for. The ledger converts
+    normally; the witness raises on its conversion; the restore must put the
+    ledger back. No lock, no timing, no platform.
+
+    The injected error is a real `sqlite3.OperationalError` raised from the
+    same call the loop makes, so the handler under test sees exactly what a
+    genuine mid-loop failure would present.
+    """
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from nornyx_forge.cli import app  # noqa: PLC0415
+    from nornyx_forge.nornyx_runtime import approval_ledger_path  # noqa: PLC0415
+
+    location = approval_ledger_path(tmp_path)
+    location.parent.mkdir(parents=True, exist_ok=True)
+    ApprovalLedger.provision(location, established_at=LEDGER_ESTABLISHED)
+    ledger = ApprovalLedger(location)
+    for index in range(3):
+        assert ledger.consume(
+            f"fp-{index}", f"rd-{index}", at=NOW,
+            grant_issued_at=GRANT_ISSUED, approval_id=f"ACT-{index}",
+        )[0]
+
+    witness = ledger.watermark_path
+    for target in (location, witness):
+        with closing(sqlite3.connect(target)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+
+    def modes() -> list:
+        seen = []
+        for target in (location, witness):
+            with closing(sqlite3.connect(target)) as conn:
+                seen.append(
+                    str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                )
+        return seen
+
+    before = modes()
+    assert before == ["wal", "wal"], before
+
+    real_connect = sqlite3.connect
+    attempted = {"convert": 0}
+    resolved_witness = witness.resolve()
+
+    class _FailsTheConversion:
+        """Delegates everything, except SETTING the witness journal mode.
+
+        KEYED ON THE OPERATION, not on a call count. Counting witness
+        connections was brittle and wrong: the command touches the witness
+        for a structure check, a pre-check probe, the mode survey, the
+        conversion and the verify-after, so the ordinal of the conversion is
+        an implementation detail that a later edit would silently move --
+        and the first version of this injection failed the SURVEY instead,
+        which aborts before anything is converted and proves nothing.
+
+        The survey reads `PRAGMA journal_mode`; the conversion writes
+        `PRAGMA journal_mode=<mode>`. The `=` is the difference, and it is
+        the thing being targeted.
+        """
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def execute(self, sql, *args, **kwargs):
+            flat = " ".join(str(sql).split()).lower()
+            if flat.startswith("pragma journal_mode="):
+                attempted["convert"] += 1
+                raise sqlite3.OperationalError("database is locked")
+            return self._inner.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def __enter__(self):
+            self._inner.__enter__()
+            return self
+
+        def __exit__(self, *exc):
+            return self._inner.__exit__(*exc)
+
+    def failing_connect(target, *args, **kwargs):
+        inner = real_connect(target, *args, **kwargs)
+        try:
+            where = Path(str(target).split("?")[0].replace("file:", "")).resolve()
+        except (OSError, ValueError):  # pragma: no cover - defensive
+            return inner
+        # RESOLVED, because the command resolves its paths and this
+        # workspace sits under a short-name temp root on Windows; comparing
+        # the raw strings matched nothing at all when first written.
+        return _FailsTheConversion(inner) if where == resolved_witness else inner
+
+    # THE STDLIB MODULE, because `cli.py` imports sqlite3 inside the
+    # function -- there is no module attribute to patch. Safe here: both
+    # mode surveys run outside the patched window, `before` above and
+    # `modes()` after `undo`, so only the command under test sees it.
+    monkeypatch.setattr(sqlite3, "connect", failing_connect)
+    result = CliRunner().invoke(
+        app,
+        ["provision-ledger", "--root", str(tmp_path), "--migrate-continuity"],
+    )
+    monkeypatch.undo()
+
+    assert attempted["convert"] >= 1, (
+
+        "the witness conversion was never attempted, so the restore path "
+        "was not reached and this control measured nothing"
+    )
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        "a mid-loop failure raised out of the command: " + repr(result.exception)
+    )
+    assert result.exit_code == 2, (
+        "a governed refusal chooses its exit code; this exited "
+        + str(result.exit_code)
+    )
+    assert modes() == before, (
+        "the ledger was converted, the witness failed, and the ledger was NOT "
+        "put back -- the pair is half-converted after a refusal: " + repr(modes())
+    )
+    assert "Restored: ledger" in result.output, (
+        "the restore happened but the operator was not told which stores were "
+        "put back: " + result.output[-400:]
+    )

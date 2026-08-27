@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .models import RequirementProfile
-from .util import digest, write_json
+from .util import digest, write_canonical_text, write_json
 
 _HEADING_RE = re.compile(r"^(#{2,3})\s+(BRD-[A-Z0-9-]+)\s+(.+?)\s*$")
 _ANY_HEADING_RE = re.compile(r"^(#{1,6})\s+.+?\s*$")
@@ -133,4 +133,4 @@ def write_requirements_artifacts(root: Path, model: RequirementsModel) -> None:
     if model.assumptions:
         lines.extend(("", "## Assumptions", ""))
         lines.extend(f"- {item}" for item in model.assumptions)
-    (target / "traceability.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_canonical_text(target / "traceability.md", "\n".join(lines) + "\n")

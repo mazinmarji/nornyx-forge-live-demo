@@ -1,6 +1,6 @@
 ---
 name: run-demo
-description: Launch and exercise the completed governed CrewAI customer-operations application.
+description: Launch and exercise the completed governed customer-operations application. The shipped `demo` path drives the stages with `run_sequential()` and reports `observed_execution_backend: sequential`; naming CrewAI unconditionally is true of the `build` path and false of the one this skill launches.
 allowed-tools: Read, Glob, Grep, Bash
 ---
 

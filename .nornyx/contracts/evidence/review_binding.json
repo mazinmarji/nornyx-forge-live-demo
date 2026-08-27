@@ -1,22 +1,30 @@
 {
-  "approval_state": "not_granted",
-  "control_pack_commit": "git:b02478df11610b10b2f9703cfc9ced4c2c420103",
-  "digests": {
-    "architecture_contract": "sha256:aa8d0a680bd0c651c4bded4ed55301d85f67caac18e973bb972df7982c782d15",
-    "evidence_index": "sha256:a579304dc783be3b02fa9f1e5dfafe25b3d9949c644f76ed086d72a09e2348c9",
-    "evidence_manifest": "sha256:a4bd4daca209ce778502eae1901a2575a7fbfc9469928e7b1301cd4a287eaf59",
-    "forge_control_contract": "sha256:0f819f8b1de68d079eff21e40e35e4ed1df5c713f1c99314072096f41dd34f15",
-    "independent_review_record": "sha256:6ebd4325056d9cfd92008e495c3de038abe46899cec8720a710eeda3a752a7d9",
-    "runtime_contract": "sha256:fb1704201e1e05f03c09114979e9a278ffce9cd0764ab16eea324fb714262939"
+  "approvals": {
+    "human_review": "not_performed",
+    "records": []
   },
-  "generated_at": "2026-08-02T06:25:01Z",
-  "human_review": "not_performed",
+  "contract_set_digest": "sha256:93a06bd07f7c9ed906eb712f95bfb132a9f30a0288a0ec452afb6c675ac1fa20",
+  "control_pack_digest": "sha256:5b400fa4f3af63ddfbe9752c9f01865febd66a93e689200564b7e5a35b98a969",
+  "digests": {
+    "architecture_contract": "sha256:61bc53bd33b4aede6cef2e5b6362503880d76c5a5948d417b2d8356eadffd6f6",
+    "evidence_index": "sha256:73051cc886a777c86fee45c2e959bb549870b31474996305da8bf64f44b70b60",
+    "evidence_manifest": "sha256:ee1237276e806f22da0c5fc7cbcb9e069f4bf1271299f3a3729fd74173d0b68a",
+    "forge_control_contract": "sha256:072ef9ceaea8c997add695b9dbb81ac6e706e20f577d63bcdbc2fc3fb33e7764",
+    "independent_review_record": "sha256:8a6984ec7d78052f35eb7c0ebe0a8156f1929cf65e5572cd1560f07a46a57b67",
+    "runtime_contract": "sha256:b5e7579e0f983be82fb1b3d437a6e84b170497db24c6a5fae6f0e1580443c474"
+  },
+  "evidence_manifest_digest": "sha256:acdc1b9c713ca5cc958cbe79d2a6f9b8b52cba2e716383ed32a5cb615f29f886",
+  "generated_at": "2026-08-27T04:58:09Z",
+  "governed_input_digest": "sha256:c025d832d587aaece0ebe520005fe97bbf8811d251636221f1caebef20bca7bc",
   "independent_review": {
     "artifact": "evidence/architecture_independent_review.json",
     "embedded": true,
-    "status": "pass"
+    "status": "observed"
   },
-  "note": "subject_revision is the revision the contracts govern. control_pack_commit is the commit that carries those contracts and their evidence. An approval should name both.",
+  "inspection_subject_digest": "sha256:5c4f32a5ff15c99048e8abb691b98c81dd150ebb368ff8347e93abcc7136e60b",
+  "note": "governed_input_digest is what a human authored. contract_set_digest is the settled governance contracts. inspection_subject_digest is exactly what the independent inspectors reviewed, and moves if either moves. source_commit is provenance only.",
+  "production_approval": "not_granted",
   "schema": "nornyx.forge.review_binding.v1",
-  "subject_revision": "git:24b40e998ed738edeffbfe0dafb78833ced82d0a"
+  "source_commit": "git:121bed910322091e95ec5063442487ed5e739e8d",
+  "subject_revision": "git:121bed910322091e95ec5063442487ed5e739e8d"
 }

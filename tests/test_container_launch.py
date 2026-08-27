@@ -27,6 +27,25 @@ def _docker_cli() -> str | None:
     return shutil.which("docker")
 
 
+def _run(*command: str, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a Docker command, decoding its output as what it actually emits.
+
+    `text=True` on its own decodes with the locale encoding. Docker's BuildKit
+    progress output is UTF-8, so on a Windows console (cp1252) the reader thread
+    dies on the first box-drawing glyph and the whole launch looks like a
+    failure of the application rather than of how the test read its output.
+    """
+    return subprocess.run(
+        list(command),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
+
+
 def test_compose_declares_the_documented_application_port():
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     service = compose["services"]["app"]
@@ -34,11 +53,43 @@ def test_compose_declares_the_documented_application_port():
     assert service["build"] == "."
 
 
-def test_compose_defaults_to_fail_closed_governance():
-    """The declared compose default must not silently permit the fallback."""
+def test_the_compose_default_does_not_claim_a_governance_mode():
+    """The governance mode is not in the deployment, and must not appear to be.
+
+    This test used to assert `FORGE_ALLOW_POLICY_FALLBACK == "false"` and was
+    named for the property it believed that proved -- a fail-closed default.
+    The variable had been retired; nothing read it; the effective default was
+    the permissive backend. So the suite was requiring the presence of a key
+    that controlled nothing, and reporting a posture the application did not
+    have. The false claim was encoded as required behaviour, which is the
+    failure mode that makes a test worse than no test.
+
+    What is asserted now is the real arrangement: the mode lives in
+    `RuntimeAuthorityConfig.policy_backend`, bound into the governed subject, so
+    the deployment cannot select it at all. Changing it is a code change that
+    moves the subject digest -- which is what makes the mode something an
+    approval can cover.
+    """
     compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
     environment = compose["services"]["app"]["environment"]
-    assert environment["FORGE_ALLOW_POLICY_FALLBACK"] == "false"
+
+    assert "FORGE_ALLOW_POLICY_FALLBACK" not in environment
+    assert "FORGE_STRICT_CREWAI" not in environment
+
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    #: The mode is part of authority identity, not of the environment.
+    assert "policy_backend" in RuntimeAuthorityConfig.__dataclass_fields__
+    subject_fields = RuntimeAuthorityConfig(
+        policy_backend="nornyx", execution_backend="sequential"
+    )
+    permissive = RuntimeAuthorityConfig(
+        policy_backend="deterministic_demo", execution_backend="sequential"
+    )
+    assert subject_fields != permissive, (
+        "the two governance modes are indistinguishable, so an approval of one "
+        "would cover the other"
+    )
 
 
 def test_dockerfile_copies_the_governance_contracts():
@@ -56,12 +107,7 @@ def test_dockerignore_excludes_the_virtualenv():
 
 @pytest.mark.skipif(_docker_cli() is None, reason="docker CLI is not installed")
 def test_compose_file_is_valid_for_docker():
-    completed = subprocess.run(
-        [_docker_cli(), "compose", "-f", str(COMPOSE), "config"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
+    completed = _run(str(_docker_cli()), "compose", "-f", str(COMPOSE), "config")
     assert completed.returncode == 0, completed.stderr
 
 
@@ -72,12 +118,8 @@ def test_compose_file_is_valid_for_docker():
 def test_compose_up_build_starts_the_application():
     docker = _docker_cli()
     project = "nornyx-forge-test"
-    up = subprocess.run(
-        [docker, "compose", "-p", project, "up", "--build", "-d"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=1800,
+    up = _run(
+        str(docker), "compose", "-p", project, "up", "--build", "-d", timeout=1800
     )
     try:
         assert up.returncode == 0, up.stderr
@@ -96,10 +138,28 @@ def test_compose_up_build_starts_the_application():
         assert payload["status"] == "ok"
         assert payload["human_review"] == "not_performed"
         assert payload["production_approval"] == "not_granted"
+
+        # The packaged image ships no approver trust store, so it must say that
+        # consequential authority is unavailable rather than merely unexercised.
+        # This is the deployment-behaviour check unit tests cannot give: the real
+        # image, started for real, reporting what it can actually do.
+        assert payload["trusted_approvers_loaded"] is False
+        assert payload["action_approval_authentication"] == "unavailable"
+        # THE FIELD THAT MEASURES IT. `consequential_authority` was
+        # renamed to `approver_trust_authentication` because it read one
+        # of the five inputs the boundary consults, while its name
+        # promised all five. This assertion kept the old name and the old
+        # value, and nothing caught it: the rename was validated by unit
+        # tests on a workstation, and THIS test only runs where a Docker
+        # daemon exists, which is a declared expected skip locally.
+        assert payload["approver_trust_authentication"] == "unavailable"
+        # And the retired name must keep refusing to answer rather than
+        # quietly starting to claim again.
+        assert payload["consequential_authority"] == "not_derived_here"
+
+        # And it must not disclose where trust would come from.
+        body = json.dumps(payload)
+        for leak in ("trusted_approvers.json", "/root", "/app/.nornyx", "public_key"):
+            assert leak not in body, f"health disclosed {leak}"
     finally:
-        subprocess.run(
-            [docker, "compose", "-p", project, "down", "-v"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
+        _run(str(docker), "compose", "-p", project, "down", "-v")

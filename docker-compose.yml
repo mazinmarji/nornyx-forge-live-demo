@@ -2,10 +2,20 @@ services:
   app:
     build: .
     environment:
-      FORGE_WORKER_MODE: ${FORGE_WORKER_MODE:-deterministic}
-      FORGE_AUTONOMOUS_DEMO: "true"
-      FORGE_ALLOW_POLICY_FALLBACK: "false"
-      FORGE_STRICT_CREWAI: "true"
+      # Only variables the application actually reads. FORGE_ALLOW_POLICY_
+      # FALLBACK, FORGE_STRICT_CREWAI and FORGE_AUTONOMOUS_DEMO were set here
+      # long after they were retired, and nothing read any of them -- a
+      # deployment file asserting a security posture the code does not
+      # implement. Worse, the posture it asserted was the strict one while the
+      # effective default is the permissive `deterministic_demo` backend, so an
+      # operator reading this file would have believed the deployment was
+      # failing closed when it was not.
+      #
+      # The governance mode is now `RuntimeAuthorityConfig.policy_backend`,
+      # which is bound into the governed subject: the same packaged content
+      # under a different governance mode is not the same thing to approve, so
+      # the mode cannot be ambient. Changing it is a code change that changes
+      # the subject digest, which is the point.
       CREWAI_DISABLE_TELEMETRY: "true"
       OTEL_SDK_DISABLED: "true"
     ports:

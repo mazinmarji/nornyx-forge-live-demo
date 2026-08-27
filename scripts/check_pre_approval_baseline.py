@@ -1,15 +1,38 @@
-"""Assert the governance contracts fail only for want of a human approval.
+"""Assert the governance contracts fail only for want of an EXTERNAL AUTHORITY.
 
 The invariant this gate protects is narrow and deliberate: a governance contract
-may be blocked *only* because an accountable human has not approved it. Any other
-diagnostic — a schema break, a stale revision, expired or mismatched evidence — is
-a defect and fails this check.
+may be blocked *only* because an authority outside this repository has not acted.
+Any other diagnostic — a schema break, a stale revision, expired or mismatched
+evidence — is a defect and fails this check.
 
-It holds in both directions. Before approval the contracts fail with approval
-diagnostics only; after a real human approval record is supplied they validate
-outright. Either is acceptable; anything else is not.
+TWO AUTHORITIES, NOT ONE, and this docstring said "a human approval" for both.
+`EXPECTED_PRE_APPROVAL_DIAGNOSTICS` has five members and they divide:
 
-The check never creates, infers, or backdates an approval.
+    AN_APPROVAL_RECORD_MISSING   an accountable human has not approved
+    APPROVAL_EVIDENCE_MISSING    an accountable human has not approved
+    EVIDENCE_REQUIRED_MISSING    an accountable human has not approved
+
+    CHANGE_EVIDENCE_MISSING        no AUTHENTICATED INDEPENDENT INSPECTION
+    SOD_EVIDENCE_PRODUCER_UNKNOWN  no AUTHENTICATED INDEPENDENT INSPECTION
+
+So the both-directions claim that stood here -- "after a real human approval
+record is supplied they validate outright" -- was false. A human approval alone
+leaves `architecture_governance.nyx` failing, because it also needs an inspection
+signed by a reviewer whose key is in a trust store this repository does not have.
+A reader who believed the old sentence would conclude that one signature is all
+that stands between this repository and validating governance contracts, and that
+the independent-inspection control is already satisfied. It is not, and never was.
+
+CLAUDE.md corrected exactly this substitution in ITSELF and recorded doing so.
+The correction did not reach this file, the CI step that runs it, or
+docs/governance/EVIDENCE_FRESHNESS.md, which is why a fresh lens found it here
+three rounds later.
+
+It still holds in both directions, stated correctly: before either authority acts
+the contracts fail with those five diagnostics only; once both have acted they
+validate outright. Either is acceptable; anything else is not.
+
+The check never creates, infers, or backdates an approval or an inspection.
 """
 
 from __future__ import annotations
@@ -18,6 +41,7 @@ import argparse
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,53 +50,293 @@ GOVERNANCE_CONTRACTS = (
     ".nornyx/contracts/architecture_governance.nyx",
 )
 
-# Diagnostics that mean "a human has not approved this yet", and nothing else.
-APPROVAL_CODES = frozenset(
+#: Diagnostics that mean "an accountable prerequisite is genuinely absent", and
+#: nothing else.
+#:
+#: The set used to name only the human approval, because a second missing
+#: prerequisite was hidden. The architecture contract recorded
+#: `independent_review_record` with `status: pass` while the evidence index and
+#: the artifact itself both reported it as merely `observed` with
+#: `authenticated_inspections: {}`. Nornyx counts only `pass` records as usable
+#: evidence, so that one hand-authored word was satisfying change control,
+#: required evidence, and the separation-of-duties assignment on the strength of
+#: an unsigned self-report the builder wrote about its own work.
+#:
+#: With the status now synced from the index like every other derived field,
+#: the contract states the truth: this branch has neither an accountable human
+#: approval NOR an authenticated independent inspection. Both are absent for the
+#: same underlying reason -- nobody with standing has attested to this content --
+#: and neither can be manufactured from inside the repository.
+#:
+#: Every diagnostic below is therefore still "a prerequisite requiring an
+#: authority outside this build is missing". None of them can be cleared by
+#: changing code, and none of them may be cleared by relabelling an artifact.
+#:
+#: Matched on the structured triple Nornyx documents as its stable vocabulary —
+#: code, path, source module — never on message text. The previous version
+#: searched for "approval_record" inside the human-readable message while its own
+#: comment claimed exact matching, so a reworded message would have broken the
+#: gate and an unrelated diagnostic that happened to mention the phrase would
+#: have satisfied it.
+#:
+#: EVIDENCE_REQUIRED_MISSING is qualified deliberately. On its own that code means
+#: *some* required evidence record is absent, which is not the same claim as "a
+#: human has not approved". Pairing it with its path and source module is what
+#: makes it specific.
+EXPECTED_PRE_APPROVAL_DIAGNOSTICS = frozenset(
     {
-        "AN_APPROVAL_RECORD_MISSING",
-        "EVIDENCE_REQUIRED_MISSING",
-        "APPROVAL_EVIDENCE_MISSING",
+        (
+            "AN_APPROVAL_RECORD_MISSING",
+            "governance_evidence.records",
+            "agentic_network_foundation.v1",
+        ),
+        (
+            "EVIDENCE_REQUIRED_MISSING",
+            "governance_evidence.records",
+            "evidence_integrity.v1",
+        ),
+        (
+            "APPROVAL_EVIDENCE_MISSING",
+            "approvals[0].required_evidence",
+            "human_approval.v1",
+        ),
+        # The two below are the consequences of having no AUTHENTICATED
+        # independent inspection. They appeared the moment the contract stopped
+        # claiming `pass` for an inspection nothing had signed, so they are not
+        # a regression -- they are the state that stamp was concealing.
+        (
+            "CHANGE_EVIDENCE_MISSING",
+            "changes[0].required_evidence",
+            "change_control.v1",
+        ),
+        (
+            "SOD_EVIDENCE_PRODUCER_UNKNOWN",
+            "separation_of_duties.assignments[0].evidence_producers",
+            "separation_of_duties.v1",
+        ),
     }
 )
-APPROVAL_SUBJECT = "approval_record"
+
+
+class UnstructuredCheckerOutput(RuntimeError):
+    """The checker emitted something this gate cannot classify."""
+
+
+#: Diagnostic levels this gate knows how to classify.
+#:
+#: Enumerated from the installed Nornyx, which emits `error` and `warning`.
+#: `info` is included because it is the obvious next one and ignoring it would
+#: be harmless; anything OUTSIDE this set is reported rather than dropped.
+KNOWN_DIAGNOSTIC_LEVELS = frozenset({"error", "warning", "info"})
 
 
 def _diagnostics(output: str) -> list[dict]:
-    """Parse the concatenated JSON objects the Nornyx CLI prints."""
+    """Parse the concatenated JSON objects the Nornyx CLI prints.
+
+    Strict. The previous parser advanced one byte at a time past anything it
+    could not decode, which meant unexpected output was silently discarded:
+
+        INTERNAL VALIDATOR CRASHED
+        {"code": "AN_APPROVAL_RECORD_MISSING", ...}
+
+    would have been classified as a clean approval-only block. For an assurance
+    gate, output it cannot account for is a reason to fail, not to skip.
+    """
+
     decoder = json.JSONDecoder()
     found: list[dict] = []
-    index = 0
     text = output.strip()
+    index = 0
     while index < len(text):
-        try:
-            value, offset = decoder.raw_decode(text, index)
-        except ValueError:
+        if text[index].isspace():
             index += 1
             continue
+        try:
+            value, index = decoder.raw_decode(text, index)
+        except ValueError as exc:
+            remainder = text[index : index + 200]
+            raise UnstructuredCheckerOutput(
+                f"checker emitted output this gate cannot classify at offset "
+                f"{index}: {remainder!r}"
+            ) from exc
         if isinstance(value, dict):
             found.append(value)
-        index = offset
     return found
 
 
-def _check(contract: str, executable: str) -> dict:
+#: What the checker prints when a contract validates.
+#:
+#: An exact set, not a substring search. "passed" appearing anywhere in a
+#: diagnostic would otherwise read as success, which is the substitution this
+#: gate exists to refuse -- one level down.
+CHECKER_SUCCESS_LINES = frozenset({"Nornyx check passed"})
+
+
+def _is_success_output(output: str) -> bool:
+    """Is this the checker's plain-text success report, and nothing else?"""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return bool(lines) and all(line in CHECKER_SUCCESS_LINES for line in lines)
+
+
+def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
+    command = [executable, "check", contract]
+    if as_of:
+        command += ["--as-of", as_of]
     completed = subprocess.run(
-        [executable, "check", contract],
+        command,
         cwd=ROOT,
         text=True,
+        # PINNED, not inherited. Without this the output decodes with the
+        # Windows locale codepage while the renderer emits `ensure_ascii=False`,
+        # so a diagnostic carrying a non-cp1252 character raises out of the gate
+        # instead of being classified. The sibling checker already pins it.
+        encoding="utf-8",
+        errors="replace",
+        timeout=900,
         capture_output=True,
         check=False,
     )
-    diagnostics = _diagnostics(completed.stdout + completed.stderr)
-    offending = [
+    try:
+        diagnostics = _diagnostics(completed.stdout + completed.stderr)
+    except UnstructuredCheckerOutput as exc:
+        # A CONTRACT THAT PASSES PRINTS PROSE, AND THIS READ THAT AS FAILURE.
+        #
+        # `nornyx check` on a VALIDATING contract writes the plain line
+        # "Nornyx check passed" and exits 0 -- no JSON at all. `_diagnostics`
+        # refuses it, correctly by its own strictness rule, and this handler
+        # then hardcoded `validates: False`, discarding `returncode` entirely.
+        # The normal return path computes `validates` from the return code;
+        # only this early exit threw it away.
+        #
+        # Measured on this checkout, against the one contract that passes:
+        #
+        #     raw            rc 0, stdout "Nornyx check passed"
+        #     _check(...)    validates False, approval_blocked False
+        #
+        # `healthy = all(validates or approval_blocked)`, so the gate exits 2.
+        # WHICH MEANS SUPPLYING THE REAL HUMAN APPROVAL -- the event that makes
+        # both governance contracts validate -- WOULD TURN THIS GATE FROM PASS
+        # TO FAIL. `--has-approval` could never return 0, so CI took the "no
+        # approval" branch permanently and the strict-authorization path was
+        # unreachable even after a genuine approval. And
+        # `human_approval_present`, which is `all(validates)`, would report
+        # false at the exact moment every contract validated.
+        #
+        # The strictness rule stands for a NON-ZERO exit: output the gate
+        # cannot account for is a reason to fail. A ZERO exit is the checker
+        # asserting success, and unstructured output there is not evidence of
+        # failure. Narrowly: exit 0 plus a RECOGNISED success line validates;
+        # anything else is still refused.
+        if completed.returncode == 0 and _is_success_output(
+            completed.stdout + completed.stderr
+        ):
+            return {
+                "contract": contract,
+                "returncode": completed.returncode,
+                "validates": True,
+                "approval_blocked": False,
+                "unexpected_diagnostics": [],
+            }
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{"unstructured_output": str(exc)}],
+        }
+
+    # A FAILURE THAT SAYS NOTHING IS NOT AN APPROVAL GAP.
+    #
+    # `_diagnostics("")` returns an empty list without raising, so a checker
+    # that exited non-zero having printed NOTHING left `offending` empty, and
+    # `not offending` is vacuously true. The gate then reported
+    # `approval_blocked: True` and `status: pass` -- under the sentence
+    # "Governance contracts must fail only because a human approval record is
+    # absent" -- having observed nothing to be absent, or present.
+    #
+    # Measured with two fake checkers differing by a single echo line:
+    #     noisy crash  -> status FAIL, approval_blocked False
+    #     SILENT crash -> status PASS, approval_blocked True
+    #
+    # The docstring on `_diagnostics` already states the rule this violated:
+    # output the gate cannot account for is a reason to fail, not to skip. An
+    # unexplained non-zero exit is the emptiest such output there is.
+    # AN EXIT EXPLAINED ONLY BY WARNINGS IS NOT EXPLAINED.
+    #
+    # The first repair required at least one PARSED diagnostic. A review then
+    # pointed at the neighbouring vacuity: a checker exiting non-zero having
+    # emitted only `warning`-level items leaves `offending` empty for the same
+    # reason, and `not offending` is true again. Today's `nornyx check` returns
+    # non-zero only when it has errors, so this is latent rather than live --
+    # and "latent because of what another program happens to do" is the
+    # property that stops holding without anyone noticing.
+    explained = [item for item in diagnostics if item.get("level") == "error"]
+    if completed.returncode != 0 and not explained:
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{
+                "unexplained_failure":
+                    f"the checker exited {completed.returncode} and emitted no "
+                    f"error-level diagnostic ({len(diagnostics)} non-error "
+                    "item(s) seen). Nothing was observed to be absent, so "
+                    "nothing licenses calling this an approval gap.",
+            }],
+        }
+
+    # A LEVEL THIS GATE DOES NOT KNOW IS NOT A LEVEL IT MAY IGNORE.
+    #
+    # The filter read `level == "error"` and dropped everything else on the
+    # floor. Today's checker emits only `error` and `warning`, so this is
+    # complete now -- and "complete now" is exactly the property that stops
+    # holding without anyone noticing. An unknown level is unaccountable
+    # output, and lands in `unexpected_diagnostics` where it can be read.
+    unknown_levels = [
+        item for item in diagnostics
+        if str(item.get("level")) not in KNOWN_DIAGNOSTIC_LEVELS
+    ]
+
+    offending = unknown_levels + [
         item
         for item in diagnostics
         if item.get("level") == "error"
-        and not (
-            item.get("code") in APPROVAL_CODES
-            and APPROVAL_SUBJECT in str(item.get("message", ""))
+        and (
+            str(item.get("code")),
+            str(item.get("path")),
+            str(item.get("source_id")),
         )
+        not in EXPECTED_PRE_APPROVAL_DIAGNOSTICS
     ]
+    # A ZERO EXIT MUST BE EXPLAINED TOO, and this is the symmetric half of the
+    # rule above. A checker that exits 0 having printed NOTHING leaves
+    # `_diagnostics("")` empty without raising, and `returncode == 0` alone was
+    # then read as "this contract validates" -- absence taken as confirmation,
+    # the same class as the unexplained failure this gate already refuses.
+    #
+    # It is not hypothetical in shape: a checker that silently no-ops on a
+    # contract path it cannot read exits 0 and says nothing, and the gate would
+    # credit a pass for a check that never ran.
+    #
+    # Positive evidence means the recognised success line, or at least one
+    # parsed diagnostic. Today's checker always supplies one or the other.
+    explained_pass = _is_success_output(
+        completed.stdout + completed.stderr
+    ) or bool(diagnostics)
+    if completed.returncode == 0 and not explained_pass:
+        return {
+            "contract": contract,
+            "returncode": completed.returncode,
+            "validates": False,
+            "approval_blocked": False,
+            "unexpected_diagnostics": [{
+                "unexplained_pass":
+                    "the checker exited 0 and said nothing this gate "
+                    "recognises, so nothing observed says the contract was "
+                    "checked at all.",
+            }],
+        }
     return {
         "contract": contract,
         "returncode": completed.returncode,
@@ -82,12 +346,45 @@ def _check(contract: str, executable: str) -> dict:
     }
 
 
+def _regenerate(as_of: str | None) -> int:
+    """Run the documented review-time refresh: rebuild evidence, then rebind.
+
+    Machine evidence has a real, finite freshness window because Nornyx 1.11.0
+    offers no way to express a non-expiring one — see
+    docs/governance/EVIDENCE_FRESHNESS.md. Regenerating is the honest way to get
+    a healthy baseline at an arbitrary instant, and it is one command.
+    """
+
+    refresh = str(ROOT / "scripts" / "refresh_governance_evidence.py")
+    for stage in ([refresh] + (["--as-of", as_of] if as_of else []), [refresh, "--sync-contracts"]):
+        completed = subprocess.run(
+            [sys.executable, *stage], cwd=ROOT, text=True, capture_output=True,
+            check=False, timeout=1800
+        )
+        if completed.returncode:
+            print(completed.stdout + completed.stderr)
+            return completed.returncode
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--has-approval",
         action="store_true",
         help="Exit 0 only if every governance contract already validates",
+    )
+    parser.add_argument(
+        "--as-of",
+        help="Evaluate at an explicit instant. The committed machine evidence "
+        "carries a finite window, so a distant instant needs --regenerate too",
+    )
+    parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="Run the documented review-time refresh before checking. Nornyx "
+        "has no non-expiring representation for machine evidence, so this is "
+        "how the baseline is made healthy at an arbitrary instant",
     )
     args = parser.parse_args()
 
@@ -96,7 +393,13 @@ def main() -> int:
         print(json.dumps({"status": "fail", "error": "nornyx CLI not installed"}, indent=2))
         return 2
 
-    results = [_check(contract, executable) for contract in GOVERNANCE_CONTRACTS]
+    if args.regenerate and _regenerate(args.as_of) != 0:
+        print(json.dumps({"status": "fail", "error": "regeneration failed"}, indent=2))
+        return 2
+
+    results = [
+        _check(contract, executable, args.as_of) for contract in GOVERNANCE_CONTRACTS
+    ]
 
     if args.has_approval:
         # Used by CI to decide whether the strict-authorization path can run.
@@ -108,8 +411,13 @@ def main() -> int:
         "status": "pass" if healthy else "fail",
         "statement": (
             "Governance contracts must fail only because a human approval record "
-            "is absent. Any other diagnostic is a defect."
+            "is absent, or the consequences of having no AUTHENTICATED "
+            "independent inspection. The accepted set is "
+            "EXPECTED_PRE_APPROVAL_DIAGNOSTICS; any diagnostic outside it "
+            "is a defect. The narrower wording this replaces named only "
+            "the approval record, while the accepted set is wider."
         ),
+        "evaluated_at": args.as_of or "now",
         "human_approval_present": all(item["validates"] for item in results),
         "contracts": results,
     }

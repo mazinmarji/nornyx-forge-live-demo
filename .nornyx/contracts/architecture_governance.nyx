@@ -31,7 +31,14 @@ agents:
 
 policies:
   - name: ArchitecturePolicy
-    deny: [undeclared_component_dependency, ui_direct_persistence_access, api_direct_command_execution]
+    # `ui_direct_persistence_access` was removed from this list. It denied
+    # an edge THIS CONTRACT declares -- component.api depends_on
+    # component.persistence -- and no check consumed the token, so it was a
+    # prohibition in the governance source of truth that governed nothing.
+    # A control name with no decision point is worse than no name: it reads
+    # as protection. The remaining two are enforced, and
+    # tests/test_architecture_vocabulary.py holds each to a decision point.
+    deny: [undeclared_component_dependency, api_direct_command_execution]
     require: [architecture_evidence_per_change, revision_binding, bounded_external_adapter]
   - name: ArchitectureReviewPolicy
     deny: [reviewer_modifies_implementation, ai_architecture_approval]
@@ -62,7 +69,11 @@ goals:
 
 approvals:
   - name: ArchitectureAuthority
-    required_roles: [architect]
+    # A signer states the role they acted in, and the contract must accept that
+    # role without ambiguity. Requiring `architect` while listing
+    # `architecture_reviewer` as eligible left a reviewer-signed approval
+    # readable two ways. The required role is now the one a reviewer signs as.
+    required_roles: [architecture_reviewer]
     eligible_roles: [architect, architecture_reviewer]
     denied_actor_types: [ai_tool, execution_surface, autonomous_agent, model, connector, generated_output]
     required_evidence: [architecture_conformance_report, independent_review_record, approval_record]
@@ -71,25 +82,25 @@ approvals:
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      revision: git:121bed910322091e95ec5063442487ed5e739e8d
       exact: true
     invalidation_conditions: [revision_change, scope_change]
-    expires_at: "2099-01-01T00:00:00Z"
+    expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
   records:
     - id: architecture_conformance_report
       type: architecture_evidence
       schema_id: nornyx.architecture_evidence.v1
       producer: {id: tool:check_architecture, type: tool}
       artifact: evidence/architecture_conformance_report.json
-      content_hash: sha256:c5508c8c78ee4af2164491f803d45ad31986c70386726c935360fa0c0a35368d
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: check_architecture, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:91b9b1cfc24c36ae8e0d9912885c082a5c1078b150a0074a8b357a904be2c669
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool: {name: check_architecture, version: "0.3.0"}
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
       status: pass
       dependencies: []
     - id: independent_review_record
@@ -97,23 +108,23 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:in_session_inspectors, type: tool}
       artifact: evidence/architecture_independent_review.json
-      content_hash: sha256:6ebd4325056d9cfd92008e495c3de038abe46899cec8720a710eeda3a752a7d9
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: in_session_inspectors, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
-      status: pass
+      content_hash: sha256:8a6984ec7d78052f35eb7c0ebe0a8156f1929cf65e5572cd1560f07a46a57b67
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool: {name: in_session_inspectors, version: "0.3.0"}
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
+      status: observed
       dependencies: []
     - id: exception_review_record
       type: exception_review_record
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_exception_review.json
-      content_hash: sha256:1eecedfbddcb11ad20d5977782c487e86ff2125bcaced595324506e2e32f8581
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: forge_gates, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:ee2a216253693b90f4f9fce3e4001bcdd8e894e2c1d6232ca5295b27d35e75af
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool: {name: forge_gates, version: "0.3.0"}
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
       status: pass
       dependencies: []
     - id: change_record
@@ -121,37 +132,44 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_change_record.json
-      content_hash: sha256:645232821d8701ca24ad166c3ba648c9fc6a985f517b20cddb863c5520b715a4
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: forge_gates, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:1725f4109f6d87f2bbfdb5f4c30b046c2baded32e6a655860dc87ca11f98f495
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool: {name: forge_gates, version: "0.3.0"}
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
       status: pass
       dependencies: [architecture_conformance_report]
-    - id: approval_record
-      type: approval_record
-      schema_id: nornyx.governance_evidence.v1
-      producer: {id: system:autonomous_demonstration, type: system}
-      artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:6d95d3f7e87389b21c58a2de548023b6f561d508e558d7c19a72025b48d1206e
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
-      status: observed
-      dependencies: []
     - id: evidence_manifest
       type: evidence_manifest
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/architecture_evidence_manifest.json
-      content_hash: sha256:a4bd4daca209ce778502eae1901a2575a7fbfc9469928e7b1301cd4a287eaf59
-      subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-      tool: {name: refresh_governance_evidence, version: "0.2.0"}
-      generated_at: "2026-08-02T06:23:12Z"
-      expires_at: "2027-08-02T06:23:12Z"
+      content_hash: sha256:ee1237276e806f22da0c5fc7cbcb9e069f4bf1271299f3a3729fd74173d0b68a
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool: {name: refresh_governance_evidence, version: "0.3.0"}
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
+
+    # >>> managed:approval_record
+    - id: approval_record
+      type: approval_record
+      schema_id: nornyx.governance_evidence.v1
+      producer:
+        id: system:autonomous_demonstration
+        type: system
+      artifact: evidence/architecture_approval_record.json
+      content_hash: sha256:f31d6080bd8dc5033ca4519d26caacc0f0c7ae5f18456b902607a81273fd53c8
+      subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+      tool:
+        name: refresh_governance_evidence
+        version: 0.3.0
+      generated_at: "2026-08-27T04:58:05Z"
+      expires_at: "2027-08-27T04:58:05Z"
+      status: observed
+      dependencies: []
+    # <<< managed:approval_record
 
 changes:
   - schema: nornyx.change.v1
@@ -179,15 +197,15 @@ changes:
       operational: minor
     required_controls: [architecture_conformance_policy, separation_of_duties_policy]
     required_evidence: [architecture_conformance_report, change_record, independent_review_record]
-    approver_roles: [architect]
+    approver_roles: [architecture_reviewer]
     approval_ids: [ArchitectureAuthority]
     separation_of_duties:
       author_role: repository_maintainer
-      approver_role: architect
+      approver_role: architecture_reviewer
       disjoint: true
     revision_binding:
       kind: git
-      revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+      revision: git:121bed910322091e95ec5063442487ed5e739e8d
       exact: true
       scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
     approval_invalidated_on: [revision_change, scope_change]
@@ -199,7 +217,7 @@ separation_of_duties:
     - subject: architecture.nornyx_forge_demo
       risk_tier: medium
       author: human:repository_maintainer
-      approvers: [human:architect]
+      approvers: [human:architecture_reviewer]
       evidence_producers: [tool:check_architecture, tool:in_session_inspectors]
       require_evidence_independence: true
       release_requester: null
@@ -214,7 +232,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
+  subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -230,7 +248,7 @@ architecture:
   systems:
     - id: system.forge
       name: Nornyx Forge
-      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel]
+      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel, component.governed_subject, component.nornyx_cli, component.runtime_preparation, component.subject_observation, component.subject_bootstrap, component.app_launcher, component.forge_cli, component.forge_flow, component.forge_authoring, component.forge_probes, component.reviewer_trust]
   components:
     - id: component.api
       name: FastAPI and dashboard boundary
@@ -255,6 +273,19 @@ architecture:
       bounded_context: context.governance
       canonical: true
       modules: [module.governance]
+      depends_on: []
+    # Its own component, not a corner of component.governance. A reviewer key
+    # says "I inspected this content"; an approver key says "this effect may be
+    # released". Modelling them as one component would make it structurally
+    # unremarkable for a single key to do both, which is precisely the confusion
+    # the two stores exist to prevent.
+    - id: component.reviewer_trust
+      name: Reviewer identity and inspection authentication
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.reviewer_trust]
       depends_on: []
     - id: component.evidence
       name: Evidence recording and validation
@@ -288,6 +319,86 @@ architecture:
       canonical: true
       modules: [module.shared_models, module.shared_util]
       depends_on: []
+    - id: component.app_launcher
+      name: Bounded application server launcher
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.app_launcher]
+      depends_on: []
+    - id: component.governed_subject
+      name: Governed subject identity
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.governed_subject]
+      depends_on: []
+    - id: component.subject_observation
+      name: Filesystem observation of the governed subject
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.subject_observer]
+      depends_on: [component.governed_subject]
+    - id: component.nornyx_cli
+      name: Nornyx CLI invocation adapter
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.nornyx_cli_adapter]
+      depends_on: []
+    - id: component.runtime_preparation
+      name: Runtime contract preparation
+      system: system.forge
+      layer: layer.application
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.runtime_preparation]
+      depends_on: [component.nornyx_cli, component.governance, component.shared_kernel]
+    - id: component.subject_bootstrap
+      name: Subject establishment at startup
+      system: system.forge
+      layer: layer.application
+      bounded_context: context.governance
+      canonical: true
+      modules: [module.subject_bootstrap]
+      depends_on: [component.subject_observation, component.governed_subject]
+    - id: component.forge_cli
+      name: Forge command surface
+      system: system.forge
+      layer: layer.application
+      bounded_context: context.build
+      canonical: true
+      modules: [module.forge_cli]
+      depends_on: [component.forge_flow, component.runtime, component.governance, component.forge_authoring, component.forge_probes, component.shared_kernel]
+    - id: component.forge_flow
+      name: Governed development flow
+      system: system.forge
+      layer: layer.application
+      bounded_context: context.build
+      canonical: true
+      modules: [module.forge_flow]
+      depends_on: [component.forge_authoring, component.forge_probes, component.evidence, component.worker_adapter, component.shared_kernel]
+    - id: component.forge_authoring
+      name: BRD parsing and contract authoring
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.build
+      canonical: true
+      modules: [module.requirements_model, module.contract_authoring]
+      depends_on: [component.shared_kernel]
+    - id: component.forge_probes
+      name: Bounded probes for gates, policy, and candidate repositories
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.build
+      canonical: true
+      modules: [module.gate_runner, module.policy_adapter, module.repo_qualifier, module.repo_scout]
+      depends_on: [component.shared_kernel, component.evidence]
   modules:
     - id: module.api
       name: demo_app.main
@@ -298,12 +409,31 @@ architecture:
       name: demo_app.agentic
       component: component.runtime
       layer: layer.application
-      depends_on: [module.governance, module.evidence, module.worker_adapter]
+      depends_on: [module.governance, module.evidence, module.worker_adapter, module.approval_trust, module.governed_subject, module.subject_bootstrap]
     - id: module.governance
       name: nornyx_forge.nornyx_runtime
       component: component.governance
       layer: layer.domain
-      depends_on: [module.shared_models, module.shared_util]
+      depends_on: [module.shared_models, module.shared_util, module.approval_trust, module.governed_subject]
+    # Authentication for action-specific consequential approvals. Deliberately a
+    # leaf: it verifies signatures against a trust store held outside this
+    # repository, and depends on nothing in the application or effect layers. A
+    # verifier that could reach runtime effect code, or hold a signing key, would
+    # no longer be separable from the thing it authenticates.
+    - id: module.approval_trust
+      name: nornyx_forge.approval_trust
+      component: component.governance
+      layer: layer.domain
+      depends_on: []
+    # Verification only, and depends on nothing. It must stay separable from the
+    # code it authenticates: a verifier that could reach runtime effect code, or
+    # hold a signing key, would be authenticating itself. Signing lives in
+    # scripts/, which the runtime image never copies.
+    - id: module.reviewer_trust
+      name: nornyx_forge.reviewer_trust
+      component: component.reviewer_trust
+      layer: layer.domain
+      depends_on: []
     - id: module.evidence
       name: nornyx_forge.evidence
       component: component.evidence
@@ -314,6 +444,125 @@ architecture:
       component: component.persistence
       layer: layer.infrastructure
       depends_on: []
+    # Starting the application server is process execution, so it lives in a
+    # declared adapter rather than in the entrypoint. The point of
+    # constraint.bounded_external_adapter is that this list is complete.
+    # The authority primitive, and a leaf by construction. Enumeration, byte
+    # reads and git are all somewhere else: a domain module that could reach a
+    # filesystem could rediscover its own authority, which is the ambient
+    # re-resolution this model exists to remove. The architecture gate fails if
+    # this ever gains a dependency.
+    # Process execution only. It decides nothing: not risk, not approval, not
+    # whether an effect may be released. Moving the governance decision here
+    # merely because the subprocess lives here would relocate exactly what the
+    # layering keeps apart.
+    # Sequences CLI invocations and interprets their results: application work
+    # that had been living in a domain module, which is why moving the
+    # subprocess to an adapter surfaced a layering violation rather than
+    # resolving one.
+    - id: module.runtime_preparation
+      name: nornyx_forge.runtime_preparation
+      component: component.runtime_preparation
+      layer: layer.application
+      depends_on: [module.nornyx_cli_adapter, module.governance, module.approval_trust, module.shared_models, module.shared_util]
+    - id: module.nornyx_cli_adapter
+      name: nornyx_forge.nornyx_cli_adapter
+      component: component.nornyx_cli
+      layer: layer.adapter
+      depends_on: []
+    - id: module.governed_subject
+      name: nornyx_forge.governed_subject
+      component: component.governed_subject
+      layer: layer.domain
+      depends_on: []
+    # Reading a tree is an external observation, so it is an adapter and says
+    # so, rather than hiding inside a generic governance component.
+    - id: module.subject_observer
+      name: nornyx_forge.subject_observer
+      component: component.subject_observation
+      layer: layer.adapter
+      depends_on: [module.governed_subject]
+    # Establishes one immutable subject at startup. The action boundary is
+    # given that subject; it never discovers one, because a request that can
+    # cause its own subject to be re-resolved has a say in the authority
+    # judging it.
+    # Depends on all three trust anchors because it is the one place that
+    # resolves them. Startup reading the environment once is the property; every
+    # module below it receiving already-resolved locations is the consequence.
+    - id: module.subject_bootstrap
+      name: nornyx_forge.subject_bootstrap
+      component: component.subject_bootstrap
+      layer: layer.application
+      depends_on: [module.subject_observer, module.governed_subject, module.approval_trust, module.reviewer_trust, module.governance]
+    - id: module.app_launcher
+      name: nornyx_forge.app_launcher
+      component: component.app_launcher
+      layer: layer.adapter
+      depends_on: []
+    # The Forge command surface, and the toolchain's application layer: each
+    # command body composes a sequence — parse the BRD, qualify a repository,
+    # write the artifact, choose an exit code — and no other module coordinates
+    # that. It is declared for what it does rather than for the Typer
+    # decorators sitting on top of it.
+    #
+    # Calling it interface and granting it an exemption for reaching into the
+    # domain and the probes was the tempting alternative. Nornyx rejects that
+    # outright: layer.interface may not depend on layer.domain, and the schema
+    # has no vocabulary for such an exemption. A flag honoured only by
+    # scripts/check_architecture.py would have left the gate reporting pass
+    # while the governance engine reported a real violation, which is the
+    # divergence this work exists to remove.
+    #
+    # Nothing depends on this module, and the gate enforces that from the
+    # console entrypoint declared in pyproject.toml, so it cannot become a hub
+    # carrying a dependency between two modules that may not depend on each
+    # other.
+    - id: module.forge_cli
+      name: nornyx_forge.cli
+      component: component.forge_cli
+      layer: layer.application
+      depends_on: [module.governed_subject, module.forge_flow, module.runtime, module.governance, module.runtime_preparation, module.app_launcher, module.repo_qualifier, module.repo_scout, module.requirements_model, module.shared_util]
+    - id: module.forge_flow
+      name: nornyx_forge.development_flow
+      component: component.forge_flow
+      layer: layer.application
+      depends_on: [module.contract_authoring, module.requirements_model, module.gate_runner, module.repo_qualifier, module.repo_scout, module.evidence, module.worker_adapter, module.shared_models, module.shared_util, module.governed_subject]
+    - id: module.requirements_model
+      name: nornyx_forge.requirements
+      component: component.forge_authoring
+      layer: layer.domain
+      depends_on: [module.shared_models, module.shared_util]
+    - id: module.contract_authoring
+      name: nornyx_forge.contract_generator
+      component: component.forge_authoring
+      layer: layer.domain
+      # shared_util for write_canonical_text: a generated contract is governed
+      # text, and letting the platform choose its line endings made the same
+      # contract digest differently on Windows and Linux.
+      depends_on: [module.requirements_model, module.shared_util]
+    # The probes below start external processes or reach the network, which is
+    # why they are adapters rather than domain: layer.adapter is a declared place
+    # for a bounded external call, and layer.domain is not.
+    - id: module.gate_runner
+      name: nornyx_forge.gates
+      component: component.forge_probes
+      layer: layer.adapter
+      depends_on: [module.shared_models]
+    - id: module.policy_adapter
+      name: nornyx_forge.policy
+      component: component.forge_probes
+      layer: layer.adapter
+      depends_on: [module.evidence]
+    - id: module.repo_qualifier
+      name: nornyx_forge.repo_qualifier
+      component: component.forge_probes
+      layer: layer.adapter
+      depends_on: [module.shared_models]
+    - id: module.repo_scout
+      name: nornyx_forge.repo_scout
+      component: component.forge_probes
+      layer: layer.adapter
+      depends_on: [module.shared_models, module.repo_qualifier]
     - id: module.worker_adapter
       name: nornyx_forge.claude_worker
       component: component.worker_adapter
@@ -352,6 +601,14 @@ architecture:
     - id: context.governance
       name: Governance and assurance
       description: Nornyx authorization, architecture, and evidence.
+    - id: context.build
+      name: Forge build toolchain
+      description: >
+        The Forge tool itself: its command surface, the governed development
+        flow, BRD and contract authoring, and the probes that inspect candidate
+        repositories. Modelled separately from the application it builds so that
+        a dependency running from the toolchain into the governed application is
+        visible as a declared edge rather than an unexamined one.
   interfaces: []
   boundaries:
     trust: []
@@ -365,22 +622,30 @@ architecture:
       statement: Deterministic architecture checks are separate from builder reasoning.
   constraints:
     - id: constraint.api_no_commands
-      statement: The API layer cannot invoke shell commands directly.
+      statement: The API layer cannot invoke shell commands directly. Decided over the declared, statically visible structure -- the check reads source and never imports governed code, so a module object reached through an expression whose value is known only at runtime is outside this constraint. See docs/ASSURANCE_BOUNDARY.md
       verified_by: architecture-check
     - id: constraint.persistence_isolation
-      statement: Persistence does not depend on FastAPI, CrewAI, or subprocess execution.
+      statement: Persistence does not depend on FastAPI, CrewAI, or subprocess execution. Decided over the declared, statically visible structure -- the check reads source and never imports governed code, so a module object reached through an expression whose value is known only at runtime is outside this constraint. See docs/ASSURANCE_BOUNDARY.md
       verified_by: architecture-check
     - id: constraint.declared_dependencies_only
-      statement: Every first-party import of a declared module must appear in that module's declared depends_on.
+      statement: Every first-party import of a declared module must appear in that module's declared depends_on. Decided over the declared, statically visible structure -- the check reads source and never imports governed code, so a module object reached through an expression whose value is known only at runtime is outside this constraint. See docs/ASSURANCE_BOUNDARY.md
       verified_by: architecture-check
     - id: constraint.layer_direction
-      statement: A module may only depend on modules whose layer is permitted by its own layer's may_depend_on.
+      statement: A module may only depend on modules whose layer is permitted by its own layer's may_depend_on. Decided over the declared, statically visible structure -- the check reads source and never imports governed code, so a module object reached through an expression whose value is known only at runtime is outside this constraint. See docs/ASSURANCE_BOUNDARY.md
       verified_by: architecture-check
     - id: constraint.bounded_external_adapter
-      statement: Interface and application modules never execute processes directly; they delegate to the governance module or a declared infrastructure adapter.
+      statement: Interface and application modules never execute processes directly; they delegate to the governance module or a declared infrastructure adapter. Decided over the declared, statically visible structure -- the check reads source and never imports governed code, so a module object reached through an expression whose value is known only at runtime is outside this constraint. See docs/ASSURANCE_BOUNDARY.md
       verified_by: architecture-check
   required_checks:
     - id: architecture-check
+      # STATIC AND SIDE-EFFECT-FREE, and the scope is stated rather than
+      # implied. This check reads source; it never imports governed code.
+      # It verifies the DECLARED, STATICALLY VISIBLE dependency structure
+      # and refuses the dynamic module-acquisition constructs it can name.
+      # A module object reached through an expression whose value is known
+      # only at runtime is outside its scope, and outside what the
+      # constraints above claim. Disclosed in docs/ASSURANCE_BOUNDARY.md
+      # and enumerated in docs/governance/MODULE_ACQUISITION.md.
       tool: scripts/check_architecture.py
       evidence_schema: nornyx.architecture_evidence.v1
       frequency: per_change
@@ -391,11 +656,11 @@ architecture_evidence:
   - schema: nornyx.architecture_evidence.v1
     check_id: architecture-check
     tool: scripts/check_architecture.py
-    tool_version: "0.2.0"
+    tool_version: "0.3.0"
     status: pass
-    subject_revision: git:24b40e998ed738edeffbfe0dafb78833ced82d0a
-    generated_at: "2026-08-02T06:23:12Z"
-    expires_at: "2027-08-02T06:23:12Z"
+    subject_revision: git:121bed910322091e95ec5063442487ed5e739e8d
+    generated_at: "2026-08-27T04:58:05Z"
+    expires_at: "2027-08-27T04:58:05Z"
     violations: []
     artifact: evidence/architecture_conformance_report.json
-    artifact_sha256: sha256:c5508c8c78ee4af2164491f803d45ad31986c70386726c935360fa0c0a35368d
+    artifact_sha256: sha256:91b9b1cfc24c36ae8e0d9912885c082a5c1078b150a0074a8b357a904be2c669
