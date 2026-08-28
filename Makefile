@@ -4,7 +4,9 @@ install:
 	python -m pip install -e '.[demo,dev]'
 
 test:
-	pytest
+	# The census, not bare pytest: pytest reports the tests, the census is
+	# the gate, and they can disagree (undeclared skips exit 0 under pytest).
+	python scripts/check_test_coverage.py
 
 validate:
 	python scripts/validate_repository.py

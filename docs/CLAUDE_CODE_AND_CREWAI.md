@@ -2,7 +2,12 @@
 
 Nornyx Forge separates engineering reasoning, orchestration, and governance:
 
-- **Claude Code** performs requirements, architecture, implementation, repair, and bounded inspection.
+- **Claude Code** performs requirements, architecture, implementation, repair,
+  and SELF-REPORTED review. It does NOT perform independent inspection: that
+  requires three Ed25519 attestations verified against
+  `FORGE_REVIEWER_TRUST_STORE` (`docs/ASSURANCE_BOUNDARY.md`), and none exists
+  here. README.md retracts the same claim; this line kept it, and the
+  overclaim guard's patterns did not match this phrasing.
 - **Nornyx Forge Skill** is the preferred Claude Code entry point and orchestrates the governed transformation workflow.
 - **CrewAI Flow** defines the development and application state machines.
 - **Forge deterministic machinery** runs repository, architecture, security, evidence, and conformance checks.

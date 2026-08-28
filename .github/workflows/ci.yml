@@ -1,26 +1,120 @@
 name: ci
 on:
+  # Branch work is covered by the pull_request event. Listening to bare `push`
+  # as well ran the entire workflow twice per commit on the same SHA, which was
+  # merely wasteful until container-launch added a real image build to each —
+  # then the duplicate runs contended for runners and one of the pair sat
+  # unstarted for an hour before being cancelled. Every job still runs on every
+  # commit; it runs once.
   push:
+    branches: [main]
   pull_request:
+  # Hosted runners occasionally drop a queued job, or strand a whole run in
+  # `queued` that the API will neither advance nor let you cancel. Without a
+  # manual trigger the only way to ask the question again is an empty commit,
+  # which puts infrastructure noise into a history that is meant to read as a
+  # record of assurance findings.
+  workflow_dispatch:
+
+# A superseded run is finished with. Without this, pushing twice in quick
+# succession leaves the older run competing with the newer one for the same
+# runners, and the answer it eventually gives is about code nobody is waiting on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
+
+# EVERY `run:` STEP GETS `bash -eo pipefail`.
+#
+# GitHub's IMPLICIT shell is `bash -e`, which does not set pipefail: in
+# `pytest ... | tail -3` the step observes `tail`, so a failing pytest can leave
+# a step green. That is not hypothetical here -- a commit in this repository was
+# made over a red suite by exactly that pipeline, and the displayed output
+# looked fine because the displayed output was never the measured exit state.
+#
+# Declaring `shell: bash` explicitly is what turns pipefail on.
+defaults:
+  run:
+    shell: bash
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # EVERY VERSION REPORTS. With fail-fast the first failing
+      # interpreter cancels the other three, so a run proves nothing
+      # about them -- and the release gate requires 3.10, 3.11, 3.12 and
+      # 3.13 each to pass, not one of them to fail first. Measured: 3.11
+      # failed and cancelled 3.10, 3.12 and 3.13 mid-run.
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # FULL HISTORY, for the reason demo-contract already states:
+          # a shallow clone cannot confirm that an ancestor named by the
+          # evidence binding is a real commit in this history. The test
+          # job carries the anchor and evidence-binding proofs too, and
+          # under depth-1 they failed on ALL FOUR interpreters -- 3.12
+          # included, which passes locally. Not a version defect; the
+          # environment could not answer the question.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e '.[dev]'
+      # The demo extra carries nornyx. Installing only [dev] left every
+      # @needs_nornyx test skipping, so a green CI run proved 139 of 202 tests
+      # and none of the governance tooling. The job reported success over the
+      # controls it was supposed to be guarding.
+      - run: python -m pip install -e '.[demo,dev]'
       - run: python scripts/validate_repository.py
-      - run: python -m pytest -q
+      - name: Tests, with no unexpected skips
+        run: python scripts/check_test_coverage.py
       - run: python -m compileall -q src scripts
+
+  # A real build and a real launch on a host with a real Docker daemon. The
+  # default suite skips this because building downloads packages, which BRD-004
+  # forbids for the offline run — but `docker compose config` only parses YAML,
+  # so skipping everywhere would leave BRD-005 asserted by nothing.
+  container-launch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e '.[dev]'
+
+      - name: Build the image and start the application
+        env:
+          FORGE_DOCKER_TESTS: "1"
+        # `-p no:randomly --strict-markers` is not the point here; `-rs` and the
+        # skip assertion below are. This job had no skip census, so if the
+        # runner ever lost its Docker CLI every test would skip, pytest would
+        # exit 0, and the job would stay green having launched nothing — the
+        # exact defect the test job's census exists to prevent, in the one job
+        # the census did not cover.
+        run: |
+          python -m pytest tests/test_container_launch.py tests/test_runtime_image_subject.py -q -rs             --junitxml=container.xml
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          suite = ET.parse("container.xml").getroot()
+          cases = suite.iter("testcase")
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          total = len(list(ET.parse("container.xml").getroot().iter("testcase")))
+          print(f"container job: {total} collected, {len(skipped)} skipped")
+          if skipped:
+              print("These must run in this job; a skip here proves nothing:")
+              for name in skipped:
+                  print(f"  {name}")
+              sys.exit(1)
+          if total == 0:
+              print("no container tests ran at all")
+              sys.exit(1)
+          PY
 
   # Asserts the state this repository is actually in before a human approval
   # exists. It deliberately does NOT assert that the governance contracts
@@ -53,11 +147,26 @@ jobs:
           PY
           nornyx check .nornyx/generated/brd_contract.nyx
 
-      - name: Governance contracts are blocked only by the missing human approval
+      # Two external authorities are missing, not one: a human approval AND an
+      # authenticated independent inspection. This step was named for the
+      # approval alone, which is the string a reader sees in the checks UI.
+      - name: Governance contracts are blocked only by absent external authority
         run: python scripts/check_pre_approval_baseline.py
 
       - name: Governance evidence artifacts match their declared digests
         run: python scripts/refresh_governance_evidence.py --verify
+
+      # EVIDENCE-BINDING. The evidence a commit ships must describe the tree that
+      # commit contains. Measured on the hardening branch: 130 of 168
+      # evidence-bearing commits shipped a binding describing a different tree.
+      #
+      # PR-scoped with an exact-SHA historical baseline. `origin/main..HEAD`
+      # would be permanently red over immutable history, and a permanently red
+      # security control is one that gets switched off.
+      - name: evidence-binding
+        run: |
+          git fetch --no-tags --depth=200 origin "${{ github.base_ref || 'main' }}"
+          python scripts/check_evidence_binding.py "origin/${{ github.base_ref || 'main' }}...HEAD"
 
       - name: Architecture and security gates
         run: |
@@ -85,6 +194,12 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e '.[demo,dev]'
 
+      # NOTE: this detects the APPROVAL only. A contract set that validates
+      # outright also needs an authenticated independent inspection, so an
+      # approval turning this on is necessary and not sufficient -- the
+      # steps below will then fail on the inspection diagnostics rather
+      # than pass. That is the correct outcome and not a defect: it is what
+      # a second missing authority looks like.
       - name: Detect whether a human approval exists
         id: approval
         run: |
@@ -114,8 +229,10 @@ jobs:
         if: steps.approval.outputs.present == 'true'
         run: nornyx-forge demo --offline --strict-nornyx
 
-      - name: Strict application smoke
+      - name: Application smoke over the approved head
         if: steps.approval.outputs.present == 'true'
-        env:
-          FORGE_SMOKE_STRICT: "true"
+        # No FORGE_SMOKE_STRICT: it was read by the script and used nowhere, so
+        # this step and the ordinary smoke were the same run under two names.
+        # What proves strict behaviour is the demo and lock steps above, which
+        # request the governed backend and fail closed.
         run: python scripts/smoke_http.py

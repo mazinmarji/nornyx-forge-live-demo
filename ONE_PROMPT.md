@@ -60,16 +60,47 @@ Then run:
 
   python scripts/bootstrap.py --autonomous --worker-mode in-session
 
-Continue until the application is implemented, all acceptance gates pass, the
-CrewAI customer-operations Flow completes its demonstration scenarios, and the
-application is running. Stop only on a declared hard stop, unavailable
+Continue until the application is implemented, all acceptance gates pass, and
+the customer-operations Flow completes its demonstration scenarios.
+
+On a fresh clone the run STOPS BEFORE LAUNCH, and that is correct.
+`bootstrap.py` appends `--strict-nornyx` when `--skip-install` is absent;
+measured on a fresh clone, that demo exits 2 with
+
+    "detail": "RuntimeError: RUNTIME_LOCK_MISSING: ...nornyx.agentic_network.lock
+               does not exist"
+
+This sentence used to name AN_APPROVAL_RECORD_MISSING and to stop mid-clause.
+A review measured a fresh clone and found that code appears zero times: it is
+what a tree with a PREPARED RUNTIME LOCK reports, and no reader has one.
+
+> **What a reader actually sees.** `.nornyx/runtime/` is gitignored and the
+> lock CANNOT be produced without a human approval (`prepare_runtime.py` exits
+> 2, names the absent approval, and writes only `preparation-report.json`),
+> so on a clean checkout the proximate refusal is
+> `RuntimeError: RUNTIME_LOCK_MISSING`. Same absence, reported at a different
+> depth: no approval exists, so the lock cannot be prepared, so the authorizer
+> cannot load. The exit code (2), `status: blocked` and
+> `reason: nornyx_runtime_unavailable` are identical either way.
+`run()` raises SystemExit on a nonzero return, so the launch and the URL
+prints below are never reached. Declining to execute governed actions
+without an approval is the system working.
+
+The shipped flow runs `run_sequential()`; `observed_execution_backend` is
+`sequential`. It is not a CrewAI kickoff, and this section previously said
+it was. Stop only on a declared hard stop, unavailable
 prerequisite, exhausted budget, or unresolved security/legal ambiguity.
 
-At completion report separately:
-- the application URL, dashboard URL, and API documentation URL;
+At completion report separately. Report the URLs IF the launch was actually
+reached; otherwise report the exact refusal and its diagnostics, because a
+run that refused has not produced a running application and must not read as
+though it had:
+- the application URL, dashboard URL, and API documentation URL — or, when
+  the launch was refused, the refusal and its diagnostics in their place;
 - what Claude Code built or changed;
 - each deterministic Forge/Nornyx gate actually invoked and its exact result;
 - the authoritative evidence/verdict mechanically produced by those gates;
+- build evidence verdict and runtime evidence verdict, kept apart;
 - model-only in-session review evidence;
 - whether human approval or external independent review exists;
 - repository foundation and revision;

@@ -23,8 +23,96 @@ The task is complete only when:
 
 - all BRD acceptance criteria are represented by tests;
 - architecture checks pass;
-- Nornyx contracts validate;
+- Nornyx contract structure and governed-content integrity validate:
+  `--verify` reports `integrity_state: intact` with zero problems, and no
+  structural or integrity diagnostic remains;
+- production-approval readiness is NOT satisfied, and is not expected to be.
+  This is a separate criterion on purpose. Folding it into the one above
+  required reading "contracts validate" as "validation may still return
+  approval-absence diagnostics", which redefines a failing approval gate as
+  successful validation -- the exact substitution of a label for the thing
+  that this repository keeps finding. Two of the three contracts fail today,
+  for this reason and only this reason.
+
+  The sole diagnostics an autonomous run may leave outstanding are those
+  `scripts/check_pre_approval_baseline.py` accepts:
+
+      AN_APPROVAL_RECORD_MISSING      APPROVAL_EVIDENCE_MISSING
+      EVIDENCE_REQUIRED_MISSING       CHANGE_EVIDENCE_MISSING
+      SOD_EVIDENCE_PRODUCER_UNKNOWN
+
+  FIVE, not three. This listed three and said any other diagnostic fails the
+  criterion -- which, read literally, failed it at every head, because
+  architecture_governance.nyx also emits CHANGE_EVIDENCE_MISSING and
+  SOD_EVIDENCE_PRODUCER_UNKNOWN. Those two are not the absent APPROVAL: they
+  are the consequences of having no AUTHENTICATED INDEPENDENT INSPECTION, a
+  different external authority. This list is a copy of one the script owns,
+  so EXPECTED_PRE_APPROVAL_DIAGNOSTICS is authoritative and this is a
+  restatement for readers. If the two ever disagree the script is right, and
+  they cannot disagree silently:
+  `test_the_success_criteria_name_exactly_the_accepted_diagnostics` compares
+  this list against that constant in both directions.
+
+  Any other validation or integrity diagnostic fails the criterion above.
+  Clearing the approval codes requires a genuine human approval record;
+  clearing the other two requires an authenticated independent inspection. Creating,
+  adopting, inferring, or backdating one is forbidden, so no autonomous run
+  may close this criterion, and none may report it closed;
 - the live application starts;
-- its CrewAI Flow runs;
-- Nornyx evidence is emitted;
+- its configured execution path runs successfully, with the observed backend
+  matching the selected backend;
+- evidence is emitted, and named for what it is. Measured on the shipped
+  path what is produced is FORGE-schema evidence
+  (`nornyx.forge.demo_evidence_report.v1`) whose `nornyx_evidence` field reads
+  `{"status": "fallback", "load_error": "AuthorizerLoadError..."}` on every
+  case. On a clean checkout the load_error is RUNTIME_LOCK_MISSING instead --
+  the same absence one step earlier, because the runtime lock is gitignored and
+  cannot be prepared without an approval. Measured: `prepare_runtime.py` exits
+  2, names the absent approval, and writes only `preparation-report.json`.
+  Either way no `nornyx.agentic` runtime evidence is produced, because the
+  authorizer never loads without a human approval. "Nornyx evidence is
+  emitted" read as the latter and was satisfied by the former -- the exact
+  substitution ASSURANCE_BOUNDARY.md forbids;
 - final limitations are disclosed.
+
+### What "configured execution path" means
+
+The criterion deliberately names no backend. Its predecessor read "its CrewAI
+Flow runs", which named no path either -- and was true of one path while false of
+the one that ships. Naming today's default instead would fossilise it: the
+criterion would go false the moment the shipped default changed, for a change
+that ought to satisfy it.
+
+What is required is that the selected backend is the one that actually runs, and
+that the application reports which. Measured on this baseline, both directions:
+
+    SHIPPED DEMONSTRATION PATH -- demonstration_authority()
+      execution_backend selected     sequential
+      CustomerCaseFlow driven by     run_sequential()
+      observed_execution_backend     sequential
+      framework reported             CrewAI Flow-compatible sequential execution
+      CrewAI kickoff used            no
+
+    EXPLICIT CREWAI SELECTION -- execution_backend="crewai"
+      CustomerCaseFlow driven by     CustomerCaseFlow.kickoff()
+      observed_execution_backend     crewai_flow
+      framework reported             CrewAI Flow kickoff
+      run_sequential used            no
+
+Both were observed by running the code and spying on the driver, not read from
+configuration. CrewAI is genuinely functional here; the shipped path simply does
+not select it. If `crewai` is selected while CrewAI cannot be imported the run
+RAISES rather than downgrading to sequential under an unchanged label -- that
+silent downgrade is how a suite once stayed green with CrewAI absent.
+
+Three facts, kept apart. The shipped path selects and runs sequential. Explicit
+CrewAI selection runs a real Flow kickoff. `demonstration_authority()` hardcodes
+sequential. None of them is "CrewAI does not run".
+
+`observed_execution_backend` is derived from the execution path rather than
+restated from configuration, which is what makes this criterion checkable
+instead of tautological. Pinned by `tests/test_execution_mode_truth.py`:
+`test_the_observed_backend_comes_from_the_driver_not_the_configuration`,
+`test_the_sequential_path_reports_the_sequential_driver`, and
+`test_crewai_cannot_be_claimed_when_crewai_cannot_run`.
+

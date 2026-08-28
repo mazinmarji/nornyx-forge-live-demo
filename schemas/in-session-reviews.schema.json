@@ -1,31 +1,62 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mazinmarji/nornyx-forge-live-demo/schemas/in-session-reviews.schema.json",
-  "title": "Nornyx Forge in-session independent review evidence",
-  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "required": ["schema", "human_review", "builder_self_approval", "reviews"],
+  "description": "In-session findings recorded by the builder. NOT independent inspection: these are self-reported, carry no authenticated reviewer identity, and no control derives assurance from them. The previous title said 'independent review evidence', which the markdown sweeps could not see because they scan .md only.",
   "properties": {
-    "schema": {"const": "nornyx.forge.in_session_reviews.v1"},
-    "human_review": {"const": "not_performed"},
-    "builder_self_approval": {"const": false},
+    "builder_self_approval": {
+      "const": false
+    },
+    "human_review": {
+      "const": "not_performed"
+    },
     "reviews": {
-      "type": "array",
-      "minItems": 3,
       "items": {
-        "type": "object",
         "additionalProperties": true,
-        "required": ["role", "status", "findings"],
         "properties": {
-          "role": {
-            "enum": ["test-inspector", "architecture-inspector", "security-inspector"]
+          "evidence": {
+            "type": "array"
           },
-          "status": {"enum": ["pass", "fail"]},
-          "findings": {"type": "array"},
-          "evidence": {"type": "array"},
-          "summary": {"type": "string"}
-        }
-      }
+          "findings": {
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "test-inspector",
+              "architecture-inspector",
+              "security-inspector"
+            ]
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "status",
+          "findings"
+        ],
+        "type": "object"
+      },
+      "minItems": 3,
+      "type": "array"
+    },
+    "schema": {
+      "const": "nornyx.forge.in_session_reviews.v1"
     }
-  }
+  },
+  "required": [
+    "schema",
+    "human_review",
+    "builder_self_approval",
+    "reviews"
+  ],
+  "title": "Nornyx Forge in-session SELF-REPORTED review evidence",
+  "type": "object"
 }

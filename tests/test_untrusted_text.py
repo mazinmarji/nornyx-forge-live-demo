@@ -1,0 +1,706 @@
+"""Untrusted text must not acquire stronger meaning by where it is used.
+
+Three findings, one principle. Caller-supplied text was being promoted into
+semantics it never earned:
+
+* a ``mission_id`` became a filesystem path, so ``x/../CASE-HONEST`` overwrote
+  another mission's decision evidence and ``../../../../pwned`` escaped the
+  repository entirely;
+* a ``risk`` label became a classification, so ``"HIGH-RISK"`` — unrecognised —
+  fell through to the low-risk path, skipped the trust-zone crossing and the
+  approval requirement, and ran the callable;
+* a diagnostic's human-readable *message* became a gate decision, so a reworded
+  message would break the gate and an unrelated error mentioning the right
+  phrase would satisfy it.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_pre_approval_baseline import (  # noqa: E402
+    EXPECTED_PRE_APPROVAL_DIAGNOSTICS,
+    UnstructuredCheckerOutput,
+    _diagnostics,
+)
+from signing import LEDGER_ESTABLISHED  # noqa: E402
+from test_governance_failure import _permissive_boundary  # noqa: E402
+
+from nornyx_forge.governed_subject import (  # noqa: E402
+    INTEGRITY_INTACT,
+    GovernanceIntegrityState,
+)
+from nornyx_forge.nornyx_runtime import (  # noqa: E402
+    RISK_LEVEL_UNKNOWN,
+    RISK_LEVELS,
+    NornyxActionBoundary,
+    UnknownRiskLevel,
+    evidence_storage_key,
+    normalize_risk,
+)
+
+# --------------------------------------------------------------------------
+# P2-A1 — an identifier is data, never a path
+# --------------------------------------------------------------------------
+
+HOSTILE_IDS = [
+    "x/../CASE-HONEST",
+    "../../../../pwned",
+    "/absolute/path",
+    "..\\..\\victim",
+    "C:\\Windows\\system32\\evil",
+    "a/b\\c/../d",
+    "....//....//escape",
+    "CASE\u2044slash",  # unicode fraction slash
+    "CASE\x00null",
+]
+
+
+@pytest.mark.parametrize("mission_id", HOSTILE_IDS)
+def test_a_hostile_identifier_cannot_leave_the_evidence_directory(
+    mission_id: str, tmp_path: Path
+):
+    evidence = tmp_path / "evidence/runtime/nornyx"
+    evidence.mkdir(parents=True)
+    target = (evidence / f"{evidence_storage_key(mission_id)}.report.json").resolve()
+    assert target.parent == evidence.resolve(), mission_id
+    assert evidence.resolve() in target.parents, mission_id
+
+
+def test_sanitising_alone_would_have_created_collisions():
+    """Closing traversal must not open overwriting.
+
+    Replacing separators maps `a/b` and `a_b` onto one name, so a second mission
+    could silently replace the first mission's evidence — including the record of
+    a refused high-risk effect. The digest of the original identifier is what
+    keeps them apart.
+    """
+    assert evidence_storage_key("a/b") != evidence_storage_key("a_b")
+    assert evidence_storage_key("x/../y") != evidence_storage_key("x_.._y")
+
+    collided = {evidence_storage_key(value) for value in ("a/b", "a_b", "a\\b", "a.b")}
+    assert len(collided) == 4, "distinct identifiers must not share a storage key"
+
+
+def test_the_storage_key_is_stable_bounded_and_derived_from_the_original():
+    long_id = "M" * 500
+    key = evidence_storage_key(long_id)
+    assert len(key) <= 64 + 2 + 16
+    assert evidence_storage_key(long_id) == key, "must be deterministic"
+    assert hashlib.sha256(long_id.encode()).hexdigest()[:16] in key
+
+    assert evidence_storage_key("") == evidence_storage_key("")
+    assert evidence_storage_key("").startswith("unnamed--")
+
+
+def test_the_real_identifier_survives_in_the_payload(tmp_path: Path):
+    """A filename is storage identity; governance identity stays in the data.
+
+    Driven through the official path, which is the one that writes evidence —
+    the fallback records nothing, so a fallback boundary would prove nothing.
+    """
+    boundary = _permissive_boundary(tmp_path)
+    boundary.evaluate_and_execute(
+        mission_id="x/../CASE-HONEST", risk="low", action=lambda: "done"
+    )
+    evidence = (tmp_path / "evidence/runtime/nornyx").resolve()
+    written = list(evidence.glob("*.report.json"))
+    assert written, "no evidence was written"
+
+    # The invariant is containment, not the absence of a substring. A name may
+    # legitimately contain dots — `x_.._CASE-HONEST` is one component and cannot
+    # traverse anywhere. What matters is where the file actually landed.
+    for path in written:
+        assert path.resolve().parent == evidence, path
+        assert "/" not in path.name and "\\" not in path.name, path
+
+
+def test_one_mission_cannot_overwrite_another(tmp_path: Path):
+    boundary = _permissive_boundary(tmp_path)
+    boundary.evaluate_and_execute(mission_id="CASE-HONEST", risk="low", action=lambda: "a")
+    boundary.evaluate_and_execute(
+        mission_id="x/../CASE-HONEST", risk="low", action=lambda: "b"
+    )
+    written = list((tmp_path / "evidence/runtime/nornyx").glob("*.report.json"))
+    assert len(written) == 2, "a crafted id overwrote another mission's evidence"
+
+
+# --------------------------------------------------------------------------
+# P2-A2 — an unclassified act is not a low-risk act
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["HIGH-RISK", "high_risk", "severe", "urgent", "unknown", "", "  ", "High\n!", "elevated"],
+)
+def test_an_unrecognised_risk_label_is_refused(label: str, tmp_path: Path):
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    ran: list[int] = []
+    decision, result = boundary.evaluate_and_execute(
+        mission_id="CASE-1", risk=label, action=lambda: ran.append(1) or "ran"
+    )
+    assert decision.effect == "DENY", label
+    assert decision.code == RISK_LEVEL_UNKNOWN, label
+    assert result is None
+    assert ran == [], f"{label!r} reached the callable"
+
+
+@pytest.mark.parametrize("label", [None, 3, True, 0.5, ["high"], {"risk": "high"}])
+def test_a_non_string_risk_is_refused(label: object, tmp_path: Path):
+    """Types other than str can reach this boundary through the library API."""
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    ran: list[int] = []
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-1", risk=label, action=lambda: ran.append(1) or "ran"
+    )
+    assert decision.effect == "DENY"
+    assert decision.code == RISK_LEVEL_UNKNOWN
+    assert ran == []
+
+
+def test_an_unknown_risk_consumes_no_approval(tmp_path: Path):
+    """Refused before anything could be spent finding out."""
+    from nornyx_forge.nornyx_runtime import ApprovalLedger
+
+    ledger_path = tmp_path / "ledger.sqlite3"
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary.approval_ledger = ApprovalLedger.provision(ledger_path, established_at=LEDGER_ESTABLISHED)
+    boundary.evaluate_and_execute(
+        mission_id="CASE-1", risk="HIGH-RISK", action=lambda: "ran",
+        action_approval={"granted": True, "approval_id": "ACT-1"},
+    )
+    import sqlite3
+
+    rows = sqlite3.connect(ledger_path).execute(
+        "SELECT COUNT(*) FROM consumed_approvals"
+    ).fetchone()[0]
+    assert rows == 0
+
+
+@pytest.mark.parametrize("label", sorted(RISK_LEVELS))
+def test_every_declared_level_is_accepted(label: str):
+    assert normalize_risk(label) == label
+    assert normalize_risk(f"  {label.upper()}  ") == label
+
+
+def test_the_vocabulary_is_closed_and_has_no_aliases():
+    """Friendly labels belong upstream, where a mistranslation is a display bug."""
+    assert RISK_LEVELS == {"low", "medium", "high", "critical"}
+    for alias in ("hi", "HIGH RISK", "crit", "danger", "p0"):
+        with pytest.raises(UnknownRiskLevel):
+            normalize_risk(alias)
+
+
+def test_the_unknown_risk_code_is_distinct_from_missing_approval(tmp_path: Path):
+    """Different facts, different remedies.
+
+    The integrity observation is supplied because this test is about
+    ATTRIBUTION. A boundary handed none refuses for THAT reason instead,
+    and the high-risk arm would report GOVERNANCE_INTEGRITY_COMPROMISED --
+    still a denial, still distinct from the unknown-risk code, and no
+    longer the fact this test names. The assertion would have stayed
+    green on the last line while the middle one measured something else.
+    """
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary.governance_integrity = GovernanceIntegrityState(
+        status=INTEGRITY_INTACT, verified_claims=8,
+    )
+    unknown, _ = boundary.evaluate_and_execute(
+        mission_id="A", risk="severe", action=lambda: "ran"
+    )
+    known, _ = boundary.evaluate_and_execute(
+        mission_id="B", risk="high", action=lambda: "ran"
+    )
+    assert unknown.code == RISK_LEVEL_UNKNOWN
+    assert known.code == "HUMAN_APPROVAL_REQUIRED"
+    assert unknown.code != known.code
+
+
+# --------------------------------------------------------------------------
+# P2-A3 — classify by structure, never by prose
+# --------------------------------------------------------------------------
+
+
+def _diag(code: str, path: str, source: str, message: str = "anything") -> str:
+    return json.dumps(
+        {"level": "error", "code": code, "path": path, "source_id": source,
+         "message": message}
+    )
+
+
+def _classify(payload: str) -> list[dict]:
+    """The gate's own classification, over synthetic checker output."""
+    diagnostics = _diagnostics(payload)
+    return [
+        item
+        for item in diagnostics
+        if item.get("level") == "error"
+        and (str(item.get("code")), str(item.get("path")), str(item.get("source_id")))
+        not in EXPECTED_PRE_APPROVAL_DIAGNOSTICS
+    ]
+
+
+def test_the_expected_triple_is_accepted():
+    payload = _diag(
+        "AN_APPROVAL_RECORD_MISSING",
+        "governance_evidence.records",
+        "agentic_network_foundation.v1",
+    )
+    assert _classify(payload) == []
+
+
+def test_rewording_the_message_does_not_break_the_gate():
+    """Codes are the stable vocabulary; message text is not."""
+    payload = _diag(
+        "APPROVAL_EVIDENCE_MISSING",
+        "approvals[0].required_evidence",
+        "human_approval.v1",
+        message="Completely different wording, no magic phrase at all.",
+    )
+    assert _classify(payload) == []
+
+
+def test_the_right_code_at_the_wrong_path_is_not_an_approval_gap():
+    payload = _diag(
+        "EVIDENCE_REQUIRED_MISSING",
+        "architecture_evidence[0]",
+        "evidence_integrity.v1",
+    )
+    assert _classify(payload), "a different path was accepted as an approval gap"
+
+
+def test_a_message_mentioning_approval_record_cannot_launder_another_error():
+    """The exact defect: prose deciding what a diagnostic meant."""
+    payload = _diag(
+        "SCHEMA_INVALID",
+        "governance_evidence.records",
+        "evidence_integrity.v1",
+        message="something about approval_record went wrong",
+    )
+    assert _classify(payload), "message text satisfied the gate"
+
+
+def test_an_unexpected_error_alongside_an_expected_one_still_fails():
+    payload = (
+        _diag(
+            "AN_APPROVAL_RECORD_MISSING",
+            "governance_evidence.records",
+            "agentic_network_foundation.v1",
+        )
+        + _diag("EVIDENCE_STALE", "governance_evidence.records[2].expires_at", "evidence_integrity.v1")
+    )
+    assert len(_classify(payload)) == 1
+
+
+def test_unstructured_output_fails_rather_than_being_skipped():
+    """The parser used to walk past anything it could not decode.
+
+    So a crash banner followed by an acceptable diagnostic classified as a clean
+    approval-only block. For an assurance gate, output it cannot account for is a
+    reason to fail.
+    """
+    payload = (
+        "INTERNAL VALIDATOR CRASHED\n"
+        + _diag(
+            "AN_APPROVAL_RECORD_MISSING",
+            "governance_evidence.records",
+            "agentic_network_foundation.v1",
+        )
+    )
+    with pytest.raises(UnstructuredCheckerOutput):
+        _diagnostics(payload)
+
+
+def test_the_gate_reports_unstructured_output_rather_than_passing(tmp_path: Path):
+    """End to end: a checker that prints noise must not yield a healthy baseline."""
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    if sys.platform == "win32":
+        fake.write_text("@echo INTERNAL VALIDATOR CRASHED\r\n@exit /b 1\r\n", encoding="utf-8")
+    else:
+        fake.write_text("#!/bin/sh\necho INTERNAL VALIDATOR CRASHED\nexit 1\n", encoding="utf-8")
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate
+
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["approval_blocked"] is False
+    assert result["unexpected_diagnostics"], "noise was accepted as an approval gap"
+
+
+@pytest.mark.parametrize(
+    ("label", "script"),
+    [
+        ("silent", ("@exit /b 1", "exit 1")),
+        ("noisy", ("@echo INTERNAL VALIDATOR CRASHED" + chr(10) + "@exit /b 1",
+                   "echo INTERNAL VALIDATOR CRASHED" + chr(10) + "exit 1")),
+        ("stderr only", ("@echo boom 1>&2" + chr(10) + "@exit /b 1",
+                         "echo boom 1>&2" + chr(10) + "exit 1")),
+        # WARNINGS ONLY. The first repair required at least one PARSED
+        # diagnostic; a review pointed at the neighbouring vacuity, where the
+        # items parse but none is an error, so `offending` is empty again and
+        # `not offending` is true again. Latent against today's checker, which
+        # exits non-zero only when it has errors -- and "latent because of what
+        # another program happens to do" is what stops holding silently.
+        ("warnings only",
+         ('@echo {"level":"warning","code":"X","path":"p","source_id":"s"}'
+          + chr(10) + "@exit /b 1",
+          "cat <<'JSON'" + chr(10)
+          + '{"level":"warning","code":"X","path":"p","source_id":"s"}'
+          + chr(10) + "JSON" + chr(10) + "exit 1")),
+    ],
+)
+def test_a_checker_that_fails_without_saying_why_is_not_an_approval_gap(
+    label: str, script: tuple, tmp_path: Path,
+):
+    """The silent neighbour of the noisy crash, one echo line away.
+
+    `_diagnostics("")` returns an empty list without raising, so a checker that
+    exited non-zero having printed NOTHING left `offending` empty and
+    `not offending` vacuously true. The gate reported `approval_blocked: True`
+    and `status: pass` -- under the sentence "Governance contracts must fail
+    only because a human approval record is absent" -- having observed nothing
+    to be absent, or present.
+
+    Measured before the repair, with two fake checkers differing by a single
+    echo line:
+
+        noisy crash   -> status FAIL, approval_blocked [False, False]
+        SILENT crash  -> status PASS, approval_blocked [True, True]
+
+    The noisy case was already covered. The whole property is "a non-zero exit
+    must be EXPLAINED", and covering only the loud half of it is how the quiet
+    half survived: an assurance gate is exactly where the quiet failure is the
+    dangerous one, because nobody reads a green run.
+    """
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    windows, posix = script
+    if sys.platform == "win32":
+        fake.write_text(windows.replace(chr(10), chr(13) + chr(10)) + chr(13) + chr(10),
+                        encoding="utf-8")
+    else:
+        fake.write_text("#!/bin/sh" + chr(10) + posix + chr(10), encoding="utf-8")
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["approval_blocked"] is False, (
+        f"a checker that crashed ({label}) was reported as blocked only by the "
+        "missing human approval. Nothing was observed to be absent."
+    )
+    assert result["unexpected_diagnostics"], (
+        f"a {label} crash left nothing for an operator to read, and the gate "
+        "still reached a verdict about why the contract failed"
+    )
+
+
+def test_a_diagnostic_level_the_gate_cannot_classify_is_reported(tmp_path: Path):
+    """An unknown level was dropped on the floor by an `== "error"` filter.
+
+    Complete against today's checker, which emits only `error` and `warning` --
+    and "complete against today's" is precisely the property that stops holding
+    without anyone noticing. A future level carrying a real refusal would be
+    invisible to the classifier and absent from the report, and the gate would
+    say the contract fails only for the missing approval.
+
+    Driven through the real `_check` with a fake checker, not by re-running the
+    filter expression here: a test that re-implements the rule proves the
+    re-implementation.
+    """
+    import json as _json  # noqa: PLC0415
+
+    payload = _json.dumps({
+        "level": "critical",
+        "code": "SOMETHING_NEW",
+        "path": "approvals[0].required_evidence",
+        "source_id": "human_approval.v1",
+    })
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    if sys.platform == "win32":
+        escaped = payload.replace("%", "%%").replace('"', chr(94) + '"')
+        fake.write_text("@echo " + escaped + chr(13) + chr(10) + "@exit /b 1" + chr(13) + chr(10),
+                        encoding="utf-8")
+    else:
+        fake.write_text("#!/bin/sh" + chr(10) + "cat <<'JSON'" + chr(10) + payload
+                        + chr(10) + "JSON" + chr(10) + "exit 1" + chr(10), encoding="utf-8")
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    assert {"error", "warning"} <= gate.KNOWN_DIAGNOSTIC_LEVELS
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["approval_blocked"] is False, (
+        "a diagnostic at a level this gate cannot classify was treated as "
+        "absent, and the contract was reported as blocked only by the approval"
+    )
+    assert result["unexpected_diagnostics"], (
+        "an unclassifiable diagnostic left nothing for an operator to read"
+    )
+
+
+def test_no_assurance_gate_classifies_by_message_text():
+    """The invariant, asserted against the source rather than assumed."""
+    source = (ROOT / "scripts/check_pre_approval_baseline.py").read_text(encoding="utf-8")
+    assert 'item.get("message"' not in source
+    assert "APPROVAL_SUBJECTS" not in source
+
+
+def test_generic_evidence_missing_cannot_masquerade_as_approval_absence():
+    """`EVIDENCE_REQUIRED_MISSING` alone means *some* record is absent.
+
+    Only the full triple makes it specific to the human-approval gap.
+    """
+    codes_alone = {code for code, _, _ in EXPECTED_PRE_APPROVAL_DIAGNOSTICS}
+    assert "EVIDENCE_REQUIRED_MISSING" in codes_alone
+    payload = _diag(
+        "EVIDENCE_REQUIRED_MISSING",
+        "governance_evidence.records",
+        "some_other_module.v1",
+    )
+    assert _classify(payload), "a different source module was accepted"
+
+
+def test_the_real_contracts_still_classify_as_approval_blocked():
+    """The gate must still recognise the state this repository is actually in."""
+    if shutil.which("nornyx") is None:
+        pytest.skip("nornyx CLI is not installed")
+    import check_pre_approval_baseline as gate
+
+    for contract in gate.GOVERNANCE_CONTRACTS:
+        result = gate._check(contract, shutil.which("nornyx"))
+        assert result["validates"] or result["approval_blocked"], result
+        assert result["unexpected_diagnostics"] == [], result
+
+
+#: (label, what the fake checker prints, its exit code, does it validate).
+#:
+#: THE SECOND DIRECTION, which nothing tested. This module's docstring says the
+#: property "holds in both directions ... after a real human approval record is
+#: supplied they validate outright", and every existing case presents a FAILING
+#: contract. `tests/test_pre_approval_baseline.py` asserts
+#: `validates or approval_blocked`, satisfied today by `approval_blocked`
+#: alone, so a broken `validates` was invisible.
+VALIDATION_OUTPUTS = [
+    ("the checker's real success line", "Nornyx check passed", 0, True),
+    ("success with surrounding blank lines",
+     chr(10) + " Nornyx check passed " + chr(10), 0, True),
+
+    # THE SUBSTRING TRAP. "passed" inside a diagnostic must not read as
+    # success: that is the substitution this gate exists to refuse, one level
+    # down.
+    ("a diagnostic mentioning passed",
+     '{"level":"error","code":"X","path":"p","source_id":"s",'
+     '"message":"the approval check passed nothing"}', 1, False),
+    ("prose claiming success on a failing exit", "Nornyx check passed", 1, False),
+    # THE SUBSTRING TRAP ON A ZERO EXIT, which is where the success check is
+    # actually consulted. The row above exits 1, so it never reaches it -- and
+    # a control that cannot reach the code it targets is not a control.
+    ("the success line buried in other output",
+     "WARNING: the lock is stale" + chr(10) + "Nornyx check passed", 0, False),
+    ("unparseable noise on a zero exit", "INTERNAL VALIDATOR CRASHED", 0, False),
+    ("silence on a zero exit", "", 0, False),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "output", "code", "validates"), VALIDATION_OUTPUTS,
+    ids=[case[0] for case in VALIDATION_OUTPUTS],
+)
+def test_a_contract_that_validates_is_reported_as_validating(
+    label: str, output: str, code: int, validates: bool, tmp_path: Path,
+):
+    """A PASSING contract was reported as not validating, and that inverts the gate.
+
+    `nornyx check` on a contract that validates prints the plain line
+    "Nornyx check passed" and exits 0 -- no JSON. `_diagnostics` refuses it, and
+    the handler hardcoded `validates: False`, discarding the return code.
+
+    MEASURED on this checkout against `forge_control.nyx`, the one contract that
+    passes today:
+
+        raw          rc 0, stdout "Nornyx check passed"
+        _check(...)  validates False, approval_blocked False
+
+    `healthy = all(validates or approval_blocked)`, so the gate exits 2.
+    SUPPLYING THE REAL HUMAN APPROVAL -- the event that makes both governance
+    contracts validate -- WOULD HAVE TURNED THIS GATE FROM PASS TO FAIL.
+    `--has-approval` could never return 0, so CI took the "no approval" branch
+    permanently and the strict-authorization job was unreachable even after a
+    genuine approval. `human_approval_present`, computed as `all(validates)`,
+    would have reported false at the exact moment every contract validated.
+
+    The last four rows keep the strictness that was right: a non-zero exit is
+    never talked out of by prose, and "passed" inside a diagnostic is not a
+    verdict.
+    """
+    fake = tmp_path / ("nornyx.bat" if sys.platform == "win32" else "nornyx")
+    if sys.platform == "win32":
+        lines = [f"@echo {line}" if line.strip() else "@echo."
+                 for line in output.split(chr(10))]
+        lines = lines or ["@echo."]
+        fake.write_text(
+            (chr(13) + chr(10)).join([*lines, f"@exit /b {code}"])
+            + chr(13) + chr(10),
+            encoding="utf-8",
+        )
+    else:
+        fake.write_text(
+            "#!/bin/sh" + chr(10) + "cat <<'OUT'" + chr(10) + output + chr(10)
+            + "OUT" + chr(10) + f"exit {code}" + chr(10),
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    result = gate._check(str(gate.GOVERNANCE_CONTRACTS[0]), str(fake))
+    assert result["validates"] is validates, (
+        label + ": the gate reports validates=" + str(result["validates"])
+        + " for a checker that exited " + str(code) + " saying " + repr(output[:60])
+    )
+    if not validates and code == 0:
+        assert result["unexpected_diagnostics"], (
+            label + ": output the gate cannot classify was accepted silently"
+        )
+
+
+def test_the_real_passing_contract_reads_as_validating():
+    """The end-to-end direction, on the contract that actually passes.
+
+    Driven through the shipped checker rather than a fake, because the defect
+    was in how the gate reads what the REAL checker prints -- and no fake would
+    have told me what that is.
+    """
+    import shutil  # noqa: PLC0415
+
+    import check_pre_approval_baseline as gate  # noqa: PLC0415
+
+    executable = shutil.which("nornyx")
+    if executable is None:
+        pytest.skip("the nornyx CLI is not on PATH in this environment")
+    result = gate._check(".nornyx/contracts/forge_control.nyx", executable)
+    assert result["returncode"] == 0, result
+    assert result["validates"] is True, (
+        "a contract that passes is reported as not validating, so obtaining "
+        "the human approval would turn this gate from pass to fail: "
+        + repr(result)
+    )
+    assert result["unexpected_diagnostics"] == [], result
+
+
+UNRECOGNISED_RISKS = ["severe", "HIGH-RISK", "", "  ", "elevated"]
+
+
+@pytest.mark.parametrize("label", UNRECOGNISED_RISKS)
+def test_an_unrecognised_risk_is_refused_where_a_reader_can_see_it(
+    label: str, tmp_path: Path,
+):
+    """The boundary refused correctly and the flow crashed one statement later.
+
+    `canonical_action_request` and `exercised_capability` both derive a
+    capability, and an unrecognised label has none -- so both raised AFTER the
+    boundary had already answered `RISK_LEVEL_UNKNOWN`. The refusal existed and
+    could not be observed: no case, no ledger record, no response, just an
+    exception out of `run_case`. A guard that refuses correctly and then
+    crashes before anyone can see it has not refused anything a reader can act
+    on.
+    """
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    case = run_case(
+        {"id": "CASE-RISK", "customer": "Amina", "risk": label,
+         "summary": "s", "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig(
+            policy_backend="deterministic_demo", execution_backend="sequential",
+        ),
+        security_context=application_security_context(),
+    )
+    assert case["action_status"] == "prevented", case["decision"]
+    assert case["decision"]["code"] == RISK_LEVEL_UNKNOWN, case["decision"]
+    assert case["evidence"]["status"] == "pass", case["evidence"]["diagnostics"]
+    # No capability is claimed for an act that exercised none.
+    assert "action_request" not in case
+
+
+def test_the_recognised_levels_are_unaffected(tmp_path: Path):
+    """The over-reach control: refusing everything would satisfy the above."""
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    for label, expected in (("low", "executed"), ("medium", "executed"),
+                            ("high", "prevented"), ("critical", "prevented")):
+        case = run_case(
+            {"id": "CASE-OK", "customer": "Amina", "risk": label,
+             "summary": "s", "requested_action": "a"},
+            root=tmp_path / label, worker_mode="deterministic",
+            config=RuntimeAuthorityConfig(
+                policy_backend="deterministic_demo", execution_backend="sequential",
+            ),
+            security_context=application_security_context(),
+        )
+        assert case["action_status"] == expected, (label, case["decision"])
+        assert case["decision"]["code"] != RISK_LEVEL_UNKNOWN
+
+
+RISK_STAGE_AGREEMENT = [
+    ("bogus", "unclassified", RISK_LEVEL_UNKNOWN),
+    ("  ", "unclassified", RISK_LEVEL_UNKNOWN),
+    ("HIGH-RISK", "unclassified", RISK_LEVEL_UNKNOWN),
+    # `normalize_risk` strips, so this IS high -- and the stage used to call it
+    # bounded-low-risk while the boundary named the high-risk effect capability.
+    (" high ", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+    ("low", "bounded-low-risk", "ALLOWED"),
+    ("medium", "bounded-low-risk", "ALLOWED"),
+    ("high", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+    ("critical", "high-impact", "HUMAN_APPROVAL_REQUIRED"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "classification", "code"), RISK_STAGE_AGREEMENT,
+    ids=[case[0] or "blank" for case in RISK_STAGE_AGREEMENT],
+)
+def test_the_risk_stage_and_the_boundary_agree(
+    label: str, classification: str, code: str, tmp_path: Path,
+):
+    """One mission's evidence must not contain two verdicts about one act.
+
+    The stage did bare `.lower()` membership and the boundary uses
+    `normalize_risk`, so `"bogus"` and `" high "` were both written into the
+    stream as `bounded-low-risk` -- while the boundary answered
+    RISK_LEVEL_UNKNOWN, whose own text reads "An unclassified act is not a
+    low-risk act", and for `" high "` named `execute_high_risk_effect`. A
+    stage record calling the act bounded-low-risk sat beside an
+    `action_prevented` record naming the high-risk capability, in one stream.
+    """
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+    from nornyx_forge.governed_subject import RuntimeAuthorityConfig  # noqa: PLC0415
+
+    case = run_case(
+        {"id": "CASE-AGREE", "customer": "Amina", "risk": label,
+         "summary": "s", "requested_action": "a"},
+        root=tmp_path, worker_mode="deterministic",
+        config=RuntimeAuthorityConfig(
+            policy_backend="deterministic_demo", execution_backend="sequential",
+        ),
+        security_context=application_security_context(),
+    )
+    assert case["risk_decision"] == classification, case["risk_decision"]
+    assert case["decision"]["code"] == code, case["decision"]
+    summary = next(entry["summary"] for entry in case["timeline"]
+                   if entry["stage"] == "risk")
+    if classification == "unclassified":
+        assert "could not be classified" in summary, summary
+        assert "low-risk" not in summary.replace("not a low-risk act", ""), summary

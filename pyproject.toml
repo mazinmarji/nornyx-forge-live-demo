@@ -4,14 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nornyx-forge-live-demo"
-version = "0.2.0"
-description = "One-prompt, Nornyx-governed software delivery demo using Claude Code and CrewAI Flows."
+version = "0.3.0"
+description = "One-prompt, Nornyx-governed software delivery demo using Claude Code. The shipped demo path runs a CrewAI Flow-compatible sequential backend."
 readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = {text = "MIT"}
 authors = [{name = "Mazin Marji and Nornyx Forge contributors"}]
 dependencies = [
   "PyYAML>=6.0",
+  # Ed25519 verification for action-approval signatures. A core dependency, not
+  # a demo extra: the action boundary cannot authenticate an approval without it.
+  "cryptography>=42,<51",
   "pydantic>=2.8,<3",
   "rich>=13.9,<15",
   "typer>=0.12,<1",
@@ -30,6 +33,8 @@ dev = [
   "pytest-cov>=6,<7",
   "ruff>=0.16,<0.17",
   "build>=1.2,<2",
+  # `tomllib` is 3.11+; `requires-python` allows 3.10.
+  "tomli>=2.0.1; python_version < '3.11'",
 ]
 
 [project.scripts]
@@ -49,8 +54,20 @@ line-length = 100
 select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.pytest.ini_options]
+# The false-green class a guard proves, declared BY the guard. A marker
+# is metadata on the collected node: a comment cannot satisfy it and a
+# node pytest never collects cannot carry it.
+markers = ["false_green(ident): the FG class this guard proves"]
+
 testpaths = ["tests"]
 addopts = "-q"
+# An xfail that is not strict is a security proof with an off switch. The
+# census used to skip xfails outright on the stated ground that they were
+# strict here -- and this setting did not exist, so one decorator could
+# silence a failing integrity proof with the gate still green. Strict means
+# an XPASS fails the run, so a marked test that starts passing is reported
+# rather than quietly accepted.
+xfail_strict = true
 
 [tool.setuptools.package-data]
 demo_app = ["static/*"]

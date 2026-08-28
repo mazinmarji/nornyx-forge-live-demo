@@ -28,14 +28,21 @@ def _request(url: str, *, method: str = "GET", timeout: float = 5.0) -> bytes:
 def main() -> int:
     port = _free_port()
     base = f"http://127.0.0.1:{port}"
-    strict = os.getenv("FORGE_SMOKE_STRICT", "false").lower() == "true"
-    env = {
-        **os.environ,
-        "FORGE_ROOT": str(ROOT),
-        "FORGE_WORKER_MODE": "deterministic",
-        "FORGE_ALLOW_POLICY_FALLBACK": "false" if strict else "true",
-        "FORGE_STRICT_CREWAI": "true" if strict else "false",
-    }
+    # FORGE_ROOT, FORGE_ALLOW_POLICY_FALLBACK and FORGE_STRICT_CREWAI were set
+    # here and read by nothing: the application derives its root structurally and
+    # takes its backends from RuntimeAuthorityConfig. Setting them made this look
+    # like it selected a strict configuration when the strict and non-strict runs
+    # were materially identical, so they are gone rather than left as decoration
+    # a reader would trust.
+    #
+    # FORGE_SMOKE_STRICT was read here and used nowhere else, so the "strict"
+    # and ordinary smoke runs were materially identical. Removing the three env
+    # vars above made that visible: the flag had no remaining effect to lose.
+    # Strict governance IS exercised, by `nornyx-forge demo --offline
+    # --strict-nornyx` and by scripts/prepare_runtime.py -- neither of which is
+    # this script.
+    # No FORGE_WORKER_MODE: nothing reads it. See app_launcher.
+    env = {**os.environ}
     # The server's output must go to a file, not an unread PIPE. CrewAI prints a
     # large flow trace per case; with subprocess.PIPE and no reader the OS pipe
     # buffer fills, the server blocks on write, and every request then times out.

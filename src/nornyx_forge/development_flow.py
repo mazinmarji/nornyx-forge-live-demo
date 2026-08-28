@@ -10,6 +10,7 @@ from .claude_worker import ClaudeCodeWorker
 from .contract_generator import generate_brd_contract
 from .evidence import EvidenceLedger
 from .gates import default_gates
+from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .repo_qualifier import qualify_local, qualify_remote
 from .repo_scout import scout
@@ -44,6 +45,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         root: Path,
         *,
         worker_mode: str = "deterministic",
+        config: RuntimeAuthorityConfig | None = None,
         repo_mode: str = "certified",
         target_repo: str | None = None,
     ) -> None:
@@ -51,6 +53,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             super().__init__()
         except Exception:
             pass
+        self.config = config if config is not None else RuntimeAuthorityConfig()
         if worker_mode not in {"deterministic", "claude-code", "in-session"}:
             raise ValueError(f"unsupported worker mode: {worker_mode}")
         if repo_mode not in {"certified", "target", "scout", "greenfield"}:
@@ -239,9 +242,22 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     for item in in_session_reviews
                     if isinstance(item, dict)
                 }
+                # `builder_self_approval is False` used to be a term in this
+                # expression. It was the builder certifying their own
+                # independence, in a gitignored file the builder writes — the
+                # same defect removed from the evidence tool, still gating
+                # acceptance here. A file cannot witness the conditions under
+                # which it was produced, so nothing it says about its own
+                # provenance is consulted.
+                #
+                # What remains is a completeness and outcome check over records
+                # this session produced. That is a useful local gate and it is
+                # not an independent review: independence requires an
+                # authenticated attestation from a reviewer who is not the
+                # builder, which lives in `nornyx_forge.reviewer_trust` and
+                # cannot be satisfied by anything written here.
                 review_passed = (
                     payload.get("schema") == "nornyx.forge.in_session_reviews.v1"
-                    and payload.get("builder_self_approval") is False
                     and payload.get("human_review") == "not_performed"
                     and required_roles.issubset(observed_roles)
                     and all(
@@ -251,7 +267,8 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     )
                 )
                 detail = (
-                    f"Validated {len(in_session_reviews)} in-session review records."
+                    f"Validated {len(in_session_reviews)} self-reported in-session "
+                    "review records. Establishes completeness, not independence."
                     if review_passed
                     else "The in-session review artifact is incomplete or contains a failed review."
                 )
@@ -259,7 +276,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 review_passed = False
                 detail = f"Cannot load in-session review evidence: {type(exc).__name__}: {exc}"
             self.pre_gate_failures.append(
-                GateResult("independent in-session AI review", review_passed, detail)
+                GateResult("in-session AI review records complete", review_passed, detail)
             )
         gates = [*self.pre_gate_failures, *default_gates(self.root)]
         while not all(gate.passed for gate in gates) and self.worker_mode == "claude-code":
@@ -330,7 +347,13 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             "mode": "autonomous_demonstration",
             "human_review": "not_performed",
             "production_approval": "not_granted",
-            "independent_ai_review": bool(reviews),
+            # A count of worker processes that ran, named as such. It was
+            # `independent_ai_review: bool(reviews)` — a non-empty list of
+            # subprocesses standing in for a verdict, so launching a reviewer
+            # was indistinguishable from passing a review, and neither was
+            # independent of the builder that launched it.
+            "review_workers_executed": len(reviews),
+            "independent_ai_review": "not_established",
         }
         self.ledger.append(
             "build_acceptance",
@@ -378,10 +401,12 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
 
     def run(self) -> dict[str, Any]:
         """Run through CrewAI Flow when installed; otherwise use the same deterministic chain."""
-        use_kickoff = (
-            CREWAI_AVAILABLE
-            and os.getenv("FORGE_USE_CREWAI_KICKOFF", "true").lower() == "true"
-        )
+        # Mode comes from the authority configuration, never the environment.
+        # This flow generates contracts and evidence that later enter
+        # governed_subject_digest, so an ambient mode selection here would alter
+        # authority indirectly — the build path is not exempt from the rule
+        # simply because it is not the consequential runtime.
+        use_kickoff = self.config.execution_backend == "crewai"
         if use_kickoff:
             self.execution_backend = "crewai_flow"
             try:
@@ -392,7 +417,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 self.data["execution_backend"] = self.execution_backend
                 return self.data
             except Exception as exc:
-                if os.getenv("FORGE_STRICT_CREWAI", "false").lower() == "true":
+                if self.config.policy_backend == "nornyx":
                     raise
                 # A fresh flow prevents a partially-run kickoff from being accepted twice.
                 fresh = DevelopmentFlow(
