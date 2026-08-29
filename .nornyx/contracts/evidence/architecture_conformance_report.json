@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-27T14:41:51Z",
-  "governed_input_digest": "sha256:bedee772f98c5aa4b220d86e5e4828d2d48d3d4edb6ff58def256e470a7a090e",
+  "generated_at": "2026-08-29T14:02:07Z",
+  "governed_input_digest": "sha256:af2177997118c62ac2709c4d1ea6af5fed9aabb9e4c8a3e3e9ddaa9dd887bea7",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -22,6 +22,8 @@
       "nornyx_forge",
       "nornyx_forge.app_launcher",
       "nornyx_forge.approval_trust",
+      "nornyx_forge.capsule",
+      "nornyx_forge.capsule_store",
       "nornyx_forge.claude_worker",
       "nornyx_forge.cli",
       "nornyx_forge.contract_generator",
@@ -46,6 +48,7 @@
       "module.api",
       "module.app_launcher",
       "module.approval_trust",
+      "module.capsule_store",
       "module.contract_authoring",
       "module.evidence",
       "module.forge_cli",
@@ -56,6 +59,7 @@
       "module.nornyx_cli_adapter",
       "module.persistence",
       "module.policy_adapter",
+      "module.project_capsule",
       "module.repo_qualifier",
       "module.repo_scout",
       "module.requirements_model",
@@ -74,5 +78,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:be2f6420e729991491699f9d5da501254686b9bd"
+  "subject_revision": "git:8f1dd09e32c97b1f9f84abab3f79f5f1410e6822"
 }
