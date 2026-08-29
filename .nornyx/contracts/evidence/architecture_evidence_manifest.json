@@ -1,7 +1,7 @@
 {
   "contract": ".nornyx/contracts/architecture_governance.nyx",
-  "generated_at": "2026-08-29T18:30:29Z",
-  "governed_input_digest": "sha256:4450e3c5af1de2b79a375f9af1e291e4411414ca2f0f65fd007630b0b2d27904",
+  "generated_at": "2026-08-29T20:18:34Z",
+  "governed_input_digest": "sha256:5c1ca249c339552057065300d1a568415f5e5c9b3add85d07a23810c719ec536",
   "records": [
     "architecture_conformance_report",
     "independent_review_record",
@@ -10,5 +10,5 @@
     "approval_record"
   ],
   "schema": "nornyx.forge.evidence_manifest.v1",
-  "subject_revision": "git:2552844126b8f5083ace9d7efabb7ae60d26cb74"
+  "subject_revision": "git:919b507a6fd80f838f17a3ab705836b8c6781cea"
 }
