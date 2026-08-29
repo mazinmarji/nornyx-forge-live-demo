@@ -222,16 +222,19 @@ def test_the_registry_serves_claude_and_validates_its_identity():
     validate_adapter_identity(adapter)
 
 
-def test_codex_is_declared_but_honestly_refused():
-    """A name in the capsule's vocabulary is not an adapter in the registry.
+def test_codex_is_declared_and_served_with_validated_identity():
+    """The refusal guard's successor, changed ON PURPOSE in the Codex slice.
 
-    The refusal must name the gap — no Codex adapter in this slice — rather
-    than raising a generic unknown-provider error, because 'we have not built
-    it' and 'it does not exist as a concept' are different truths and the
-    contract keeps them apart."""
+    Until the Codex adapter existed, this test held the registry to an honest
+    refusal — a declared name is not a capability. The adapter now exists, so
+    the same site holds the successor property: codex is served, its identity
+    validates, and it is a DIFFERENT adapter from Claude's — served does not
+    mean merged, and nothing about equivalence is asserted by either."""
     assert "codex" in PROVIDERS
-    with pytest.raises(ProviderError, match="no Codex adapter"):
-        get_provider("codex")
+    adapter = get_provider("codex")
+    assert adapter.name == "codex"
+    validate_adapter_identity(adapter)
+    assert type(adapter) is not type(get_provider("claude"))
 
 
 def test_an_undeclared_provider_is_refused_as_undeclared():

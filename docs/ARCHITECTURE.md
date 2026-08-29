@@ -65,7 +65,7 @@ carry a dependency between two modules that may not depend on each other.
 Process execution is confined to the adapter layer, which is what makes the list
 of places this system can start a process short enough to read: `gates`,
 `policy`, `repo_qualifier`, `claude_worker`, `app_launcher`,
-`nornyx_cli_adapter`, `subject_observer`, and `capsule_store`, which
+`nornyx_cli_adapter`, `subject_observer`, `codex_worker`, and `capsule_store`, which
 invokes git to give the project capsule its revision binding.
 
 The last two were missing from this sentence, and they are the two that matter
