@@ -165,7 +165,7 @@ def test_the_adapter_equals_the_raw_worker_field_for_field(tmp_path: Path, endin
 def test_claude_worker_is_untouched_at_its_pinned_path():
     """The module architecture guards pin must still be exactly itself:
     importable at its path, with subprocess in run's globals — the anchor
-    `test_module_acquisition_limits` reaches through."""
+    tests/test_module_acquisition_limits.py reaches through."""
     import nornyx_forge.claude_worker as worker_module
 
     assert worker_module.ClaudeCodeWorker is ClaudeCodeWorker
