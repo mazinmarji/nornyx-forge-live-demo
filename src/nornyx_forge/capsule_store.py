@@ -43,8 +43,10 @@ from .capsule import (
     validate_document,
     verify_integrity,
 )
+from .experience import validate_experience, verify_experience
 
 _CAPSULE_FILE = "capsule.json"
+_EXPERIENCE_FILE = "experience.json"
 #: Written once at initialize; its presence marks a directory as a capsule
 #: store THIS adapter created. Loading without it is refused, which is the
 #: mechanism behind "never adopt a repository we did not initialize".
@@ -175,6 +177,52 @@ class CapsuleStore:
         """All revisions, oldest first."""
         out = _run_git(self.root, "rev-list", "--reverse", "HEAD").stdout
         return [line.strip() for line in out.splitlines() if line.strip()]
+
+    # -- experience state --------------------------------------------------
+    def load_experience(self) -> dict[str, Any]:
+        """The workflow position, with the same three-way failure split as the
+        capsule: unreadable is CORRUPT, schema-breaking is INVALID, and a
+        chain mismatch is TAMPERED -- a forged READY must surface as the
+        gravest of the three, not blur into the mildest."""
+        if not (self.root / _MARKER_FILE).exists():
+            raise CapsuleStoreError(
+                f"{self.root} is not a capsule store this adapter initialized"
+            )
+        path = self.root / _EXPERIENCE_FILE
+        if not path.exists():
+            raise CapsuleStoreError(f"{self.root} contains no experience state")
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CapsuleStoreError(f"experience state is unreadable: {exc}") from exc
+        validate_experience(state)
+        verify_experience(state)
+        return state
+
+    def save_experience(self, state: Mapping[str, Any], message: str) -> str:
+        """Persist one workflow transition as one commit, same refusals as
+        `save`: re-validated at the door, no-op commits refused, and only into
+        a store this adapter initialized."""
+        if not isinstance(message, str) or not message.strip() or len(message) > 200:
+            raise CapsuleStoreError("a save needs a one-line reason under 200 chars")
+        validate_experience(state)
+        verify_experience(state)
+        if not (self.root / _MARKER_FILE).exists():
+            raise CapsuleStoreError(
+                f"{self.root} is not a capsule store this adapter initialized"
+            )
+        (self.root / _EXPERIENCE_FILE).write_text(
+            canonical_json(state) + "\n", encoding="utf-8", newline=""
+        )
+        _run_git(self.root, "add", "-A")
+        status = _run_git(self.root, "status", "--porcelain")
+        if not status.stdout.strip():
+            raise CapsuleStoreError(
+                "save_experience was asked to persist a state identical to the "
+                "current revision; a no-op commit would fabricate history"
+            )
+        _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
+        return self.revision()
 
     # -- internals ---------------------------------------------------------
     def _write_document(self, document: Mapping[str, Any]) -> None:
