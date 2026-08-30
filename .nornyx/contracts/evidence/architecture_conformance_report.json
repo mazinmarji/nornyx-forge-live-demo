@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-30T14:50:28Z",
-  "governed_input_digest": "sha256:515acbc715c81c0aad73e66584d1a712658b14de8d6f3e8f94e2f0eff21da21a",
+  "generated_at": "2026-08-30T14:50:59Z",
+  "governed_input_digest": "sha256:bbae852cce6c2bf9d18337e1980e4236dab028e26d8bcb7a74beaa6b66232fd9",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -22,6 +22,7 @@
       "nornyx_forge",
       "nornyx_forge.app_launcher",
       "nornyx_forge.approval_trust",
+      "nornyx_forge.brd_authoring",
       "nornyx_forge.capsule",
       "nornyx_forge.capsule_store",
       "nornyx_forge.claude_worker",
@@ -57,6 +58,7 @@
       "module.api",
       "module.app_launcher",
       "module.approval_trust",
+      "module.brd_authoring",
       "module.capsule_store",
       "module.codex_worker",
       "module.contract_authoring",
@@ -96,5 +98,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:19355128c3b47f3affafd64f47b8097b2d2813eb"
+  "subject_revision": "git:65673f733cbf06c019b11829028038585e66d8bf"
 }
