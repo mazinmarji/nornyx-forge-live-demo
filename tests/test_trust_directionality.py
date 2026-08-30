@@ -188,7 +188,21 @@ def test_a_forged_index_cannot_mint_a_human_approval(tmp_path: Path):
     for record in _approval_records(work):
         assert record["producer"]["type"] != "human", "a forged index minted a human producer"
         assert record["status"] != "pass", "a forged index minted a passing approval"
-        assert "2099" not in json.dumps(record), "a forged index set the window"
+        # THE DATE FIELDS, NOT A SUBSTRING OF THE BLOB. This read
+        # `"2099" not in json.dumps(record)` and fired on PR #26's 3.10 job
+        # over `...abaa2099a41b...` -- a content hash, not a date. The same
+        # defect was found and documented in tests/test_expiry_semantics.py
+        # ("a hash, not a date ... a flake that arrives with unrelated
+        # content changes"), and this line was its surviving twin. The
+        # property is that the forged far-future WINDOW did not survive into
+        # a date field, so that is what is read.
+        stamps = [
+            value for key, value in record.items()
+            if key in ("generated_at", "expires_at")
+        ]
+        assert stamps, "no date fields found; this would assert nothing"
+        forged = [value for value in stamps if str(value).startswith("2099")]
+        assert forged == [], f"a forged index set the window: {forged}"
 
 
 @needs_nornyx
