@@ -9,7 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .app_launcher import launch_application
+from .app_launcher import launch_application, launch_onboarding
 from .development_flow import DevelopmentFlow
 from .governed_subject import RuntimeAuthorityConfig
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
@@ -112,6 +112,24 @@ def prepare_runtime() -> None:
     results = prepare_runtime_contract(Path.cwd())
     console.print_json(json.dumps([item.__dict__ for item in results], default=list))
     raise typer.Exit(0 if results and all(item.passed for item in results) else 2)
+
+
+@app.command()
+def onboard(
+    port: int = typer.Option(8710, help="Loopback port for the onboarding page."),
+    project_dir: Path = typer.Option(
+        Path("forge-project"),
+        help="Where this project's capsule lives. Resolved here, at your "
+        "console, so the choice is yours and never the environment's.",
+    ),
+) -> None:
+    """Open the Forge onboarding surface for one project. Never returns.
+
+    The resolution below is the one place a relative path becomes absolute:
+    an explicit decision at the human's console, per the FORGE_ROOT closure.
+    Everything downstream refuses relative project directories outright.
+    """
+    launch_onboarding(port=port, project_dir=str(project_dir.resolve()))
 
 
 @app.command("build")
