@@ -184,6 +184,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # capsule refuses them, tamper named TAMPERED, absence reported as
     # absence, the governance route serving only the guarded rendering.
     "tests/test_onboarding_app.py": 13,
+    # The launch path: 9 collected at introduction, floor at band(9) = 9.
+    # The FORGE_ROOT doctrine held at every layer -- relative directories
+    # refused in assemble, main and the launcher alike, and the loopback
+    # binding pinned.
+    "tests/test_onboarding_launch.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -397,14 +402,15 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # Re-measured for the governance-rendering round: 19 new collected in
 # tests/test_governance_rendering.py (95 -> 96 modules). Re-measured for
 # the onboarding round: 14 new collected in tests/test_onboarding_app.py
-# (96 -> 97 modules):
+# (96 -> 97 modules). Re-measured for the launch-wiring round: 9 new
+# collected in tests/test_onboarding_launch.py (97 -> 98 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2399   (97 modules)
-#     sum of the module floors    2207
-#     band(2399) = ceil(0.9*n)    2160
-#     MINIMUM_COLLECTED           2222
+#     collected across tests/     2408   (98 modules)
+#     sum of the module floors    2216
+#     band(2408) = ceil(0.9*n)    2168
+#     MINIMUM_COLLECTED           2231
 #     above the module sum        15
 #     below what collects         177
 #
@@ -448,7 +454,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2222
+MINIMUM_COLLECTED = 2231
 
 
 def band(collected: int) -> int:
@@ -514,6 +520,7 @@ REQUIRED_MODULES = (
     "tests/test_provider_equivalence.py",
     "tests/test_governance_rendering.py",
     "tests/test_onboarding_app.py",
+    "tests/test_onboarding_launch.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",

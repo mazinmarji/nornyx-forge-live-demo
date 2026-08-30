@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 APPLICATION_TARGET = "demo_app.main:app"
+ONBOARDING_TARGET = "nornyx_forge.onboarding_serve"
 
 
 def launch_application(*, port: int, worker_mode: str) -> None:
@@ -47,5 +49,32 @@ def launch_application(*, port: int, worker_mode: str) -> None:
         "0.0.0.0",
         "--port",
         str(port),
+    ]
+    os.execvp(command[0], command)
+
+
+def launch_onboarding(*, port: int, project_dir: str) -> None:
+    """Replace this process with the onboarding server. Never returns.
+
+    The project directory travels as an explicit absolute argument and is
+    refused otherwise HERE as well as in the serve module: this adapter is
+    the last point where a relative path could silently pick up the launch
+    directory, so the refusal cannot be bypassed by calling one layer down.
+    The target is named as a string for the same reason as the application
+    target above — this adapter starts the server, it does not depend on it.
+    """
+    if not Path(project_dir).is_absolute():
+        raise ValueError(
+            "the project directory must be absolute before launch: a relative "
+            "path would let the launch directory select project authority"
+        )
+    command = [
+        sys.executable,
+        "-m",
+        ONBOARDING_TARGET,
+        "--port",
+        str(port),
+        "--project-dir",
+        project_dir,
     ]
     os.execvp(command[0], command)

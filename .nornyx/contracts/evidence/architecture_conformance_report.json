@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-30T10:45:23Z",
-  "governed_input_digest": "sha256:b9c56cc52d23531b2ea3e0c33bb7982ecf347a0eee36588338fa026af9d495af",
+  "generated_at": "2026-08-30T10:48:32Z",
+  "governed_input_digest": "sha256:ae188bef0490c05fc4d993abd9621ea0b28783d127fc90d2afc3e11c5c7d0be1",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -39,6 +39,7 @@
       "nornyx_forge.nornyx_cli_adapter",
       "nornyx_forge.nornyx_runtime",
       "nornyx_forge.onboarding_app",
+      "nornyx_forge.onboarding_serve",
       "nornyx_forge.policy",
       "nornyx_forge.provider_contract",
       "nornyx_forge.providers",
@@ -69,6 +70,7 @@
       "module.governed_subject",
       "module.nornyx_cli_adapter",
       "module.onboarding_app",
+      "module.onboarding_serve",
       "module.persistence",
       "module.policy_adapter",
       "module.project_capsule",
@@ -92,5 +94,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:a2fae8872b54e85e5201ca5ab34546364def4cb3"
+  "subject_revision": "git:6d329d789b7e582f042ae29e08f046d5728f515f"
 }
