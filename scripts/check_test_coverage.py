@@ -162,6 +162,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The conformance suite and the invariance proof that wrapping the Claude
     # path changed nothing observable.
     "tests/test_provider_contract.py": 15,
+    # The Codex adapter's conformance: 10 collected at introduction, floor at
+    # band(10) = 9. Same harness technique as the Claude conformance,
+    # separate proof -- and the two mapping limits pinned, not hidden.
+    "tests/test_codex_provider.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -357,8 +361,8 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # did not hold between them either.
 #
 # So the numbers below are dated and measured, and nothing here is derived by
-# hand. Re-measured for the provider-contract round (16 new collected in
-# tests/test_provider_contract.py; 92 -> 93 modules) by a full
+# hand. Re-measured for the codex-adapter round (10 new collected in
+# tests/test_codex_provider.py; 93 -> 94 modules) by a full
 # `--collect-only` over tests/. Re-measured for the AC07 probe, which added
 # ten collected cases to tests/test_attack_classes.py and pushed its
 # declared floor below the band -- caught by
@@ -366,12 +370,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2333   (93 modules)
-#     sum of the module floors    2145
-#     band(2333) = ceil(0.9*n)    2100
-#     MINIMUM_COLLECTED           2160
+#     collected across tests/     2343   (94 modules)
+#     sum of the module floors    2154
+#     band(2343) = ceil(0.9*n)    2109
+#     MINIMUM_COLLECTED           2169
 #     above the module sum        15
-#     below what collects         173
+#     below what collects         174
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -392,7 +396,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 188 in total, and the aggregate refuses
+# per-module bands already grant 189 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -413,7 +417,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2160
+MINIMUM_COLLECTED = 2169
 
 
 def band(collected: int) -> int:
@@ -474,6 +478,7 @@ REQUIRED_MODULES = (
     # only proof of the property that replaced C9-P1-7's overbroad one.
     "tests/test_claim_surface_boundary.py",
     "tests/test_process_execution_spellings.py",
+    "tests/test_codex_provider.py",
     "tests/test_provider_contract.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
