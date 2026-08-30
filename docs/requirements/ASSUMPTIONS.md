@@ -280,3 +280,61 @@ deployment that silently begins with no replay history and cannot tell the
 difference between "nothing has happened yet" and "the record is gone".
 
 **Serves.** BRD-002.
+
+## A-015 The onboarding surface trusts its loopback, and says so
+
+**Ambiguity.** The basic-user programme adds a local web surface whose requests
+carry an actor the capsule judges by KIND. Nothing authenticates that the
+person at the browser is the project's human.
+
+**Resolution.** The surface binds `127.0.0.1` only (pinned by test against the
+literal), the trust boundary is stated in the module's own docstring and in
+this register, and no route claims authentication anywhere. Authenticating the
+human is a separately-scoped future slice; until it lands, the boundary is the
+same one the CLI beside it has always had — the machine's logged-in user.
+
+**Serves.** The founder's basic-user strategy, correction C2.
+
+## A-016 A fresh user project is greenfield, never certified
+
+**Ambiguity.** The build trigger must pick a repo mode for a directory that
+holds only a capsule and a derived BRD.
+
+**Resolution.** `greenfield`, hardcoded at the trigger. A fresh project is not
+a certified foundation, and selecting the honest mode is what the mode
+vocabulary exists for; a user who wants a certified base uses the developer
+CLI, where the choice is explicit.
+
+**Serves.** BRD-F-007's mode vocabulary, applied truthfully.
+
+## A-017 The Windows bundle assumes a builder-supplied interpreter
+
+**Ambiguity.** A user machine has no Python; the bundle must carry one, but
+downloading an interpreter during a governed build would put an unverified
+artifact inside the deliverable.
+
+**Resolution.** The builder embeds only an interpreter zip the OPERATOR
+supplies together with its expected sha256; a mismatch refuses the build, and
+the builder never downloads. Developer-mode bundles (no interpreter) exist so
+the layout is provable without one. The embedded-interpreter path is tested
+against synthetic zips; a real embed run is an operator act.
+
+**Serves.** the FORGE_ROOT doctrine extended to packaging: nothing ambient,
+nothing unverified, selects what ships.
+
+## A-018 The live model-driven build is the founder's acceptance act
+
+**Ambiguity.** The end-to-end journey ends in a build that invokes a real
+provider CLI, spending the founder's model quota; an autonomous run could
+execute it uninvited.
+
+**Resolution.** Everything up to the build gate was observed live on the
+served surface (recorded 2026-08-30: create → propose → confirm → reopen →
+provider → rendered governance → minimized sharing preview → derived BRD →
+model-actor refusal). The build itself was deliberately not run by the
+autonomous session: spending the founder's provider quota is the founder's
+decision, and the acceptance run stays theirs. No claim of a live model-driven
+build exists anywhere in the programme's records.
+
+**Serves.** the claim discipline itself — experimentally observed stays
+distinct from not yet proven.
