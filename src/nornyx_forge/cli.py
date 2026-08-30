@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .app_launcher import launch_application, launch_onboarding
+from .capsule_store import CapsuleStore
 from .development_flow import DevelopmentFlow
 from .governed_subject import RuntimeAuthorityConfig
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
@@ -148,8 +149,36 @@ def build_app(
         help="Route engineering workers through a declared provider "
         "(codex or claude); requires --worker-mode claude-code.",
     ),
+    project_dir: Path | None = typer.Option(
+        None,
+        help="Take the provider from this project's CONFIRMED capsule "
+        "selection. A proposed-but-unconfirmed selection never drives a "
+        "build.",
+    ),
 ) -> None:
     """Execute the governed development flow."""
+    if project_dir is not None:
+        # The onboarding decision feeding the build. Only the AUTHORITATIVE
+        # region speaks here: a proposal is a proposal, whoever made it, and
+        # the store's load path re-validates and re-verifies the chain, so a
+        # tampered capsule refuses before anything runs. Two explicit
+        # selections that disagree are a contradiction to resolve, not a
+        # precedence rule to remember.
+        document = CapsuleStore(project_dir.resolve() / "capsule").load()
+        confirmed = document["authoritative"].get("provider")
+        if confirmed is None:
+            console.print(
+                "[red]This project's capsule has no CONFIRMED provider. "
+                "Confirm one through onboarding, or pass --provider.[/red]"
+            )
+            raise typer.Exit(2)
+        if provider is not None and provider != confirmed["name"]:
+            console.print(
+                f"[red]--provider {provider!r} contradicts the capsule's "
+                f"confirmed selection {confirmed['name']!r}; drop one.[/red]"
+            )
+            raise typer.Exit(2)
+        provider = confirmed["name"]
     root = Path.cwd()
     flow = DevelopmentFlow(
         root,

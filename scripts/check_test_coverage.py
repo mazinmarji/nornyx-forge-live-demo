@@ -194,6 +194,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # no-silent-fallback rule, and a real flow call site recording the
     # provider that actually ran.
     "tests/test_provider_execution.py": 9,
+    # The confirmed capsule provider drives the build; proposals never do:
+    # 7 collected at introduction, floor at band(7) = 7. The authority
+    # split extended to execution, over the real CLI and a real store.
+    "tests/test_capsule_selection.py": 7,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -410,14 +414,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (96 -> 97 modules). Re-measured for the launch-wiring round: 9 new
 # collected in tests/test_onboarding_launch.py (97 -> 98 modules).
 # Re-measured for the provider-execution round: 9 new collected in
-# tests/test_provider_execution.py (98 -> 99 modules):
+# tests/test_provider_execution.py (98 -> 99 modules). Re-measured for
+# the capsule-selection round: 7 new collected in
+# tests/test_capsule_selection.py (99 -> 100 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2417   (99 modules)
-#     sum of the module floors    2225
-#     band(2417) = ceil(0.9*n)    2176
-#     MINIMUM_COLLECTED           2240
+#     collected across tests/     2424   (100 modules)
+#     sum of the module floors    2232
+#     band(2424) = ceil(0.9*n)    2182
+#     MINIMUM_COLLECTED           2247
 #     above the module sum        15
 #     below what collects         177
 #
@@ -461,7 +467,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2240
+MINIMUM_COLLECTED = 2247
 
 
 def band(collected: int) -> int:
@@ -529,6 +535,7 @@ REQUIRED_MODULES = (
     "tests/test_onboarding_app.py",
     "tests/test_onboarding_launch.py",
     "tests/test_provider_execution.py",
+    "tests/test_capsule_selection.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
