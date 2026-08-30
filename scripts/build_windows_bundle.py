@@ -100,7 +100,7 @@ def _installer_command(python_exe: str) -> list[str]:
     """
     probe = subprocess.run(
         [python_exe, "-m", "pip", "--version"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=60,
     )
     if probe.returncode == 0:
         return [python_exe, "-m", "pip", "install", "--quiet"]
@@ -127,7 +127,7 @@ def install_dependencies(dist: Path, python_exe: str) -> None:
     subprocess.run(
         [*_installer_command(python_exe),
          "--target", str(dist / "pylib"), f"{dist}[demo]"],
-        check=True,
+        check=True, timeout=1800,
     )
     for own in ("nornyx_forge", "demo_app"):
         installed = dist / "pylib" / own
@@ -176,7 +176,7 @@ def verify_bundle(dist: Path) -> None:
          "import nornyx_forge.cli, demo_app.main; "
          "from nornyx_forge.subject_bootstrap import resolve_packaged_root; "
          "print(resolve_packaged_root())"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=300,
     )
     if completed.returncode != 0:
         raise BundleError(
