@@ -172,6 +172,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # module existed, so losing its specimens means losing the only
     # executable form of that registration.
     "tests/test_provider_equivalence.py": 17,
+    # The C1 rendering guards: 19 collected at introduction, floor at
+    # band(19) = 18. Round-trip closure on the three shipped contracts,
+    # plus the hostile specimens for every quiet death of the rule --
+    # dropped clause, paraphrase, reorder, injected prose, softened
+    # authority statement.
+    "tests/test_governance_rendering.py": 18,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -381,16 +387,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_provider_equivalence.py (94 -> 95 modules), and 5 more in
 # tests/test_recorded_measurements.py because the frozen pre-registration
 # is itself a document the document sweep parametrizes over -- a test
-# census growing when a governance document lands is the sweep working:
+# census growing when a governance document lands is the sweep working.
+# Re-measured for the governance-rendering round: 19 new collected in
+# tests/test_governance_rendering.py (95 -> 96 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2366   (95 modules)
-#     sum of the module floors    2176
-#     band(2366) = ceil(0.9*n)    2130
-#     MINIMUM_COLLECTED           2191
+#     collected across tests/     2385   (96 modules)
+#     sum of the module floors    2194
+#     band(2385) = ceil(0.9*n)    2147
+#     MINIMUM_COLLECTED           2209
 #     above the module sum        15
-#     below what collects         175
+#     below what collects         176
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -411,7 +419,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 190 in total, and the aggregate refuses
+# per-module bands already grant 191 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -432,7 +440,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2191
+MINIMUM_COLLECTED = 2209
 
 
 def band(collected: int) -> int:
@@ -496,6 +504,7 @@ REQUIRED_MODULES = (
     "tests/test_codex_provider.py",
     "tests/test_provider_contract.py",
     "tests/test_provider_equivalence.py",
+    "tests/test_governance_rendering.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
