@@ -93,6 +93,49 @@ class CodexProviderAdapter:
         return result_from_worker(self.name, worker_result)
 
 
+class ProviderRoutedWorker:
+    """The worker surface, served through the Provider Contract.
+
+    The development flow calls `worker.run(role=..., goal=..., ...)` — the
+    exact surface the contract's `ProviderTask` was shaped around — so
+    routing a flow through a selected provider is this translation and
+    nothing else: build the task, run it through the identity-validated
+    adapter, hand back the `ProviderResult`, which carries every field the
+    flow reads (`success`, `output`, `command`, `returncode`, `session_id`)
+    PLUS the honest surplus: which provider actually ran, and its failure
+    class. Nothing here inspects or improves the result, and nothing here
+    can fall back to a different provider — an unavailable provider reports
+    `unavailable`, it does not quietly become another one.
+    """
+
+    def __init__(self, adapter: ClaudeProviderAdapter | CodexProviderAdapter) -> None:
+        validate_adapter_identity(adapter)
+        self._adapter = adapter
+        self.provider_name = adapter.name
+
+    def available(self) -> bool:
+        return self._adapter.available()
+
+    def run(
+        self,
+        *,
+        role: str,
+        goal: str,
+        workspace: Path,
+        allowed_tools: tuple[str, ...],
+        max_turns: int,
+        timeout_seconds: int,
+    ) -> ProviderResult:
+        return self._adapter.run_task(ProviderTask(
+            role=role,
+            goal=goal,
+            workspace=str(workspace),
+            allowed_tools=allowed_tools,
+            max_turns=max_turns,
+            timeout_seconds=timeout_seconds,
+        ))
+
+
 def get_provider(name: str) -> ClaudeProviderAdapter | CodexProviderAdapter:
     """The one place a provider name becomes an adapter.
 

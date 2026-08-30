@@ -12,6 +12,7 @@ from .evidence import EvidenceLedger
 from .gates import default_gates
 from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
+from .providers import ProviderRoutedWorker, get_provider
 from .repo_qualifier import qualify_local, qualify_remote
 from .repo_scout import scout
 from .requirements import parse_brd, profile_from_brd, write_requirements_artifacts
@@ -48,6 +49,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         config: RuntimeAuthorityConfig | None = None,
         repo_mode: str = "certified",
         target_repo: str | None = None,
+        provider: str | None = None,
     ) -> None:
         try:
             super().__init__()
@@ -58,14 +60,35 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             raise ValueError(f"unsupported worker mode: {worker_mode}")
         if repo_mode not in {"certified", "target", "scout", "greenfield"}:
             raise ValueError(f"unsupported repository mode: {repo_mode}")
+        # Provider routing is opt-in and EXPLICIT. `None` is the path every
+        # existing caller takes, byte-identical to before this parameter
+        # existed. A named provider routes the same worker calls through the
+        # Provider Contract's identity-validated adapter instead — and an
+        # undeclared name is refused HERE, before anything runs. A selected
+        # provider whose CLI is absent reports `unavailable` at each step;
+        # nothing anywhere falls back to the direct Claude worker, because a
+        # run that silently swaps providers under an unchanged label is the
+        # downgrade this repository's history exists to forbid.
+        if provider is not None and worker_mode != "claude-code":
+            raise ValueError(
+                "a provider selection routes external CLI workers, so it "
+                "requires worker_mode='claude-code'; "
+                f"got worker_mode={worker_mode!r}"
+            )
         self.root = root
         self.worker_mode = worker_mode
         self.repo_mode = repo_mode
         self.target_repo = target_repo
+        self.provider = provider
         self.mission = "FORGE-BUILD-001"
         self.ledger = EvidenceLedger(root / ".nornyx/runs/build-events.jsonl")
-        self.worker = ClaudeCodeWorker()
+        if provider is None:
+            self.worker: Any = ClaudeCodeWorker()
+        else:
+            self.worker = ProviderRoutedWorker(get_provider(provider))
         self.data: dict[str, Any] = {}
+        if provider is not None:
+            self.data["engineering_provider"] = {"selected": provider}
         self.started_at = time.monotonic()
         self.repair_attempts = 0
         self.pre_gate_failures: list[GateResult] = []

@@ -189,6 +189,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # refused in assemble, main and the launcher alike, and the loopback
     # binding pinned.
     "tests/test_onboarding_launch.py": 9,
+    # Provider-routed engineering execution: 9 collected at introduction,
+    # floor at band(9) = 9. The default path preserved structurally, the
+    # no-silent-fallback rule, and a real flow call site recording the
+    # provider that actually ran.
+    "tests/test_provider_execution.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -403,14 +408,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_governance_rendering.py (95 -> 96 modules). Re-measured for
 # the onboarding round: 14 new collected in tests/test_onboarding_app.py
 # (96 -> 97 modules). Re-measured for the launch-wiring round: 9 new
-# collected in tests/test_onboarding_launch.py (97 -> 98 modules):
+# collected in tests/test_onboarding_launch.py (97 -> 98 modules).
+# Re-measured for the provider-execution round: 9 new collected in
+# tests/test_provider_execution.py (98 -> 99 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2408   (98 modules)
-#     sum of the module floors    2216
-#     band(2408) = ceil(0.9*n)    2168
-#     MINIMUM_COLLECTED           2231
+#     collected across tests/     2417   (99 modules)
+#     sum of the module floors    2225
+#     band(2417) = ceil(0.9*n)    2176
+#     MINIMUM_COLLECTED           2240
 #     above the module sum        15
 #     below what collects         177
 #
@@ -454,7 +461,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2231
+MINIMUM_COLLECTED = 2240
 
 
 def band(collected: int) -> int:
@@ -521,6 +528,7 @@ REQUIRED_MODULES = (
     "tests/test_governance_rendering.py",
     "tests/test_onboarding_app.py",
     "tests/test_onboarding_launch.py",
+    "tests/test_provider_execution.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",

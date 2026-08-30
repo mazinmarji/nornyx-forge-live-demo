@@ -143,6 +143,11 @@ def build_app(
         help="certified, target, scout, or greenfield",
     ),
     target_repo: str | None = typer.Option(None),
+    provider: str | None = typer.Option(
+        None,
+        help="Route engineering workers through a declared provider "
+        "(codex or claude); requires --worker-mode claude-code.",
+    ),
 ) -> None:
     """Execute the governed development flow."""
     root = Path.cwd()
@@ -151,6 +156,7 @@ def build_app(
         worker_mode=worker_mode,
         repo_mode=repo_mode,
         target_repo=target_repo,
+        provider=provider,
     )
     result = flow.run()
     console.print_json(json.dumps(result, default=list))
