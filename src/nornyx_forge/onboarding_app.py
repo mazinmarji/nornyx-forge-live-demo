@@ -61,6 +61,7 @@ from .capsule import (
     reject,
 )
 from .capsule_store import CapsuleStore, CapsuleStoreError
+from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
 
 #: The honest words for lifecycle state that does not exist. A surface that
@@ -211,6 +212,34 @@ def create_app(
         except CapsuleError as error:
             return _refusal(error)
         return {"proposal_id": proposal_id, "status": "rejected"}
+
+    @app.get("/api/sharing-preview")
+    def sharing():
+        """What sharing WOULD contain, for the user's review. Never sent.
+
+        Serves the minimized payload derived by the sharing module — counts,
+        closed-vocabulary names, one fingerprint, and the transmission state
+        as data. The module has no network path, and neither does this
+        route: display is the whole feature until a founder decision
+        authorizes a receiving backend.
+        """
+        current = store()
+        try:
+            document = current.load()
+        except CapsuleStoreError:
+            return JSONResponse(
+                status_code=409,
+                content={"refused": "no project exists to preview sharing for"},
+            )
+        except CapsuleError as error:
+            return _refusal(error)
+        try:
+            experience: Mapping[str, Any] | None = current.load_experience()
+        except CapsuleStoreError:
+            experience = None
+        except CapsuleError as error:
+            return _refusal(error)
+        return sharing_preview(document, experience)
 
     @app.get("/api/governance")
     def governance():
