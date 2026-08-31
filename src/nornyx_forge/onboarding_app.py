@@ -49,6 +49,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from .brd_authoring import BrdAuthoringError, brd_from_capsule
 from .capsule import (
     PROVIDERS,
     Actor,
@@ -212,6 +213,29 @@ def create_app(
         except CapsuleError as error:
             return _refusal(error)
         return {"proposal_id": proposal_id, "status": "rejected"}
+
+    @app.post("/api/brd")
+    def derive_brd():
+        """Derive the project's BRD from the CONFIRMED capsule region.
+
+        The bridge from plain language to the build flow, with the
+        authority line intact: only confirmed intent and requirements reach
+        the document, the derivation refuses a proposal-only capsule with
+        its own reason, and the file lands in the project directory beside
+        the capsule -- where the build reads it.
+        """
+        current = store()
+        try:
+            document = current.load()
+            rendered = brd_from_capsule(document)
+        except BrdAuthoringError as error:
+            return JSONResponse(status_code=409, content={"refused": str(error)})
+        except CapsuleError as error:
+            return _refusal(error)
+        target = root.parent / "BRD.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered, encoding="utf-8", newline="")
+        return {"written": str(target), "bytes": len(rendered.encode("utf-8"))}
 
     @app.get("/api/sharing-preview")
     def sharing():

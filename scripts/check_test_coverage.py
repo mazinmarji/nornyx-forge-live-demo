@@ -208,6 +208,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # markers, the src-before-pylib shadowing order, the probed installer,
     # and the refusal of an unverified interpreter.
     "tests/test_windows_bundle.py": 9,
+    # The BRD derivation: 9 collected at introduction, floor at band(9) = 9.
+    # Round-tripped against the real parse_brd; a proposal-only capsule
+    # refuses; open proposals author nothing; heading collisions refused.
+    "tests/test_brd_authoring.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -430,14 +434,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the sharing-preview round: 10 new collected in
 # tests/test_experience_sharing.py (100 -> 101 modules). Re-measured for
 # the windows-bundle round: 10 new collected in
-# tests/test_windows_bundle.py (101 -> 102 modules):
+# tests/test_windows_bundle.py (101 -> 102 modules). Re-measured for the
+# brd-authoring round: 9 new collected in tests/test_brd_authoring.py
+# (102 -> 103 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2444   (102 modules)
-#     sum of the module floors    2250
-#     band(2444) = ceil(0.9*n)    2200
-#     MINIMUM_COLLECTED           2265
+#     collected across tests/     2453   (103 modules)
+#     sum of the module floors    2259
+#     band(2453) = ceil(0.9*n)    2208
+#     MINIMUM_COLLECTED           2274
 #     above the module sum        15
 #     below what collects         179
 #
@@ -481,7 +487,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2265
+MINIMUM_COLLECTED = 2274
 
 
 def band(collected: int) -> int:
@@ -552,6 +558,7 @@ REQUIRED_MODULES = (
     "tests/test_capsule_selection.py",
     "tests/test_experience_sharing.py",
     "tests/test_windows_bundle.py",
+    "tests/test_brd_authoring.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
