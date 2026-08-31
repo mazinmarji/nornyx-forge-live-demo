@@ -11,11 +11,13 @@
 - `gates`: deterministic gate-profile selection and execution. Certified Forge
   repositories retain the repository profile; `repo_mode="greenfield"` selects
   the Forge-owned greenfield profile in trusted flow code.
-- `greenfield_verifier`: standalone static inspection of an untrusted generated
-  project. Forge invokes its absolute installation path with an absolute Python
-  interpreter in isolated mode, from the Forge directory, with no inherited
-  `PATH`, `PYTHONPATH`, or `PYTHONHOME`. The project is an argument, never the
-  verifier working directory, and no project code or executable is run.
+- `greenfield_verifier`: standalone inspection of an untrusted generated
+  project. Forge digests its installed bytes, executes a private read-only copy
+  with an absolute Python interpreter in isolated mode, and supplies no inherited
+  `PATH`, `PYTHONPATH`, or `PYTHONHOME`. Static checks stream bounded subject
+  files without retaining the corpus. Tests run in a separate process over a
+  private subject copy under an OS memory/process limit; they never determine
+  verifier resolution or run from project cwd.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf
@@ -67,14 +69,19 @@ provider may change the generated project's application source, tests, and BRD
 until the greenfield profile passes. It may not select the profile or supply the
 verifier. `DevelopmentFlow` selects the profile from its trusted `repo_mode`;
 `gates` resolves the Forge-owned verifier and interpreter; the standalone
-verifier reads the project only as data. Acceptance is the conjunction of the
+verifier inspects project bytes and runs the project's tests only from a private
+copy after the static checks pass. Scripted reviewers receive a read-only tool
+surface, and the trusted profile runs again after them, so a stale pre-review
+result cannot authorize changed bytes. Local evidence-ledger validity is also a
+verdict gate before `ALLOW` is recorded. Acceptance is the conjunction of these
 recorded gate results. Provider prose and project-local verifier-looking files
 are not verdict inputs.
 
 Greenfield provenance is structural and tamper-evident, not authenticated. Each
 gate and the acceptance event bind the profile ID/digest, verifier absolute
-origin/digest, Forge package version/source revision, isolated command, trusted
-working directory, and environment policy. Those facts make the judge
+origin/digest, executed byte-snapshot digest, Forge package version/source
+revision, subject digest, isolated commands, resource limits, trusted working
+directory, and environment policy. Those facts make the judge
 falsifiable and expose file changes. They do not prove who installed Forge, who
 controlled that installation, or that a cryptographic signer approved it.
 

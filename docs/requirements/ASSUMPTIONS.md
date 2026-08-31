@@ -346,14 +346,17 @@ acceptance, but it does not contain Forge's repository verification scripts and
 the provider can modify every file in its workspace.
 
 **Resolution.** `repo_mode="greenfield"` selects a deterministic profile in
-trusted `DevelopmentFlow` code. The verifier is a standalone file in the Forge
-installation, invoked by absolute interpreter and absolute file path under
-isolated Python, from a Forge working directory, with a constructed environment
-that contains no project-controlled PATH or Python import variables. It reads
-the project as data and never imports or executes project code. Profile and
-verifier identity, origin, version/revision, and digests travel with every gate
-and the acceptance event. The provenance is structural/tamper-evident; it is not
-a signature or proof of installer identity.
+trusted `DevelopmentFlow` code. Forge reads and digests the installed standalone
+verifier, executes those bytes from a private read-only snapshot with an
+absolute interpreter under isolated Python, and constructs an environment with
+no project-controlled PATH or Python import variables. Static checks stream
+bounded project bytes; project tests execute only from a private subject copy in
+a separate resource-limited process. Scripted reviewers have a read-only tool
+surface and are followed by a final trusted rerun. Profile and verifier identity,
+origin, version/revision and digests, plus the final subject digest, travel with
+every gate and the acceptance event. The provenance is structural/tamper-evident;
+it is not a signature, proof of installer identity, or a sandbox against every
+possible host effect in arbitrary test code.
 
 **Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
 criteria for generated application subjects.

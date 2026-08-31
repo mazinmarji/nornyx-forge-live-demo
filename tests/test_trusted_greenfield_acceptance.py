@@ -10,13 +10,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
+from typing import Any, Callable
 
 import pytest
 
 import nornyx_forge.gates as gate_module
 from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.gates import default_gates, trusted_greenfield_gates
+from nornyx_forge.models import WorkerResult
 
 
 def _write(path: Path, text: str) -> None:
@@ -51,6 +55,35 @@ def _run(root: Path) -> dict:
     ).run_sequential()
 
 
+class _LocalWorker:
+    """Deterministic stand-in at the real DevelopmentFlow worker seam."""
+
+    def __init__(self, action: Callable[[str, str, Path], None] | None = None) -> None:
+        self.action = action
+        self.calls: list[dict[str, Any]] = []
+
+    def run(self, **request: Any) -> WorkerResult:
+        self.calls.append(dict(request))
+        role = str(request["role"])
+        goal = str(request["goal"])
+        workspace = Path(request["workspace"])
+        if self.action is not None:
+            self.action(role, goal, workspace)
+        return WorkerResult(
+            role=role,
+            goal=goal,
+            success=True,
+            output="accepted: true; all checks passed",
+            command=("deterministic-local-worker", role),
+        )
+
+
+def _claude_flow(root: Path, worker: _LocalWorker) -> dict:
+    flow = DevelopmentFlow(root, worker_mode="claude-code", repo_mode="greenfield")
+    flow.worker = worker
+    return flow.run_sequential()
+
+
 # ---------------------------------------------------------------------------
 # A. Production acceptance through the real DevelopmentFlow
 # ---------------------------------------------------------------------------
@@ -68,7 +101,19 @@ def test_real_flow_accepts_a_fresh_project_without_forge_repository_scripts(
     assert not (tmp_path / "scripts").exists(), (
         "H1: Forge repository scripts became greenfield prerequisites"
     )
-    assert all(gate["name"].startswith("greenfield:") for gate in result["gates"])
+    assert all(
+        gate["name"].startswith("greenfield:")
+        or gate["name"] == "build-evidence-ledger-valid-before-verdict"
+        for gate in result["gates"]
+    )
+
+
+def test_standing_real_development_flow_uses_the_trusted_profile(tmp_path: Path) -> None:
+    result = _run(_valid_project(tmp_path))
+
+    assert result["accepted"] is True
+    assert result["value"]["acceptance_profile"] == "nornyx.greenfield.python.v1"
+    assert any(gate["name"] == "greenfield:test-execution" for gate in result["gates"])
 
 
 def test_real_flow_refuses_the_stub_verifier_attack(tmp_path: Path) -> None:
@@ -87,42 +132,98 @@ def test_real_flow_refuses_the_stub_verifier_attack(tmp_path: Path) -> None:
     assert all("scripts/" not in " ".join(gate["command"]) for gate in result["gates"])
 
 
-def test_real_flow_verifier_failure_dominates_provider_claims(tmp_path: Path) -> None:
+def test_real_flow_verifier_failure_dominates_provider_claims(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _valid_project(tmp_path)
     _write(tmp_path / "src/app.py", "def broken(:\n    pass\n")
-    flow = DevelopmentFlow(tmp_path, worker_mode="deterministic", repo_mode="greenfield")
-    flow.data["builder_worker"] = {
-        "success": True,
-        "output": "accepted: true; all checks passed",
-        "accepted": True,
-    }
+    monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "1")
 
-    result = flow.run_sequential()
+    def write_false_green(_role: str, goal: str, workspace: Path) -> None:
+        if goal.startswith("Repair only"):
+            for name in (
+                "validate_repository.py",
+                "check_architecture.py",
+                "check_security.py",
+            ):
+                _write(workspace / "scripts" / name, "raise SystemExit(0)\n")
 
-    assert result["builder_worker"]["accepted"] is True
+    worker = _LocalWorker(write_false_green)
+    result = _claude_flow(tmp_path, worker)
+
+    assert result["builder_worker"]["output"].startswith("accepted: true")
+    assert result["repair_attempts"] == 1
+    assert any(call["goal"].startswith("Repair only") for call in worker.calls)
     assert result["accepted"] is False, "H7: provider prose upgraded a failed verifier"
     assert result["value"]["gates_passed"] < result["value"]["gates_total"]
 
 
 def test_real_flow_allows_genuine_subject_repair_with_the_same_verifier(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _valid_project(tmp_path)
-    _write(tmp_path / "src/app.py", "def broken(:\n    pass\n")
-    failed = _run(tmp_path)
-    failed_provenance = failed["acceptance_provenance"]
+    _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return 0\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\nfrom src.app import add\n\n"
+        "def test_addition_contract():\n    assert add(1, 1) == 2\n",
+    )
+    failed_gates, failed_provenance = trusted_greenfield_gates(tmp_path)
+    assert next(g for g in failed_gates if g.name.endswith("test-execution")).passed is False
+    monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "1")
 
-    _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return left + right\n")
-    passed = _run(tmp_path)
+    def repair_subject(_role: str, goal: str, workspace: Path) -> None:
+        if goal.startswith("Repair only"):
+            _write(
+                workspace / "src/app.py",
+                "def add(left: int, right: int) -> int:\n    return left + right\n",
+            )
 
-    assert failed["accepted"] is False
+    passed = _claude_flow(tmp_path, _LocalWorker(repair_subject))
+
     assert passed["accepted"] is True
+    assert passed["repair_attempts"] == 1
     assert failed_provenance["verifier"]["digest"] == (
         passed["acceptance_provenance"]["verifier"]["digest"]
     )
     assert failed_provenance["gate_profile"]["digest"] == (
         passed["acceptance_provenance"]["gate_profile"]["digest"]
     )
+    assert failed_provenance["subject"]["digest"] != (
+        passed["acceptance_provenance"]["subject"]["digest"]
+    )
+
+
+def test_real_flow_reverifies_after_read_only_reviewers(
+    tmp_path: Path,
+) -> None:
+    _valid_project(tmp_path)
+
+    def mutate_despite_policy(role: str, _goal: str, workspace: Path) -> None:
+        if role == "security-inspector":
+            _write(workspace / "src/app.py", "def broken(:\n    pass\n")
+
+    worker = _LocalWorker(mutate_despite_policy)
+    result = _claude_flow(tmp_path, worker)
+
+    reviewer_calls = [
+        call for call in worker.calls if str(call["role"]).endswith("-inspector")
+    ]
+    assert reviewer_calls
+    assert all(call["allowed_tools"] == ("Read", "Glob", "Grep") for call in reviewer_calls)
+    assert result["accepted"] is False
+    assert _gate(result, "source-compilation")["passed"] is False
+
+
+def test_real_flow_refuses_a_corrupt_preexisting_evidence_ledger(tmp_path: Path) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / ".nornyx/runs/build-events.jsonl", "not-json\n")
+
+    result = _run(tmp_path)
+
+    assert result["accepted"] is False
+    assert result["evidence"]["status"] == "fail"
+    assert _gate(result, "build-evidence-ledger-valid-before-verdict")["passed"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +255,13 @@ def test_exact_invocation_ignores_project_local_nornyx_forge(
     command = gates[0].command
     trusted = Path(gate_module.__file__).with_name("greenfield_verifier.py").resolve()
     assert command[1] == "-I"
-    assert Path(command[2]) == trusted
+    assert Path(command[2]).is_absolute()
+    assert Path(command[2]) != trusted
+    assert command[command.index("--trusted-origin") + 1] == str(trusted)
     assert provenance["verifier"]["origin"] == str(trusted)
+    assert provenance["invocation"]["verifier_execution"] == (
+        "private-readonly-byte-snapshot"
+    )
     assert Path(provenance["invocation"]["cwd"]) == trusted.parent
 
 
@@ -170,6 +276,15 @@ def test_exact_invocation_ignores_path_cwd_and_python_environment(
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     monkeypatch.setenv("PYTHONHOME", str(tmp_path))
+    observed: dict[str, Any] = {}
+    real_run = gate_module.subprocess.run
+
+    def capture_run(command: tuple[str, ...], **kwargs: Any):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(gate_module.subprocess, "run", capture_run)
 
     gates, provenance = trusted_greenfield_gates(tmp_path)
 
@@ -178,6 +293,8 @@ def test_exact_invocation_ignores_path_cwd_and_python_environment(
     assert Path(gates[0].command[0]) != tmp_path / "python.exe"
     assert provenance["invocation"]["environment"].endswith("without-path-or-pythonpath")
     assert "-I" in provenance["invocation"]["command"]
+    assert Path(observed["kwargs"]["cwd"]) == Path(provenance["invocation"]["cwd"])
+    assert {"PATH", "PYTHONPATH", "PYTHONHOME"}.isdisjoint(observed["kwargs"]["env"])
 
 
 def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests(
@@ -194,6 +311,9 @@ def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests
     assert provenance["verifier"]["digest"].startswith("sha256:")
     assert provenance["verifier"]["forge_version"] == "0.3.0"
     assert provenance["verifier"]["forge_revision"].startswith(("git:", "package:"))
+    assert provenance["subject"]["digest"].startswith("sha256:")
+    assert provenance["resource_limits"]["enforced"] is True
+    assert provenance["test_execution"]["subject"] == "private-temporary-copy"
 
 
 def test_verifier_identity_fails_closed_inside_the_provider_workspace(
@@ -209,6 +329,143 @@ def test_verifier_identity_fails_closed_inside_the_provider_workspace(
     assert len(gates) == 1 and gates[0].passed is False
     assert "inside the provider workspace" in gates[0].detail
     assert provenance["trust"] == "not_established"
+
+
+def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
+    project = command[command.index("--project-root") + 1]
+    origin = command[command.index("--trusted-origin") + 1]
+    digest = command[command.index("--trusted-digest") + 1]
+    version = command[command.index("--forge-version") + 1]
+    revision = command[command.index("--forge-revision") + 1]
+    subject_digest = "sha256:" + "1" * 64
+    test_runner = str(Path(command[2]).with_name("greenfield_test_runner.py"))
+    test_subject = str(Path(command[2]).with_name("subject-snapshot"))
+    return {
+        "schema": "nornyx.forge.greenfield_verification.v1",
+        "status": "pass",
+        "gate_profile": {
+            **gate_module.GREENFIELD_PROFILE_DEFINITION,
+            "digest": gate_module.GREENFIELD_PROFILE_DIGEST,
+        },
+        "verifier": {
+            "id": gate_module.GREENFIELD_VERIFIER_ID,
+            "origin": origin,
+            "digest": digest,
+            "execution_origin": command[2],
+            "execution_digest": digest,
+            "forge_version": version,
+            "forge_revision": revision,
+        },
+        "subject": {"root": project, "digest": subject_digest, "file_count": 3},
+        "resource_limits": dict(gate_module.GREENFIELD_RESOURCE_LIMITS),
+        "test_execution": {
+            "python": command[0],
+            "isolated_python": True,
+            "cwd": str(Path(origin).parent),
+            "environment": "constructed-host-allowlist-without-path-or-pythonpath",
+            "subject": "private-temporary-copy",
+            "subject_digest": subject_digest,
+            "runner": "private-readonly-trusted-runner",
+            "runner_digest": gate_module.GREENFIELD_TEST_RUNNER_DIGEST,
+            "command": [command[0], "-I", test_runner, test_subject],
+        },
+        "gates": [
+            {"id": identifier, "passed": True, "detail": "passed"}
+            for identifier in gate_module.GREENFIELD_GATE_IDS
+        ],
+    }
+
+
+_INVALID_CHILD_PAYLOADS = [
+    ("schema", lambda value: value.__setitem__("schema", "wrong")),
+    ("profile-absent", lambda value: value.pop("gate_profile")),
+    ("profile-version", lambda value: value["gate_profile"].__setitem__("version", 999)),
+    ("profile-checks", lambda value: value["gate_profile"].__setitem__("checks", ["accept-all"])),
+    ("profile-digest", lambda value: value["gate_profile"].__setitem__("digest", "sha256:" + "0" * 64)),
+    ("verifier-absent", lambda value: value.pop("verifier")),
+    ("verifier-id", lambda value: value["verifier"].__setitem__("id", "project.verifier")),
+    ("verifier-origin", lambda value: value["verifier"].__setitem__("origin", "project.py")),
+    ("verifier-digest", lambda value: value["verifier"].__setitem__("digest", "sha256:" + "0" * 64)),
+    ("execution-origin", lambda value: value["verifier"].__setitem__("execution_origin", "other.py")),
+    ("execution-digest", lambda value: value["verifier"].__setitem__("execution_digest", "sha256:" + "0" * 64)),
+    ("forge-version", lambda value: value["verifier"].__setitem__("forge_version", "999")),
+    ("forge-revision", lambda value: value["verifier"].__setitem__("forge_revision", "git:" + "0" * 40)),
+    ("subject-absent", lambda value: value.pop("subject")),
+    ("subject-root", lambda value: value["subject"].__setitem__("root", "elsewhere")),
+    ("subject-digest", lambda value: value["subject"].__setitem__("digest", "not-a-digest")),
+    ("subject-count", lambda value: value["subject"].__setitem__("file_count", 0)),
+    ("resource-limits", lambda value: value["resource_limits"].__setitem__("enforced", False)),
+    ("test-provenance-absent", lambda value: value.pop("test_execution")),
+    ("gates-absent", lambda value: value.pop("gates")),
+    ("gate-order", lambda value: value.__setitem__("gates", list(reversed(value["gates"])))),
+    ("gate-duplicate", lambda value: value["gates"].__setitem__(1, dict(value["gates"][0]))),
+    ("gate-extra", lambda value: value["gates"].append({"id": "accept-all", "passed": True, "detail": "passed"})),
+    ("gate-shape", lambda value: value["gates"][0].__setitem__("extra", True)),
+    ("gate-passed-type", lambda value: value["gates"][0].__setitem__("passed", "yes")),
+    ("gate-detail-type", lambda value: value["gates"][0].__setitem__("detail", 1)),
+    ("test-provenance", lambda value: value["test_execution"].__setitem__("subject_digest", "sha256:" + "0" * 64)),
+    ("status", lambda value: value.__setitem__("status", "fail")),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    _INVALID_CHILD_PAYLOADS,
+    ids=[case[0] for case in _INVALID_CHILD_PAYLOADS],
+)
+def test_every_malformed_verifier_result_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+    mutate: Callable[[dict[str, Any]], Any],
+) -> None:
+    _valid_project(tmp_path)
+
+    def fake_run(command: tuple[str, ...], **_kwargs: Any):
+        payload = _valid_child_payload(command)
+        mutate(payload)
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(gate_module.subprocess, "run", fake_run)
+    gates, provenance = trusted_greenfield_gates(tmp_path)
+
+    assert label
+    assert len(gates) == 1 and gates[0].passed is False
+    assert gates[0].name == "greenfield:trusted-verifier-identity"
+    assert provenance["trust"] in {"not_established", "structural-origin-and-digest"}
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ("oserror", "timeout", "invalid-json", "non-object", "stderr", "returncode"),
+)
+def test_verifier_process_and_protocol_failures_are_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    _valid_project(tmp_path)
+
+    def fake_run(command: tuple[str, ...], **_kwargs: Any):
+        if failure == "oserror":
+            raise OSError("cannot execute")
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 120)
+        if failure == "invalid-json":
+            return subprocess.CompletedProcess(command, 0, "not-json", "")
+        if failure == "non-object":
+            return subprocess.CompletedProcess(command, 0, "[]", "")
+        payload = _valid_child_payload(command)
+        return subprocess.CompletedProcess(
+            command,
+            2 if failure == "returncode" else 0,
+            json.dumps(payload),
+            "unexpected" if failure == "stderr" else "",
+        )
+
+    monkeypatch.setattr(gate_module.subprocess, "run", fake_run)
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    assert len(gates) == 1 and gates[0].passed is False
+    assert gates[0].name == "greenfield:trusted-verifier-identity"
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +523,143 @@ def test_architecture_gate_requires_processes_to_live_behind_an_explicit_boundar
 
     assert next(gate for gate in failed if gate.name.endswith("architecture-boundary")).passed is False
     assert all(gate.passed for gate in passed)
+
+
+_PROCESS_CAPABILITY_SPELLINGS = [
+    ("os-attribute", "import os\ndef probe(c):\n    os.system(c)\n"),
+    ("os-from-import", "from os import system\ndef probe(c):\n    system(c)\n"),
+    ("os-alias", "from os import system as run\ndef probe(c):\n    run(c)\n"),
+    ("popen-alias", "from os import popen as run\ndef probe(c):\n    return run(c)\n"),
+    ("subprocess-import", "import subprocess\ndef probe(c):\n    subprocess.run(c)\n"),
+    ("subprocess-from", "from subprocess import run\ndef probe(c):\n    run(c)\n"),
+    ("startfile", "import os\ndef probe(p):\n    os.startfile(p)\n"),
+    ("execvp", "from os import execvp\ndef probe(a,b):\n    execvp(a,b)\n"),
+    ("multiprocessing", "import multiprocessing\nHANDLE=multiprocessing.Process\n"),
+    ("retained-handle", "from os import system\nHANDLE=system\n"),
+    ("modules-subscript", "import sys\nHANDLE=sys.modules['sub'+'process']\n"),
+    ("modules-get", "import sys\nHANDLE=sys.modules.get('sub'+'process')\n"),
+    ("modules-pop", "import sys\nHANDLE=sys.modules.pop('sub'+'process')\n"),
+    ("builtins-import", "import builtins\nHANDLE=builtins.__import__('sub'+'process')\n"),
+    (
+        "computed-importer",
+        "import builtins\nIMPORT=getattr(builtins,'__imp'+'ort__')\n"
+        "HANDLE=IMPORT('sub'+'process')\n",
+    ),
+    ("aliased-sys", "import sys as runtime\nHANDLE=runtime.modules.get('sub'+'process')\n"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "source"),
+    _PROCESS_CAPABILITY_SPELLINGS,
+    ids=[case[0] for case in _PROCESS_CAPABILITY_SPELLINGS],
+)
+def test_greenfield_profile_matches_the_hardened_process_capability_corpus(
+    tmp_path: Path, label: str, source: str
+) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", source)
+
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+    architecture = next(g for g in gates if g.name.endswith("architecture-boundary"))
+
+    assert label
+    assert architecture.passed is False
+    assert "process capability" in architecture.detail
+
+
+@pytest.mark.parametrize(
+    ("relative", "source"),
+    [
+        (
+            "src/app.py",
+            "import builtins\nVALUE=getattr(builtins,'ev'+'al')('1 + 1')\n",
+        ),
+        (
+            "src/tools/process_tool.py",
+            "import subprocess\ndef run(c):\n    subprocess.run(c, shell=1)\n",
+        ),
+        ("src/app.py", "TOKEN = 'sk-' + 'C' * 40\n"),
+        ("src/app.py", "import importlib\nMOD=importlib.import_module('json')\n"),
+    ],
+    ids=("indirect-eval", "truthy-shell", "split-secret", "dynamic-import"),
+)
+def test_security_static_rejects_resolved_and_constant_folded_bypasses(
+    tmp_path: Path, relative: str, source: str
+) -> None:
+    _valid_project(tmp_path)
+    if relative != "src/app.py":
+        _write(tmp_path / "src/app.py", "VALUE = 1\n")
+    _write(tmp_path / relative, source)
+
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    assert next(g for g in gates if g.name.endswith("security-static")).passed is False
+
+
+def test_failing_project_tests_are_a_real_acceptance_failure(tmp_path: Path) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return 0\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\nfrom src.app import add\n\n"
+        "def test_addition_contract():\n    assert add(1, 1) == 2\n",
+    )
+
+    result = _run(tmp_path)
+
+    assert result["accepted"] is False
+    assert _gate(result, "test-execution")["passed"] is False
+
+
+@pytest.mark.parametrize("missing", ("BRD.md", "src", "tests"))
+def test_required_greenfield_structure_fails_closed(tmp_path: Path, missing: str) -> None:
+    _valid_project(tmp_path)
+    target = tmp_path / missing
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    assert next(g for g in gates if g.name.endswith("project-structure")).passed is False
+
+
+def test_greenfield_file_size_limit_is_a_refusal(tmp_path: Path) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / "notes.txt", "x" * 500_001)
+
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    structure = next(g for g in gates if g.name.endswith("project-structure"))
+    assert structure.passed is False
+    assert "inspection limit" in structure.detail
+
+
+def test_links_and_windows_junctions_cannot_escape_the_subject(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    outside = tmp_path / "outside"
+    _valid_project(project)
+    _valid_project(outside)
+    shutil.rmtree(project / "src")
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(project / "src"), str(outside / "src")],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert (project / "src").is_symlink() is False
+    else:
+        os.symlink(outside / "src", project / "src", target_is_directory=True)
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    structure = next(g for g in gates if g.name.endswith("project-structure"))
+    assert structure.passed is False
+    assert "reparse" in structure.detail or "linked" in structure.detail
 
 
 @pytest.mark.parametrize(

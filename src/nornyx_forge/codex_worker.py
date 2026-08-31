@@ -78,6 +78,12 @@ class CodexWorker:
             "Return a concise JSON-compatible result with changed files, checks, "
             "findings, assumptions, and limitations."
         )
+        read_only_tools = {"Read", "Glob", "Grep"}
+        sandbox = (
+            "read-only"
+            if set(allowed_tools).issubset(read_only_tools)
+            else "workspace-write"
+        )
         command = (
             self.executable,
             "exec",
@@ -86,7 +92,7 @@ class CodexWorker:
             str(workspace),
             "--skip-git-repo-check",
             "--sandbox",
-            "workspace-write",
+            sandbox,
             "--color",
             "never",
             prompt,

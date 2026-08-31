@@ -217,12 +217,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
-    # PR-16's trust boundary: 16 collected at introduction, floor at
-    # band(16) = 15. Real DevelopmentFlow acceptance, all seven hostile
-    # specimens, exact isolated invocation, provenance, subject repair, and a
-    # controlled old-profile false green live together so the boundary cannot
-    # disappear behind growth elsewhere.
-    "tests/test_trusted_greenfield_acceptance.py": 15,
+    # PR-16's trust boundary: 79 collected after independent review, floor at
+    # band(79) = 72. Real DevelopmentFlow repair/review paths, all seven hostile
+    # specimens, exact isolated invocation, strict result-protocol refusals,
+    # process-capability equivalence, provenance, and the controlled old-profile
+    # false green live together. Eight named identities are pinned separately.
+    "tests/test_trusted_greenfield_acceptance.py": 72,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -255,7 +255,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_security_context.py": 10,
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
-    "tests/test_skip_gate.py": 30,
+    # 41 collected after the PR-16 identity registry, floor at band(41) = 37.
+    "tests/test_skip_gate.py": 37,
     "tests/test_documented_claims.py": 144,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
@@ -449,17 +450,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # brd-authoring round: 9 new collected in tests/test_brd_authoring.py
 # (102 -> 103 modules). Re-measured for the build-trigger round: 9 new
 # collected in tests/test_build_trigger.py (103 -> 104 modules). Re-measured
-# for the PR-16 trusted-greenfield round: 16 new collected in
-# tests/test_trusted_greenfield_acceptance.py (104 -> 105 modules):
+# for the PR-16 trusted-greenfield round and its inspector remediation: 79
+# collected in tests/test_trusted_greenfield_acceptance.py and eight new census
+# identity proofs in tests/test_skip_gate.py (104 -> 105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2478   (105 modules)
-#     sum of the module floors    2283
-#     band(2478) = ceil(0.9*n)    2231
-#     MINIMUM_COLLECTED           2298
+#     collected across tests/     2549   (105 modules)
+#     sum of the module floors    2347
+#     band(2549) = ceil(0.9*n)    2295
+#     MINIMUM_COLLECTED           2362
 #     above the module sum        15
-#     below what collects         180
+#     below what collects         187
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -480,7 +482,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 195 in total, and the aggregate refuses
+# per-module bands already grant 202 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -501,7 +503,22 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2298
+MINIMUM_COLLECTED = 2362
+
+# PR-16's threat model is identity-sensitive: a raw module count can stay green
+# while H1, H7, or the standing real-flow proof is replaced by an unrelated
+# case. These exact proofs must therefore be present and executed, not merely
+# absorbed by the module's ordinary anti-shrink floor.
+PR16_REQUIRED_EXECUTED = {
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_accepts_a_fresh_project_without_forge_repository_scripts",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_refuses_the_stub_verifier_attack",
+    "tests/test_trusted_greenfield_acceptance.py::test_exact_invocation_ignores_project_local_nornyx_forge",
+    "tests/test_trusted_greenfield_acceptance.py::test_exact_invocation_ignores_path_cwd_and_python_environment",
+    "tests/test_trusted_greenfield_acceptance.py::test_acceptance_provenance_binds_profile_origin_version_revision_and_digests",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_allows_genuine_subject_repair_with_the_same_verifier",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_verifier_failure_dominates_provider_claims",
+    "tests/test_trusted_greenfield_acceptance.py::test_standing_real_development_flow_uses_the_trusted_profile",
+}
 
 
 def band(collected: int) -> int:
@@ -841,6 +858,16 @@ def classify(
     )
 
 
+def executed_node_ids(report: Path) -> set[str]:
+    """Exact identities that completed without skip, xfail, or collection error."""
+    root = ET.parse(report).getroot()
+    return {
+        node_id(case)
+        for case in root.iter("testcase")
+        if case.find("error") is None and case.find("skipped") is None
+    }
+
+
 def evaluate(report: Path, pytest_returncode: int) -> int:
     """Decide the verdict from a report. Separated so the refusals are testable.
 
@@ -913,6 +940,19 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
             "anything."
         )
         print(NEWLINE + "GATE: FAIL - undeclared skips")
+        return 2
+
+    missing_pr16 = sorted(PR16_REQUIRED_EXECUTED - executed_node_ids(report))
+    if missing_pr16:
+        print(NEWLINE + "These PR-16 hostile or real-flow proofs did not execute:" + NEWLINE)
+        for name in missing_pr16:
+            print(f"  {name}")
+        print(
+            NEWLINE + "A module floor can be met by unrelated growth. H1-H7 and "
+            "the standing real-DevelopmentFlow proof are identity-bound so one "
+            "cannot disappear behind another test."
+        )
+        print(NEWLINE + "GATE: FAIL - a required PR-16 specimen did not execute")
         return 2
 
     missing_modules = [name for name in REQUIRED_MODULES if name not in seen_modules]
