@@ -40,6 +40,7 @@ top of it. It starts no process; serving it is the launcher's job.
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -126,12 +127,23 @@ def create_app(
     capsule_root: Path,
     contracts_dir: Path,
     clock: Callable[[], str] | None = None,
+    flow_factory: Callable[..., Any] | None = None,
 ) -> FastAPI:
-    """The onboarding application over one capsule store and one contract set."""
+    """The onboarding application over one capsule store and one contract set.
+
+    `flow_factory` is the injectable seam for the build trigger, defaulting
+    to the real `DevelopmentFlow`; tests capture it, the shipped surface
+    runs the real flow.
+    """
     root = Path(capsule_root)
     contracts = Path(contracts_dir)
     at = clock if clock is not None else _now_iso
+    if flow_factory is None:
+        from .development_flow import DevelopmentFlow
+        flow_factory = DevelopmentFlow
     app = FastAPI(title="Nornyx Forge — Onboarding", version="0.1.0")
+    app.state.build = {"status": "never_run"}
+    build_lock = threading.Lock()
 
     def store() -> CapsuleStore:
         return CapsuleStore(root)
@@ -213,6 +225,79 @@ def create_app(
         except CapsuleError as error:
             return _refusal(error)
         return {"proposal_id": proposal_id, "status": "rejected"}
+
+    @app.post("/api/build")
+    def trigger_build(payload: ResolvePayload):
+        """Run the governed build for this project, from confirmed state only.
+
+        The no-terminal path to `nornyx-forge build`: the flow runs over the
+        PROJECT directory with the capsule's CONFIRMED provider, in
+        greenfield mode (a fresh user project is not a certified
+        foundation, and saying so is what the mode vocabulary is for). The
+        prerequisites are refused by name -- no derived BRD, no confirmed
+        provider, a build already running -- and triggering is a human act
+        on this surface, judged by the same KIND rule as every confirmation.
+        The flow's own result is recorded verbatim, gates and worker
+        endings included; this route improves no news.
+        """
+        actor = payload.actor.to_actor()
+        try:
+            actor.validate()
+        except CapsuleError as error:
+            return _refusal(error)
+        if actor.kind != "human":
+            return JSONResponse(status_code=409, content={
+                "refused": "starting a build is a human act on this surface; "
+                f"got kind={actor.kind!r}",
+            })
+        current = store()
+        try:
+            document = current.load()
+        except CapsuleError as error:
+            return _refusal(error)
+        provider = document["authoritative"].get("provider")
+        if provider is None:
+            return JSONResponse(status_code=409, content={
+                "refused": "no confirmed provider; confirm one before building",
+            })
+        project_dir = root.parent
+        if not (project_dir / "BRD.md").exists():
+            return JSONResponse(status_code=409, content={
+                "refused": "no BRD.md in the project; derive it first",
+            })
+        if not build_lock.acquire(blocking=False):
+            return JSONResponse(status_code=409, content={
+                "refused": "a build is already running for this project",
+            })
+        app.state.build = {"status": "running", "provider": provider["name"]}
+
+        def run() -> None:
+            try:
+                flow = flow_factory(
+                    project_dir,
+                    worker_mode="claude-code",
+                    repo_mode="greenfield",
+                    provider=provider["name"],
+                )
+                result = flow.run()
+                app.state.build = {
+                    "status": "finished",
+                    "provider": provider["name"],
+                    "accepted": bool(result.get("accepted")),
+                    "result": result,
+                }
+            except Exception as error:  # noqa: BLE001 - recorded, not judged
+                app.state.build = {"status": "failed", "error": str(error)}
+            finally:
+                build_lock.release()
+
+        threading.Thread(target=run, name="forge-build", daemon=True).start()
+        return {"status": "running", "provider": provider["name"]}
+
+    @app.get("/api/build")
+    def build_status():
+        """The build's state as last recorded. Never improved, never guessed."""
+        return app.state.build
 
     @app.post("/api/brd")
     def derive_brd():
