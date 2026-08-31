@@ -198,6 +198,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # 7 collected at introduction, floor at band(7) = 7. The authority
     # split extended to execution, over the real CLI and a real store.
     "tests/test_capsule_selection.py": 7,
+    # The sharing preview under C5: 10 collected at introduction, floor at
+    # band(10) = 9. Shape-closed minimization (its first sweep-based guard
+    # let a fragment leak through -- the specimen caught the guard), the
+    # never-sent state as data, and no network path in the module.
+    "tests/test_experience_sharing.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -416,16 +421,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # Re-measured for the provider-execution round: 9 new collected in
 # tests/test_provider_execution.py (98 -> 99 modules). Re-measured for
 # the capsule-selection round: 7 new collected in
-# tests/test_capsule_selection.py (99 -> 100 modules):
+# tests/test_capsule_selection.py (99 -> 100 modules). Re-measured for
+# the sharing-preview round: 10 new collected in
+# tests/test_experience_sharing.py (100 -> 101 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2424   (100 modules)
-#     sum of the module floors    2232
-#     band(2424) = ceil(0.9*n)    2182
-#     MINIMUM_COLLECTED           2247
+#     collected across tests/     2434   (101 modules)
+#     sum of the module floors    2241
+#     band(2434) = ceil(0.9*n)    2191
+#     MINIMUM_COLLECTED           2256
 #     above the module sum        15
-#     below what collects         177
+#     below what collects         178
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -446,7 +453,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 192 in total, and the aggregate refuses
+# per-module bands already grant 193 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -467,7 +474,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2247
+MINIMUM_COLLECTED = 2256
 
 
 def band(collected: int) -> int:
@@ -536,6 +543,7 @@ REQUIRED_MODULES = (
     "tests/test_onboarding_launch.py",
     "tests/test_provider_execution.py",
     "tests/test_capsule_selection.py",
+    "tests/test_experience_sharing.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
