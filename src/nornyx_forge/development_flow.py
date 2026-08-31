@@ -9,7 +9,7 @@ from typing import Any
 from .claude_worker import ClaudeCodeWorker
 from .contract_generator import generate_brd_contract
 from .evidence import EvidenceLedger
-from .gates import default_gates
+from .gates import default_gates, trusted_greenfield_gates
 from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .providers import ProviderRoutedWorker, get_provider
@@ -301,7 +301,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             self.pre_gate_failures.append(
                 GateResult("in-session AI review records complete", review_passed, detail)
             )
-        gates = [*self.pre_gate_failures, *default_gates(self.root)]
+        gates = [*self.pre_gate_failures, *self._acceptance_gates()]
         while not all(gate.passed for gate in gates) and self.worker_mode == "claude-code":
             if self.repair_attempts >= max_repairs:
                 break
@@ -332,7 +332,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             if not repair.success:
                 break
             self.pre_gate_failures = []
-            gates = default_gates(self.root)
+            gates = self._acceptance_gates()
 
         self.data["gates"] = [gate.__dict__ for gate in gates]
         passed = all(gate.passed for gate in gates)
@@ -389,6 +389,8 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 else "One or more automated gates or worker stages failed."
             ),
             repair_attempts=self.repair_attempts,
+            verdict_source="all_recorded_gate_results",
+            acceptance_provenance=self.data.get("acceptance_provenance"),
         )
         report = self.ledger.validate(
             report_path=self.root / ".nornyx/runs/build-evidence-report.json"
@@ -406,6 +408,11 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             "foundation_mode": self.repo_mode,
             "foundation_score": foundation.get("overall_score"),
             "foundation_verdict": foundation.get("verdict"),
+            "acceptance_profile": (
+                self.data.get("acceptance_provenance", {})
+                .get("gate_profile", {})
+                .get("id")
+            ),
             "measured": {
                 "elapsed_seconds": True,
                 "repair_attempts": True,
@@ -421,6 +428,24 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         self.data["execution_backend"] = self.execution_backend
         write_json(self.root / ".nornyx/runs/build-summary.json", self.data)
         return self.data
+
+    def _acceptance_gates(self) -> list[GateResult]:
+        """Select the profile in trusted flow code, never from project data."""
+        if self.repo_mode == "greenfield":
+            gates, provenance = trusted_greenfield_gates(self.root)
+            previous = self.data.get("acceptance_provenance")
+            if previous is not None and previous != provenance:
+                return [
+                    GateResult(
+                        "greenfield:provenance-stability",
+                        False,
+                        "trusted verifier provenance changed during one acceptance run",
+                        provenance=provenance,
+                    )
+                ]
+            self.data["acceptance_provenance"] = provenance
+            return gates
+        return default_gates(self.root)
 
     def run(self) -> dict[str, Any]:
         """Run through CrewAI Flow when installed; otherwise use the same deterministic chain."""

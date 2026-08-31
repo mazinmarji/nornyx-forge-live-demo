@@ -8,7 +8,14 @@
 - `development_flow`: CrewAI Flow orchestration of in-session or scripted Claude Code work and deterministic gates.
 - `contract_generator` / `requirements`: deterministic BRD parsing and BRD-to-Nornyx repository-harness generation.
 - `claude_worker`: optional bounded `claude -p` execution bridge for scripted mode.
-- `gates`: deterministic gate execution.
+- `gates`: deterministic gate-profile selection and execution. Certified Forge
+  repositories retain the repository profile; `repo_mode="greenfield"` selects
+  the Forge-owned greenfield profile in trusted flow code.
+- `greenfield_verifier`: standalone static inspection of an untrusted generated
+  project. Forge invokes its absolute installation path with an absolute Python
+  interpreter in isolated mode, from the Forge directory, with no inherited
+  `PATH`, `PYTHONPATH`, or `PYTHONHOME`. The project is an argument, never the
+  verifier working directory, and no project code or executable is run.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf
@@ -54,6 +61,22 @@ the persistence gateway would move file I/O into the module that owns the action
 boundary, which is worse for the property that actually matters.
 
 The runtime flow cannot grant human or production approval.
+
+The build trust boundary is separate from that runtime authority boundary. A
+provider may change the generated project's application source, tests, and BRD
+until the greenfield profile passes. It may not select the profile or supply the
+verifier. `DevelopmentFlow` selects the profile from its trusted `repo_mode`;
+`gates` resolves the Forge-owned verifier and interpreter; the standalone
+verifier reads the project only as data. Acceptance is the conjunction of the
+recorded gate results. Provider prose and project-local verifier-looking files
+are not verdict inputs.
+
+Greenfield provenance is structural and tamper-evident, not authenticated. Each
+gate and the acceptance event bind the profile ID/digest, verifier absolute
+origin/digest, Forge package version/source revision, isolated command, trusted
+working directory, and environment policy. Those facts make the judge
+falsifiable and expose file changes. They do not prove who installed Forge, who
+controlled that installation, or that a cryptographic signer approved it.
 
 Two rules keep that from eroding. `demo_app.main` may not import `nornyx_forge`
 at all, checked by path so that no contract edit can grant the edge — the action

@@ -12,13 +12,12 @@
 - Architecture dependency and command-isolation checks.
 - Security checks for embedded credentials, unsafe subprocess shell mode, `eval`, and `exec`.
 - Deterministic BRD-to-build flow: eleven requirements, certified foundation GO,
-  zero repair attempts. The GATE COUNT IS DELIBERATELY NOT PINNED HERE:
-  `default_gates()` resolves tools on PATH, so the number depends on the
-  environment -- fewer in a bare shell, more with the venv's `pytest`, `ruff`
-  and `nornyx` available. Measured here: 11 with the venv's tooling on PATH,
-  and a review measured 4 in a bare shell. Never the 5 this line asserted.
-  Read the count from the build report, which is produced by the run it
-  describes.
+  zero repair attempts. For a certified Forge repository the gate count is
+  deliberately not pinned: `default_gates()` resolves optional repository tools
+  on PATH. For `repo_mode="greenfield"`, the count and profile are deterministic:
+  six static project checks from `nornyx.greenfield.python.v1`, invoked from the
+  trusted Forge installation without PATH or project import resolution. Read the
+  count and provenance from the build report produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.
 - Local demonstration evidence stream validated, with its event count and

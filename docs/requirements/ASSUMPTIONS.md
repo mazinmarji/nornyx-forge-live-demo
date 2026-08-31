@@ -338,3 +338,33 @@ build exists anywhere in the programme's records.
 
 **Serves.** the claim discipline itself — experimentally observed stays
 distinct from not yet proven.
+
+## A-019 A greenfield project is the subject, never its verifier
+
+**Ambiguity.** A generated project needs tests, architecture, and security
+acceptance, but it does not contain Forge's repository verification scripts and
+the provider can modify every file in its workspace.
+
+**Resolution.** `repo_mode="greenfield"` selects a deterministic profile in
+trusted `DevelopmentFlow` code. The verifier is a standalone file in the Forge
+installation, invoked by absolute interpreter and absolute file path under
+isolated Python, from a Forge working directory, with a constructed environment
+that contains no project-controlled PATH or Python import variables. It reads
+the project as data and never imports or executes project code. Profile and
+verifier identity, origin, version/revision, and digests travel with every gate
+and the acceptance event. The provenance is structural/tamper-evident; it is not
+a signature or proof of installer identity.
+
+**Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
+criteria for generated application subjects.
+
+## A-020 Windows distribution is EXE-first
+
+**Decision.** The Windows distribution target is `ForgeSetup.exe`, EXE-first.
+MSI is not the current target. A folder plus `Forge.cmd` remains the interim v1
+delivery.
+
+**Scope.** This records the already-decided distribution direction only. It does
+not implement packaging, signing, release CI, or the installer.
+
+**Serves.** programme traceability for the post-PR-18 Windows distribution work.
