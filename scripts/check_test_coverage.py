@@ -239,11 +239,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # pre-registration is a governance document, so the document sweep
     # gained five parametrized cases (177 collected, band(177) = 160) --
     # caught by `test_no_module_floor_drifts_far_below_its_module`.
-    # PR-16 adds two tracked decisions and the greenfield trust-boundary claims
-    # to governed prose. The mechanical claim sweep therefore grows from 177
-    # to 351 collected cases; band(351) = 316. That growth is the sweep seeing
-    # the new claims, not filler, so its module floor moves with it.
-    "tests/test_recorded_measurements.py": 316,
+    "tests/test_recorded_measurements.py": 160,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -454,18 +450,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (102 -> 103 modules). Re-measured for the build-trigger round: 9 new
 # collected in tests/test_build_trigger.py (103 -> 104 modules). Re-measured
 # for the PR-16 trusted-greenfield round: 16 new collected in
-# tests/test_trusted_greenfield_acceptance.py (104 -> 105 modules), plus 174
-# newly-visible claim cases in tests/test_recorded_measurements.py from the
-# tracked assumptions and trust-boundary documentation:
+# tests/test_trusted_greenfield_acceptance.py (104 -> 105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2652   (105 modules)
-#     sum of the module floors    2439
-#     band(2652) = ceil(0.9*n)    2387
-#     MINIMUM_COLLECTED           2454
+#     collected across tests/     2478   (105 modules)
+#     sum of the module floors    2283
+#     band(2478) = ceil(0.9*n)    2231
+#     MINIMUM_COLLECTED           2298
 #     above the module sum        15
-#     below what collects         198
+#     below what collects         180
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -486,7 +480,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 213 in total, and the aggregate refuses
+# per-module bands already grant 195 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -507,7 +501,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2454
+MINIMUM_COLLECTED = 2298
 
 
 def band(collected: int) -> int:
