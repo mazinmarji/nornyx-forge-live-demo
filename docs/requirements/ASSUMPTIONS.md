@@ -351,7 +351,7 @@ verifier, executes those bytes from a private read-only snapshot with an
 absolute interpreter under isolated Python, and constructs an environment with
 no project-controlled PATH or Python import variables. Static checks stream
 bounded project bytes; project tests execute only from a private subject copy in
-a separate resource-limited process. Scripted reviewers have a read-only tool
+a separate resource-limited process. Scripted model checks have a read-only tool
 surface and are followed by a final trusted rerun. Profile and verifier identity,
 origin, version/revision and digests, plus the final subject digest, travel with
 every gate and the acceptance event. The provenance is structural/tamper-evident;
