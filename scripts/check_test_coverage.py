@@ -203,6 +203,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # let a fragment leak through -- the specimen caught the guard), the
     # never-sent state as data, and no network path in the module.
     "tests/test_experience_sharing.py": 9,
+    # The Windows bundle builder: 10 collected at introduction, floor at
+    # band(10) = 9. The Dockerfile-parsed anti-drift pin, the resolver's
+    # markers, the src-before-pylib shadowing order, the probed installer,
+    # and the refusal of an unverified interpreter.
+    "tests/test_windows_bundle.py": 9,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -423,16 +428,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the capsule-selection round: 7 new collected in
 # tests/test_capsule_selection.py (99 -> 100 modules). Re-measured for
 # the sharing-preview round: 10 new collected in
-# tests/test_experience_sharing.py (100 -> 101 modules):
+# tests/test_experience_sharing.py (100 -> 101 modules). Re-measured for
+# the windows-bundle round: 10 new collected in
+# tests/test_windows_bundle.py (101 -> 102 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2434   (101 modules)
-#     sum of the module floors    2241
-#     band(2434) = ceil(0.9*n)    2191
-#     MINIMUM_COLLECTED           2256
+#     collected across tests/     2444   (102 modules)
+#     sum of the module floors    2250
+#     band(2444) = ceil(0.9*n)    2200
+#     MINIMUM_COLLECTED           2265
 #     above the module sum        15
-#     below what collects         178
+#     below what collects         179
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -453,7 +460,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 193 in total, and the aggregate refuses
+# per-module bands already grant 194 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -474,7 +481,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2256
+MINIMUM_COLLECTED = 2265
 
 
 def band(collected: int) -> int:
@@ -544,6 +551,7 @@ REQUIRED_MODULES = (
     "tests/test_provider_execution.py",
     "tests/test_capsule_selection.py",
     "tests/test_experience_sharing.py",
+    "tests/test_windows_bundle.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
