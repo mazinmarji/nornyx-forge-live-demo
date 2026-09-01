@@ -25,8 +25,11 @@
   control; during execution an audit hook confines writes to the pytest temp
   root and refuses process starts. A separate trusted supervisor requires a
   complete executed-test record, a normal-completion sentinel, and the expected
-  executor digest, and retains only a bounded output tail. Read the count and
-  provenance from the build report
+  executor digest, and retains only a bounded output tail. The absolute Python
+  environment entrypoint is preserved on POSIX rather than resolving the venv
+  symlink to its base interpreter; that resolved target is separately validated
+  and recorded. This keeps trusted dependencies available under `-I` without
+  consulting PATH. Read the count and provenance from the build report
   produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.

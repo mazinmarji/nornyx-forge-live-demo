@@ -415,7 +415,13 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
     try:
         project = Path(root).resolve(strict=True)
         verifier = _greenfield_verifier_path()
-        interpreter = Path(sys.executable).resolve(strict=True)
+        interpreter = Path(sys.executable)
+        if not interpreter.is_absolute():
+            return _closed_failure(
+                "Python interpreter path is not absolute; executable trust is absent"
+            )
+        interpreter = Path(os.path.abspath(interpreter))
+        interpreter_target = interpreter.resolve(strict=True)
     except OSError as exc:
         return _closed_failure(f"trusted verifier identity cannot be resolved: {exc}")
     if not project.is_dir():
@@ -424,7 +430,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         return _closed_failure(
             "trusted verifier is inside the provider workspace; structural trust is absent"
         )
-    if _inside(interpreter, project):
+    if _inside(interpreter, project) or _inside(interpreter_target, project):
         return _closed_failure(
             "Python interpreter is inside the provider workspace; executable trust is absent"
         )
@@ -462,6 +468,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             )
             invocation = {
                 "python": str(interpreter),
+                "python_resolved_target": str(interpreter_target),
                 "isolated_python": True,
                 "cwd": str(verifier.parent),
                 "environment": "constructed-host-allowlist-without-path-or-pythonpath",

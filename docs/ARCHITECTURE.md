@@ -14,7 +14,7 @@
 - `greenfield_verifier`: standalone inspection of an untrusted generated
   project. Forge digests its installed bytes, reads a private copy once through a
   digest-checking in-memory bootstrap, executes those same bytes with an absolute
-  Python interpreter in isolated mode, and supplies no inherited
+  Python environment entrypoint in isolated mode, and supplies no inherited
   `PATH`, `PYTHONPATH`, or `PYTHONHOME`. Static checks stream bounded subject
   files without retaining the corpus. Tests run in a separate process over a
   private subject copy under an OS memory/process limit, with project `conftest.py`
@@ -29,7 +29,10 @@
   completion sentinel, drains only a bounded output tail, and the verifier
   re-censuses the original subject before verdict. Project code runs from the
   private copy, never the original project cwd, and never determines verifier,
-  runner, or executor resolution.
+  runner, or executor resolution. On POSIX the absolute environment entrypoint
+  is deliberately not canonicalized through its symlink: doing so would discard
+  the virtual environment that owns pytest. Its separately resolved base target
+  is checked against the project boundary and recorded in provenance.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf

@@ -292,7 +292,11 @@ def test_exact_invocation_ignores_path_cwd_and_python_environment(
 
     assert all(gate.passed for gate in gates)
     assert Path(gates[0].command[0]).is_absolute()
+    assert gates[0].command[0] == os.path.abspath(gate_module.sys.executable)
     assert Path(gates[0].command[0]) != tmp_path / "python.exe"
+    assert provenance["invocation"]["python_resolved_target"] == str(
+        Path(gate_module.sys.executable).resolve(strict=True)
+    )
     assert provenance["invocation"]["environment"].endswith("without-path-or-pythonpath")
     assert "-I" in provenance["invocation"]["command"]
     assert Path(observed["kwargs"]["cwd"]) == Path(provenance["invocation"]["cwd"])
@@ -327,7 +331,7 @@ def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests
     )
     assert provenance["test_execution"]["completion"]["executor_returncode"] == 73
     assert provenance["test_execution"]["completion"]["executor_command"][:4] == [
-        str(Path(gate_module.sys.executable).resolve()),
+        os.path.abspath(gate_module.sys.executable),
         "-I",
         "-c",
         gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,

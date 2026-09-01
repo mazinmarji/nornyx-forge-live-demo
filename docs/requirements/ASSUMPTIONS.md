@@ -348,8 +348,8 @@ the provider can modify every file in its workspace.
 **Resolution.** `repo_mode="greenfield"` selects a deterministic profile in
 trusted `DevelopmentFlow` code. Forge reads and digests the installed standalone
 verifier, reads a private snapshot once through a digest-checking in-memory
-bootstrap, executes those same bytes with an absolute interpreter under isolated
-Python, and constructs an environment with
+bootstrap, executes those same bytes through the active absolute Python
+environment entrypoint under isolated Python, and constructs an environment with
 no project-controlled PATH or Python import variables. Static checks stream
 bounded project bytes; project tests execute only from a private subject copy in
 a separate resource-limited process with project `conftest.py` hooks and discovery
@@ -365,7 +365,10 @@ followed by a final trusted rerun. Profile and verifier identity,
 origin, version/revision and digests, plus the final subject digest, travel with
 every gate and the acceptance event. The provenance is structural/tamper-evident;
 it is not a signature, proof of installer identity, or a sandbox against every
-possible host effect in arbitrary test code.
+possible host effect in arbitrary test code. On POSIX the environment entrypoint
+may be a venv symlink and is therefore preserved for execution; its resolved base
+target is separately checked against the project boundary and recorded. Resolving
+the entrypoint itself would silently leave the environment that provides pytest.
 
 **Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
 criteria for generated application subjects.
