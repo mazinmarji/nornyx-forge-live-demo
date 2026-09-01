@@ -356,7 +356,12 @@ a separate resource-limited process with project `conftest.py` hooks and discove
 configuration disabled. The runner and executor are each digest-checked and
 executed from the same in-memory bytes. Executor completion state is not exposed
 through `__main__`; static inspection refuses hard exits, reflection, and pytest
-lifecycle control, while an audit hook confines writes and process authority.
+lifecycle control, including constant-folded or opaque `getattr` acquisition of
+interpreter capabilities. Both `sys.argv` and `sys.orig_argv` are scrubbed before
+subject collection. The audit hook confines writes and process authority,
+validates both endpoints of a hard link and the destination of a symbolic link,
+and permits the external completion write only from the executor thread that
+owns it.
 A trusted supervisor outside the pytest interpreter requires a complete
 executed-test record, the expected executor digest and a normal-completion
 sentinel, bounds retained output, and performs a final subject census. Scripted

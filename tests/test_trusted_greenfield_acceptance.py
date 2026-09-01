@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -720,6 +721,29 @@ def test_security_static_rejects_resolved_and_constant_folded_bypasses(
     assert next(g for g in gates if g.name.endswith("security-static")).passed is False
 
 
+@pytest.mark.parametrize(
+    "source",
+    (
+        "import os\nEXIT=getattr(os, '_' + 'exit')\n",
+        "def subject():\n    return None\nGLOBALS=getattr(subject, '__glo' + 'bals__')\n",
+        "import sys\nORIGINAL=sys.orig_argv\n",
+        "def reflected(subject, member):\n    return getattr(subject, member)\n",
+    ),
+    ids=("reflected-hard-exit", "reflected-globals", "original-argv", "opaque-getattr"),
+)
+def test_security_static_rejects_reflected_executor_control(
+    tmp_path: Path, source: str
+) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", source)
+
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    security = next(g for g in gates if g.name.endswith("security-static"))
+    assert security.passed is False
+    assert "interpreter-control" in security.detail or "reflected" in security.detail
+
+
 def test_failing_project_tests_are_a_real_acceptance_failure(tmp_path: Path) -> None:
     _valid_project(tmp_path)
     _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return 0\n")
@@ -820,6 +844,68 @@ def test_runner_and_executor_use_digest_verified_in_memory_snapshots() -> None:
     assert "executor_command = [" in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
     assert '"-I", "-c", DIGEST_BOOTSTRAP' in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
     assert "completed.returncode == 73" in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
+    assert '_sys.orig_argv[:] = [str(_subject)]' in gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE
+    assert '_event == "os.link"' in gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE
+    assert '_write_is_allowed(_item) for _item in _args[:2]' in (
+        gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE
+    )
+
+
+def test_executor_rejects_a_hard_link_to_its_completion_record(tmp_path: Path) -> None:
+    subject = _valid_project(tmp_path / "subject")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    executor = scratch / "greenfield_pytest_executor.py"
+    result = scratch / "greenfield_pytest_inner.json"
+    config = scratch / "greenfield_pytest.ini"
+    _write(executor, gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE)
+    _write(config, "[pytest]\n")
+    forged = {
+        "schema": "nornyx.greenfield.pytest_result.v1",
+        "returncode": 0,
+        "collected": 1,
+        "executed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+    }
+    _write(
+        subject / "tests/test_app.py",
+        "# BRD-F-001\n"
+        "import json\n"
+        "import os\n"
+        "from pathlib import Path\n\n"
+        "def test_forges_completion_with_a_hard_link():\n"
+        "    source = Path('.nornyx-test-tmp/forged.json')\n"
+        f"    source.write_text({json.dumps(json.dumps(forged))}, encoding='utf-8')\n"
+        f"    os.link(source, Path({json.dumps(str(result))}))\n"
+        "    os._exit(73)\n",
+    )
+
+    completed = subprocess.run(
+        [
+            os.fspath(Path(sys.executable)),
+            "-I",
+            "-c",
+            gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+            os.fspath(executor),
+            gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+            os.fspath(subject),
+            os.fspath(result),
+            os.fspath(config),
+            gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+        ],
+        cwd=subject,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert completed.returncode == 73, completed.stdout + completed.stderr
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert payload["returncode"] != 0
+    assert payload["failed"] == 1
 
 
 def test_project_test_output_is_drained_without_an_unbounded_spool(tmp_path: Path) -> None:

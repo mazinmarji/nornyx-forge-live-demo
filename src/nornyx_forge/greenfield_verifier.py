@@ -78,7 +78,8 @@ def _entry():
     _int = int
     _len = len
     _system_exit = SystemExit
-    _trusted_result_write = [False]
+    _get_ident = __import__("_thread").get_ident
+    _trusted_result_writer = [None]
     _write_flags = (
         _os.O_WRONLY | _os.O_RDWR | _os.O_CREAT | _os.O_TRUNC | _os.O_APPEND
     )
@@ -106,7 +107,7 @@ def _entry():
         _path = _resolved(_raw)
         if _path is None:
             return False
-        if _trusted_result_write[0] and _path == _result_path:
+        if _trusted_result_writer[0] == _get_ident() and _path == _result_path:
             return True
         return _inside(_path, _test_tmp)
 
@@ -121,10 +122,18 @@ def _entry():
                 raise PermissionError("test process cannot write outside its private temp root")
         elif _event in {
             "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown",
-            "os.truncate", "os.utime", "os.link", "os.symlink",
+            "os.truncate", "os.utime",
         }:
             if _args and not _write_is_allowed(_args[0]):
                 raise PermissionError("test process cannot mutate outside its private temp root")
+        elif _event == "os.link":
+            if _len(_args) < 2 or not all(
+                _write_is_allowed(_item) for _item in _args[:2]
+            ):
+                raise PermissionError("test process cannot link outside its private temp root")
+        elif _event == "os.symlink":
+            if _len(_args) < 2 or not _write_is_allowed(_args[1]):
+                raise PermissionError("test process cannot link outside its private temp root")
         elif _event == "os.rename":
             if _len(_args) < 2 or not all(_write_is_allowed(_item) for _item in _args[:2]):
                 raise PermissionError("test process cannot rename outside its private temp root")
@@ -163,6 +172,8 @@ def _entry():
 
     _recorder = _Recorder()
     _sys.argv[:] = [str(_subject)]
+    if hasattr(_sys, "orig_argv"):
+        _sys.orig_argv[:] = [str(_subject)]
     _module = _sys.modules.get("__main__")
     if _module is not None:
         for _name in tuple(vars(_module)):
@@ -188,7 +199,7 @@ def _entry():
         "skipped": _recorder.skipped,
         "executor_digest": _executor_digest,
     }, sort_keys=True).encode("utf-8")
-    _trusted_result_write[0] = True
+    _trusted_result_writer[0] = _get_ident()
     try:
         _descriptor = _open(
             _result_path,
@@ -201,7 +212,7 @@ def _entry():
         finally:
             _close(_descriptor)
     finally:
-        _trusted_result_write[0] = False
+        _trusted_result_writer[0] = None
     raise _system_exit(73)
 
 _entry()
@@ -404,6 +415,7 @@ _INTERPRETER_CONTROL_ATTRIBUTES = {
     "modules",
     "path_hooks",
     "pluginmanager",
+    "orig_argv",
     "tb_frame",
 }
 _PYTEST_CONTROL_HOOKS = {
@@ -920,6 +932,23 @@ def _execution_control_findings(
                     f"interpreter-control call is not allowed: {relative}:{node.lineno} "
                     f"({name})"
                 )
+            accessor = _resolved_call_name(node.func, aliases)
+            if accessor in {"getattr", "builtins.getattr"}:
+                member = _static_string(node.args[1]) if len(node.args) > 1 else None
+                acquired = _resolved_callable_name(node, aliases)
+                if member is None:
+                    findings.append(
+                        f"opaque reflected attribute access is not allowed: "
+                        f"{relative}:{node.lineno}"
+                    )
+                elif (
+                    member in _INTERPRETER_CONTROL_ATTRIBUTES
+                    or acquired in _INTERPRETER_CONTROL_CALLS
+                ):
+                    findings.append(
+                        f"reflected interpreter-control capability is not allowed: "
+                        f"{relative}:{node.lineno} ({member})"
+                    )
     return findings
 
 

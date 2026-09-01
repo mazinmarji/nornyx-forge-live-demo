@@ -22,8 +22,11 @@
   OS resource limits. The runner and executor use the same digest-verified
   in-memory byte-snapshot pattern as the top-level verifier. Before execution,
   static inspection refuses hard termination, reflection, and pytest lifecycle
-  control; during execution an audit hook confines writes to the pytest temp
-  root and refuses process starts. A separate trusted supervisor requires a
+  control, including folded and opaque reflected capability acquisition. Before
+  collection it scrubs both interpreter argument vectors; during execution an
+  audit hook confines writes to the pytest temp root, checks link destinations,
+  binds the completion write to its owning executor thread, and refuses process
+  starts. A separate trusted supervisor requires a
   complete executed-test record, a normal-completion sentinel, and the expected
   executor digest, and retains only a bounded output tail. The absolute Python
   environment entrypoint is preserved on POSIX rather than resolving the venv
