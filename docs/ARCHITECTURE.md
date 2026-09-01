@@ -18,10 +18,18 @@
   `PATH`, `PYTHONPATH`, or `PYTHONHOME`. Static checks stream bounded subject
   files without retaining the corpus. Tests run in a separate process over a
   private subject copy under an OS memory/process limit, with project `conftest.py`
-  hooks and project discovery configuration disabled. A trusted supervisor outside
-  the pytest interpreter validates the complete executed-test record, drains only a
-  bounded output tail, and the verifier re-censuses the subject before verdict;
-  project code never determines verifier resolution or runs from project cwd.
+  hooks and project discovery configuration disabled. The trusted runner and
+  pytest executor are also read once, digest-checked, and executed from those
+  in-memory bytes rather than reopened as Python pathnames. Executor state is
+  closure-held and removed from `__main__`; an irreversible audit hook restricts
+  writes to the pytest temp root and refuses process starts. Whole-subject static
+  inspection refuses hard exits, reflection, pytest lifecycle control, and other
+  capabilities that could reach the supervisor. A trusted supervisor outside the
+  pytest interpreter validates the complete executed-test record and its normal
+  completion sentinel, drains only a bounded output tail, and the verifier
+  re-censuses the original subject before verdict. Project code runs from the
+  private copy, never the original project cwd, and never determines verifier,
+  runner, or executor resolution.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf
@@ -74,7 +82,10 @@ until the greenfield profile passes. It may not select the profile or supply the
 verifier. `DevelopmentFlow` selects the profile from its trusted `repo_mode`;
 `gates` resolves the Forge-owned verifier and interpreter; the standalone
 verifier inspects project bytes and runs the project's tests only from a private
-copy after the static checks pass. Scripted reviewers receive a read-only tool
+copy after the static checks pass. The static profile intentionally refuses
+interpreter-control and reflection capabilities before arbitrary Python is
+executed; this is a bounded greenfield acceptance profile, not a general-purpose
+host sandbox. Scripted reviewers receive a read-only tool
 surface, and the trusted profile runs again after them, so a stale pre-review
 result cannot authorize changed bytes. Local evidence-ledger validity is also a
 verdict gate before `ALLOW` is recorded. Acceptance is the conjunction of these
@@ -83,9 +94,9 @@ are not verdict inputs.
 
 Greenfield provenance is structural and tamper-evident, not authenticated. Each
 gate and the acceptance event bind the profile ID/digest, verifier absolute
-origin/digest, executed byte-snapshot digest, Forge package version/source
-revision, subject digest, isolated commands, resource limits, trusted working
-directory, and environment policy. Those facts make the judge
+origin/digest, executed verifier/runner/executor byte-snapshot digests, Forge
+package version/source revision, subject digest, isolated commands, resource
+limits, trusted working directory, and environment policy. Those facts make the judge
 falsifiable and expose file changes. They do not prove who installed Forge, who
 controlled that installation, or that a cryptographic signer approved it.
 

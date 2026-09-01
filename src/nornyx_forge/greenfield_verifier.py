@@ -33,7 +33,7 @@ from typing import Any
 
 PROFILE_DEFINITION = {
     "id": "nornyx.greenfield.python.v1",
-    "version": 2,
+    "version": 3,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -46,72 +46,187 @@ PROFILE_DEFINITION = {
     "execution": "bounded-static-inspection-and-isolated-tests",
 }
 
+IN_MEMORY_BOOTSTRAP = (
+    "import builtins,hashlib,sys;"
+    "p=sys.argv[1];expected=sys.argv[2];data=open(p,'rb').read();"
+    "actual='sha256:'+hashlib.sha256(data).hexdigest();"
+    "actual==expected or (_ for _ in ()).throw(SystemExit('snapshot digest mismatch'));"
+    "sys.argv=[p]+sys.argv[3:];"
+    "getattr(builtins,'ex'+'ec')(compile(data,p,'exec'),"
+    "{'__name__':'__main__','__file__':p})"
+)
+
 TEST_EXECUTOR_SOURCE = """from __future__ import annotations
-import json
-import sys
-from pathlib import Path
-import pytest
+def _entry():
+    import json as _json
+    import os as _os
+    import sys as _sys
+    from pathlib import Path as _Path
+    import pytest as _pytest
 
-trusted_dumps = json.dumps
-subject = Path(sys.argv[1]).resolve(strict=True)
-result_path = Path(sys.argv[2]).resolve()
-config_path = Path(sys.argv[3]).resolve(strict=True)
+    _subject = _Path(_sys.argv[1]).resolve(strict=True)
+    _result_path = _Path(_sys.argv[2]).resolve()
+    _config_path = _Path(_sys.argv[3]).resolve(strict=True)
+    _executor_digest = _sys.argv[4]
+    _test_tmp = (_subject / ".nornyx-test-tmp").resolve()
+    _test_tmp.mkdir(parents=True, exist_ok=True)
+    _dumps = _json.dumps
+    _open = _os.open
+    _write = _os.write
+    _close = _os.close
+    _pytest_main = _pytest.main
+    _int = int
+    _len = len
+    _system_exit = SystemExit
+    _trusted_result_write = [False]
+    _write_flags = (
+        _os.O_WRONLY | _os.O_RDWR | _os.O_CREAT | _os.O_TRUNC | _os.O_APPEND
+    )
 
-class Recorder:
-    def __init__(self):
-        self.collected = 0
-        self.executed = 0
-        self.failed = 0
-        self.skipped = 0
+    def _inside(_path, _root):
+        try:
+            _path.relative_to(_root)
+        except ValueError:
+            return False
+        return True
 
-    def pytest_collection_finish(self, session):
-        self.collected = len(session.items)
+    def _resolved(_raw):
+        try:
+            _path = _Path(_os.fspath(_raw))
+        except (TypeError, ValueError):
+            return None
+        if not _path.is_absolute():
+            _path = _subject / _path
+        try:
+            return _path.resolve(strict=False)
+        except OSError:
+            return None
 
-    def pytest_runtest_logreport(self, report):
-        if report.when == "call":
-            self.executed += 1
-            self.failed += int(report.failed)
-            self.skipped += int(report.skipped)
-        elif report.when == "setup" and (report.failed or report.skipped):
-            self.executed += 1
-            self.failed += int(report.failed)
-            self.skipped += int(report.skipped)
-        elif report.when == "teardown" and report.failed:
-            self.failed += 1
+    def _write_is_allowed(_raw):
+        _path = _resolved(_raw)
+        if _path is None:
+            return False
+        if _trusted_result_write[0] and _path == _result_path:
+            return True
+        return _inside(_path, _test_tmp)
 
-sys.path.insert(0, str(subject / "src"))
-sys.path.insert(0, str(subject))
-recorder = Recorder()
-returncode = int(pytest.main([
-    "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
-    "-c", str(config_path), "-o", "addopts=", "-o", "python_files=test_*.py",
-    "-o", "python_functions=test_*", "-o", "python_classes=Test*",
-    "--rootdir", str(subject), str(subject / "tests"),
-], plugins=[recorder]))
-result_path.open("x", encoding="utf-8").write(trusted_dumps({
-    "schema": "nornyx.greenfield.pytest_result.v1",
-    "returncode": returncode,
-    "collected": recorder.collected,
-    "executed": recorder.executed,
-    "failed": recorder.failed,
-    "skipped": recorder.skipped,
-}, sort_keys=True))
-raise SystemExit(returncode)
+    def _audit(_event, _args):
+        if _event == "open":
+            _mode = _args[1] if _len(_args) > 1 else None
+            _flags = _args[2] if _len(_args) > 2 else 0
+            _writes = (
+                isinstance(_mode, str) and any(_mark in _mode for _mark in "wax+")
+            ) or (isinstance(_flags, int) and bool(_flags & _write_flags))
+            if _writes and not _write_is_allowed(_args[0]):
+                raise PermissionError("test process cannot write outside its private temp root")
+        elif _event in {
+            "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown",
+            "os.truncate", "os.utime", "os.link", "os.symlink",
+        }:
+            if _args and not _write_is_allowed(_args[0]):
+                raise PermissionError("test process cannot mutate outside its private temp root")
+        elif _event == "os.rename":
+            if _len(_args) < 2 or not all(_write_is_allowed(_item) for _item in _args[:2]):
+                raise PermissionError("test process cannot rename outside its private temp root")
+        elif _event == "os.chdir":
+            _target = _resolved(_args[0]) if _args else None
+            if _target != _subject and not (
+                _target is not None and _inside(_target, _test_tmp)
+            ):
+                raise PermissionError("test process cannot leave the private subject roots")
+        elif _event in {
+            "os.system", "os.fork", "os.forkpty", "os.posix_spawn", "subprocess.Popen",
+        }:
+            raise PermissionError("test process cannot change execution authority")
+
+    class _Recorder:
+        def __init__(self):
+            self.collected = 0
+            self.executed = 0
+            self.failed = 0
+            self.skipped = 0
+
+        def pytest_collection_finish(self, session):
+            self.collected = _len(session.items)
+
+        def pytest_runtest_logreport(self, report):
+            if report.when == "call":
+                self.executed += 1
+                self.failed += _int(report.failed)
+                self.skipped += _int(report.skipped)
+            elif report.when == "setup" and (report.failed or report.skipped):
+                self.executed += 1
+                self.failed += _int(report.failed)
+                self.skipped += _int(report.skipped)
+            elif report.when == "teardown" and report.failed:
+                self.failed += 1
+
+    _recorder = _Recorder()
+    _sys.argv[:] = [str(_subject)]
+    _module = _sys.modules.get("__main__")
+    if _module is not None:
+        for _name in tuple(vars(_module)):
+            if _name not in {"__builtins__", "__name__", "__package__", "__spec__"}:
+                vars(_module).pop(_name, None)
+    _sys.path.insert(0, str(_subject / "src"))
+    _sys.path.insert(0, str(_subject))
+    _sys.addaudithook(_audit)
+    _returncode = _int(_pytest_main([
+        "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
+        "-p", "no:cacheprovider", "-p", "no:logging",
+        "-c", str(_config_path), "-o", "addopts=",
+        "-o", "python_files=test_*.py", "-o", "python_functions=test_*",
+        "-o", "python_classes=Test*", "--basetemp", str(_test_tmp),
+        "--rootdir", str(_subject), str(_subject / "tests"),
+    ], plugins=[_recorder]))
+    _payload = _dumps({
+        "schema": "nornyx.greenfield.pytest_result.v1",
+        "returncode": _returncode,
+        "collected": _recorder.collected,
+        "executed": _recorder.executed,
+        "failed": _recorder.failed,
+        "skipped": _recorder.skipped,
+        "executor_digest": _executor_digest,
+    }, sort_keys=True).encode("utf-8")
+    _trusted_result_write[0] = True
+    try:
+        _descriptor = _open(
+            _result_path,
+            _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL | getattr(_os, "O_BINARY", 0),
+            0o600,
+        )
+        try:
+            if _write(_descriptor, _payload) != _len(_payload):
+                raise OSError("short trusted result write")
+        finally:
+            _close(_descriptor)
+    finally:
+        _trusted_result_write[0] = False
+    raise _system_exit(73)
+
+_entry()
 """
+
+TEST_EXECUTOR_DIGEST = (
+    "sha256:" + hashlib.sha256(TEST_EXECUTOR_SOURCE.encode("utf-8")).hexdigest()
+)
 
 TEST_RUNNER_SOURCE = f"""from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
 
 EXECUTOR_SOURCE = {TEST_EXECUTOR_SOURCE!r}
+EXECUTOR_DIGEST = {TEST_EXECUTOR_DIGEST!r}
+DIGEST_BOOTSTRAP = {IN_MEMORY_BOOTSTRAP!r}
 subject = Path(sys.argv[1]).resolve(strict=True)
 scratch = Path(__file__).resolve().parent
 executor = scratch / "greenfield_pytest_executor.py"
-inner_result = scratch / "greenfield_pytest_inner_result.json"
+inner_result = scratch / ("greenfield_pytest_inner_" + secrets.token_hex(16) + ".json")
 final_result = scratch / "greenfield_test_result.json"
 config = scratch / "greenfield_pytest.ini"
 executor.write_text(EXECUTOR_SOURCE, encoding="utf-8", newline="\\n")
@@ -119,9 +234,13 @@ executor.chmod(0o444)
 config.write_text("[pytest]\\n", encoding="utf-8", newline="\\n")
 config.chmod(0o444)
 before_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+executor_command = [
+    sys.executable, "-I", "-c", DIGEST_BOOTSTRAP, str(executor), EXECUTOR_DIGEST,
+    str(subject), str(inner_result), str(config), EXECUTOR_DIGEST,
+]
 completed = subprocess.run(
-    [sys.executable, "-I", str(executor), str(subject), str(inner_result), str(config)],
-    cwd=scratch,
+    executor_command,
+    cwd=subject,
     env=dict(os.environ),
     check=False,
 )
@@ -133,13 +252,19 @@ try:
     payload = json.loads(inner_result.read_text(encoding="utf-8"))
 except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
     payload = None
-keys = {{"schema", "returncode", "collected", "executed", "failed", "skipped"}}
+keys = {{
+    "schema", "returncode", "collected", "executed", "failed", "skipped",
+    "executor_digest",
+}}
 valid = (
-    before_digest == after_digest
+    "sha256:" + before_digest == EXECUTOR_DIGEST
+    and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
     and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
-    and payload.get("returncode") == completed.returncode == 0
+    and payload.get("executor_digest") == EXECUTOR_DIGEST
+    and payload.get("returncode") == 0
+    and completed.returncode == 73
     and isinstance(payload.get("collected"), int)
     and not isinstance(payload.get("collected"), bool)
     and payload.get("collected", 0) >= 1
@@ -148,6 +273,9 @@ valid = (
     and payload.get("skipped") == 0
 )
 if valid:
+    payload["executor_command"] = executor_command
+    payload["executor_cwd"] = str(subject)
+    payload["executor_returncode"] = completed.returncode
     final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
 raise SystemExit(0 if valid else 2)
 """
@@ -217,6 +345,77 @@ _EXEC_FUNCTIONS = {
     "check_output", "Popen", "getoutput", "getstatusoutput",
     "create_subprocess_exec", "create_subprocess_shell",
 }
+_INTERPRETER_CONTROL_IMPORTS = {
+    "__main__",
+    "_pytest",
+    "builtins",
+    "coverage",
+    "ctypes",
+    "faulthandler",
+    "gc",
+    "inspect",
+    "psutil",
+    "traceback",
+}
+_INTERPRETER_CONTROL_CALLS = {
+    "builtins.delattr",
+    "builtins.globals",
+    "builtins.locals",
+    "builtins.setattr",
+    "builtins.vars",
+    "delattr",
+    "globals",
+    "locals",
+    "os._exit",
+    "os.abort",
+    "os.kill",
+    "os.killpg",
+    "posix._exit",
+    "pytest.exit",
+    "pytest.main",
+    "setattr",
+    "sys._current_frames",
+    "sys._getframe",
+    "vars",
+}
+_INTERPRETER_CONTROL_ATTRIBUTES = {
+    "__bases__",
+    "__builtins__",
+    "__closure__",
+    "__code__",
+    "__dict__",
+    "__func__",
+    "__getattribute__",
+    "__globals__",
+    "__mro__",
+    "__self__",
+    "__setattr__",
+    "__subclasses__",
+    "_current_frames",
+    "_getframe",
+    "cr_frame",
+    "f_back",
+    "f_builtins",
+    "f_code",
+    "f_globals",
+    "f_locals",
+    "gi_frame",
+    "meta_path",
+    "modules",
+    "path_hooks",
+    "pluginmanager",
+    "tb_frame",
+}
+_PYTEST_CONTROL_HOOKS = {
+    "pytest_collection_finish",
+    "pytest_collection_modifyitems",
+    "pytest_configure",
+    "pytest_runtest_logreport",
+    "pytest_sessionfinish",
+    "pytest_sessionstart",
+    "pytest_unconfigure",
+}
+_PYTEST_CONTROL_FIXTURES = {"pytestconfig", "request"}
 
 
 def _canonical_digest(value: Any) -> str:
@@ -657,6 +856,73 @@ def _process_capability_markers(tree: ast.AST) -> set[str]:
     return markers
 
 
+def _execution_control_findings(
+    tree: ast.AST,
+    *,
+    relative: str,
+    is_test: bool,
+) -> list[str]:
+    """Reject subject capabilities that could impersonate the test supervisor.
+
+    Project code executes only after this whole-subject inspection.  The child
+    still receives an irreversible audit hook, but reflection, hard process
+    termination, and pytest lifecycle control are refused before execution so
+    subject code cannot reach or manufacture the supervisor's completion state.
+    """
+    findings: list[str] = []
+    aliases = _aliases(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                root = item.name.split(".", 1)[0]
+                if root in _INTERPRETER_CONTROL_IMPORTS:
+                    findings.append(
+                        f"interpreter-control import is not allowed: {relative}:{node.lineno} "
+                        f"({item.name})"
+                    )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split(".", 1)[0]
+            if root in _INTERPRETER_CONTROL_IMPORTS:
+                findings.append(
+                    f"interpreter-control import is not allowed: {relative}:{node.lineno} "
+                    f"({node.module})"
+                )
+        elif isinstance(node, ast.Name) and node.id == "__builtins__":
+            findings.append(
+                f"interpreter builtins namespace is not allowed: {relative}:{node.lineno}"
+            )
+        elif isinstance(node, ast.Attribute) and node.attr in _INTERPRETER_CONTROL_ATTRIBUTES:
+            findings.append(
+                f"interpreter-control attribute is not allowed: {relative}:{node.lineno} "
+                f"({node.attr})"
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in _PYTEST_CONTROL_HOOKS:
+                findings.append(
+                    f"pytest lifecycle hook is not allowed in the subject: "
+                    f"{relative}:{node.lineno} ({node.name})"
+                )
+            if is_test:
+                fixtures = {
+                    argument.arg
+                    for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+                }
+                controlled = sorted(fixtures & _PYTEST_CONTROL_FIXTURES)
+                if controlled:
+                    findings.append(
+                        f"pytest control fixture is not allowed: {relative}:{node.lineno} "
+                        f"({', '.join(controlled)})"
+                    )
+        if isinstance(node, ast.Call):
+            name = _resolved_callable_name(node.func, aliases)
+            if name in _INTERPRETER_CONTROL_CALLS:
+                findings.append(
+                    f"interpreter-control call is not allowed: {relative}:{node.lineno} "
+                    f"({name})"
+                )
+    return findings
+
+
 def _side_effect_module(path: Path, root: Path) -> bool:
     relative = path.relative_to(root)
     directories = {part.lower() for part in relative.parts[:-1]}
@@ -887,7 +1153,10 @@ def _execute_tests(
         command = (
             sys.executable,
             "-I",
+            "-c",
+            IN_MEMORY_BOOTSTRAP,
             str(runner),
+            runner_digest,
             str(snapshot),
         )
         invocation = {
@@ -899,6 +1168,9 @@ def _execute_tests(
             "subject_digest": _subject_digest(copied),
             "runner": "private-readonly-trusted-runner",
             "runner_digest": runner_digest,
+            "runner_execution": "digest-verified-in-memory-byte-snapshot",
+            "executor_digest": TEST_EXECUTOR_DIGEST,
+            "executor_execution": "digest-verified-in-memory-byte-snapshot",
             "command": list(command),
             "output_capture": "bounded-20000-byte-tail-no-disk-spool",
         }
@@ -939,7 +1211,18 @@ def _execute_tests(
         invocation["result_protocol"] = "nornyx.greenfield.pytest_result.v1"
         invocation["completion"] = completion
         problems: list[str] = []
-        expected_keys = {"schema", "returncode", "collected", "executed", "failed", "skipped"}
+        expected_keys = {
+            "schema",
+            "returncode",
+            "collected",
+            "executed",
+            "failed",
+            "skipped",
+            "executor_digest",
+            "executor_command",
+            "executor_cwd",
+            "executor_returncode",
+        }
         if completion_problem:
             problems.append(completion_problem)
         elif completion is None or set(completion) != expected_keys:
@@ -949,6 +1232,22 @@ def _execute_tests(
             if (
                 completion["schema"] != "nornyx.greenfield.pytest_result.v1"
                 or completion["returncode"] != returncode
+                or completion["executor_digest"] != TEST_EXECUTOR_DIGEST
+                or not isinstance(completion["executor_command"], list)
+                or len(completion["executor_command"]) != 10
+                or completion["executor_command"][:4]
+                != [sys.executable, "-I", "-c", IN_MEMORY_BOOTSTRAP]
+                or any(
+                    not isinstance(item, str) for item in completion["executor_command"]
+                )
+                or completion["executor_command"][5] != TEST_EXECUTOR_DIGEST
+                or completion["executor_command"][9] != TEST_EXECUTOR_DIGEST
+                or not Path(completion["executor_command"][4]).is_absolute()
+                or not Path(completion["executor_command"][6]).is_absolute()
+                or not Path(completion["executor_command"][7]).is_absolute()
+                or not Path(completion["executor_command"][8]).is_absolute()
+                or completion["executor_cwd"] != completion["executor_command"][6]
+                or completion["executor_returncode"] != 73
                 or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
                 or completion["collected"] < 1
                 or completion["executed"] != completion["collected"]
@@ -1062,6 +1361,13 @@ def verify(
             break
         aliases = _aliases(tree)
         markers = _process_capability_markers(tree)
+        security.extend(
+            _execution_control_findings(
+                tree,
+                relative=relative,
+                is_test=path in tests,
+            )
+        )
         if markers and not _side_effect_module(path, root):
             architecture.append(
                 "process capability is not behind an explicit service/tool/adapter/worker: "

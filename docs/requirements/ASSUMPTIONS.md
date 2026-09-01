@@ -353,9 +353,14 @@ Python, and constructs an environment with
 no project-controlled PATH or Python import variables. Static checks stream
 bounded project bytes; project tests execute only from a private subject copy in
 a separate resource-limited process with project `conftest.py` hooks and discovery
-configuration disabled. A trusted supervisor outside the pytest interpreter
-requires a complete executed-test record, bounds retained output, and performs a
-final subject census. Scripted model checks have a read-only tool surface and are
+configuration disabled. The runner and executor are each digest-checked and
+executed from the same in-memory bytes. Executor completion state is not exposed
+through `__main__`; static inspection refuses hard exits, reflection, and pytest
+lifecycle control, while an audit hook confines writes and process authority.
+A trusted supervisor outside the pytest interpreter requires a complete
+executed-test record, the expected executor digest and a normal-completion
+sentinel, bounds retained output, and performs a final subject census. Scripted
+model checks have a read-only tool surface and are
 followed by a final trusted rerun. Profile and verifier identity,
 origin, version/revision and digests, plus the final subject digest, travel with
 every gate and the acceptance event. The provenance is structural/tamper-evident;

@@ -18,6 +18,7 @@ from typing import Any, Callable
 import pytest
 
 import nornyx_forge.gates as gate_module
+import nornyx_forge.greenfield_verifier as verifier_module
 from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.gates import default_gates, trusted_greenfield_gates
 from nornyx_forge.models import WorkerResult
@@ -315,6 +316,22 @@ def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests
     assert provenance["subject"]["digest"].startswith("sha256:")
     assert provenance["resource_limits"]["enforced"] is True
     assert provenance["test_execution"]["subject"] == "private-temporary-copy"
+    assert provenance["test_execution"]["runner_execution"] == (
+        "digest-verified-in-memory-byte-snapshot"
+    )
+    assert provenance["test_execution"]["executor_execution"] == (
+        "digest-verified-in-memory-byte-snapshot"
+    )
+    assert provenance["test_execution"]["executor_digest"] == (
+        gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST
+    )
+    assert provenance["test_execution"]["completion"]["executor_returncode"] == 73
+    assert provenance["test_execution"]["completion"]["executor_command"][:4] == [
+        str(Path(gate_module.sys.executable).resolve()),
+        "-I",
+        "-c",
+        gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+    ]
 
 
 def test_verifier_identity_fails_closed_inside_the_provider_workspace(
@@ -339,8 +356,11 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
     version = command[command.index("--forge-version") + 1]
     revision = command[command.index("--forge-revision") + 1]
     subject_digest = "sha256:" + "1" * 64
-    test_runner = str(Path(command[2]).with_name("greenfield_test_runner.py"))
-    test_subject = str(Path(command[2]).with_name("subject-snapshot"))
+    test_runner = str(Path(command[4]).with_name("greenfield_test_runner.py"))
+    test_subject = str(Path(command[4]).with_name("subject-snapshot"))
+    test_executor = str(Path(command[4]).with_name("greenfield_pytest_executor.py"))
+    test_inner_result = str(Path(command[4]).with_name("greenfield_pytest_inner.json"))
+    test_config = str(Path(command[4]).with_name("greenfield_pytest.ini"))
     return {
         "schema": "nornyx.forge.greenfield_verification.v1",
         "status": "pass",
@@ -352,7 +372,7 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
             "id": gate_module.GREENFIELD_VERIFIER_ID,
             "origin": origin,
             "digest": digest,
-            "execution_origin": command[2],
+            "execution_origin": command[4],
             "execution_digest": digest,
             "forge_version": version,
             "forge_revision": revision,
@@ -368,7 +388,18 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
             "subject_digest": subject_digest,
             "runner": "private-readonly-trusted-runner",
             "runner_digest": gate_module.GREENFIELD_TEST_RUNNER_DIGEST,
-            "command": [command[0], "-I", test_runner, test_subject],
+            "runner_execution": "digest-verified-in-memory-byte-snapshot",
+            "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+            "executor_execution": "digest-verified-in-memory-byte-snapshot",
+            "command": [
+                command[0],
+                "-I",
+                "-c",
+                gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+                test_runner,
+                gate_module.GREENFIELD_TEST_RUNNER_DIGEST,
+                test_subject,
+            ],
             "output_capture": "bounded-20000-byte-tail-no-disk-spool",
             "output_bytes": 100,
             "result_protocol": "nornyx.greenfield.pytest_result.v1",
@@ -379,6 +410,21 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
                 "executed": 1,
                 "failed": 0,
                 "skipped": 0,
+                "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+                "executor_command": [
+                    command[0],
+                    "-I",
+                    "-c",
+                    gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+                    test_executor,
+                    gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+                    test_subject,
+                    test_inner_result,
+                    test_config,
+                    gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+                ],
+                "executor_cwd": test_subject,
+                "executor_returncode": 73,
             },
             "final_subject_digest": subject_digest,
         },
@@ -417,6 +463,22 @@ _INVALID_CHILD_PAYLOADS = [
     ("gate-passed-type", lambda value: value["gates"][0].__setitem__("passed", "yes")),
     ("gate-detail-type", lambda value: value["gates"][0].__setitem__("detail", 1)),
     ("test-provenance", lambda value: value["test_execution"].__setitem__("subject_digest", "sha256:" + "0" * 64)),
+    (
+        "runner-execution",
+        lambda value: value["test_execution"].__setitem__("runner_execution", "by-path"),
+    ),
+    (
+        "executor-digest",
+        lambda value: value["test_execution"].__setitem__(
+            "executor_digest", "sha256:" + "0" * 64
+        ),
+    ),
+    (
+        "executor-command",
+        lambda value: value["test_execution"]["completion"]["executor_command"].__setitem__(
+            3, "exec-by-path"
+        ),
+    ),
     ("status", lambda value: value.__setitem__("status", "fail")),
 ]
 
@@ -664,6 +726,27 @@ def test_project_tests_cannot_force_a_successful_runner_exit(tmp_path: Path) -> 
         "import os\n\ndef test_forced_exit():\n    os._exit(0)\n    assert False\n",
         "import pytest\npytest.exit('forced', returncode=0)\n\n"
         "def test_never_runs():\n    assert False\n",
+        "import __main__\nimport json\nimport os\nfrom pathlib import Path\n\n"
+        "def test_forged_completion():\n"
+        "    payload = {'schema': 'nornyx.greenfield.pytest_result.v1', "
+        "'returncode': 0, 'collected': 1, 'executed': 1, 'failed': 0, 'skipped': 0}\n"
+        "    Path(__main__.result_path).write_text(json.dumps(payload), encoding='utf-8')\n"
+        "    os._exit(0)\n"
+        "    assert False\n",
+        "import __main__\nimport pytest\n\n"
+        "__main__.trusted_dumps = lambda value, **kwargs: "
+        "\"{\\\"schema\\\":\\\"nornyx.greenfield.pytest_result.v1\\\","
+        "\\\"returncode\\\":0,\\\"collected\\\":1,\\\"executed\\\":1,"
+        "\\\"failed\\\":0,\\\"skipped\\\":0}\"\n"
+        "pytest.exit('forged completion', returncode=0)\n\n"
+        "def test_never_runs():\n    assert False\n",
+        "import pytest\n\n"
+        "class ExitRewriter:\n"
+        "    def pytest_sessionfinish(self, session):\n"
+        "        session.exitstatus = 0\n\n"
+        "def test_registers_runtime_plugin(request):\n"
+        "    request.config.pluginmanager.register(ExitRewriter())\n"
+        "    assert False\n",
     )
     for index, source in enumerate(specimens):
         project = _valid_project(tmp_path / str(index))
@@ -673,6 +756,22 @@ def test_project_tests_cannot_force_a_successful_runner_exit(tmp_path: Path) -> 
 
         assert result["accepted"] is False
         assert _gate(result, "test-execution")["passed"] is False
+        assert (
+            _gate(result, "security-static")["passed"] is False
+            or "completion record" in _gate(result, "test-execution")["detail"]
+        )
+
+
+def test_runner_and_executor_use_digest_verified_in_memory_snapshots() -> None:
+    assert gate_module.GREENFIELD_TEST_RUNNER_SOURCE == (
+        verifier_module.TEST_RUNNER_SOURCE
+    )
+    assert gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE == (
+        verifier_module.TEST_EXECUTOR_SOURCE
+    )
+    assert "executor_command = [" in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
+    assert '"-I", "-c", DIGEST_BOOTSTRAP' in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
+    assert "completed.returncode == 73" in gate_module.GREENFIELD_TEST_RUNNER_SOURCE
 
 
 def test_project_test_output_is_drained_without_an_unbounded_spool(tmp_path: Path) -> None:

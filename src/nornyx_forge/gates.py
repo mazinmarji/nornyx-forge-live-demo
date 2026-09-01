@@ -18,7 +18,7 @@ GREENFIELD_PROFILE_ID = "nornyx.greenfield.python.v1"
 GREENFIELD_VERIFIER_ID = "nornyx_forge.greenfield_verifier"
 GREENFIELD_PROFILE_DEFINITION = {
     "id": GREENFIELD_PROFILE_ID,
-    "version": 2,
+    "version": 3,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -31,72 +31,187 @@ GREENFIELD_PROFILE_DEFINITION = {
     "execution": "bounded-static-inspection-and-isolated-tests",
 }
 GREENFIELD_GATE_IDS = tuple(GREENFIELD_PROFILE_DEFINITION["checks"])
+GREENFIELD_IN_MEMORY_BOOTSTRAP = (
+    "import builtins,hashlib,sys;"
+    "p=sys.argv[1];expected=sys.argv[2];data=open(p,'rb').read();"
+    "actual='sha256:'+hashlib.sha256(data).hexdigest();"
+    "actual==expected or (_ for _ in ()).throw(SystemExit('snapshot digest mismatch'));"
+    "sys.argv=[p]+sys.argv[3:];"
+    "getattr(builtins,'ex'+'ec')(compile(data,p,'exec'),"
+    "{'__name__':'__main__','__file__':p})"
+)
+
 GREENFIELD_TEST_EXECUTOR_SOURCE = """from __future__ import annotations
-import json
-import sys
-from pathlib import Path
-import pytest
+def _entry():
+    import json as _json
+    import os as _os
+    import sys as _sys
+    from pathlib import Path as _Path
+    import pytest as _pytest
 
-trusted_dumps = json.dumps
-subject = Path(sys.argv[1]).resolve(strict=True)
-result_path = Path(sys.argv[2]).resolve()
-config_path = Path(sys.argv[3]).resolve(strict=True)
+    _subject = _Path(_sys.argv[1]).resolve(strict=True)
+    _result_path = _Path(_sys.argv[2]).resolve()
+    _config_path = _Path(_sys.argv[3]).resolve(strict=True)
+    _executor_digest = _sys.argv[4]
+    _test_tmp = (_subject / ".nornyx-test-tmp").resolve()
+    _test_tmp.mkdir(parents=True, exist_ok=True)
+    _dumps = _json.dumps
+    _open = _os.open
+    _write = _os.write
+    _close = _os.close
+    _pytest_main = _pytest.main
+    _int = int
+    _len = len
+    _system_exit = SystemExit
+    _trusted_result_write = [False]
+    _write_flags = (
+        _os.O_WRONLY | _os.O_RDWR | _os.O_CREAT | _os.O_TRUNC | _os.O_APPEND
+    )
 
-class Recorder:
-    def __init__(self):
-        self.collected = 0
-        self.executed = 0
-        self.failed = 0
-        self.skipped = 0
+    def _inside(_path, _root):
+        try:
+            _path.relative_to(_root)
+        except ValueError:
+            return False
+        return True
 
-    def pytest_collection_finish(self, session):
-        self.collected = len(session.items)
+    def _resolved(_raw):
+        try:
+            _path = _Path(_os.fspath(_raw))
+        except (TypeError, ValueError):
+            return None
+        if not _path.is_absolute():
+            _path = _subject / _path
+        try:
+            return _path.resolve(strict=False)
+        except OSError:
+            return None
 
-    def pytest_runtest_logreport(self, report):
-        if report.when == "call":
-            self.executed += 1
-            self.failed += int(report.failed)
-            self.skipped += int(report.skipped)
-        elif report.when == "setup" and (report.failed or report.skipped):
-            self.executed += 1
-            self.failed += int(report.failed)
-            self.skipped += int(report.skipped)
-        elif report.when == "teardown" and report.failed:
-            self.failed += 1
+    def _write_is_allowed(_raw):
+        _path = _resolved(_raw)
+        if _path is None:
+            return False
+        if _trusted_result_write[0] and _path == _result_path:
+            return True
+        return _inside(_path, _test_tmp)
 
-sys.path.insert(0, str(subject / "src"))
-sys.path.insert(0, str(subject))
-recorder = Recorder()
-returncode = int(pytest.main([
-    "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
-    "-c", str(config_path), "-o", "addopts=", "-o", "python_files=test_*.py",
-    "-o", "python_functions=test_*", "-o", "python_classes=Test*",
-    "--rootdir", str(subject), str(subject / "tests"),
-], plugins=[recorder]))
-result_path.open("x", encoding="utf-8").write(trusted_dumps({
-    "schema": "nornyx.greenfield.pytest_result.v1",
-    "returncode": returncode,
-    "collected": recorder.collected,
-    "executed": recorder.executed,
-    "failed": recorder.failed,
-    "skipped": recorder.skipped,
-}, sort_keys=True))
-raise SystemExit(returncode)
+    def _audit(_event, _args):
+        if _event == "open":
+            _mode = _args[1] if _len(_args) > 1 else None
+            _flags = _args[2] if _len(_args) > 2 else 0
+            _writes = (
+                isinstance(_mode, str) and any(_mark in _mode for _mark in "wax+")
+            ) or (isinstance(_flags, int) and bool(_flags & _write_flags))
+            if _writes and not _write_is_allowed(_args[0]):
+                raise PermissionError("test process cannot write outside its private temp root")
+        elif _event in {
+            "os.remove", "os.rmdir", "os.mkdir", "os.chmod", "os.chown",
+            "os.truncate", "os.utime", "os.link", "os.symlink",
+        }:
+            if _args and not _write_is_allowed(_args[0]):
+                raise PermissionError("test process cannot mutate outside its private temp root")
+        elif _event == "os.rename":
+            if _len(_args) < 2 or not all(_write_is_allowed(_item) for _item in _args[:2]):
+                raise PermissionError("test process cannot rename outside its private temp root")
+        elif _event == "os.chdir":
+            _target = _resolved(_args[0]) if _args else None
+            if _target != _subject and not (
+                _target is not None and _inside(_target, _test_tmp)
+            ):
+                raise PermissionError("test process cannot leave the private subject roots")
+        elif _event in {
+            "os.system", "os.fork", "os.forkpty", "os.posix_spawn", "subprocess.Popen",
+        }:
+            raise PermissionError("test process cannot change execution authority")
+
+    class _Recorder:
+        def __init__(self):
+            self.collected = 0
+            self.executed = 0
+            self.failed = 0
+            self.skipped = 0
+
+        def pytest_collection_finish(self, session):
+            self.collected = _len(session.items)
+
+        def pytest_runtest_logreport(self, report):
+            if report.when == "call":
+                self.executed += 1
+                self.failed += _int(report.failed)
+                self.skipped += _int(report.skipped)
+            elif report.when == "setup" and (report.failed or report.skipped):
+                self.executed += 1
+                self.failed += _int(report.failed)
+                self.skipped += _int(report.skipped)
+            elif report.when == "teardown" and report.failed:
+                self.failed += 1
+
+    _recorder = _Recorder()
+    _sys.argv[:] = [str(_subject)]
+    _module = _sys.modules.get("__main__")
+    if _module is not None:
+        for _name in tuple(vars(_module)):
+            if _name not in {"__builtins__", "__name__", "__package__", "__spec__"}:
+                vars(_module).pop(_name, None)
+    _sys.path.insert(0, str(_subject / "src"))
+    _sys.path.insert(0, str(_subject))
+    _sys.addaudithook(_audit)
+    _returncode = _int(_pytest_main([
+        "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
+        "-p", "no:cacheprovider", "-p", "no:logging",
+        "-c", str(_config_path), "-o", "addopts=",
+        "-o", "python_files=test_*.py", "-o", "python_functions=test_*",
+        "-o", "python_classes=Test*", "--basetemp", str(_test_tmp),
+        "--rootdir", str(_subject), str(_subject / "tests"),
+    ], plugins=[_recorder]))
+    _payload = _dumps({
+        "schema": "nornyx.greenfield.pytest_result.v1",
+        "returncode": _returncode,
+        "collected": _recorder.collected,
+        "executed": _recorder.executed,
+        "failed": _recorder.failed,
+        "skipped": _recorder.skipped,
+        "executor_digest": _executor_digest,
+    }, sort_keys=True).encode("utf-8")
+    _trusted_result_write[0] = True
+    try:
+        _descriptor = _open(
+            _result_path,
+            _os.O_WRONLY | _os.O_CREAT | _os.O_EXCL | getattr(_os, "O_BINARY", 0),
+            0o600,
+        )
+        try:
+            if _write(_descriptor, _payload) != _len(_payload):
+                raise OSError("short trusted result write")
+        finally:
+            _close(_descriptor)
+    finally:
+        _trusted_result_write[0] = False
+    raise _system_exit(73)
+
+_entry()
 """
+
+GREENFIELD_TEST_EXECUTOR_DIGEST = (
+    "sha256:" + hashlib.sha256(GREENFIELD_TEST_EXECUTOR_SOURCE.encode("utf-8")).hexdigest()
+)
 
 GREENFIELD_TEST_RUNNER_SOURCE = f"""from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
 
 EXECUTOR_SOURCE = {GREENFIELD_TEST_EXECUTOR_SOURCE!r}
+EXECUTOR_DIGEST = {GREENFIELD_TEST_EXECUTOR_DIGEST!r}
+DIGEST_BOOTSTRAP = {GREENFIELD_IN_MEMORY_BOOTSTRAP!r}
 subject = Path(sys.argv[1]).resolve(strict=True)
 scratch = Path(__file__).resolve().parent
 executor = scratch / "greenfield_pytest_executor.py"
-inner_result = scratch / "greenfield_pytest_inner_result.json"
+inner_result = scratch / ("greenfield_pytest_inner_" + secrets.token_hex(16) + ".json")
 final_result = scratch / "greenfield_test_result.json"
 config = scratch / "greenfield_pytest.ini"
 executor.write_text(EXECUTOR_SOURCE, encoding="utf-8", newline="\\n")
@@ -104,9 +219,13 @@ executor.chmod(0o444)
 config.write_text("[pytest]\\n", encoding="utf-8", newline="\\n")
 config.chmod(0o444)
 before_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+executor_command = [
+    sys.executable, "-I", "-c", DIGEST_BOOTSTRAP, str(executor), EXECUTOR_DIGEST,
+    str(subject), str(inner_result), str(config), EXECUTOR_DIGEST,
+]
 completed = subprocess.run(
-    [sys.executable, "-I", str(executor), str(subject), str(inner_result), str(config)],
-    cwd=scratch,
+    executor_command,
+    cwd=subject,
     env=dict(os.environ),
     check=False,
 )
@@ -118,13 +237,19 @@ try:
     payload = json.loads(inner_result.read_text(encoding="utf-8"))
 except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
     payload = None
-keys = {{"schema", "returncode", "collected", "executed", "failed", "skipped"}}
+keys = {{
+    "schema", "returncode", "collected", "executed", "failed", "skipped",
+    "executor_digest",
+}}
 valid = (
-    before_digest == after_digest
+    "sha256:" + before_digest == EXECUTOR_DIGEST
+    and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
     and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
-    and payload.get("returncode") == completed.returncode == 0
+    and payload.get("executor_digest") == EXECUTOR_DIGEST
+    and payload.get("returncode") == 0
+    and completed.returncode == 73
     and isinstance(payload.get("collected"), int)
     and not isinstance(payload.get("collected"), bool)
     and payload.get("collected", 0) >= 1
@@ -133,6 +258,9 @@ valid = (
     and payload.get("skipped") == 0
 )
 if valid:
+    payload["executor_command"] = executor_command
+    payload["executor_cwd"] = str(subject)
+    payload["executor_returncode"] = completed.returncode
     final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
 raise SystemExit(0 if valid else 2)
 """
@@ -165,15 +293,7 @@ GREENFIELD_RESOURCE_LIMITS = (
     }
 )
 
-_VERIFIER_BOOTSTRAP = (
-    "import builtins,hashlib,sys;"
-    "p=sys.argv[1];expected=sys.argv[2];data=open(p,'rb').read();"
-    "actual='sha256:'+hashlib.sha256(data).hexdigest();"
-    "actual==expected or (_ for _ in ()).throw(SystemExit('verifier digest mismatch'));"
-    "sys.argv=[p]+sys.argv[3:];"
-    "getattr(builtins,'ex'+'ec')(compile(data,p,'exec'),"
-    "{'__name__':'__main__','__file__':p})"
-)
+_VERIFIER_BOOTSTRAP = GREENFIELD_IN_MEMORY_BOOTSTRAP
 
 
 def _digest_file(path: Path) -> str:
@@ -285,12 +405,12 @@ def _closed_failure(
 def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, Any]]:
     """Run the Forge-owned greenfield profile without trusting project state.
 
-    The project is an argument, never the verifier working directory. Both
-    executable paths are absolute, ``-I`` ignores project import/environment
-    precedence, and the child receives a constructed environment with no PATH,
-    PYTHONPATH, or PYTHONHOME. The already-digested verifier bytes execute from
-    a private read-only snapshot and run project tests from a second private
-    snapshot under OS resource limits.
+    The project is an argument, never the verifier working directory. The
+    interpreter path is absolute, ``-I`` ignores project import/environment
+    precedence, and each child receives a constructed environment with no PATH,
+    PYTHONPATH, or PYTHONHOME. Verifier, runner, and executor snapshots are each
+    read once, digest-checked, and executed from those in-memory bytes. Tests run
+    from a separate private subject copy under OS resource limits.
     """
     try:
         project = Path(root).resolve(strict=True)
@@ -494,12 +614,14 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         completion = test_execution.get("completion") if isinstance(test_execution, dict) else None
         if (
             not isinstance(test_command, list)
-            or len(test_command) != 4
-            or test_command[:2] != [str(interpreter), "-I"]
-            or not Path(test_command[2]).is_absolute()
-            or not Path(test_command[3]).is_absolute()
-            or _inside(Path(test_command[2]), project)
-            or _inside(Path(test_command[3]), project)
+            or len(test_command) != 7
+            or test_command[:4]
+            != [str(interpreter), "-I", "-c", GREENFIELD_IN_MEMORY_BOOTSTRAP]
+            or not Path(test_command[4]).is_absolute()
+            or test_command[5] != GREENFIELD_TEST_RUNNER_DIGEST
+            or not Path(test_command[6]).is_absolute()
+            or _inside(Path(test_command[4]), project)
+            or _inside(Path(test_command[6]), project)
             or test_execution.get("isolated_python") is not True
             or test_execution.get("python") != str(interpreter)
             or test_execution.get("environment")
@@ -509,6 +631,11 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             or test_cwd != str(verifier.parent)
             or test_execution.get("runner") != "private-readonly-trusted-runner"
             or test_execution.get("runner_digest") != GREENFIELD_TEST_RUNNER_DIGEST
+            or test_execution.get("runner_execution")
+            != "digest-verified-in-memory-byte-snapshot"
+            or test_execution.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
+            or test_execution.get("executor_execution")
+            != "digest-verified-in-memory-byte-snapshot"
             or test_execution.get("output_capture")
             != "bounded-20000-byte-tail-no-disk-spool"
             or not isinstance(test_execution.get("output_bytes"), int)
@@ -518,8 +645,39 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             != "nornyx.greenfield.pytest_result.v1"
             or not isinstance(completion, dict)
             or set(completion)
-            != {"schema", "returncode", "collected", "executed", "failed", "skipped"}
+            != {
+                "schema",
+                "returncode",
+                "collected",
+                "executed",
+                "failed",
+                "skipped",
+                "executor_digest",
+                "executor_command",
+                "executor_cwd",
+                "executor_returncode",
+            }
             or completion.get("schema") != "nornyx.greenfield.pytest_result.v1"
+            or completion.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
+            or not isinstance(completion.get("executor_command"), list)
+            or len(completion.get("executor_command", [])) != 10
+            or completion.get("executor_command", [])[:4]
+            != [str(interpreter), "-I", "-c", GREENFIELD_IN_MEMORY_BOOTSTRAP]
+            or any(
+                not isinstance(item, str)
+                for item in completion.get("executor_command", [])
+            )
+            or completion.get("executor_command", [None] * 10)[5]
+            != GREENFIELD_TEST_EXECUTOR_DIGEST
+            or completion.get("executor_command", [None] * 10)[9]
+            != GREENFIELD_TEST_EXECUTOR_DIGEST
+            or not Path(completion.get("executor_command", [None] * 10)[4]).is_absolute()
+            or not Path(completion.get("executor_command", [None] * 10)[6]).is_absolute()
+            or _inside(Path(completion.get("executor_command", [None] * 10)[4]), project)
+            or _inside(Path(completion.get("executor_command", [None] * 10)[6]), project)
+            or completion.get("executor_cwd")
+            != completion.get("executor_command", [None] * 10)[6]
+            or completion.get("executor_returncode") != 73
             or completion.get("returncode") != 0
             or not isinstance(completion.get("collected"), int)
             or isinstance(completion.get("collected"), bool)
@@ -541,9 +699,12 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         test_command = test_execution.get("command")
         if (
             not isinstance(test_command, list)
-            or len(test_command) != 4
-            or test_command[:2] != [str(interpreter), "-I"]
+            or len(test_command) != 7
+            or test_command[:4]
+            != [str(interpreter), "-I", "-c", GREENFIELD_IN_MEMORY_BOOTSTRAP]
+            or test_command[5] != GREENFIELD_TEST_RUNNER_DIGEST
             or test_execution.get("runner_digest") != GREENFIELD_TEST_RUNNER_DIGEST
+            or test_execution.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
         ):
             return _closed_failure(
                 "failed test-execution provenance is absent or malformed",

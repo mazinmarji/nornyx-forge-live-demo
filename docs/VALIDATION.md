@@ -19,8 +19,13 @@
   `nornyx.greenfield.python.v1`, invoked from trusted Forge bytes without PATH or
   project import resolution. The test process receives a private subject copy,
   disables project `conftest.py` hooks and discovery configuration, and applies
-  OS resource limits. A separate trusted supervisor requires a complete executed-
-  test record and retains only a bounded output tail. Read the count and
+  OS resource limits. The runner and executor use the same digest-verified
+  in-memory byte-snapshot pattern as the top-level verifier. Before execution,
+  static inspection refuses hard termination, reflection, and pytest lifecycle
+  control; during execution an audit hook confines writes to the pytest temp
+  root and refuses process starts. A separate trusted supervisor requires a
+  complete executed-test record, a normal-completion sentinel, and the expected
+  executor digest, and retains only a bounded output tail. Read the count and
   provenance from the build report
   produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.

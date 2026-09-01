@@ -217,12 +217,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
-    # PR-16's trust boundary: 83 collected after in-session review, floor at
-    # band(83) = 75. Real DevelopmentFlow repair/review paths, all seven hostile
+    # PR-16's trust boundary: 87 collected after in-session review, floor at
+    # band(87) = 79. Real DevelopmentFlow repair/review paths, all seven hostile
     # specimens, exact isolated invocation, strict result-protocol refusals,
     # process-capability equivalence, provenance, and the controlled old-profile
     # false green live together. Eight named identities are pinned separately.
-    "tests/test_trusted_greenfield_acceptance.py": 75,
+    "tests/test_trusted_greenfield_acceptance.py": 79,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -450,18 +450,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # brd-authoring round: 9 new collected in tests/test_brd_authoring.py
 # (102 -> 103 modules). Re-measured for the build-trigger round: 9 new
 # collected in tests/test_build_trigger.py (103 -> 104 modules). Re-measured
-# for the PR-16 trusted-greenfield round and its inspector remediation: 83
+# for the PR-16 trusted-greenfield round and its inspector remediation: 87
 # collected in tests/test_trusted_greenfield_acceptance.py and eight new census
 # identity proofs in tests/test_skip_gate.py (104 -> 105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2553   (105 modules)
-#     sum of the module floors    2350
-#     band(2553) = ceil(0.9*n)    2298
+#     collected across tests/     2557   (105 modules)
+#     sum of the module floors    2354
+#     band(2557) = ceil(0.9*n)    2302
 #     MINIMUM_COLLECTED           2362
-#     above the module sum        12
-#     below what collects         191
+#     above the module sum         8
+#     below what collects         195
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
