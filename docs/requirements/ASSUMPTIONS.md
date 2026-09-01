@@ -347,12 +347,16 @@ the provider can modify every file in its workspace.
 
 **Resolution.** `repo_mode="greenfield"` selects a deterministic profile in
 trusted `DevelopmentFlow` code. Forge reads and digests the installed standalone
-verifier, executes those bytes from a private read-only snapshot with an
-absolute interpreter under isolated Python, and constructs an environment with
+verifier, reads a private snapshot once through a digest-checking in-memory
+bootstrap, executes those same bytes with an absolute interpreter under isolated
+Python, and constructs an environment with
 no project-controlled PATH or Python import variables. Static checks stream
 bounded project bytes; project tests execute only from a private subject copy in
-a separate resource-limited process. Scripted model checks have a read-only tool
-surface and are followed by a final trusted rerun. Profile and verifier identity,
+a separate resource-limited process with project `conftest.py` hooks and discovery
+configuration disabled. A trusted supervisor outside the pytest interpreter
+requires a complete executed-test record, bounds retained output, and performs a
+final subject census. Scripted model checks have a read-only tool surface and are
+followed by a final trusted rerun. Profile and verifier identity,
 origin, version/revision and digests, plus the final subject digest, travel with
 every gate and the acceptance event. The provenance is structural/tamper-evident;
 it is not a signature, proof of installer identity, or a sandbox against every

@@ -17,8 +17,11 @@
   on PATH. For `repo_mode="greenfield"`, the count and profile are deterministic:
   six bounded static checks plus isolated test execution from
   `nornyx.greenfield.python.v1`, invoked from trusted Forge bytes without PATH or
-  project import resolution. The test process receives a private subject copy
-  and OS resource limits. Read the count and provenance from the build report
+  project import resolution. The test process receives a private subject copy,
+  disables project `conftest.py` hooks and discovery configuration, and applies
+  OS resource limits. A separate trusted supervisor requires a complete executed-
+  test record and retains only a bounded output tail. Read the count and
+  provenance from the build report
   produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.

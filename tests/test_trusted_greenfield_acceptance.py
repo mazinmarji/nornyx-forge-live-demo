@@ -255,12 +255,13 @@ def test_exact_invocation_ignores_project_local_nornyx_forge(
     command = gates[0].command
     trusted = Path(gate_module.__file__).with_name("greenfield_verifier.py").resolve()
     assert command[1] == "-I"
-    assert Path(command[2]).is_absolute()
-    assert Path(command[2]) != trusted
+    assert command[2] == "-c"
+    assert Path(command[4]).is_absolute()
+    assert Path(command[4]) != trusted
     assert command[command.index("--trusted-origin") + 1] == str(trusted)
     assert provenance["verifier"]["origin"] == str(trusted)
     assert provenance["invocation"]["verifier_execution"] == (
-        "private-readonly-byte-snapshot"
+        "digest-verified-in-memory-byte-snapshot"
     )
     assert Path(provenance["invocation"]["cwd"]) == trusted.parent
 
@@ -368,6 +369,18 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
             "runner": "private-readonly-trusted-runner",
             "runner_digest": gate_module.GREENFIELD_TEST_RUNNER_DIGEST,
             "command": [command[0], "-I", test_runner, test_subject],
+            "output_capture": "bounded-20000-byte-tail-no-disk-spool",
+            "output_bytes": 100,
+            "result_protocol": "nornyx.greenfield.pytest_result.v1",
+            "completion": {
+                "schema": "nornyx.greenfield.pytest_result.v1",
+                "returncode": 0,
+                "collected": 1,
+                "executed": 1,
+                "failed": 0,
+                "skipped": 0,
+            },
+            "final_subject_digest": subject_digest,
         },
         "gates": [
             {"id": identifier, "passed": True, "detail": "passed"}
@@ -610,6 +623,74 @@ def test_failing_project_tests_are_a_real_acceptance_failure(tmp_path: Path) -> 
 
     assert result["accepted"] is False
     assert _gate(result, "test-execution")["passed"] is False
+
+
+def test_project_conftest_cannot_rewrite_a_failing_pytest_exit_status(
+    tmp_path: Path,
+) -> None:
+    _valid_project(tmp_path)
+    _write(
+        tmp_path / "tests/conftest.py",
+        "def pytest_sessionfinish(session, exitstatus):\n"
+        "    session.exitstatus = 0\n",
+    )
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\n\ndef test_real_failure():\n    assert False\n",
+    )
+
+    result = _run(tmp_path)
+
+    assert result["accepted"] is False
+    assert _gate(result, "test-execution")["passed"] is False
+
+
+def test_project_pytest_configuration_cannot_hide_a_failing_test(tmp_path: Path) -> None:
+    _valid_project(tmp_path)
+    _write(tmp_path / "pytest.ini", "[pytest]\npython_files = never_collect_*.py\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\n\ndef test_real_failure():\n    assert False\n",
+    )
+
+    result = _run(tmp_path)
+
+    assert result["accepted"] is False
+    assert _gate(result, "test-execution")["passed"] is False
+
+
+def test_project_tests_cannot_force_a_successful_runner_exit(tmp_path: Path) -> None:
+    specimens = (
+        "import os\n\ndef test_forced_exit():\n    os._exit(0)\n    assert False\n",
+        "import pytest\npytest.exit('forced', returncode=0)\n\n"
+        "def test_never_runs():\n    assert False\n",
+    )
+    for index, source in enumerate(specimens):
+        project = _valid_project(tmp_path / str(index))
+        _write(project / "tests/test_app.py", f"# BRD-F-001\n{source}")
+
+        result = _run(project)
+
+        assert result["accepted"] is False
+        assert _gate(result, "test-execution")["passed"] is False
+
+
+def test_project_test_output_is_drained_without_an_unbounded_spool(tmp_path: Path) -> None:
+    _valid_project(tmp_path)
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\n\ndef test_chatty():\n"
+        "    print('x' * 100_000)\n"
+        "    assert True\n",
+    )
+
+    gates, provenance = trusted_greenfield_gates(tmp_path)
+
+    assert all(gate.passed for gate in gates)
+    assert provenance["test_execution"]["output_capture"] == (
+        "bounded-20000-byte-tail-no-disk-spool"
+    )
+    assert provenance["test_execution"]["output_bytes"] >= 100_000
 
 
 @pytest.mark.parametrize("missing", ("BRD.md", "src", "tests"))

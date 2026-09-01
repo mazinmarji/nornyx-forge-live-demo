@@ -12,12 +12,16 @@
   repositories retain the repository profile; `repo_mode="greenfield"` selects
   the Forge-owned greenfield profile in trusted flow code.
 - `greenfield_verifier`: standalone inspection of an untrusted generated
-  project. Forge digests its installed bytes, executes a private read-only copy
-  with an absolute Python interpreter in isolated mode, and supplies no inherited
+  project. Forge digests its installed bytes, reads a private copy once through a
+  digest-checking in-memory bootstrap, executes those same bytes with an absolute
+  Python interpreter in isolated mode, and supplies no inherited
   `PATH`, `PYTHONPATH`, or `PYTHONHOME`. Static checks stream bounded subject
   files without retaining the corpus. Tests run in a separate process over a
-  private subject copy under an OS memory/process limit; they never determine
-  verifier resolution or run from project cwd.
+  private subject copy under an OS memory/process limit, with project `conftest.py`
+  hooks and project discovery configuration disabled. A trusted supervisor outside
+  the pytest interpreter validates the complete executed-test record, drains only a
+  bounded output tail, and the verifier re-censuses the subject before verdict;
+  project code never determines verifier resolution or runs from project cwd.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf

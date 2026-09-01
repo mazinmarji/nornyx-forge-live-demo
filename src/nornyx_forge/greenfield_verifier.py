@@ -26,6 +26,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import tokenize
 from pathlib import Path
 from typing import Any
@@ -45,18 +46,110 @@ PROFILE_DEFINITION = {
     "execution": "bounded-static-inspection-and-isolated-tests",
 }
 
-TEST_RUNNER_SOURCE = """from __future__ import annotations
+TEST_EXECUTOR_SOURCE = """from __future__ import annotations
+import json
 import sys
 from pathlib import Path
 import pytest
 
+trusted_dumps = json.dumps
 subject = Path(sys.argv[1]).resolve(strict=True)
+result_path = Path(sys.argv[2]).resolve()
+config_path = Path(sys.argv[3]).resolve(strict=True)
+
+class Recorder:
+    def __init__(self):
+        self.collected = 0
+        self.executed = 0
+        self.failed = 0
+        self.skipped = 0
+
+    def pytest_collection_finish(self, session):
+        self.collected = len(session.items)
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call":
+            self.executed += 1
+            self.failed += int(report.failed)
+            self.skipped += int(report.skipped)
+        elif report.when == "setup" and (report.failed or report.skipped):
+            self.executed += 1
+            self.failed += int(report.failed)
+            self.skipped += int(report.skipped)
+        elif report.when == "teardown" and report.failed:
+            self.failed += 1
+
 sys.path.insert(0, str(subject / "src"))
 sys.path.insert(0, str(subject))
-raise SystemExit(pytest.main([
-    "-q", "--capture=no", "--disable-warnings", "--maxfail=1",
-    "-o", "addopts=", "--rootdir", str(subject), str(subject / "tests"),
-]))
+recorder = Recorder()
+returncode = int(pytest.main([
+    "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
+    "-c", str(config_path), "-o", "addopts=", "-o", "python_files=test_*.py",
+    "-o", "python_functions=test_*", "-o", "python_classes=Test*",
+    "--rootdir", str(subject), str(subject / "tests"),
+], plugins=[recorder]))
+result_path.open("x", encoding="utf-8").write(trusted_dumps({
+    "schema": "nornyx.greenfield.pytest_result.v1",
+    "returncode": returncode,
+    "collected": recorder.collected,
+    "executed": recorder.executed,
+    "failed": recorder.failed,
+    "skipped": recorder.skipped,
+}, sort_keys=True))
+raise SystemExit(returncode)
+"""
+
+TEST_RUNNER_SOURCE = f"""from __future__ import annotations
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+EXECUTOR_SOURCE = {TEST_EXECUTOR_SOURCE!r}
+subject = Path(sys.argv[1]).resolve(strict=True)
+scratch = Path(__file__).resolve().parent
+executor = scratch / "greenfield_pytest_executor.py"
+inner_result = scratch / "greenfield_pytest_inner_result.json"
+final_result = scratch / "greenfield_test_result.json"
+config = scratch / "greenfield_pytest.ini"
+executor.write_text(EXECUTOR_SOURCE, encoding="utf-8", newline="\\n")
+executor.chmod(0o444)
+config.write_text("[pytest]\\n", encoding="utf-8", newline="\\n")
+config.chmod(0o444)
+before_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+completed = subprocess.run(
+    [sys.executable, "-I", str(executor), str(subject), str(inner_result), str(config)],
+    cwd=scratch,
+    env=dict(os.environ),
+    check=False,
+)
+after_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+try:
+    metadata = inner_result.stat()
+    if metadata.st_size > 4096 or not inner_result.is_file():
+        raise ValueError("inner result is not a bounded regular file")
+    payload = json.loads(inner_result.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+    payload = None
+keys = {{"schema", "returncode", "collected", "executed", "failed", "skipped"}}
+valid = (
+    before_digest == after_digest
+    and isinstance(payload, dict)
+    and set(payload) == keys
+    and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
+    and payload.get("returncode") == completed.returncode == 0
+    and isinstance(payload.get("collected"), int)
+    and not isinstance(payload.get("collected"), bool)
+    and payload.get("collected", 0) >= 1
+    and payload.get("executed") == payload.get("collected")
+    and payload.get("failed") == 0
+    and payload.get("skipped") == 0
+)
+if valid:
+    final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
+raise SystemExit(0 if valid else 2)
 """
 
 _IGNORED_DIRECTORIES = {
@@ -105,7 +198,7 @@ _MAX_TOTAL_BYTES = 10_000_000
 _MAX_TOTAL_AST_NODES = 1_000_000
 _MAX_MEMORY_BYTES = 768 * 1024 * 1024
 _MAX_JOB_MEMORY_BYTES = 1024 * 1024 * 1024
-_MAX_PROCESSES = 4
+_MAX_PROCESSES = 8
 _MAX_POSIX_PROCESSES = 64
 _TEST_TIMEOUT_SECONDS = 60
 _WINDOWS_JOB_HANDLES: list[Any] = []
@@ -272,19 +365,33 @@ def _collect_files(root: Path) -> tuple[list[Path], list[str]]:
 
 
 def _safe_bytes(path: Path, root: Path) -> tuple[bytes | None, str | None]:
-    """Read only a canonical in-root regular file and recheck after the read."""
+    """Read one opened file identity and bind it back to the in-root pathname."""
     relative = _relative(path, root)
     if _is_linklike(path) or not _canonical_inside(path, root):
         return None, f"file escaped the inspected subject before read: {relative}"
+    descriptor: int | None = None
     try:
-        before = path.stat()
-        data = path.read_bytes()
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        chunks: list[bytes] = []
+        remaining = _MAX_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
         after = path.stat()
     except OSError as exc:
         return None, f"cannot read {relative}: {exc}"
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if _is_linklike(path) or not _canonical_inside(path, root):
         return None, f"file escaped the inspected subject during read: {relative}"
-    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    before_identity = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
     after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
     if before_identity != after_identity or len(data) != after.st_size:
         return None, f"file changed while it was inspected: {relative}"
@@ -653,13 +760,24 @@ def _apply_resource_limits() -> dict[str, Any]:
     try:
         import resource
 
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return {
+                "enforced": False,
+                "platform": "posix-rlimit",
+                "error": "RLIMIT_NPROC is not enforceable for uid 0",
+            }
+        if not hasattr(resource, "RLIMIT_NPROC"):
+            return {
+                "enforced": False,
+                "platform": "posix-rlimit",
+                "error": "RLIMIT_NPROC is unavailable",
+            }
         resource.setrlimit(resource.RLIMIT_AS, (_MAX_MEMORY_BYTES, _MAX_MEMORY_BYTES))
         resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
-        if hasattr(resource, "RLIMIT_NPROC"):
-            resource.setrlimit(
-                resource.RLIMIT_NPROC,
-                (_MAX_POSIX_PROCESSES, _MAX_POSIX_PROCESSES),
-            )
+        resource.setrlimit(
+            resource.RLIMIT_NPROC,
+            (_MAX_POSIX_PROCESSES, _MAX_POSIX_PROCESSES),
+        )
         return {
             "enforced": True,
             "platform": "posix-rlimit",
@@ -673,6 +791,63 @@ def _apply_resource_limits() -> dict[str, Any]:
 
 def _subject_digest(file_digests: dict[str, str]) -> str:
     return _canonical_digest({"files": sorted(file_digests.items())})
+
+
+def _run_with_capped_output(
+    command: tuple[str, ...], *, cwd: Path, env: dict[str, str]
+) -> tuple[int, str, int]:
+    """Drain child output without retaining it in memory or on disk."""
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=os.name != "nt",
+    )
+    retained = bytearray()
+    total = 0
+    read_error: list[OSError] = []
+
+    def drain() -> None:
+        nonlocal total
+        assert process.stdout is not None
+        try:
+            while chunk := process.stdout.read(8192):
+                total += len(chunk)
+                retained.extend(chunk)
+                if len(retained) > 20_000:
+                    del retained[:-20_000]
+        except OSError as exc:
+            read_error.append(exc)
+
+    reader = threading.Thread(target=drain, name="greenfield-output-drain", daemon=True)
+    reader.start()
+    try:
+        returncode = process.wait(timeout=_TEST_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            import signal
+
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+        process.wait()
+        reader.join(timeout=5)
+        raise
+    if os.name != "nt":
+        import signal
+
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    reader.join(timeout=5)
+    if reader.is_alive():
+        raise OSError("isolated test output drain did not terminate")
+    if read_error:
+        raise read_error[0]
+    return returncode, retained.decode("utf-8", errors="replace").strip(), total
 
 
 def _constructed_environment() -> dict[str, str]:
@@ -705,6 +880,7 @@ def _execute_tests(
             target.write_bytes(data)
             copied[relative] = "sha256:" + hashlib.sha256(data).hexdigest()
         runner = Path(scratch) / "greenfield_test_runner.py"
+        result_path = Path(scratch) / "greenfield_test_result.json"
         runner.write_text(TEST_RUNNER_SOURCE, encoding="utf-8", newline="\n")
         runner.chmod(0o444)
         runner_digest = _file_digest(runner)
@@ -724,21 +900,15 @@ def _execute_tests(
             "runner": "private-readonly-trusted-runner",
             "runner_digest": runner_digest,
             "command": list(command),
+            "output_capture": "bounded-20000-byte-tail-no-disk-spool",
         }
         try:
-            with tempfile.TemporaryFile(mode="w+b") as output:
-                completed = subprocess.run(
-                    command,
-                    cwd=trusted_origin.parent,
-                    env=_constructed_environment(),
-                    stdout=output,
-                    stderr=subprocess.STDOUT,
-                    check=False,
-                    timeout=_TEST_TIMEOUT_SECONDS,
-                )
-                output.seek(0)
-                detail = output.read(20_000).decode("utf-8", errors="replace").strip()
-                after_runner_digest = _file_digest(runner)
+            returncode, detail, output_bytes = _run_with_capped_output(
+                command,
+                cwd=trusted_origin.parent,
+                env=_constructed_environment(),
+            )
+            after_runner_digest = _file_digest(runner)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return (
                 _gate(
@@ -748,14 +918,46 @@ def _execute_tests(
                 ),
                 invocation,
             )
+        invocation["output_bytes"] = output_bytes
         if after_runner_digest != runner_digest:
             return (
                 _gate("test-execution", ["trusted test runner changed during execution"], ""),
                 invocation,
             )
-        problems = [] if completed.returncode == 0 else [
-            f"isolated tests exited {completed.returncode}: {detail[-4000:]}"
-        ]
+        completion: dict[str, Any] | None = None
+        completion_problem: str | None = None
+        try:
+            metadata = result_path.stat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+                raise ValueError("completion record is not a bounded regular file")
+            parsed = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(parsed, dict):
+                raise ValueError("completion record is not an object")
+            completion = parsed
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            completion_problem = f"trusted test completion record is absent or invalid: {exc}"
+        invocation["result_protocol"] = "nornyx.greenfield.pytest_result.v1"
+        invocation["completion"] = completion
+        problems: list[str] = []
+        expected_keys = {"schema", "returncode", "collected", "executed", "failed", "skipped"}
+        if completion_problem:
+            problems.append(completion_problem)
+        elif completion is None or set(completion) != expected_keys:
+            problems.append("trusted test completion record has the wrong shape")
+        else:
+            counts = tuple(completion[name] for name in ("collected", "executed", "failed", "skipped"))
+            if (
+                completion["schema"] != "nornyx.greenfield.pytest_result.v1"
+                or completion["returncode"] != returncode
+                or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
+                or completion["collected"] < 1
+                or completion["executed"] != completion["collected"]
+                or completion["failed"] != 0
+                or completion["skipped"] != 0
+            ):
+                problems.append("trusted test completion record does not prove every test passed")
+        if returncode != 0:
+            problems.append(f"isolated tests exited {returncode}: {detail[-4000:]}")
         return (
             _gate("test-execution", problems, "isolated project tests passed"),
             invocation,
@@ -944,6 +1146,28 @@ def verify(
             "",
         )
         test_invocation = {"status": "not_run"}
+
+    final_files, final_boundary_problems = _collect_files(root)
+    final_digests: dict[str, str] = {}
+    for final_path in final_files:
+        final_data, final_problem = _safe_bytes(final_path, root)
+        if final_problem or final_data is None:
+            final_boundary_problems.append(final_problem or "final subject read failed")
+            continue
+        final_digests[_relative(final_path, root)] = (
+            "sha256:" + hashlib.sha256(final_data).hexdigest()
+        )
+    final_subject_digest = _subject_digest(final_digests)
+    test_invocation["final_subject_digest"] = final_subject_digest
+    if final_boundary_problems or final_subject_digest != subject_digest:
+        test_gate = _gate(
+            "test-execution",
+            [
+                *final_boundary_problems,
+                "subject changed between initial inspection and the final acceptance census",
+            ],
+            "",
+        )
     gates.append(test_gate)
 
     origin = trusted_origin or Path(__file__).resolve(strict=True)

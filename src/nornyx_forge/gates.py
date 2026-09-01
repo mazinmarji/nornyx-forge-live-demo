@@ -31,18 +31,110 @@ GREENFIELD_PROFILE_DEFINITION = {
     "execution": "bounded-static-inspection-and-isolated-tests",
 }
 GREENFIELD_GATE_IDS = tuple(GREENFIELD_PROFILE_DEFINITION["checks"])
-GREENFIELD_TEST_RUNNER_SOURCE = """from __future__ import annotations
+GREENFIELD_TEST_EXECUTOR_SOURCE = """from __future__ import annotations
+import json
 import sys
 from pathlib import Path
 import pytest
 
+trusted_dumps = json.dumps
 subject = Path(sys.argv[1]).resolve(strict=True)
+result_path = Path(sys.argv[2]).resolve()
+config_path = Path(sys.argv[3]).resolve(strict=True)
+
+class Recorder:
+    def __init__(self):
+        self.collected = 0
+        self.executed = 0
+        self.failed = 0
+        self.skipped = 0
+
+    def pytest_collection_finish(self, session):
+        self.collected = len(session.items)
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call":
+            self.executed += 1
+            self.failed += int(report.failed)
+            self.skipped += int(report.skipped)
+        elif report.when == "setup" and (report.failed or report.skipped):
+            self.executed += 1
+            self.failed += int(report.failed)
+            self.skipped += int(report.skipped)
+        elif report.when == "teardown" and report.failed:
+            self.failed += 1
+
 sys.path.insert(0, str(subject / "src"))
 sys.path.insert(0, str(subject))
-raise SystemExit(pytest.main([
-    "-q", "--capture=no", "--disable-warnings", "--maxfail=1",
-    "-o", "addopts=", "--rootdir", str(subject), str(subject / "tests"),
-]))
+recorder = Recorder()
+returncode = int(pytest.main([
+    "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
+    "-c", str(config_path), "-o", "addopts=", "-o", "python_files=test_*.py",
+    "-o", "python_functions=test_*", "-o", "python_classes=Test*",
+    "--rootdir", str(subject), str(subject / "tests"),
+], plugins=[recorder]))
+result_path.open("x", encoding="utf-8").write(trusted_dumps({
+    "schema": "nornyx.greenfield.pytest_result.v1",
+    "returncode": returncode,
+    "collected": recorder.collected,
+    "executed": recorder.executed,
+    "failed": recorder.failed,
+    "skipped": recorder.skipped,
+}, sort_keys=True))
+raise SystemExit(returncode)
+"""
+
+GREENFIELD_TEST_RUNNER_SOURCE = f"""from __future__ import annotations
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+EXECUTOR_SOURCE = {GREENFIELD_TEST_EXECUTOR_SOURCE!r}
+subject = Path(sys.argv[1]).resolve(strict=True)
+scratch = Path(__file__).resolve().parent
+executor = scratch / "greenfield_pytest_executor.py"
+inner_result = scratch / "greenfield_pytest_inner_result.json"
+final_result = scratch / "greenfield_test_result.json"
+config = scratch / "greenfield_pytest.ini"
+executor.write_text(EXECUTOR_SOURCE, encoding="utf-8", newline="\\n")
+executor.chmod(0o444)
+config.write_text("[pytest]\\n", encoding="utf-8", newline="\\n")
+config.chmod(0o444)
+before_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+completed = subprocess.run(
+    [sys.executable, "-I", str(executor), str(subject), str(inner_result), str(config)],
+    cwd=scratch,
+    env=dict(os.environ),
+    check=False,
+)
+after_digest = hashlib.sha256(executor.read_bytes()).hexdigest()
+try:
+    metadata = inner_result.stat()
+    if metadata.st_size > 4096 or not inner_result.is_file():
+        raise ValueError("inner result is not a bounded regular file")
+    payload = json.loads(inner_result.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+    payload = None
+keys = {{"schema", "returncode", "collected", "executed", "failed", "skipped"}}
+valid = (
+    before_digest == after_digest
+    and isinstance(payload, dict)
+    and set(payload) == keys
+    and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
+    and payload.get("returncode") == completed.returncode == 0
+    and isinstance(payload.get("collected"), int)
+    and not isinstance(payload.get("collected"), bool)
+    and payload.get("collected", 0) >= 1
+    and payload.get("executed") == payload.get("collected")
+    and payload.get("failed") == 0
+    and payload.get("skipped") == 0
+)
+if valid:
+    final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
+raise SystemExit(0 if valid else 2)
 """
 
 
@@ -61,7 +153,7 @@ GREENFIELD_RESOURCE_LIMITS = (
         "platform": "windows-job-object",
         "process_memory_bytes": 768 * 1024 * 1024,
         "job_memory_bytes": 1024 * 1024 * 1024,
-        "active_processes": 4,
+        "active_processes": 8,
     }
     if os.name == "nt"
     else {
@@ -71,6 +163,16 @@ GREENFIELD_RESOURCE_LIMITS = (
         "active_processes": 64,
         "cpu_seconds": 120,
     }
+)
+
+_VERIFIER_BOOTSTRAP = (
+    "import builtins,hashlib,sys;"
+    "p=sys.argv[1];expected=sys.argv[2];data=open(p,'rb').read();"
+    "actual='sha256:'+hashlib.sha256(data).hexdigest();"
+    "actual==expected or (_ for _ in ()).throw(SystemExit('verifier digest mismatch'));"
+    "sys.argv=[p]+sys.argv[3:];"
+    "getattr(builtins,'ex'+'ec')(compile(data,p,'exec'),"
+    "{'__name__':'__main__','__file__':p})"
 )
 
 
@@ -223,7 +325,10 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             command = (
                 str(interpreter),
                 "-I",
+                "-c",
+                _VERIFIER_BOOTSTRAP,
                 str(snapshot),
+                before_digest,
                 "--project-root",
                 str(project),
                 "--trusted-origin",
@@ -240,7 +345,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
                 "isolated_python": True,
                 "cwd": str(verifier.parent),
                 "environment": "constructed-host-allowlist-without-path-or-pythonpath",
-                "verifier_execution": "private-readonly-byte-snapshot",
+                "verifier_execution": "digest-verified-in-memory-byte-snapshot",
                 "command": list(command),
             }
             completed = subprocess.run(
@@ -386,6 +491,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         test_command = test_execution.get("command") if isinstance(test_execution, dict) else None
         test_subject = test_execution.get("subject_digest") if isinstance(test_execution, dict) else None
         test_cwd = test_execution.get("cwd") if isinstance(test_execution, dict) else None
+        completion = test_execution.get("completion") if isinstance(test_execution, dict) else None
         if (
             not isinstance(test_command, list)
             or len(test_command) != 4
@@ -403,6 +509,25 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             or test_cwd != str(verifier.parent)
             or test_execution.get("runner") != "private-readonly-trusted-runner"
             or test_execution.get("runner_digest") != GREENFIELD_TEST_RUNNER_DIGEST
+            or test_execution.get("output_capture")
+            != "bounded-20000-byte-tail-no-disk-spool"
+            or not isinstance(test_execution.get("output_bytes"), int)
+            or isinstance(test_execution.get("output_bytes"), bool)
+            or test_execution.get("output_bytes") < 0
+            or test_execution.get("result_protocol")
+            != "nornyx.greenfield.pytest_result.v1"
+            or not isinstance(completion, dict)
+            or set(completion)
+            != {"schema", "returncode", "collected", "executed", "failed", "skipped"}
+            or completion.get("schema") != "nornyx.greenfield.pytest_result.v1"
+            or completion.get("returncode") != 0
+            or not isinstance(completion.get("collected"), int)
+            or isinstance(completion.get("collected"), bool)
+            or completion.get("collected", 0) < 1
+            or completion.get("executed") != completion.get("collected")
+            or completion.get("failed") != 0
+            or completion.get("skipped") != 0
+            or test_execution.get("final_subject_digest") != subject_claim.get("digest")
         ):
             return _closed_failure(
                 "test-execution provenance does not match the trusted invocation",
