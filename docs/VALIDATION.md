@@ -29,7 +29,10 @@
   environment entrypoint is preserved on POSIX rather than resolving the venv
   symlink to its base interpreter; that resolved target is separately validated
   and recorded. This keeps trusted dependencies available under `-I` without
-  consulting PATH. Read the count and provenance from the build report
+  consulting PATH. On Linux, the only loader path admitted to the verifier and
+  test child is derived from the trusted Python installation, never inherited
+  from `LD_LIBRARY_PATH`; this supports shared-library setup-python runtimes
+  without giving the project native-library precedence. Read the count and provenance from the build report
   produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.

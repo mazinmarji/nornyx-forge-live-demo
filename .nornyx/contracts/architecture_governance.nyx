@@ -82,25 +82,25 @@ approvals:
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       exact: true
     invalidation_conditions: [revision_change, scope_change]
     expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+  subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
   records:
     - id: architecture_conformance_report
       type: architecture_evidence
       schema_id: nornyx.architecture_evidence.v1
       producer: {id: tool:check_architecture, type: tool}
       artifact: evidence/architecture_conformance_report.json
-      content_hash: sha256:3a696313e05f90ef6ed48c188bf3dc8282fc78b73ab6942fc8e0d434e8e4745c
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:bac07a18e8cf835471cbef66323e7a213315f23ae98c9a8c5d94501a462768ea
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool: {name: check_architecture, version: "0.3.0"}
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: pass
       dependencies: []
     - id: independent_review_record
@@ -108,11 +108,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:in_session_inspectors, type: tool}
       artifact: evidence/architecture_independent_review.json
-      content_hash: sha256:abf19903c1d2a2b122c80a2da377e0a780741801aa5521e3f9337e44ca089a9d
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:12ef216cc496c2ee5e35d1a1f40549503f23e7bbc4312a8acbf6011773c700bf
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool: {name: in_session_inspectors, version: "0.3.0"}
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: observed
       dependencies: []
     - id: exception_review_record
@@ -120,11 +120,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_exception_review.json
-      content_hash: sha256:f0ef73c69ebed907714222c30f7528594a0b38389e7417831fa3b06df86deaf4
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:535f6580f1da5ff0d8855e3827e74359ba8e459d2751a256e03e4bc9b9e62892
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: pass
       dependencies: []
     - id: change_record
@@ -132,11 +132,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_change_record.json
-      content_hash: sha256:0b8485aa793ab985ed1e69a16809f1c28a2160421deef5920f4d2105b4e1e180
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:94e45e63b3f368993104302dc825092c99d3917a5c39a73d8c2c840811c74b35
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: pass
       dependencies: [architecture_conformance_report]
     - id: evidence_manifest
@@ -144,11 +144,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/architecture_evidence_manifest.json
-      content_hash: sha256:7cd3908f2cb432795402ee1c9df20ed284ee2629dba100a4e6a2b3e313c3fc5f
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:cf414354c5937844a533453be994207b844da90b89e369dd03da00db2c52acdf
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
 
@@ -160,13 +160,13 @@ governance_evidence:
         id: system:autonomous_demonstration
         type: system
       artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:f5db9790bcc1a4b1675344f617d9c615724723c465fcfea79aca8458b9a0d770
-      subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      content_hash: sha256:e23e71ccd4a300d231578fad10c75a7bb575b13d6fc2280a7c807f7e304f2e9c
+      subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       tool:
         name: refresh_governance_evidence
         version: 0.3.0
-      generated_at: "2026-09-01T17:07:11Z"
-      expires_at: "2027-09-01T17:07:11Z"
+      generated_at: "2026-09-01T18:01:09Z"
+      expires_at: "2027-09-01T18:01:09Z"
       status: observed
       dependencies: []
     # <<< managed:approval_record
@@ -205,7 +205,7 @@ changes:
       disjoint: true
     revision_binding:
       kind: git
-      revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+      revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
       exact: true
       scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
     approval_invalidated_on: [revision_change, scope_change]
@@ -232,7 +232,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
+  subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -855,9 +855,9 @@ architecture_evidence:
     tool: scripts/check_architecture.py
     tool_version: "0.3.0"
     status: pass
-    subject_revision: git:41872fcfd20e5bfac28d356b88830807bf43180f
-    generated_at: "2026-09-01T17:07:11Z"
-    expires_at: "2027-09-01T17:07:11Z"
+    subject_revision: git:858e7164c9363e82afb36aecd15a494ec73666bc
+    generated_at: "2026-09-01T18:01:09Z"
+    expires_at: "2027-09-01T18:01:09Z"
     violations: []
     artifact: evidence/architecture_conformance_report.json
-    artifact_sha256: sha256:3a696313e05f90ef6ed48c188bf3dc8282fc78b73ab6942fc8e0d434e8e4745c
+    artifact_sha256: sha256:bac07a18e8cf835471cbef66323e7a213315f23ae98c9a8c5d94501a462768ea

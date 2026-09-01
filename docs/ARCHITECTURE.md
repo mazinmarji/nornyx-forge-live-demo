@@ -32,7 +32,10 @@
   runner, or executor resolution. On POSIX the absolute environment entrypoint
   is deliberately not canonicalized through its symlink: doing so would discard
   the virtual environment that owns pytest. Its separately resolved base target
-  is checked against the project boundary and recorded in provenance.
+  is checked against the project boundary and recorded in provenance. Linux
+  shared-library builds such as `actions/setup-python` also receive a loader
+  directory derived from the trusted interpreter's `sys.base_prefix`; inherited
+  `LD_LIBRARY_PATH` remains excluded so project state cannot select native code.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf

@@ -1116,9 +1116,11 @@ def _run_with_capped_output(
     return returncode, retained.decode("utf-8", errors="replace").strip(), total
 
 
-def _constructed_environment() -> dict[str, str]:
+def _constructed_environment(trusted_loader_path: Path | None = None) -> dict[str, str]:
     allowed = ("COMSPEC", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "WINDIR")
     result = {name: os.environ[name] for name in allowed if name in os.environ}
+    if trusted_loader_path is not None:
+        result["LD_LIBRARY_PATH"] = str(trusted_loader_path)
     result["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     result["PYTHONDONTWRITEBYTECODE"] = "1"
     return result
@@ -1128,6 +1130,7 @@ def _execute_tests(
     root: Path,
     files: list[Path],
     trusted_origin: Path,
+    trusted_loader_path: Path | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Run tests from a private copy, never from project cwd or import state."""
     with tempfile.TemporaryDirectory(prefix="nornyx-greenfield-subject-") as scratch:
@@ -1164,6 +1167,9 @@ def _execute_tests(
             "isolated_python": True,
             "cwd": str(trusted_origin.parent),
             "environment": "constructed-host-allowlist-without-path-or-pythonpath",
+            "trusted_loader_path": (
+                str(trusted_loader_path) if trusted_loader_path is not None else None
+            ),
             "subject": "private-temporary-copy",
             "subject_digest": _subject_digest(copied),
             "runner": "private-readonly-trusted-runner",
@@ -1178,7 +1184,7 @@ def _execute_tests(
             returncode, detail, output_bytes = _run_with_capped_output(
                 command,
                 cwd=trusted_origin.parent,
-                env=_constructed_environment(),
+                env=_constructed_environment(trusted_loader_path),
             )
             after_runner_digest = _file_digest(runner)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1270,9 +1276,21 @@ def verify(
     trusted_digest: str | None = None,
     forge_version: str | None = None,
     forge_revision: str | None = None,
+    trusted_loader_path: Path | None = None,
     resource_limits: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = project_root.resolve(strict=True)
+    loader_problem: str | None = None
+    if trusted_loader_path is not None:
+        try:
+            trusted_loader_path = trusted_loader_path.resolve(strict=True)
+        except OSError as exc:
+            loader_problem = f"trusted Python loader directory cannot be resolved: {exc}"
+        else:
+            if not trusted_loader_path.is_dir() or _inside(trusted_loader_path, root):
+                loader_problem = (
+                    "trusted Python loader directory is not an external directory"
+                )
     files, boundary_problems = _collect_files(root)
     python_files = [path for path in files if path.suffix.lower() == ".py"]
     tests = [
@@ -1286,6 +1304,8 @@ def verify(
 
     brd = root / "BRD.md"
     structure = list(boundary_problems)
+    if loader_problem is not None:
+        structure.append(loader_problem)
     if resource_limits is not None and not resource_limits.get("enforced"):
         structure.append("OS resource confinement could not be established")
     if brd not in files:
@@ -1437,7 +1457,10 @@ def verify(
     subject_digest = _subject_digest(file_digests)
     if all(gate["passed"] for gate in gates):
         test_gate, test_invocation = _execute_tests(
-            root, files, trusted_origin or Path(__file__).resolve(strict=True)
+            root,
+            files,
+            trusted_origin or Path(__file__).resolve(strict=True),
+            trusted_loader_path,
         )
         if test_invocation.get("subject_digest") != subject_digest:
             test_gate = _gate(
@@ -1514,6 +1537,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trusted-digest")
     parser.add_argument("--forge-version")
     parser.add_argument("--forge-revision")
+    parser.add_argument("--trusted-loader-path")
     args = parser.parse_args(argv)
     resource_limits = _apply_resource_limits()
     try:
@@ -1523,6 +1547,11 @@ def main(argv: list[str] | None = None) -> int:
             trusted_digest=args.trusted_digest,
             forge_version=args.forge_version,
             forge_revision=args.forge_revision,
+            trusted_loader_path=(
+                Path(args.trusted_loader_path).resolve(strict=True)
+                if args.trusted_loader_path
+                else None
+            ),
             resource_limits=resource_limits,
         )
     except (MemoryError, OSError, RuntimeError, ValueError) as exc:

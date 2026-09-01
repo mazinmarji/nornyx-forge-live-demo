@@ -369,6 +369,12 @@ possible host effect in arbitrary test code. On POSIX the environment entrypoint
 may be a venv symlink and is therefore preserved for execution; its resolved base
 target is separately checked against the project boundary and recorded. Resolving
 the entrypoint itself would silently leave the environment that provides pytest.
+Linux distributions whose absolute Python executable depends on a colocated
+shared library (including GitHub Actions setup-python) need one additional host
+fact: Forge derives `<sys.base_prefix>/lib`, verifies that it is an external
+directory, passes it explicitly through the trusted verifier command, and uses
+it as the child's sole `LD_LIBRARY_PATH`. The inherited value is ignored because
+it is provider-influenceable.
 
 **Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
 criteria for generated application subjects.

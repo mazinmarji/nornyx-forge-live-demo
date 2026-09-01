@@ -368,10 +368,32 @@ def _forge_version() -> str:
         return "unknown"
 
 
-def _verifier_environment() -> dict[str, str]:
+def _trusted_loader_path(project: Path) -> Path | None:
+    """Derive Linux's loader directory from the trusted running Python.
+
+    ``actions/setup-python`` installs a shared-library build whose absolute
+    interpreter still needs its own ``lib`` directory in ``LD_LIBRARY_PATH``.
+    Inheriting that variable would let provider state select native code, so
+    derive the one allowed directory from ``sys.base_prefix`` instead.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        candidate = (Path(sys.base_prefix) / "lib").resolve(strict=True)
+    except OSError:
+        return None
+    if not candidate.is_dir() or _inside(candidate, project):
+        return None
+    return candidate
+
+
+def _verifier_environment(loader_path: Path | None = None) -> dict[str, str]:
     """A small host allowlist; project PATH/PYTHON* state is not inherited."""
     allowed = ("COMSPEC", "SYSTEMROOT", "TEMP", "TMP", "TMPDIR", "WINDIR")
-    return {name: os.environ[name] for name in allowed if name in os.environ}
+    result = {name: os.environ[name] for name in allowed if name in os.environ}
+    if loader_path is not None:
+        result["LD_LIBRARY_PATH"] = str(loader_path)
+    return result
 
 
 def _closed_failure(
@@ -434,6 +456,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         return _closed_failure(
             "Python interpreter is inside the provider workspace; executable trust is absent"
         )
+    loader_path = _trusted_loader_path(project)
 
     try:
         verifier_bytes = verifier.read_bytes()
@@ -466,9 +489,12 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
                 "--forge-revision",
                 forge_revision,
             )
+            if loader_path is not None:
+                command += ("--trusted-loader-path", str(loader_path))
             invocation = {
                 "python": str(interpreter),
                 "python_resolved_target": str(interpreter_target),
+                "trusted_loader_path": str(loader_path) if loader_path else None,
                 "isolated_python": True,
                 "cwd": str(verifier.parent),
                 "environment": "constructed-host-allowlist-without-path-or-pythonpath",
@@ -478,7 +504,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             completed = subprocess.run(
                 command,
                 cwd=verifier.parent,
-                env=_verifier_environment(),
+                env=_verifier_environment(loader_path),
                 text=True,
                 capture_output=True,
                 check=False,

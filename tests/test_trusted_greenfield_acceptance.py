@@ -278,6 +278,7 @@ def test_exact_invocation_ignores_path_cwd_and_python_environment(
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     monkeypatch.setenv("PYTHONHOME", str(tmp_path))
+    monkeypatch.setenv("LD_LIBRARY_PATH", str(tmp_path))
     observed: dict[str, Any] = {}
     real_run = gate_module.subprocess.run
 
@@ -301,6 +302,46 @@ def test_exact_invocation_ignores_path_cwd_and_python_environment(
     assert "-I" in provenance["invocation"]["command"]
     assert Path(observed["kwargs"]["cwd"]) == Path(provenance["invocation"]["cwd"])
     assert {"PATH", "PYTHONPATH", "PYTHONHOME"}.isdisjoint(observed["kwargs"]["env"])
+    assert observed["kwargs"]["env"].get("LD_LIBRARY_PATH") != str(tmp_path)
+    assert provenance["invocation"]["trusted_loader_path"] == observed["kwargs"][
+        "env"
+    ].get("LD_LIBRARY_PATH")
+
+
+def test_linux_loader_path_is_derived_from_trusted_python_not_inherited_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "subject"
+    project.mkdir()
+    runtime = tmp_path / "trusted-python"
+    library = runtime / "lib"
+    library.mkdir(parents=True)
+    hostile = project / "native-libraries"
+    hostile.mkdir()
+    monkeypatch.setattr(gate_module.sys, "platform", "linux")
+    monkeypatch.setattr(gate_module.sys, "base_prefix", str(runtime))
+    monkeypatch.setenv("LD_LIBRARY_PATH", str(hostile))
+
+    loader = gate_module._trusted_loader_path(project.resolve())
+    environment = gate_module._verifier_environment(loader)
+
+    assert loader == library.resolve()
+    assert environment["LD_LIBRARY_PATH"] == str(library.resolve())
+    assert str(hostile) not in environment["LD_LIBRARY_PATH"]
+
+
+def test_verifier_refuses_a_loader_directory_inside_the_provider_workspace(
+    tmp_path: Path,
+) -> None:
+    project = _valid_project(tmp_path)
+
+    payload = verifier_module.verify(project, trusted_loader_path=project)
+    structure = next(
+        gate for gate in payload["gates"] if gate["id"] == "project-structure"
+    )
+
+    assert structure["passed"] is False
+    assert "loader directory is not an external directory" in structure["detail"]
 
 
 def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests(
@@ -329,6 +370,9 @@ def test_acceptance_provenance_binds_profile_origin_version_revision_and_digests
     assert provenance["test_execution"]["executor_digest"] == (
         gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST
     )
+    assert provenance["test_execution"]["trusted_loader_path"] == provenance[
+        "invocation"
+    ]["trusted_loader_path"]
     assert provenance["test_execution"]["completion"]["executor_returncode"] == 73
     assert provenance["test_execution"]["completion"]["executor_command"][:4] == [
         os.path.abspath(gate_module.sys.executable),
