@@ -1151,7 +1151,15 @@ def _apply_resource_limits() -> dict[str, Any]:
             "enforced": True,
             "platform": "posix-rlimit",
             "process_memory_bytes": _MAX_MEMORY_BYTES,
-            "active_processes": _MAX_POSIX_PROCESSES,
+            # NAMED FOR THE RULE THAT IS ENFORCED. This read
+            # ``active_processes`` while the ceiling was absolute, and keeping
+            # that key would have left the policy describing a total cap while
+            # the code enforced an increment -- a label standing in for the
+            # thing it names, which is the substitution this repository exists
+            # to refuse. The Windows branch keeps ``active_processes`` because
+            # a Job Object's ActiveProcessLimit really is a total.
+            "additional_processes": _MAX_POSIX_PROCESSES,
+            "process_budget": "ambient-real-uid-tasks-plus-fixed-increment",
             "cpu_seconds": 120,
         }
     except (ImportError, OSError, ValueError) as exc:

@@ -308,7 +308,11 @@ GREENFIELD_RESOURCE_LIMITS = (
         "enforced": True,
         "platform": "posix-rlimit",
         "process_memory_bytes": 768 * 1024 * 1024,
-        "active_processes": 64,
+        # An INCREMENT above the real user id's ambient task count, not a total.
+        # RLIMIT_NPROC is charged per real user id host-wide, so a total here
+        # would name a rule the verifier does not enforce.
+        "additional_processes": 64,
+        "process_budget": "ambient-real-uid-tasks-plus-fixed-increment",
         "cpu_seconds": 120,
     }
 )

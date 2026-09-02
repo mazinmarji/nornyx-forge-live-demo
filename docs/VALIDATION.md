@@ -22,7 +22,9 @@
   OS resource limits: address space and CPU time on POSIX with a process budget
   applied above the real user id's ambient task count (an absolute
   `RLIMIT_NPROC` ceiling refused the verifier's own runner on GitHub-hosted
-  runners), or a Job Object on Windows. The runner and executor use the same digest-verified
+  runners), or a Job Object on Windows. The POSIX budget is an increment, set
+  into both the soft and hard limits so the subject cannot raise it, and a host
+  whose ambient count cannot be read is refused rather than run unconfined. The runner and executor use the same digest-verified
   in-memory byte-snapshot pattern as the top-level verifier. Before execution,
   static inspection refuses hard termination, reflection, and pytest lifecycle
   control, including folded and opaque reflected capability acquisition. Before

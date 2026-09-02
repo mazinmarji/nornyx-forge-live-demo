@@ -1069,7 +1069,7 @@ def test_posix_process_budget_is_applied_above_the_ambient_task_count() -> None:
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     observed = json.loads(completed.stdout.strip().splitlines()[-1])
-    budget = gate_module.GREENFIELD_RESOURCE_LIMITS["active_processes"]
+    budget = gate_module.GREENFIELD_RESOURCE_LIMITS["additional_processes"]
     assert observed["limits"] == gate_module.GREENFIELD_RESOURCE_LIMITS
     assert observed["memory"] == [768 * 1024 * 1024, 768 * 1024 * 1024]
     assert observed["cpu"] == [120, 120]
@@ -1078,6 +1078,115 @@ def test_posix_process_budget_is_applied_above_the_ambient_task_count() -> None:
     assert observed["soft"] <= observed["ambient"] + budget + 2, "the budget was lifted, not bounded"
     assert observed["soft"] == observed["hard"], "the subject could raise the budget back"
     assert observed["child"] == 0
+
+
+@_POSIX_ONLY
+def test_posix_process_budget_refuses_more_than_its_incremental_allowance() -> None:
+    """The bound is enforced, not merely recorded in a limit value.
+
+    Compensating for the ambient count must not become "ambient plus as many as
+    you like". This asks the kernel rather than the policy dictionary: after the
+    limits are applied, a child creates tasks one at a time until the kernel
+    refuses. A refusal must arrive, and it must arrive within the declared
+    increment of where it started. Thread stacks are shrunk first so the
+    address-space limit cannot be what stops the loop and be mistaken for the
+    process budget.
+    """
+    probe = (
+        "import json, sys, threading\n"
+        "from nornyx_forge import greenfield_verifier as verifier\n"
+        "limits = verifier._apply_resource_limits()\n"
+        "threading.stack_size(131072)\n"
+        "release = threading.Event()\n"
+        "created = 0\n"
+        "refusal = None\n"
+        "while created < 4096:\n"
+        "    try:\n"
+        "        threading.Thread(target=release.wait).start()\n"
+        "    except (RuntimeError, OSError, MemoryError) as exc:\n"
+        "        refusal = type(exc).__name__\n"
+        "        break\n"
+        "    created += 1\n"
+        "release.set()\n"
+        "print(json.dumps({'created': created, 'refusal': refusal, "
+        "'enforced': limits.get('enforced')}))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=180,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    observed = json.loads(completed.stdout.strip().splitlines()[-1])
+    allowance = gate_module.GREENFIELD_RESOURCE_LIMITS["additional_processes"]
+    assert observed["enforced"] is True
+    assert observed["refusal"] is not None, (
+        "the child created 4096 tasks without a refusal, so the process budget "
+        "is not a bound at all"
+    )
+    assert observed["created"] <= allowance + 16, (
+        f"the child created {observed['created']} tasks against a declared "
+        f"increment of {allowance}: the ambient measurement widened the "
+        "allowance instead of shifting it"
+    )
+
+
+@_POSIX_ONLY
+def test_posix_ambient_measurement_ignores_project_controlled_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The baseline is host state read by absolute path, not project state.
+
+    A subject that could inflate the baseline could buy itself an arbitrarily
+    large budget. The measurement takes no argument, reads ``/proc`` by absolute
+    path, and selects on the real user id, so a project-local ``proc`` tree
+    full of fabricated task counts, a hostile cwd, PATH, PYTHONPATH and TMPDIR
+    move it by nothing. A relative read of the decoy would add 500000.
+    """
+    _valid_project(tmp_path)
+    decoy = tmp_path / "proc"
+    for pid in range(1, 6):
+        _write(
+            decoy / str(pid) / "status",
+            f"Name:\tdecoy\nUid:\t{os.getuid()}\t{os.getuid()}\t0\t0\nThreads:\t100000\n",
+        )
+
+    baseline = verifier_module._real_uid_task_count()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    influenced = verifier_module._real_uid_task_count()
+
+    assert baseline is not None and influenced is not None
+    assert abs(influenced - baseline) < 500, (
+        "the ambient baseline moved with project-controlled state, so a subject "
+        "could buy itself a larger process budget"
+    )
+
+
+@_POSIX_ONLY
+def test_posix_limits_fail_closed_when_the_ambient_count_cannot_be_measured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No baseline, no claim of confinement.
+
+    Guessing a baseline would be inventing the one number the budget rests on.
+    The verifier reports the limits unenforced instead, which the parent already
+    refuses: `test_every_malformed_verifier_result_fails_closed[resource-limits]`
+    drives exactly that payload and requires a closed failure.
+    """
+    monkeypatch.setattr(verifier_module, "_real_uid_task_count", lambda: None)
+
+    limits = verifier_module._apply_resource_limits()
+
+    assert limits["enforced"] is False
+    assert limits["platform"] == "posix-rlimit"
+    assert "cannot be measured" in limits["error"]
+    assert limits != gate_module.GREENFIELD_RESOURCE_LIMITS
 
 
 @pytest.mark.parametrize("missing", ("BRD.md", "src", "tests"))

@@ -389,6 +389,27 @@ service user already held, so the verifier's own runner failed with `EAGAIN`
 on every interpreter of the matrix while the same suite passed on a quiet
 workstation. A host where that count cannot be measured fails closed.
 
+The budget SHIFTS the ceiling; it does not widen it. The soft and hard limits
+are both set to the budgeted value, so the subject cannot raise it back, and
+the recorded policy is named `additional_processes` with a
+`process_budget` of `ambient-real-uid-tasks-plus-fixed-increment` rather than
+`active_processes`, because a key naming a total while the code enforces an
+increment is the substitution this repository refuses. The Windows Job Object
+keeps `active_processes`, which really is a total for that job.
+
+Two limits of the mechanism are disclosed rather than papered over. First, the
+count is read immediately before the limit is applied and is not atomic with
+it: tasks belonging to the same user id may start or exit in between. A task
+that EXITS in the gap leaves the ceiling correspondingly further above the
+live count, so the subject may create a few more than the increment; a task
+that STARTS in the gap consumes budget and can only make the verifier refuse
+its own work, which is fail-closed. The gap cannot lift the ceiling, because
+the ceiling is a number fixed at the moment of application. Second, the
+baseline is host state: anything already running under that user id raises it,
+so a provider that leaves background processes behind raises the absolute
+number of tasks the user id may hold. Neither makes the subject's allowance
+unbounded, which is the property being claimed.
+
 **Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
 criteria for generated application subjects.
 
