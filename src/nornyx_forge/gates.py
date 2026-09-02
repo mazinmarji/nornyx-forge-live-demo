@@ -261,28 +261,39 @@ keys = {{
     "schema", "returncode", "collected", "executed", "failed", "skipped",
     "executor_digest",
 }}
-valid = (
+integrity = (
     "sha256:" + before_digest == EXECUTOR_DIGEST
     and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
     and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
     and payload.get("executor_digest") == EXECUTOR_DIGEST
-    and payload.get("returncode") == 0
     and completed.returncode == 73
-    and isinstance(payload.get("collected"), int)
-    and not isinstance(payload.get("collected"), bool)
+    and all(
+        isinstance(payload.get(name), int) and not isinstance(payload.get(name), bool)
+        for name in ("returncode", "collected", "executed", "failed", "skipped")
+    )
+)
+passed = integrity and (
+    payload.get("returncode") == 0
     and payload.get("collected", 0) >= 1
     and payload.get("executed") == payload.get("collected")
     and payload.get("failed") == 0
     and payload.get("skipped") == 0
 )
-if valid:
+# The trusted executor completed and produced a well-formed, digest-bound
+# record whenever integrity holds, WHETHER OR NOT the subject's tests passed.
+# Writing it only on success collapsed two states: a subject that ran and
+# failed, and a trusted executor that never completed, both left no record.
+# The record is written on either outcome so the parser can tell a genuine
+# subject failure (a record showing failures) from a completion that was
+# never established (no record). The exit code still marks pass from not-pass.
+if integrity:
     payload["executor_command"] = executor_command
     payload["executor_cwd"] = str(subject)
     payload["executor_returncode"] = completed.returncode
     final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
-raise SystemExit(0 if valid else 2)
+raise SystemExit(0 if passed else 2)
 """
 
 
@@ -330,6 +341,71 @@ def _inside(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _greenfield_completion_from_trusted_executor(
+    completion: Any, interpreter: Path
+) -> bool:
+    """Whether a completion record is well-formed and produced by the executor.
+
+    This is the trust axis, not the pass/fail axis: it establishes that the
+    record came from the digest-verified executor exiting on its sentinel, and
+    says nothing about whether the subject's tests passed. The pass branch adds
+    the success predicate on top; the failure branch requires the opposite.
+    """
+    if not isinstance(completion, dict):
+        return False
+    if set(completion) != {
+        "schema",
+        "returncode",
+        "collected",
+        "executed",
+        "failed",
+        "skipped",
+        "executor_digest",
+        "executor_command",
+        "executor_cwd",
+        "executor_returncode",
+    }:
+        return False
+    command = completion.get("executor_command")
+    counts = [
+        completion.get(name)
+        for name in ("returncode", "collected", "executed", "failed", "skipped")
+    ]
+    return not (
+        completion.get("schema") != "nornyx.greenfield.pytest_result.v1"
+        or completion.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
+        or not isinstance(command, list)
+        or len(command) != 10
+        or command[:4] != [str(interpreter), "-I", "-c", GREENFIELD_IN_MEMORY_BOOTSTRAP]
+        or any(not isinstance(item, str) for item in command)
+        or command[5] != GREENFIELD_TEST_EXECUTOR_DIGEST
+        or command[9] != GREENFIELD_TEST_EXECUTOR_DIGEST
+        or not Path(command[4]).is_absolute()
+        or not Path(command[6]).is_absolute()
+        or not Path(command[7]).is_absolute()
+        or not Path(command[8]).is_absolute()
+        or completion.get("executor_cwd") != command[6]
+        or completion.get("executor_returncode") != 73
+        or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
+    )
+
+
+def _greenfield_completion_shows_pass(completion: Any) -> bool:
+    """Whether a trusted completion record reports a clean subject pass."""
+    if not isinstance(completion, dict):
+        return False
+    collected = completion.get("collected")
+    return (
+        completion.get("returncode") == 0
+        and isinstance(collected, int)
+        and not isinstance(collected, bool)
+        and collected >= 1
+        and completion.get("executed") == collected
+        and completion.get("failed") == 0
+        and completion.get("skipped") == 0
+    )
 
 
 def _greenfield_verifier_path() -> Path:
@@ -765,6 +841,25 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         ):
             return _closed_failure(
                 "failed test-execution provenance is absent or malformed",
+                command=command,
+                returncode=completed.returncode,
+                provenance=provenance,
+            )
+        # Two failing shapes, kept apart (F-002). A record that is present must
+        # be a trusted subject-FAILURE record: from the executor, and NOT
+        # showing a pass. A failed gate carrying a completion that is untrusted,
+        # or that reports a pass, is a forgery or an inconsistency, not an
+        # ordinary subject failure, so it fails closed. A genuinely absent
+        # record (the executor never established completion) is the other
+        # failing shape and is left to the gate reason, which names it.
+        completion = test_execution.get("completion")
+        if completion is not None and (
+            not _greenfield_completion_from_trusted_executor(completion, interpreter)
+            or _greenfield_completion_shows_pass(completion)
+        ):
+            return _closed_failure(
+                "a failed test-execution carries a completion record that is not a "
+                "trusted subject-failure record",
                 command=command,
                 returncode=completed.returncode,
                 provenance=provenance,

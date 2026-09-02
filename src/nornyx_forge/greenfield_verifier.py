@@ -276,28 +276,39 @@ keys = {{
     "schema", "returncode", "collected", "executed", "failed", "skipped",
     "executor_digest",
 }}
-valid = (
+integrity = (
     "sha256:" + before_digest == EXECUTOR_DIGEST
     and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
     and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
     and payload.get("executor_digest") == EXECUTOR_DIGEST
-    and payload.get("returncode") == 0
     and completed.returncode == 73
-    and isinstance(payload.get("collected"), int)
-    and not isinstance(payload.get("collected"), bool)
+    and all(
+        isinstance(payload.get(name), int) and not isinstance(payload.get(name), bool)
+        for name in ("returncode", "collected", "executed", "failed", "skipped")
+    )
+)
+passed = integrity and (
+    payload.get("returncode") == 0
     and payload.get("collected", 0) >= 1
     and payload.get("executed") == payload.get("collected")
     and payload.get("failed") == 0
     and payload.get("skipped") == 0
 )
-if valid:
+# The trusted executor completed and produced a well-formed, digest-bound
+# record whenever integrity holds, WHETHER OR NOT the subject's tests passed.
+# Writing it only on success collapsed two states: a subject that ran and
+# failed, and a trusted executor that never completed, both left no record.
+# The record is written on either outcome so the parser can tell a genuine
+# subject failure (a record showing failures) from a completion that was
+# never established (no record). The exit code still marks pass from not-pass.
+if integrity:
     payload["executor_command"] = executor_command
     payload["executor_cwd"] = str(subject)
     payload["executor_returncode"] = completed.returncode
     final_result.open("x", encoding="utf-8").write(json.dumps(payload, sort_keys=True))
-raise SystemExit(0 if valid else 2)
+raise SystemExit(0 if passed else 2)
 """
 
 _IGNORED_DIRECTORIES = {
@@ -1324,7 +1335,10 @@ def _execute_tests(
                 raise ValueError("completion record is not an object")
             completion = parsed
         except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-            completion_problem = f"trusted test completion record is absent or invalid: {exc}"
+            completion_problem = (
+                "trusted test completion was not established: the record is absent "
+                f"or unreadable ({exc})"
+            )
         invocation["result_protocol"] = "nornyx.greenfield.pytest_result.v1"
         invocation["completion"] = completion
         problems: list[str] = []
@@ -1340,15 +1354,24 @@ def _execute_tests(
             "executor_cwd",
             "executor_returncode",
         }
+        # Three outcomes are kept apart here, because collapsing the last two was
+        # F-002. The trusted executor writes a faithful record on EITHER a pass
+        # or a subject-test failure; only a completion that never happened, or
+        # one that did not come from the trusted executor, leaves no usable
+        # record. So a record that is well-formed and digest-bound but shows
+        # failures is a genuine SUBJECT failure, not a missing completion.
+        established = False
         if completion_problem:
             problems.append(completion_problem)
         elif completion is None or set(completion) != expected_keys:
-            problems.append("trusted test completion record has the wrong shape")
+            problems.append(
+                "trusted test completion was not established: the record is absent "
+                "or has the wrong shape"
+            )
         else:
             counts = tuple(completion[name] for name in ("collected", "executed", "failed", "skipped"))
-            if (
+            record_untrusted = (
                 completion["schema"] != "nornyx.greenfield.pytest_result.v1"
-                or completion["returncode"] != returncode
                 or completion["executor_digest"] != TEST_EXECUTOR_DIGEST
                 or not isinstance(completion["executor_command"], list)
                 or len(completion["executor_command"]) != 10
@@ -1365,14 +1388,42 @@ def _execute_tests(
                 or not Path(completion["executor_command"][8]).is_absolute()
                 or completion["executor_cwd"] != completion["executor_command"][6]
                 or completion["executor_returncode"] != 73
+                or not isinstance(completion["returncode"], int)
+                or isinstance(completion["returncode"], bool)
                 or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
-                or completion["collected"] < 1
-                or completion["executed"] != completion["collected"]
-                or completion["failed"] != 0
-                or completion["skipped"] != 0
-            ):
-                problems.append("trusted test completion record does not prove every test passed")
-        if returncode != 0:
+            )
+            if record_untrusted:
+                problems.append(
+                    "trusted test completion was not established: the record is "
+                    "malformed or did not come from the trusted executor"
+                )
+            else:
+                subject_passed = (
+                    completion["returncode"] == 0
+                    and completion["collected"] >= 1
+                    and completion["executed"] == completion["collected"]
+                    and completion["failed"] == 0
+                    and completion["skipped"] == 0
+                )
+                if (returncode == 0) != subject_passed:
+                    # The runner exits 0 only on a clean pass. A record whose
+                    # counts disagree with that exit is not a state we trust.
+                    problems.append(
+                        "trusted test completion is inconsistent with the runner "
+                        "exit status"
+                    )
+                else:
+                    established = True
+                    if not subject_passed:
+                        problems.append(
+                            "isolated project tests failed: "
+                            f"{completion['failed']} failed, {completion['skipped']} skipped, "
+                            f"{completion['executed']} of {completion['collected']} collected "
+                            f"tests executed, executor pytest exit {completion['returncode']}"
+                        )
+        # The raw exit tail is only meaningful when no structured completion
+        # explained the outcome; a subject failure is already stated above.
+        if returncode != 0 and not established:
             problems.append(f"isolated tests exited {returncode}: {detail[-4000:]}")
         return (
             _gate("test-execution", problems, "isolated project tests passed"),

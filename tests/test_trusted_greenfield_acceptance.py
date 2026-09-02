@@ -8,6 +8,7 @@ uses, including hostile cwd, PATH, PYTHONPATH, and project-local package names.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -1284,3 +1285,258 @@ def test_acceptance_event_carries_the_same_provenance_as_the_verdict(
 
     assert acceptance["fields"]["verdict_source"] == "all_recorded_gate_results"
     assert acceptance["fields"]["acceptance_provenance"] == result["acceptance_provenance"]
+
+
+# ---------------------------------------------------------------------------
+# F-002: a genuine subject-test failure is distinct from a lost completion
+# ---------------------------------------------------------------------------
+
+
+def test_ordinary_subject_failure_produces_a_structured_trusted_completion(
+    tmp_path: Path,
+) -> None:
+    """F-002 (T1): one failing assertion is a subject failure, not a lost record.
+
+    Before the repair the trusted runner wrote its completion record only on a
+    pass, so an ordinary failing test and a trusted executor that never
+    completed both produced "completion absent or invalid". They are now
+    distinct: the executor's faithful record travels, the gate fails because
+    the SUBJECT failed, and the reason says so rather than blaming the record.
+    """
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", "def add(left: int, right: int) -> int:\n    return 0\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\nfrom src.app import add\n\n"
+        "def test_addition_contract():\n    assert add(1, 1) == 2\n",
+    )
+
+    gates, provenance = trusted_greenfield_gates(tmp_path)
+    test_gate = next(gate for gate in gates if gate.name.endswith("test-execution"))
+    completion = provenance["test_execution"]["completion"]
+
+    assert test_gate.passed is False
+    assert provenance["trust"] == "structural-origin-and-digest"
+    assert isinstance(completion, dict)
+    assert completion["failed"] >= 1
+    assert completion["returncode"] != 0
+    assert completion["executor_returncode"] == 73
+    assert "isolated project tests failed" in test_gate.detail
+    assert "not established" not in test_gate.detail
+    assert "absent" not in test_gate.detail
+
+
+def test_subject_repair_moves_failure_to_pass_without_touching_the_verifier(
+    tmp_path: Path,
+) -> None:
+    """F-002 (T2): only the subject changes; verifier identity is byte-identical."""
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", "def add(a: int, b: int) -> int:\n    return 0\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\nfrom src.app import add\n\n"
+        "def test_addition_contract():\n    assert add(1, 1) == 2\n",
+    )
+    failed, failed_prov = trusted_greenfield_gates(tmp_path)
+    assert next(g for g in failed if g.name.endswith("test-execution")).passed is False
+
+    _write(tmp_path / "src/app.py", "def add(a: int, b: int) -> int:\n    return a + b\n")
+    passed, passed_prov = trusted_greenfield_gates(tmp_path)
+
+    assert all(gate.passed for gate in passed)
+    assert failed_prov["verifier"]["digest"] == passed_prov["verifier"]["digest"]
+    assert failed_prov["gate_profile"]["digest"] == passed_prov["gate_profile"]["digest"]
+    assert failed_prov["subject"]["digest"] != passed_prov["subject"]["digest"]
+    assert failed_prov["test_execution"]["completion"]["failed"] >= 1
+    assert passed_prov["test_execution"]["completion"]["failed"] == 0
+
+
+def test_a_completion_that_never_arrives_is_distinct_from_a_subject_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002 (T3): an interrupted trusted execution is not an ordinary failure.
+
+    A real subject failure names the subject; a trusted runner that exits
+    without ever writing a completion names the missing establishment. Both are
+    fail-closed, and the two reasons do not collapse into one.
+    """
+    _valid_project(tmp_path)
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\n\ndef test_real_failure():\n    assert False\n",
+    )
+    subject_failure = verifier_module.verify(tmp_path)
+    failure_detail = next(
+        gate for gate in subject_failure["gates"] if gate["id"] == "test-execution"
+    )["detail"]
+
+    # A trusted runner that exits without establishing completion (an executor
+    # killed or a protocol interrupted before the record is written) leaves no
+    # record at all. The digest self-check still holds: the runner is written
+    # and hashed here, so the interruption is what the parser must classify.
+    monkeypatch.setattr(
+        verifier_module, "TEST_RUNNER_SOURCE", "import sys\nsys.exit(2)\n"
+    )
+    interrupted = verifier_module.verify(tmp_path)
+    interrupted_detail = next(
+        gate for gate in interrupted["gates"] if gate["id"] == "test-execution"
+    )["detail"]
+
+    assert subject_failure["status"] == "fail"
+    assert interrupted["status"] == "fail"
+    assert "isolated project tests failed" in failure_detail
+    assert "not established" in interrupted_detail
+    assert "isolated project tests failed" not in interrupted_detail
+
+
+def test_a_failed_gate_rejects_a_completion_that_shows_a_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002 (T4): a completion on a failed gate must be a trusted failure record.
+
+    A forged record showing a pass beside a failed test-execution gate, or one
+    not from the trusted executor, is not an ordinary subject failure. The
+    parent fails closed rather than presenting it as trusted execution.
+    """
+    _valid_project(tmp_path)
+
+    def forge_pass_on_failure(command: tuple[str, ...], **_kwargs: Any):
+        payload = _valid_child_payload(command)
+        payload["status"] = "fail"
+        for gate in payload["gates"]:
+            if gate["id"] == "test-execution":
+                gate["passed"] = False
+        # The completion still claims a clean pass -- the forgery.
+        return subprocess.CompletedProcess(command, 2, json.dumps(payload), "")
+
+    monkeypatch.setattr(gate_module.subprocess, "run", forge_pass_on_failure)
+    gates, _provenance = trusted_greenfield_gates(tmp_path)
+
+    assert len(gates) == 1 and gates[0].passed is False
+    assert gates[0].name == "greenfield:trusted-verifier-identity"
+    assert "trusted subject-failure record" in gates[0].detail
+
+
+def test_a_failed_gate_accepts_a_genuine_trusted_subject_failure_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control for T4: a real failing record is an ordinary subject failure."""
+    _valid_project(tmp_path)
+
+    def genuine_failure(command: tuple[str, ...], **_kwargs: Any):
+        payload = _valid_child_payload(command)
+        payload["status"] = "fail"
+        for gate in payload["gates"]:
+            if gate["id"] == "test-execution":
+                gate["passed"] = False
+        completion = payload["test_execution"]["completion"]
+        completion["returncode"] = 1
+        completion["failed"] = 1
+        return subprocess.CompletedProcess(command, 2, json.dumps(payload), "")
+
+    monkeypatch.setattr(gate_module.subprocess, "run", genuine_failure)
+    gates, provenance = trusted_greenfield_gates(tmp_path)
+
+    assert provenance["trust"] == "structural-origin-and-digest"
+    assert len(gates) == len(gate_module.GREENFIELD_GATE_IDS)
+    assert next(g for g in gates if g.name.endswith("test-execution")).passed is False
+    assert all(gate.name != "greenfield:trusted-verifier-identity" for gate in gates)
+
+
+def test_real_flow_subject_failure_carries_a_structured_completion(tmp_path: Path) -> None:
+    """F-002 (T5): the production DevelopmentFlow, not only the low-level verifier.
+
+    A failing greenfield subject run through the real flow is rejected as a
+    subject-test failure carrying a structured trusted completion, not as a
+    lost completion.
+    """
+    _valid_project(tmp_path)
+    _write(tmp_path / "src/app.py", "def add(a: int, b: int) -> int:\n    return 0\n")
+    _write(
+        tmp_path / "tests/test_app.py",
+        "# BRD-F-001\nfrom src.app import add\n\n"
+        "def test_addition_contract():\n    assert add(1, 1) == 2\n",
+    )
+
+    result = _run(tmp_path)
+
+    assert result["accepted"] is False
+    test_gate = _gate(result, "test-execution")
+    assert test_gate["passed"] is False
+    assert "isolated project tests failed" in test_gate["detail"]
+    completion = result["acceptance_provenance"]["test_execution"]["completion"]
+    assert completion["failed"] >= 1
+    assert completion["executor_returncode"] == 73
+
+
+def test_a_subject_using_os_exec_is_refused_before_execution(tmp_path: Path) -> None:
+    """F-004: process replacement in the subject is refused by static analysis.
+
+    ``os.exec*`` is a process capability like any other, and a plain application
+    or test module holding it fails the architecture gate, so the subject never
+    reaches execution. Both a direct call and a constant-folded reflective form
+    are caught.
+    """
+    _valid_project(tmp_path)
+    _write(
+        tmp_path / "src/app.py",
+        "import os\n\ndef launch(program: str) -> None:\n    os.execv(program, [program])\n",
+    )
+    direct, _ = trusted_greenfield_gates(tmp_path)
+    architecture = next(g for g in direct if g.name.endswith("architecture-boundary"))
+    assert architecture.passed is False
+    assert "os.execv" in architecture.detail
+    assert next(g for g in direct if g.name.endswith("test-execution")).passed is False
+
+    _write(tmp_path / "src/app.py", "import os\nRUN = getattr(os, 'exe' + 'cv')\n")
+    reflective, _ = trusted_greenfield_gates(tmp_path)
+    assert next(
+        g for g in reflective if g.name.endswith("architecture-boundary")
+    ).passed is False
+
+
+def test_subject_exec_cannot_forge_a_completion_by_replacing_the_executor(
+    tmp_path: Path,
+) -> None:
+    """F-004 runtime backstop: even bypassing static analysis, exec fails closed.
+
+    Run the trusted runner directly against a subject whose test replaces the
+    executor process with ``os.exec`` before pytest completes. The replaced
+    process never writes the digest-bound inner record and does not exit on the
+    sentinel, so the runner establishes no completion and exits non-zero.
+    Process replacement destroys the completion; it does not forge one.
+    """
+    subject = _valid_project(tmp_path / "subject")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    runner = scratch / "greenfield_test_runner.py"
+    runner.write_text(
+        gate_module.GREENFIELD_TEST_RUNNER_SOURCE, encoding="utf-8", newline="\n"
+    )
+    runner_digest = "sha256:" + hashlib.sha256(runner.read_bytes()).hexdigest()
+    _write(
+        subject / "tests/test_app.py",
+        "# BRD-F-001\nimport os\nimport sys\n\n"
+        "def test_replaces_the_executor():\n"
+        "    os.execl(sys.executable, sys.executable, '-c', 'import sys; sys.exit(0)')\n",
+    )
+
+    completed = subprocess.run(
+        [
+            os.fspath(Path(sys.executable)),
+            "-I",
+            "-c",
+            gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+            os.fspath(runner),
+            runner_digest,
+            os.fspath(subject),
+        ],
+        cwd=scratch,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert completed.returncode != 0, completed.stdout + completed.stderr
+    assert not (scratch / "greenfield_test_result.json").exists()

@@ -35,7 +35,10 @@
   statically refused, with the mutable `sys` callback entrypoints disabled before
   project imports. A separate trusted supervisor requires a
   complete executed-test record, a normal-completion sentinel, and the expected
-  executor digest, and retains only a bounded output tail. The absolute Python
+  executor digest, and retains only a bounded output tail. The trusted
+  executor writes that record on either outcome, so a present, trusted
+  record reporting failures is a genuine subject-test failure, kept distinct
+  from a completion that never arrived; both fail closed. The absolute Python
   environment entrypoint is preserved on POSIX rather than resolving the venv
   symlink to its base interpreter; that resolved target is separately validated
   and recorded. This keeps trusted dependencies available under `-I` without

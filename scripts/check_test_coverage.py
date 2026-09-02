@@ -233,15 +233,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
-    # PR-16's trust boundary: 99 collected after CI, security-review and
-    # POSIX process-budget remediation, floor at band(99) = 90. Real
+    # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
+    # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
     # isolated invocation, strict result-protocol refusals, process-capability
     # equivalence, provenance, and the controlled old-profile false green live
-    # together. The two Linux loader, five executor-control and five POSIX
-    # process-budget regressions are included; critical acceptance identities
+    # together. The two Linux loader, five executor-control, five POSIX
+    # process-budget regressions, and eight F-002 subject-failure and
+    # process-replacement proofs are included; critical acceptance identities
     # are pinned separately.
-    "tests/test_trusted_greenfield_acceptance.py": 90,
+    "tests/test_trusted_greenfield_acceptance.py": 97,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -475,17 +476,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # ten census identity proofs in tests/test_skip_gate.py (104 -> 105
 # modules). Re-measured for the POSIX process-budget repair that turned the
 # PR-16 matrix green, and again for the three proofs that the budget is an
-# increment rather than a licence: 99 collected in
+# increment rather than a licence, and again for the eight F-002 subject-
+# failure and process-replacement proofs: 107 collected in
 # tests/test_trusted_greenfield_acceptance.py (105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2571   (105 modules)
-#     sum of the module floors    2367
-#     band(2571) = ceil(0.9*n)    2314
-#     MINIMUM_COLLECTED           2374
+#     collected across tests/     2579   (105 modules)
+#     sum of the module floors    2374
+#     band(2579) = ceil(0.9*n)    2322
+#     MINIMUM_COLLECTED           2381
 #     above the module sum         7
-#     below what collects         197
+#     below what collects         198
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -506,7 +508,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 204 in total, and the aggregate refuses
+# per-module bands already grant 205 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -527,7 +529,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2374
+MINIMUM_COLLECTED = 2381
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
