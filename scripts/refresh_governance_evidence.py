@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -127,7 +128,101 @@ except Exception:  # pragma: no cover - packaging boundary
     TOOL_VERSION = "0.0.0"
 
 
+#: Environment variables that re-aim git at a repository other than the one
+#: whose root is the working directory: an explicit git directory or work
+#: tree, an index or object store kept elsewhere, and limits on where
+#: discovery may look. Every git question this tool asks is about the
+#: governed tree at ROOT and nothing else, so none of these may have a say.
+#: `tests/test_subject_provenance.py` records the same lesson for the runtime:
+#: `GIT_DIR` takes precedence over `-C`, so a foreign repository answers.
+GIT_STEERING_VARIABLES = frozenset({
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    "GIT_NAMESPACE",
+})
+
+
+def _git_environment() -> dict[str, str]:
+    """The process environment with every git-steering variable removed."""
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name not in GIT_STEERING_VARIABLES
+    }
+
+
+def _same_directory(left: Path, right: Path) -> bool:
+    """One directory under two spellings: case, separators, short names, links."""
+    return os.path.normcase(os.path.realpath(left)) == os.path.normcase(
+        os.path.realpath(right)
+    )
+
+
+def _repository_root() -> Path | None:
+    """ROOT, when it is the root of the repository git would answer from.
+
+    Every other git call here runs with `cwd=ROOT` and trusted whatever
+    repository git discovered. Discovery walks UPWARD, so a governed tree with
+    no `.git` of its own -- an extracted archive, a copied tree -- was answered
+    for by whatever repository happened to enclose it, and the answer described
+    that repository's index and HEAD rather than this tree. With no repository
+    anywhere above it, `git diff` fell back to its no-index mode, printed
+    nothing and exited 0, and that silence read as a clean tree.
+
+    Measured at f114074, on an archive of that commit extracted with
+    byte-identical content into three places and verified in each with the
+    tool as archived there:
+
+        outside any repository                      intact
+        inside a foreign repository                 intact, borrowed
+        inside a foreign repository whose index     compromised, naming a path
+          differs at one governed path                this tree holds exactly
+                                                      as the archive wrote it
+
+    The bytes on disk were the same in all three. Only the enclosing
+    repository changed, and it changed the verdict.
+
+    Returns ROOT when git resolves its top level to ROOT itself. Returns None
+    when git can name no repository for ROOT at all; callers report that in
+    their own vocabulary, a refusal for a gate and `git:unbound` for
+    provenance. Raises when git resolves a DIFFERENT top level, because no
+    caller has a legitimate use for another repository's state.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=600,
+        env=_git_environment(),
+    )
+    if result.returncode:
+        return None
+    found = Path(result.stdout.strip())
+    if _same_directory(found, ROOT):
+        return ROOT
+    raise SystemExit(
+        f"{ROOT} is not the root of the git repository that encloses it: git "
+        f"resolves {found}. Its index and HEAD belong to that repository, not "
+        "to this tree, so nothing here can be proven clean or bound from them, "
+        "and nothing was modified. Give the tree a repository of its own, or "
+        "run from the repository's root."
+    )
+
+
 def _revision() -> str:
+    if _repository_root() is None:
+        raise SystemExit(
+            f"git could not name the repository enclosing {ROOT}; a bound "
+            "revision is required"
+        )
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
@@ -135,6 +230,7 @@ def _revision() -> str:
         capture_output=True,
         check=False,
         timeout=600,
+        env=_git_environment(),
     )
     if result.returncode:
         raise SystemExit("git rev-parse HEAD failed; a bound revision is required")
@@ -1445,9 +1541,23 @@ REGENERATED_OUTPUTS = frozenset(
 
 
 def _git_lines(*args: str) -> list[str]:
+    """Lines git prints about THIS tree, or a refusal.
+
+    The repository is established before the question is asked, because git
+    will otherwise answer from whatever encloses the working directory, or
+    from nothing: see `_repository_root`. A tree git cannot place is refused
+    in the same vocabulary as a git that cannot run, since the two leave the
+    gate in the same position -- nothing about the tree has been proven.
+    """
+    if _repository_root() is None:
+        raise SystemExit(
+            f"git could not name the repository enclosing {ROOT}, so it cannot "
+            "be asked what this tree holds. A clean governed tree cannot be "
+            "proven, so nothing was modified."
+        )
     result = subprocess.run(
         ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False,
-        timeout=600
+        timeout=600, env=_git_environment(),
     )
     if result.returncode:
         raise SystemExit(
@@ -1617,9 +1727,15 @@ def require_approval_matches_head() -> str | None:
 
 
 def _head_commit() -> str:
+    # Provenance, and tolerant of there being none: a tree with no repository
+    # is recorded as unbound. A tree inside a repository that is not its own
+    # is refused by `_repository_root` instead, because that HEAD is somebody
+    # else's commit.
+    if _repository_root() is None:
+        return "git:unbound"
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True,
-        check=False, timeout=600
+        check=False, timeout=600, env=_git_environment(),
     )
     return "git:" + result.stdout.strip() if result.returncode == 0 else "git:unbound"
 

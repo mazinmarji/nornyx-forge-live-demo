@@ -1,13 +1,15 @@
 """Required evidence being absent is not a successful empty verification.
 
-Four defects in this repository have shared one root cause:
+Five defects in this repository have shared one root cause:
 
     missing contracts directory  -> empty result   -> intact
     empty contracts directory    -> empty result   -> intact
     missing review_binding.json  -> loop skipped   -> intact
     git binary unreachable       -> empty path set -> clean tree
+    no repository around a tree  -> git no-index   -> clean tree
+      (and a foreign one around it -> that repository's answer)
 
-Each was fixed where it was found. Four instances of one class is not four
+Each was fixed where it was found. Five instances of one class is not five
 bugs, so this is the class written down as a control:
 
     PRESENT + VERIFIED        -> intact / authenticated / available
@@ -30,6 +32,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -366,6 +369,194 @@ def test_an_unrunnable_git_is_not_a_clean_tree(monkeypatch: pytest.MonkeyPatch):
     with pytest.raises(SystemExit) as refusal:
         refresh._unstaged_governed_paths()
     assert "clean governed tree cannot be proven" in str(refusal.value)
+
+
+# --------------------------------------------------------------------------
+# The fifth instance: a repository that is not this tree's.
+#
+# Every git question in the evidence tool ran with the governed tree as its
+# working directory and trusted whatever repository git discovered walking
+# upward from there. Two outcomes, one construct:
+#
+#     no repository above the tree   -> `git diff` no-index mode -> [] -> clean
+#     a foreign repository above it  -> that repository's index  -> its answer
+#
+# Measured on an archive of this repository extracted, byte for byte, into a
+# temp directory outside any repository (intact), inside a foreign repository
+# (intact, borrowed) and inside a foreign repository whose index differed at
+# one governed path (compromised, naming a file whose bytes were exactly the
+# archive's). The anchored-measurement harness in
+# tests/test_recorded_measurements.py ran `--verify` in exactly such an
+# extraction, so its verdict was a property of where the reader keeps temp
+# files. The tool now establishes the repository before asking anything of it.
+# --------------------------------------------------------------------------
+
+#: A governed path, as the covered roots name it.
+GOVERNED = "src/nornyx_forge/util.py"
+
+
+def _repository(root: Path, files: dict[str, str]) -> None:
+    """A repository at `root` holding `files`, committed."""
+    for relative, content in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    for command in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture"],
+    ):
+        subprocess.run(["git", *command], cwd=root, check=True,  # noqa: S603, S607
+                       capture_output=True, timeout=600)
+
+
+def _diverge_index(root: Path, relative: str) -> None:
+    """Change `relative` in the index only; the file on disk keeps its bytes."""
+    path = root / relative
+    original = path.read_bytes()
+    path.write_bytes(original + ("# index only" + NL).encode("utf-8"))
+    subprocess.run(["git", "add", relative], cwd=root, check=True,  # noqa: S603, S607
+                   capture_output=True, timeout=600)
+    path.write_bytes(original)
+
+
+def test_the_real_checkout_answers_for_itself():
+    """The root check must not refuse the repository it lives in.
+
+    Driven here because this checkout may be a worktree, whose `.git` is a
+    file pointing elsewhere, and CI's is a plain clone: both must resolve to
+    the tree itself, under whatever spelling git prints the path in.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    assert refresh._repository_root() == refresh.ROOT
+
+
+def test_a_tree_inside_a_foreign_repository_is_refused_not_measured_against_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Measured before this check existed: `_unstaged_governed_paths` returned
+    the governed path as divergent, because a repository that is not this
+    tree's held a different blob for it in its index. The bytes on disk were
+    exactly what they should have been.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    enclosing = tmp_path / "enclosing"
+    tree = enclosing / "tree"
+    _repository(enclosing, {"tree/" + GOVERNED: "print('governed')" + NL})
+    _diverge_index(enclosing, "tree/" + GOVERNED)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+
+    with pytest.raises(SystemExit) as refusal:
+        refresh._unstaged_governed_paths()
+    message = str(refusal.value)
+    assert "is not the root of the git repository that encloses it" in message
+    # THE REPOSITORY GIT FOUND, compared as a path. `enclosing.name in message`
+    # stood here and could not fail: the message also prints ROOT, which is
+    # `.../enclosing/tree`, so the name was always present.
+    resolved = re.search(r"git resolves (.+?)\. Its index", message)
+    assert resolved, "the refusal does not say which repository git resolved"
+    assert os.path.normcase(os.path.realpath(resolved.group(1))) == os.path.normcase(
+        os.path.realpath(enclosing)
+    ), f"the refusal names {resolved.group(1)!r}, not the enclosing repository"
+    assert "nothing was modified" in message
+
+    # The other two questions, from the same tree. Before the root check both
+    # ANSWERED, with the enclosing repository's HEAD as this tree's bound
+    # revision and as its provenance. Asserted here and not in the
+    # no-repository case, where a failing `git rev-parse` already produced
+    # the same refusal and the same `git:unbound` before this change.
+    for question in (refresh._revision, refresh._head_commit):
+        with pytest.raises(SystemExit) as borrowed:
+            question()
+        assert "is not the root of the git repository that encloses it" in str(
+            borrowed.value
+        ), f"{question.__name__} answered from the enclosing repository"
+
+
+def test_a_tree_with_no_repository_is_refused_not_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Measured before this check existed: outside any repository,
+    `git diff --name-only -- <the covered roots>` fell back to comparing
+    paths on disk, printed nothing, and exited 0. `_unstaged_governed_paths`
+    returned `[]`, which every caller reads as a clean governed tree -- an
+    empty answer to a question git never took.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    (tree / "src").mkdir(parents=True)
+    placed = subprocess.run(  # noqa: S603, S607
+        ["git", "rev-parse", "--show-toplevel"], cwd=tree, capture_output=True,
+        text=True, timeout=600,
+    )
+    assert placed.returncode != 0, (
+        "this test needs a temp directory outside any repository, and "
+        f"{tmp_path} sits inside {placed.stdout.strip()}; point TMPDIR elsewhere"
+    )
+    monkeypatch.setattr(refresh, "ROOT", tree)
+
+    with pytest.raises(SystemExit) as refusal:
+        refresh._unstaged_governed_paths()
+    assert "could not name the repository enclosing" in str(refusal.value)
+    assert "cannot be proven" in str(refusal.value)
+    # The other two vocabularies for the same absence, from the same tree: a
+    # bound revision is refused, and provenance is recorded as unbound rather
+    # than invented.
+    with pytest.raises(SystemExit) as unbound:
+        refresh._revision()
+    assert "a bound revision is required" in str(unbound.value)
+    assert refresh._head_commit() == "git:unbound"
+
+
+#: Steering variables aimed at the foreign repository, each by the path git
+#: expects for it. Two of them defeat the root check on their own: with
+#: `GIT_DIR` set and no `GIT_WORK_TREE`, git takes the working directory as
+#: the work tree, so `--show-toplevel` names this tree while the index and
+#: HEAD are the foreign repository's; with `GIT_INDEX_FILE`, discovery finds
+#: this tree's repository and compares its files against another index
+#: entirely (measured under review, git 2.55: the top level still names this
+#: tree). `GIT_WORK_TREE` moves the top level, which the root check refuses,
+#: so it proves the drop from the other side. The remaining members of
+#: `GIT_STEERING_VARIABLES` yield a refusal rather than a foreign answer.
+STEERED_AT_FOREIGN = {
+    "GIT_DIR": lambda foreign: foreign / ".git",
+    "GIT_INDEX_FILE": lambda foreign: foreign / ".git" / "index",
+    "GIT_WORK_TREE": lambda foreign: foreign,
+}
+
+
+@pytest.mark.parametrize("variable", sorted(STEERED_AT_FOREIGN))
+def test_a_steering_variable_cannot_re_aim_the_governed_tree(
+    variable: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The variables are dropped from every git call, so the answer comes
+    from this tree's own repository whatever the environment says.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    _repository(tree, {GOVERNED: "print('governed')" + NL})
+    foreign = tmp_path / "foreign"
+    _repository(foreign, {GOVERNED: "print('foreign')" + NL})
+    _diverge_index(foreign, GOVERNED)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    honest_paths = refresh._unstaged_governed_paths()
+    honest_head = refresh._head_commit()
+    assert honest_paths == []
+    assert honest_head.startswith("git:") and honest_head != "git:unbound"
+
+    monkeypatch.setenv(variable, str(STEERED_AT_FOREIGN[variable](foreign)))
+
+    assert refresh._unstaged_governed_paths() == honest_paths, (
+        f"{variable} re-aimed the dirty-tree question at another repository"
+    )
+    assert refresh._head_commit() == honest_head, (
+        f"{variable} re-aimed provenance at another repository's HEAD"
+    )
 
 
 def test_a_missing_review_binding_is_not_a_passing_verification(tmp_path: Path):

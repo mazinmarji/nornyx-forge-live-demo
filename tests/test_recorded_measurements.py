@@ -37,7 +37,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -884,7 +884,22 @@ def _verify_at(sha: str) -> dict:
         tree = work / "tree"
         tree.mkdir()
         with tarfile.open(bundle) as tar:
-            tar.extractall(tree)  # noqa: S202
+            members = tar.getmembers()
+            # NO `.git` COMPONENT IN THE ARCHIVE, asserted rather than assumed.
+            # A gitfile in the extraction would make the repository created
+            # below REINITIALISE whatever that file points at. Measured under
+            # review: `git init` reinitialised a foreign repository, `add -A`
+            # rewrote its index, the fixture commit advanced its HEAD, and the
+            # root check then passed with that HEAD as provenance. `git archive`
+            # refuses a tree holding a `.git` entry today, which is what closes
+            # the route -- an unpinned behaviour of another program, so it is
+            # checked here as well.
+            carried = sorted(
+                member.name for member in members
+                if ".git" in PurePosixPath(member.name).parts
+            )
+            assert carried == [], f"the archive of {sha} carries a .git entry: {carried}"
+            tar.extractall(tree, members=members)  # noqa: S202
 
         # AN EXPLICIT ENVIRONMENT. With none, the child inherited
         # `FORGE_REVIEWER_TRUST_STORE` and `HOME`, and the assurance fields this
@@ -924,19 +939,77 @@ def _verify_at(sha: str) -> dict:
         # Pointing them at an EMPTY directory severs the same authority and
         # leaves the tool able to run: both stores resolve, both find nothing,
         # and nothing about the answer depends on whose machine it is.
+        from refresh_governance_evidence import GIT_STEERING_VARIABLES  # noqa: PLC0415
+
         empty_home = work / "no-home"
         empty_home.mkdir(exist_ok=True)
+        # NO READER GIT CONFIGURATION, measured rather than assumed. With HOME
+        # redirected and the steering variables dropped, `GIT_CONFIG_GLOBAL`
+        # carrying `init.templateDir` and `GIT_CONFIG_COUNT` carrying
+        # `core.hooksPath` were each measured to run a reader-supplied
+        # pre-commit hook during the fixture commit below -- code this harness
+        # never executed before it made commits, and able to rewrite the
+        # extraction before `--verify` reads it. So every `GIT_CONFIG_*`
+        # variable, the XDG config home and the template directory go the same
+        # way as HOME, the system gitconfig is switched off, and init and
+        # commit are told to take templates and hooks from an empty directory.
+        no_templates = work / "no-git-templates"
+        no_templates.mkdir(exist_ok=True)
         environment = {
             key: value for key, value in os.environ.items()
-            if not key.startswith("FORGE_")
+            if not key.startswith(("FORGE_", "GIT_CONFIG_"))
+            and key not in GIT_STEERING_VARIABLES
+            and key not in {"XDG_CONFIG_HOME", "GIT_TEMPLATE_DIR"}
         }
         environment.update({
             "HOME": str(empty_home),
             "USERPROFILE": str(empty_home),
             "HOMEDRIVE": empty_home.drive or "",
             "HOMEPATH": str(empty_home)[len(empty_home.drive):] or "\\",
+            "GIT_CONFIG_NOSYSTEM": "1",
             "PYTHONIOENCODING": "utf-8",
         })
+
+        # A REPOSITORY OF ITS OWN, so that git answers from the extraction.
+        #
+        # `--verify` asks git whether the working tree still holds what git
+        # holds, with the working directory as its only address. The
+        # extraction had no `.git`, so git looked UPWARD and answered from
+        # whatever repository enclosed the temp directory -- on a machine
+        # whose TMPDIR sits under a checkout, from that checkout's index --
+        # and where nothing enclosed it, from a no-index fallback that prints
+        # nothing and exits 0. Measured on the same archive, byte for byte:
+        # `intact` in a temp directory outside any repository, `compromised`
+        # inside a repository whose index differed at one governed path. The
+        # anchored verdict was a property of where the reader's temp directory
+        # lives, which is the same defect as the planted home directory above,
+        # reached by a route nothing here had closed.
+        #
+        # So the extraction is committed to a repository containing nothing
+        # else, under the same explicit environment as the run: no reader
+        # gitconfig, no steering variable. HEAD here is a fixture commit and
+        # not the anchored one. That is provenance, and it is not what
+        # anchors the measurement -- the archive is. At this baseline
+        # `--verify` asks git only about working-tree agreement, never which
+        # commit; should that change, this fixture commit fails the comparison
+        # loudly rather than letting a reader's HEAD stand in for the anchor.
+        for command in (
+            ["init", "-q", f"--template={no_templates}"],
+            ["add", "-A"],
+            ["-c", "user.name=anchor", "-c", "user.email=anchor@example.invalid",
+             "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={no_templates}",
+             "commit", "-q", "-m", f"archive of {sha}"],
+        ):
+            settled = subprocess.run(  # noqa: S603
+                ["git", *command], cwd=tree, capture_output=True,  # noqa: S607
+                text=True, encoding="utf-8", errors="replace", timeout=600,
+                env=environment,
+            )
+            verb = next(word for word in command if word in {"init", "add", "commit"})
+            assert settled.returncode == 0, (
+                f"git {verb} in the extraction of {sha}: {settled.stderr[-300:]}"
+            )
+
         done = subprocess.run(  # noqa: S603
             [sys.executable, "scripts/refresh_governance_evidence.py", "--verify"],
             cwd=tree, capture_output=True, text=True, encoding="utf-8",
@@ -1316,6 +1389,148 @@ def test_the_anchored_re_execution_does_not_depend_on_the_readers_machine(
     assert len(planted_result.get("assurance_problems", [])) == len(
         baseline.get("assurance_problems", [])
     ), "the planted store changed how many assurance problems were reported"
+
+
+def test_the_anchored_re_execution_does_not_depend_on_the_enclosing_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The second route to a reader-dependent verdict, driven.
+
+    `_verify_at` extracts the archive into a temp directory and runs
+    `--verify` there. The extraction had no repository of its own, so git's
+    upward discovery answered from whatever repository enclosed the temp
+    directory. Measured at f114074, the merge of PR-16, with byte-identical
+    files on disk: the same archive verified intact in a temp directory outside any
+    repository and compromised inside a repository whose index held different
+    content at one governed path. A reader whose TMPDIR sits under a checkout
+    got a different anchored verdict from every other reader.
+
+    This plants exactly that: a repository enclosing the harness's work
+    directory, whose index disagrees with the archive at one governed path.
+    The re-execution must return the same fields it returns anywhere else.
+    """
+    import shutil as _shutil
+    import subprocess as _sp
+    import tempfile as _tempfile
+
+    sha = _sp.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
+                  text=True, timeout=600, check=True).stdout.strip()
+    baseline = _verify_at(sha)
+
+    enclosing = tmp_path / "enclosing"
+    work = enclosing / "anchor"
+    governed = Path("tree") / "src" / "nornyx_forge" / "util.py"
+    divergent = work / governed
+    divergent.parent.mkdir(parents=True)
+    divergent.write_text("# not what the archive holds" + chr(10), encoding="utf-8")
+    for command in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=enclosing", "-c", "user.email=enclosing@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "enclosing"],
+    ):
+        _sp.run(["git", *command], cwd=enclosing, check=True,  # noqa: S603, S607
+                capture_output=True, timeout=600)
+    # The index keeps the divergent blob; the working files go, so the
+    # harness can extract into a directory that does not exist yet.
+    _shutil.rmtree(work / "tree")
+    # PRECONDITION, measured rather than assumed: the enclosing repository
+    # tracks that path, so once the archive puts its own bytes there the
+    # enclosing index disagrees with the disk. That disagreement is what the
+    # borrowed verdict reported.
+    tracked = _sp.run(  # noqa: S603, S607
+        ["git", "ls-files", "--", str(Path("anchor") / governed).replace("\\", "/")],
+        cwd=enclosing, capture_output=True, text=True, timeout=600, check=True,
+    ).stdout.strip()
+    assert tracked, "the enclosing repository does not track the governed path"
+
+    # RECORDED, so that a harness which stops taking its work directory from
+    # `tempfile.mkdtemp` cannot turn this into a comparison of two unplanted
+    # runs that agree trivially.
+    plants: list[str] = []
+
+    def plant(*args, **kwargs) -> str:
+        plants.append(str(kwargs.get("prefix", "")))
+        return str(work)
+
+    monkeypatch.setattr(_tempfile, "mkdtemp", plant)
+    planted = _verify_at(sha)
+    assert plants, (
+        "the harness did not take its work directory from tempfile.mkdtemp, so "
+        "nothing here ran inside the enclosing repository"
+    )
+
+    for field in ("status", "integrity_state", "governed_input_match", "problems"):
+        assert planted.get(field) == baseline.get(field), (
+            f"{field} changed from {baseline.get(field)!r} to "
+            f"{planted.get(field)!r} when the harness's temp directory sat "
+            "inside a repository whose index disagreed with the archive. The "
+            "anchored verdict is then a property of where the reader keeps "
+            "temp files rather than of the commit it names."
+        )
+
+
+def test_the_anchored_re_execution_runs_no_reader_hook(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The fixture commit inside the extraction must not run the reader's code.
+
+    Giving the extraction a repository means the harness now makes commits,
+    and a commit runs hooks. Measured under review before this was closed:
+    `GIT_CONFIG_COUNT` carrying `core.hooksPath` ran a reader-supplied
+    pre-commit hook during the fixture commit -- code the harness never
+    executed before, able to rewrite the extraction before `--verify` reads
+    it, and a second route back to a verdict that depends on the reader.
+
+    A hook that leaves a marker is planted through exactly that route. The
+    positive control commits in a throwaway repository under the same
+    environment and must leave the marker; without it the negative result
+    below would prove nothing about isolation on this machine.
+    """
+    import subprocess as _sp
+
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    marker = tmp_path / "hook-ran"
+    hook = hooks / "pre-commit"
+    # LF on every platform: `write_text` would emit CRLF on Windows, which
+    # Git for Windows' sh happens to tolerate, and the control should not
+    # depend on that.
+    hook.write_text(
+        "#!/bin/sh" + chr(10) + f"echo ran > '{marker.as_posix()}'" + chr(10),
+        encoding="utf-8", newline=chr(10),
+    )
+    hook.chmod(0o755)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(hooks))
+
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "file").write_text("x" + chr(10), encoding="utf-8")
+    for command in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=control", "-c", "user.email=control@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", "control"],
+    ):
+        _sp.run(["git", *command], cwd=control, check=True,  # noqa: S603, S607
+                capture_output=True, timeout=600)
+    assert marker.exists(), (
+        "the planted hook did not fire for a plain commit, so this machine "
+        "cannot show whether the harness is isolated from it"
+    )
+    marker.unlink()
+
+    sha = _sp.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True,
+                  text=True, timeout=600, check=True).stdout.strip()
+    result = _verify_at(sha)
+
+    assert result.get("status") is not None, "the re-execution produced no report"
+    assert not marker.exists(), (
+        "the harness's fixture commit ran a hook supplied by the reader's "
+        "environment; the extraction could be rewritten before --verify reads it"
+    )
 
 
 @pytest.mark.false_green("FG36")

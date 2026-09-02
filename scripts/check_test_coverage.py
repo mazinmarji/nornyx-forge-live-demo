@@ -259,7 +259,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # pre-registration is a governance document, so the document sweep
     # gained five parametrized cases (177 collected, band(177) = 160) --
     # caught by `test_no_module_floor_drifts_far_below_its_module`.
-    "tests/test_recorded_measurements.py": 160,
+    # Raised 160 -> 162 for the anchored-measurement isolation round: the
+    # re-execution gained its enclosing-repository and reader-hook proofs
+    # (179 collected, band(179) = 162).
+    "tests/test_recorded_measurements.py": 162,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -309,7 +312,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_governance_integrity_authority.py": 36,
     "tests/test_artifact_authority.py": 16,
     "tests/test_collection_completeness.py": 9,
-    "tests/test_absence_is_not_success.py": 21,
+    # Raised 21 -> 27 for the fifth instance of the class -- a repository that
+    # is not this tree's -- six nodes (29 collected, band(29) = 27).
+    "tests/test_absence_is_not_success.py": 27,
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
@@ -478,14 +483,21 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # PR-16 matrix green, and again for the three proofs that the budget is an
 # increment rather than a licence, and again for the eight F-002 subject-
 # failure and process-replacement proofs: 107 collected in
-# tests/test_trusted_greenfield_acceptance.py (105 modules):
+# tests/test_trusted_greenfield_acceptance.py (105 modules). Re-measured for
+# the anchored-measurement isolation round: 6 new collected in
+# tests/test_absence_is_not_success.py and 2 in
+# tests/test_recorded_measurements.py (105 modules). Both module floors were
+# raised to their bands, which lifted the module-floor sum past the aggregate,
+# so the aggregate moves up by the same eight and keeps its margin --
+# `test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors` caught
+# it, not a reader:
 #
 # (rows below):
 #
-#     collected across tests/     2579   (105 modules)
-#     sum of the module floors    2374
-#     band(2579) = ceil(0.9*n)    2322
-#     MINIMUM_COLLECTED           2381
+#     collected across tests/     2587   (105 modules)
+#     sum of the module floors    2382
+#     band(2587) = ceil(0.9*n)    2329
+#     MINIMUM_COLLECTED           2389
 #     above the module sum         7
 #     below what collects         198
 #
@@ -529,7 +541,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2381
+MINIMUM_COLLECTED = 2389
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
