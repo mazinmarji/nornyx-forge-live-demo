@@ -78,6 +78,7 @@ def _entry():
     _int = int
     _len = len
     _system_exit = SystemExit
+    _permission_error = PermissionError
     _get_ident = __import__("_thread").get_ident
     _trusted_result_writer = [None]
     _write_flags = (
@@ -148,6 +149,9 @@ def _entry():
         }:
             raise PermissionError("test process cannot change execution authority")
 
+    def _refuse_interpreter_callback(*_args, **_kwargs):
+        raise _permission_error("test process cannot register interpreter callbacks")
+
     class _Recorder:
         def __init__(self):
             self.collected = 0
@@ -182,6 +186,11 @@ def _entry():
     _sys.path.insert(0, str(_subject / "src"))
     _sys.path.insert(0, str(_subject))
     _sys.addaudithook(_audit)
+    _sys.addaudithook = _refuse_interpreter_callback
+    _sys.call_tracing = _refuse_interpreter_callback
+    _sys.set_asyncgen_hooks = _refuse_interpreter_callback
+    _sys.setprofile = _refuse_interpreter_callback
+    _sys.settrace = _refuse_interpreter_callback
     _returncode = _int(_pytest_main([
         "-q", "--capture=no", "--disable-warnings", "--maxfail=1", "--noconftest",
         "-p", "no:cacheprovider", "-p", "no:logging",
@@ -385,8 +394,13 @@ _INTERPRETER_CONTROL_CALLS = {
     "pytest.exit",
     "pytest.main",
     "setattr",
+    "sys.addaudithook",
+    "sys.call_tracing",
     "sys._current_frames",
     "sys._getframe",
+    "sys.set_asyncgen_hooks",
+    "sys.setprofile",
+    "sys.settrace",
     "vars",
 }
 _INTERPRETER_CONTROL_ATTRIBUTES = {
@@ -412,6 +426,7 @@ _INTERPRETER_CONTROL_ATTRIBUTES = {
     "f_locals",
     "gi_frame",
     "meta_path",
+    "monitoring",
     "modules",
     "path_hooks",
     "pluginmanager",

@@ -361,7 +361,9 @@ interpreter capabilities. Both `sys.argv` and `sys.orig_argv` are scrubbed befor
 subject collection. The audit hook confines writes and process authority,
 validates both endpoints of a hard link and the destination of a symbolic link,
 and permits the external completion write only from the executor thread that
-owns it.
+owns it. Audit, trace, profile, asynchronous-generator, and interpreter-monitoring
+callback registration are refused statically; the mutable `sys` registration
+entrypoints are also replaced before project imports begin.
 A trusted supervisor outside the pytest interpreter requires a complete
 executed-test record, the expected executor digest and a normal-completion
 sentinel, bounds retained output, and performs a final subject census. Scripted

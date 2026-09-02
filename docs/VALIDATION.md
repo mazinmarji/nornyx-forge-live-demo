@@ -26,7 +26,9 @@
   collection it scrubs both interpreter argument vectors; during execution an
   audit hook confines writes to the pytest temp root, checks link destinations,
   binds the completion write to its owning executor thread, and refuses process
-  starts. A separate trusted supervisor requires a
+  starts. Audit, trace, profile, async-generator, and monitoring callbacks are
+  statically refused, with the mutable `sys` callback entrypoints disabled before
+  project imports. A separate trusted supervisor requires a
   complete executed-test record, a normal-completion sentinel, and the expected
   executor digest, and retains only a bounded output tail. The absolute Python
   environment entrypoint is preserved on POSIX rather than resolving the venv

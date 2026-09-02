@@ -25,7 +25,9 @@
   writes to the pytest temp root and refuses process starts. Link operations are
   destination-aware, and the one external completion write is bound to its
   executor thread. Both ordinary and original interpreter argument vectors are
-  scrubbed before collection. Whole-subject static inspection refuses hard exits,
+  scrubbed before collection. Interpreter audit/trace/profile callback
+  registration is statically refused and its mutable `sys` entrypoints are
+  disabled before project imports. Whole-subject static inspection refuses hard exits,
   direct, constant-folded, and opaque reflection, pytest lifecycle control, and
   other capabilities that could reach the supervisor. A trusted supervisor outside the
   pytest interpreter validates the complete executed-test record and its normal

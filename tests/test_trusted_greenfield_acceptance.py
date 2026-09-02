@@ -907,6 +907,75 @@ def test_executor_rejects_a_hard_link_to_its_completion_record(tmp_path: Path) -
     assert payload["returncode"] != 0
     assert payload["failed"] == 1
 
+    interpreter_controls = (
+        "import sys\nsys.addaudithook(lambda *_args: None)\n",
+        "import sys\nsys.call_tracing(lambda: None, ())\n",
+        "import sys\nsys.set_asyncgen_hooks(firstiter=lambda _item: None)\n",
+        "import sys\nsys.setprofile(lambda *_args: None)\n",
+        "import sys\nsys.settrace(lambda *_args: None)\n",
+        "import sys\nCONTROL=sys.monitoring\n",
+    )
+    for index, source in enumerate(interpreter_controls):
+        project = _valid_project(tmp_path / f"static-control-{index}")
+        _write(project / "src/app.py", source)
+        gates, _provenance = trusted_greenfield_gates(project)
+        security = next(g for g in gates if g.name.endswith("security-static"))
+        assert security.passed is False, source
+
+    callback_subject = _valid_project(tmp_path / "callback-subject")
+    callback_scratch = tmp_path / "callback-scratch"
+    callback_scratch.mkdir()
+    callback_executor = callback_scratch / "greenfield_pytest_executor.py"
+    callback_result = callback_scratch / "greenfield_pytest_inner.json"
+    callback_config = callback_scratch / "greenfield_pytest.ini"
+    _write(callback_executor, gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE)
+    _write(callback_config, "[pytest]\n")
+    _write(
+        callback_subject / "tests/test_app.py",
+        "# BRD-F-001\n"
+        "import json\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n\n"
+        f"RESULT = Path({json.dumps(str(callback_result))})\n"
+        "SOURCE = Path('.nornyx-test-tmp/forged.json')\n\n"
+        "def completion_hook(event, args):\n"
+        "    if event == 'open' and args and Path(args[0]).resolve() == RESULT:\n"
+        "        os.link(SOURCE, RESULT)\n"
+        "        os._exit(73)\n\n"
+        "def test_registers_a_completion_callback():\n"
+        f"    SOURCE.write_text({json.dumps(json.dumps(forged))}, encoding='utf-8')\n"
+        "    sys.addaudithook(completion_hook)\n"
+        "    assert True\n",
+    )
+
+    callback_completed = subprocess.run(
+        [
+            os.fspath(Path(sys.executable)),
+            "-I",
+            "-c",
+            gate_module.GREENFIELD_IN_MEMORY_BOOTSTRAP,
+            os.fspath(callback_executor),
+            gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+            os.fspath(callback_subject),
+            os.fspath(callback_result),
+            os.fspath(callback_config),
+            gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
+        ],
+        cwd=callback_subject,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert callback_completed.returncode == 73, (
+        callback_completed.stdout + callback_completed.stderr
+    )
+    callback_payload = json.loads(callback_result.read_text(encoding="utf-8"))
+    assert callback_payload["returncode"] != 0
+    assert callback_payload["failed"] == 1
+
 
 def test_project_test_output_is_drained_without_an_unbounded_spool(tmp_path: Path) -> None:
     _valid_project(tmp_path)
