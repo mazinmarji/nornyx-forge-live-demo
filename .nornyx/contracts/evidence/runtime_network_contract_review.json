@@ -6,11 +6,11 @@
     "high_risk_capability_requires_human_approval",
     "sensitive_categories_never_shared"
   ],
-  "generated_at": "2026-09-02T03:43:00Z",
-  "governed_input_digest": "sha256:fdcb3d7e7387eeba18663f2a783b99e85adcddc1eb201a298bf07e4e55912f3a",
+  "generated_at": "2026-09-02T06:38:18Z",
+  "governed_input_digest": "sha256:a08879a8c35b37239c6afc84ec21f57e5f50d84e37ae1dd78a655ec3c413b717",
   "human_review": "not_performed",
   "reviewer_type": "deterministic_tool",
   "schema": "nornyx.forge.network_contract_review.v1",
   "statement": "The declared agentic-network contract was reviewed by deterministic reference checks. This is a machine review, not a human approval.",
-  "subject_revision": "git:1826207625185e59007364dffce7d3b9a3e95f6b"
+  "subject_revision": "git:8f135ff31ae8fe733eb5f80c34c69756fc12f5c2"
 }

@@ -347,6 +347,11 @@ _MAX_TOTAL_AST_NODES = 1_000_000
 _MAX_MEMORY_BYTES = 768 * 1024 * 1024
 _MAX_JOB_MEMORY_BYTES = 1024 * 1024 * 1024
 _MAX_PROCESSES = 8
+# A BUDGET ABOVE THE AMBIENT COUNT, not an absolute ceiling. ``RLIMIT_NPROC``
+# is compared with every task (process or thread) the real user id holds
+# host-wide, so an absolute 64 refused this verifier's own runner, executor and
+# drain thread on every GitHub-hosted runner, whose service user already holds
+# more than that before the verifier starts. See ``_real_uid_task_count``.
 _MAX_POSIX_PROCESSES = 64
 _TEST_TIMEOUT_SECONDS = 60
 _WINDOWS_JOB_HANDLES: list[Any] = []
@@ -983,6 +988,49 @@ def _gate(identifier: str, problems: list[str], success: str) -> dict[str, Any]:
     return {"id": identifier, "passed": not unique, "detail": detail}
 
 
+def _real_uid_task_count() -> int | None:
+    """Count every task the real user id holds, which is what RLIMIT_NPROC counts.
+
+    The kernel does not charge ``RLIMIT_NPROC`` to a process tree.  At every
+    fork or thread start it compares the limit with the number of tasks the
+    real user id owns across the whole host, so a ceiling below that ambient
+    count refuses the next task whoever asks for it.  Measured on GitHub-hosted
+    runners: the service user held more than 64 tasks before the verifier
+    started, and an absolute 64 refused the verifier's own test runner with
+    ``EAGAIN`` on every interpreter of the matrix, at three different points of
+    the chain depending on where the ceiling happened to bite.  The budget is
+    therefore applied above this count.  ``None`` means the count cannot be
+    measured, and the caller fails closed rather than guessing.
+    """
+    proc = Path("/proc")
+    try:
+        uid = str(os.getuid())
+        entries = os.listdir(proc)
+    except (AttributeError, OSError):
+        return None
+    total = 0
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            status = (proc / entry / "status").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue  # the task exited while it was being counted
+        owner: str | None = None
+        threads = 1
+        for line in status.splitlines():
+            if line.startswith("Uid:"):
+                fields = line.split()
+                owner = fields[1] if len(fields) > 1 else None
+            elif line.startswith("Threads:"):
+                fields = line.split()
+                if len(fields) > 1 and fields[1].isdigit():
+                    threads = int(fields[1])
+        if owner == uid:
+            total += threads
+    return total
+
+
 def _apply_resource_limits() -> dict[str, Any]:
     """Confine this verifier and the test process it launches, or fail closed."""
     if os.name == "nt":
@@ -1082,12 +1130,23 @@ def _apply_resource_limits() -> dict[str, Any]:
                 "platform": "posix-rlimit",
                 "error": "RLIMIT_NPROC is unavailable",
             }
+        ambient = _real_uid_task_count()
+        if ambient is None:
+            return {
+                "enforced": False,
+                "platform": "posix-rlimit",
+                "error": (
+                    "the real user id's task count cannot be measured, so no "
+                    "process budget can be applied above it"
+                ),
+            }
+        _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        budgeted = ambient + _MAX_POSIX_PROCESSES
+        if hard != resource.RLIM_INFINITY:
+            budgeted = min(budgeted, hard)
         resource.setrlimit(resource.RLIMIT_AS, (_MAX_MEMORY_BYTES, _MAX_MEMORY_BYTES))
         resource.setrlimit(resource.RLIMIT_CPU, (120, 120))
-        resource.setrlimit(
-            resource.RLIMIT_NPROC,
-            (_MAX_POSIX_PROCESSES, _MAX_POSIX_PROCESSES),
-        )
+        resource.setrlimit(resource.RLIMIT_NPROC, (budgeted, budgeted))
         return {
             "enforced": True,
             "platform": "posix-rlimit",

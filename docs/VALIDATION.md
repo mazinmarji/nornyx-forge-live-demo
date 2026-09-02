@@ -19,7 +19,10 @@
   `nornyx.greenfield.python.v1`, invoked from trusted Forge bytes without PATH or
   project import resolution. The test process receives a private subject copy,
   disables project `conftest.py` hooks and discovery configuration, and applies
-  OS resource limits. The runner and executor use the same digest-verified
+  OS resource limits: address space and CPU time on POSIX with a process budget
+  applied above the real user id's ambient task count (an absolute
+  `RLIMIT_NPROC` ceiling refused the verifier's own runner on GitHub-hosted
+  runners), or a Job Object on Windows. The runner and executor use the same digest-verified
   in-memory byte-snapshot pattern as the top-level verifier. Before execution,
   static inspection refuses hard termination, reflection, and pytest lifecycle
   control, including folded and opaque reflected capability acquisition. Before

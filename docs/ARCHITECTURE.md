@@ -41,6 +41,12 @@
   shared-library builds such as `actions/setup-python` also receive a loader
   directory derived from the trusted interpreter's `sys.base_prefix`; inherited
   `LD_LIBRARY_PATH` remains excluded so project state cannot select native code.
+  On POSIX the process budget is applied above the real user id's ambient task
+  count, because `RLIMIT_NPROC` is charged to every process and thread that
+  user holds host-wide rather than to this process tree: an absolute ceiling of
+  64 refused the verifier's own runner on GitHub-hosted runners, whose service
+  user already exceeds it. A host whose task count cannot be measured fails
+  closed.
 - `app_launcher`: bounded adapter that starts the application server process.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf

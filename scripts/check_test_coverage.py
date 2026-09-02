@@ -108,6 +108,16 @@ EXPECTED_SKIPS = {
     # nine permanent skips instead of spending a minute disproving it.
     "tests/test_container_launch.py::test_compose_up_build_starts_the_application":
         "The live container build downloads packages, which BRD-004 forbids for the default offline run. CI exercises it in the container-launch job instead, so it is covered — just not here.",
+    # RLIMIT_NPROC is a POSIX per-user-id limit. These two proofs hold a busy
+    # real uid against the trusted verifier and probe the budget the kernel
+    # then holds, neither of which exists on a Windows workstation, where a Job
+    # Object confines the verifier instead. The property is not weakened: every
+    # CI test job runs Linux and executes both, and the provenance proof
+    # requires enforced limits on every platform.
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_process_budget_survives_a_busy_real_uid":
+        "RLIMIT_NPROC is a POSIX per-user-id limit; a Windows workstation confines the verifier with a Job Object instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the provenance proof requires enforced limits on every platform.",
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_process_budget_is_applied_above_the_ambient_task_count":
+        "RLIMIT_NPROC is a POSIX per-user-id limit; a Windows workstation confines the verifier with a Job Object instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the provenance proof requires enforced limits on every platform.",
 }
 
 
@@ -217,13 +227,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
-    # PR-16's trust boundary: 94 collected after CI and security-review
-    # remediation, floor at band(94) = 85. Real DevelopmentFlow repair/review paths, all seven hostile
-    # specimens, exact isolated invocation, strict result-protocol refusals,
-    # process-capability equivalence, provenance, and the controlled old-profile
-    # false green live together. The two Linux loader and five executor-control
-    # regressions are included; critical acceptance identities are pinned separately.
-    "tests/test_trusted_greenfield_acceptance.py": 85,
+    # PR-16's trust boundary: 96 collected after CI, security-review and
+    # POSIX process-budget remediation, floor at band(96) = 87. Real
+    # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
+    # isolated invocation, strict result-protocol refusals, process-capability
+    # equivalence, provenance, and the controlled old-profile false green live
+    # together. The two Linux loader, five executor-control and two POSIX
+    # process-budget regressions are included; critical acceptance identities
+    # are pinned separately.
+    "tests/test_trusted_greenfield_acceptance.py": 87,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -455,14 +467,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # for the PR-16 trusted-greenfield round and its inspector/CI/security
 # remediation: 94 collected in tests/test_trusted_greenfield_acceptance.py and
 # ten census identity proofs in tests/test_skip_gate.py (104 -> 105
-# modules):
+# modules). Re-measured for the POSIX process-budget repair that turned the
+# PR-16 matrix green: 96 collected in
+# tests/test_trusted_greenfield_acceptance.py (105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2566   (105 modules)
-#     sum of the module floors    2362
-#     band(2566) = ceil(0.9*n)    2310
-#     MINIMUM_COLLECTED           2369
+#     collected across tests/     2568   (105 modules)
+#     sum of the module floors    2364
+#     band(2568) = ceil(0.9*n)    2312
+#     MINIMUM_COLLECTED           2371
 #     above the module sum         7
 #     below what collects         197
 #
@@ -506,7 +520,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2369
+MINIMUM_COLLECTED = 2371
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

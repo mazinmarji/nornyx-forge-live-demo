@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -993,6 +994,90 @@ def test_project_test_output_is_drained_without_an_unbounded_spool(tmp_path: Pat
         "bounded-20000-byte-tail-no-disk-spool"
     )
     assert provenance["test_execution"]["output_bytes"] >= 100_000
+
+
+_POSIX_ONLY = pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "RLIMIT_NPROC is a POSIX per-user-id limit; Windows confines the "
+        "verifier with a Job Object whose active-process cap is per job"
+    ),
+)
+
+
+@_POSIX_ONLY
+def test_posix_process_budget_survives_a_busy_real_uid(tmp_path: Path) -> None:
+    """The CI red: an absolute RLIMIT_NPROC ceiling refused the verifier's own runner.
+
+    ``RLIMIT_NPROC`` is charged to every task the real user id holds host-wide,
+    not to this process tree. The GitHub runner service user already held more
+    than the verifier's ceiling of 64, so the trusted runner, the executor, or
+    the output drain thread failed with EAGAIN on every interpreter of the
+    matrix -- at whichever point the ceiling happened to bite. Holding 96
+    sleeping threads reproduces that host without depending on it. Under the
+    old ceiling this test fails; the budget must sit above the ambient count.
+    """
+    release = threading.Event()
+    threads = [threading.Thread(target=release.wait, daemon=True) for _ in range(96)]
+    for thread in threads:
+        thread.start()
+    try:
+        gates, provenance = trusted_greenfield_gates(_valid_project(tmp_path))
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(timeout=10)
+
+    assert provenance["trust"] == "structural-origin-and-digest"
+    assert [gate.name for gate in gates if not gate.passed] == []
+    assert provenance["resource_limits"] == gate_module.GREENFIELD_RESOURCE_LIMITS
+    assert provenance["test_execution"]["completion"]["executor_returncode"] == 73
+
+
+@_POSIX_ONLY
+def test_posix_process_budget_is_applied_above_the_ambient_task_count() -> None:
+    """The budget still bounds what the subject may add; it was not merely lifted.
+
+    Probed in a child so the limits never land on the pytest interpreter. The
+    child measures the ambient count the way the verifier does, applies the
+    limits, and reads back what the kernel now holds: room for the verifier's
+    own three tasks, at most the declared budget above the ambient count, a
+    hard limit the subject cannot raise, and the memory/CPU limits unchanged.
+    """
+    probe = (
+        "import json, resource, subprocess, sys, threading\n"
+        "from nornyx_forge import greenfield_verifier as verifier\n"
+        "ambient = verifier._real_uid_task_count()\n"
+        "limits = verifier._apply_resource_limits()\n"
+        "soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)\n"
+        "memory = resource.getrlimit(resource.RLIMIT_AS)\n"
+        "cpu = resource.getrlimit(resource.RLIMIT_CPU)\n"
+        "thread = threading.Thread(target=lambda: None)\n"
+        "thread.start()\n"
+        "thread.join()\n"
+        "child = subprocess.run([sys.executable, '-c', 'pass'], check=False)\n"
+        "print(json.dumps({'ambient': ambient, 'limits': limits, 'soft': soft, "
+        "'hard': hard, 'memory': memory, 'cpu': cpu, 'child': child.returncode}))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    observed = json.loads(completed.stdout.strip().splitlines()[-1])
+    budget = gate_module.GREENFIELD_RESOURCE_LIMITS["active_processes"]
+    assert observed["limits"] == gate_module.GREENFIELD_RESOURCE_LIMITS
+    assert observed["memory"] == [768 * 1024 * 1024, 768 * 1024 * 1024]
+    assert observed["cpu"] == [120, 120]
+    assert observed["ambient"] >= 1
+    assert observed["soft"] >= observed["ambient"] + 3, "no room for the verifier's own tasks"
+    assert observed["soft"] <= observed["ambient"] + budget + 2, "the budget was lifted, not bounded"
+    assert observed["soft"] == observed["hard"], "the subject could raise the budget back"
+    assert observed["child"] == 0
 
 
 @pytest.mark.parametrize("missing", ("BRD.md", "src", "tests"))

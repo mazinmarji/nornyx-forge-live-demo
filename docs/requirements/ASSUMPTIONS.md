@@ -381,7 +381,13 @@ shared library (including GitHub Actions setup-python) need one additional host
 fact: Forge derives `<sys.base_prefix>/lib`, verifies that it is an external
 directory, passes it explicitly through the trusted verifier command, and uses
 it as the child's sole `LD_LIBRARY_PATH`. The inherited value is ignored because
-it is provider-influenceable.
+it is provider-influenceable. The POSIX process budget is 64 tasks above the
+real user id's ambient count, measured from `/proc` immediately before the
+limit is applied. `RLIMIT_NPROC` is charged per user id host-wide, not per
+process tree: an absolute ceiling of 64 sat below what the GitHub runner
+service user already held, so the verifier's own runner failed with `EAGAIN`
+on every interpreter of the matrix while the same suite passed on a quiet
+workstation. A host where that count cannot be measured fails closed.
 
 **Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
 criteria for generated application subjects.
