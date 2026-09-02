@@ -2,6 +2,18 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The governance evidence tool asks git about the governed tree and nothing
+  else. Every git question ran with the tree as working directory and trusted
+  whatever repository git discovered walking upward, so a tree with no `.git`
+  of its own -- the archive the anchored-measurement harness extracts -- was
+  answered for by whichever repository enclosed the temp directory, and by
+  git's silent no-index fallback when none did. Measured on one archive
+  extracted byte for byte into three places: the verdict changed with the
+  enclosing repository while the files did not. The tool now refuses a tree
+  that is not the root of the repository git resolves, refuses one git cannot
+  place at all rather than reading an empty answer as a clean tree, and drops
+  the environment variables that re-aim git. The harness commits each
+  extraction to a repository of its own before re-running `--verify` there.
 - Approval records are emitted by the YAML serializer instead of hand-formatted
   text. Interpolating artifact-controlled fields let a crafted `status` close
   the record, forge the managed end-marker, and append a rogue approval that

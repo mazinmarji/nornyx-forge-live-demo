@@ -423,3 +423,31 @@ delivery.
 not implement packaging, signing, release CI, or the installer.
 
 **Serves.** programme traceability for the post-PR-18 Windows distribution work.
+
+## A-021 A governed tree answers for itself, or not at all
+
+**Decision.** Every git question the governance evidence tool asks is about
+the tree at its own root. A tree that is not the root of the repository git
+resolves for it is refused, not measured against that repository. A tree git
+cannot place in any repository is refused by the gates that need git and
+recorded as `git:unbound` for provenance, rather than having git's no-index
+fallback read as a clean tree. The environment variables that re-aim git
+(`GIT_DIR`, `GIT_WORK_TREE` and their kin) are dropped from every git call.
+The anchored-measurement harness therefore commits each archive extraction to
+a repository of its own before re-running `--verify` in it.
+
+**Scope.** The extraction's HEAD is a fixture commit, not the anchored commit.
+That is provenance: the archive is what anchors the measurement, and at this
+baseline `--verify` asks git only whether the working tree agrees with what
+git holds, never which commit that is. Should `--verify` ever compare HEAD
+against the revision the evidence records, the fixture commit fails that
+comparison loudly rather than letting a reader's HEAD stand in for the anchor.
+For a checkout whose root is its own repository, run without steering
+variables, `--verify` reports what it reported before; a checkout run under
+`GIT_DIR` or its kin now answers from its own repository instead of the one
+those variables name, and that difference is the repair.
+
+**Serves.** the anchored-measurement convention in
+`tests/test_recorded_measurements.py`, the absence-is-not-success control in
+`tests/test_absence_is_not_success.py`, and the success criterion in
+`CLAUDE.md` that evidence is named for what it is.

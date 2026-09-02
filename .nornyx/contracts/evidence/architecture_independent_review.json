@@ -1,19 +1,87 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-09-02T12:36:48Z",
-  "governed_input_digest": "sha256:8ca2b02ddaa5c0fe22f7caff5727ada99bdfa7f2b83af04d6f06be019cee0df2",
+  "generated_at": "2026-09-02T16:43:51Z",
+  "governed_input_digest": "sha256:53a771fa37f3f1a3f69921ab6074f10a223581a6f0deb38e2b56f94482ebef6b",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
-  "reviewers": [],
+  "reviewers": [
+    {
+      "role": "test-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "architecture-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "security-inspector",
+      "status": "pass"
+    }
+  ],
   "schema": "nornyx.forge.independent_review_record.v1",
   "self_reported_builder_independence": false,
   "session_report": {
     "authoritative": false,
-    "reviews": null,
+    "reviews": {
+      "builder_self_approval": false,
+      "human_review": "not_performed",
+      "reviewer_kind": "read-only in-session model subagents (Claude Code Agent tool); not a human review, not an authenticated independent inspection",
+      "reviews": [
+        {
+          "evidence": [
+            "ran the archived pre-change tool under pre-change harness conditions: pass/intact outside any repository, fail/compromised inside a planted repository with a divergent index naming anchor/tree/src/nornyx_forge/util.py",
+            "floors: band(178)=161 and band(29)=27 confirmed against check_test_coverage.band (later raised again to 162 for the added hook-isolation node, 179 collected)",
+            "portability measured on this machine: gitfile worktree, core.autocrlf=true from the system gitconfig, git 2.55.0.windows.5; all new nodes pass"
+          ],
+          "findings": [
+            "should-fix (applied): tests/test_absence_is_not_success.py foreign-repository test asserted `enclosing.name in message`, which could not fail because ROOT itself contains that name; now compares the `git resolves <path>` fragment to the enclosing repository by realpath/normcase",
+            "should-fix (applied): tests/test_recorded_measurements.py enclosing-repository test did not prove the planted tempfile.mkdtemp was used; the plant now records its calls and the test asserts one happened",
+            "should-fix (applied): the `git:unbound` provenance branch and the `_revision()` refusal claimed in A-021 were untested; both are now asserted inside the no-repository test",
+            "note: failing rather than skipping when tmp_path sits inside a repository is the right call under a census that refuses undeclared skips",
+            "note (pre-existing, out of scope): the harness's HOME redirect fails with 'Filename too long' when the temp path exceeds roughly 200 characters; pytest's tmp_path and the system temp are short"
+          ],
+          "role": "test-inspector",
+          "status": "pass"
+        },
+        {
+          "evidence": [
+            "verified A-021's claim that --verify at this baseline never consults _revision, _head_commit, _approved_revision or require_* on the verify path (main --verify -> verify() -> derive_assurance_state())",
+            "scratchpad probe under git 2.55: GIT_INDEX_FILE aimed at a foreign index leaves `git rev-parse --show-toplevel` naming the tree"
+          ],
+          "findings": [
+            "should-fix (applied): A-021 overstated 'Nothing changes for a checkout whose root is its own repository ... every checkout CI verifies'; reworded to a checkout run without steering variables, and the GIT_DIR difference named as the repair",
+            "should-fix (applied): the steering proof enumerated GIT_DIR and GIT_WORK_TREE only; GIT_INDEX_FILE, measured to leave --show-toplevel naming the tree so that only the environment drop protects it, was added",
+            "note: authority stays with content; git enters --verify only through _unstaged_governed_paths, which names paths and never moves a digest; the new refusals are SystemExit before any verdict",
+            "note: the gate/provenance asymmetry (_git_lines refuses no-repository, _head_commit stays git:unbound) is principled, documented, reachable and in scope",
+            "note: all four git subprocess sites in the script are covered; every other archive fixture already commits its extraction; scripts/check_evidence_binding.py's history questions remain steerable by GIT_DIR and are out of scope",
+            "note: the three-condition measurement lives in comments and docstrings, not in an anchored markdown block, so the repository's anchored re-execution does not recheck it"
+          ],
+          "role": "architecture-inspector",
+          "status": "pass"
+        },
+        {
+          "evidence": [
+            "measured bypass attempts that did NOT work: core.worktree or core.bare injected via GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, XDG_CONFIG_HOME, HOME/.gitconfig and includeIf gitdir:; GIT_EXEC_PATH substitution of builtins; pathspec flags; core.attributesFile with filter.clean",
+            "measured _same_directory holding for 8.3 short names, drive-letter case, forward slashes, a junction and a subst drive; _repository_root() returned ROOT under each spelling",
+            "measured fail-closed: every refusal is SystemExit before anything reaches stdout, so the harness's report assertion fires"
+          ],
+          "findings": [
+            "should-fix (applied): the harness's new git init and commit executed reader-supplied hook code reached through GIT_CONFIG_GLOBAL (init.templateDir) and GIT_CONFIG_COUNT (core.hooksPath); the harness now drops every GIT_CONFIG_* variable, XDG_CONFIG_HOME and GIT_TEMPLATE_DIR, sets GIT_CONFIG_NOSYSTEM, and points init --template and core.hooksPath at an empty directory; a regression node with a positive control pins it",
+            "should-fix (applied): a .git gitfile inside the extraction would make the fixture init reinitialise a foreign repository, rewrite its index and advance its HEAD while the root check passed; closed today only by git archive refusing such trees, so the harness now asserts no tar member carries a .git path component",
+            "note: a gitfile inside ROOT on the plain --verify path bypasses the root check; it requires write access to ROOT, which already owns the outcome, and linked worktrees rely on it legitimately; no change requested",
+            "note: at 248+ character paths git discovery reports 'not a git repository', which the harness turns into a loud assertion failure rather than a verdict"
+          ],
+          "role": "security-inspector",
+          "status": "pass"
+        }
+      ],
+      "schema": "nornyx.forge.in_session_reviews.v1",
+      "subject": "Anchored Measurement Isolation P1 maintenance change on top of main f114074"
+    },
     "source": ".nornyx/in-session/reviews.json",
-    "source_sha256": null
+    "source_sha256": "sha256:114345a8c34e4a4a94a0325d9abecc790a432fdbf94e3b88e6aca01e28e92694"
   },
   "statement": "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any reviewer rows below come from an in-session report that is not part of the governed content and decides nothing. This record asserts no independence: an unauthenticated file cannot establish that the party who produced it was independent of it.",
-  "subject_revision": "git:9308a314399e5fd994c2d0f68a412cf06abf0e99",
-  "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (/home/mmarji/.nornyx/forge_reviewer_trust.json (absent)))"
+  "subject_revision": "git:f114074f25825ad3281ac06d1c5aad444cf8b37f",
+  "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (C:\\Users\\mazin.LAPTOP-EMF4NEOK\\.nornyx\\forge_reviewer_trust.json (absent)))"
 }
