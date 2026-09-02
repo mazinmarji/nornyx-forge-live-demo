@@ -108,6 +108,22 @@ EXPECTED_SKIPS = {
     # nine permanent skips instead of spending a minute disproving it.
     "tests/test_container_launch.py::test_compose_up_build_starts_the_application":
         "The live container build downloads packages, which BRD-004 forbids for the default offline run. CI exercises it in the container-launch job instead, so it is covered — just not here.",
+    # RLIMIT_NPROC is a POSIX per-user-id limit. These two proofs hold a busy
+    # real uid against the trusted verifier and probe the budget the kernel
+    # then holds, neither of which exists on a Windows workstation, where a Job
+    # Object confines the verifier instead. The property is not weakened: every
+    # CI test job runs Linux and executes both, and the provenance proof
+    # requires enforced limits on every platform.
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_process_budget_survives_a_busy_real_uid":
+        "RLIMIT_NPROC is a POSIX per-user-id limit; a Windows workstation confines the verifier with a Job Object instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the provenance proof requires enforced limits on every platform.",
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_process_budget_is_applied_above_the_ambient_task_count":
+        "RLIMIT_NPROC is a POSIX per-user-id limit; a Windows workstation confines the verifier with a Job Object instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the provenance proof requires enforced limits on every platform.",
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_process_budget_refuses_more_than_its_incremental_allowance":
+        "RLIMIT_NPROC is a POSIX per-user-id limit; a Windows workstation confines the verifier with a Job Object instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the provenance proof requires enforced limits on every platform.",
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_ambient_measurement_ignores_project_controlled_state":
+        "The ambient baseline is read from /proc, which a Windows workstation does not have; there the verifier is confined by a Job Object whose limit needs no baseline. The property is not weakened: every CI test job runs Linux and executes this proof.",
+    "tests/test_trusted_greenfield_acceptance.py::test_posix_limits_fail_closed_when_the_ambient_count_cannot_be_measured":
+        "The POSIX baseline and its fail-closed path do not exist on a Windows workstation, where a Job Object confines the verifier instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the parent's resource-limits refusal is proved on every platform.",
 }
 
 
@@ -217,6 +233,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
+    # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
+    # process-budget and F-002 remediation, floor at band(107) = 97. Real
+    # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
+    # isolated invocation, strict result-protocol refusals, process-capability
+    # equivalence, provenance, and the controlled old-profile false green live
+    # together. The two Linux loader, five executor-control, five POSIX
+    # process-budget regressions, and eight F-002 subject-failure and
+    # process-replacement proofs are included; critical acceptance identities
+    # are pinned separately.
+    "tests/test_trusted_greenfield_acceptance.py": 97,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -249,7 +275,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_security_context.py": 10,
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
-    "tests/test_skip_gate.py": 30,
+    # 43 collected after the PR-16 executor-control identities were added,
+    # floor at band(43) = 39.
+    "tests/test_skip_gate.py": 39,
     "tests/test_documented_claims.py": 144,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
@@ -442,16 +470,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_windows_bundle.py (101 -> 102 modules). Re-measured for the
 # brd-authoring round: 9 new collected in tests/test_brd_authoring.py
 # (102 -> 103 modules). Re-measured for the build-trigger round: 9 new
-# collected in tests/test_build_trigger.py (103 -> 104 modules):
+# collected in tests/test_build_trigger.py (103 -> 104 modules). Re-measured
+# for the PR-16 trusted-greenfield round and its inspector/CI/security
+# remediation: 94 collected in tests/test_trusted_greenfield_acceptance.py and
+# ten census identity proofs in tests/test_skip_gate.py (104 -> 105
+# modules). Re-measured for the POSIX process-budget repair that turned the
+# PR-16 matrix green, and again for the three proofs that the budget is an
+# increment rather than a licence, and again for the eight F-002 subject-
+# failure and process-replacement proofs: 107 collected in
+# tests/test_trusted_greenfield_acceptance.py (105 modules):
 #
 # (rows below):
 #
-#     collected across tests/     2462   (104 modules)
-#     sum of the module floors    2268
-#     band(2462) = ceil(0.9*n)    2216
-#     MINIMUM_COLLECTED           2283
-#     above the module sum        15
-#     below what collects         179
+#     collected across tests/     2579   (105 modules)
+#     sum of the module floors    2374
+#     band(2579) = ceil(0.9*n)    2322
+#     MINIMUM_COLLECTED           2381
+#     above the module sum         7
+#     below what collects         198
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -472,7 +508,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 194 in total, and the aggregate refuses
+# per-module bands already grant 205 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -493,7 +529,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2283
+MINIMUM_COLLECTED = 2381
+
+# PR-16's threat model is identity-sensitive: a raw module count can stay green
+# while H1, H7, or the standing real-flow proof is replaced by an unrelated
+# case. These exact proofs must therefore be present and executed, not merely
+# absorbed by the module's ordinary anti-shrink floor.
+PR16_REQUIRED_EXECUTED = {
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_accepts_a_fresh_project_without_forge_repository_scripts",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_refuses_the_stub_verifier_attack",
+    "tests/test_trusted_greenfield_acceptance.py::test_exact_invocation_ignores_project_local_nornyx_forge",
+    "tests/test_trusted_greenfield_acceptance.py::test_exact_invocation_ignores_path_cwd_and_python_environment",
+    "tests/test_trusted_greenfield_acceptance.py::test_acceptance_provenance_binds_profile_origin_version_revision_and_digests",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_allows_genuine_subject_repair_with_the_same_verifier",
+    "tests/test_trusted_greenfield_acceptance.py::test_real_flow_verifier_failure_dominates_provider_claims",
+    "tests/test_trusted_greenfield_acceptance.py::test_standing_real_development_flow_uses_the_trusted_profile",
+    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control",
+    "tests/test_trusted_greenfield_acceptance.py::test_executor_rejects_a_hard_link_to_its_completion_record",
+}
 
 
 def band(collected: int) -> int:
@@ -566,6 +619,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_bundle.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
+    "tests/test_trusted_greenfield_acceptance.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",
     "tests/test_approval_artifact_authentication.py",
@@ -832,6 +886,16 @@ def classify(
     )
 
 
+def executed_node_ids(report: Path) -> set[str]:
+    """Exact identities that completed without skip, xfail, or collection error."""
+    root = ET.parse(report).getroot()
+    return {
+        node_id(case)
+        for case in root.iter("testcase")
+        if case.find("error") is None and case.find("skipped") is None
+    }
+
+
 def evaluate(report: Path, pytest_returncode: int) -> int:
     """Decide the verdict from a report. Separated so the refusals are testable.
 
@@ -904,6 +968,19 @@ def evaluate(report: Path, pytest_returncode: int) -> int:
             "anything."
         )
         print(NEWLINE + "GATE: FAIL - undeclared skips")
+        return 2
+
+    missing_pr16 = sorted(PR16_REQUIRED_EXECUTED - executed_node_ids(report))
+    if missing_pr16:
+        print(NEWLINE + "These PR-16 hostile or real-flow proofs did not execute:" + NEWLINE)
+        for name in missing_pr16:
+            print(f"  {name}")
+        print(
+            NEWLINE + "A module floor can be met by unrelated growth. H1-H7 and "
+            "the standing real-DevelopmentFlow proof are identity-bound so one "
+            "cannot disappear behind another test."
+        )
+        print(NEWLINE + "GATE: FAIL - a required PR-16 specimen did not execute")
         return 2
 
     missing_modules = [name for name in REQUIRED_MODULES if name not in seen_modules]

@@ -391,7 +391,19 @@ def _module_cases(modules) -> str:
     cases = []
     for name in modules:
         classname = name.removesuffix(".py").replace("/", ".")
-        for index in range(max(census.REQUIRED_MODULE_MINIMUMS.get(name, 1), 1)):
+        required_names = (
+            sorted(
+                identity.split("::", 1)[1]
+                for identity in census.PR16_REQUIRED_EXECUTED
+                if identity.split("::", 1)[0] == name
+            )
+            if name == "tests/test_trusted_greenfield_acceptance.py"
+            else []
+        )
+        for test_name in required_names:
+            cases.append(f'<testcase classname="{classname}" name="{test_name}"/>')
+        floor = max(census.REQUIRED_MODULE_MINIMUMS.get(name, 1), 1)
+        for index in range(max(floor - len(required_names), 0)):
             cases.append(
                 f'<testcase classname="{classname}" name="test_probe_{index}"/>'
             )
@@ -908,7 +920,21 @@ def _report_omitting(tmp_path: Path, omit: set[str]) -> Path:
         if module in omit:
             continue
         classname = module[len("tests/"):-len(".py")]
-        for index in range(floor):
+        required_names = (
+            sorted(
+                identity.split("::", 1)[1]
+                for identity in census.PR16_REQUIRED_EXECUTED
+                if identity.split("::", 1)[0] == module
+            )
+            if module == "tests/test_trusted_greenfield_acceptance.py"
+            else []
+        )
+        for test_name in required_names:
+            cases.append(
+                f'<testcase classname="tests.{classname}" name="{test_name}" '
+                f'file="{module}"></testcase>'
+            )
+        for index in range(max(floor - len(required_names), 0)):
             cases.append(
                 f'<testcase classname="tests.{classname}" name="test_{index}" '
                 f'file="{module}"></testcase>'
@@ -967,6 +993,24 @@ def test_the_census_accepts_a_complete_report(tmp_path: Path):
         "the census refused a report holding every declared module at its "
         "declared floor, so it now refuses valid runs"
     )
+
+
+@pytest.mark.parametrize("victim", sorted(census.PR16_REQUIRED_EXECUTED))
+def test_each_pr16_hostile_and_real_flow_identity_is_load_bearing(
+    tmp_path: Path, victim: str
+) -> None:
+    module, test_name = victim.split("::", 1)
+    classname = module.removesuffix(".py").replace("/", ".")
+    exact = f'<testcase classname="{classname}" name="{test_name}"/>'
+    cases = _complete_report_cases(MINIMUM_COLLECTED)
+    assert exact in cases, f"the synthetic complete report does not carry {victim}"
+    cases = cases.replace(exact, "", 1) + (
+        '<testcase classname="tests.test_filler" name="test_pr16_replacement"/>'
+    )
+
+    verdict = evaluate(_report_with(tmp_path, cases), 0)
+
+    assert verdict != 0, f"the census accepted a run missing {victim}"
 
 
 def _band(collected: int) -> int:

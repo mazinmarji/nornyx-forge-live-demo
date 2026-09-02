@@ -14,8 +14,8 @@ The two honest mapping limits are pinned rather than hidden:
     interface symmetry and the enforced bound is the timeout; a test proves
     the parameter does not leak into the command line as an invented flag;
   * `allowed_tools` maps to the sandbox policy, not per-tool allowlists — a
-    test pins that the command carries `--sandbox workspace-write` and no
-    fabricated tool flag.
+    test pins mutation-capable tasks to `workspace-write`, read-only reviewer
+    tasks to `read-only`, and both to no fabricated tool flag.
 
 The invocation surface itself (exec, --cd, --json, --skip-git-repo-check,
 --sandbox) was validated against a real codex-cli 0.128.0 installation; the
@@ -160,12 +160,19 @@ def test_max_turns_does_not_leak_into_the_command_as_an_invented_flag(tmp_path: 
 
 def test_allowed_tools_map_to_the_sandbox_not_to_fabricated_flags(tmp_path: Path):
     """The other disclosed limit: the mechanism is the sandbox policy."""
-    result = CodexWorker(_fake_cli(tmp_path)).run(
+    worker = CodexWorker(_fake_cli(tmp_path))
+    result = worker.run(
         role="builder", goal="g", workspace=tmp_path,
         allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
     )
     sandbox_index = result.command.index("--sandbox")
     assert result.command[sandbox_index + 1] == "workspace-write"
+    review = worker.run(
+        role="security-inspector", goal="review", workspace=tmp_path,
+        allowed_tools=("Read", "Glob", "Grep"), max_turns=1, timeout_seconds=30,
+    )
+    review_sandbox = review.command.index("--sandbox")
+    assert review.command[review_sandbox + 1] == "read-only"
     assert not any("allowedTools" in part for part in result.command), (
         "a Claude-shaped tool flag was fabricated for the Codex CLI"
     )

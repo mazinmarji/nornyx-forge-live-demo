@@ -338,3 +338,88 @@ build exists anywhere in the programme's records.
 
 **Serves.** the claim discipline itself — experimentally observed stays
 distinct from not yet proven.
+
+## A-019 A greenfield project is the subject, never its verifier
+
+**Ambiguity.** A generated project needs tests, architecture, and security
+acceptance, but it does not contain Forge's repository verification scripts and
+the provider can modify every file in its workspace.
+
+**Resolution.** `repo_mode="greenfield"` selects a deterministic profile in
+trusted `DevelopmentFlow` code. Forge reads and digests the installed standalone
+verifier, reads a private snapshot once through a digest-checking in-memory
+bootstrap, executes those same bytes through the active absolute Python
+environment entrypoint under isolated Python, and constructs an environment with
+no project-controlled PATH or Python import variables. Static checks stream
+bounded project bytes; project tests execute only from a private subject copy in
+a separate resource-limited process with project `conftest.py` hooks and discovery
+configuration disabled. The runner and executor are each digest-checked and
+executed from the same in-memory bytes. Executor completion state is not exposed
+through `__main__`; static inspection refuses hard exits, reflection, and pytest
+lifecycle control, including constant-folded or opaque `getattr` acquisition of
+interpreter capabilities. Both `sys.argv` and `sys.orig_argv` are scrubbed before
+subject collection. The audit hook confines writes and process authority,
+validates both endpoints of a hard link and the destination of a symbolic link,
+and permits the external completion write only from the executor thread that
+owns it. Audit, trace, profile, asynchronous-generator, and interpreter-monitoring
+callback registration are refused statically; the mutable `sys` registration
+entrypoints are also replaced before project imports begin.
+A trusted supervisor outside the pytest interpreter requires a complete
+executed-test record, the expected executor digest and a normal-completion
+sentinel, bounds retained output, and performs a final subject census. Scripted
+model checks have a read-only tool surface and are
+followed by a final trusted rerun. Profile and verifier identity,
+origin, version/revision and digests, plus the final subject digest, travel with
+every gate and the acceptance event. The provenance is structural/tamper-evident;
+it is not a signature, proof of installer identity, or a sandbox against every
+possible host effect in arbitrary test code. On POSIX the environment entrypoint
+may be a venv symlink and is therefore preserved for execution; its resolved base
+target is separately checked against the project boundary and recorded. Resolving
+the entrypoint itself would silently leave the environment that provides pytest.
+Linux distributions whose absolute Python executable depends on a colocated
+shared library (including GitHub Actions setup-python) need one additional host
+fact: Forge derives `<sys.base_prefix>/lib`, verifies that it is an external
+directory, passes it explicitly through the trusted verifier command, and uses
+it as the child's sole `LD_LIBRARY_PATH`. The inherited value is ignored because
+it is provider-influenceable. The POSIX process budget is 64 tasks above the
+real user id's ambient count, measured from `/proc` immediately before the
+limit is applied. `RLIMIT_NPROC` is charged per user id host-wide, not per
+process tree: an absolute ceiling of 64 sat below what the GitHub runner
+service user already held, so the verifier's own runner failed with `EAGAIN`
+on every interpreter of the matrix while the same suite passed on a quiet
+workstation. A host where that count cannot be measured fails closed.
+
+The budget SHIFTS the ceiling; it does not widen it. The soft and hard limits
+are both set to the budgeted value, so the subject cannot raise it back, and
+the recorded policy is named `additional_processes` with a
+`process_budget` of `ambient-real-uid-tasks-plus-fixed-increment` rather than
+`active_processes`, because a key naming a total while the code enforces an
+increment is the substitution this repository refuses. The Windows Job Object
+keeps `active_processes`, which really is a total for that job.
+
+Two limits of the mechanism are disclosed rather than papered over. First, the
+count is read immediately before the limit is applied and is not atomic with
+it: tasks belonging to the same user id may start or exit in between. A task
+that EXITS in the gap leaves the ceiling correspondingly further above the
+live count, so the subject may create a few more than the increment; a task
+that STARTS in the gap consumes budget and can only make the verifier refuse
+its own work, which is fail-closed. The gap cannot lift the ceiling, because
+the ceiling is a number fixed at the moment of application. Second, the
+baseline is host state: anything already running under that user id raises it,
+so a provider that leaves background processes behind raises the absolute
+number of tasks the user id may hold. Neither makes the subject's allowance
+unbounded, which is the property being claimed.
+
+**Serves.** BRD-004's architecture/security boundaries and BRD-005 acceptance
+criteria for generated application subjects.
+
+## A-020 Windows distribution is EXE-first
+
+**Decision.** The Windows distribution target is `ForgeSetup.exe`, EXE-first.
+MSI is not the current target. A folder plus `Forge.cmd` remains the interim v1
+delivery.
+
+**Scope.** This records the already-decided distribution direction only. It does
+not implement packaging, signing, release CI, or the installer.
+
+**Serves.** programme traceability for the post-PR-18 Windows distribution work.

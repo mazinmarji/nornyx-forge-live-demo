@@ -65,3 +65,4 @@ class GateResult:
     detail: str
     command: tuple[str, ...] = ()
     returncode: int = 0
+    provenance: dict[str, Any] | None = None

@@ -12,13 +12,41 @@
 - Architecture dependency and command-isolation checks.
 - Security checks for embedded credentials, unsafe subprocess shell mode, `eval`, and `exec`.
 - Deterministic BRD-to-build flow: eleven requirements, certified foundation GO,
-  zero repair attempts. The GATE COUNT IS DELIBERATELY NOT PINNED HERE:
-  `default_gates()` resolves tools on PATH, so the number depends on the
-  environment -- fewer in a bare shell, more with the venv's `pytest`, `ruff`
-  and `nornyx` available. Measured here: 11 with the venv's tooling on PATH,
-  and a review measured 4 in a bare shell. Never the 5 this line asserted.
-  Read the count from the build report, which is produced by the run it
-  describes.
+  zero repair attempts. For a certified Forge repository the gate count is
+  deliberately not pinned: `default_gates()` resolves optional repository tools
+  on PATH. For `repo_mode="greenfield"`, the count and profile are deterministic:
+  six bounded static checks plus isolated test execution from
+  `nornyx.greenfield.python.v1`, invoked from trusted Forge bytes without PATH or
+  project import resolution. The test process receives a private subject copy,
+  disables project `conftest.py` hooks and discovery configuration, and applies
+  OS resource limits: address space and CPU time on POSIX with a process budget
+  applied above the real user id's ambient task count (an absolute
+  `RLIMIT_NPROC` ceiling refused the verifier's own runner on GitHub-hosted
+  runners), or a Job Object on Windows. The POSIX budget is an increment, set
+  into both the soft and hard limits so the subject cannot raise it, and a host
+  whose ambient count cannot be read is refused rather than run unconfined. The runner and executor use the same digest-verified
+  in-memory byte-snapshot pattern as the top-level verifier. Before execution,
+  static inspection refuses hard termination, reflection, and pytest lifecycle
+  control, including folded and opaque reflected capability acquisition. Before
+  collection it scrubs both interpreter argument vectors; during execution an
+  audit hook confines writes to the pytest temp root, checks link destinations,
+  binds the completion write to its owning executor thread, and refuses process
+  starts. Audit, trace, profile, async-generator, and monitoring callbacks are
+  statically refused, with the mutable `sys` callback entrypoints disabled before
+  project imports. A separate trusted supervisor requires a
+  complete executed-test record, a normal-completion sentinel, and the expected
+  executor digest, and retains only a bounded output tail. The trusted
+  executor writes that record on either outcome, so a present, trusted
+  record reporting failures is a genuine subject-test failure, kept distinct
+  from a completion that never arrived; both fail closed. The absolute Python
+  environment entrypoint is preserved on POSIX rather than resolving the venv
+  symlink to its base interpreter; that resolved target is separately validated
+  and recorded. This keeps trusted dependencies available under `-I` without
+  consulting PATH. On Linux, the only loader path admitted to the verifier and
+  test child is derived from the trusted Python installation, never inherited
+  from `LD_LIBRARY_PATH`; this supports shared-library setup-python runtimes
+  without giving the project native-library precedence. Read the count and provenance from the build report
+  produced by the run it describes.
 - Live FastAPI health, dashboard, and demonstration endpoints through `scripts/smoke_http.py`.
 - Low-risk action executed; high-risk external action prevented.
 - Local demonstration evidence stream validated, with its event count and

@@ -9,7 +9,7 @@ from typing import Any
 from .claude_worker import ClaudeCodeWorker
 from .contract_generator import generate_brd_contract
 from .evidence import EvidenceLedger
-from .gates import default_gates
+from .gates import default_gates, trusted_greenfield_gates
 from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .providers import ProviderRoutedWorker, get_provider
@@ -301,7 +301,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             self.pre_gate_failures.append(
                 GateResult("in-session AI review records complete", review_passed, detail)
             )
-        gates = [*self.pre_gate_failures, *default_gates(self.root)]
+        gates = [*self.pre_gate_failures, *self._acceptance_gates()]
         while not all(gate.passed for gate in gates) and self.worker_mode == "claude-code":
             if self.repair_attempts >= max_repairs:
                 break
@@ -332,11 +332,11 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             if not repair.success:
                 break
             self.pre_gate_failures = []
-            gates = default_gates(self.root)
+            gates = self._acceptance_gates()
 
-        self.data["gates"] = [gate.__dict__ for gate in gates]
         passed = all(gate.passed for gate in gates)
         reviews: list[dict[str, Any]] = list(in_session_reviews)
+        review_gates: list[GateResult] = []
         if passed and self.worker_mode == "claude-code":
             review_specs = (
                 (
@@ -357,15 +357,50 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                     role=role,
                     goal=goal,
                     workspace=self.root,
-                    allowed_tools=("Read", "Glob", "Grep", "Bash"),
+                    allowed_tools=("Read", "Glob", "Grep"),
                     max_turns=22,
                     timeout_seconds=600,
                 )
                 reviews.append(review.__dict__)
-                passed = passed and review.success
+                review_gates.append(
+                    GateResult(
+                        f"review-worker:{role}",
+                        review.success,
+                        review.output,
+                        review.command,
+                        review.returncode,
+                    )
+                )
+            # Reviewers run after the initial gates, so their success can never
+            # authorize stale bytes. The external adapter is read-only by tool
+            # policy, and this final verification still catches a faulty or
+            # adversarial adapter that ignores that policy and mutates files.
+            if self.repo_mode == "greenfield":
+                final_subject_gates = self._acceptance_gates()
+                gates = [
+                    gate for gate in gates if not gate.name.startswith("greenfield:")
+                ] + final_subject_gates
+            gates.extend(review_gates)
+            passed = all(gate.passed for gate in gates)
+
+        pre_evidence = self.ledger.validate(
+            report_path=self.root / ".nornyx/runs/build-evidence-report.json"
+        )
+        gates.append(
+            GateResult(
+                "build-evidence-ledger-valid-before-verdict",
+                pre_evidence.get("status") == "pass",
+                (
+                    "build evidence is readable, contiguous, linked, and complete"
+                    if pre_evidence.get("status") == "pass"
+                    else "; ".join(str(item) for item in pre_evidence.get("diagnostics", []))
+                ),
+            )
+        )
+        passed = all(gate.passed for gate in gates)
+        self.data["gates"] = [gate.__dict__ for gate in gates]
         self.data["review_workers"] = reviews
         self.data["repair_attempts"] = self.repair_attempts
-        self.data["accepted"] = passed
         self.data["assurance"] = {
             "mode": "autonomous_demonstration",
             "human_review": "not_performed",
@@ -389,10 +424,36 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 else "One or more automated gates or worker stages failed."
             ),
             repair_attempts=self.repair_attempts,
+            verdict_source="all_recorded_gate_results",
+            acceptance_provenance=self.data.get("acceptance_provenance"),
         )
         report = self.ledger.validate(
             report_path=self.root / ".nornyx/runs/build-evidence-report.json"
         )
+        if report.get("status") != "pass":
+            candidate_was_allowed = passed
+            passed = False
+            gates.append(
+                GateResult(
+                    "build-evidence-ledger-valid-after-verdict",
+                    False,
+                    "; ".join(str(item) for item in report.get("diagnostics", [])),
+                )
+            )
+            if candidate_was_allowed:
+                self.ledger.append(
+                    "build_acceptance_correction",
+                    mission_id=self.mission,
+                    actor="forge-coordinator",
+                    decision="DENY",
+                    reason="Post-verdict evidence validation failed; the prior candidate is not accepted.",
+                    verdict_source="build_evidence_ledger_validation",
+                )
+                report = self.ledger.validate(
+                    report_path=self.root / ".nornyx/runs/build-evidence-report.json"
+                )
+        self.data["gates"] = [gate.__dict__ for gate in gates]
+        self.data["accepted"] = passed
         self.data["evidence"] = report
         foundation = self.data.get("foundation", {})
         self.data["value"] = {
@@ -406,6 +467,11 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             "foundation_mode": self.repo_mode,
             "foundation_score": foundation.get("overall_score"),
             "foundation_verdict": foundation.get("verdict"),
+            "acceptance_profile": (
+                self.data.get("acceptance_provenance", {})
+                .get("gate_profile", {})
+                .get("id")
+            ),
             "measured": {
                 "elapsed_seconds": True,
                 "repair_attempts": True,
@@ -421,6 +487,53 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         self.data["execution_backend"] = self.execution_backend
         write_json(self.root / ".nornyx/runs/build-summary.json", self.data)
         return self.data
+
+    def _acceptance_gates(self) -> list[GateResult]:
+        """Select the profile in trusted flow code, never from project data."""
+        if self.repo_mode == "greenfield":
+            gates, provenance = trusted_greenfield_gates(self.root)
+            verifier = provenance.get("verifier", {})
+            invocation = provenance.get("invocation", {})
+            stable_identity = {
+                "schema": provenance.get("schema"),
+                "trust": provenance.get("trust"),
+                "gate_profile": provenance.get("gate_profile"),
+                "verifier": {
+                    key: verifier.get(key)
+                    for key in (
+                        "id",
+                        "origin",
+                        "digest",
+                        "forge_version",
+                        "forge_revision",
+                    )
+                },
+                "invocation": {
+                    key: invocation.get(key)
+                    for key in (
+                        "python",
+                        "isolated_python",
+                        "cwd",
+                        "environment",
+                        "verifier_execution",
+                    )
+                },
+                "resource_limits": provenance.get("resource_limits"),
+            }
+            previous = self.data.get("acceptance_verifier_identity")
+            if previous is not None and previous != stable_identity:
+                return [
+                    GateResult(
+                        "greenfield:provenance-stability",
+                        False,
+                        "trusted verifier provenance changed during one acceptance run",
+                        provenance=provenance,
+                    )
+                ]
+            self.data["acceptance_verifier_identity"] = stable_identity
+            self.data["acceptance_provenance"] = provenance
+            return gates
+        return default_gates(self.root)
 
     def run(self) -> dict[str, Any]:
         """Run through CrewAI Flow when installed; otherwise use the same deterministic chain."""
