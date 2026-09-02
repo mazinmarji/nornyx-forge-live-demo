@@ -218,12 +218,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # result reported verbatim.
     "tests/test_build_trigger.py": 9,
     # PR-16's trust boundary: 94 collected after CI and security-review
-    # remediation, floor at 86. Real DevelopmentFlow repair/review paths, all seven hostile
+    # remediation, floor at band(94) = 85. Real DevelopmentFlow repair/review paths, all seven hostile
     # specimens, exact isolated invocation, strict result-protocol refusals,
     # process-capability equivalence, provenance, and the controlled old-profile
     # false green live together. The two Linux loader and five executor-control
     # regressions are included; critical acceptance identities are pinned separately.
-    "tests/test_trusted_greenfield_acceptance.py": 86,
+    "tests/test_trusted_greenfield_acceptance.py": 85,
     "tests/test_attack_classes.py": 44,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
@@ -256,8 +256,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_security_context.py": 10,
     "tests/test_evaluation_time.py": 15,
     "tests/test_execution_semantics.py": 10,
-    # 41 collected after the PR-16 identity registry, floor at band(41) = 37.
-    "tests/test_skip_gate.py": 37,
+    # 43 collected after the PR-16 executor-control identities were added,
+    # floor at band(43) = 39.
+    "tests/test_skip_gate.py": 39,
     "tests/test_documented_claims.py": 144,
     "tests/test_claim_surface_boundary.py": 8,
     "tests/test_process_execution_spellings.py": 22,
@@ -453,16 +454,16 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # collected in tests/test_build_trigger.py (103 -> 104 modules). Re-measured
 # for the PR-16 trusted-greenfield round and its inspector/CI/security
 # remediation: 94 collected in tests/test_trusted_greenfield_acceptance.py and
-# eight new census identity proofs in tests/test_skip_gate.py (104 -> 105
+# ten census identity proofs in tests/test_skip_gate.py (104 -> 105
 # modules):
 #
 # (rows below):
 #
-#     collected across tests/     2564   (105 modules)
-#     sum of the module floors    2361
-#     band(2564) = ceil(0.9*n)    2308
-#     MINIMUM_COLLECTED           2367
-#     above the module sum         6
+#     collected across tests/     2566   (105 modules)
+#     sum of the module floors    2362
+#     band(2566) = ceil(0.9*n)    2310
+#     MINIMUM_COLLECTED           2369
+#     above the module sum         7
 #     below what collects         197
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
@@ -484,7 +485,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 203 in total, and the aggregate refuses
+# per-module bands already grant 204 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -505,7 +506,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2367
+MINIMUM_COLLECTED = 2369
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -520,10 +521,7 @@ PR16_REQUIRED_EXECUTED = {
     "tests/test_trusted_greenfield_acceptance.py::test_real_flow_allows_genuine_subject_repair_with_the_same_verifier",
     "tests/test_trusted_greenfield_acceptance.py::test_real_flow_verifier_failure_dominates_provider_claims",
     "tests/test_trusted_greenfield_acceptance.py::test_standing_real_development_flow_uses_the_trusted_profile",
-    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control[reflected-hard-exit]",
-    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control[reflected-globals]",
-    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control[original-argv]",
-    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control[opaque-getattr]",
+    "tests/test_trusted_greenfield_acceptance.py::test_security_static_rejects_reflected_executor_control",
     "tests/test_trusted_greenfield_acceptance.py::test_executor_rejects_a_hard_link_to_its_completion_record",
 }
 
