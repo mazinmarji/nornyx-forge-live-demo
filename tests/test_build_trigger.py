@@ -18,7 +18,9 @@ from fastapi.testclient import TestClient
 
 from nornyx_forge.capsule import Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleStore
+from nornyx_forge.experience import advance, start_experience
 from nornyx_forge.onboarding_app import create_app
+from nornyx_forge.provider_contract import GovernedEligibility
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
@@ -27,7 +29,10 @@ MODEL = {"kind": "model", "ident": "builder-model"}
 
 
 def _project(tmp_path: Path, *, with_provider: bool = True,
-             with_brd: bool = True) -> Path:
+             with_brd: bool = True, with_lifecycle: bool = True) -> Path:
+    """A project whose lifecycle sits at CONFIRM -- the pre-build position
+    the trigger requires since PR-17 -- reached through the contract's own
+    `start_experience` and `advance`, never written by hand."""
     document = create_document("proj-1", "Test Project", Actor("human", "casey"),
                                "2026-08-30T12:00:00Z")
     document, intent_id = propose(document, "intent", "Build a portal.",
@@ -41,7 +46,12 @@ def _project(tmp_path: Path, *, with_provider: bool = True,
         )
         document = confirm(document, provider_id, Actor("human", "casey"),
                            "2026-08-30T12:04:00Z")
-    CapsuleStore(tmp_path / "capsule").initialize(document)
+    lifecycle = None
+    if with_lifecycle:
+        lifecycle = start_experience(Actor("human", "casey"), "2026-08-30T12:00:00Z")
+        lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"),
+                            "2026-08-30T12:05:00Z")
+    CapsuleStore(tmp_path / "capsule").initialize(document, experience=lifecycle)
     if with_brd:
         (tmp_path / "BRD.md").write_text(
             "# BRD — Test\n\n## BRD-001 Purpose\n\nBuild a portal.\n",
@@ -66,10 +76,22 @@ class RecordingFlow:
         return {"accepted": False, "gates": ["worker unavailable"]}
 
 
+def _seam_eligibility(provider: str) -> GovernedEligibility:
+    """The injectable seam executes no provider: the deterministic flow the
+    tests install answers in the flow's shape and never runs an engineering
+    agent, so the governed-eligibility gate -- which exists to keep an
+    unconfined provider off the authority store -- has nothing to decide.
+    The shipped surface never sees this; it uses the contract's own decision,
+    and tests/test_governed_provider_eligibility.py pins that."""
+    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+                               reason="deterministic flow at the injectable seam; no provider executes")
+
+
 def _client(tmp_path: Path, factory=RecordingFlow) -> TestClient:
     RecordingFlow.instances = []
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS,
-                                 flow_factory=factory))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals",
+                                 eligibility=_seam_eligibility))
 
 
 def _wait_finished(client: TestClient) -> dict:
@@ -180,3 +202,14 @@ def test_a_crashing_flow_is_reported_failed_not_hidden(tmp_path: Path):
 def test_the_status_starts_honest(tmp_path: Path):
     client = _client(_project(tmp_path))
     assert client.get("/api/build").json() == {"status": "never_run"}
+
+
+def test_no_recorded_lifecycle_refuses_by_name(tmp_path: Path):
+    """PR-17: the build is a lifecycle transition, so a capsule that predates
+    lifecycle tracking cannot build until a human starts tracking it -- and
+    nothing about its history is inferred to let it."""
+    client = _client(_project(tmp_path, with_lifecycle=False))
+    response = client.post("/api/build", json={"actor": HUMAN})
+    assert response.status_code == 409
+    assert "no lifecycle is recorded" in response.json()["refused"]
+    assert RecordingFlow.instances == []

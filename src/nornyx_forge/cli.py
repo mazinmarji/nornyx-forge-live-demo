@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .app_launcher import launch_application, launch_onboarding
-from .capsule_store import CapsuleStore
+from .capsule_store import DEFAULT_SEAL_DIR, CapsuleStore
 from .development_flow import DevelopmentFlow
 from .governed_subject import RuntimeAuthorityConfig
 from .repo_qualifier import qualify_deep_remote, qualify_local, qualify_remote
@@ -164,7 +164,11 @@ def build_app(
         # tampered capsule refuses before anything runs. Two explicit
         # selections that disagree are a contradiction to resolve, not a
         # precedence rule to remember.
-        document = CapsuleStore(project_dir.resolve() / "capsule").load()
+        # Sealed, like the surface: a capsule the provider rewrote beside its
+        # own workspace must not choose which provider the next build runs.
+        document = CapsuleStore(
+            project_dir.resolve() / "capsule", seal_dir=DEFAULT_SEAL_DIR,
+        ).load()
         confirmed = document["authoritative"].get("provider")
         if confirmed is None:
             console.print(

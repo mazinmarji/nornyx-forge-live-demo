@@ -1,111 +1,19 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-09-03T03:59:48Z",
-  "governed_input_digest": "sha256:038cadc236fe7a62edd2e6db545d9151029ff2e45ca86a508d74c00b93d55930",
+  "generated_at": "2026-09-03T19:04:52Z",
+  "governed_input_digest": "sha256:7c0865ffd6603292a3c79b7556d639590fb5faa2522f7440a1f1e385a7761585",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
-  "reviewers": [
-    {
-      "role": "test-inspector",
-      "status": "pass"
-    },
-    {
-      "role": "architecture-inspector",
-      "status": "pass"
-    },
-    {
-      "role": "security-inspector",
-      "status": "pass"
-    }
-  ],
+  "reviewers": [],
   "schema": "nornyx.forge.independent_review_record.v1",
   "self_reported_builder_independence": false,
   "session_report": {
     "authoritative": false,
-    "reviews": {
-      "builder_self_approval": false,
-      "human_review": "not_performed",
-      "reviews": [
-        {
-          "evidence": [
-            "against the base-SHA script (scratch harness, ROOT pinned to the worktree): 15 failed / 4 passed over the 19 new nodes, each at its isolation assertion; G3/G4/G5 pass on both; the long-path node passes on the base tool here only because the reader's global sets core.longpaths=true",
-            "tool-level long-path probe with both scripts: new and base agree (modified [tracked.py], untracked [untracked2.py]; unstaged [tracked.py]); the runner's ls-files returns one line with empty stderr",
-            "census: 105 floors sum 2399; MINIMUM_COLLECTED 2406 = 2399 + 7; absence floor 44 = band(48); band(2606) = 2346; slack 207",
-            "git 2.32 release notes confirm GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM; git 2.51 release notes confirm diff --no-index pathspec limiting"
-          ],
-          "findings": [
-            "should-fix (applied): severing the global gitconfig severed core.longpaths; git on Windows then answered nothing, exit 0, with a warning on stderr the tool discards, for a governed untracked or edited path beyond MAX_PATH; core.longpaths=true is now pinned and test_a_governed_path_beyond_max_path_is_still_seen pins it with a Windows-only positive control",
-            "note: the route positive controls, with HOME redirected to an empty directory, fail loudly rather than vacuously under a ~191-character pytest basetemp on Windows (the plain git loses the reader's longpaths); environmental, passes under the default basetemp",
-            "note: the AST one-runner guard reaches run/Popen/check_output/check_call/call and module-level calls; not seen are a name-bound list, a tuple literal, or subprocess.run under another name, now stated in its docstring",
-            "note: the LF fixture change is correct and measured; the tool reporting a CRLF working copy committed under reader autocrlf as modified is disclosed in A-021 and pinned by no test",
-            "note: GIT_ATTR_SOURCE needs git 2.40 and GIT_TEST_ASSUME_DIFFERENT_OWNER git 2.35.2; on an older git both new nodes fail at their positive controls, loudly",
-            "builder note (after round 2, from CI on 279bde9): three positive controls failed loudly on the GitHub ubuntu runner and were corrected without touching the tool -- the two HOME default-file routes now unset XDG_CONFIG_HOME (the runner exports it, and git derives the default ignore and attributes files from it instead of HOME), and the ownership control runs with the system and global files switched off (a plain git under the runner's own configuration resolved the repository despite the knob, with no ownership message); measured locally with XDG_CONFIG_HOME exported, all 48 nodes pass"
-          ],
-          "reviewer_kind": "read-only in-session model subagent (Claude Code Agent tool); not a human review, not an authenticated independent inspection",
-          "role": "test-inspector",
-          "round": 2,
-          "status": "pass",
-          "subject": "Git configuration hygiene (F-02) and the no-repository historical claim (F-01), a bounded maintenance slice on top of main b999537",
-          "summary": "Round 1 FAIL with one should-fix (core.longpaths severed with the reader's global file, so a governed path beyond MAX_PATH on Windows became an empty exit-0 answer). Applied; round 2 PASS: the tool and the base tool agree on a 383-character path, the earlier 15/44 long-basetemp failures pass with the pin, 15 of 19 new nodes red against the base-SHA tool for the intended reason, positive controls cannot pass vacuously, census arithmetic consistent."
-        },
-        {
-          "evidence": [
-            "Popen trace of `refresh_governance_evidence.py --verify` with GIT_ATTR_SOURCE=HEAD and a GIT_CONFIG_COUNT family planted: six process starts, every one `git -c core.excludesFile=nul -c core.attributesFile=nul -c core.fsmonitor=false -c core.longpaths=true {rev-parse|diff}` with LC_ALL=C and GIT_CONFIG_GLOBAL=nul, no GIT_ATTR_SOURCE, no leftover GIT_CONFIG_*",
-            "fixture with HEAD~1 carrying `*.py ident`: under GIT_ATTR_SOURCE=HEAD~1 plain git prints nothing, the tool names the file",
-            "ident route via ~/.config/git/attributes with no configuration anywhere: with the core.attributesFile pin the tool names the file; with the pin removed it returns []",
-            "branch probes: absent repository -> None / git:unbound / 'could not name'; GIT_TEST_ASSUME_DIFFERENT_OWNER=1 -> SystemExit 'will not answer for it' from all four questions; bound tree answers normally",
-            "13 single nodes of tests/test_absence_is_not_success.py pass; --collect-only 48; census arithmetic 29+19=48, band(48)=44, 2587+19=2606, 2382+17=2399, 2389+17=2406"
-          ],
-          "findings": [
-            "should-fix (applied): GIT_ATTR_SOURCE re-aims where attributes are read from; measured HEAD~1 carrying `*.py ident` hid a `$Id$`-span change from plain git and the tool; now dropped with the steering variables and pinned by test_an_attributes_source_variable_cannot_hide_a_governed_modification",
-            "should-fix (applied): the GIT_POLICY_NEUTRAL_CONFIGURATION comment now cites the configuration-free `*.py ident` measurement and says the clean-filter route is refused twice over",
-            "note: single policy point holds; subject_observer.observe_source_commit and capsule_store are runtime provenance off the evidence-tool path; scripts/check_evidence_binding.py is the out-of-scope history checker",
-            "note: GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM exist from git 2.32, now recorded in a comment and A-021 as an unmeasured floor",
-            "note (precision, applied after round 2): a dangling .git link says 'not a git repository: <gitdir>' and is classified as absent, which is git's own classification; the comment no longer lists 'broken' among the refused cases",
-            "note: inside the disclosed boundary, attr.tree written into the repository's own .git/config still steers attributes; A-021 places writes into .git outside what the tool establishes"
-          ],
-          "reviewer_kind": "read-only in-session model subagent (Claude Code Agent tool); not a human review, not an authenticated independent inspection",
-          "role": "architecture-inspector",
-          "round": 2,
-          "status": "pass",
-          "subject": "Git configuration hygiene (F-02) and the no-repository historical claim (F-01), a bounded maintenance slice on top of main b999537",
-          "summary": "Round 1 FAIL with two should-fixes (GIT_ATTR_SOURCE passed through and hid a modification when an older commit carried hiding attributes; one comment claimed a configuration-free attributes measurement for a clean filter that needs configuration). Both applied; round 2 PASS: GIT_ATTR_SOURCE neutralised at tool level, the reworded claim matches the `*.py ident` measurement, a Popen trace of --verify shows six git starts all through the one runner with the four pins and LC_ALL=C, no caller turns the new refusal branch into an empty answer, A-021 claim-disciplined."
-        },
-        {
-          "evidence": [
-            "enumerated 196 GIT_* names in the git 2.55 binary to choose channels; driver importing the worktree tool with ROOT pinned to throwaway repositories, wrapping _git to capture stderr",
-            "repo-attrsource: plain GIT_ATTR_SOURCE=HEAD~1 diff prints nothing; the tool answers dirty ([util.py],[]) unstaged [util.py] on three runs, GIT_ATTR_SOURCE=nonsense no longer refuses",
-            "repo-long3 (389-character paths): neutral git with core.longpaths=false blind (warnings only); the tool reports the tracked-edited and untracked long paths, empty stderr",
-            "ownership: GIT_TEST_ASSUME_DIFFERENT_OWNER=1 -> every question raises 'git found a repository ... will not answer for it: fatal: detected dubious ownership'; with safe.directory=* offered via GIT_CONFIG_COUNT the tool still refuses by design; norepo unchanged (None / git:unbound / could not name)",
-            "phrase-in-path: a checkout under 'not a git repository/' with the ownership flag read as absent under the anywhere-match (recorded; anchored match applied after round 2)",
-            "real worktree under the round-2 tool: root = ROOT, head = revision = git:b999537, five governed files modified, empty git stderr; `git diff --name-only` byte-identical under the reader's locale and LC_ALL=C",
-            "global git configuration untouched (8 entries, same digest before and after); scratch removed"
-          ],
-          "findings": [
-            "should-fix (applied): GIT_ATTR_SOURCE, the environment form of attr.tree, changed the tool's answer on a fixture whose older commit carried `* text=auto`; now dropped",
-            "should-fix (applied): core.longpaths severed with the global file made the neutral environment blind to governed paths beyond MAX_PATH on Windows, exit 0; now pinned on, accepted silently by Linux git 2.43",
-            "should-fix (applied): with safe.directory out of reach a foreign-owned checkout was reported as 'could not name the repository' with git:unbound provenance; _repository_root now returns absent only for git's 'not a git repository' and otherwise raises with git's refusal; A-021 and CHANGELOG disclose that such checkouts cannot be verified",
-            "note (precision, applied after round 2): the ownership message embeds the checkout path, so a checkout under a directory literally named 'not a git repository' read as absent when the phrase was matched anywhere in stderr; the match is now anchored to the start of a stderr line and the ownership test pins that case",
-            "note: measured inert for the tool and live for plain git 2.55: GIT_ATTR_GLOBAL, GIT_ATTR_SYSTEM, HOME config/ignore/attributes with XDG unset, GIT_TEST_FSMONITOR (reader code executed under plain git only)",
-            "note: measured inert for both: legacy GIT_CONFIG, PROGRAMDATA config, the pathspec-mode variables, GIT_IMPLICIT_WORK_TREE, untracked-cache and index knobs, GIT_INDEX_VERSION, GIT_NO_REPLACE_OBJECTS, GIT_EXTERNAL_DIFF with --name-only; GIT_SHALLOW_FILE and GIT_TEST_ASSUME_DIFFERENT_OWNER can only make git refuse",
-            "note: repo-local include/includeIf, sparse checkout, checkStat, .gitmodules and the repository's own attributes are declared allowed and were not measured",
-            "note: localisation could not be exercised, neither git available ships message catalogues; LC_ALL=C is the right control by gettext precedence and the tool sets it after filtering",
-            "note: os.devnull spelling is correct on both platforms: 'nul' is a device name resolved in every directory on Windows, '/dev/null' documented on Linux; git 2.43 in WSL answers correctly under the identical environment"
-          ],
-          "reviewer_kind": "read-only in-session model subagent (Claude Code Agent tool); not a human review, not an authenticated independent inspection",
-          "role": "security-inspector",
-          "round": 2,
-          "status": "pass",
-          "subject": "Git configuration hygiene (F-02) and the no-repository historical claim (F-01), a bounded maintenance slice on top of main b999537",
-          "summary": "Round 1 FAIL with three should-fixes (GIT_ATTR_SOURCE; core.longpaths; the ownership check reported as an absent repository with git:unbound provenance and no disclosure). All applied; round 2 PASS: GIT_ATTR_SOURCE inert for the tool on the attrsource fixture, 389-character paths reported again, ownership refusal surfaces git's own words through every question, LC_ALL=C changes no answer, no remaining should-fix within the declared invariant."
-        }
-      ],
-      "schema": "nornyx.forge.in_session_reviews.v1"
-    },
+    "reviews": null,
     "source": ".nornyx/in-session/reviews.json",
-    "source_sha256": "sha256:4be4ed4a8d088be986c0a70e8628d62416cfab07127fa918bfca5321a61b8404"
+    "source_sha256": null
   },
   "statement": "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any reviewer rows below come from an in-session report that is not part of the governed content and decides nothing. This record asserts no independence: an unauthenticated file cannot establish that the party who produced it was independent of it.",
-  "subject_revision": "git:279bde9ac76f33fa9259ecf191dee6d990c51d94",
+  "subject_revision": "git:8f348a509bc95d994cb71e74a169bc9b7f0737eb",
   "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (C:\\Users\\mazin.LAPTOP-EMF4NEOK\\.nornyx\\forge_reviewer_trust.json (absent)))"
 }

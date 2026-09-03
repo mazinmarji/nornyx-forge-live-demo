@@ -32,11 +32,19 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
+from .capsule_store import DEFAULT_SEAL_DIR
 from .onboarding_app import create_app
 from .subject_bootstrap import resolve_packaged_root
 
 #: The one address the onboarding surface may bind. Loopback, by doctrine.
 ONBOARDING_HOST = "127.0.0.1"
+
+#: Where Forge keeps each project's authority seal: outside every project
+#: directory, in Forge's own place beside the reviewer trust store. A seal
+#: inside the provider's workspace would seal nothing; this one is out of a
+#: workspace-write sandbox's reach and inside the same operating-system user's
+#: reach, which is the bound capsule_store states.
+SEAL_DIR = DEFAULT_SEAL_DIR
 
 
 def assemble(project_dir: Path) -> FastAPI:
@@ -48,9 +56,12 @@ def assemble(project_dir: Path) -> FastAPI:
             "let the launch directory select project authority, which is the "
             "FORGE_ROOT defect wearing different clothes"
         )
+    # No `eligibility` is passed: the served surface decides governed
+    # eligibility by the Provider Contract's own function and nothing else.
     application = create_app(
         chosen / "capsule",
         resolve_packaged_root() / ".nornyx" / "contracts",
+        seal_dir=SEAL_DIR,
     )
     application.state.project_dir = str(chosen)
     return application

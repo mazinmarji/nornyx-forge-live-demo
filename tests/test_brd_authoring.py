@@ -125,7 +125,8 @@ def test_words_that_would_change_the_parse_are_refused():
 def test_the_route_writes_the_brd_beside_the_capsule(tmp_path: Path):
     CapsuleStore(tmp_path / "capsule").initialize(_document(with_requirements=True))
     client = TestClient(create_app(tmp_path / "capsule",
-                                   ROOT / ".nornyx" / "contracts"))
+                                   ROOT / ".nornyx" / "contracts",
+                                   seal_dir=tmp_path / "seals"))
     response = client.post("/api/brd")
     assert response.status_code == 200, response.text
     written = Path(response.json()["written"])
@@ -137,7 +138,8 @@ def test_the_route_writes_the_brd_beside_the_capsule(tmp_path: Path):
 def test_the_route_refuses_a_proposal_only_capsule(tmp_path: Path):
     CapsuleStore(tmp_path / "capsule").initialize(_document(confirm_intent=False))
     client = TestClient(create_app(tmp_path / "capsule",
-                                   ROOT / ".nornyx" / "contracts"))
+                                   ROOT / ".nornyx" / "contracts",
+                                   seal_dir=tmp_path / "seals"))
     response = client.post("/api/brd")
     assert response.status_code == 409
     assert "no confirmed intent" in response.json()["refused"]
@@ -146,6 +148,7 @@ def test_the_route_refuses_a_proposal_only_capsule(tmp_path: Path):
 
 def test_the_route_refuses_without_a_project(tmp_path: Path):
     client = TestClient(create_app(tmp_path / "capsule",
-                                   ROOT / ".nornyx" / "contracts"))
+                                   ROOT / ".nornyx" / "contracts",
+                                   seal_dir=tmp_path / "seals"))
     response = client.post("/api/brd")
     assert response.status_code == 409

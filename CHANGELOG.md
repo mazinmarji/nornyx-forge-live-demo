@@ -2,6 +2,114 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Declared is not eligible: the governed basic-user build executes an
+  engineering provider only when Forge has established that the provider is
+  confined to the project subject, and today that is neither of them
+  (independent review of 89910b8, R1). The seal had narrowed what a
+  provider could do to the authority store, but the default Claude provider
+  runs with general shell capability and no filesystem confinement as the
+  same operating-system user whose files hold the seal, so the anchor and
+  the actor it constrains shared a trust domain. The Provider Contract now
+  carries, as data, what Forge has established about each adapter's
+  confinement -- Claude `none`, Codex `declared` (a sandbox flag passed to a
+  CLI, not independently established) -- and `governed_build_eligibility`
+  decides from that table alone. `/api/build` refuses an ineligible provider
+  before the lifecycle moves and before any flow is constructed, tries no
+  other provider, changes no execution mode, and the page lists the reason;
+  the served surface passes no other decision. The rest of the journey is
+  unchanged. Two anchor states are kept apart (R2): a store Forge ever
+  sealed carries a committed marker, so a protected store whose seal is
+  missing is TAMPERED with nothing to restore from, while a store with
+  neither is the legacy case, reported unsealed. The seal's currency is
+  reported as not independently anchored and monotonic external anchoring
+  is deferred rather than claimed (R3).
+- The authority store is sealed against the provider that builds beside
+  it (P17-B1). The capsule store lives under the basic-user project
+  directory and `/api/build` hands that directory to the engineering
+  provider as a writable workspace, so a worker with Write or Bash could
+  rewrite `experience.json` or `capsule.json`, recompute the one-link
+  digest chain, and commit the result inside the store's own repository.
+  Measured at 47bd370 through the build seam and through the real
+  `DevelopmentFlow` worker seam: a forged READY was rendered mid-build,
+  persisted, and read back after a restart, and a committed forgery left a
+  clean tree; forged capsule authority was rendered the same way. Now
+  `CapsuleStore` records a seal -- the revision and the exact bytes of both
+  authority files -- in a Forge-owned directory outside every project
+  after each of its own commits, and checks the store against it on every
+  load: revision, working tree, bytes. While a build runs the surface
+  answers every read from the authority it sealed when the build began and
+  refuses every write; when the flow returns it checks the seal before
+  translating the result, restores the sealed authority when the store
+  moved, and records the run as a failure that names what moved. A forgery
+  left for a later process is TAMPERED on every route until a person
+  restores the sealed authority explicitly. The seal is out of a
+  workspace-write sandbox's reach and within the same operating-system
+  user's reach; A-022 states that bound and withdraws the earlier claim
+  that detection "belongs to git history". Three in-session reviews of the
+  repair were applied before this entry was final: the served page's script
+  had stopped parsing (a statement inserted between an `if` and its `else`),
+  which no API test could see and a structural pin now holds; the developer
+  CLI's `build --project-dir` read the capsule unsealed and now reads it
+  under the same seal; a worker that replaced the store's `.git` with a
+  plain file crashed the restoration and left the store stuck, and the
+  rebuild now removes what it finds by shape; a damaged or foreign seal
+  file was reported as an absent project and is now the TAMPERED finding
+  with nothing to restore from; a seal that cannot be written is the
+  store's refusal, not a traceback; creating a project is refused while a
+  build has the store sealed (a worker that deleted the store mid-build
+  could otherwise have a client re-create it and overwrite the seal); and a
+  store whose directory the worker removed outright is rebuilt from the
+  seal rather than tripping on the missing working directory. Also: a
+  build thread that fails to start releases the build lock and the seal,
+  so the next build is not refused as already running.
+- The basic-user journey is orchestrated through the Experience Contract
+  (PR-17). Measured at 9a16851 through the real onboarding app: creating a
+  project, confirming its intent and provider, deriving the BRD, starting a
+  build and receiving its result -- accepted or not -- and restarting the
+  server all left the lifecycle `absent`, with no `experience.json` on disk
+  and no lifecycle route; the contract and its tests existed and nothing a
+  user did reached them. Now project creation starts a persisted lifecycle
+  at DISCOVER through `start_experience`, in the same first store revision
+  as the capsule, and the surface offers semantic actions -- start
+  tracking, confirm scope, start build, retry, mark ready -- that
+  `experience_journey` maps onto the one canonical transition each names.
+  No route takes a stage from the client. Confirming a capsule proposal is
+  not the lifecycle's CONFIRM: that is an explicit human act with three
+  named prerequisites (confirmed intent, confirmed provider, derived BRD),
+  refused by the contract for any other actor kind. The build enters BUILD
+  through `advance` under the person who started it and requires a
+  recorded lifecycle at a pre-build stage, or one already at BUILD with no
+  run in progress, which is re-run without a second transition; on
+  completion the surface, as a system actor, records TEST from the translated `flow_run` evidence and
+  GOVERN from the translated `gate_results`, both through
+  `experience_build.flow_evidence` and nothing a worker wrote, and stops
+  there. A flow that raised, returned nothing usable, or was not accepted
+  is recorded as a failure of the stage the workflow is at, in the
+  contract's words, and is retried only through the contract's retry.
+  READY is offered only when the persisted GOVERN evidence would satisfy
+  the contract and is entered only by a human presenting exactly that
+  evidence, read back from the store; a build whose acceptance profile ran
+  no Nornyx gate -- which is the shipped greenfield profile -- ends
+  honestly at GOVERN, because the translator produces no governance
+  validation for it and nothing here supplies one. A capsule from before
+  this change stays `absent` until a human starts tracking it at DISCOVER;
+  no stage is inferred from its files. One in-process lock serialises every
+  read and write of the store -- capsule and lifecycle alike, the build
+  thread included, because both files share one git repository and every
+  save stages the whole tree (a review measured a concurrent proposal
+  committing a half-saved lifecycle as its own) -- so a repeated or stale
+  request is judged against the current persisted state, and the build
+  status is published only after the lifecycle it produced is persisted. A
+  completed run is persisted whole or recorded as one failure at BUILD,
+  never left at TEST, from which the contract declares no way back. A
+  store refusal reaches the browser in the store's own words; only a
+  missing store is reported as "no project". The page shows the persisted stage, its status, the actions
+  the contract allows, what still blocks the others, the build status for
+  this server session, and each refusal verbatim; its script names no
+  stage and decides nothing. The trust boundary is unchanged: loopback
+  only, the human unauthenticated (A-015), provider output still only
+  proposed content.
+
 - The governance evidence tool asks git under policy-neutral configuration,
   not the reader's. Binding every git question to the governed tree's own
   repository (the entry below) established which repository answers; an

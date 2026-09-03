@@ -506,3 +506,214 @@ those variables name, and that difference is the repair.
 `tests/test_recorded_measurements.py`, the absence-is-not-success control in
 `tests/test_absence_is_not_success.py`, and the success criterion in
 `CLAUDE.md` that evidence is named for what it is.
+
+## A-022 The basic-user journey projects the Experience Contract; it is not a second workflow
+
+**Ambiguity.** The onboarding surface performed every step of the basic
+journey -- project creation, proposal confirmation, provider confirmation,
+BRD derivation, a governed build and its result -- without the Experience
+Contract, so a project's lifecycle stayed `absent` however far the user got
+(measured at 9a16851 through the real application, success and failure
+paths, and across a restart). Wiring the surface to the contract raises
+four questions the contract does not answer by itself: what the human
+scope confirmation requires, which actor performs the evidence-driven
+transitions, what READY may claim, and what a capsule from before the
+wiring means.
+
+**Resolution.** Every lifecycle advancement the surface records comes from
+the contract's own `start_experience`, `advance`, `fail` and `retry`, under
+the actor and evidence rules those functions already enforce; the surface
+maps a closed set of semantic actions onto fixed transitions and never
+accepts a stage from a client. The scope confirmation (lifecycle CONFIRM)
+requires a confirmed intent, a confirmed provider and a derived BRD --
+exactly the inputs the build consumes and the things the build and BRD
+routes already refuse by name -- and no more: the contract's optional
+stages are not entered, because nothing on this surface implements them.
+BUILD is entered under the person who pressed the button; TEST and GOVERN
+are recorded by a system actor from `flow_evidence()` over the completed
+flow result, and the automatic path stops at GOVERN. READY is a human act
+presenting the gate-results and governance-validation references that
+GOVERN recorded, read back from the persisted lifecycle. On the shipped
+greenfield acceptance profile no gate runs the Nornyx CLI, so the
+translator yields no governance validation and READY is unreachable for a
+real basic-user build; the journey ends at GOVERN and the page says why.
+That is the honest outcome of a profile that never asks the governance
+question, and it is left as it is rather than improved. A capsule with no
+recorded lifecycle is reported absent, offers only a human "start
+tracking" that begins at DISCOVER, and has no stage inferred from its
+files. Four limits are disclosed. The contract does not freeze capsule
+content after CONFIRM, so a proposal confirmed and a BRD re-derived after
+the scope confirmation are built without the lifecycle re-confirming them
+(every such input is still human-confirmed capsule content); the contract
+declares a `brd_requirements` evidence kind that no stage requires, and
+whether CONFIRM should consume one -- and what its reference would denote
+-- is a domain decision this slice does not take. A server that dies
+mid-build leaves the lifecycle at BUILD/active, where the next session
+reports that no build is running and re-runs it from BUILD without a
+second transition and without recording a failure nothing observed; the
+person who starts that re-run is therefore not recorded, because the
+contract records transitions, not runs, and BUILD's `entered` stays the
+first presser. A completed run is recorded whole or not at all: the
+surface asks the contract for every evidence step in memory first and
+persists TEST then GOVERN only when both are licensed, and otherwise
+records one failure at BUILD in the contract's words for the refused step
+-- because the contract declares no edge back from TEST, so a failure
+persisted there could never be re-run (measured under review with a flow
+that reported itself accepted while a gate failed, a shape the real
+`DevelopmentFlow` cannot produce because its `accepted` is the conjunction
+of its gates).
+
+The store is inside the provider's workspace, and that was an authority
+hole (P17-B1, adjudicated a merge blocker). The capsule store lives under
+the project directory; `/api/build` hands that directory to the selected
+provider as its writable workspace -- Claude with Edit, Write and Bash,
+Codex under a workspace-write sandbox -- and both digest chains are one
+link deep, so a worker that has read the domain modules can rewrite a
+state and recompute the final link, and can commit the result inside the
+store's own git repository with the store's identity. Measured at 47bd370
+through the production build seam and through the real `DevelopmentFlow`
+worker seam: the worker's forged READY was rendered by `/api/state` while
+the build ran, persisted, and read back after a restart; a committed
+forgery left a clean tree and changed nothing; forged capsule authority
+(intent, provider) was rendered the same way. An earlier version of this
+entry said detection of such an edit "belongs to the store's git
+history". That was insufficient: mutable git history inside the
+provider's workspace is not an anchor when the provider can write the
+repository, and the claim is withdrawn.
+
+What is established now. The store keeps a seal -- the revision and the
+exact bytes of the two authority files -- in a directory OUTSIDE every
+project (`~/.nornyx/forge/seals`, beside the reviewer trust store), written
+by Forge after each of its own commits and by nothing else. Every load
+checks the store against the seal first: the revision, the working tree
+(a dirty tree, an extra file) and each file's bytes, so a dirty forgery
+and a committed forgery are the same finding, and a clean tree at a new
+commit is not trusted authority. While a build runs, every read is
+answered from the authority Forge sealed when the build began and every
+write is refused, so a forgery on disk is never rendered and no action
+can consume it. When the flow returns, the store is checked against that
+seal before the result is translated; a store that moved is reset to the
+sealed authority, the run is recorded as a failure that names what moved,
+and the provider's result is not consulted. A forgery left for a later
+process is the TAMPERED finding on every route until a person restores
+the sealed authority through one explicit action, which records the
+restoration on the lifecycle. Confirmed capsule authority is covered by
+the same seal as the lifecycle. The legitimate journey is unchanged.
+
+What the seal does not establish, stated rather than implied away. It is
+Forge-owned persistence, not a signature: it is out of a workspace-write
+sandbox's reach, so a Codex worker cannot touch it, and it is within the
+same operating-system user's reach, so a Claude worker with Bash could.
+That is the local trust boundary of A-015 -- the machine's logged-in
+user -- and the seal narrows what a provider can do inside it without
+claiming to hold against that user. A store with neither a seal marker nor
+a seal -- one from before sealing existed -- is reported `unsealed` and is
+sealed by Forge's next save; a store that carries the marker and has lost
+its seal is the TAMPERED finding with nothing to restore from; a seal that
+is unreadable, of another schema, or written for another store anchors
+nothing and is that finding too.
+
+Declared is not eligible (independent review of 89910b8, findings R1 to
+R3). The seal narrowed what a provider could do to the store, but the
+default Claude provider and the seal occupy the same operating-system trust
+domain: Claude runs on this path with general shell capability and no
+filesystem confinement as the user whose files hold the anchor, so a
+validation mechanism cannot establish independence from an actor that can
+replace the validation state. The governed basic-user path therefore
+executes an engineering provider only when Forge itself can establish that
+the provider is confined to the project subject. The Provider Contract
+carries that as data: a closed confinement vocabulary (`none`, `declared`,
+`established`) and one row per declared provider, and
+`governed_build_eligibility` decides from that table and nothing else --
+not the request, not the capsule, not the project directory, not the
+provider's own account. Claude's confinement is `none`; Codex's is
+`declared`, because the workspace-write sandbox is a flag the adapter
+passes to a CLI and Forge has not independently established it; nothing is
+`established`. Both providers are therefore declared, registered and
+selectable, and neither is eligible for the governed build: `/api/build`
+refuses before the lifecycle moves and before any flow is constructed, in
+the contract's words, tries no other provider, changes no execution mode,
+and the page lists the same reason as the blocker. A basic-user journey
+whose creation, proposals, human confirmations, BRD derivation and
+lifecycle orchestration all work while a real external-provider build is
+refused is the intended result of this baseline; the authority invariant
+is not weakened to keep a build executable. The deterministic flow the
+tests install at the injectable seam carries its own eligibility because it
+executes no provider; the served surface passes nothing and uses the
+contract's decision, which is pinned. Promotion of any provider to
+`established` is future work that requires Forge to verify a confinement,
+not to be told about one. The developer CLI's `build --project-dir` is a
+terminal path outside the governed basic-user surface: it constructs the
+flow over the same store-bearing directory and does not consult the
+eligibility decision, which is the "selectable elsewhere" the decision
+leaves open; a developer who runs it accepts R1's exposure at their own
+console, and it is named here rather than implied away.
+
+Two anchor states that were one are now kept apart. A store Forge has ever
+sealed carries a committed marker naming its seal, so a protected store
+whose seal is missing is the TAMPERED finding with nothing to restore from
+-- no authority is inferred from its files, and recovery is outside this
+surface -- while a store with neither marker nor seal is the legacy case
+from before sealing existed, reported `unsealed` and sealed by Forge's
+next save. The marker's trustworthiness depends on the eligibility gate,
+and the dependency runs one way. Measured: removing the marker alone,
+uncommitted or committed, is still caught, because the seal outside the
+project names it; a protected store reads as legacy only when the marker
+AND the seal are both gone, and the seal is outside any workspace. So the
+precondition for that fall-open is the same-operating-system-user write the
+whole design concedes -- exactly what an unconfined provider holds -- and
+the marker is trustworthy at this baseline because no provider executes on
+the governed path at all. A later slice
+that makes any provider eligible must revisit this before it does so, or it
+silently reopens R2. Nor is the marker a freshness mechanism: a store
+restored wholesale to an earlier state carries its marker back with it. The
+seal establishes what Forge last wrote, not that it is the latest thing
+Forge wrote: an actor who can replace the store, its marker and its seal
+together with an earlier consistent set is not detected by any of them, so
+the surface reports the seal's currency as `not_independently_anchored`
+and monotonic external anchoring is deferred rather than claimed. Not
+claimed anywhere: sandboxing of any provider, an authenticated human
+identity, cryptographic provenance, A-018, or PR-18.
+
+The injectable seam is a composition-time act and nothing else. `create_app`
+takes `eligibility` beside `flow_factory`; a test that installs a
+deterministic flow -- one that answers in the flow's shape and executes no
+engineering agent -- passes an eligibility that says so, because the gate
+exists to keep an unconfined provider off the authority store and that flow
+has none. No request, capsule content, project file or provider output
+reaches either parameter; the served composition passes neither, so the
+shipped surface decides by the contract alone, and that is pinned by test.
+A flow injected at the seam without its own eligibility is still gated by
+the contract's decision. A process the provider
+leaves running after the flow returns is caught at the next load, not
+while it writes. The seal is written after the store's commit, so a process
+that dies between the two leaves Forge's own newest commit reading as a
+breach at the next load; that fails closed, and a restoration then returns
+the store to the previous sealed revision, losing that one transition
+rather than trusting anything unsealed. A breach found when the sealed
+lifecycle is already failed is restored and reported for the session but
+cannot be recorded on the lifecycle, which admits one failure per stage.
+The developer CLI's `build --project-dir` reads the capsule under the same
+seal. The domain modules' own docstrings still say a full-chain rebuild is
+"git history's to catch"; that sentence is true of the chain and was never
+enough for a repository the provider can write, which is what the seal is
+for. Whether the seal should be strengthened beyond this boundary is a
+decision for a later slice, not this one.
+
+The capsule and the lifecycle are two files in one git repository, and
+every save stages the whole tree. Measured under review with the two
+written under separate serialisation: a lifecycle save paused after its
+file landed, a concurrent proposal's `git add -A` swept `experience.json`
+into the proposal's own commit, and the lifecycle save then found nothing
+left to commit. One in-process store lock now serialises every read and
+write of the store, the build thread's included; it is held around store
+access only, never around the build.
+
+**Scope.** This wires the existing contract; it changes no stage, edge,
+actor or evidence rule. READY means what the contract establishes and
+nothing beyond it: not deployment, not production approval, not an
+authenticated independent inspection, not a human approval record. The
+trust boundary of A-015 is unchanged and A-018 has not occurred.
+
+**Serves.** the founder's basic-user strategy, the progress-authority rule
+of the Experience Contract, and the claim discipline in `CLAUDE.md`.
