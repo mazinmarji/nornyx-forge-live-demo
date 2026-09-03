@@ -78,6 +78,11 @@ _EXPERIENCE_FILE = "experience.json"
 #: unexpected and fails the seal check.
 _AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
 _SEAL_SCHEMA = "nornyx.forge.capsule_seal.v1"
+#: Where Forge keeps every store's seal when nothing more specific is given:
+#: outside every project, in Forge's own place beside the reviewer trust
+#: store (the `reviewer_trust.DEFAULT_REVIEWER_STORE` precedent). Callers
+#: pass it explicitly; the store never reaches for it on its own.
+DEFAULT_SEAL_DIR = Path.home() / ".nornyx" / "forge" / "seals"
 #: Written once at initialize; its presence marks a directory as a capsule
 #: store THIS adapter created. Loading without it is refused, which is the
 #: mechanism behind "never adopt a repository we did not initialize".
@@ -104,6 +109,13 @@ class AuthoritySnapshot:
 
     def as_dict(self) -> dict[str, Any]:
         return {"revision": self.revision, "files": dict(self.files)}
+
+
+class CapsuleSealUnreadable(CapsuleTamperError):
+    """The seal file exists and is not a seal this adapter wrote for this
+    store: unreadable, another schema, or another store's. The anchor is
+    damaged, so nothing on disk can be held to it -- a tamper finding with
+    nothing to restore from."""
 
 
 class CapsuleSealError(CapsuleTamperError):
@@ -338,12 +350,18 @@ class CapsuleStore:
         snapshot = self.snapshot()
         if path is None:
             return None
-        path.parent.mkdir(parents=True, exist_ok=True)
         record = {"schema": _SEAL_SCHEMA, "store": str(self.root.resolve()), **snapshot.as_dict()}
-        # Written whole, then moved into place: a seal is never half a seal.
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(canonical_json(record) + "\n", encoding="utf-8", newline="")
-        os.replace(tmp, path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Written whole, then moved into place: a seal is never half a seal.
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(canonical_json(record) + "\n", encoding="utf-8", newline="")
+            os.replace(tmp, path)
+        except OSError as exc:
+            raise CapsuleStoreError(
+                f"the authority seal could not be written to {path}: {exc}; the store's "
+                "newest commit stands unsealed and will read as a breach until resealed"
+            ) from exc
         return snapshot
 
     def sealed(self) -> AuthoritySnapshot | None:
@@ -355,7 +373,10 @@ class CapsuleStore:
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise CapsuleStoreError(f"the authority seal is unreadable: {exc}") from exc
+            raise CapsuleSealUnreadable(
+                f"the authority seal at {path} is unreadable: {exc}; the store cannot be "
+                "held to its anchor"
+            ) from exc
         if (
             not isinstance(record, dict)
             or record.get("schema") != _SEAL_SCHEMA
@@ -363,7 +384,14 @@ class CapsuleStore:
             or not isinstance(record.get("files"), dict)
             or set(record["files"]) != set(_AUTHORITY_FILES)
         ):
-            raise CapsuleStoreError("the authority seal is not a seal this adapter wrote")
+            raise CapsuleSealUnreadable(
+                f"the authority seal at {path} is not a seal this adapter wrote"
+            )
+        if record.get("store") != str(self.root.resolve()):
+            raise CapsuleSealUnreadable(
+                f"the authority seal at {path} names another store "
+                f"({str(record.get('store'))[:80]}); it does not anchor this one"
+            )
         return AuthoritySnapshot(revision=record["revision"], files=dict(record["files"]))
 
     def seal_problems(self, snapshot: AuthoritySnapshot) -> list[str]:
@@ -425,44 +453,53 @@ class CapsuleStore:
         last wrote, which is the property the seal exists for.
         """
         notes: list[str] = []
-        reset = subprocess.run(
-            ["git", *_GIT_IDENTITY, "reset", "--hard", "--quiet", snapshot.revision],
-            cwd=str(self.root), capture_output=True, text=True, check=False,
-        )
-        if reset.returncode == 0:
-            subprocess.run(
-                ["git", "clean", "-fdxq"], cwd=str(self.root),
-                capture_output=True, text=True, check=False,
+        try:
+            reset = subprocess.run(
+                ["git", *_GIT_IDENTITY, "reset", "--hard", "--quiet", snapshot.revision],
+                cwd=str(self.root), capture_output=True, text=True, check=False,
             )
-        if reset.returncode != 0 or self.seal_problems(snapshot):
-            notes.append("the sealed revision could not be restored from the store's own "
-                         "history; the repository was rebuilt around the sealed bytes")
-            git_dir = self.root / ".git"
-            if git_dir.exists():
-                _remove_tree(git_dir)
-            for entry in self.root.iterdir():
-                if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
-                    continue
-                if entry.is_dir():
-                    _remove_tree(entry)
-                else:
-                    entry.unlink(missing_ok=True)
-            _run_git(self.root, "init", "--quiet", "--initial-branch=main")
-            (self.root / _MARKER_FILE).write_text(
-                "Forge capsule store. Managed by nornyx_forge.capsule_store; "
-                "not a user-facing repository.\n",
-                encoding="utf-8", newline="",
-            )
-            for name, text in snapshot.files.items():
-                path = self.root / name
-                if text is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    path.write_text(text, encoding="utf-8", newline="")
-            _run_git(self.root, "add", "-A")
-            _run_git(self.root, "commit", "--quiet", "-m", "capsule: authority restored from seal")
+            if reset.returncode == 0:
+                subprocess.run(
+                    ["git", "clean", "-fdxq"], cwd=str(self.root),
+                    capture_output=True, text=True, check=False,
+                )
+            if reset.returncode != 0 or self.seal_problems(snapshot):
+                notes.append("the sealed revision could not be restored from the store's own "
+                             "history; the repository was rebuilt around the sealed bytes")
+                self._rebuild(snapshot)
+        except OSError as exc:
+            raise CapsuleStoreError(
+                f"the sealed authority could not be restored: {type(exc).__name__}: {exc}"
+            ) from exc
         self.seal()
         return self.revision(), notes
+
+    def _rebuild(self, snapshot: AuthoritySnapshot) -> None:
+        """A fresh repository around the sealed bytes. Whatever the worker left
+        in the store directory -- a `.git` directory, a `.git` FILE, a junction,
+        stray files -- is removed by shape, not by assumption."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        for entry in list(self.root.iterdir()):
+            if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                _remove_tree(entry)
+            else:
+                entry.unlink(missing_ok=True)
+        _run_git(self.root, "init", "--quiet", "--initial-branch=main")
+        (self.root / _MARKER_FILE).write_text(
+            "Forge capsule store. Managed by nornyx_forge.capsule_store; "
+            "not a user-facing repository.\n",
+            encoding="utf-8", newline="",
+        )
+        for name, text in snapshot.files.items():
+            path = self.root / name
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(text, encoding="utf-8", newline="")
+        _run_git(self.root, "add", "-A")
+        _run_git(self.root, "commit", "--quiet", "-m", "capsule: authority restored from seal")
 
     # -- internals ---------------------------------------------------------
     def _write_document(self, document: Mapping[str, Any]) -> None:
@@ -480,8 +517,10 @@ class CapsuleStore:
 
 
 __all__ = [
+    "DEFAULT_SEAL_DIR",
     "AuthoritySnapshot",
     "CapsuleSealError",
+    "CapsuleSealUnreadable",
     "CapsuleStore",
     "CapsuleStoreError",
     "CapsuleTamperError",

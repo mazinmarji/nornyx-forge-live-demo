@@ -50,6 +50,7 @@ from nornyx_forge.capsule import Actor, _chain_digest, confirm, create_document,
 from nornyx_forge.capsule_store import (
     AuthoritySnapshot,
     CapsuleSealError,
+    CapsuleSealUnreadable,
     CapsuleStore,
     CapsuleStoreError,
     _remove_tree,
@@ -594,6 +595,25 @@ def test_the_seal_sees_every_way_the_store_can_move(tmp_path: Path, mutation: st
         store.load_experience()
 
 
+def test_the_seal_reads_the_bytes_not_only_what_git_reports(tmp_path: Path):
+    """A worker that hides its edit from git: `update-index --assume-unchanged`
+    keeps HEAD and `git status` exactly as sealed while the file on disk says
+    READY. The seal compares the bytes themselves, so the store is caught by
+    that comparison alone -- the one check the other specimens never isolate."""
+    store = _sealed_store(tmp_path)
+    capsule = tmp_path / "capsule"
+    subprocess.run(["git", "update-index", "--assume-unchanged", "experience.json"],
+                   cwd=capsule, check=True, capture_output=True)
+    forge_ready(capsule)
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=capsule,
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert status == "", "the specimen must be invisible to git status"
+    problems = store.seal_problems(store.sealed())
+    assert problems == ["experience.json differs from the sealed bytes"], problems
+    with pytest.raises(CapsuleSealError):
+        store.load_experience()
+
+
 def test_restoration_rebuilds_the_repository_when_the_worker_destroyed_it(tmp_path: Path):
     store = _sealed_store(tmp_path)
     sealed = store.sealed()
@@ -604,6 +624,87 @@ def test_restoration_rebuilds_the_repository_when_the_worker_destroyed_it(tmp_pa
     assert store.seal_problems(store.sealed()) == []
     assert store.load_experience()["stage"] == "DISCOVER"
     assert store.sealed().revision == revision
+
+
+def test_restoration_survives_a_worker_that_replaced_git_with_a_file(tmp_path: Path):
+    """A review measured `restore()` raising NotADirectoryError -- and the
+    human restore route returning 500, the store stuck TAMPERED -- when the
+    worker left `capsule/.git` as a plain FILE. The rebuild now removes what
+    it finds by shape. Driven through the surface: mid-build the worker
+    swaps `.git` for a file and forges READY; the thread restores; then the
+    same shape at rest is restored by a person."""
+
+    class GitSmashingFlow(HostileFlow):
+        def run(self):
+            store = self.root / "capsule"
+            forge_ready(store)
+            _remove_tree(store / ".git")
+            (store / ".git").write_text("x", encoding="utf-8")
+            HostileFlow.written.set()
+            assert HostileFlow.release.wait(timeout=30)
+            return {"accepted": True, "gates": [dict(SUBJECT_GATE), dict(NORNYX_GATE)],
+                    "execution_backend": "sequential"}
+
+    client = _client(tmp_path, factory=GitSmashingFlow)
+    _confirmed(client)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    assert HostileFlow.written.wait(timeout=30)
+    assert _ok(client.get("/api/state"))["journey"]["stage"] == "BUILD"
+    HostileFlow.release.set()
+    status = _wait_finished(client)
+    assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed",
+                                   "authority": "restored from seal"}
+    assert (tmp_path / "capsule" / ".git").is_dir()
+    persisted = _persisted(tmp_path)
+    assert "READY" not in _stages(persisted) and "rebuilt" in persisted["history"][-1]["detail"]
+
+    # The same shape left for a later process, restored by a person.
+    _remove_tree(tmp_path / "capsule" / ".git")
+    (tmp_path / "capsule" / ".git").write_text("x", encoding="utf-8")
+    forge_authority(tmp_path / "capsule")
+    later = _client(tmp_path)
+    assert later.get("/api/state").json()["finding"] == "TAMPERED"
+    restored = _ok(later.post("/api/journey/restore", json={"actor": HUMAN}))
+    assert restored["stage"] == "BUILD" and "rebuilt" in restored["restoration"]["detail"]
+    assert _store(tmp_path).load()["authoritative"]["intent"] == "Build a customer support portal."
+
+
+def test_a_damaged_or_foreign_seal_is_a_tamper_finding_not_an_absent_project(tmp_path: Path):
+    """A review measured a malformed seal turning an initialized project
+    into `initialized: false`. A seal that is unreadable, of another schema,
+    or written for another store anchors nothing: TAMPERED, with nothing to
+    restore from, on every route."""
+    store = _sealed_store(tmp_path)
+    seal = store.seal_path()
+    good = seal.read_text(encoding="utf-8")
+    own = json.dumps(str((tmp_path / "capsule").resolve()))[1:-1]
+    client = _client(tmp_path)
+    for label, damaged in (
+        ("malformed", "{not json"),
+        ("other schema", good.replace("nornyx.forge.capsule_seal.v1", "nornyx.forge.other.v1")),
+        ("other store", good.replace(own, "C:/elsewhere/capsule")),
+    ):
+        seal.write_text(damaged, encoding="utf-8", newline="")
+        with pytest.raises(CapsuleSealUnreadable):
+            store.load()
+        state = client.get("/api/state")
+        assert state.status_code == 409 and state.json()["finding"] == "TAMPERED", label
+        assert "restorable" not in state.json(), label
+        restore = client.post("/api/journey/restore", json={"actor": HUMAN})
+        assert restore.status_code == 409 and restore.json().get("finding") == "TAMPERED", label
+    seal.write_text(good, encoding="utf-8", newline="")
+    assert _ok(client.get("/api/state"))["authority"]["anchor"] == "sealed"
+
+
+def test_a_seal_that_cannot_be_written_is_the_stores_refusal(tmp_path: Path):
+    """A review measured a raw OSError escaping `initialize` when the seal
+    directory was unwritable. It is the store's refusal now, and it says
+    what state the store is left in."""
+    (tmp_path / "seals").write_text("not a directory", encoding="utf-8")
+    store = _store(tmp_path)
+    document = create_document("proj-1", "Portal", Actor("human", "casey"), AT)
+    with pytest.raises(CapsuleStoreError, match="seal could not be written"):
+        store.initialize(document, experience=start_experience(Actor("human", "casey"), AT))
 
 
 def test_a_store_never_sealed_is_reported_unsealed_and_sealed_on_the_next_save(tmp_path: Path):

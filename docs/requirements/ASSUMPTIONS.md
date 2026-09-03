@@ -608,10 +608,23 @@ That is the local trust boundary of A-015 -- the machine's logged-in
 user -- and the seal narrows what a provider can do inside it without
 claiming to hold against that user. A store that has no seal (one from
 before sealing existed, or one whose seal was removed) is reported
-`unsealed` and is sealed by Forge's next save. A process the provider
+`unsealed` and is sealed by Forge's next save; a seal that is unreadable,
+of another schema, or written for another store anchors nothing and is
+the TAMPERED finding with nothing to restore from. A process the provider
 leaves running after the flow returns is caught at the next load, not
-while it writes. Whether the seal should be strengthened beyond this
-boundary is a decision for a later slice, not this one.
+while it writes. The seal is written after the store's commit, so a process
+that dies between the two leaves Forge's own newest commit reading as a
+breach at the next load; that fails closed, and a restoration then returns
+the store to the previous sealed revision, losing that one transition
+rather than trusting anything unsealed. A breach found when the sealed
+lifecycle is already failed is restored and reported for the session but
+cannot be recorded on the lifecycle, which admits one failure per stage.
+The developer CLI's `build --project-dir` reads the capsule under the same
+seal. The domain modules' own docstrings still say a full-chain rebuild is
+"git history's to catch"; that sentence is true of the chain and was never
+enough for a repository the provider can write, which is what the seal is
+for. Whether the seal should be strengthened beyond this boundary is a
+decision for a later slice, not this one.
 
 The capsule and the lifecycle are two files in one git repository, and
 every save stages the whole tree. Measured under review with the two

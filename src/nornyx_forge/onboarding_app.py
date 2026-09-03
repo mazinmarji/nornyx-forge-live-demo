@@ -862,7 +862,6 @@ const BUTTONS = {b_start: "start_tracking", b_confirm: "confirm_scope", b_build:
 function renderJourney(s){
   const j = s.journey;
   if(s.finding){ text("stage", s.finding); text("status", ""); text("next", s.refused); }
-  document.getElementById("b_restore").disabled = !(s.finding && s.restorable);
   else if(!s.initialized){ text("stage", "no project"); text("status", ""); text("next", "Create a project to begin."); }
   else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
   else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
@@ -884,6 +883,7 @@ function renderJourney(s){
   const actions = new Set((j && j.actions) || []);
   for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
   document.getElementById("b_brd").disabled = !s.initialized;
+  document.getElementById("b_restore").disabled = !(s.finding && s.restorable);
 }
 async function refreshBuild(){
   const b = await fetch("/api/build").then(json);

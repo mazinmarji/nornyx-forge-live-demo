@@ -1106,6 +1106,24 @@ def test_the_view_offers_only_what_the_contract_allows_from_each_stage():
     assert journey.journey_view(reached["BUILD"], document, True, build_running=True)["actions"] == []
 
 
+def test_the_page_script_keeps_its_if_else_chains_intact():
+    """A review found the served page dead: a statement had been inserted
+    between an `if` block and its `else if`, which is a syntax error, and no
+    API test could see it. No JavaScript engine is a dependency here, so the
+    pin is structural: every line that begins with `else` follows a line
+    that closes a block."""
+    from nornyx_forge.onboarding_app import _PAGE
+
+    script = _PAGE[_PAGE.index("<script>"):_PAGE.index("</script>")].splitlines()
+    for index, line in enumerate(script):
+        if line.strip().startswith("else"):
+            previous = script[index - 1].rstrip()
+            assert previous.endswith("}"), (
+                f"line {index + 1} begins with `else` after a line that does not "
+                f"close a block: {previous!r}"
+            )
+
+
 def test_the_page_decides_nothing_by_stage_name():
     """JavaScript is not the governance boundary: the page enables buttons
     from the server's `actions` list and names no stage in its logic."""

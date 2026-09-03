@@ -24,8 +24,18 @@
   restores the sealed authority explicitly. The seal is out of a
   workspace-write sandbox's reach and within the same operating-system
   user's reach; A-022 states that bound and withdraws the earlier claim
-  that detection "belongs to git history". Also: a build thread that fails
-  to start releases the build lock and the seal, so the next build is not
+  that detection "belongs to git history". Three in-session reviews of the
+  repair were applied before this entry was final: the served page's script
+  had stopped parsing (a statement inserted between an `if` and its `else`),
+  which no API test could see and a structural pin now holds; the developer
+  CLI's `build --project-dir` read the capsule unsealed and now reads it
+  under the same seal; a worker that replaced the store's `.git` with a
+  plain file crashed the restoration and left the store stuck, and the
+  rebuild now removes what it finds by shape; a damaged or foreign seal
+  file was reported as an absent project and is now the TAMPERED finding
+  with nothing to restore from; a seal that cannot be written is the
+  store's refusal, not a traceback. Also: a build thread that fails to
+  start releases the build lock and the seal, so the next build is not
   refused as already running.
 - The basic-user journey is orchestrated through the Experience Contract
   (PR-17). Measured at 9a16851 through the real onboarding app: creating a
