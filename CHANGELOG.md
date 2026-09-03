@@ -18,8 +18,9 @@
   named prerequisites (confirmed intent, confirmed provider, derived BRD),
   refused by the contract for any other actor kind. The build enters BUILD
   through `advance` under the person who started it and requires a
-  recorded lifecycle at a pre-build stage; on completion the surface, as a
-  system actor, records TEST from the translated `flow_run` evidence and
+  recorded lifecycle at a pre-build stage, or one already at BUILD with no
+  run in progress, which is re-run without a second transition; on
+  completion the surface, as a system actor, records TEST from the translated `flow_run` evidence and
   GOVERN from the translated `gate_results`, both through
   `experience_build.flow_evidence` and nothing a worker wrote, and stops
   there. A flow that raised, returned nothing usable, or was not accepted
@@ -33,10 +34,16 @@
   validation for it and nothing here supplies one. A capsule from before
   this change stays `absent` until a human starts tracking it at DISCOVER;
   no stage is inferred from its files. One in-process lock serialises every
-  lifecycle read-decide-save, the build thread included, so a repeated or
-  stale request is judged against the current persisted state, and the
-  build status is published only after the lifecycle it produced is
-  persisted. The page shows the persisted stage, its status, the actions
+  read and write of the store -- capsule and lifecycle alike, the build
+  thread included, because both files share one git repository and every
+  save stages the whole tree (a review measured a concurrent proposal
+  committing a half-saved lifecycle as its own) -- so a repeated or stale
+  request is judged against the current persisted state, and the build
+  status is published only after the lifecycle it produced is persisted. A
+  completed run is persisted whole or recorded as one failure at BUILD,
+  never left at TEST, from which the contract declares no way back. A
+  store refusal reaches the browser in the store's own words; only a
+  missing store is reported as "no project". The page shows the persisted stage, its status, the actions
   the contract allows, what still blocks the others, the build status for
   this server session, and each refusal verbatim; its script names no
   stage and decides nothing. The trust boundary is unchanged: loopback

@@ -98,6 +98,18 @@ def scope_blockers(document: Mapping[str, Any], brd_present: bool) -> tuple[str,
     return tuple(missing)
 
 
+def build_blockers(document: Mapping[str, Any], brd_present: bool) -> tuple[str, ...]:
+    """What the build route refuses by name: a confirmed provider and a
+    derived BRD. The route enforces these itself; the projection reads them
+    so the page offers only what the route would accept."""
+    authoritative = document.get("authoritative", {})
+    missing = [why for field, why in _SCOPE_PREREQUISITES if field == "provider"
+               and field not in authoritative]
+    if not brd_present:
+        missing.append(_BRD_MISSING)
+    return tuple(missing)
+
+
 def start_tracking(actor: Actor, at: str) -> dict[str, Any]:
     """Begin a lifecycle at DISCOVER for a project that has none.
 
@@ -162,9 +174,12 @@ def build_outcome(
     `gate_results` licenses GOVERN, and the governance-validation reference
     -- when the translator produced one -- is recorded alongside GOVERN so a
     later human READY can consume it after a restart. Each step is the
-    contract's decision; the first refusal is recorded with `fail`, in the
-    contract's own words, at the stage the workflow is actually at. GOVERN
-    is where this stops. READY is not a system act.
+    contract's decision, asked in memory first: only a run every step of
+    which the contract licenses is persisted, stage by stage, and a run the
+    contract refuses anywhere is recorded as ONE failure of the stage the
+    run started from, in the contract's own words -- because the contract
+    declares no edge back from TEST, so a failure persisted there could
+    never be re-run. GOVERN is where this stops. READY is not a system act.
     """
     try:
         refs = flow_evidence(result)
@@ -179,16 +194,18 @@ def build_outcome(
         ("TEST", (by_kind["flow_run"],)),
         ("GOVERN", tuple(by_kind[kind] for kind in READY_EVIDENCE_KINDS if kind in by_kind)),
     )
+    licensed: list[tuple[dict[str, Any], str]] = []
     current: Mapping[str, Any] = state
     for stage, evidence in steps:
         try:
             current = advance(current, stage, SYSTEM_ACTOR, clock(), evidence)
         except ExperienceError as error:
-            yield fail(current, SYSTEM_ACTOR, _reason("refused", error), clock()), (
-                f"failed at {current['stage']}"
+            yield fail(state, SYSTEM_ACTOR, _reason("refused", error), clock()), (
+                f"failed at {state['stage']}"
             )
             return
-        yield current, f"reached {stage}"
+        licensed.append((current, f"reached {stage}"))
+    yield from licensed
 
 
 def build_error(state: Mapping[str, Any], error: str, at: str) -> dict[str, Any]:
@@ -311,7 +328,10 @@ def journey_view(
         if not missing:
             actions.append("confirm_scope")
     if "BUILD" in allowed or (stage == "BUILD" and not build_running):
-        actions.append("start_build")
+        missing = build_blockers(document, brd_present)
+        blockers.extend(why for why in missing if why not in blockers)
+        if not missing:
+            actions.append("start_build")
     if "READY" in allowed:
         if any(ref.kind == "governance_validation" for ref in ready_evidence(experience)):
             actions.append("mark_ready")

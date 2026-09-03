@@ -30,6 +30,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from nornyx_forge import experience_journey as journey
+from nornyx_forge import onboarding_app as onboarding
 from nornyx_forge.capsule import (
     Actor,
     CapsuleTamperError,
@@ -38,7 +39,7 @@ from nornyx_forge.capsule import (
     create_document,
     propose,
 )
-from nornyx_forge.capsule_store import CapsuleStore
+from nornyx_forge.capsule_store import CapsuleStore, CapsuleStoreError
 from nornyx_forge.experience import (
     MANDATORY_STAGES,
     STAGES,
@@ -298,12 +299,11 @@ def test_j1_a_restart_still_reports_discover(tmp_path: Path):
     again = _client(tmp_path)
     state = _ok(again.get("/api/state"))
     assert state["experience"]["stage"] == "DISCOVER"
-    assert state["journey"] == {
-        "tracking": "recorded", "stage": "DISCOVER", "status": "active",
-        "actions": [], "blockers": state["journey"]["blockers"], "failure": None,
-        "next": state["journey"]["next"],
-    }
-    assert len(state["journey"]["blockers"]) == 3, "a fresh project lacks all three prerequisites"
+    view = state["journey"]
+    assert (view["tracking"], view["stage"], view["status"]) == ("recorded", "DISCOVER", "active")
+    assert view["actions"] == [] and view["failure"] is None
+    assert view["blockers"] == list(journey.scope_blockers({"authoritative": {}}, False))
+    assert view["next"] == journey._NEXT["DISCOVER"]
 
 
 def test_the_store_refuses_a_bad_lifecycle_before_creating_anything(tmp_path: Path):
@@ -500,6 +500,35 @@ def test_j6_the_build_enters_build_through_advance_under_the_person_who_started_
     assert _persisted(tmp_path)["stage"] == "GOVERN"
 
 
+def test_j6_the_existing_build_route_alone_carries_a_confirmed_lifecycle_to_govern(
+        tmp_path: Path):
+    """The discriminator that needs no new route. A lifecycle placed at
+    CONFIRM through the contract (fixture only, as test_build_trigger does)
+    and a POST to the build route that existed before this slice: the
+    persisted lifecycle must end at GOVERN, moved by the surface's system
+    actor. At 9a16851 the same request ran the flow and left the lifecycle
+    at CONFIRM -- measured, which is why this test exists beside J6."""
+    _legacy_project(tmp_path)
+    state = start_experience(Actor("human", "casey"), AT)
+    state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z")
+    CapsuleStore(tmp_path / "capsule").save_experience(state, "reached CONFIRM")
+
+    client = _client(tmp_path)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    status = _wait_finished(client)
+    assert status["status"] == "finished" and status["accepted"] is True
+    persisted = _persisted(tmp_path)
+    assert persisted["stage"] == "GOVERN", (
+        "the build ran and the lifecycle did not move: the surface is not "
+        "orchestrating the contract"
+    )
+    assert _events(persisted)[2:] == [
+        ("advanced", "BUILD", "casey", "human"),
+        ("advanced", "TEST", "forge-onboarding", "system"),
+        ("advanced", "GOVERN", "forge-onboarding", "system"),
+    ]
+
+
 def test_j6_a_build_before_the_scope_is_confirmed_is_refused_by_the_contract(tmp_path: Path):
     client = _client(tmp_path)
     _prerequisites(client)
@@ -580,15 +609,23 @@ def test_j9_govern_needs_every_gate_and_records_what_ready_will_need(tmp_path: P
 
 
 def test_j9_one_failing_gate_keeps_govern_unreachable(tmp_path: Path):
+    """A flow that says accepted while a gate failed: TEST would be
+    licensed by `flow_run` and GOVERN refused by `gate_results`. The run is
+    recorded as ONE failure at BUILD, in the contract's words for the
+    refused step, and nothing of it is persisted at TEST -- a failure
+    persisted there could never be re-run, because the contract declares
+    no edge back from TEST (measured under review as a dead end)."""
     client = _client(tmp_path, factory=GateFailingFlow)
     _built(client)
     persisted = _persisted(tmp_path)
-    assert persisted["stage"] == "TEST" and persisted["status"] == "failed", (
-        "a flow that said accepted with a failing gate reached GOVERN"
+    assert persisted["stage"] == "BUILD" and persisted["status"] == "failed", (
+        "a flow that said accepted with a failing gate moved the lifecycle"
     )
-    assert "GOVERN" not in persisted["evidence"]
+    assert persisted["evidence"] == {}
     assert "gate_results" in persisted["history"][-1]["detail"]
     assert "reports failure" in persisted["history"][-1]["detail"]
+    _ok(client.post("/api/journey/retry", json={"actor": HUMAN}))
+    assert _journey(client)["actions"] == ["start_build"], "the failure must be re-runnable"
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +713,11 @@ def test_govern_survives_a_restart_with_the_evidence_ready_needs(tmp_path: Path)
 # J13  tamper stays fail-closed
 # ---------------------------------------------------------------------------
 
-def test_j13_a_hand_edited_stage_is_named_tampered_and_never_rendered(tmp_path: Path):
+def test_j13_an_edit_the_chain_no_longer_verifies_is_named_tampered_never_rendered(
+        tmp_path: Path):
+    """J13 as measured: an edit that leaves the final chain link stale is
+    TAMPERED on every route and no stage is rendered. The edit that also
+    rebuilds the final link is the disclosed bound, pinned separately."""
     client = _client(tmp_path)
     _confirmed(client)
     path = tmp_path / "capsule" / "experience.json"
@@ -687,8 +728,7 @@ def test_j13_a_hand_edited_stage_is_named_tampered_and_never_rendered(tmp_path: 
     state = client.get("/api/state")
     assert state.status_code == 409
     assert state.json()["finding"] == "TAMPERED"
-    assert "journey" not in state.json() and "READY" not in state.text.replace(
-        "READY", "", 0)
+    assert "journey" not in state.json() and "READY" not in state.text
 
     for route in ("/api/journey/confirm-scope", "/api/journey/ready", "/api/build",
                   "/api/journey/retry", "/api/journey/start"):
@@ -696,6 +736,195 @@ def test_j13_a_hand_edited_stage_is_named_tampered_and_never_rendered(tmp_path: 
         assert response.status_code == 409, route
         assert response.json().get("finding") == "TAMPERED", route
     assert GovernedFlow.instances == []
+
+
+def test_the_disclosed_bound_a_rebuilt_final_link_passes_in_document_verification(
+        tmp_path: Path):
+    """The boundary of J13, stated rather than discovered -- the same bound
+    `test_rebuilding_the_final_digest_alone_is_still_tampered` pins for the
+    capsule. An edit that also recomputes the LAST chain link is
+    self-consistent to `verify_experience`, and this surface renders it:
+    in-document integrity is tamper EVIDENCE against out-of-band edits, not
+    a signature. What the store still holds against such an edit is its git
+    history: every legitimate write is a commit, so the forgery leaves the
+    capsule repository with an uncommitted change to `experience.json`. No
+    route consults that history at this baseline; A-022 discloses it."""
+    from nornyx_forge.experience import _link  # the real link function
+
+    client = _client(tmp_path)
+    _confirmed(client)
+    path = tmp_path / "capsule" / "experience.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["stage"] = "READY"
+    raw["chain"][-1] = _link(raw["chain"][-2], raw)
+    path.write_text(json.dumps(raw), encoding="utf-8", newline="")
+
+    state = client.get("/api/state")
+    assert state.status_code == 200 and state.json()["journey"]["stage"] == "READY", (
+        "the bound moved: a rebuilt final link no longer verifies, so the "
+        "contract or the store changed and this disclosure must be re-measured"
+    )
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", "experience.json"],
+        cwd=tmp_path / "capsule", capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert dirty.startswith("M "), (
+        "the out-of-band edit left no trace in the store's git history, which "
+        "is the one detector the contract's docstring names"
+    )
+
+
+class _PausingStore(CapsuleStore):
+    """A store whose lifecycle write can be held between the file landing
+    and the commit -- the window a review used to interleave a capsule save."""
+
+    armed = threading.Event()
+    landed = threading.Event()
+    release = threading.Event()
+
+    def _write_experience(self, state):
+        super()._write_experience(state)
+        if _PausingStore.armed.is_set():
+            _PausingStore.armed.clear()
+            _PausingStore.landed.set()
+            assert _PausingStore.release.wait(timeout=15), "the test never released the save"
+
+
+def test_j14_a_capsule_write_cannot_interleave_with_a_lifecycle_write(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Both files live in one git repository and every save stages the
+    whole tree. Measured under review without one lock over both: with the
+    lifecycle save paused after its file landed, a concurrent proposal's
+    `git add -A` swept experience.json into "capsule: capsule: propose P-3", and the
+    scope confirmation then reported a refusal for a lifecycle that was in
+    fact persisted. One store lock serialises them; this test holds the
+    save open at exactly that point and proves the proposal waits."""
+    monkeypatch.setattr(onboarding, "CapsuleStore", _PausingStore)
+    for event in (_PausingStore.armed, _PausingStore.landed, _PausingStore.release):
+        event.clear()
+    client = _client(tmp_path)
+    _prerequisites(client)
+
+    outcome: dict = {}
+    _PausingStore.armed.set()
+    confirming = threading.Thread(target=lambda: outcome.update(
+        confirm=client.post("/api/journey/confirm-scope", json={"actor": HUMAN})))
+    confirming.start()
+    assert _PausingStore.landed.wait(timeout=15), "the lifecycle save never reached its file"
+    proposing = threading.Thread(target=lambda: outcome.update(
+        propose=client.post("/api/proposals", json={
+            "field": "intent", "value": "A second idea.", "actor": MODEL})))
+    proposing.start()
+    proposing.join(timeout=1.0)
+    assert proposing.is_alive(), "the proposal did not wait for the lifecycle save"
+    _PausingStore.release.set()
+    confirming.join(timeout=30)
+    proposing.join(timeout=30)
+
+    assert outcome["confirm"].status_code == 200, outcome["confirm"].text
+    assert outcome["propose"].status_code == 200, outcome["propose"].text
+    log = subprocess.run(
+        ["git", "log", "--reverse", "--format=%s"], cwd=tmp_path / "capsule",
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    assert log[-2:] == ["experience: reached CONFIRM", "capsule: capsule: propose P-3"]
+    assert _persisted(tmp_path)["stage"] == "CONFIRM"
+
+
+def test_j14_the_build_threads_lifecycle_write_holds_the_same_lock(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The other writer: the build thread. Its TEST save is held open at
+    the same point and a concurrent proposal must wait for it, or the
+    proposal's `git add -A` would commit the thread's half-saved file."""
+    monkeypatch.setattr(onboarding, "CapsuleStore", _PausingStore)
+    for event in (_PausingStore.armed, _PausingStore.landed, _PausingStore.release):
+        event.clear()
+    client = _client(tmp_path, factory=BlockingFlow)
+    _confirmed(client)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _PausingStore.armed.set()          # the next lifecycle write is the thread's TEST
+    BlockingFlow.hold.set()
+    assert _PausingStore.landed.wait(timeout=15), "the thread's TEST save never landed"
+
+    outcome: dict = {}
+    proposing = threading.Thread(target=lambda: outcome.update(
+        propose=client.post("/api/proposals", json={
+            "field": "intent", "value": "A second idea.", "actor": MODEL})))
+    proposing.start()
+    proposing.join(timeout=1.0)
+    assert proposing.is_alive(), "the proposal did not wait for the build thread's save"
+    _PausingStore.release.set()
+    proposing.join(timeout=30)
+    _wait_finished(client)
+
+    assert outcome["propose"].status_code == 200, outcome["propose"].text
+    log = subprocess.run(
+        ["git", "log", "--reverse", "--format=%s"], cwd=tmp_path / "capsule",
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    assert log.index("experience: reached TEST") < log.index("capsule: capsule: propose P-3")
+    assert "experience: reached GOVERN" in log
+    assert _persisted(tmp_path)["stage"] == "GOVERN"
+
+
+def test_a_store_refusal_is_returned_in_its_own_words_not_as_a_missing_project(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A review measured the journey routes reporting "no project exists"
+    for a save the store had declined. Only a MISSING store maps to that
+    sentence; every other refusal is the store's own."""
+    client = _client(tmp_path)
+    _prerequisites(client)
+
+    def declined(self, state, message):
+        raise CapsuleStoreError("git commit failed: simulated disk full")
+
+    monkeypatch.setattr(onboarding.CapsuleStore, "save_experience", declined)
+    response = client.post("/api/journey/confirm-scope", json={"actor": HUMAN})
+    assert response.status_code == 409
+    assert response.json()["refused"] == "git commit failed: simulated disk full"
+    monkeypatch.undo()
+    assert _persisted(tmp_path)["stage"] == "DISCOVER"
+
+    absent = _client(tmp_path / "elsewhere")
+    for path in ("/api/journey/confirm-scope", "/api/journey/ready", "/api/journey/retry",
+                 "/api/journey/start", "/api/build"):
+        response = absent.post(path, json={"actor": HUMAN})
+        assert response.status_code == 409 and "no project exists" in response.json()["refused"], path
+
+
+def test_the_page_offers_no_build_the_route_would_refuse(tmp_path: Path):
+    """A review deleted BRD.md after CONFIRM and measured the build button
+    enabled while the route refused. The projection now reads the build's
+    own prerequisites; the route still enforces them independently."""
+    client = _client(tmp_path)
+    _confirmed(client)
+    assert _journey(client)["actions"] == ["start_build"]
+    (tmp_path / "BRD.md").unlink()
+    view = _journey(client)
+    assert view["actions"] == [] and view["blockers"] == [journey._BRD_MISSING]
+    response = client.post("/api/build", json={"actor": HUMAN})
+    assert response.status_code == 409 and "derive it first" in response.json()["refused"]
+    assert _persisted(tmp_path)["stage"] == "CONFIRM"
+
+
+def test_a_crash_before_the_build_starts_does_not_hold_the_build_lock(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A non-capsule exception inside the acquired window (an absent git,
+    an interrupted request) used to leave the build lock held, so every
+    later build was refused as "already running" for the session."""
+    monkeypatch.setattr(onboarding, "begin_build",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git vanished")))
+    client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
+                                   flow_factory=GovernedFlow), raise_server_exceptions=False)
+    GovernedFlow.instances = []
+    _confirmed(client)
+    crashed = client.post("/api/build", json={"actor": HUMAN})
+    assert crashed.status_code == 500
+    monkeypatch.undo()
+    again = client.post("/api/build", json={"actor": HUMAN})
+    assert again.status_code == 200, again.text
+    _wait_finished(client)
+    assert _persisted(tmp_path)["stage"] == "GOVERN"
 
 
 # ---------------------------------------------------------------------------
@@ -758,17 +987,17 @@ def test_j14_a_stale_request_is_judged_against_the_current_state(tmp_path: Path)
     assert _persisted(tmp_path) == before, "a stale request rewrote a newer lifecycle"
 
 
-def test_j14_a_retried_build_re_runs_without_a_second_build_transition(tmp_path: Path):
+def test_j14_a_retried_build_re_runs_without_a_second_build_transition(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     client = _client(tmp_path, factory=RejectedFlow)
     _built(client)
     _ok(client.post("/api/journey/retry", json={"actor": HUMAN}))
-    # The next run succeeds: swap the seam's answer, not the app.
-    RejectedFlow.result = GovernedFlow.result  # type: ignore[method-assign]
-    try:
-        _ok(client.post("/api/build", json={"actor": HUMAN}))
-        _wait_finished(client)
-    finally:
-        del RejectedFlow.result
+    # The next run succeeds: swap the seam's answer, not the app -- and
+    # only for this test (a `del` here once deleted the class's own method
+    # and left RejectedFlow inheriting the accepted answer for the session).
+    monkeypatch.setattr(RejectedFlow, "result", GovernedFlow.result)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(client)
     assert _stages(_persisted(tmp_path)) == [
         ("started", "DISCOVER"), ("advanced", "CONFIRM"), ("advanced", "BUILD"),
         ("failed", "BUILD"), ("retried", "BUILD"), ("advanced", "TEST"),
@@ -782,8 +1011,6 @@ def test_an_interrupted_build_is_re_run_from_build_without_inventing_a_failure(
     next session says no build is running, offers to start it, and the
     re-run neither duplicates the BUILD transition nor fabricates a failure
     nothing observed."""
-    _built(_client(tmp_path, factory=BlockingFlow.__mro__[1]))  # GovernedFlow, to GOVERN
-    # Rewind honestly: a fresh store at BUILD/active through the contract.
     _legacy_project(tmp_path / "second")
     state = start_experience(Actor("human", "casey"), AT)
     state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z")
@@ -805,6 +1032,24 @@ def test_an_interrupted_build_is_re_run_from_build_without_inventing_a_failure(
 # ---------------------------------------------------------------------------
 # J15  provider claims are not evidence
 # ---------------------------------------------------------------------------
+
+def test_a_flow_that_returns_nothing_usable_is_reported_as_such(tmp_path: Path):
+    """A completed call whose value is not a mapping: the build status says
+    finished and not accepted with the value verbatim, the lifecycle says
+    no usable evidence -- neither dresses it as a crash in the reader."""
+
+    class NothingFlow(GovernedFlow):
+        def run(self):
+            return None
+
+    client = _client(tmp_path, factory=NothingFlow)
+    status = _built(client)
+    assert status["status"] == "finished" and status["accepted"] is False
+    assert status["result"] is None
+    persisted = _persisted(tmp_path)
+    assert persisted["stage"] == "BUILD" and persisted["status"] == "failed"
+    assert "no usable evidence" in persisted["history"][-1]["detail"]
+
 
 def test_j15_a_workers_own_success_words_move_nothing(tmp_path: Path):
     client = _client(tmp_path, factory=BoastfulFlow)

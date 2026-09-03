@@ -541,13 +541,46 @@ That is the honest outcome of a profile that never asks the governance
 question, and it is left as it is rather than improved. A capsule with no
 recorded lifecycle is reported absent, offers only a human "start
 tracking" that begins at DISCOVER, and has no stage inferred from its
-files. Two limits are disclosed: the contract does not freeze capsule
+files. Four limits are disclosed. The contract does not freeze capsule
 content after CONFIRM, so a proposal confirmed and a BRD re-derived after
 the scope confirmation are built without the lifecycle re-confirming them
-(every such input is still human-confirmed capsule content); and a server
-that dies mid-build leaves the lifecycle at BUILD/active, where the next
-session reports that no build is running and re-runs it from BUILD without
-a second transition and without recording a failure nothing observed.
+(every such input is still human-confirmed capsule content); the contract
+declares a `brd_requirements` evidence kind that no stage requires, and
+whether CONFIRM should consume one -- and what its reference would denote
+-- is a domain decision this slice does not take. A server that dies
+mid-build leaves the lifecycle at BUILD/active, where the next session
+reports that no build is running and re-runs it from BUILD without a
+second transition and without recording a failure nothing observed; the
+person who starts that re-run is therefore not recorded, because the
+contract records transitions, not runs, and BUILD's `entered` stays the
+first presser. A completed run is recorded whole or not at all: the
+surface asks the contract for every evidence step in memory first and
+persists TEST then GOVERN only when both are licensed, and otherwise
+records one failure at BUILD in the contract's words for the refused step
+-- because the contract declares no edge back from TEST, so a failure
+persisted there could never be re-run (measured under review with a flow
+that reported itself accepted while a gate failed, a shape the real
+`DevelopmentFlow` cannot produce because its `accepted` is the conjunction
+of its gates). And one bound
+is inherited rather than introduced: the lifecycle's digest chain, like
+the capsule's, is in-document tamper evidence and not a signature, so a
+hand edit that also recomputes the final chain link verifies and is
+rendered as the stage it names. Every legitimate lifecycle write is a
+commit in the capsule's own git repository, so such an edit leaves that
+repository with an uncommitted change; no route consults that history at
+this baseline, and whether the store should refuse an uncommitted
+lifecycle is a persistence decision this slice does not take. The bound
+is pinned beside the capsule's equivalent by
+`test_the_disclosed_bound_a_rebuilt_final_link_passes_in_document_verification`.
+
+The capsule and the lifecycle are two files in one git repository, and
+every save stages the whole tree. Measured under review with the two
+written under separate serialisation: a lifecycle save paused after its
+file landed, a concurrent proposal's `git add -A` swept `experience.json`
+into the proposal's own commit, and the lifecycle save then found nothing
+left to commit. One in-process store lock now serialises every read and
+write of the store, the build thread's included; it is held around store
+access only, never around the build.
 
 **Scope.** This wires the existing contract; it changes no stage, edge,
 actor or evidence rule. READY means what the contract establishes and

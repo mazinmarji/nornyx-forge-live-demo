@@ -198,19 +198,42 @@ def create_app(
     app = FastAPI(title="Nornyx Forge — Onboarding", version="0.1.0")
     app.state.build = {"status": "never_run"}
     build_lock = threading.Lock()
-    # One writer at a time for the lifecycle. Every route that reads the
-    # persisted experience, asks the contract, and saves the answer does so
-    # under this lock, and so does the build thread -- so a stale request
-    # is judged against the CURRENT persisted state rather than the one its
-    # sender last saw, and two requests cannot each load the same state and
-    # both persist a successor. A local single-user surface needs no more.
-    experience_lock = threading.Lock()
+    # ONE STORE, ONE WRITER AT A TIME. The capsule and the lifecycle are two
+    # files in one git repository, and every save stages the whole tree, so
+    # a capsule save that interleaved with a lifecycle save would sweep the
+    # other's half-written file into its own commit (measured under review:
+    # a concurrent proposal committed experience.json as "capsule: propose
+    # P-3", and the lifecycle save then found nothing left to commit). Every
+    # route that reads or writes the store does so under this lock, and so
+    # does the build thread -- so a stale request is judged against the
+    # CURRENT persisted state rather than the one its sender last saw, two
+    # requests cannot each load the same state and both persist a
+    # successor, and a reader never sees a file mid-write. The lock is held
+    # around store access only, never around the build itself. A local
+    # single-user surface needs no more.
+    store_lock = threading.Lock()
 
     def store() -> CapsuleStore:
         return CapsuleStore(root)
 
     def brd_present() -> bool:
         return (root.parent / "BRD.md").exists()
+
+    def project(current: CapsuleStore) -> dict[str, Any]:
+        """The capsule, or the journey's refusal when no store exists at all.
+
+        Only a MISSING store is translated; every other refusal the store
+        raises -- unreadable, invalid, tampered, or a save it declined --
+        passes through in the store's own words. A review measured the
+        broader mapping reporting "no project exists" for a lifecycle that
+        had in fact just been persisted.
+        """
+        try:
+            return current.load()
+        except CapsuleStoreError:
+            if not root.exists():
+                raise JourneyRefusal(_NO_PROJECT) from None
+            raise
 
     def recorded(current: CapsuleStore) -> dict[str, Any]:
         """The persisted lifecycle, or the journey's refusal when there is
@@ -227,19 +250,24 @@ def create_app(
     @app.get("/api/state")
     def state():
         current = store()
-        try:
-            document = current.load()
-        except CapsuleStoreError:
-            return {"initialized": False, "providers": list(PROVIDERS)}
-        except CapsuleError as error:
-            return _refusal(error)
-        lifecycle: dict[str, Any] | None
-        try:
-            lifecycle = current.load_experience()
-        except CapsuleStoreError:
-            lifecycle = None
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = current.load()
+            except CapsuleStoreError:
+                return {"initialized": False, "providers": list(PROVIDERS)}
+            except CapsuleError as error:
+                return _refusal(error)
+            lifecycle: dict[str, Any] | None
+            try:
+                lifecycle = current.load_experience()
+                revision = current.revision()
+            except CapsuleStoreError as error:
+                if "experience state" not in str(error):
+                    return _refusal(error)  # a store with no commit: reported, not a 500
+                lifecycle = None
+                revision = current.revision()
+            except CapsuleError as error:
+                return _refusal(error)
         return {
             "initialized": True,
             "project_id": document["project_id"],
@@ -250,7 +278,7 @@ def create_app(
             "journey": journey_view(lifecycle, document, brd_present(), build_lock.locked()),
             "brd_present": brd_present(),
             "providers": list(PROVIDERS),
-            "revision": current.revision(),
+            "revision": revision,
         }
 
     @app.post("/api/project")
@@ -269,7 +297,8 @@ def create_app(
                 payload.project_id, payload.project_name, actor, at(),
             )
             lifecycle = start_tracking(actor, at())
-            revision = store().initialize(document, experience=lifecycle)
+            with store_lock:
+                revision = store().initialize(document, experience=lifecycle)
         except CapsuleError as error:
             return _refusal(error)
         return {
@@ -281,15 +310,16 @@ def create_app(
     @app.post("/api/proposals")
     def create_proposal(payload: ProposalPayload):
         current = store()
-        try:
-            document = current.load()
-            updated, proposal_id = propose(
-                document, payload.field, payload.value,
-                payload.actor.to_actor(), at(),
-            )
-            current.save(updated, f"capsule: propose {proposal_id}")
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = current.load()
+                updated, proposal_id = propose(
+                    document, payload.field, payload.value,
+                    payload.actor.to_actor(), at(),
+                )
+                current.save(updated, f"capsule: propose {proposal_id}")
+            except CapsuleError as error:
+                return _refusal(error)
         return {"proposal_id": proposal_id, "status": "open"}
 
     @app.post("/api/proposals/{proposal_id}/confirm")
@@ -298,23 +328,25 @@ def create_app(
         lifecycle's CONFIRM: that is the separate scope confirmation below,
         and nothing here touches the lifecycle."""
         current = store()
-        try:
-            document = current.load()
-            updated = confirm(document, proposal_id, payload.actor.to_actor(), at())
-            current.save(updated, f"capsule: confirm {proposal_id}")
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = current.load()
+                updated = confirm(document, proposal_id, payload.actor.to_actor(), at())
+                current.save(updated, f"capsule: confirm {proposal_id}")
+            except CapsuleError as error:
+                return _refusal(error)
         return {"proposal_id": proposal_id, "status": "confirmed"}
 
     @app.post("/api/proposals/{proposal_id}/reject")
     def reject_proposal(proposal_id: str, payload: ResolvePayload):
         current = store()
-        try:
-            document = current.load()
-            updated = reject(document, proposal_id, payload.actor.to_actor(), at())
-            current.save(updated, f"capsule: reject {proposal_id}")
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = current.load()
+                updated = reject(document, proposal_id, payload.actor.to_actor(), at())
+                current.save(updated, f"capsule: reject {proposal_id}")
+            except CapsuleError as error:
+                return _refusal(error)
         return {"proposal_id": proposal_id, "status": "rejected"}
 
     # -- the journey: semantic actions, each one canonical transition ------
@@ -329,25 +361,18 @@ def create_app(
         a lifecycle is refused, because tracking begins once.
         """
         current = store()
-        with experience_lock:
+        with store_lock:
             try:
-                current.load()
-            except CapsuleStoreError:
-                return _refused(_NO_PROJECT)
-            except CapsuleError as error:
-                return _refusal(error)
-            try:
-                existing = current.load_experience()
-            except CapsuleStoreError:
-                existing = None
-            except CapsuleError as error:
-                return _refusal(error)
-            if existing is not None:
-                return _refused(
-                    f"a lifecycle is already recorded at {existing['stage']}; "
-                    "tracking starts once"
-                )
-            try:
+                project(current)
+                try:
+                    existing = current.load_experience()
+                except CapsuleStoreError:
+                    existing = None
+                if existing is not None:
+                    return _refused(
+                        f"a lifecycle is already recorded at {existing['stage']}; "
+                        "tracking starts once"
+                    )
                 started = start_tracking(payload.actor.to_actor(), at())
                 current.save_experience(started, "started at DISCOVER")
             except CapsuleError as error:
@@ -364,16 +389,14 @@ def create_app(
         which the contract grants to a human and to nobody else.
         """
         current = store()
-        with experience_lock:
+        with store_lock:
             try:
-                document = current.load()
+                document = project(current)
                 lifecycle = recorded(current)
                 updated = confirm_scope(
                     lifecycle, document, brd_present(), payload.actor.to_actor(), at(),
                 )
                 current.save_experience(updated, "reached CONFIRM")
-            except CapsuleStoreError:
-                return _refused(_NO_PROJECT)
             except CapsuleError as error:
                 return _refusal(error)
         return {"stage": updated["stage"], "status": updated["status"]}
@@ -386,14 +409,12 @@ def create_app(
         if isinstance(actor, JSONResponse):
             return actor
         current = store()
-        with experience_lock:
+        with store_lock:
             try:
-                current.load()
+                project(current)
                 lifecycle = recorded(current)
                 updated = retry_after_failure(lifecycle, actor, at())
                 current.save_experience(updated, f"retried at {updated['stage']}")
-            except CapsuleStoreError:
-                return _refused(_NO_PROJECT)
             except CapsuleError as error:
                 return _refusal(error)
         return {"stage": updated["stage"], "status": updated["status"]}
@@ -409,14 +430,12 @@ def create_app(
         supplies what the build did not produce.
         """
         current = store()
-        with experience_lock:
+        with store_lock:
             try:
-                current.load()
+                project(current)
                 lifecycle = recorded(current)
                 updated = mark_ready(lifecycle, payload.actor.to_actor(), at())
                 current.save_experience(updated, "reached READY")
-            except CapsuleStoreError:
-                return _refused(_NO_PROJECT)
             except CapsuleError as error:
                 return _refusal(error)
         return {"stage": updated["stage"], "status": updated["status"]}
@@ -446,10 +465,11 @@ def create_app(
         if isinstance(actor, JSONResponse):
             return actor
         current = store()
-        try:
-            document = current.load()
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = project(current)
+            except CapsuleError as error:
+                return _refusal(error)
         provider = document["authoritative"].get("provider")
         if provider is None:
             return _refused("no confirmed provider; confirm one before building")
@@ -459,7 +479,7 @@ def create_app(
         if not build_lock.acquire(blocking=False):
             return _refused("a build is already running for this project")
         try:
-            with experience_lock:
+            with store_lock:
                 lifecycle = recorded(current)
                 positioned, advanced = begin_build(lifecycle, actor, at())
                 if advanced:
@@ -467,6 +487,11 @@ def create_app(
         except CapsuleError as error:
             build_lock.release()
             return _refusal(error)
+        except BaseException:
+            # Anything else -- an absent git, an interrupted request -- must
+            # not leave the build lock held for the rest of the session.
+            build_lock.release()
+            raise
         app.state.build = {"status": "running", "provider": provider["name"]}
 
         def run() -> None:
@@ -483,13 +508,13 @@ def create_app(
                 outcome = {
                     "status": "finished",
                     "provider": provider["name"],
-                    "accepted": bool(result.get("accepted")),
+                    "accepted": isinstance(result, Mapping) and bool(result.get("accepted")),
                     "result": result,
                 }
             except Exception as error:  # noqa: BLE001 - recorded, not judged
                 outcome = {"status": "failed", "error": str(error)}
             try:
-                with experience_lock:
+                with store_lock:
                     lifecycle = current.load_experience()
                     if result is _NOT_RETURNED:
                         steps = [(build_error(lifecycle, outcome["error"], at()),
@@ -556,21 +581,22 @@ def create_app(
         authorizes a receiving backend.
         """
         current = store()
-        try:
-            document = current.load()
-        except CapsuleStoreError:
-            return JSONResponse(
-                status_code=409,
-                content={"refused": "no project exists to preview sharing for"},
-            )
-        except CapsuleError as error:
-            return _refusal(error)
-        try:
-            experience: Mapping[str, Any] | None = current.load_experience()
-        except CapsuleStoreError:
-            experience = None
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = current.load()
+            except CapsuleStoreError:
+                return JSONResponse(
+                    status_code=409,
+                    content={"refused": "no project exists to preview sharing for"},
+                )
+            except CapsuleError as error:
+                return _refusal(error)
+            try:
+                experience: Mapping[str, Any] | None = current.load_experience()
+            except CapsuleStoreError:
+                experience = None
+            except CapsuleError as error:
+                return _refusal(error)
         return sharing_preview(document, experience)
 
     @app.get("/api/governance")
@@ -682,8 +708,14 @@ function renderJourney(s){
   else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
   else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
   text("failure", (j && j.failure) ? ("Failure recorded: " + j.failure) : "");
-  document.getElementById("blockers").innerHTML = (j && j.blockers && j.blockers.length)
-    ? "Still required:<ul>" + j.blockers.map(b => `<li>${b}</li>`).join("") + "</ul>" : "";
+  const blockers = document.getElementById("blockers");
+  blockers.replaceChildren();
+  if(j && j.blockers && j.blockers.length){
+    blockers.append("Still required:");
+    const list = document.createElement("ul");
+    for(const b of j.blockers){ const item = document.createElement("li"); item.textContent = b; list.append(item); }
+    blockers.append(list);
+  }
   const actions = new Set((j && j.actions) || []);
   for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
   document.getElementById("b_brd").disabled = !s.initialized;
