@@ -606,11 +606,12 @@ sandbox's reach, so a Codex worker cannot touch it, and it is within the
 same operating-system user's reach, so a Claude worker with Bash could.
 That is the local trust boundary of A-015 -- the machine's logged-in
 user -- and the seal narrows what a provider can do inside it without
-claiming to hold against that user. A store that has no seal (one from
-before sealing existed, or one whose seal was removed) is reported
-`unsealed` and is sealed by Forge's next save; a seal that is unreadable,
-of another schema, or written for another store anchors nothing and is
-the TAMPERED finding with nothing to restore from.
+claiming to hold against that user. A store with neither a seal marker nor
+a seal -- one from before sealing existed -- is reported `unsealed` and is
+sealed by Forge's next save; a store that carries the marker and has lost
+its seal is the TAMPERED finding with nothing to restore from; a seal that
+is unreadable, of another schema, or written for another store anchors
+nothing and is that finding too.
 
 Declared is not eligible (independent review of 89910b8, findings R1 to
 R3). The seal narrowed what a provider could do to the store, but the
@@ -641,7 +642,12 @@ tests install at the injectable seam carries its own eligibility because it
 executes no provider; the served surface passes nothing and uses the
 contract's decision, which is pinned. Promotion of any provider to
 `established` is future work that requires Forge to verify a confinement,
-not to be told about one.
+not to be told about one. The developer CLI's `build --project-dir` is a
+terminal path outside the governed basic-user surface: it constructs the
+flow over the same store-bearing directory and does not consult the
+eligibility decision, which is the "selectable elsewhere" the decision
+leaves open; a developer who runs it accepts R1's exposure at their own
+console, and it is named here rather than implied away.
 
 Two anchor states that were one are now kept apart. A store Forge has ever
 sealed carries a committed marker naming its seal, so a protected store
@@ -650,11 +656,14 @@ whose seal is missing is the TAMPERED finding with nothing to restore from
 surface -- while a store with neither marker nor seal is the legacy case
 from before sealing existed, reported `unsealed` and sealed by Forge's
 next save. The marker's trustworthiness depends on the eligibility gate,
-and the dependency runs one way: the marker lives in the store, inside the
-workspace any executing provider would hold write authority over, and a
-process with that authority could remove it and commit the removal so that
-a protected store reads as legacy again. It is trustworthy at this baseline
-because no provider executes on the governed path at all. A later slice
+and the dependency runs one way. Measured: removing the marker alone,
+uncommitted or committed, is still caught, because the seal outside the
+project names it; a protected store reads as legacy only when the marker
+AND the seal are both gone, and the seal is outside any workspace. So the
+precondition for that fall-open is the same-operating-system-user write the
+whole design concedes -- exactly what an unconfined provider holds -- and
+the marker is trustworthy at this baseline because no provider executes on
+the governed path at all. A later slice
 that makes any provider eligible must revisit this before it does so, or it
 silently reopens R2. Nor is the marker a freshness mechanism: a store
 restored wholesale to an earlier state carries its marker back with it. The

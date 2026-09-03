@@ -43,11 +43,13 @@ revision, working tree, and file bytes -- before trusting anything on disk.
 A store that does not match its seal is `CapsuleSealError`, a tamper finding
 that carries the sealed snapshot so the caller can restore it. The seal is
 Forge-owned persistence; it is not the provider's file and not the provider's
-repository. WHAT IT DOES NOT ESTABLISH: the Codex sandbox cannot write outside
-its workspace, so the seal is out of its reach; a Claude worker with Bash runs
-as the same operating-system user and can reach the seal directory. Within the
-current local trust boundary (A-015) that is the bound, and it is stated here
-rather than implied away. A store that was ever sealed also carries a
+repository. WHAT IT DOES NOT ESTABLISH: Codex is declared not to write outside
+its workspace (a sandbox flag its adapter passes, which Forge has not
+independently established), and a Claude worker with Bash runs as the same
+operating-system user and can reach the seal directory. Within the current
+local trust boundary (A-015) that is the bound, and it is stated here rather
+than implied away; it is why neither provider is eligible for the governed
+build (the Provider Contract's decision). A store that was ever sealed also carries a
 committed marker naming its seal, so a protected store whose seal is gone is
 refused rather than mistaken for a store from before sealing existed; only a
 store with neither marker nor seal is the legacy case, reported unsealed. The
@@ -566,7 +568,7 @@ class CapsuleStore:
         stray files -- is removed by shape, not by assumption."""
         self.root.mkdir(parents=True, exist_ok=True)
         for entry in list(self.root.iterdir()):
-            if entry.name in (_MARKER_FILE, _SEAL_MARKER_FILE, *_AUTHORITY_FILES):
+            if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
                 continue
             if entry.is_dir() and not entry.is_symlink():
                 _remove_tree(entry)

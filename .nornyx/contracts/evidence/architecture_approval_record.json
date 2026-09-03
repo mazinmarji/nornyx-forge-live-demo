@@ -1,11 +1,11 @@
 {
   "approval": "not_granted",
   "assurance_mode": "autonomous_demonstration",
-  "generated_at": "2026-09-03T17:42:14Z",
-  "governed_input_digest": "sha256:83e87613eca649e74650f8870b8c1aaeb4f03f21abf5f64385a4310461cf1127",
+  "generated_at": "2026-09-03T19:04:52Z",
+  "governed_input_digest": "sha256:7c0865ffd6603292a3c79b7556d639590fb5faa2522f7440a1f1e385a7761585",
   "human_review": "not_performed",
   "production_approval": "not_granted",
   "schema": "nornyx.forge.approval_record.v1",
   "statement": "No human architecture approval was granted. This record documents the absence of approval; it does not grant one.",
-  "subject_revision": "git:89910b843bc526a0dc2383443b867d9a148d7d48"
+  "subject_revision": "git:8f348a509bc95d994cb71e74a169bc9b7f0737eb"
 }

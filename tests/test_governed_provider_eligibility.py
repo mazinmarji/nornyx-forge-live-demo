@@ -20,7 +20,8 @@ before any flow exists, with no fallback and no change of execution mode --
 and the page says why. A store Forge ever sealed is refused when its seal is
 gone; a store never sealed stays distinguishable as legacy.
 
-E1..E12 name the required proofs. No external provider is called and no
+E1..E11 name the required proofs held here; E12 is the journey module,
+which must stay green beside them. No external provider is called and no
 bypass is demonstrated; the defect was independently established.
 """
 
@@ -223,13 +224,21 @@ def test_e5_the_served_surface_decides_by_the_contract_and_nothing_else(tmp_path
 def test_e5_the_assembled_surface_refuses_the_governed_build(tmp_path: Path, monkeypatch):
     """`assemble`, the shipped composition, over a confirmed project: the
     build is refused by the contract's own decision. The seal directory is
-    redirected so this test writes nothing under the user's home."""
+    redirected so this test writes nothing under the user's home, and the
+    default flow class is replaced by a recorder so that a REGRESSED gate
+    fails this test without ever starting a real flow or reaching a
+    provider's CLI -- a review measured that it otherwise would."""
+    from nornyx_forge import development_flow
+
+    factory = RecordingFactory()
+    monkeypatch.setattr(development_flow, "DevelopmentFlow", factory)
     monkeypatch.setattr(onboarding_serve, "SEAL_DIR", tmp_path / "seals")
     client = TestClient(onboarding_serve.assemble(tmp_path))
     _confirmed(client, "claude")
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409
     assert response.json()["eligibility"] == governed_build_eligibility("claude").as_dict()
+    assert factory.calls == [], "the shipped composition constructed a flow for an ineligible provider"
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
 
@@ -345,10 +354,15 @@ def test_restoration_recreates_the_marker_when_the_repository_is_rebuilt(tmp_pat
     store = _sealed_store(tmp_path)
     sealed = store.sealed()
     _remove_tree(tmp_path / "capsule" / ".git")
-    (tmp_path / "capsule" / ".forge-seal").unlink()
+    (tmp_path / "capsule" / ".forge-seal").write_text(
+        json.dumps({"schema": "nornyx.forge.capsule_seal_marker.v1", "seal": "0" * 24}),
+        encoding="utf-8")
     revision, notes = store.restore(sealed)
     assert notes and store.protected()
-    assert store.seal_problems(store.sealed()) == []
+    assert store.seal_problems(store.sealed()) == [], (
+        "a review measured a tampered marker surviving the rebuild, so restore never converged"
+    )
+    assert json.loads((tmp_path / "capsule" / ".forge-seal").read_text(encoding="utf-8"))["seal"]         == store.seal_ident()
 
 
 # ---------------------------------------------------------------------------

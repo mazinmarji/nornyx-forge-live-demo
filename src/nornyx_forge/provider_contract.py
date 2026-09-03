@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, is_dataclass
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol, runtime_checkable
 
 from .capsule import PROVIDERS, CapsuleValidationError
@@ -78,10 +79,10 @@ CONFINEMENT = ("none", "declared", "established")
 
 #: The table the eligibility decision reads. One row per declared provider;
 #: growing PROVIDERS without a row here is refused by the decision itself.
-PROVIDER_CONFINEMENT: Mapping[str, str] = {
+PROVIDER_CONFINEMENT: Mapping[str, str] = MappingProxyType({
     "claude": "none",
     "codex": "declared",
-}
+})
 
 _CONFINEMENT_REASON: Mapping[str, str] = {
     "none": (
@@ -89,8 +90,8 @@ _CONFINEMENT_REASON: Mapping[str, str] = {
         "same operating-system user that holds Forge's authority store and its seal"
     ),
     "declared": (
-        "passes a workspace-write sandbox flag to its CLI, which is declared by the "
-        "provider and not independently established by Forge"
+        "is run under a workspace-write sandbox flag that Forge's adapter passes to the "
+        "provider's CLI, whose enforcement Forge has not independently established"
     ),
     "established": "Forge has established that it is confined to the project subject",
 }
