@@ -614,6 +614,25 @@ def test_the_seal_reads_the_bytes_not_only_what_git_reports(tmp_path: Path):
         store.load_experience()
 
 
+def test_restoration_keeps_history_when_the_worker_left_an_extra_file(tmp_path: Path):
+    """A review measured that skipping `git clean` in the restoration left
+    the suite green: the rebuild fallback still restored the sealed bytes,
+    at the price of the store's whole history. The honest route -- reset to
+    the sealed revision, clean what the seal does not know -- must be the
+    one taken when the worker left an untracked file beside its forgery."""
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    (capsule / "notes.txt").write_text("left by the worker", encoding="utf-8")
+    revision, notes = store.restore(sealed)
+    assert notes == [], "the honest route was not taken; the repository was rebuilt"
+    assert revision == sealed.revision, "the store's history was not preserved"
+    assert not (capsule / "notes.txt").exists()
+    assert _git_log(capsule) == ["capsule: initialize"]
+    assert store.load_experience()["stage"] == "DISCOVER"
+
+
 def test_restoration_rebuilds_the_repository_when_the_worker_destroyed_it(tmp_path: Path):
     store = _sealed_store(tmp_path)
     sealed = store.sealed()

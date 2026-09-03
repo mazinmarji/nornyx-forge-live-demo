@@ -242,13 +242,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # no-terminal journey through the routes alone, and the pre-PR-17 gap
     # (lifecycle absent at every step) pinned closed.
     "tests/test_basic_user_journey.py": 45,
-    # P17-B1's authority boundary: 34 collected at introduction, floor at
-    # band(34) = 31. The provider's writable path into the store -- forged
+    # P17-B1's authority boundary: 35 collected at introduction, floor at
+    # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
     # poll and actions, the restart with and without a detected breach,
     # the real DevelopmentFlow worker seam, the seal's own detections and
     # rebuild, and the thread-start lock release.
-    "tests/test_provider_authority_boundary.py": 31,
+    "tests/test_provider_authority_boundary.py": 32,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -519,18 +519,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_basic_user_journey.py and 1 in tests/test_build_trigger.py
 # (105 -> 106 modules); the new module's floor is its band, 45, so the
 # module-floor sum rises by 45 and the aggregate follows it. Re-measured
-# for the P17-B1 repair: 34 new collected in
+# for the P17-B1 repair: 35 new collected in
 # tests/test_provider_authority_boundary.py (106 -> 107 modules), floor at
-# its band, 31, and one more in tests/test_basic_user_journey.py (50, floor
-# unchanged at its band); the module-floor sum rises by 31 and the aggregate
+# its band, 32, and one more in tests/test_basic_user_journey.py (50, floor
+# unchanged at its band); the module-floor sum rises by 32 and the aggregate
 # follows:
 #
 # (rows below):
 #
-#     collected across tests/     2691   (107 modules)
-#     sum of the module floors    2475
-#     band(2691) = ceil(0.9*n)    2422
-#     MINIMUM_COLLECTED           2482
+#     collected across tests/     2692   (107 modules)
+#     sum of the module floors    2476
+#     band(2692) = ceil(0.9*n)    2423
+#     MINIMUM_COLLECTED           2483
 #     above the module sum         7
 #     below what collects         209
 #
@@ -574,7 +574,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2482
+MINIMUM_COLLECTED = 2483
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
