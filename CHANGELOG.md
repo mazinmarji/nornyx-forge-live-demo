@@ -2,18 +2,59 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The governance evidence tool asks git under policy-neutral configuration,
+  not the reader's. Binding every git question to the governed tree's own
+  repository (the entry below) established which repository answers; an
+  independent review of that change measured that it did not establish the
+  configuration git answers under. In a fresh clone holding a governed,
+  untracked `src/untracked.py`, nine reader-controlled routes -- the
+  `GIT_CONFIG_COUNT` family, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`,
+  `GIT_CONFIG_SYSTEM`, an `XDG_CONFIG_HOME` config and its ignore file, a
+  `HOME` gitconfig and its ignore file, an include -- each left the root
+  resolving correctly while `git ls-files --others --exclude-standard` named
+  nothing, and the dirty-tree gate reported the tree clean. A reader
+  attributes file naming a clean filter hid a modified governed file the same
+  way. Every git question now runs through one runner: the `GIT_CONFIG_*`
+  family is dropped by prefix, `GIT_ATTR_SOURCE` is dropped with the
+  steering variables (found under review: it reads attributes from a commit
+  instead of the working tree), the system gitconfig and system attributes
+  file are switched off, the global gitconfig is pointed at the empty
+  device, git's messages are pinned untranslated, and `core.excludesFile`,
+  `core.attributesFile`, `core.fsmonitor` and `core.longpaths` are pinned on
+  the command line, which outranks every environment route. `HOME` is left
+  alone. The repository's own `.git/config`, `.gitattributes` and
+  `.gitignore` still apply. Git failures remain refusals, and a genuine
+  change to the governed tree is still reported. Two consequences found under
+  review are handled and disclosed in A-021: severing the global file also
+  severed `core.longpaths`, under which git on Windows answered NOTHING,
+  exit 0, for a governed path beyond MAX_PATH, so the key is pinned on; and a
+  checkout owned by another user can no longer be verified, because the
+  reader's `safe.directory` allowance is out of reach -- the tool now reports
+  that refusal in git's words instead of calling the repository absent and
+  its provenance `git:unbound`.
+- A historical claim corrected: the previous entry said that with no
+  repository above the tree, git's silent no-index fallback read the tree as
+  clean. That reproduces on git 2.55 (since 2.51, `diff --no-index` takes the
+  first two paths as directories and the rest as limits, so a thirteen-path
+  `git diff` outside a repository exits 0 printing nothing) and does not on
+  git 2.43, where the same command is a usage error and the tool refused --
+  which is what the independent review measured. The established defect is
+  the enclosing foreign repository; the no-repository outcome was a property
+  of the git version. The tool's own docstrings, the tests and A-021 now say
+  so; the merged pull request's description is left as written.
 - The governance evidence tool asks git about the governed tree and nothing
   else. Every git question ran with the tree as working directory and trusted
   whatever repository git discovered walking upward, so a tree with no `.git`
   of its own -- the archive the anchored-measurement harness extracts -- was
-  answered for by whichever repository enclosed the temp directory, and by
-  git's silent no-index fallback when none did. Measured on one archive
-  extracted byte for byte into three places: the verdict changed with the
-  enclosing repository while the files did not. The tool now refuses a tree
-  that is not the root of the repository git resolves, refuses one git cannot
-  place at all rather than reading an empty answer as a clean tree, and drops
-  the environment variables that re-aim git. The harness commits each
-  extraction to a repository of its own before re-running `--verify` there.
+  answered for by whichever repository enclosed the temp directory, and, when
+  none did, by whatever the reader's git does outside a repository (see the
+  correction above). Measured on one archive extracted byte for byte into
+  three places: the verdict changed with the enclosing repository while the
+  files did not. The tool now refuses a tree that is not the root of the
+  repository git resolves, refuses one git cannot place at all rather than
+  leaving the answer to git, and drops the environment variables that re-aim
+  git. The harness commits each extraction to a repository of its own before
+  re-running `--verify` there.
 - Approval records are emitted by the YAML serializer instead of hand-formatted
   text. Interpolating artifact-controlled fields let a crafted `status` close
   the record, forge the managed end-marker, and append a rogue approval that

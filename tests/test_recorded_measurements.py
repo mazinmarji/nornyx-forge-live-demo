@@ -977,13 +977,17 @@ def _verify_at(sha: str) -> dict:
         # extraction had no `.git`, so git looked UPWARD and answered from
         # whatever repository enclosed the temp directory -- on a machine
         # whose TMPDIR sits under a checkout, from that checkout's index --
-        # and where nothing enclosed it, from a no-index fallback that prints
-        # nothing and exits 0. Measured on the same archive, byte for byte:
-        # `intact` in a temp directory outside any repository, `compromised`
-        # inside a repository whose index differed at one governed path. The
-        # anchored verdict was a property of where the reader's temp directory
-        # lives, which is the same defect as the planted home directory above,
-        # reached by a route nothing here had closed.
+        # and where nothing enclosed it, from whatever the reader's git does
+        # outside a repository: on git 2.55 a silent no-index comparison that
+        # prints nothing and exits 0, on git 2.43 a usage error the old tool
+        # turned into a refusal (an independent review measured the second
+        # after this comment had recorded only the first). Measured on the
+        # same archive, byte for byte: `intact` in a temp directory outside
+        # any repository on git 2.55, `compromised` inside a repository whose
+        # index differed at one governed path. The anchored verdict was a
+        # property of where the reader's temp directory lives and of which git
+        # they run, which is the same defect as the planted home directory
+        # above, reached by a route nothing here had closed.
         #
         # So the extraction is committed to a repository containing nothing
         # else, under the same explicit environment as the run: no reader

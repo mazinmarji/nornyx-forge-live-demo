@@ -6,8 +6,11 @@ Five defects in this repository have shared one root cause:
     empty contracts directory    -> empty result   -> intact
     missing review_binding.json  -> loop skipped   -> intact
     git binary unreachable       -> empty path set -> clean tree
-    no repository around a tree  -> git no-index   -> clean tree
-      (and a foreign one around it -> that repository's answer)
+    a foreign repository around  -> that repository's index and HEAD
+      a tree with no .git of its own
+      (with NO repository around it the old tool's answer depended on the
+       git version: refused on 2.43, silently clean on 2.55; see
+       `test_a_tree_with_no_repository_is_refused_not_clean`)
 
 Each was fixed where it was found. Five instances of one class is not five
 bugs, so this is the class written down as a control:
@@ -378,17 +381,25 @@ def test_an_unrunnable_git_is_not_a_clean_tree(monkeypatch: pytest.MonkeyPatch):
 # working directory and trusted whatever repository git discovered walking
 # upward from there. Two outcomes, one construct:
 #
-#     no repository above the tree   -> `git diff` no-index mode -> [] -> clean
 #     a foreign repository above it  -> that repository's index  -> its answer
+#     no repository above the tree   -> whatever `git diff` does outside a
+#                                       repository on the reader's git version
 #
 # Measured on an archive of this repository extracted, byte for byte, into a
-# temp directory outside any repository (intact), inside a foreign repository
-# (intact, borrowed) and inside a foreign repository whose index differed at
-# one governed path (compromised, naming a file whose bytes were exactly the
-# archive's). The anchored-measurement harness in
+# temp directory inside a foreign repository (intact, borrowed) and inside a
+# foreign repository whose index differed at one governed path (compromised,
+# naming a file whose bytes were exactly the archive's). Outside any
+# repository the same archive verified intact on git 2.55.0.windows.5 and was
+# REFUSED on git 2.43.0: the first was recorded here as if it were the only
+# behaviour, and an independent review measured the second. The refusal is
+# git's usage error for a `diff` with more than two paths outside a
+# repository; git 2.51 taught `diff --no-index` to take the first two paths
+# as directories and the rest as limits, which made the same command exit 0
+# printing nothing. The anchored-measurement harness in
 # tests/test_recorded_measurements.py ran `--verify` in exactly such an
 # extraction, so its verdict was a property of where the reader keeps temp
-# files. The tool now establishes the repository before asking anything of it.
+# files and of which git they run. The tool now establishes the repository
+# before asking anything of it, on every git.
 # --------------------------------------------------------------------------
 
 #: A governed path, as the covered roots name it.
@@ -396,11 +407,22 @@ GOVERNED = "src/nornyx_forge/util.py"
 
 
 def _repository(root: Path, files: dict[str, str]) -> None:
-    """A repository at `root` holding `files`, committed."""
+    """A repository at `root` holding `files`, committed.
+
+    LF ON EVERY PLATFORM. `write_text` emits CRLF on Windows, and the commit
+    below runs under the reader's git, whose `core.autocrlf=true` (Git for
+    Windows' system default) stores LF. The tool then reads the tree under
+    policy-neutral configuration, where nothing normalises, and truthfully
+    reports a working copy whose bytes differ from what git holds. Measured
+    when the tool stopped inheriting the reader's configuration: this
+    fixture's governed file came back "modified" from a commit seconds old.
+    The tool is right and the fixture was leaning on the reader's autocrlf,
+    which is the dependency the tool exists to refuse.
+    """
     for relative, content in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text(content, encoding="utf-8", newline=NL)
     for command in (
         ["init", "-q"],
         ["add", "-A"],
@@ -479,11 +501,25 @@ def test_a_tree_inside_a_foreign_repository_is_refused_not_measured_against_it(
 def test_a_tree_with_no_repository_is_refused_not_clean(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Measured before this check existed: outside any repository,
-    `git diff --name-only -- <the covered roots>` fell back to comparing
-    paths on disk, printed nothing, and exited 0. `_unstaged_governed_paths`
-    returned `[]`, which every caller reads as a clean governed tree -- an
-    empty answer to a question git never took.
+    """Outside any repository the tool refuses, whatever git would have said.
+
+    What git says there depends on its version. Measured at b999537 with the
+    tool as archived at f114074, in an extraction no repository encloses:
+
+        git 2.55.0.windows.5   `git diff --name-only -- <13 roots>` exits 0
+                               printing nothing; --verify reports intact
+        git 2.43.0 (Linux)     the same command is a usage error, exit 129;
+                               --verify refuses (measured here in WSL Ubuntu;
+                               the independent review of the previous change
+                               measured the same refusal)
+
+    The first is git 2.51's pathspec limiting for `diff --no-index`: outside
+    a repository, three or more paths make git compare the first two as
+    directories in no-index mode and read the rest as limits, so the answer
+    is empty and `_unstaged_governed_paths` returned `[]`, which every caller
+    reads as a clean tree. This docstring once stated that behaviour as the
+    only one; an independent review measured the second. Establishing the
+    repository first makes the version irrelevant.
     """
     import refresh_governance_evidence as refresh  # noqa: PLC0415
 
@@ -556,6 +592,538 @@ def test_a_steering_variable_cannot_re_aim_the_governed_tree(
     )
     assert refresh._head_commit() == honest_head, (
         f"{variable} re-aimed provenance at another repository's HEAD"
+    )
+
+
+# --------------------------------------------------------------------------
+# Reader configuration. Root equality is not enough.
+#
+# The root check above establishes WHICH repository answers. An independent
+# review of that change measured what it does not establish: the
+# configuration git answers UNDER. At b999537, in a fresh clone holding a
+# governed, untracked `src/untracked.py`, nine reader-controlled routes --
+# `GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`,
+# `GIT_CONFIG_SYSTEM`, an `XDG_CONFIG_HOME` config and its ignore file, a
+# `HOME` gitconfig and its ignore file, an include -- each left
+# `git rev-parse --show-toplevel` naming the governed tree while
+# `git ls-files --others --exclude-standard -- src` named nothing, and the
+# dirty-tree gate reported the tree clean. A reader attributes file naming a
+# clean filter did the same to a MODIFIED governed file. None of these touch
+# the repository. The tool now runs every git question through one runner,
+# `_git`, under a policy-neutral environment: the configuration variables
+# dropped by prefix, the system and global files switched off, the default
+# ignore and attributes files pinned to nothing. The repository's own
+# `.git/config`, `.gitattributes` and `.gitignore` still apply, deliberately.
+# --------------------------------------------------------------------------
+
+#: A governed path with no tracked counterpart, as the covered roots name it.
+UNTRACKED = "src/nornyx_forge/untracked.py"
+
+
+def _file(path: Path, body: str) -> Path:
+    """`body` at `path`, LF on every platform (see `_repository`)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8", newline=NL)
+    return path
+
+
+def _home(root: Path) -> dict[str, str]:
+    """Point git's home at `root` on every platform git for Windows supports."""
+    return {"HOME": str(root), "USERPROFILE": str(root)}
+
+
+#: label -> (tmp_path, ignore file) -> environment. Every route hands git a
+#: `core.excludesFile` naming the reader's ignore file, or the default ignore
+#: file that stands in for one. All were measured live at b999537 on git
+#: 2.55.0.windows.5; the positive control in the test re-measures each on the
+#: machine running it, so a route git has since stopped honouring fails there
+#: rather than passing for nothing.
+READER_CONFIGURATION_ROUTES = {
+    "GIT_CONFIG_COUNT": lambda tmp, ignore: {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.excludesFile",
+        "GIT_CONFIG_VALUE_0": ignore.as_posix(),
+    },
+    # The family is numbered, so a fixed list of names would miss any slot
+    # it did not think of. Third slot, harmless first two.
+    "GIT_CONFIG_COUNT third slot": lambda tmp, ignore: {
+        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_KEY_0": "color.ui", "GIT_CONFIG_VALUE_0": "never",
+        "GIT_CONFIG_KEY_1": "diff.noprefix", "GIT_CONFIG_VALUE_1": "true",
+        "GIT_CONFIG_KEY_2": "core.excludesFile", "GIT_CONFIG_VALUE_2": ignore.as_posix(),
+    },
+    "GIT_CONFIG_PARAMETERS": lambda tmp, ignore: {
+        "GIT_CONFIG_PARAMETERS": f"'core.excludesFile'='{ignore.as_posix()}'",
+    },
+    "GIT_CONFIG_GLOBAL": lambda tmp, ignore: {
+        "GIT_CONFIG_GLOBAL": str(_file(
+            tmp / "reader-global", f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
+        )),
+    },
+    "GIT_CONFIG_GLOBAL include.path": lambda tmp, ignore: {
+        "GIT_CONFIG_GLOBAL": str(_file(
+            tmp / "reader-outer",
+            f"[include]{NL}\tpath = "
+            + _file(tmp / "reader-inner", f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}").as_posix()
+            + NL,
+        )),
+    },
+    "GIT_CONFIG_SYSTEM": lambda tmp, ignore: {
+        "GIT_CONFIG_SYSTEM": str(_file(
+            tmp / "reader-system", f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
+        )),
+    },
+    "XDG_CONFIG_HOME config": lambda tmp, ignore: {
+        "XDG_CONFIG_HOME": str(_file(
+            tmp / "xdg-config" / "git" / "config",
+            f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
+        ).parents[1]),
+    },
+    "XDG_CONFIG_HOME ignore": lambda tmp, ignore: {
+        "XDG_CONFIG_HOME": str(_file(tmp / "xdg-ignore" / "git" / "ignore", "untracked.py" + NL).parents[1]),
+    },
+    "HOME gitconfig": lambda tmp, ignore: _home(_file(
+        tmp / "home-config" / ".gitconfig", f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
+    ).parent),
+    "HOME ignore": lambda tmp, ignore: _home(
+        _file(tmp / "home-ignore" / ".config" / "git" / "ignore", "untracked.py" + NL).parents[2],
+    ),
+}
+
+
+def _plain_git(
+    *args: str, cwd: Path, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """git as a reader would run it: the process environment, nothing scrubbed."""
+    return subprocess.run(  # noqa: S603, S607
+        ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=600, env=env,
+    )
+
+
+@pytest.mark.parametrize("route", sorted(READER_CONFIGURATION_ROUTES))
+def test_reader_configuration_cannot_hide_a_governed_untracked_file(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """G1, G2 and their kin: the untracked answer is the tree's, not the reader's.
+
+    Root resolution stays correct under every route -- that is what made
+    the gap invisible to the root check -- so it is asserted alongside the
+    answer rather than instead of it.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    _repository(tree, {GOVERNED: "print('governed')" + NL})
+    _file(tree / UNTRACKED, "print('untracked')" + NL)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    honest = refresh._dirty_governed_inputs()
+    assert honest == ([], [UNTRACKED])
+
+    ignore = _file(tmp_path / "reader-ignore", "untracked.py" + NL)
+    delta = READER_CONFIGURATION_ROUTES[route](tmp_path, ignore)
+    for name, value in delta.items():
+        monkeypatch.setenv(name, value)
+
+    # POSITIVE CONTROL. The route must be live for a plain git on this
+    # machine, or the assertion after it shows nothing about isolation. The
+    # control's HOME is an empty directory unless the route IS a HOME route:
+    # a reader whose own `~/.gitconfig` names an excludes file would outrank
+    # the system and XDG routes and fail the control for a reason that has
+    # nothing to do with the route (measured under review).
+    control = dict(os.environ)
+    if "HOME" not in delta:
+        empty_home = tmp_path / "empty-home"
+        empty_home.mkdir(exist_ok=True)
+        control.update(_home(empty_home))
+    plain = _plain_git(
+        "ls-files", "--others", "--exclude-standard", "--", "src", cwd=tree, env=control,
+    )
+    assert plain.returncode == 0 and plain.stdout.strip() == "", (
+        f"{route} did not hide {UNTRACKED} from a plain git here, so this test "
+        f"cannot show the tool is isolated from it: {plain.stdout!r} {plain.stderr!r}"
+    )
+    placed = _plain_git("rev-parse", "--show-toplevel", cwd=tree, env=control)
+    assert placed.returncode == 0, f"{route} broke root resolution: {placed.stderr!r}"
+
+    assert refresh._repository_root() == tree, f"{route} moved the root"
+    assert refresh._dirty_governed_inputs() == honest, (
+        f"{route} changed the dirty-tree answer: the governed untracked file is hidden"
+    )
+
+
+#: Two ways a reader attributes file hides a real change. The clean filter
+#: needs its command from configuration, so that route is refused twice over;
+#: `ident` needs no configuration at all, which is what makes the
+#: `core.attributesFile` pin load-bearing on its own (measured: with the pin
+#: removed the tool answered clean under the second route).
+ATTRIBUTE_ROUTES = {
+    "clean filter via GIT_CONFIG_COUNT": (
+        "print('governed')" + NL,
+        "print('governed')" + NL + "# appended" + NL,
+    ),
+    "ident via the HOME default attributes file": (
+        "# $Id$" + NL + "print('governed')" + NL,
+        "# $Id: tampered$" + NL + "print('governed')" + NL,
+    ),
+}
+
+
+def _reader_attributes(route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put the route's attributes in the reader's hands."""
+    if route == "clean filter via GIT_CONFIG_COUNT":
+        strip = _file(
+            tmp_path / "strip.py",
+            "import sys" + NL
+            + "data = sys.stdin.buffer.read()" + NL
+            + "sys.stdout.buffer.write(data.replace(b'# appended\\n', b''))" + NL,
+        )
+        attributes = _file(tmp_path / "reader-attributes", "*.py filter=strip" + NL)
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "3")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.attributesFile")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", attributes.as_posix())
+        monkeypatch.setenv("GIT_CONFIG_KEY_1", "filter.strip.clean")
+        monkeypatch.setenv(
+            "GIT_CONFIG_VALUE_1", f'"{Path(sys.executable).as_posix()}" "{strip.as_posix()}"'
+        )
+        monkeypatch.setenv("GIT_CONFIG_KEY_2", "filter.strip.required")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_2", "false")
+        return
+    home = _file(tmp_path / "home-attributes" / ".config" / "git" / "attributes", "*.py ident" + NL)
+    for name, value in _home(home.parents[2]).items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.mark.parametrize("route", sorted(ATTRIBUTE_ROUTES))
+def test_a_reader_attributes_file_cannot_hide_a_governed_modification(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The modified answer is the tree's too, and it is decided by attributes.
+
+    Measured at b999537: an attributes file assigning `filter=strip` to
+    `*.py`, reached through `core.attributesFile` with the filter's clean
+    command supplied by `GIT_CONFIG_COUNT`, made `git diff --name-only -- src`
+    print nothing for a governed file with a line appended; a clean filter
+    rewrites the working copy before git compares it. And with no
+    configuration anywhere, `~/.config/git/attributes` reading `*.py ident`
+    made a change inside a `$Id$` span vanish the same way, since `ident`
+    collapses the span before the comparison. Either way the reader decides
+    what "unchanged" means.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    before, after = ATTRIBUTE_ROUTES[route]
+    tree = tmp_path / "tree"
+    _repository(tree, {GOVERNED: before})
+    _file(tree / GOVERNED, after)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    assert refresh._unstaged_governed_paths() == [GOVERNED]
+
+    _reader_attributes(route, tmp_path, monkeypatch)
+
+    plain = _plain_git("diff", "--name-only", "--", "src", cwd=tree)
+    assert plain.returncode == 0 and plain.stdout.strip() == "", (
+        f"{route} did not hide the change from a plain git here, so this test "
+        f"cannot show the tool is isolated from it: {plain.stdout!r} {plain.stderr!r}"
+    )
+
+    assert refresh._unstaged_governed_paths() == [GOVERNED], (
+        f"{route}: a reader attributes file hid a modified governed file from the tool"
+    )
+
+
+def _commit(root: Path, message: str) -> None:
+    for command in (
+        ["add", "-A"],
+        ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", message],
+    ):
+        subprocess.run(["git", *command], cwd=root, check=True,  # noqa: S603, S607
+                       capture_output=True, timeout=600)
+
+
+def test_an_attributes_source_variable_cannot_hide_a_governed_modification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`GIT_ATTR_SOURCE` reads attributes from a commit instead of the tree.
+
+    Found by two inspectors of the configuration repair. Measured: a fixture
+    whose first commit carried `*.py ident` and whose HEAD carries no
+    attributes at all; with `GIT_ATTR_SOURCE=HEAD~1` a change inside a `$Id$`
+    span vanished from plain `git diff --name-only`, from a plain git with
+    `core.attributesFile` pinned, and from the tool. Its configuration form,
+    `attr.tree`, was already refused with the rest of the reader's
+    configuration. The variable is now dropped with the steering variables,
+    which is what it is: it re-aims where an answer comes from.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    body = "# $Id$" + NL + "print('governed')" + NL
+    _repository(tree, {".gitattributes": "*.py ident" + NL, GOVERNED: body})
+    (tree / ".gitattributes").unlink()
+    _commit(tree, "attribute removed")
+    _file(tree / GOVERNED, "# $Id: tampered$" + NL + "print('governed')" + NL)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    assert refresh._unstaged_governed_paths() == [GOVERNED]
+
+    monkeypatch.setenv("GIT_ATTR_SOURCE", "HEAD~1")
+    plain = _plain_git("diff", "--name-only", "--", "src", cwd=tree)
+    assert plain.returncode == 0 and plain.stdout.strip() == "", (
+        "GIT_ATTR_SOURCE did not hide the change from a plain git here, so this "
+        f"test cannot show the tool is isolated from it: {plain.stdout!r} {plain.stderr!r}"
+    )
+
+    assert refresh._unstaged_governed_paths() == [GOVERNED], (
+        "GIT_ATTR_SOURCE hid a modified governed file from the tool"
+    )
+
+
+def _beyond_max_path(path: Path) -> Path:
+    """`path`, spelled so that Python can create it past MAX_PATH on Windows."""
+    text = str(path)
+    if os.name == "nt" and not text.startswith("\\\\?\\"):
+        return Path("\\\\?\\" + text)
+    return path
+
+
+def test_a_governed_path_beyond_max_path_is_still_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Severing the reader's global file severed `core.longpaths` with it.
+
+    Found by two inspectors of the configuration repair. On Windows, git
+    without `core.longpaths` answers for a governed path beyond MAX_PATH with
+    NOTHING: `ls-files --others` and `diff --name-only` exit 0, print no
+    path, and put a warning on stderr the tool does not read. The reader's
+    global `core.longpaths=true` was the only thing making such a path
+    visible, and the neutral environment dropped it. Measured at 342
+    characters: reported under the reader's global, silent under the neutral
+    environment, reported again with the key pinned on. Every other
+    platform's git ignores the key, so on those this proves only that a deep
+    governed path is seen, which is still the property.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    _repository(tree, {GOVERNED: "print('governed')" + NL})
+    deep = "src/nornyx_forge/" + "/".join(
+        f"directory-with-a-long-name-{index}" for index in range(9)
+    ) + "/deep.py"
+    assert len(str(tree / deep)) > 260, "the fixture path does not exceed MAX_PATH"
+    target = _beyond_max_path(tree / deep)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("print('deep')" + NL, encoding="utf-8", newline=NL)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+
+    if os.name == "nt":
+        # POSITIVE CONTROL, where the key means something: the neutral
+        # environment WITHOUT the pin is blind to the path, exit 0.
+        blind = subprocess.run(  # noqa: S603, S607
+            ["git", "-c", "core.longpaths=false", "ls-files", "--others",
+             "--exclude-standard", "--", "src"],
+            cwd=tree, capture_output=True, text=True, timeout=600,
+            env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+        )
+        assert blind.returncode == 0 and blind.stdout.strip() == "", (
+            "git with core.longpaths off still saw the long path here, so this "
+            f"test cannot show the pin matters: {blind.stdout!r} {blind.stderr!r}"
+        )
+
+    assert refresh._dirty_governed_inputs() == ([], [deep]), (
+        "an untracked governed path beyond MAX_PATH was not reported"
+    )
+
+    for command in (
+        ["-c", "core.longpaths=true", "add", "-A"],
+        ["-c", "core.longpaths=true", "-c", "user.name=fixture",
+         "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+         "commit", "-q", "-m", "deep"],
+    ):
+        subprocess.run(["git", *command], cwd=tree, check=True,  # noqa: S603, S607
+                       capture_output=True, timeout=600)
+    target.write_text("print('deep edited')" + NL, encoding="utf-8", newline=NL)
+    assert refresh._unstaged_governed_paths() == [deep], (
+        "an edited governed path beyond MAX_PATH was not reported"
+    )
+
+
+def test_a_repository_git_refuses_is_a_refusal_not_an_unbound_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """G6. Git exits 128 for "no repository" and for "a repository I will not
+    answer for": one owned by another user, whose `safe.directory` allowance
+    lived in the reader configuration this tool no longer reads. Reading the
+    second as the first told the operator git could not NAME the repository
+    and sent provenance out as `git:unbound` for a bound tree. Found by an
+    inspector of the configuration repair; measured with git's own
+    `GIT_TEST_ASSUME_DIFFERENT_OWNER`, which makes every repository look
+    foreign-owned. The tool must refuse in git's words, not misdescribe.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    _repository(tree, {GOVERNED: "print('governed')" + NL})
+    # Built now, before every repository here starts looking foreign-owned.
+    named = tmp_path / "not a git repository" / "tree"
+    _repository(named, {GOVERNED: "print('governed')" + NL})
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    assert refresh._repository_root() == tree
+
+    monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+    plain = _plain_git("rev-parse", "--show-toplevel", cwd=tree)
+    assert plain.returncode != 0 and "dubious ownership" in plain.stderr, (
+        "this git does not refuse a foreign-owned repository under "
+        f"GIT_TEST_ASSUME_DIFFERENT_OWNER, so the refusal cannot be exercised: "
+        f"{plain.stdout!r} {plain.stderr!r}"
+    )
+
+    for question in (
+        refresh._repository_root, refresh._head_commit,
+        refresh._revision, refresh._unstaged_governed_paths,
+    ):
+        with pytest.raises(SystemExit) as refused:
+            question()
+        message = str(refused.value)
+        assert "will not answer for it" in message and "dubious ownership" in message, (
+            f"{question.__name__} did not report git's refusal: {message}"
+        )
+        assert "could not name the repository" not in message, (
+            f"{question.__name__} described a refusal as an absence: {message}"
+        )
+
+    # The refusal embeds the checkout's path. Measured under review: a
+    # checkout under a directory literally named "not a git repository" was
+    # read as absent when git's message was matched anywhere in stderr, so
+    # the match is anchored to the start of a line, and this pins it.
+    monkeypatch.setattr(refresh, "ROOT", named)
+    with pytest.raises(SystemExit) as refused:
+        refresh._repository_root()
+    assert "will not answer for it" in str(refused.value), (
+        f"a path containing git's absence phrase read as absence: {refused.value}"
+    )
+
+
+def test_the_real_checkout_answers_under_the_neutral_environment():
+    """G3. Isolation must not stop the tool answering for the repository it
+    lives in -- a worktree here, a plain clone in CI -- and for a question
+    configuration cannot bend, HEAD, it must agree with a plain git.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    assert refresh._repository_root() == refresh.ROOT
+    plain = _plain_git("rev-parse", "HEAD", cwd=ROOT)
+    assert plain.returncode == 0
+    assert refresh._head_commit() == "git:" + plain.stdout.strip()
+    assert refresh._revision() == "git:" + plain.stdout.strip()
+    # Runs to an answer rather than a refusal; what it lists depends on the
+    # checkout's state and is not the point.
+    assert isinstance(refresh._unstaged_governed_paths(), list)
+
+
+def test_a_genuine_change_to_the_governed_tree_is_still_detected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """G4. Every isolation proof above is satisfied by a tool that answers
+    "clean" to everything. This is the other half: change the tree and the
+    tool must say so, at each of the three questions it asks.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    body = "print('governed')" + NL
+    _repository(tree, {GOVERNED: body})
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    assert refresh._unstaged_governed_paths() == []
+    assert refresh._dirty_governed_inputs() == ([], [])
+
+    _file(tree / GOVERNED, body + "# edited" + NL)
+    assert refresh._unstaged_governed_paths() == [GOVERNED]
+    assert refresh._dirty_governed_inputs() == ([GOVERNED], [])
+
+    # Staged: the working tree agrees with the index, so the unstaged
+    # question is answered clean and the HEAD question is not.
+    subprocess.run(["git", "add", GOVERNED], cwd=tree, check=True,  # noqa: S603, S607
+                   capture_output=True, timeout=600)
+    assert refresh._unstaged_governed_paths() == []
+    assert refresh._dirty_governed_inputs() == ([GOVERNED], [])
+
+    _file(tree / UNTRACKED, "print('untracked')" + NL)
+    assert refresh._dirty_governed_inputs() == ([GOVERNED], [UNTRACKED])
+
+
+def test_a_git_failure_under_the_neutral_environment_is_still_a_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """G5. A repository with no commit: the root resolves, and every question
+    about HEAD fails. The runner returns the failure and each caller keeps
+    its own vocabulary for it; none of them reads it as an empty answer.
+    """
+    import refresh_governance_evidence as refresh  # noqa: PLC0415
+
+    tree = tmp_path / "tree"
+    (tree / "src").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=tree, check=True,  # noqa: S603, S607
+                   capture_output=True, timeout=600)
+    monkeypatch.setattr(refresh, "ROOT", tree)
+    assert refresh._repository_root() == tree
+
+    with pytest.raises(SystemExit) as refusal:
+        refresh._dirty_governed_inputs()
+    assert "failed" in str(refusal.value)
+    assert "cannot be proven" in str(refusal.value)
+    with pytest.raises(SystemExit) as unbound:
+        refresh._revision()
+    assert "a bound revision is required" in str(unbound.value)
+    assert refresh._head_commit() == "git:unbound"
+
+
+def test_every_git_question_in_the_tool_goes_through_the_one_runner():
+    """One policy, one place. A second git start in the tool is a git question
+    the policy does not reach, whatever environment its author remembered to
+    pass.
+
+    What this sees, stated so the net is not mistaken for the sea: a call to
+    `subprocess.run`, `Popen`, `check_output`, `check_call` or `call` whose
+    first argument is a literal list beginning with "git", anywhere in the
+    module, inside a function or at module level. Not seen: a list bound to
+    a name first, a tuple literal, or `subprocess.run` imported under another
+    name. None of those is how this module has ever started git; the
+    runner's docstring is the claim, and this is the check that reaches the
+    shapes the module uses.
+    """
+    source = (ROOT / "scripts/refresh_governance_evidence.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(module):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def enclosing(node: ast.AST) -> str:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node.name
+        return "<module>"
+
+    starters: dict[str, list[int]] = {}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        callee = node.func
+        starts_process = (
+            isinstance(callee, ast.Attribute)
+            and callee.attr in {"run", "Popen", "check_output", "check_call", "call"}
+            and isinstance(callee.value, ast.Name) and callee.value.id == "subprocess"
+        )
+        first = node.args[0]
+        starts_git = (
+            isinstance(first, ast.List) and first.elts
+            and isinstance(first.elts[0], ast.Constant) and first.elts[0].value == "git"
+        )
+        if starts_process and starts_git:
+            starters.setdefault(enclosing(node), []).append(node.lineno)
+    assert list(starters) == ["_git"] and len(starters["_git"]) == 1, (
+        f"git is started outside the one runner: {starters}"
     )
 
 

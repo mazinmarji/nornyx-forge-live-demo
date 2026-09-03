@@ -135,6 +135,16 @@ except Exception:  # pragma: no cover - packaging boundary
 #: governed tree at ROOT and nothing else, so none of these may have a say.
 #: `tests/test_subject_provenance.py` records the same lesson for the runtime:
 #: `GIT_DIR` takes precedence over `-C`, so a foreign repository answers.
+#:
+#: `GIT_ATTR_SOURCE` belongs here too, found by two inspectors of this change:
+#: it re-aims where git reads ATTRIBUTES from, a commit instead of the working
+#: tree, and attributes decide what "modified" means. Measured on git 2.55 in
+#: a fixture whose older commit carried `*.py ident` and whose HEAD carried no
+#: attributes: with `GIT_ATTR_SOURCE=HEAD~1` a change inside a `$Id$` span
+#: vanished from plain `git diff --name-only` and from this tool, and pinning
+#: `core.attributesFile` did not restore it, because that is a different
+#: source. Its configuration form, `attr.tree`, is already refused with the
+#: rest of the reader's configuration; the variable was not.
 GIT_STEERING_VARIABLES = frozenset({
     "GIT_DIR",
     "GIT_WORK_TREE",
@@ -145,16 +155,125 @@ GIT_STEERING_VARIABLES = frozenset({
     "GIT_CEILING_DIRECTORIES",
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
     "GIT_NAMESPACE",
+    "GIT_ATTR_SOURCE",
 })
+
+#: Environment variables that hand git CONFIGURATION rather than a repository,
+#: matched by prefix because their names are dynamic: `GIT_CONFIG_COUNT` with
+#: `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` for any n, `GIT_CONFIG_PARAMETERS`
+#: (what `git -c` becomes in the environment), and `GIT_CONFIG_GLOBAL` /
+#: `GIT_CONFIG_SYSTEM` / `GIT_CONFIG_NOSYSTEM`, which choose the files. A
+#: static list is the wrong shape for a family whose names are numbered.
+#:
+#: Why configuration matters once the repository is already the right one.
+#: Measured at b999537 with a governed, untracked `src/untracked.py`: under
+#: nine reader configuration routes (this family, the global and system
+#: files, the XDG and home ignore files, an include) `git rev-parse
+#: --show-toplevel` named the governed tree every time, and `git ls-files
+#: --others --exclude-standard -- src` named the file under none of them,
+#: because each route supplied a `core.excludesFile` -- or the default ignore
+#: file that stands in for it -- listing the file. The dirty-tree gate then
+#: reported the tree clean. Root equality proves WHICH repository answers; it
+#: says nothing about the configuration git answers UNDER, and configuration
+#: decides what "untracked" and "modified" mean.
+GIT_CONFIGURATION_PREFIX = "GIT_CONFIG_"
+
+#: Applied on top of the scrubbed process environment for every git question.
+#: The system gitconfig is switched off and the global one is pointed at the
+#: empty device, which git documents as the way to read no file at that
+#: level. `HOME`, `USERPROFILE` and `XDG_CONFIG_HOME` are left alone: with the
+#: global file named explicitly git no longer derives one from them (measured:
+#: `git config --show-scope --list` then reports only `local`), and pinning
+#: them would make this tool's answer depend on a home directory it invented.
+#: The system attributes file goes the same way. Messages are pinned to git's
+#: untranslated form because `_repository_root` reads one of them to tell an
+#: absent repository from a refused one. What remains is the repository's own
+#: `.git/config`, `.gitattributes` and `.gitignore`, which are governed
+#: content this repository relies on deliberately.
+#:
+#: `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` exist from git 2.32 (its
+#: release notes; no older git was available to measure). On an older git the
+#: reader's global file is read after all, and only the settings pinned below
+#: are certain to outrank it.
+GIT_POLICY_NEUTRAL_ENVIRONMENT = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_ATTR_NOSYSTEM": "1",
+    "LC_ALL": "C",
+}
+
+#: Settings git otherwise takes from the reader's home directory or platform
+#: defaults when no configuration names them, pinned on the command line,
+#: which outranks every environment route (measured: `-c` won against a
+#: `GIT_CONFIG_COUNT` and a `GIT_CONFIG_PARAMETERS` deliberately left in
+#: place). The default excludes file is `$XDG_CONFIG_HOME/git/ignore` or
+#: `~/.config/git/ignore`; the default attributes file is the `attributes`
+#: beside it. Both were measured to hide governed content with no
+#: configuration file or variable involved at all: an ignore file listing the
+#: untracked path hid it from `git ls-files --others`, and an attributes file
+#: reading `*.py ident` hid a change inside a `$Id$` span from `git diff
+#: --name-only`. (A clean filter reached through an attributes file needs its
+#: command from configuration as well; that route is refused twice over.)
+#: `core.fsmonitor` is pinned off because injected configuration was measured
+#: to run the command it names during a plain `git diff`; it did not change
+#: the answer in three runs, and a governance query should not be running
+#: reader code at all. `core.longpaths` is pinned ON because switching the
+#: reader's global file off switched it off with it: on Windows git then
+#: reports a governed path beyond MAX_PATH as NOTHING -- `ls-files --others`
+#: and `diff --name-only` both exit 0 with an empty answer and a warning on
+#: stderr this tool does not read -- an absent answer wearing a clean one,
+#: the class `tests/test_absence_is_not_success.py` exists for. Measured with
+#: a 342-character governed path: reported under the reader's global
+#: `core.longpaths=true`, silent under the neutral environment, reported
+#: again once pinned. Every other platform's git ignores the key.
+GIT_POLICY_NEUTRAL_CONFIGURATION = (
+    ("core.excludesFile", os.devnull),
+    ("core.attributesFile", os.devnull),
+    ("core.fsmonitor", "false"),
+    ("core.longpaths", "true"),
+)
 
 
 def _git_environment() -> dict[str, str]:
-    """The process environment with every git-steering variable removed."""
-    return {
+    """The process environment with every git-steering and git-configuration
+    variable removed and the policy-neutral settings applied."""
+    environment = {
         name: value
         for name, value in os.environ.items()
         if name not in GIT_STEERING_VARIABLES
+        and not name.startswith(GIT_CONFIGURATION_PREFIX)
     }
+    environment.update(GIT_POLICY_NEUTRAL_ENVIRONMENT)
+    return environment
+
+
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run one git question about ROOT under the policy-neutral environment.
+
+    THE ONE PLACE git is started from this tool. Four call sites each built
+    their own `subprocess.run(["git", ...], env=_git_environment())`, which is
+    four places for the next configuration channel to be forgotten at, and the
+    environment alone was measured insufficient: the default ignore and
+    attributes files are read with no configuration variable set anywhere.
+
+    Exit status is returned, not raised. Each caller decides what a failure
+    means in its own vocabulary -- a refusal for a gate, `git:unbound` for
+    provenance -- and none of them may turn it into an empty answer.
+    """
+    pinned = [
+        flag
+        for key, value in GIT_POLICY_NEUTRAL_CONFIGURATION
+        for flag in ("-c", f"{key}={value}")
+    ]
+    return subprocess.run(
+        ["git", *pinned, *args],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=600,
+        env=_git_environment(),
+    )
 
 
 def _same_directory(left: Path, right: Path) -> bool:
@@ -172,39 +291,68 @@ def _repository_root() -> Path | None:
     no `.git` of its own -- an extracted archive, a copied tree -- was answered
     for by whatever repository happened to enclose it, and the answer described
     that repository's index and HEAD rather than this tree. With no repository
-    anywhere above it, `git diff` fell back to its no-index mode, printed
-    nothing and exited 0, and that silence read as a clean tree.
+    anywhere above it, what happened depended on the reader's git.
 
     Measured at f114074, on an archive of that commit extracted with
     byte-identical content into three places and verified in each with the
     tool as archived there:
 
-        outside any repository                      intact
         inside a foreign repository                 intact, borrowed
         inside a foreign repository whose index     compromised, naming a path
           differs at one governed path                this tree holds exactly
                                                       as the archive wrote it
+        outside any repository                      intact on git 2.55.0.windows.5;
+                                                    REFUSED on git 2.43.0
 
     The bytes on disk were the same in all three. Only the enclosing
-    repository changed, and it changed the verdict.
+    repository changed, and it changed the verdict. The third row first read
+    "intact" alone; an independent review measured the refusal, and both were
+    then re-measured at b999537. On git 2.43 a `diff` with more than two paths
+    outside a repository is a usage error, which the old `_git_lines` turned
+    into a refusal. Git 2.51 taught `diff --no-index` to take the first two
+    paths as directories and the rest as limits, so on git 2.55 the same
+    thirteen-path question compared `src` with `scripts`, limited to paths
+    that matched nothing, printed nothing and exited 0 -- and that silence
+    read as a clean tree. The row is a property of the git version, which is
+    exactly the kind of thing a governance verdict must not be.
 
     Returns ROOT when git resolves its top level to ROOT itself. Returns None
     when git can name no repository for ROOT at all; callers report that in
     their own vocabulary, a refusal for a gate and `git:unbound` for
     provenance. Raises when git resolves a DIFFERENT top level, because no
-    caller has a legitimate use for another repository's state.
+    caller has a legitimate use for another repository's state, and when git
+    finds a repository and refuses to answer for it, because a refusal is not
+    an absence.
     """
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=600,
-        env=_git_environment(),
-    )
+    result = _git("rev-parse", "--show-toplevel")
     if result.returncode:
-        return None
+        # ABSENT is the only failure that means "no repository". Git exits
+        # 128 for that and for a repository it found and will not answer
+        # for: one owned by another user, with the reader's `safe.directory`
+        # allowance now deliberately out of reach. Reading the second as
+        # absence sent a bound tree to provenance as `git:unbound` and told
+        # the operator git could not NAME the repository, when git had named
+        # it and refused it (measured under review with
+        # `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`). The message is git's own,
+        # read under `LC_ALL=C` so it is not translated, and matched at the
+        # START of a line: the refusal embeds the checkout's path, so a
+        # checkout under a directory literally named "not a git repository"
+        # was measured to read as absent when the phrase was matched
+        # anywhere. A dangling `.git` link also says "not a git repository:
+        # <gitdir>" and is classified as absent, which is git's own
+        # classification: it found no repository there.
+        if any(
+            line.startswith("fatal: not a git repository")
+            for line in result.stderr.splitlines()
+        ):
+            return None
+        raise SystemExit(
+            f"git found a repository for {ROOT} and will not answer for it: "
+            f"{result.stderr.strip()}. Nothing here can be proven clean or "
+            "bound while git refuses, and nothing was modified. If this is an "
+            "ownership check, the reader's safe.directory allowance is "
+            "deliberately not consulted; run as the owner of the checkout."
+        )
     found = Path(result.stdout.strip())
     if _same_directory(found, ROOT):
         return ROOT
@@ -223,15 +371,7 @@ def _revision() -> str:
             f"git could not name the repository enclosing {ROOT}; a bound "
             "revision is required"
         )
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=600,
-        env=_git_environment(),
-    )
+    result = _git("rev-parse", "HEAD")
     if result.returncode:
         raise SystemExit("git rev-parse HEAD failed; a bound revision is required")
     return "git:" + result.stdout.strip()
@@ -1555,10 +1695,7 @@ def _git_lines(*args: str) -> list[str]:
             "be asked what this tree holds. A clean governed tree cannot be "
             "proven, so nothing was modified."
         )
-    result = subprocess.run(
-        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False,
-        timeout=600, env=_git_environment(),
-    )
+    result = _git(*args)
     if result.returncode:
         raise SystemExit(
             f"git {' '.join(args)} failed: {result.stderr.strip()}. "
@@ -1733,10 +1870,7 @@ def _head_commit() -> str:
     # else's commit.
     if _repository_root() is None:
         return "git:unbound"
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True,
-        check=False, timeout=600, env=_git_environment(),
-    )
+    result = _git("rev-parse", "HEAD")
     return "git:" + result.stdout.strip() if result.returncode == 0 else "git:unbound"
 
 

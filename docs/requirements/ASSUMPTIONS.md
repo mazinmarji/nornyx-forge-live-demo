@@ -430,11 +430,66 @@ not implement packaging, signing, release CI, or the installer.
 the tree at its own root. A tree that is not the root of the repository git
 resolves for it is refused, not measured against that repository. A tree git
 cannot place in any repository is refused by the gates that need git and
-recorded as `git:unbound` for provenance, rather than having git's no-index
-fallback read as a clean tree. The environment variables that re-aim git
-(`GIT_DIR`, `GIT_WORK_TREE` and their kin) are dropped from every git call.
-The anchored-measurement harness therefore commits each archive extraction to
-a repository of its own before re-running `--verify` in it.
+recorded as `git:unbound` for provenance, rather than left to whatever the
+reader's git does outside a repository. (This decision first said that git's
+no-index fallback had read such a tree as clean. That was measured on git
+2.55.0.windows.5, where `diff --no-index` limits by pathspec since git 2.51
+and a thirteen-path `git diff` outside a repository exits 0 printing
+nothing; an independent review measured git 2.43.0, where the same command
+is a usage error and the tool at f114074 refused. The established defect is
+the enclosing foreign repository; the no-repository outcome was
+version-dependent, and the refusal makes it irrelevant.) The environment
+variables that re-aim git (`GIT_DIR`, `GIT_WORK_TREE` and their kin) are
+dropped from every git call. The anchored-measurement harness therefore
+commits each archive extraction to a repository of its own before re-running
+`--verify` in it.
+
+Which repository answers is not the same question as which configuration it
+answers under. Measured at b999537 in a fresh clone holding a governed,
+untracked `src/untracked.py`: under nine reader-controlled configuration
+routes (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_GLOBAL`,
+`GIT_CONFIG_SYSTEM`, an `XDG_CONFIG_HOME` config and its ignore file, a
+`HOME` gitconfig and its ignore file, an include) the root resolved to the
+governed tree every time and the untracked file was reported under none of
+them, because each supplied a `core.excludesFile` naming it. A reader
+attributes file naming a clean filter hid a modified governed file the same
+way. Every git question the tool asks therefore runs through one runner
+under a policy-neutral environment: the `GIT_CONFIG_*` family dropped by
+prefix, `GIT_ATTR_SOURCE` dropped with the steering variables (it reads
+attributes from a commit instead of the working tree, and was measured to
+hide a change when an older commit carried `*.py ident`), the system
+gitconfig switched off, the global gitconfig pointed at the empty device,
+the system attributes file switched off, git's messages pinned untranslated,
+and `core.excludesFile`, `core.attributesFile`, `core.fsmonitor` and
+`core.longpaths` pinned on the command line. `HOME` is not redirected: with
+the global file named explicitly git derives no configuration file from it,
+and the two default files it would still derive, the ignore and attributes
+files, are the ones pinned. The repository's own `.git/config`,
+`.gitattributes` and `.gitignore` still apply, because they are governed
+content this repository relies on deliberately -- `.gitattributes` normalises
+line endings, so a CRLF-only edit to a governed file is reported clean by
+git while it does move the byte digest, which is a pre-existing property of
+the repository's policy and not of the reader's machine. This is not
+hostile-host isolation: the `git` binary on `PATH`, the reader's ability to
+write into the governed tree or its `.git`, and reader control of the
+process environment beyond git's configuration are outside what it
+establishes.
+
+Three limits of the neutral environment are disclosed rather than papered
+over. `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` exist from git 2.32 (its
+release notes; no older git was available to measure): on an older git the
+reader's global file is read after all, and only the pinned keys are certain
+to outrank it. A checkout owned by another user can no longer be verified at
+all, because the reader's `safe.directory` allowance lives in the
+configuration this severs; git refuses, and the tool now reports git's
+refusal in git's words rather than an absent repository (measured under
+review with `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`, which made the tool say git
+could not name the repository and provenance say `git:unbound` for a bound
+tree). And `core.longpaths` is pinned on because severing the global file
+otherwise made a governed path beyond MAX_PATH on Windows an empty, exit-0
+answer with a warning on stderr; a warning beside an empty exit-0 answer from
+any other cause, an unreadable directory for instance, is still not read as a
+refusal.
 
 **Scope.** The extraction's HEAD is a fixture commit, not the anchored commit.
 That is provenance: the archive is what anchors the measurement, and at this

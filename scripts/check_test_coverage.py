@@ -314,7 +314,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_collection_completeness.py": 9,
     # Raised 21 -> 27 for the fifth instance of the class -- a repository that
     # is not this tree's -- six nodes (29 collected, band(29) = 27).
-    "tests/test_absence_is_not_success.py": 27,
+    # Raised 27 -> 44 for the reader-configuration round: ten configuration
+    # routes, two attributes routes, the attributes-source variable, the
+    # path beyond MAX_PATH, the neutral-environment checkout, the
+    # genuine-change, git-failure and git-refusal guards and the one-runner
+    # structural check, nineteen nodes (48 collected, band(48) = 44).
+    "tests/test_absence_is_not_success.py": 44,
     "tests/test_trust_snapshot.py": 19,
     "tests/test_historical_reproof.py": 56,
     "tests/test_mutation_catalogue.py": 38,
@@ -490,16 +495,19 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # raised to their bands, which lifted the module-floor sum past the aggregate,
 # so the aggregate moves up by the same eight and keeps its margin --
 # `test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors` caught
-# it, not a reader:
+# it, not a reader. Re-measured for the reader-configuration round: 19 new
+# collected in tests/test_absence_is_not_success.py (105 modules); that
+# module's floor rose 27 -> 44 to its band, the module-floor sum rose by the
+# same seventeen, and the aggregate follows it to keep the margin:
 #
 # (rows below):
 #
-#     collected across tests/     2587   (105 modules)
-#     sum of the module floors    2382
-#     band(2587) = ceil(0.9*n)    2329
-#     MINIMUM_COLLECTED           2389
+#     collected across tests/     2606   (105 modules)
+#     sum of the module floors    2399
+#     band(2606) = ceil(0.9*n)    2346
+#     MINIMUM_COLLECTED           2406
 #     above the module sum         7
-#     below what collects         198
+#     below what collects         200
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -520,7 +528,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 205 in total, and the aggregate refuses
+# per-module bands already grant 207 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -541,7 +549,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2389
+MINIMUM_COLLECTED = 2406
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
