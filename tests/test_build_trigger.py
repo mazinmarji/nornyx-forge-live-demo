@@ -20,6 +20,7 @@ from nornyx_forge.capsule import Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleStore
 from nornyx_forge.experience import advance, start_experience
 from nornyx_forge.onboarding_app import create_app
+from nornyx_forge.provider_contract import GovernedEligibility
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
@@ -75,10 +76,22 @@ class RecordingFlow:
         return {"accepted": False, "gates": ["worker unavailable"]}
 
 
+def _seam_eligibility(provider: str) -> GovernedEligibility:
+    """The injectable seam executes no provider: the deterministic flow the
+    tests install answers in the flow's shape and never runs an engineering
+    agent, so the governed-eligibility gate -- which exists to keep an
+    unconfined provider off the authority store -- has nothing to decide.
+    The shipped surface never sees this; it uses the contract's own decision,
+    and tests/test_governed_provider_eligibility.py pins that."""
+    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+                               reason="deterministic flow at the injectable seam; no provider executes")
+
+
 def _client(tmp_path: Path, factory=RecordingFlow) -> TestClient:
     RecordingFlow.instances = []
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS,
-                                 flow_factory=factory, seal_dir=tmp_path / "seals"))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals",
+                                 eligibility=_seam_eligibility))
 
 
 def _wait_finished(client: TestClient) -> dict:

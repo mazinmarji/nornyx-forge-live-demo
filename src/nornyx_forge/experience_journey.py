@@ -290,6 +290,7 @@ def journey_view(
     document: Mapping[str, Any],
     brd_present: bool,
     build_running: bool,
+    provider_blocker: str | None = None,
 ) -> dict[str, Any]:
     """What the page shows: the persisted position, the actions the contract
     allows from it, and what still blocks the ones it does not.
@@ -297,7 +298,10 @@ def journey_view(
     Every `actions` entry is derived from the contract's own transition
     table, so the page enables exactly what the contract would accept -- as
     a convenience. The routes enforce independently; a request the page
-    would not have offered gets the same refusal.
+    would not have offered gets the same refusal. `provider_blocker` is the
+    surface's governed-eligibility verdict for the confirmed provider when
+    that verdict is a refusal: the build is then not offered and the reason
+    is listed, in the same words the build route refuses with.
     """
     if experience is None:
         return {
@@ -328,7 +332,9 @@ def journey_view(
         if not missing:
             actions.append("confirm_scope")
     if "BUILD" in allowed or (stage == "BUILD" and not build_running):
-        missing = build_blockers(document, brd_present)
+        missing = list(build_blockers(document, brd_present))
+        if provider_blocker:
+            missing.append(provider_blocker)
         blockers.extend(why for why in missing if why not in blockers)
         if not missing:
             actions.append("start_build")

@@ -610,7 +610,72 @@ claiming to hold against that user. A store that has no seal (one from
 before sealing existed, or one whose seal was removed) is reported
 `unsealed` and is sealed by Forge's next save; a seal that is unreadable,
 of another schema, or written for another store anchors nothing and is
-the TAMPERED finding with nothing to restore from. A process the provider
+the TAMPERED finding with nothing to restore from.
+
+Declared is not eligible (independent review of 89910b8, findings R1 to
+R3). The seal narrowed what a provider could do to the store, but the
+default Claude provider and the seal occupy the same operating-system trust
+domain: Claude runs on this path with general shell capability and no
+filesystem confinement as the user whose files hold the anchor, so a
+validation mechanism cannot establish independence from an actor that can
+replace the validation state. The governed basic-user path therefore
+executes an engineering provider only when Forge itself can establish that
+the provider is confined to the project subject. The Provider Contract
+carries that as data: a closed confinement vocabulary (`none`, `declared`,
+`established`) and one row per declared provider, and
+`governed_build_eligibility` decides from that table and nothing else --
+not the request, not the capsule, not the project directory, not the
+provider's own account. Claude's confinement is `none`; Codex's is
+`declared`, because the workspace-write sandbox is a flag the adapter
+passes to a CLI and Forge has not independently established it; nothing is
+`established`. Both providers are therefore declared, registered and
+selectable, and neither is eligible for the governed build: `/api/build`
+refuses before the lifecycle moves and before any flow is constructed, in
+the contract's words, tries no other provider, changes no execution mode,
+and the page lists the same reason as the blocker. A basic-user journey
+whose creation, proposals, human confirmations, BRD derivation and
+lifecycle orchestration all work while a real external-provider build is
+refused is the intended result of this baseline; the authority invariant
+is not weakened to keep a build executable. The deterministic flow the
+tests install at the injectable seam carries its own eligibility because it
+executes no provider; the served surface passes nothing and uses the
+contract's decision, which is pinned. Promotion of any provider to
+`established` is future work that requires Forge to verify a confinement,
+not to be told about one.
+
+Two anchor states that were one are now kept apart. A store Forge has ever
+sealed carries a committed marker naming its seal, so a protected store
+whose seal is missing is the TAMPERED finding with nothing to restore from
+-- no authority is inferred from its files, and recovery is outside this
+surface -- while a store with neither marker nor seal is the legacy case
+from before sealing existed, reported `unsealed` and sealed by Forge's
+next save. The marker's trustworthiness depends on the eligibility gate,
+and the dependency runs one way: the marker lives in the store, inside the
+workspace any executing provider would hold write authority over, and a
+process with that authority could remove it and commit the removal so that
+a protected store reads as legacy again. It is trustworthy at this baseline
+because no provider executes on the governed path at all. A later slice
+that makes any provider eligible must revisit this before it does so, or it
+silently reopens R2. Nor is the marker a freshness mechanism: a store
+restored wholesale to an earlier state carries its marker back with it. The
+seal establishes what Forge last wrote, not that it is the latest thing
+Forge wrote: an actor who can replace the store, its marker and its seal
+together with an earlier consistent set is not detected by any of them, so
+the surface reports the seal's currency as `not_independently_anchored`
+and monotonic external anchoring is deferred rather than claimed. Not
+claimed anywhere: sandboxing of any provider, an authenticated human
+identity, cryptographic provenance, A-018, or PR-18.
+
+The injectable seam is a composition-time act and nothing else. `create_app`
+takes `eligibility` beside `flow_factory`; a test that installs a
+deterministic flow -- one that answers in the flow's shape and executes no
+engineering agent -- passes an eligibility that says so, because the gate
+exists to keep an unconfined provider off the authority store and that flow
+has none. No request, capsule content, project file or provider output
+reaches either parameter; the served composition passes neither, so the
+shipped surface decides by the contract alone, and that is pinned by test.
+A flow injected at the seam without its own eligibility is still gated by
+the contract's decision. A process the provider
 leaves running after the flow returns is caught at the next load, not
 while it writes. The seal is written after the store's commit, so a process
 that dies between the two leaves Forge's own newest commit reading as a

@@ -2,6 +2,27 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Declared is not eligible: the governed basic-user build executes an
+  engineering provider only when Forge has established that the provider is
+  confined to the project subject, and today that is neither of them
+  (independent review of 89910b8, R1). The seal had narrowed what a
+  provider could do to the authority store, but the default Claude provider
+  runs with general shell capability and no filesystem confinement as the
+  same operating-system user whose files hold the seal, so the anchor and
+  the actor it constrains shared a trust domain. The Provider Contract now
+  carries, as data, what Forge has established about each adapter's
+  confinement -- Claude `none`, Codex `declared` (a sandbox flag passed to a
+  CLI, not independently established) -- and `governed_build_eligibility`
+  decides from that table alone. `/api/build` refuses an ineligible provider
+  before the lifecycle moves and before any flow is constructed, tries no
+  other provider, changes no execution mode, and the page lists the reason;
+  the served surface passes no other decision. The rest of the journey is
+  unchanged. Two anchor states are kept apart (R2): a store Forge ever
+  sealed carries a committed marker, so a protected store whose seal is
+  missing is TAMPERED with nothing to restore from, while a store with
+  neither is the legacy case, reported unsealed. The seal's currency is
+  reported as not independently anchored and monotonic external anchoring
+  is deferred rather than claimed (R3).
 - The authority store is sealed against the provider that builds beside
   it (P17-B1). The capsule store lives under the basic-user project
   directory and `/api/build` hands that directory to the engineering

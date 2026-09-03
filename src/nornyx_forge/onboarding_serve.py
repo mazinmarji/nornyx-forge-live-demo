@@ -56,6 +56,8 @@ def assemble(project_dir: Path) -> FastAPI:
             "let the launch directory select project authority, which is the "
             "FORGE_ROOT defect wearing different clothes"
         )
+    # No `eligibility` is passed: the served surface decides governed
+    # eligibility by the Provider Contract's own function and nothing else.
     application = create_app(
         chosen / "capsule",
         resolve_packaged_root() / ".nornyx" / "contracts",

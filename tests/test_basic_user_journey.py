@@ -50,6 +50,7 @@ from nornyx_forge.experience import (
 )
 from nornyx_forge.experience_build import flow_evidence
 from nornyx_forge.onboarding_app import ResolvePayload, create_app
+from nornyx_forge.provider_contract import GovernedEligibility
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
@@ -78,6 +79,17 @@ def _clock():
     return lambda: (
         f"2026-09-03T{(next(ticks) // 60) % 24:02d}:{next(ticks) % 60:02d}:00Z"
     )
+
+
+def _seam_eligibility(provider: str) -> GovernedEligibility:
+    """The injectable seam executes no provider: the deterministic flow the
+    tests install answers in the flow's shape and never runs an engineering
+    agent, so the governed-eligibility gate -- which exists to keep an
+    unconfined provider off the authority store -- has nothing to decide.
+    The shipped surface never sees this; it uses the contract's own decision,
+    and tests/test_governed_provider_eligibility.py pins that."""
+    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+                               reason="deterministic flow at the injectable seam; no provider executes")
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +182,8 @@ def _client(tmp_path: Path, factory=GovernedFlow) -> TestClient:
     GovernedFlow.instances = []
     BlockingFlow.hold.clear()
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                 flow_factory=factory, seal_dir=tmp_path / "seals"))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals",
+                                 eligibility=_seam_eligibility))
 
 
 def _ok(response) -> dict:
@@ -897,7 +910,8 @@ def test_a_crash_before_the_build_starts_does_not_hold_the_build_lock(
     monkeypatch.setattr(onboarding, "begin_build",
                         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git vanished")))
     client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals"),
+                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
+                                   eligibility=_seam_eligibility),
                         raise_server_exceptions=False)
     GovernedFlow.instances = []
     _confirmed(client)

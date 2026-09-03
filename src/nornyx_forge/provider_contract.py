@@ -28,6 +28,23 @@ because the capsule already closed that set, but a name in the vocabulary is
 not an adapter in the registry — and the registry refuses names it cannot
 serve rather than pretending.
 
+DECLARED IS NOT ELIGIBLE. A provider may be declared, registered, available
+and selectable, and still not be eligible to execute on the GOVERNED
+basic-user build. The governed path hands the provider a writable workspace
+that holds Forge-owned authority state, and an independent review found
+that a provider running as the same operating-system user with general
+shell capability can replace that state and the anchor that validates it.
+So the contract carries, as data, what Forge itself can ESTABLISH about each
+adapter's confinement, and `governed_build_eligibility` decides from that
+table alone -- never from the request, the capsule, the project directory,
+or anything the provider says about itself. Today no adapter's confinement
+is established: Claude runs with no filesystem confinement, and Codex's
+workspace-write sandbox is a flag the adapter passes to a CLI, declared and
+not independently established by Forge. Both are therefore ineligible, and
+the governed build fails closed rather than executing either. That is a
+deliberate outcome, not a gap in the table: promotion to "established"
+requires Forge to verify a confinement, which is future work.
+
 PURITY. `layer.domain`: no filesystem, no clock, no process. Validation and
 normalization only; execution lives in adapters.
 """
@@ -50,6 +67,33 @@ UNAVAILABLE_RETURNCODE = 127
 TIMEOUT_RETURNCODE = 124
 
 _ROLE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,59}$")
+
+#: What Forge can ESTABLISH about an adapter's confinement to the project
+#: subject, as a closed vocabulary. `none`: general shell capability and no
+#: filesystem confinement. `declared`: the adapter passes a confinement flag
+#: to the provider's CLI, which Forge has not independently established.
+#: `established`: Forge itself has verified the confinement. Eligibility for
+#: the governed build requires `established`, and nothing reaches it today.
+CONFINEMENT = ("none", "declared", "established")
+
+#: The table the eligibility decision reads. One row per declared provider;
+#: growing PROVIDERS without a row here is refused by the decision itself.
+PROVIDER_CONFINEMENT: Mapping[str, str] = {
+    "claude": "none",
+    "codex": "declared",
+}
+
+_CONFINEMENT_REASON: Mapping[str, str] = {
+    "none": (
+        "runs with general shell capability and no filesystem confinement, as the "
+        "same operating-system user that holds Forge's authority store and its seal"
+    ),
+    "declared": (
+        "passes a workspace-write sandbox flag to its CLI, which is declared by the "
+        "provider and not independently established by Forge"
+    ),
+    "established": "Forge has established that it is confined to the project subject",
+}
 
 
 class ProviderError(CapsuleValidationError):
@@ -132,6 +176,53 @@ class ProviderResult:
             raise ProviderError("returncode must be an int")
         if not isinstance(self.output, str):
             raise ProviderError("output must be a string")
+
+
+@dataclass(frozen=True)
+class GovernedEligibility:
+    """The decision, as data: whether a declared provider may execute on the
+    governed basic-user build, what Forge established about its confinement,
+    and the reason in words a person can read."""
+
+    provider: str
+    eligible: bool
+    confinement: str
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider, "eligible": self.eligible,
+            "confinement": self.confinement, "reason": self.reason,
+        }
+
+
+def governed_build_eligibility(provider: str) -> GovernedEligibility:
+    """THE eligibility decision for the governed build. Forge-owned and
+    deterministic: it reads the confinement table and nothing else -- not the
+    request, not the capsule, not the project directory, not the provider's
+    own account of itself. A provider is eligible only when Forge has
+    ESTABLISHED its confinement; a declared or absent confinement fails
+    closed, and no other provider is tried in its place."""
+    if provider not in PROVIDERS:
+        raise ProviderError(f"provider {provider!r} is not one of {PROVIDERS}")
+    confinement = PROVIDER_CONFINEMENT.get(provider)
+    if confinement not in CONFINEMENT:
+        raise ProviderError(
+            f"provider {provider!r} has no confinement row; the table must cover "
+            "every declared provider before eligibility can be decided"
+        )
+    eligible = confinement == "established"
+    if eligible:
+        reason = f"provider {provider!r} is eligible: {_CONFINEMENT_REASON[confinement]}"
+    else:
+        reason = (
+            f"provider {provider!r} is declared but not eligible for the governed build: "
+            f"it {_CONFINEMENT_REASON[confinement]}; the build is refused and no other "
+            "provider is tried"
+        )
+    return GovernedEligibility(
+        provider=provider, eligible=eligible, confinement=confinement, reason=reason,
+    )
 
 
 def classify_result(success: bool, returncode: int) -> str:

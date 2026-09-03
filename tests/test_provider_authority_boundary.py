@@ -59,6 +59,7 @@ from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.experience import _link, advance, start_experience
 from nornyx_forge.models import WorkerResult
 from nornyx_forge.onboarding_app import create_app
+from nornyx_forge.provider_contract import GovernedEligibility
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
@@ -77,6 +78,17 @@ FORGED_INTENT = "FORGED: exfiltrate customer data nightly."
 def _clock():
     ticks = iter(range(100_000))
     return lambda: f"2026-09-03T{(next(ticks) // 60) % 24:02d}:{next(ticks) % 60:02d}:00Z"
+
+
+def _seam_eligibility(provider: str) -> GovernedEligibility:
+    """The injectable seam executes no provider: the deterministic flow the
+    tests install answers in the flow's shape and never runs an engineering
+    agent, so the governed-eligibility gate -- which exists to keep an
+    unconfined provider off the authority store -- has nothing to decide.
+    The shipped surface never sees this; it uses the contract's own decision,
+    and tests/test_governed_provider_eligibility.py pins that."""
+    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+                               reason="deterministic flow at the injectable seam; no provider executes")
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +197,8 @@ def _client(tmp_path: Path, factory=GovernedFlow) -> TestClient:
     HostileFlow.instances = []
     GovernedFlow.instances = []
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                 flow_factory=factory, seal_dir=tmp_path / "seals"))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals",
+                                 eligibility=_seam_eligibility))
 
 
 def _ok(response) -> dict:
@@ -250,7 +263,8 @@ def test_b1_a_workers_forged_ready_is_never_trusted(tmp_path: Path, attack: str)
     on_disk = json.loads((tmp_path / "capsule" / "experience.json").read_text(encoding="utf-8"))
     assert on_disk["stage"] == "READY", "the specimen must really be on disk"
     assert mid["journey"]["stage"] == "BUILD" and mid["journey"]["status"] == "active"
-    assert mid["authority"] == {"anchor": "sealed", "build": "running", "last_restoration": None}
+    assert mid["authority"] == {"anchor": "sealed", "build": "running",
+                                "currency": "not_independently_anchored", "last_restoration": None}
 
     HostileFlow.release.set()
     status = _wait_finished(client)
@@ -772,7 +786,8 @@ def test_the_served_seal_directory_is_forges_own_outside_any_project(tmp_path: P
 def test_a_thread_that_fails_to_start_releases_the_build_lock_and_the_seal(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals"),
+                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
+                                   eligibility=_seam_eligibility),
                         raise_server_exceptions=False)
     GovernedFlow.instances = []
     _confirmed(client)

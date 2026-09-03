@@ -47,7 +47,19 @@ repository. WHAT IT DOES NOT ESTABLISH: the Codex sandbox cannot write outside
 its workspace, so the seal is out of its reach; a Claude worker with Bash runs
 as the same operating-system user and can reach the seal directory. Within the
 current local trust boundary (A-015) that is the bound, and it is stated here
-rather than implied away.
+rather than implied away. A store that was ever sealed also carries a
+committed marker naming its seal, so a protected store whose seal is gone is
+refused rather than mistaken for a store from before sealing existed; only a
+store with neither marker nor seal is the legacy case, reported unsealed. The
+marker sits inside the store and so inside any provider's workspace; it is
+trustworthy because the governed path executes no provider (the Provider
+Contract's eligibility decision), not the other way round, and a wholesale
+rollback of the store carries the marker back with it -- it is not a
+freshness mechanism. The seal establishes what Forge last wrote, not that it
+is the LATEST thing Forge wrote: an actor who can replace the store, marker
+and seal together with an earlier consistent set is not detected, so the
+surface reports the seal's currency as not independently anchored, and
+monotonic external anchoring is deferred rather than claimed.
 """
 
 from __future__ import annotations
@@ -78,6 +90,12 @@ _EXPERIENCE_FILE = "experience.json"
 #: unexpected and fails the seal check.
 _AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
 _SEAL_SCHEMA = "nornyx.forge.capsule_seal.v1"
+#: Committed into the store the first time Forge seals it, naming the seal.
+#: Its presence is what tells a later load that this store REQUIRES a seal:
+#: a protected store with no seal is a refusal, a store with neither is
+#: legacy. Written before the commit it travels with, so the tree stays clean.
+_SEAL_MARKER_FILE = ".forge-seal"
+_SEAL_MARKER_SCHEMA = "nornyx.forge.capsule_seal_marker.v1"
 #: Where Forge keeps every store's seal when nothing more specific is given:
 #: outside every project, in Forge's own place beside the reviewer trust
 #: store (the `reviewer_trust.DEFAULT_REVIEWER_STORE` precedent). Callers
@@ -116,6 +134,13 @@ class CapsuleSealUnreadable(CapsuleTamperError):
     store: unreadable, another schema, or another store's. The anchor is
     damaged, so nothing on disk can be held to it -- a tamper finding with
     nothing to restore from."""
+
+
+class CapsuleSealMissing(CapsuleTamperError):
+    """The store carries Forge's seal marker and its seal is gone. It was
+    protected; nothing on disk can now be held to what Forge last wrote, and
+    no authority is inferred from it. Not restorable: there is nothing to
+    restore from."""
 
 
 class CapsuleSealError(CapsuleTamperError):
@@ -212,6 +237,7 @@ class CapsuleStore:
         self._write_document(document)
         if experience is not None:
             self._write_experience(experience)
+        self._mark_sealed()
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", "capsule: initialize")
         self.seal()
@@ -269,6 +295,8 @@ class CapsuleStore:
                 "save was asked to persist a document identical to the current "
                 "revision; a no-op commit would fabricate history"
             )
+        self._mark_sealed()
+        _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", f"capsule: {message.strip()}")
         self.seal()
         return self.revision()
@@ -324,16 +352,48 @@ class CapsuleStore:
                 "save_experience was asked to persist a state identical to the "
                 "current revision; a no-op commit would fabricate history"
             )
+        self._mark_sealed()
+        _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
         self.seal()
         return self.revision()
 
     # -- the seal ------------------------------------------------------------
+    def seal_ident(self) -> str:
+        return hashlib.sha256(str(self.root.resolve()).encode("utf-8")).hexdigest()[:24]
+
     def seal_path(self) -> Path | None:
         if self.seal_dir is None:
             return None
-        ident = hashlib.sha256(str(self.root.resolve()).encode("utf-8")).hexdigest()[:24]
-        return self.seal_dir / f"{ident}.json"
+        return self.seal_dir / f"{self.seal_ident()}.json"
+
+    def protected(self) -> bool:
+        """Was this store ever sealed by Forge? The committed marker says so,
+        independently of whether the seal itself is still there."""
+        return (self.root / _SEAL_MARKER_FILE).exists()
+
+    def protect(self) -> str | None:
+        """Begin protection of a store that predates sealing: commit the seal
+        marker as Forge's own revision and seal it. A no-op for a store that
+        already carries the marker. Returns the new revision, or None when
+        nothing needed doing."""
+        if self.seal_dir is None or self.protected():
+            return None
+        self._mark_sealed()
+        _run_git(self.root, "add", "-A")
+        _run_git(self.root, "commit", "--quiet", "-m", "capsule: protection begins")
+        self.seal()
+        return self.revision()
+
+    def _mark_sealed(self) -> None:
+        """Write the seal marker into the store when sealing is in force and
+        the store does not carry one yet. Called before the commit it joins."""
+        if self.seal_dir is None or self.protected():
+            return
+        (self.root / _SEAL_MARKER_FILE).write_text(
+            canonical_json({"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}) + "\n",
+            encoding="utf-8", newline="",
+        )
 
     def snapshot(self) -> AuthoritySnapshot:
         """The authority as it stands on disk right now: HEAD and file bytes."""
@@ -424,6 +484,16 @@ class CapsuleStore:
                 problems.append("the working tree is not clean: " + status.stdout.strip()[:120])
         if not (self.root / _MARKER_FILE).exists():
             problems.append("the store marker is missing")
+        marker = self.root / _SEAL_MARKER_FILE
+        if not marker.exists():
+            problems.append("the seal marker is missing")
+        else:
+            try:
+                named = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                named = None
+            if not isinstance(named, dict) or named.get("seal") != self.seal_ident():
+                problems.append("the seal marker does not name this store's seal")
         for name, sealed_text in snapshot.files.items():
             path = self.root / name
             current = path.read_text(encoding="utf-8") if path.exists() else None
@@ -432,10 +502,21 @@ class CapsuleStore:
         return problems
 
     def assert_sealed(self) -> None:
-        """Refuse a store that does not match its seal. No seal: nothing to
-        hold it to, and the caller's `sealed()` says so."""
+        """Refuse a store that does not match its seal, and a protected store
+        whose seal is gone. Three states, kept apart on purpose: sealed and
+        matching (trusted), never sealed (legacy -- `sealed()` is None and
+        `protected()` is False, and the caller reports it unsealed), and
+        protected-but-unsealed (the marker is there, the seal is not), which
+        is a refusal because a store known to need its anchor cannot be
+        trusted without one, and no authority is inferred from its files."""
         snapshot = self.sealed()
         if snapshot is None:
+            if self.seal_dir is not None and self.protected():
+                raise CapsuleSealMissing(
+                    f"the store at {self.root} was sealed by Forge and its seal is missing "
+                    f"from {self.seal_dir}; nothing on disk is trusted and no authority is "
+                    "inferred from it. Recovery is outside this surface."
+                )
             return
         problems = self.seal_problems(snapshot)
         if problems:
@@ -485,7 +566,7 @@ class CapsuleStore:
         stray files -- is removed by shape, not by assumption."""
         self.root.mkdir(parents=True, exist_ok=True)
         for entry in list(self.root.iterdir()):
-            if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
+            if entry.name in (_MARKER_FILE, _SEAL_MARKER_FILE, *_AUTHORITY_FILES):
                 continue
             if entry.is_dir() and not entry.is_symlink():
                 _remove_tree(entry)
@@ -503,6 +584,7 @@ class CapsuleStore:
                 path.unlink(missing_ok=True)
             else:
                 path.write_text(text, encoding="utf-8", newline="")
+        self._mark_sealed()
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", "capsule: authority restored from seal")
 
@@ -525,6 +607,7 @@ __all__ = [
     "DEFAULT_SEAL_DIR",
     "AuthoritySnapshot",
     "CapsuleSealError",
+    "CapsuleSealMissing",
     "CapsuleSealUnreadable",
     "CapsuleStore",
     "CapsuleStoreError",

@@ -249,6 +249,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # the real DevelopmentFlow worker seam, the seal's own detections and
     # rebuild, and the thread-start lock release.
     "tests/test_provider_authority_boundary.py": 32,
+    # Declared is not eligible (R1-R3 of the independent review): 16
+    # collected at introduction, floor at band(16) = 15. The governed build
+    # refusing both declared providers before anything executes, no
+    # fallback, the Forge-owned decision pinned in the served composition,
+    # the seam's own eligibility, the protected-store-without-seal refusal
+    # and the legacy distinction.
+    "tests/test_governed_provider_eligibility.py": 15,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -523,16 +530,19 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_provider_authority_boundary.py (106 -> 107 modules), floor at
 # its band, 32, and one more in tests/test_basic_user_journey.py (50, floor
 # unchanged at its band); the module-floor sum rises by 32 and the aggregate
-# follows:
+# follows. Re-measured for the governed-eligibility remediation: 16 new
+# collected in tests/test_governed_provider_eligibility.py (107 -> 108
+# modules), floor at its band, 15; the module-floor sum rises by 15 and the
+# aggregate follows:
 #
 # (rows below):
 #
-#     collected across tests/     2692   (107 modules)
-#     sum of the module floors    2476
-#     band(2692) = ceil(0.9*n)    2423
-#     MINIMUM_COLLECTED           2483
+#     collected across tests/     2708   (108 modules)
+#     sum of the module floors    2491
+#     band(2708) = ceil(0.9*n)    2438
+#     MINIMUM_COLLECTED           2498
 #     above the module sum         7
-#     below what collects         209
+#     below what collects         210
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -553,7 +563,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 216 in total, and the aggregate refuses
+# per-module bands already grant 217 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -574,7 +584,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2483
+MINIMUM_COLLECTED = 2498
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -666,6 +676,7 @@ REQUIRED_MODULES = (
     "tests/test_build_trigger.py",
     "tests/test_basic_user_journey.py",
     "tests/test_provider_authority_boundary.py",
+    "tests/test_governed_provider_eligibility.py",
     "tests/test_trusted_greenfield_acceptance.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",

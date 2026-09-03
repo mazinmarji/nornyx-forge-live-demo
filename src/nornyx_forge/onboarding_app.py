@@ -55,6 +55,18 @@ route, until a person restores the sealed authority through one explicit
 action. The seal is Forge-owned persistence outside the project; its own
 bound is stated in capsule_store.
 
+DECLARED IS NOT ELIGIBLE. Before a build is allowed to start, the surface
+asks the Provider Contract's `governed_build_eligibility` whether the
+confirmed provider may execute on the governed path at all. The answer is
+Forge-owned data about what Forge has established of the provider's
+confinement; it is never read from the request, the capsule, the project
+directory or the provider. Today neither declared provider is eligible, so
+the governed build refuses -- explicitly, before the lifecycle moves and
+before any flow is constructed, with no fallback to another provider and no
+change of execution mode -- and the page says why. The injectable seam that
+replaces provider execution in tests carries its own eligibility, because
+the deterministic flow it installs executes no provider.
+
 THE TRUST BOUNDARY, disclosed rather than implied: this surface runs
 locally for one person, like the CLI it sits beside. The actor on each
 request is taken verbatim from the request and judged by the capsule's
@@ -94,7 +106,13 @@ from .capsule import (
     propose,
     reject,
 )
-from .capsule_store import AuthoritySnapshot, CapsuleSealError, CapsuleStore, CapsuleStoreError
+from .capsule_store import (
+    AuthoritySnapshot,
+    CapsuleSealError,
+    CapsuleSealMissing,
+    CapsuleStore,
+    CapsuleStoreError,
+)
 from .experience import fail as fail_lifecycle
 from .experience_journey import (
     SYSTEM_ACTOR,
@@ -110,6 +128,7 @@ from .experience_journey import (
 )
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
+from .provider_contract import GovernedEligibility, governed_build_eligibility
 
 #: The honest words for lifecycle state that does not exist. A surface that
 #: invented a starting stage here would be reporting a workflow position
@@ -181,6 +200,11 @@ def _refusal(error: CapsuleError) -> JSONResponse:
             "refused": str(error), "finding": "TAMPERED",
             "problems": error.problems, "restorable": True,
         })
+    if isinstance(error, CapsuleSealMissing):
+        return JSONResponse(status_code=409, content={
+            "refused": str(error), "finding": "TAMPERED",
+            "anchor": "missing", "restorable": False,
+        })
     if isinstance(error, CapsuleTamperError):
         return JSONResponse(
             status_code=409, content={"refused": str(error), "finding": "TAMPERED"}
@@ -214,6 +238,7 @@ def create_app(
     flow_factory: Callable[..., Any] | None = None,
     *,
     seal_dir: Path,
+    eligibility: Callable[[str], GovernedEligibility] = governed_build_eligibility,
 ) -> FastAPI:
     """The onboarding application over one capsule store and one contract set.
 
@@ -222,6 +247,11 @@ def create_app(
     runs the real flow. `seal_dir` is where Forge keeps the store's seal:
     a directory outside the project, chosen by the caller and never derived
     here, because a seal inside the provider's workspace would seal nothing.
+    `eligibility` decides whether the confirmed provider may execute on the
+    governed build; the default is the Provider Contract's own decision and
+    the shipped surface passes nothing else. A test that installs a
+    deterministic flow at `flow_factory` passes its own, because that flow
+    executes no provider.
     """
     root = Path(capsule_root)
     contracts = Path(contracts_dir)
@@ -271,12 +301,22 @@ def create_app(
         app.state.last_restoration = {"revision": revision, "detail": record[:500]}
 
     def anchor() -> dict[str, Any]:
-        """How the authority on disk is held: sealed by Forge, or not yet."""
+        """How the authority on disk is held: sealed by Forge, or never sealed.
+        A protected store whose seal is missing never reaches here -- its load
+        refused. The seal's currency is reported for what it is: Forge's last
+        write, not independently anchored as the latest."""
         sealed = store().sealed() is not None
         return {
             "anchor": "sealed" if sealed else "unsealed",
+            "currency": "not_independently_anchored" if sealed else None,
             "last_restoration": getattr(app.state, "last_restoration", None),
         }
+
+    def provider_verdict(document: Mapping[str, Any]) -> GovernedEligibility | None:
+        provider = document["authoritative"].get("provider")
+        if provider is None:
+            return None
+        return eligibility(provider["name"])
 
     def brd_present() -> bool:
         return (root.parent / "BRD.md").exists()
@@ -324,6 +364,7 @@ def create_app(
                 lifecycle = sealed["lifecycle"]
                 revision = sealed["snapshot"].revision
                 held = {"anchor": "sealed", "build": "running",
+                        "currency": "not_independently_anchored",
                         "last_restoration": getattr(app.state, "last_restoration", None)}
             else:
                 try:
@@ -343,6 +384,7 @@ def create_app(
                 except CapsuleError as error:
                     return _refusal(error)
                 held = anchor()
+        verdict = provider_verdict(document)
         return {
             "initialized": True,
             "project_id": document["project_id"],
@@ -350,8 +392,12 @@ def create_app(
             "proposals": document["proposed"],
             "digest_chain_length": len(document["digest_chain"]),
             "experience": lifecycle if lifecycle is not None else EXPERIENCE_ABSENT,
-            "journey": journey_view(lifecycle, document, brd_present(), build_lock.locked()),
+            "journey": journey_view(
+                lifecycle, document, brd_present(), build_lock.locked(),
+                provider_blocker=None if verdict is None or verdict.eligible else verdict.reason,
+            ),
             "brd_present": brd_present(),
+            "provider_eligibility": verdict.as_dict() if verdict is not None else None,
             "authority": held,
             "providers": list(PROVIDERS),
             "revision": revision,
@@ -540,6 +586,9 @@ def create_app(
             try:
                 snapshot = current.sealed()
                 if snapshot is None:
+                    # A protected store with no seal is the missing-anchor
+                    # finding, not "nothing to restore"; a legacy store is.
+                    current.assert_sealed()
                     return _refused("this store has no seal to restore from")
                 problems = current.seal_problems(snapshot)
                 if not problems:
@@ -587,6 +636,15 @@ def create_app(
         provider = document["authoritative"].get("provider")
         if provider is None:
             return _refused("no confirmed provider; confirm one before building")
+        # DECLARED IS NOT ELIGIBLE. Decided here, before the lifecycle moves
+        # and before any flow exists: an ineligible provider is refused in
+        # the contract's words, nothing is tried in its place, and the
+        # lifecycle stays exactly where it was.
+        verdict = eligibility(provider["name"])
+        if not verdict.eligible:
+            return JSONResponse(status_code=409, content={
+                "refused": verdict.reason, "eligibility": verdict.as_dict(),
+            })
         project_dir = root.parent
         if not brd_present():
             return _refused("no BRD.md in the project; derive it first")
@@ -598,6 +656,10 @@ def create_app(
                 positioned, advanced = begin_build(lifecycle, actor, at())
                 if advanced:
                     current.save_experience(positioned, "reached BUILD")
+                # A store from before sealing existed is protected by Forge's
+                # own commit before the seal is taken, so that Forge's own
+                # build never reads as a breach of its own seal.
+                current.protect()
                 # SEAL. From here until the thread ends, this is the only
                 # authority the surface answers from, and the store on disk
                 # is the provider's to scribble on -- it will be checked
@@ -883,7 +945,7 @@ function renderJourney(s){
   text("authority", s.finding ? (s.restorable ? "does not match Forge's seal; a person may restore it" : "—")
     : !s.initialized ? "—"
     : (held.build === "running" ? "sealed while the build runs; the store on disk is not consulted"
-    : (held.anchor === "sealed" ? "sealed by Forge" : "not yet sealed by Forge"))
+    : (held.anchor === "sealed" ? "sealed by Forge (currency not independently anchored)" : "never sealed by Forge (legacy store)"))
     + (held.last_restoration ? " · restored from the seal: " + held.last_restoration.detail : ""));
   const actions = new Set((j && j.actions) || []);
   for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
