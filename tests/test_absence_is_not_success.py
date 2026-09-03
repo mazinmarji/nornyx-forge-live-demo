@@ -632,6 +632,22 @@ def _home(root: Path) -> dict[str, str]:
     return {"HOME": str(root), "USERPROFILE": str(root)}
 
 
+#: A route entry whose value is None UNSETS the variable. The HOME default
+#: files (`~/.config/git/ignore`, `~/.config/git/attributes`) are consulted
+#: only while `XDG_CONFIG_HOME` is unset; the GitHub ubuntu runner exports
+#: it, and both HOME routes were measured there to hide nothing for a plain
+#: git until the variable was cleared, so those routes clear it.
+UNSET = None
+
+
+def _apply(monkeypatch: pytest.MonkeyPatch, delta: dict[str, str | None]) -> None:
+    for name, value in delta.items():
+        if value is UNSET:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
 #: label -> (tmp_path, ignore file) -> environment. Every route hands git a
 #: `core.excludesFile` naming the reader's ignore file, or the default ignore
 #: file that stands in for one. All were measured live at b999537 on git
@@ -682,12 +698,19 @@ READER_CONFIGURATION_ROUTES = {
     "XDG_CONFIG_HOME ignore": lambda tmp, ignore: {
         "XDG_CONFIG_HOME": str(_file(tmp / "xdg-ignore" / "git" / "ignore", "untracked.py" + NL).parents[1]),
     },
-    "HOME gitconfig": lambda tmp, ignore: _home(_file(
-        tmp / "home-config" / ".gitconfig", f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
-    ).parent),
-    "HOME ignore": lambda tmp, ignore: _home(
-        _file(tmp / "home-ignore" / ".config" / "git" / "ignore", "untracked.py" + NL).parents[2],
-    ),
+    "HOME gitconfig": lambda tmp, ignore: {
+        **_home(_file(
+            tmp / "home-config" / ".gitconfig",
+            f"[core]{NL}\texcludesFile = {ignore.as_posix()}{NL}",
+        ).parent),
+        "XDG_CONFIG_HOME": UNSET,
+    },
+    "HOME ignore": lambda tmp, ignore: {
+        **_home(_file(
+            tmp / "home-ignore" / ".config" / "git" / "ignore", "untracked.py" + NL,
+        ).parents[2]),
+        "XDG_CONFIG_HOME": UNSET,
+    },
 }
 
 
@@ -721,8 +744,7 @@ def test_reader_configuration_cannot_hide_a_governed_untracked_file(
 
     ignore = _file(tmp_path / "reader-ignore", "untracked.py" + NL)
     delta = READER_CONFIGURATION_ROUTES[route](tmp_path, ignore)
-    for name, value in delta.items():
-        monkeypatch.setenv(name, value)
+    _apply(monkeypatch, delta)
 
     # POSITIVE CONTROL. The route must be live for a plain git on this
     # machine, or the assertion after it shows nothing about isolation. The
@@ -789,8 +811,7 @@ def _reader_attributes(route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPat
         monkeypatch.setenv("GIT_CONFIG_VALUE_2", "false")
         return
     home = _file(tmp_path / "home-attributes" / ".config" / "git" / "attributes", "*.py ident" + NL)
-    for name, value in _home(home.parents[2]).items():
-        monkeypatch.setenv(name, value)
+    _apply(monkeypatch, {**_home(home.parents[2]), "XDG_CONFIG_HOME": UNSET})
 
 
 @pytest.mark.parametrize("route", sorted(ATTRIBUTE_ROUTES))
@@ -970,7 +991,17 @@ def test_a_repository_git_refuses_is_a_refusal_not_an_unbound_tree(
     assert refresh._repository_root() == tree
 
     monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
-    plain = _plain_git("rev-parse", "--show-toplevel", cwd=tree)
+    # POSITIVE CONTROL under the tool's own file settings, not the reader's:
+    # the question is whether THIS git honours the knob, and a reader whose
+    # configuration already allows the directory would answer a different
+    # question. Measured on the GitHub ubuntu runner: a plain git under the
+    # runner's configuration resolved the repository despite the knob, with
+    # no ownership message at all, so the control failed there for an
+    # allowance the tool never sees.
+    plain = _plain_git(
+        "rev-parse", "--show-toplevel", cwd=tree,
+        env={**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+    )
     assert plain.returncode != 0 and "dubious ownership" in plain.stderr, (
         "this git does not refuse a foreign-owned repository under "
         f"GIT_TEST_ASSUME_DIFFERENT_OWNER, so the refusal cannot be exercised: "
