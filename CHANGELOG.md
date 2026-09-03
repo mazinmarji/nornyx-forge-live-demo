@@ -2,6 +2,31 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The authority store is sealed against the provider that builds beside
+  it (P17-B1). The capsule store lives under the basic-user project
+  directory and `/api/build` hands that directory to the engineering
+  provider as a writable workspace, so a worker with Write or Bash could
+  rewrite `experience.json` or `capsule.json`, recompute the one-link
+  digest chain, and commit the result inside the store's own repository.
+  Measured at 47bd370 through the build seam and through the real
+  `DevelopmentFlow` worker seam: a forged READY was rendered mid-build,
+  persisted, and read back after a restart, and a committed forgery left a
+  clean tree; forged capsule authority was rendered the same way. Now
+  `CapsuleStore` records a seal -- the revision and the exact bytes of both
+  authority files -- in a Forge-owned directory outside every project
+  after each of its own commits, and checks the store against it on every
+  load: revision, working tree, bytes. While a build runs the surface
+  answers every read from the authority it sealed when the build began and
+  refuses every write; when the flow returns it checks the seal before
+  translating the result, restores the sealed authority when the store
+  moved, and records the run as a failure that names what moved. A forgery
+  left for a later process is TAMPERED on every route until a person
+  restores the sealed authority explicitly. The seal is out of a
+  workspace-write sandbox's reach and within the same operating-system
+  user's reach; A-022 states that bound and withdraws the earlier claim
+  that detection "belongs to git history". Also: a build thread that fails
+  to start releases the build lock and the seal, so the next build is not
+  refused as already running.
 - The basic-user journey is orchestrated through the Experience Contract
   (PR-17). Measured at 9a16851 through the real onboarding app: creating a
   project, confirming its intent and provider, deriving the BRD, starting a

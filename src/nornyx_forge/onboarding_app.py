@@ -36,6 +36,25 @@ the contract, and refused by the contract otherwise. What the page shows
 is read back from the persisted lifecycle on every refresh; a JavaScript
 variable never decides a stage.
 
+THE PROVIDER'S WRITABLE PATH, and the boundary against it. The build hands
+the project directory to an untrusted engineering provider as a writable
+workspace, and the capsule store lives inside it. Measured at 47bd370: a
+worker that rewrote experience.json and recomputed its final chain link had
+its forged READY rendered by /api/state mid-build, persisted, and read back
+after a restart; committing the forgery inside the store's repository left a
+clean tree and changed nothing. So authority is never taken from disk while a
+build runs -- every read is served from the state Forge itself sealed when
+the build began, and every write is refused until the build ends -- and
+when the flow returns, the store is checked against Forge's seal (revision,
+working tree, exact bytes) BEFORE its result is translated. A store that
+moved outside Forge is restored to the sealed authority and the build is
+recorded as a failure that says so; the provider's result is not consulted.
+The same check runs on every load at rest, so a forgery left behind for a
+later process is refused there too -- as the TAMPERED finding, on every
+route, until a person restores the sealed authority through one explicit
+action. The seal is Forge-owned persistence outside the project; its own
+bound is stated in capsule_store.
+
 THE TRUST BOUNDARY, disclosed rather than implied: this surface runs
 locally for one person, like the CLI it sits beside. The actor on each
 request is taken verbatim from the request and judged by the capsule's
@@ -75,8 +94,10 @@ from .capsule import (
     propose,
     reject,
 )
-from .capsule_store import CapsuleStore, CapsuleStoreError
+from .capsule_store import AuthoritySnapshot, CapsuleSealError, CapsuleStore, CapsuleStoreError
+from .experience import fail as fail_lifecycle
 from .experience_journey import (
+    SYSTEM_ACTOR,
     JourneyRefusal,
     begin_build,
     build_error,
@@ -99,6 +120,10 @@ EXPERIENCE_ABSENT = {
 }
 
 _NO_PROJECT = "no project exists; create one first"
+_SEALED = (
+    "a build is running; the project's authority is sealed until it completes, "
+    "and nothing written meanwhile is trusted"
+)
 _NO_LIFECYCLE = (
     "no lifecycle is recorded for this project; start tracking it first -- "
     "nothing about its history is inferred"
@@ -151,6 +176,11 @@ def _refusal(error: CapsuleError) -> JSONResponse:
     """
     if isinstance(error, CapsuleValidationError):
         return JSONResponse(status_code=422, content={"refused": str(error)})
+    if isinstance(error, CapsuleSealError):
+        return JSONResponse(status_code=409, content={
+            "refused": str(error), "finding": "TAMPERED",
+            "problems": error.problems, "restorable": True,
+        })
     if isinstance(error, CapsuleTamperError):
         return JSONResponse(
             status_code=409, content={"refused": str(error), "finding": "TAMPERED"}
@@ -182,15 +212,20 @@ def create_app(
     contracts_dir: Path,
     clock: Callable[[], str] | None = None,
     flow_factory: Callable[..., Any] | None = None,
+    *,
+    seal_dir: Path,
 ) -> FastAPI:
     """The onboarding application over one capsule store and one contract set.
 
     `flow_factory` is the injectable seam for the build trigger, defaulting
     to the real `DevelopmentFlow`; tests capture it, the shipped surface
-    runs the real flow.
+    runs the real flow. `seal_dir` is where Forge keeps the store's seal:
+    a directory outside the project, chosen by the caller and never derived
+    here, because a seal inside the provider's workspace would seal nothing.
     """
     root = Path(capsule_root)
     contracts = Path(contracts_dir)
+    seals = Path(seal_dir)
     at = clock if clock is not None else _now_iso
     if flow_factory is None:
         from .development_flow import DevelopmentFlow
@@ -212,9 +247,36 @@ def create_app(
     # around store access only, never around the build itself. A local
     # single-user surface needs no more.
     store_lock = threading.Lock()
+    #: While a build runs: the authority Forge sealed when it began. Every
+    #: read is answered from here and every write is refused, so nothing the
+    #: provider writes to disk meanwhile can become trusted state. `None`
+    #: when no build runs. Read and written under `store_lock` only.
+    app.state.sealed = None
 
     def store() -> CapsuleStore:
-        return CapsuleStore(root)
+        return CapsuleStore(root, seal_dir=seals)
+
+    def restored(current: CapsuleStore, breach: CapsuleSealError, why: str) -> None:
+        """The store moved outside Forge: put the sealed authority back and
+        record it on the trusted lifecycle when that lifecycle can still take
+        a failure. Nothing from the untrusted disk state is read."""
+        revision, notes = current.restore(breach.snapshot)
+        record = f"{why}: " + "; ".join(breach.problems + notes)
+        sealed_lifecycle = breach.snapshot.files.get("experience.json")
+        if sealed_lifecycle is not None:
+            lifecycle = current.load_experience()
+            if lifecycle["status"] == "active":
+                failed = fail_lifecycle(lifecycle, SYSTEM_ACTOR, record[:500], at())
+                current.save_experience(failed, "authority restored from seal")
+        app.state.last_restoration = {"revision": revision, "detail": record[:500]}
+
+    def anchor() -> dict[str, Any]:
+        """How the authority on disk is held: sealed by Forge, or not yet."""
+        sealed = store().sealed() is not None
+        return {
+            "anchor": "sealed" if sealed else "unsealed",
+            "last_restoration": getattr(app.state, "last_restoration", None),
+        }
 
     def brd_present() -> bool:
         return (root.parent / "BRD.md").exists()
@@ -226,8 +288,11 @@ def create_app(
         raises -- unreadable, invalid, tampered, or a save it declined --
         passes through in the store's own words. A review measured the
         broader mapping reporting "no project exists" for a lifecycle that
-        had in fact just been persisted.
+        had in fact just been persisted. A running build seals the store:
+        no write route reads it until the build ends.
         """
+        if app.state.sealed is not None:
+            raise JourneyRefusal(_SEALED)
         try:
             return current.load()
         except CapsuleStoreError:
@@ -251,23 +316,33 @@ def create_app(
     def state():
         current = store()
         with store_lock:
-            try:
-                document = current.load()
-            except CapsuleStoreError:
-                return {"initialized": False, "providers": list(PROVIDERS)}
-            except CapsuleError as error:
-                return _refusal(error)
-            lifecycle: dict[str, Any] | None
-            try:
-                lifecycle = current.load_experience()
-                revision = current.revision()
-            except CapsuleStoreError as error:
-                if "experience state" not in str(error):
-                    return _refusal(error)  # a store with no commit: reported, not a 500
-                lifecycle = None
-                revision = current.revision()
-            except CapsuleError as error:
-                return _refusal(error)
+            sealed = app.state.sealed
+            if sealed is not None:
+                # A build is running. The disk belongs to the provider until it
+                # ends; the answer is the authority Forge sealed when it began.
+                document = sealed["document"]
+                lifecycle = sealed["lifecycle"]
+                revision = sealed["snapshot"].revision
+                held = {"anchor": "sealed", "build": "running",
+                        "last_restoration": getattr(app.state, "last_restoration", None)}
+            else:
+                try:
+                    document = current.load()
+                except CapsuleStoreError:
+                    return {"initialized": False, "providers": list(PROVIDERS)}
+                except CapsuleError as error:
+                    return _refusal(error)
+                try:
+                    lifecycle = current.load_experience()
+                    revision = current.revision()
+                except CapsuleStoreError as error:
+                    if "experience state" not in str(error):
+                        return _refusal(error)  # a store with no commit: reported, not a 500
+                    lifecycle = None
+                    revision = current.revision()
+                except CapsuleError as error:
+                    return _refusal(error)
+                held = anchor()
         return {
             "initialized": True,
             "project_id": document["project_id"],
@@ -277,6 +352,7 @@ def create_app(
             "experience": lifecycle if lifecycle is not None else EXPERIENCE_ABSENT,
             "journey": journey_view(lifecycle, document, brd_present(), build_lock.locked()),
             "brd_present": brd_present(),
+            "authority": held,
             "providers": list(PROVIDERS),
             "revision": revision,
         }
@@ -312,7 +388,7 @@ def create_app(
         current = store()
         with store_lock:
             try:
-                document = current.load()
+                document = project(current)
                 updated, proposal_id = propose(
                     document, payload.field, payload.value,
                     payload.actor.to_actor(), at(),
@@ -330,7 +406,7 @@ def create_app(
         current = store()
         with store_lock:
             try:
-                document = current.load()
+                document = project(current)
                 updated = confirm(document, proposal_id, payload.actor.to_actor(), at())
                 current.save(updated, f"capsule: confirm {proposal_id}")
             except CapsuleError as error:
@@ -342,7 +418,7 @@ def create_app(
         current = store()
         with store_lock:
             try:
-                document = current.load()
+                document = project(current)
                 updated = reject(document, proposal_id, payload.actor.to_actor(), at())
                 current.save(updated, f"capsule: reject {proposal_id}")
             except CapsuleError as error:
@@ -440,6 +516,37 @@ def create_app(
                 return _refusal(error)
         return {"stage": updated["stage"], "status": updated["status"]}
 
+    @app.post("/api/journey/restore")
+    def restore_authority(payload: ResolvePayload):
+        """Put the sealed authority back after the store moved outside Forge.
+
+        A human act, offered only while the store fails its seal. Nothing on
+        the untrusted disk is read: the store is reset to what Forge last
+        wrote, the lifecycle -- if it was active -- records the restoration
+        as a failure that names what moved, and the store is sealed again.
+        """
+        actor = _human_act(payload, "restoring the authority store")
+        if isinstance(actor, JSONResponse):
+            return actor
+        current = store()
+        with store_lock:
+            if app.state.sealed is not None:
+                return _refused(_SEALED)
+            try:
+                snapshot = current.sealed()
+                if snapshot is None:
+                    return _refused("this store has no seal to restore from")
+                problems = current.seal_problems(snapshot)
+                if not problems:
+                    return _refused("the store matches its seal; there is nothing to restore")
+                restored(current, CapsuleSealError(problems, snapshot),
+                         f"the authority store was modified outside Forge; restored by {actor.ident}")
+                lifecycle = current.load_experience()
+            except CapsuleError as error:
+                return _refusal(error)
+        return {"stage": lifecycle["stage"], "status": lifecycle["status"],
+                "restoration": app.state.last_restoration}
+
     @app.post("/api/build")
     def trigger_build(payload: ResolvePayload):
         """Run the governed build for this project, from confirmed state only.
@@ -466,6 +573,8 @@ def create_app(
             return actor
         current = store()
         with store_lock:
+            if app.state.sealed is not None:
+                return _refused("a build is already running for this project")
             try:
                 document = project(current)
             except CapsuleError as error:
@@ -484,12 +593,24 @@ def create_app(
                 positioned, advanced = begin_build(lifecycle, actor, at())
                 if advanced:
                     current.save_experience(positioned, "reached BUILD")
+                # SEAL. From here until the thread ends, this is the only
+                # authority the surface answers from, and the store on disk
+                # is the provider's to scribble on -- it will be checked
+                # against this seal before anything it holds is believed.
+                snapshot = current.seal()
+                if snapshot is None:  # pragma: no cover - the app always seals
+                    raise CapsuleStoreError("the store has no seal directory")
+                app.state.sealed = {
+                    "document": document, "lifecycle": positioned, "snapshot": snapshot,
+                }
         except CapsuleError as error:
             build_lock.release()
             return _refusal(error)
         except BaseException:
             # Anything else -- an absent git, an interrupted request -- must
             # not leave the build lock held for the rest of the session.
+            with store_lock:
+                app.state.sealed = None
             build_lock.release()
             raise
         app.state.build = {"status": "running", "provider": provider["name"]}
@@ -515,29 +636,59 @@ def create_app(
                 outcome = {"status": "failed", "error": str(error)}
             try:
                 with store_lock:
-                    lifecycle = current.load_experience()
-                    if result is _NOT_RETURNED:
-                        steps = [(build_error(lifecycle, outcome["error"], at()),
-                                  "build did not complete")]
+                    sealed_snapshot: AuthoritySnapshot = app.state.sealed["snapshot"]
+                    problems = current.seal_problems(sealed_snapshot)
+                    if problems:
+                        # THE PROVIDER MOVED THE AUTHORITY. Nothing it left on
+                        # disk is read, and its result is not translated: the
+                        # sealed state is put back and the run is recorded as
+                        # a failure that names what moved.
+                        breach = CapsuleSealError(problems, sealed_snapshot)
+                        restored(current, breach,
+                                 "the provider modified the project's authority store "
+                                 "during the build; its result is not translated")
+                        lifecycle = current.load_experience()
+                        outcome["lifecycle"] = {
+                            "recorded": True,
+                            "stage": lifecycle["stage"],
+                            "status": lifecycle["status"],
+                            "authority": "restored from seal",
+                        }
                     else:
-                        steps = list(build_outcome(lifecycle, result, at))
-                    for step, message in steps:
-                        current.save_experience(step, message)
-                        lifecycle = step
-                    outcome["lifecycle"] = {
-                        "recorded": True,
-                        "stage": lifecycle["stage"],
-                        "status": lifecycle["status"],
-                    }
+                        lifecycle = current.load_experience()
+                        if result is _NOT_RETURNED:
+                            steps = [(build_error(lifecycle, outcome["error"], at()),
+                                      "build did not complete")]
+                        else:
+                            steps = list(build_outcome(lifecycle, result, at))
+                        for step, message in steps:
+                            current.save_experience(step, message)
+                            lifecycle = step
+                        outcome["lifecycle"] = {
+                            "recorded": True,
+                            "stage": lifecycle["stage"],
+                            "status": lifecycle["status"],
+                        }
             except Exception as error:  # noqa: BLE001 - the record, not the run
                 outcome["lifecycle"] = {"recorded": False, "error": str(error)}
             finally:
                 # Published last, so a poller that sees a terminal build
-                # status also sees the lifecycle that status produced.
+                # status also sees the lifecycle that status produced; the
+                # seal is lifted only once the store is Forge's again.
+                with store_lock:
+                    app.state.sealed = None
                 app.state.build = outcome
                 build_lock.release()
 
-        threading.Thread(target=run, name="forge-build", daemon=True).start()
+        try:
+            threading.Thread(target=run, name="forge-build", daemon=True).start()
+        except BaseException:
+            # A thread that never started cannot release anything itself.
+            with store_lock:
+                app.state.sealed = None
+            app.state.build = {"status": "never_run"}
+            build_lock.release()
+            raise
         return {"status": "running", "provider": provider["name"]}
 
     @app.get("/api/build")
@@ -558,13 +709,16 @@ def create_app(
         the capsule -- where the build reads it.
         """
         current = store()
-        try:
-            document = current.load()
-            rendered = brd_from_capsule(document)
-        except BrdAuthoringError as error:
-            return JSONResponse(status_code=409, content={"refused": str(error)})
-        except CapsuleError as error:
-            return _refusal(error)
+        with store_lock:
+            try:
+                document = project(current)
+                rendered = brd_from_capsule(document)
+            except BrdAuthoringError as error:
+                return JSONResponse(status_code=409, content={"refused": str(error)})
+            except CapsuleStoreError:
+                return _refused(_NO_PROJECT)
+            except CapsuleError as error:
+                return _refusal(error)
         target = root.parent / "BRD.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(rendered, encoding="utf-8", newline="")
@@ -582,6 +736,8 @@ def create_app(
         """
         current = store()
         with store_lock:
+            if app.state.sealed is not None:
+                return sharing_preview(app.state.sealed["document"], app.state.sealed["lifecycle"])
             try:
                 document = current.load()
             except CapsuleStoreError:
@@ -667,9 +823,11 @@ this page, are the authority.</p>
   <button id="b_build" onclick="act('/api/build')">Start build</button>
   <button id="b_retry" onclick="act('/api/journey/retry')">Retry</button>
   <button id="b_ready" onclick="act('/api/journey/ready')">Mark ready</button>
+  <button id="b_restore" onclick="act('/api/journey/restore')">Restore sealed authority</button>
  </div>
  <div id="notice"></div>
- <div>Build (this server session): <span id="build">—</span></div></fieldset>
+ <div>Build (this server session): <span id="build">—</span></div>
+ <div>Authority: <span id="authority">—</span></div></fieldset>
 <fieldset><legend>Project state</legend><pre id="state">loading…</pre></fieldset>
 <fieldset><legend>Sharing preview — reviewed here, never sent</legend>
  <button onclick="sharingPreview()">Show sharing preview</button><pre id="share"></pre></fieldset>
@@ -704,6 +862,7 @@ const BUTTONS = {b_start: "start_tracking", b_confirm: "confirm_scope", b_build:
 function renderJourney(s){
   const j = s.journey;
   if(s.finding){ text("stage", s.finding); text("status", ""); text("next", s.refused); }
+  document.getElementById("b_restore").disabled = !(s.finding && s.restorable);
   else if(!s.initialized){ text("stage", "no project"); text("status", ""); text("next", "Create a project to begin."); }
   else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
   else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
@@ -716,6 +875,12 @@ function renderJourney(s){
     for(const b of j.blockers){ const item = document.createElement("li"); item.textContent = b; list.append(item); }
     blockers.append(list);
   }
+  const held = s.authority || {};
+  text("authority", s.finding ? (s.restorable ? "does not match Forge's seal; a person may restore it" : "—")
+    : !s.initialized ? "—"
+    : (held.build === "running" ? "sealed while the build runs; the store on disk is not consulted"
+    : (held.anchor === "sealed" ? "sealed by Forge" : "not yet sealed by Forge"))
+    + (held.last_restoration ? " · restored from the seal: " + held.last_restoration.detail : ""));
   const actions = new Set((j && j.actions) || []);
   for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
   document.getElementById("b_brd").disabled = !s.initialized;

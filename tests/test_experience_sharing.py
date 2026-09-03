@@ -140,7 +140,8 @@ def test_the_route_serves_the_minimized_preview(tmp_path: Path):
 
     CapsuleStore(tmp_path / "capsule").initialize(_document())
     contracts = ROOT / ".nornyx" / "contracts"
-    client = TestClient(create_app(tmp_path / "capsule", contracts))
+    client = TestClient(create_app(tmp_path / "capsule", contracts,
+                                   seal_dir=tmp_path / "seals"))
     response = client.get("/api/sharing-preview")
     assert response.status_code == 200
     payload = response.json()
@@ -150,7 +151,8 @@ def test_the_route_serves_the_minimized_preview(tmp_path: Path):
 
 
 def test_the_route_refuses_when_no_project_exists(tmp_path: Path):
-    client = TestClient(create_app(tmp_path, ROOT / ".nornyx" / "contracts"))
+    client = TestClient(create_app(tmp_path / "capsule", ROOT / ".nornyx" / "contracts",
+                                   seal_dir=tmp_path / "seals"))
     response = client.get("/api/sharing-preview")
     assert response.status_code == 409
     assert "no project exists" in response.json()["refused"]

@@ -561,17 +561,57 @@ records one failure at BUILD in the contract's words for the refused step
 persisted there could never be re-run (measured under review with a flow
 that reported itself accepted while a gate failed, a shape the real
 `DevelopmentFlow` cannot produce because its `accepted` is the conjunction
-of its gates). And one bound
-is inherited rather than introduced: the lifecycle's digest chain, like
-the capsule's, is in-document tamper evidence and not a signature, so a
-hand edit that also recomputes the final chain link verifies and is
-rendered as the stage it names. Every legitimate lifecycle write is a
-commit in the capsule's own git repository, so such an edit leaves that
-repository with an uncommitted change; no route consults that history at
-this baseline, and whether the store should refuse an uncommitted
-lifecycle is a persistence decision this slice does not take. The bound
-is pinned beside the capsule's equivalent by
-`test_the_disclosed_bound_a_rebuilt_final_link_passes_in_document_verification`.
+of its gates).
+
+The store is inside the provider's workspace, and that was an authority
+hole (P17-B1, adjudicated a merge blocker). The capsule store lives under
+the project directory; `/api/build` hands that directory to the selected
+provider as its writable workspace -- Claude with Edit, Write and Bash,
+Codex under a workspace-write sandbox -- and both digest chains are one
+link deep, so a worker that has read the domain modules can rewrite a
+state and recompute the final link, and can commit the result inside the
+store's own git repository with the store's identity. Measured at 47bd370
+through the production build seam and through the real `DevelopmentFlow`
+worker seam: the worker's forged READY was rendered by `/api/state` while
+the build ran, persisted, and read back after a restart; a committed
+forgery left a clean tree and changed nothing; forged capsule authority
+(intent, provider) was rendered the same way. An earlier version of this
+entry said detection of such an edit "belongs to the store's git
+history". That was insufficient: mutable git history inside the
+provider's workspace is not an anchor when the provider can write the
+repository, and the claim is withdrawn.
+
+What is established now. The store keeps a seal -- the revision and the
+exact bytes of the two authority files -- in a directory OUTSIDE every
+project (`~/.nornyx/forge/seals`, beside the reviewer trust store), written
+by Forge after each of its own commits and by nothing else. Every load
+checks the store against the seal first: the revision, the working tree
+(a dirty tree, an extra file) and each file's bytes, so a dirty forgery
+and a committed forgery are the same finding, and a clean tree at a new
+commit is not trusted authority. While a build runs, every read is
+answered from the authority Forge sealed when the build began and every
+write is refused, so a forgery on disk is never rendered and no action
+can consume it. When the flow returns, the store is checked against that
+seal before the result is translated; a store that moved is reset to the
+sealed authority, the run is recorded as a failure that names what moved,
+and the provider's result is not consulted. A forgery left for a later
+process is the TAMPERED finding on every route until a person restores
+the sealed authority through one explicit action, which records the
+restoration on the lifecycle. Confirmed capsule authority is covered by
+the same seal as the lifecycle. The legitimate journey is unchanged.
+
+What the seal does not establish, stated rather than implied away. It is
+Forge-owned persistence, not a signature: it is out of a workspace-write
+sandbox's reach, so a Codex worker cannot touch it, and it is within the
+same operating-system user's reach, so a Claude worker with Bash could.
+That is the local trust boundary of A-015 -- the machine's logged-in
+user -- and the seal narrows what a provider can do inside it without
+claiming to hold against that user. A store that has no seal (one from
+before sealing existed, or one whose seal was removed) is reported
+`unsealed` and is sealed by Forge's next save. A process the provider
+leaves running after the flow returns is caught at the next load, not
+while it writes. Whether the seal should be strengthened beyond this
+boundary is a decision for a later slice, not this one.
 
 The capsule and the lifecycle are two files in one git repository, and
 every save stages the whole tree. Measured under review with the two

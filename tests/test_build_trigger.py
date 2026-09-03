@@ -78,7 +78,7 @@ class RecordingFlow:
 def _client(tmp_path: Path, factory=RecordingFlow) -> TestClient:
     RecordingFlow.instances = []
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS,
-                                 flow_factory=factory))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals"))
 
 
 def _wait_finished(client: TestClient) -> dict:

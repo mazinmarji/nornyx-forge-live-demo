@@ -38,6 +38,13 @@ from .subject_bootstrap import resolve_packaged_root
 #: The one address the onboarding surface may bind. Loopback, by doctrine.
 ONBOARDING_HOST = "127.0.0.1"
 
+#: Where Forge keeps each project's authority seal: outside every project
+#: directory, in Forge's own place beside the reviewer trust store. A seal
+#: inside the provider's workspace would seal nothing; this one is out of a
+#: workspace-write sandbox's reach and inside the same operating-system user's
+#: reach, which is the bound capsule_store states.
+SEAL_DIR = Path.home() / ".nornyx" / "forge" / "seals"
+
 
 def assemble(project_dir: Path) -> FastAPI:
     """The onboarding app over an explicitly chosen project directory."""
@@ -51,6 +58,7 @@ def assemble(project_dir: Path) -> FastAPI:
     application = create_app(
         chosen / "capsule",
         resolve_packaged_root() / ".nornyx" / "contracts",
+        seal_dir=SEAL_DIR,
     )
     application.state.project_dir = str(chosen)
     return application

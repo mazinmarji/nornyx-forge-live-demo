@@ -170,7 +170,7 @@ def _client(tmp_path: Path, factory=GovernedFlow) -> TestClient:
     GovernedFlow.instances = []
     BlockingFlow.hold.clear()
     return TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                 flow_factory=factory))
+                                 flow_factory=factory, seal_dir=tmp_path / "seals"))
 
 
 def _ok(response) -> dict:
@@ -738,18 +738,16 @@ def test_j13_an_edit_the_chain_no_longer_verifies_is_named_tampered_never_render
     assert GovernedFlow.instances == []
 
 
-def test_the_disclosed_bound_a_rebuilt_final_link_passes_in_document_verification(
-        tmp_path: Path):
-    """The boundary of J13, stated rather than discovered -- the same bound
-    `test_rebuilding_the_final_digest_alone_is_still_tampered` pins for the
-    capsule. An edit that also recomputes the LAST chain link is
-    self-consistent to `verify_experience`, and this surface renders it:
-    in-document integrity is tamper EVIDENCE against out-of-band edits, not
-    a signature. What the store still holds against such an edit is its git
-    history: every legitimate write is a commit, so the forgery leaves the
-    capsule repository with an uncommitted change to `experience.json`. No
-    route consults that history at this baseline; A-022 discloses it."""
-    from nornyx_forge.experience import _link  # the real link function
+def test_a_rebuilt_final_link_is_caught_by_the_seal_not_by_the_chain(tmp_path: Path):
+    """The boundary of J13. An edit that also recomputes the LAST chain
+    link is self-consistent to `verify_experience` -- the same one-link
+    bound `test_rebuilding_the_final_digest_alone_is_still_tampered` pins
+    for the capsule -- and at 47bd370 this surface rendered it as READY.
+    What holds it now is Forge's seal, kept outside the project: the store
+    no longer matches what Forge last wrote, so every route is TAMPERED and
+    the forged stage is never rendered. The chain's own verdict is pinned
+    too, so the bound is stated, not discovered."""
+    from nornyx_forge.experience import _link, verify_experience  # the real link function
 
     client = _client(tmp_path)
     _confirmed(client)
@@ -757,21 +755,16 @@ def test_the_disclosed_bound_a_rebuilt_final_link_passes_in_document_verificatio
     raw = json.loads(path.read_text(encoding="utf-8"))
     raw["stage"] = "READY"
     raw["chain"][-1] = _link(raw["chain"][-2], raw)
+    verify_experience(raw)  # the chain alone accepts it: that is the bound
     path.write_text(json.dumps(raw), encoding="utf-8", newline="")
 
     state = client.get("/api/state")
-    assert state.status_code == 200 and state.json()["journey"]["stage"] == "READY", (
-        "the bound moved: a rebuilt final link no longer verifies, so the "
-        "contract or the store changed and this disclosure must be re-measured"
-    )
-    dirty = subprocess.run(
-        ["git", "status", "--porcelain", "--", "experience.json"],
-        cwd=tmp_path / "capsule", capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    assert dirty.startswith("M "), (
-        "the out-of-band edit left no trace in the store's git history, which "
-        "is the one detector the contract's docstring names"
-    )
+    assert state.status_code == 409
+    assert state.json()["finding"] == "TAMPERED" and state.json()["restorable"] is True
+    assert "READY" not in state.text
+    for route in ("/api/journey/ready", "/api/journey/confirm-scope", "/api/build"):
+        response = client.post(route, json={"actor": HUMAN})
+        assert response.status_code == 409 and response.json().get("finding") == "TAMPERED", route
 
 
 class _PausingStore(CapsuleStore):
@@ -831,39 +824,28 @@ def test_j14_a_capsule_write_cannot_interleave_with_a_lifecycle_write(
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
 
-def test_j14_the_build_threads_lifecycle_write_holds_the_same_lock(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The other writer: the build thread. Its TEST save is held open at
-    the same point and a concurrent proposal must wait for it, or the
-    proposal's `git add -A` would commit the thread's half-saved file."""
-    monkeypatch.setattr(onboarding, "CapsuleStore", _PausingStore)
-    for event in (_PausingStore.armed, _PausingStore.landed, _PausingStore.release):
-        event.clear()
+def test_j14_the_build_threads_lifecycle_write_cannot_be_interleaved(tmp_path: Path):
+    """The other writer: the build thread. While a build runs the store is
+    sealed, so a concurrent proposal is refused outright rather than racing
+    the thread's saves for the git index; and the thread's own saves run
+    under the store lock, so nothing can `git add -A` a half-saved file
+    into a commit of its own."""
     client = _client(tmp_path, factory=BlockingFlow)
     _confirmed(client)
     _ok(client.post("/api/build", json={"actor": HUMAN}))
-    _PausingStore.armed.set()          # the next lifecycle write is the thread's TEST
+    refused = client.post("/api/proposals", json={
+        "field": "intent", "value": "A second idea.", "actor": MODEL})
+    assert refused.status_code == 409, refused.text
+    assert "sealed until it completes" in refused.json()["refused"]
     BlockingFlow.hold.set()
-    assert _PausingStore.landed.wait(timeout=15), "the thread's TEST save never landed"
-
-    outcome: dict = {}
-    proposing = threading.Thread(target=lambda: outcome.update(
-        propose=client.post("/api/proposals", json={
-            "field": "intent", "value": "A second idea.", "actor": MODEL})))
-    proposing.start()
-    proposing.join(timeout=1.0)
-    assert proposing.is_alive(), "the proposal did not wait for the build thread's save"
-    _PausingStore.release.set()
-    proposing.join(timeout=30)
     _wait_finished(client)
 
-    assert outcome["propose"].status_code == 200, outcome["propose"].text
     log = subprocess.run(
         ["git", "log", "--reverse", "--format=%s"], cwd=tmp_path / "capsule",
         capture_output=True, text=True, check=True,
     ).stdout.splitlines()
-    assert log.index("experience: reached TEST") < log.index("capsule: capsule: propose P-3")
-    assert "experience: reached GOVERN" in log
+    assert "capsule: capsule: propose P-3" not in log
+    assert log[-2:] == ["experience: reached TEST", "experience: reached GOVERN"]
     assert _persisted(tmp_path)["stage"] == "GOVERN"
 
 
@@ -915,7 +897,8 @@ def test_a_crash_before_the_build_starts_does_not_hold_the_build_lock(
     monkeypatch.setattr(onboarding, "begin_build",
                         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git vanished")))
     client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                   flow_factory=GovernedFlow), raise_server_exceptions=False)
+                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals"),
+                        raise_server_exceptions=False)
     GovernedFlow.instances = []
     _confirmed(client)
     crashed = client.post("/api/build", json={"actor": HUMAN})

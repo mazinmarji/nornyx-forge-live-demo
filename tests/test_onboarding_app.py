@@ -42,7 +42,8 @@ def _clock():
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    app = create_app(tmp_path / "capsule", CONTRACTS_DIR, clock=_clock())
+    app = create_app(tmp_path / "capsule", CONTRACTS_DIR, clock=_clock(),
+                     seal_dir=tmp_path / "seals")
     return TestClient(app)
 
 
@@ -212,7 +213,8 @@ def test_an_unrenderable_contract_is_a_reported_failure(tmp_path: Path):
     contracts.mkdir()
     (contracts / "broken.nyx").write_text("project: [not, a, mapping]\n",
                                           encoding="utf-8", newline="")
-    app = create_app(tmp_path / "capsule", contracts, clock=_clock())
+    app = create_app(tmp_path / "capsule", contracts, clock=_clock(),
+                     seal_dir=tmp_path / "seals")
     response = TestClient(app).get("/api/governance")
     assert response.status_code == 502
     assert "broken.nyx" in response.json()["refused"]
