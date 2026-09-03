@@ -506,3 +506,54 @@ those variables name, and that difference is the repair.
 `tests/test_recorded_measurements.py`, the absence-is-not-success control in
 `tests/test_absence_is_not_success.py`, and the success criterion in
 `CLAUDE.md` that evidence is named for what it is.
+
+## A-022 The basic-user journey projects the Experience Contract; it is not a second workflow
+
+**Ambiguity.** The onboarding surface performed every step of the basic
+journey -- project creation, proposal confirmation, provider confirmation,
+BRD derivation, a governed build and its result -- without the Experience
+Contract, so a project's lifecycle stayed `absent` however far the user got
+(measured at 9a16851 through the real application, success and failure
+paths, and across a restart). Wiring the surface to the contract raises
+four questions the contract does not answer by itself: what the human
+scope confirmation requires, which actor performs the evidence-driven
+transitions, what READY may claim, and what a capsule from before the
+wiring means.
+
+**Resolution.** Every lifecycle advancement the surface records comes from
+the contract's own `start_experience`, `advance`, `fail` and `retry`, under
+the actor and evidence rules those functions already enforce; the surface
+maps a closed set of semantic actions onto fixed transitions and never
+accepts a stage from a client. The scope confirmation (lifecycle CONFIRM)
+requires a confirmed intent, a confirmed provider and a derived BRD --
+exactly the inputs the build consumes and the things the build and BRD
+routes already refuse by name -- and no more: the contract's optional
+stages are not entered, because nothing on this surface implements them.
+BUILD is entered under the person who pressed the button; TEST and GOVERN
+are recorded by a system actor from `flow_evidence()` over the completed
+flow result, and the automatic path stops at GOVERN. READY is a human act
+presenting the gate-results and governance-validation references that
+GOVERN recorded, read back from the persisted lifecycle. On the shipped
+greenfield acceptance profile no gate runs the Nornyx CLI, so the
+translator yields no governance validation and READY is unreachable for a
+real basic-user build; the journey ends at GOVERN and the page says why.
+That is the honest outcome of a profile that never asks the governance
+question, and it is left as it is rather than improved. A capsule with no
+recorded lifecycle is reported absent, offers only a human "start
+tracking" that begins at DISCOVER, and has no stage inferred from its
+files. Two limits are disclosed: the contract does not freeze capsule
+content after CONFIRM, so a proposal confirmed and a BRD re-derived after
+the scope confirmation are built without the lifecycle re-confirming them
+(every such input is still human-confirmed capsule content); and a server
+that dies mid-build leaves the lifecycle at BUILD/active, where the next
+session reports that no build is running and re-runs it from BUILD without
+a second transition and without recording a failure nothing observed.
+
+**Scope.** This wires the existing contract; it changes no stage, edge,
+actor or evidence rule. READY means what the contract establishes and
+nothing beyond it: not deployment, not production approval, not an
+authenticated independent inspection, not a human approval record. The
+trust boundary of A-015 is unchanged and A-018 has not occurred.
+
+**Serves.** the founder's basic-user strategy, the progress-authority rule
+of the Experience Contract, and the claim discipline in `CLAUDE.md`.

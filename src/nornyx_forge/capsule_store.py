@@ -85,16 +85,31 @@ class CapsuleStore:
         self.root = Path(root)
 
     # -- creation ----------------------------------------------------------
-    def initialize(self, document: Mapping[str, Any]) -> str:
+    def initialize(
+        self,
+        document: Mapping[str, Any],
+        experience: Mapping[str, Any] | None = None,
+    ) -> str:
         """Create the store and write the first revision.
 
         Refuses a directory that already contains a git repository or a
         capsule: initialization is a once-only act, and re-initializing over
         history would be exactly the silent rewrite the store exists to make
         impossible.
+
+        An `experience` given here lands in the SAME first commit as the
+        capsule. A project and its lifecycle are two persistent facts, and
+        writing them as two commits would leave a state in which the first
+        existed and the second did not -- a project that looked created and
+        had no recorded workflow. One commit holds both or neither; both are
+        validated and verified at the door before anything is written,
+        exactly as `save` and `save_experience` do for later revisions.
         """
         validate_document(document)
         verify_integrity(document)
+        if experience is not None:
+            validate_experience(experience)
+            verify_experience(experience)
         if (self.root / ".git").exists():
             raise CapsuleStoreError(
                 f"{self.root} already contains a git repository; the store "
@@ -111,6 +126,8 @@ class CapsuleStore:
             newline="",
         )
         self._write_document(document)
+        if experience is not None:
+            self._write_experience(experience)
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", "capsule: initialize")
         return self.revision()
@@ -211,9 +228,7 @@ class CapsuleStore:
             raise CapsuleStoreError(
                 f"{self.root} is not a capsule store this adapter initialized"
             )
-        (self.root / _EXPERIENCE_FILE).write_text(
-            canonical_json(state) + "\n", encoding="utf-8", newline=""
-        )
+        self._write_experience(state)
         _run_git(self.root, "add", "-A")
         status = _run_git(self.root, "status", "--porcelain")
         if not status.stdout.strip():
@@ -231,6 +246,11 @@ class CapsuleStore:
         # equal (see the no-op refusal in `save`).
         (self.root / _CAPSULE_FILE).write_text(
             canonical_json(document) + "\n", encoding="utf-8", newline=""
+        )
+
+    def _write_experience(self, state: Mapping[str, Any]) -> None:
+        (self.root / _EXPERIENCE_FILE).write_text(
+            canonical_json(state) + "\n", encoding="utf-8", newline=""
         )
 
 

@@ -77,7 +77,10 @@ def test_a_human_creates_a_project_and_it_persists(client: TestClient):
     state = client.get("/api/state").json()
     assert state["initialized"] is True
     assert state["authoritative"] == {"project_name": "Test Project"}
-    assert state["experience"]["status"] == "absent"
+    # PR-17: creation starts the lifecycle through the contract. This line
+    # read `== "absent"` before, and pinned the gap it now closes.
+    assert state["experience"]["stage"] == "DISCOVER"
+    assert state["experience"]["status"] == "active"
     assert state["revision"]
 
 

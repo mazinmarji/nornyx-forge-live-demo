@@ -2,11 +2,13 @@
 
 WHAT THIS IS FOR. A basic user describes what they need in ordinary
 language, watches it enter the project capsule as a PROPOSAL, confirms it
-as a human, selects a provider, and reads the business-language rendering
-of what governs the project — all through a local web page, never a
-terminal. This module is that surface, and it adds NO authority logic of
-its own: every refusal a route returns is the capsule's or the renderer's,
-passed through with its exact reason.
+as a human, selects a provider, derives the BRD, confirms the scope, starts
+the governed build, reads the business-language rendering of what governs
+the project, and -- when the recorded evidence licenses it -- marks the
+project ready, all through a local web page, never a terminal. This module
+is that surface, and it adds NO authority logic of its own: every refusal a
+route returns is the capsule's, the Experience Contract's, the journey
+mapping's or the renderer's, passed through with its exact reason.
 
 The corrections this surface exists to honor, stated as route behaviour:
 
@@ -23,6 +25,17 @@ The corrections this surface exists to honor, stated as route behaviour:
     and a capsule whose digest chain disagrees with its content is reported
     as the tamper finding it is, not blurred into an empty page.
 
+THE LIFECYCLE IS THE EXPERIENCE CONTRACT'S, PROJECTED. The journey routes
+offer a person semantic actions -- start tracking, confirm the scope, start
+the build, retry, mark ready -- and `experience_journey` maps each onto the
+one canonical transition it names. No route takes a stage from the client.
+The build thread records BUILD -> TEST -> GOVERN as the system actor, from
+the translated flow result and nothing else, and stops there: READY is a
+human act, offered only when the persisted GOVERN evidence would satisfy
+the contract, and refused by the contract otherwise. What the page shows
+is read back from the persisted lifecycle on every refresh; a JavaScript
+variable never decides a stage.
+
 THE TRUST BOUNDARY, disclosed rather than implied: this surface runs
 locally for one person, like the CLI it sits beside. The actor on each
 request is taken verbatim from the request and judged by the capsule's
@@ -33,9 +46,9 @@ separately-scoped slice, and until it lands no claim of authentication is
 made anywhere on this surface.
 
 `layer.application`, following the forge_cli precedent: this module
-composes the capsule domain, the store adapter, and the renderer — it is
-declared for that composition, not for the FastAPI decorators sitting on
-top of it. It starts no process; serving it is the launcher's job.
+composes the capsule domain, the store adapter, the journey mapping and
+the renderer — it is declared for that composition, not for the FastAPI
+decorators sitting on top of it. It starts no process; serving it is the launcher's job.
 """
 
 from __future__ import annotations
@@ -63,6 +76,17 @@ from .capsule import (
     reject,
 )
 from .capsule_store import CapsuleStore, CapsuleStoreError
+from .experience_journey import (
+    JourneyRefusal,
+    begin_build,
+    build_error,
+    build_outcome,
+    confirm_scope,
+    journey_view,
+    mark_ready,
+    retry_after_failure,
+    start_tracking,
+)
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
 
@@ -73,6 +97,17 @@ EXPERIENCE_ABSENT = {
     "status": "absent",
     "detail": "no lifecycle state has been recorded for this project yet",
 }
+
+_NO_PROJECT = "no project exists; create one first"
+_NO_LIFECYCLE = (
+    "no lifecycle is recorded for this project; start tracking it first -- "
+    "nothing about its history is inferred"
+)
+
+#: A flow that raised returned nothing; distinguished from a flow that
+#: returned `None`, which is a completed call with an unusable result and
+#: is judged by the translator rather than reported as a crash.
+_NOT_RETURNED = object()
 
 
 def _now_iso() -> str:
@@ -123,6 +158,25 @@ def _refusal(error: CapsuleError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"refused": str(error)})
 
 
+def _refused(reason: str) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"refused": reason})
+
+
+def _human_act(payload: ResolvePayload, what: str) -> Actor | JSONResponse:
+    """The actions this surface offers are a person's. A request claiming any
+    other kind is refused here by name, before any contract is consulted --
+    and where the contract is stricter still (CONFIRM, READY admit only a
+    human), the contract's refusal is returned as well, in its own words."""
+    actor = payload.actor.to_actor()
+    try:
+        actor.validate()
+    except CapsuleError as error:
+        return _refusal(error)
+    if actor.kind != "human":
+        return _refused(f"{what} is a human act on this surface; got kind={actor.kind!r}")
+    return actor
+
+
 def create_app(
     capsule_root: Path,
     contracts_dir: Path,
@@ -144,9 +198,27 @@ def create_app(
     app = FastAPI(title="Nornyx Forge — Onboarding", version="0.1.0")
     app.state.build = {"status": "never_run"}
     build_lock = threading.Lock()
+    # One writer at a time for the lifecycle. Every route that reads the
+    # persisted experience, asks the contract, and saves the answer does so
+    # under this lock, and so does the build thread -- so a stale request
+    # is judged against the CURRENT persisted state rather than the one its
+    # sender last saw, and two requests cannot each load the same state and
+    # both persist a successor. A local single-user surface needs no more.
+    experience_lock = threading.Lock()
 
     def store() -> CapsuleStore:
         return CapsuleStore(root)
+
+    def brd_present() -> bool:
+        return (root.parent / "BRD.md").exists()
+
+    def recorded(current: CapsuleStore) -> dict[str, Any]:
+        """The persisted lifecycle, or the journey's refusal when there is
+        none. Corruption and tamper raise their own findings through."""
+        try:
+            return current.load_experience()
+        except CapsuleStoreError:
+            raise JourneyRefusal(_NO_LIFECYCLE) from None
 
     @app.get("/", response_class=HTMLResponse)
     def page() -> str:
@@ -161,10 +233,11 @@ def create_app(
             return {"initialized": False, "providers": list(PROVIDERS)}
         except CapsuleError as error:
             return _refusal(error)
+        lifecycle: dict[str, Any] | None
         try:
-            experience: Mapping[str, Any] = current.load_experience()
+            lifecycle = current.load_experience()
         except CapsuleStoreError:
-            experience = EXPERIENCE_ABSENT
+            lifecycle = None
         except CapsuleError as error:
             return _refusal(error)
         return {
@@ -173,22 +246,37 @@ def create_app(
             "authoritative": document["authoritative"],
             "proposals": document["proposed"],
             "digest_chain_length": len(document["digest_chain"]),
-            "experience": experience,
+            "experience": lifecycle if lifecycle is not None else EXPERIENCE_ABSENT,
+            "journey": journey_view(lifecycle, document, brd_present(), build_lock.locked()),
+            "brd_present": brd_present(),
             "providers": list(PROVIDERS),
             "revision": current.revision(),
         }
 
     @app.post("/api/project")
     def create_project(payload: ProjectPayload):
+        """A project and its lifecycle, as one first revision.
+
+        The capsule is created by a human (the capsule refuses otherwise)
+        and the lifecycle is started at DISCOVER by the same human through
+        the contract's own `start_experience`; the store commits both
+        together, so there is no state in which the project exists and its
+        lifecycle does not.
+        """
         try:
+            actor = payload.actor.to_actor()
             document = create_document(
-                payload.project_id, payload.project_name,
-                payload.actor.to_actor(), at(),
+                payload.project_id, payload.project_name, actor, at(),
             )
-            revision = store().initialize(document)
+            lifecycle = start_tracking(actor, at())
+            revision = store().initialize(document, experience=lifecycle)
         except CapsuleError as error:
             return _refusal(error)
-        return {"project_id": payload.project_id, "revision": revision}
+        return {
+            "project_id": payload.project_id,
+            "revision": revision,
+            "lifecycle": {"stage": lifecycle["stage"], "status": lifecycle["status"]},
+        }
 
     @app.post("/api/proposals")
     def create_proposal(payload: ProposalPayload):
@@ -206,6 +294,9 @@ def create_app(
 
     @app.post("/api/proposals/{proposal_id}/confirm")
     def confirm_proposal(proposal_id: str, payload: ResolvePayload):
+        """Confirms ONE proposal into the capsule's authority. This is not the
+        lifecycle's CONFIRM: that is the separate scope confirmation below,
+        and nothing here touches the lifecycle."""
         current = store()
         try:
             document = current.load()
@@ -226,6 +317,110 @@ def create_app(
             return _refusal(error)
         return {"proposal_id": proposal_id, "status": "rejected"}
 
+    # -- the journey: semantic actions, each one canonical transition ------
+
+    @app.post("/api/journey/start")
+    def start_journey(payload: ResolvePayload):
+        """Begin lifecycle tracking at DISCOVER for a project that has none.
+
+        The bounded, human-controlled way in for a capsule that predates
+        lifecycle orchestration. It starts where every lifecycle starts and
+        infers nothing from the project's files; a project that already has
+        a lifecycle is refused, because tracking begins once.
+        """
+        current = store()
+        with experience_lock:
+            try:
+                current.load()
+            except CapsuleStoreError:
+                return _refused(_NO_PROJECT)
+            except CapsuleError as error:
+                return _refusal(error)
+            try:
+                existing = current.load_experience()
+            except CapsuleStoreError:
+                existing = None
+            except CapsuleError as error:
+                return _refusal(error)
+            if existing is not None:
+                return _refused(
+                    f"a lifecycle is already recorded at {existing['stage']}; "
+                    "tracking starts once"
+                )
+            try:
+                started = start_tracking(payload.actor.to_actor(), at())
+                current.save_experience(started, "started at DISCOVER")
+            except CapsuleError as error:
+                return _refusal(error)
+        return {"stage": started["stage"], "status": started["status"]}
+
+    @app.post("/api/journey/confirm-scope")
+    def confirm_project_scope(payload: ResolvePayload):
+        """The human scope confirmation: lifecycle CONFIRM.
+
+        Loads the persisted lifecycle and the authoritative capsule, lets
+        the journey mapping name what is still missing, and otherwise asks
+        the contract to advance into CONFIRM under the requesting actor --
+        which the contract grants to a human and to nobody else.
+        """
+        current = store()
+        with experience_lock:
+            try:
+                document = current.load()
+                lifecycle = recorded(current)
+                updated = confirm_scope(
+                    lifecycle, document, brd_present(), payload.actor.to_actor(), at(),
+                )
+                current.save_experience(updated, "reached CONFIRM")
+            except CapsuleStoreError:
+                return _refused(_NO_PROJECT)
+            except CapsuleError as error:
+                return _refusal(error)
+        return {"stage": updated["stage"], "status": updated["status"]}
+
+    @app.post("/api/journey/retry")
+    def retry_journey(payload: ResolvePayload):
+        """Re-enter a failed stage. The contract's own retry; no second
+        state machine, and nothing about the failure is forgotten."""
+        actor = _human_act(payload, "retrying")
+        if isinstance(actor, JSONResponse):
+            return actor
+        current = store()
+        with experience_lock:
+            try:
+                current.load()
+                lifecycle = recorded(current)
+                updated = retry_after_failure(lifecycle, actor, at())
+                current.save_experience(updated, f"retried at {updated['stage']}")
+            except CapsuleStoreError:
+                return _refused(_NO_PROJECT)
+            except CapsuleError as error:
+                return _refusal(error)
+        return {"stage": updated["stage"], "status": updated["status"]}
+
+    @app.post("/api/journey/ready")
+    def mark_project_ready(payload: ResolvePayload):
+        """The human completion claim: lifecycle READY.
+
+        Presents to the contract exactly the gate-results and
+        governance-validation references GOVERN recorded, read back from
+        the persisted lifecycle. A build that recorded no governance
+        validation is refused by the contract, in its words; nothing here
+        supplies what the build did not produce.
+        """
+        current = store()
+        with experience_lock:
+            try:
+                current.load()
+                lifecycle = recorded(current)
+                updated = mark_ready(lifecycle, payload.actor.to_actor(), at())
+                current.save_experience(updated, "reached READY")
+            except CapsuleStoreError:
+                return _refused(_NO_PROJECT)
+            except CapsuleError as error:
+                return _refusal(error)
+        return {"stage": updated["stage"], "status": updated["status"]}
+
     @app.post("/api/build")
     def trigger_build(payload: ResolvePayload):
         """Run the governed build for this project, from confirmed state only.
@@ -237,19 +432,19 @@ def create_app(
         prerequisites are refused by name -- no derived BRD, no confirmed
         provider, a build already running -- and triggering is a human act
         on this surface, judged by the same KIND rule as every confirmation.
-        The flow's own result is recorded verbatim, gates and worker
-        endings included; this route improves no news.
+
+        The lifecycle enters BUILD through the contract before the flow
+        starts, under the person who started it. When the flow completes,
+        the thread records what the translated result licenses -- TEST,
+        then GOVERN -- as the system actor, and a flow that raised, returned
+        nothing usable, or was not accepted is recorded as a failure of the
+        stage the workflow is at. The flow's own result is recorded
+        verbatim, gates and worker endings included; this route improves no
+        news, and no field a worker wrote is read as lifecycle evidence.
         """
-        actor = payload.actor.to_actor()
-        try:
-            actor.validate()
-        except CapsuleError as error:
-            return _refusal(error)
-        if actor.kind != "human":
-            return JSONResponse(status_code=409, content={
-                "refused": "starting a build is a human act on this surface; "
-                f"got kind={actor.kind!r}",
-            })
+        actor = _human_act(payload, "starting a build")
+        if isinstance(actor, JSONResponse):
+            return actor
         current = store()
         try:
             document = current.load()
@@ -257,21 +452,26 @@ def create_app(
             return _refusal(error)
         provider = document["authoritative"].get("provider")
         if provider is None:
-            return JSONResponse(status_code=409, content={
-                "refused": "no confirmed provider; confirm one before building",
-            })
+            return _refused("no confirmed provider; confirm one before building")
         project_dir = root.parent
-        if not (project_dir / "BRD.md").exists():
-            return JSONResponse(status_code=409, content={
-                "refused": "no BRD.md in the project; derive it first",
-            })
+        if not brd_present():
+            return _refused("no BRD.md in the project; derive it first")
         if not build_lock.acquire(blocking=False):
-            return JSONResponse(status_code=409, content={
-                "refused": "a build is already running for this project",
-            })
+            return _refused("a build is already running for this project")
+        try:
+            with experience_lock:
+                lifecycle = recorded(current)
+                positioned, advanced = begin_build(lifecycle, actor, at())
+                if advanced:
+                    current.save_experience(positioned, "reached BUILD")
+        except CapsuleError as error:
+            build_lock.release()
+            return _refusal(error)
         app.state.build = {"status": "running", "provider": provider["name"]}
 
         def run() -> None:
+            outcome: dict[str, Any]
+            result: Any = _NOT_RETURNED
             try:
                 flow = flow_factory(
                     project_dir,
@@ -280,15 +480,36 @@ def create_app(
                     provider=provider["name"],
                 )
                 result = flow.run()
-                app.state.build = {
+                outcome = {
                     "status": "finished",
                     "provider": provider["name"],
                     "accepted": bool(result.get("accepted")),
                     "result": result,
                 }
             except Exception as error:  # noqa: BLE001 - recorded, not judged
-                app.state.build = {"status": "failed", "error": str(error)}
+                outcome = {"status": "failed", "error": str(error)}
+            try:
+                with experience_lock:
+                    lifecycle = current.load_experience()
+                    if result is _NOT_RETURNED:
+                        steps = [(build_error(lifecycle, outcome["error"], at()),
+                                  "build did not complete")]
+                    else:
+                        steps = list(build_outcome(lifecycle, result, at))
+                    for step, message in steps:
+                        current.save_experience(step, message)
+                        lifecycle = step
+                    outcome["lifecycle"] = {
+                        "recorded": True,
+                        "stage": lifecycle["stage"],
+                        "status": lifecycle["status"],
+                    }
+            except Exception as error:  # noqa: BLE001 - the record, not the run
+                outcome["lifecycle"] = {"recorded": False, "error": str(error)}
             finally:
+                # Published last, so a poller that sees a terminal build
+                # status also sees the lifecycle that status produced.
+                app.state.build = outcome
                 build_lock.release()
 
         threading.Thread(target=run, name="forge-build", daemon=True).start()
@@ -296,7 +517,9 @@ def create_app(
 
     @app.get("/api/build")
     def build_status():
-        """The build's state as last recorded. Never improved, never guessed."""
+        """The build's state as last recorded IN THIS SERVER SESSION. Never
+        improved, never guessed; the lifecycle's persisted position is the
+        record that survives a restart, and /api/state carries it."""
         return app.state.build
 
     @app.post("/api/brd")
@@ -383,6 +606,10 @@ _PAGE = """<!doctype html>
  fieldset{margin:1rem 0;border:1px solid #999;border-radius:4px}
  pre{white-space:pre-wrap;background:#f4f4f4;padding:0.75rem;overflow-x:auto}
  button{margin:0.25rem 0}
+ #notice{color:#a00;min-height:1.5em}
+ #stage{font-weight:bold}
+ .failed{color:#a00}
+ ul{margin:0.25rem 0}
 </style>
 <h1>Nornyx Forge</h1>
 <p>Describe what you need. It becomes a <em>proposal</em>; nothing is
@@ -402,24 +629,80 @@ this page, are the authority.</p>
  <button onclick="proposeProvider()">Propose</button></fieldset>
 <fieldset><legend>Open proposals — confirming is your act, not the model's</legend>
  <div id="proposals"></div></fieldset>
+<fieldset><legend>4 · Your project's lifecycle</legend>
+ <div>Stage: <span id="stage">—</span> <span id="status"></span></div>
+ <div id="next"></div>
+ <div id="failure" class="failed"></div>
+ <div id="blockers"></div>
+ <div>
+  <button id="b_start" onclick="act('/api/journey/start')">Start lifecycle tracking</button>
+  <button id="b_brd" onclick="deriveBrd()">Derive BRD</button>
+  <button id="b_confirm" onclick="act('/api/journey/confirm-scope')">Confirm scope</button>
+  <button id="b_build" onclick="act('/api/build')">Start build</button>
+  <button id="b_retry" onclick="act('/api/journey/retry')">Retry</button>
+  <button id="b_ready" onclick="act('/api/journey/ready')">Mark ready</button>
+ </div>
+ <div id="notice"></div>
+ <div>Build (this server session): <span id="build">—</span></div></fieldset>
 <fieldset><legend>Project state</legend><pre id="state">loading…</pre></fieldset>
+<fieldset><legend>Sharing preview — reviewed here, never sent</legend>
+ <button onclick="sharingPreview()">Show sharing preview</button><pre id="share"></pre></fieldset>
 <fieldset><legend>What governs this project</legend><pre id="gov">loading…</pre></fieldset>
 <script>
 const actor = () => ({kind: "human", ident: document.getElementById("who").value || "user"});
 const json = (r) => r.json();
+const text = (id, value) => { document.getElementById(id).textContent = value; };
 async function call(url, body){
   const r = await fetch(url, {method: "POST", headers: {"content-type": "application/json"},
                               body: JSON.stringify(body)});
   const data = await r.json();
-  if(!r.ok){ alert(data.refused || JSON.stringify(data)); }
+  text("notice", r.ok ? "" : ("Refused: " + (data.refused || JSON.stringify(data))));
   await refresh();
 }
+function act(url){ call(url, {actor: actor()}); }
 function createProject(){ call("/api/project", {project_id: pid.value, project_name: pname.value, actor: actor()}); }
 function proposeNeed(){ call("/api/proposals", {field: "intent", value: need.value, actor: actor()}); }
 function proposeProvider(){ call("/api/proposals", {field: "provider", value: {name: provider.value}, actor: actor()}); }
+async function deriveBrd(){
+  const r = await fetch("/api/brd", {method: "POST"});
+  const data = await r.json();
+  text("notice", r.ok ? "BRD derived from the confirmed capsule." : ("Refused: " + (data.refused || JSON.stringify(data))));
+  await refresh();
+}
+async function sharingPreview(){
+  const r = await fetch("/api/sharing-preview");
+  text("share", JSON.stringify(await r.json(), null, 1));
+}
+const BUTTONS = {b_start: "start_tracking", b_confirm: "confirm_scope", b_build: "start_build",
+                 b_retry: "retry", b_ready: "mark_ready"};
+function renderJourney(s){
+  const j = s.journey;
+  if(s.finding){ text("stage", s.finding); text("status", ""); text("next", s.refused); }
+  else if(!s.initialized){ text("stage", "no project"); text("status", ""); text("next", "Create a project to begin."); }
+  else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
+  else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
+  text("failure", (j && j.failure) ? ("Failure recorded: " + j.failure) : "");
+  document.getElementById("blockers").innerHTML = (j && j.blockers && j.blockers.length)
+    ? "Still required:<ul>" + j.blockers.map(b => `<li>${b}</li>`).join("") + "</ul>" : "";
+  const actions = new Set((j && j.actions) || []);
+  for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
+  document.getElementById("b_brd").disabled = !s.initialized;
+}
+async function refreshBuild(){
+  const b = await fetch("/api/build").then(json);
+  let line = b.status;
+  if(b.status === "finished"){ line += b.accepted ? " · accepted by the flow" : " · not accepted by the flow"; }
+  if(b.status === "failed"){ line += " · " + b.error; }
+  if(b.lifecycle){ line += b.lifecycle.recorded ? ` · lifecycle recorded at ${b.lifecycle.stage} (${b.lifecycle.status})`
+                                                : ` · lifecycle NOT recorded: ${b.lifecycle.error}`; }
+  text("build", line);
+  if(b.status === "running"){ setTimeout(refresh, 2000); }
+}
 async function refresh(){
-  const s = await fetch("/api/state").then(json);
+  const r = await fetch("/api/state");
+  const s = await r.json();
   document.getElementById("state").textContent = JSON.stringify(s, null, 1);
+  renderJourney(s);
   const sel = document.getElementById("provider");
   sel.innerHTML = (s.providers || []).map(p => `<option>${p}</option>`).join("");
   const open = (s.proposals || []).filter(p => p.status === "open");
@@ -428,6 +711,7 @@ async function refresh(){
      <button onclick='call("/api/proposals/${p.proposal_id}/confirm", {actor: actor()})'>Confirm</button>
      <button onclick='call("/api/proposals/${p.proposal_id}/reject", {actor: actor()})'>Reject</button></div>`
   ).join("") || "none";
+  await refreshBuild();
 }
 async function governance(){
   const g = await fetch("/api/governance").then(json);

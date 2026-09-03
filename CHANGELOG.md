@@ -2,6 +2,47 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The basic-user journey is orchestrated through the Experience Contract
+  (PR-17). Measured at 9a16851 through the real onboarding app: creating a
+  project, confirming its intent and provider, deriving the BRD, starting a
+  build and receiving its result -- accepted or not -- and restarting the
+  server all left the lifecycle `absent`, with no `experience.json` on disk
+  and no lifecycle route; the contract and its tests existed and nothing a
+  user did reached them. Now project creation starts a persisted lifecycle
+  at DISCOVER through `start_experience`, in the same first store revision
+  as the capsule, and the surface offers semantic actions -- start
+  tracking, confirm scope, start build, retry, mark ready -- that
+  `experience_journey` maps onto the one canonical transition each names.
+  No route takes a stage from the client. Confirming a capsule proposal is
+  not the lifecycle's CONFIRM: that is an explicit human act with three
+  named prerequisites (confirmed intent, confirmed provider, derived BRD),
+  refused by the contract for any other actor kind. The build enters BUILD
+  through `advance` under the person who started it and requires a
+  recorded lifecycle at a pre-build stage; on completion the surface, as a
+  system actor, records TEST from the translated `flow_run` evidence and
+  GOVERN from the translated `gate_results`, both through
+  `experience_build.flow_evidence` and nothing a worker wrote, and stops
+  there. A flow that raised, returned nothing usable, or was not accepted
+  is recorded as a failure of the stage the workflow is at, in the
+  contract's words, and is retried only through the contract's retry.
+  READY is offered only when the persisted GOVERN evidence would satisfy
+  the contract and is entered only by a human presenting exactly that
+  evidence, read back from the store; a build whose acceptance profile ran
+  no Nornyx gate -- which is the shipped greenfield profile -- ends
+  honestly at GOVERN, because the translator produces no governance
+  validation for it and nothing here supplies one. A capsule from before
+  this change stays `absent` until a human starts tracking it at DISCOVER;
+  no stage is inferred from its files. One in-process lock serialises every
+  lifecycle read-decide-save, the build thread included, so a repeated or
+  stale request is judged against the current persisted state, and the
+  build status is published only after the lifecycle it produced is
+  persisted. The page shows the persisted stage, its status, the actions
+  the contract allows, what still blocks the others, the build status for
+  this server session, and each refusal verbatim; its script names no
+  stage and decides nothing. The trust boundary is unchanged: loopback
+  only, the human unauthenticated (A-015), provider output still only
+  proposed content.
+
 - The governance evidence tool asks git under policy-neutral configuration,
   not the reader's. Binding every git question to the governed tree's own
   repository (the entry below) established which repository answers; an
