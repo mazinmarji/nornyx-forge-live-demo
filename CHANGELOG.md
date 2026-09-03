@@ -34,9 +34,13 @@
   rebuild now removes what it finds by shape; a damaged or foreign seal
   file was reported as an absent project and is now the TAMPERED finding
   with nothing to restore from; a seal that cannot be written is the
-  store's refusal, not a traceback. Also: a build thread that fails to
-  start releases the build lock and the seal, so the next build is not
-  refused as already running.
+  store's refusal, not a traceback; creating a project is refused while a
+  build has the store sealed (a worker that deleted the store mid-build
+  could otherwise have a client re-create it and overwrite the seal); and a
+  store whose directory the worker removed outright is rebuilt from the
+  seal rather than tripping on the missing working directory. Also: a
+  build thread that fails to start releases the build lock and the seal,
+  so the next build is not refused as already running.
 - The basic-user journey is orchestrated through the Experience Contract
   (PR-17). Measured at 9a16851 through the real onboarding app: creating a
   project, confirming its intent and provider, deriving the BRD, starting a

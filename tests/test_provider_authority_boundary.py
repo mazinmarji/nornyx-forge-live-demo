@@ -359,9 +359,18 @@ def test_b6_no_action_can_consume_the_forgery_while_the_build_runs(tmp_path: Pat
     proposal = client.post("/api/proposals", json={
         "field": "intent", "value": "Another idea.", "actor": HUMAN})
     assert proposal.status_code == 409 and "sealed" in proposal.json()["refused"]
+    # A review measured this one open: the worker deletes the store and a
+    # client creates a new one, whose seal then overwrote the old.
+    _remove_tree(tmp_path / "capsule")
+    created = client.post("/api/project", json={
+        "project_id": "proj-2", "project_name": "Impostor", "actor": HUMAN})
+    assert created.status_code == 409 and "sealed" in created.json()["refused"]
+    assert not (tmp_path / "capsule").exists()
     HostileFlow.release.set()
-    _wait_finished(client)
+    status = _wait_finished(client)
+    assert status["lifecycle"]["stage"] == "BUILD" and status["lifecycle"]["status"] == "failed"
     assert _persisted(tmp_path)["stage"] == "BUILD"
+    assert _store(tmp_path).load()["project_id"] == "proj-1"
     response = client.post("/api/journey/ready", json={"actor": HUMAN})
     assert response.status_code == 409 and "failed at BUILD" in response.json()["refused"]
 
@@ -533,9 +542,13 @@ def test_the_real_flow_hands_the_worker_the_store_and_the_seal_still_holds(tmp_p
     assert workspaces == {str(tmp_path)}, "the worker's workspace is the project directory"
     assert any(set(r["allowed_tools"]) >= {"Edit", "Write", "Bash"} for r in worker.requests)
     assert status["status"] == "finished"
+    assert status["accepted"] is True, "the specimen must be the shape READY is reachable from"
+    gates = {gate["name"]: gate["passed"] for gate in status["result"]["gates"]}
+    assert gates.get("greenfield:test-execution") is True, "the trusted verifier did not run"
     assert status["lifecycle"]["stage"] == "BUILD" and status["lifecycle"]["status"] == "failed"
     assert status["lifecycle"]["authority"] == "restored from seal"
     assert "READY" not in _stages(_persisted(tmp_path))
+    assert "experience: reached READY" not in _git_log(tmp_path / "capsule")
     assert _ok(client.get("/api/state"))["journey"]["stage"] == "BUILD"
 
 

@@ -374,6 +374,11 @@ def create_app(
             )
             lifecycle = start_tracking(actor, at())
             with store_lock:
+                # A review measured a worker deleting the store mid-build and a
+                # client re-creating it -- and the new store's seal overwriting
+                # the old. Initializing is a store write like any other.
+                if app.state.sealed is not None:
+                    raise JourneyRefusal(_SEALED)
                 revision = store().initialize(document, experience=lifecycle)
         except CapsuleError as error:
             return _refusal(error)

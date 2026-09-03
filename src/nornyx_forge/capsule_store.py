@@ -454,16 +454,21 @@ class CapsuleStore:
         """
         notes: list[str] = []
         try:
-            reset = subprocess.run(
-                ["git", *_GIT_IDENTITY, "reset", "--hard", "--quiet", snapshot.revision],
-                cwd=str(self.root), capture_output=True, text=True, check=False,
-            )
-            if reset.returncode == 0:
-                subprocess.run(
-                    ["git", "clean", "-fdxq"], cwd=str(self.root),
-                    capture_output=True, text=True, check=False,
+            restored = False
+            if (self.root / ".git").is_dir():
+                reset = subprocess.run(
+                    ["git", *_GIT_IDENTITY, "reset", "--hard", "--quiet", snapshot.revision],
+                    cwd=str(self.root), capture_output=True, text=True, check=False,
                 )
-            if reset.returncode != 0 or self.seal_problems(snapshot):
+                if reset.returncode == 0:
+                    subprocess.run(
+                        ["git", "clean", "-fdxq"], cwd=str(self.root),
+                        capture_output=True, text=True, check=False,
+                    )
+                    restored = not self.seal_problems(snapshot)
+            if not restored:
+                # No repository to reset -- the worker removed or replaced it,
+                # or the store directory itself -- or a reset that did not land.
                 notes.append("the sealed revision could not be restored from the store's own "
                              "history; the repository was rebuilt around the sealed bytes")
                 self._rebuild(snapshot)
