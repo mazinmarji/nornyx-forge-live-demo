@@ -366,6 +366,11 @@ def test_w8_bind_loopback_takes_the_preferred_port_or_another_and_only_loopback(
     sock = bind_loopback(preferred)
     try:
         assert sock.getsockname() == (ONBOARDING_HOST, preferred)
+        # The occupant LISTENS, as a real server does. Linux lets a second
+        # socket bind a port whose only holder is bound-but-not-listening
+        # under SO_REUSEADDR (measured on the CI census), which is not the
+        # occupied port this proof is about.
+        sock.listen(1)
         other = bind_loopback(preferred)
         try:
             assert other.getsockname()[0] == ONBOARDING_HOST

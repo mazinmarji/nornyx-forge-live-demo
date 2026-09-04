@@ -507,7 +507,7 @@ def _note_failure(runtime_dir: Path | None, text: str) -> None:
         return
     try:
         runtime_dir.mkdir(parents=True, exist_ok=True)
-        with (runtime_dir / "launch-failures.log").open("a", encoding="utf-8") as trail:
+        with (runtime_dir / "launch-failures.log").open("a", encoding="utf-8", newline="") as trail:
             trail.write(f"{_now_iso()} {text}\n")
     except OSError:
         pass

@@ -40,7 +40,7 @@ def _trail(text: str) -> None:
     try:
         FAILURE_TRAIL.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        with FAILURE_TRAIL.open("a", encoding="utf-8") as trail:
+        with FAILURE_TRAIL.open("a", encoding="utf-8", newline="") as trail:
             trail.write(f"{stamp} {text}\n")
     except OSError:
         pass
