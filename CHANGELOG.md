@@ -2,6 +2,47 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Post-PR-18 hardening: the two non-blocking findings of the independent
+  review of PR-18, closed before the next programme tranche. N1: the
+  bundle builder's `--smoke` said `pass` whenever a stopped runtime record
+  existed, while the launcher's exit code, the three route statuses, the
+  instance-token comparison on `/api/runtime` and the stop outcome were
+  recorded and never judged (measured at the base: exit code 7, HTTP 500
+  on every route, a foreign token and a failed stop still produced
+  `pass`). The smoke now records every observation its contract names
+  and derives `result` from them through one verdict function,
+  `evaluate_smoke_observations` (report schema v2): the launcher returned
+  0; the record reached `ready` with the runtime's schema, a token and a
+  port; `/api/runtime` answered 200 with a JSON object of that schema
+  whose instance IS the recorded one; `/api/state` answered 200 with a
+  usable state object; `/` answered 200 as HTML; the stop route answered
+  200 with `stopping` for that instance; and the record then reached
+  `stopped` for the same instance. Anything else -- including an
+  observation that is absent or made twice -- is a `fail` that names the
+  observation, and `--smoke` refuses by that name. This strengthens the
+  instrument the operator's embedded-interpreter run will be measured
+  with; it performs no such run and creates no operator evidence. N3:
+  the loopback Host rule PR-18 installed on the Windows runtime's
+  composition now belongs to `onboarding_serve.assemble`, the one
+  composition every production launch path serves, so the console
+  `onboard` path and the Windows launcher inherit one and the same rule
+  (`127.0.0.1` and `localhost`, nothing wider); the runtime's own copy is
+  gone, and a repository-wide census pins that no composition under
+  `src/` omits it. A Host check is not authentication: A-015's
+  single-person, loopback, unauthenticated trust boundary is unchanged,
+  and the two tests that used the test client's default `testserver`
+  Host now carry a loopback base URL rather than the rule being widened
+  for them. No Experience stage, CONFIRM, READY, eligibility, confinement
+  vocabulary, declaration, admission, seal, lock, token or port semantics
+  changed; both providers remain governed-ineligible; the real
+  embedded-Python operator run remains NOT PERFORMED. Three in-session
+  read-only inspections then hardened the smoke against a hostile listener
+  on its scratch port -- a nested body or record is invalid rather than a
+  raise, the scratch never outlives a raise, the record is kept as five
+  bounded fields, an over-long token is refused, every exchange ends
+  within twice its time budget (a watchdog plus the receive timeout,
+  measured), a body short of its declared length is refused -- and gave
+  its exception paths and bounds tests.
 - The Windows folder bundle is a runtime a basic user can double-click
   (PR-18). At b1780ee `Forge.cmd` ran `onboard` through `os.execvp`, which
   on Windows spawns the server and returns at once, hardcoded an

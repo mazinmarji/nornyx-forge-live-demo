@@ -292,6 +292,11 @@ literal), the trust boundary is stated in the module's own docstring and in
 this register, and no route claims authentication anywhere. Authenticating the
 human is a separately-scoped future slice; until it lands, the boundary is the
 same one the CLI beside it has always had — the machine's logged-in user.
+Since the post-PR-18 hardening the served composition also refuses any Host
+header other than `127.0.0.1` or `localhost`, installed once in
+`onboarding_serve.assemble` and inherited by every launch path. That is a
+Host-header check against a page that rebinds a name to loopback; it is not
+authentication of the person, and this boundary is unchanged by it.
 
 **Serves.** The founder's basic-user strategy, correction C2.
 
@@ -833,11 +838,18 @@ reads them; a forged record or marker changes nothing `/api/state` reports,
 which is pinned. `/api/runtime` and `/api/runtime/stop` are operational
 routes on the same loopback, single-person, unauthenticated surface as
 everything else (A-015); stopping is a person's act, validated as the
-surface validates every actor, and a model actor is refused. The runtime's
-composition answers only to a loopback Host header, because a page that
-rebinds a name to 127.0.0.1 would otherwise reach the surface (measured
-under review); the developer's console `onboard` path composes the same
-surface without that check and is unchanged by this slice. Nothing here
+surface validates every actor, and a model actor is refused. The served
+composition answers only to a loopback Host header (`127.0.0.1` or
+`localhost`), because a page that rebinds a name to 127.0.0.1 would
+otherwise reach the surface (measured under review). That rule was first
+installed on the Windows runtime's composition alone, which left the
+console `onboard` path -- the same surface -- without it: finding N3 of
+the independent PR-18 review, non-blocking at merge because the governed
+Windows entry was protected. Since the post-PR-18 hardening the rule
+belongs to `onboarding_serve.assemble`, the composition both launch paths
+serve, and the runtime adds no copy of its own; a repository-wide census
+pins that no composition under `src/` omits it. It is a Host-header
+check, not authentication: the trust boundary stays A-015's. Nothing here
 advances an Experience stage, creates or implies an
 approval, makes a provider eligible, validates a contract, or stands in for
 an inspection. The PR-17 result is unchanged and was re-measured through a
@@ -859,7 +871,14 @@ account with no browser association sees the address in a message box. The
 real embedded-interpreter run remains the operator's act, because no
 embeddable archive is supplied by the repository and the builder never
 fetches one; `build_windows_bundle.py --smoke` measures that run and
-records it when the operator performs it. Windows-hosted automated evidence
+records it when the operator performs it. Its `pass` had meant only that
+a stopped record existed while the route statuses, the instance-token
+comparison and the stop outcome were recorded and never judged -- finding
+N1 of the independent PR-18 review, non-blocking at merge because no
+operator smoke evidence had been recorded. Since the post-PR-18 hardening
+`result` is derived from the recorded observations by one verdict
+function and a failure names the observation; the instrument is stronger,
+and the run it measures remains NOT PERFORMED. Windows-hosted automated evidence
 in this repository runs the runtime as a real child process from a real
 bundle folder on the runner's own CPython -- the developer arrangement --
 and is labelled as exactly that.

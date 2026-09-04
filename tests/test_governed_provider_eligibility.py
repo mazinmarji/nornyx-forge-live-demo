@@ -233,7 +233,9 @@ def test_e5_the_assembled_surface_refuses_the_governed_build(tmp_path: Path, mon
     factory = RecordingFactory()
     monkeypatch.setattr(development_flow, "DevelopmentFlow", factory)
     monkeypatch.setattr(onboarding_serve, "SEAL_DIR", tmp_path / "seals")
-    client = TestClient(onboarding_serve.assemble(tmp_path))
+    # A loopback base URL: the served composition refuses the test client's
+    # default `testserver` Host, and the production rule is not widened for it.
+    client = TestClient(onboarding_serve.assemble(tmp_path), base_url="http://127.0.0.1")
     _confirmed(client, "claude")
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409
