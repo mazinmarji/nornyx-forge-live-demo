@@ -76,7 +76,6 @@ from typing import Any, Callable
 
 import uvicorn
 from fastapi import FastAPI
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -808,10 +807,10 @@ def _own_runtime(
         server.should_exit = True
 
     attach_runtime_routes(application, identity=served_identity, request_stop=request_stop)
-    # A page that rebinds a name to 127.0.0.1 would otherwise reach the
-    # surface with a foreign Host header (measured under review). The surface
-    # is loopback; so is the only host it answers to.
-    application.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+    # The loopback Host rule is `assemble`'s -- the composition this seam
+    # defaults to, pinned -- so it is applied once, there, and inherited here
+    # exactly as the console `onboard` path inherits it. Nothing is added
+    # twice and no launcher has to remember it.
     outcome: dict[str, Any] = {"code": 0, "notice": None}
 
     def await_readiness() -> None:

@@ -110,7 +110,12 @@ operator's embeddable interpreter are operator evidence, and
 python scripts/build_windows_bundle.py --python-embed <embeddable zip> --python-embed-sha256 <sha256> --smoke
 ```
 
-Without `--python-embed` the result is a DEVELOPER bundle that carries no
+`--smoke` reports `pass` only when every observation its contract names
+succeeded -- the launcher returned exit code 0 within its timeout; the
+record reached ready; `/api/runtime`
+and the stop answered with the recorded instance token; `/api/state`
+answered 200 as a usable state object; `/` answered 200 as HTML; and the
+record reached stopped -- and names the failed observation otherwise. Without `--python-embed` the result is a DEVELOPER bundle that carries no
 interpreter and runs on an installed Python; its launcher says so. The
 builder never downloads an interpreter: the operator supplies the archive and
 its digest, and a mismatch refuses the build (A-017). Git for Windows must be

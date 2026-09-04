@@ -36,6 +36,17 @@ started on a foreign interpreter.
 
 The launcher passes its own directory as the bundle root and the person's
 profile project directory explicitly; the launch directory selects nothing.
+
+THE SMOKE VERDICT. `--smoke` runs the built folder's own launcher and records
+every observation the smoke contract names; `result` is then DERIVED from
+those recorded observations by `evaluate_smoke_observations` and has no
+other source. The independent PR-18 review found (N1) that `pass` had meant
+only "a stopped record exists": the endpoint statuses, the instance-token
+comparison and the stop outcome were recorded and never judged. The smoke
+measures whether the built runtime starts, answers as itself, serves its
+page and state, and stops on request. It is operator evidence about a
+bundle; it is never governance evidence about approval, READY, provider
+eligibility or model safety, and it decides nothing about any project.
 """
 
 from __future__ import annotations
@@ -46,12 +57,15 @@ import http.client
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -324,30 +338,420 @@ def verify_bundle(dist: Path) -> None:
         )
 
 
-def _get(port: int, path: str, timeout: float = 5.0) -> tuple[int, bytes]:
+# ---------------------------------------------------------------------------
+# The smoke: the built folder's own launcher, observed; a verdict derived from
+# the observations and from nothing else
+# ---------------------------------------------------------------------------
+
+#: The smoke report's schema. v2: `result` is derived from the recorded
+#: observations by `evaluate_smoke_observations`. Under v1 it said `pass`
+#: whenever a stopped record existed (finding N1 of the independent PR-18
+#: review) while the statuses and the token comparison were recorded and
+#: never judged; a reader of a v1 report must not read its `pass` as this one.
+SMOKE_SCHEMA = "nornyx.forge.windows_bundle_smoke.v2"
+#: The runtime record's schema, restated from `nornyx_forge.windows_runtime`
+#: and pinned equal to it by test, so that this script imports nothing from
+#: the package whose bundle it measures.
+RUNTIME_SCHEMA = "nornyx.forge.windows_runtime.v1"
+#: The actor the smoke stops the runtime as: a person, by the route's contract.
+SMOKE_ACTOR = {"kind": "human", "ident": "bundle-smoke"}
+#: How much of a response body is read. Enough for the page; a listener that
+#: sends more is not this runtime and is not read further.
+RESPONSE_LIMIT = 1 << 20
+#: A recorded response string is cut here, and a launcher's output there: the
+#: report explains a failure; it does not archive bodies.
+FACT_LIMIT = 200
+OUTPUT_LIMIT = 500
+
+#: THE SMOKE CONTRACT: every observation a `pass` requires, in the order the
+#: smoke makes them. Each name is judged by exactly one predicate in
+#: `_SMOKE_CHECKS` over the facts the report records for that step. An
+#: observation that is absent, duplicated or failed is a named failure, and
+#: only the conjunction of all seven is a pass.
+SMOKE_REQUIRED = ("launcher", "runtime_record", "get /api/runtime", "get /api/state",
+                  "get /", "stop", "stopped")
+
+
+class _Budget:
+    """One time budget for a whole exchange -- status line, headers and body
+    alike -- enforced by a watchdog that shuts the socket down when the
+    budget ends.
+
+    A socket timeout bounds each RECEIVE, not the response, and `read` loops
+    receives internally until its amount or EOF: measured under inspection,
+    a listener trickling one byte per receive under a long Content-Length
+    held the smoke open for the body's length with a per-receive timeout
+    and again with a deadline checked between reads. The watchdog is the
+    bound that does not depend on how the reader loops.
+
+    THE BOUND, MEASURED (round 3 of the security inspection, Windows): the
+    shutdown does not itself wake a receive already pending; the exchange
+    then ends at the next inbound byte or at that receive's own socket
+    timeout. So an exchange ends within `timeout` for the budget plus at
+    most one receive timeout -- twice `timeout`, at most 40 s across the
+    smoke's four exchanges with the 5 s default -- never at the trickle's
+    pace. `connect()` runs before the budget exists and is bounded by the
+    socket timeout alone.
+    """
+
+    def __init__(self, sock: socket.socket, seconds: float) -> None:
+        self.expired = False
+        self._sock = sock
+        self._timer = threading.Timer(seconds, self._expire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _expire(self) -> None:
+        self.expired = True
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def cancel(self) -> None:
+        self._timer.cancel()
+
+
+def _exchange(port: int, method: str, path: str, *, body: bytes | None = None,
+              headers: dict[str, str] | None = None,
+              timeout: float = 5.0) -> tuple[int, bytes, str]:
+    """One request on the loopback port under one time budget (`_Budget`).
+    The body is read up to RESPONSE_LIMIT; a body shorter than the length it
+    declared, as far as it is read, is a broken answer, not the answer. An
+    exchange the budget ended is reported as a TimeoutError, an OSError the
+    caller records."""
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    connection.connect()
+    budget = _Budget(connection.sock, timeout)
     try:
-        connection.request("GET", path)
+        connection.request(method, path, body=body, headers=headers or {})
         response = connection.getresponse()
-        return response.status, response.read()
+        # http.client's own parse of Content-Length, taken before the read
+        # (the read counts it down): None when absent, chunked, or not a
+        # number it accepts. The header is not parsed here a second time --
+        # measured under inspection, a parse of our own raised on a one-byte
+        # latin-1 value and on a 5000-digit one.
+        declared = response.length
+        data = response.read(RESPONSE_LIMIT)
+        content_type = response.getheader("content-type", "") or ""
+        if declared is not None and len(data) < min(declared, RESPONSE_LIMIT):
+            # A listener that closes early delivers a short body with no
+            # IncompleteRead (measured under inspection). Short of what it
+            # declared, as far as it is read, the body is not the answer.
+            raise http.client.IncompleteRead(data, declared - len(data))
+    except (OSError, http.client.HTTPException) as error:
+        if budget.expired:
+            raise TimeoutError(
+                "the exchange did not complete within the smoke's time budget") from error
+        raise
     finally:
+        budget.cancel()
         connection.close()
+    if budget.expired:
+        raise TimeoutError("the exchange did not complete within the smoke's time budget")
+    return response.status, data, content_type
+
+
+def _get(port: int, path: str, timeout: float = 5.0) -> tuple[int, bytes, str]:
+    return _exchange(port, "GET", path, timeout=timeout)
 
 
 def _post_json(port: int, path: str, payload: dict, timeout: float = 5.0) -> tuple[int, bytes]:
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    status, data, _ = _exchange(port, "POST", path, body=json.dumps(payload).encode("utf-8"),
+                                headers={"content-type": "application/json"}, timeout=timeout)
+    return status, data
+
+
+def _fact(value: Any) -> Any:
+    """A response value as the report records it: scalars kept, strings cut,
+    anything else named by type. The report explains; it does not archive."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value if len(value) <= FACT_LIMIT else value[:FACT_LIMIT] + "..."
+    return type(value).__name__
+
+
+#: The runtime record as the report keeps it: the four fields the verdict
+#: reads, plus `reason` so a failed record explains itself, each bounded by
+#: `_fact`. The record is the child's own file, not a listener's body, but
+#: the report explains it rather than archiving it.
+RECORD_FACTS = ("schema", "instance", "status", "port", "reason")
+
+
+def _record_facts(record: Any) -> Any:
+    if not isinstance(record, dict):
+        return _fact(record)
+    return {key: _fact(record.get(key)) for key in RECORD_FACTS if key in record}
+
+
+def _parse_object(body: bytes) -> tuple[dict | None, str]:
+    """(payload, outcome): the JSON object a body carries, or why it is none.
+    A body nested deeper than the interpreter decodes raises RecursionError,
+    which is not a ValueError (measured under review): it is invalid too."""
     try:
-        body = json.dumps(payload).encode("utf-8")
-        connection.request("POST", path, body=body,
-                           headers={"content-type": "application/json"})
-        response = connection.getresponse()
-        return response.status, response.read()
-    finally:
-        connection.close()
+        payload = json.loads(body.decode("utf-8", "replace"))
+    except (ValueError, RecursionError):
+        return None, "invalid"
+    if not isinstance(payload, dict):
+        return None, "not an object"
+    return payload, "object"
 
 
-def smoke_bundle(dist: Path, *, timeout: float = 180.0) -> dict:
-    """Run the built folder's OWN launcher and record what happened.
+def _read_record(path: Path | None) -> Any:
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
+def _record_shape(record: Any) -> str | None:
+    """Why a runtime record cannot be used by the smoke, or None if it can:
+    the runtime's schema, a non-empty instance token, and a port."""
+    if not isinstance(record, dict):
+        return "no runtime record was observed"
+    if record.get("schema") != RUNTIME_SCHEMA:
+        return f"record schema {_fact(record.get('schema'))!r}, not {RUNTIME_SCHEMA!r}"
+    instance = record.get("instance")
+    if not isinstance(instance, str) or not instance:
+        return "record carries no instance token"
+    if len(instance) > FACT_LIMIT:
+        # A Forge token is 32 hex characters. Recorded facts are cut at
+        # FACT_LIMIT, so a longer token could never be compared whole; it is
+        # refused here rather than compared truncated (measured under review).
+        return "record instance token is longer than the recorded-fact bound"
+    port = record.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        return f"record port {_fact(port)!r} is not a port"
+    return None
+
+
+# Each predicate: (the recorded step, the recorded runtime's instance token or
+# None) -> why the observation failed, or None if it succeeded.
+
+def _launcher_completed(step: dict, expected: str | None) -> str | None:
+    if step.get("timed_out"):
+        return "the launcher did not return within its timeout"
+    if step.get("returncode") != 0:
+        return f"exit code {_fact(step.get('returncode'))!r}, not 0"
+    return None
+
+
+def _record_ready(step: dict, expected: str | None) -> str | None:
+    record = step.get("record")
+    shape = _record_shape(record)
+    if shape is not None:
+        return shape
+    if record.get("status") != "ready":
+        return f"record status {_fact(record.get('status'))!r}, not 'ready'"
+    return None
+
+
+def _http_ok(step: dict) -> str | None:
+    if step.get("status") != 200:
+        detail = f" ({step['error']})" if step.get("error") else ""
+        return f"HTTP {_fact(step.get('status'))!r}, not 200{detail}"
+    return None
+
+
+def _runtime_route(step: dict, expected: str | None) -> str | None:
+    if (reason := _http_ok(step)) is not None:
+        return reason
+    if step.get("json") != "object":
+        return f"body is {_fact(step.get('json'))!r}, not a JSON object"
+    if step.get("schema") != RUNTIME_SCHEMA:
+        return (f"schema {_fact(step.get('schema'))!r}, not {RUNTIME_SCHEMA!r}: "
+                "not a Forge runtime answer")
+    if expected is None:
+        return "no recorded instance token to compare against"
+    if step.get("instance") != expected:
+        return f"instance {_fact(step.get('instance'))!r} is not the recorded runtime's"
+    return None
+
+
+def _state_route(step: dict, expected: str | None) -> str | None:
+    if (reason := _http_ok(step)) is not None:
+        return reason
+    if step.get("json") != "object":
+        return f"body is {_fact(step.get('json'))!r}, not a JSON object"
+    if not isinstance(step.get("initialized"), bool):
+        return "no boolean 'initialized': not usable as the onboarding state response"
+    return None
+
+
+def _page_route(step: dict, expected: str | None) -> str | None:
+    if (reason := _http_ok(step)) is not None:
+        return reason
+    content_type = step.get("content_type")
+    if not isinstance(content_type, str) or not content_type.lower().startswith("text/html"):
+        return f"content type {_fact(content_type)!r}, not text/html"
+    if not step.get("bytes"):
+        return "an empty page"
+    return None
+
+
+def _stop_route(step: dict, expected: str | None) -> str | None:
+    if (reason := _http_ok(step)) is not None:
+        return reason
+    if step.get("json") != "object":
+        return f"body is {_fact(step.get('json'))!r}, not a JSON object"
+    if step.get("stopping") is not True:
+        return f"stopping is {_fact(step.get('stopping'))!r}, not true"
+    if expected is None:
+        return "no recorded instance token to compare against"
+    if step.get("instance") != expected:
+        return f"instance {_fact(step.get('instance'))!r} is not the recorded runtime's"
+    return None
+
+
+def _record_stopped(step: dict, expected: str | None) -> str | None:
+    record = step.get("record")
+    if record is None:
+        return "no stopped record within the wait"
+    shape = _record_shape(record)
+    if shape is not None:
+        return shape
+    if record.get("status") != "stopped":
+        return f"record status {_fact(record.get('status'))!r}, not 'stopped'"
+    if expected is None:
+        return "no recorded instance token to compare against"
+    if record.get("instance") != expected:
+        return f"instance {_fact(record.get('instance'))!r} is not the recorded runtime's"
+    return None
+
+
+_SMOKE_CHECKS: dict[str, Callable[[dict, str | None], str | None]] = {
+    "launcher": _launcher_completed,
+    "runtime_record": _record_ready,
+    "get /api/runtime": _runtime_route,
+    "get /api/state": _state_route,
+    "get /": _page_route,
+    "stop": _stop_route,
+    "stopped": _record_stopped,
+}
+
+
+def _identity(step: dict) -> str:
+    """Which observation a recorded step is: its name, plus the path for a GET."""
+    if step.get("step") == "get":
+        return f"get {step.get('path')}"
+    return str(step.get("step"))
+
+
+def evaluate_smoke_observations(steps: list[dict]) -> dict:
+    """The verdict, derived from the recorded observations and nothing else.
+
+    Every name in `SMOKE_REQUIRED` must be observed exactly once and its
+    predicate must hold; the instance token every comparison uses is the one
+    the recorded runtime record carries. Returns the rule, the required
+    names, the failures (`"<observation>: <reason>"`, in contract order) and
+    `result`, which is `pass` only when the failure list is empty.
+    """
+    observed: dict[str, list[dict]] = {}
+    for step in steps:
+        observed.setdefault(_identity(step), []).append(step)
+    records = observed.get("runtime_record", [])
+    expected: str | None = None
+    if len(records) == 1 and _record_shape(records[0].get("record")) is None:
+        expected = records[0]["record"]["instance"]
+    failed: list[str] = []
+    for name in SMOKE_REQUIRED:
+        candidates = observed.get(name, [])
+        if not candidates:
+            failed.append(f"{name}: not observed")
+        elif len(candidates) > 1:
+            failed.append(f"{name}: observed {len(candidates)} times, "
+                          "so there is no one observation to judge")
+        elif (reason := _SMOKE_CHECKS[name](candidates[0], expected)) is not None:
+            failed.append(f"{name}: {reason}")
+    return {
+        "rule": "pass only when every required observation was made once and succeeded",
+        "required": list(SMOKE_REQUIRED),
+        "failed": failed,
+        "result": "pass" if not failed else "fail",
+    }
+
+
+def _observe_launch(dist: Path, scratch: Path, step: Callable[..., None], *,
+                    timeout: float, stop_timeout: float) -> None:
+    """Make the smoke's observations in contract order, recording each as it
+    is made. Ends early when the runtime never becomes ready: nothing can be
+    reached, and the verdict names what was not observed."""
+    project = scratch / "project"
+    runtime_dir = scratch / "runtime"
+    # A scratch profile for the child: the scratch project's seal and any
+    # failure trail land under it, not in the operator's own `~/.nornyx`.
+    profile = scratch / "profile"
+    profile.mkdir()
+    environment = {**os.environ, "USERPROFILE": str(profile), "HOME": str(profile)}
+    command = ["cmd.exe", "/c", str(dist / "Forge.cmd"), "--project-dir", str(project),
+               "--runtime-dir", str(runtime_dir), "--port", "0", "--no-browser"]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=120,
+                                   cwd=str(scratch), env=environment)
+    except subprocess.TimeoutExpired as expired:
+        step("launcher", returncode=None, timed_out=True,
+             stdout=str(expired.stdout or "")[-OUTPUT_LIMIT:],
+             stderr=str(expired.stderr or "")[-OUTPUT_LIMIT:])
+    else:
+        step("launcher", returncode=completed.returncode, timed_out=False,
+             stdout=completed.stdout[-OUTPUT_LIMIT:], stderr=completed.stderr[-OUTPUT_LIMIT:])
+    record: Any = None
+    record_path: Path | None = None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        candidates = sorted(runtime_dir.glob("*.json")) if runtime_dir.exists() else []
+        if candidates:
+            record_path = candidates[0]
+            record = _read_record(record_path)
+            if isinstance(record, dict) and record.get("status") in ("ready", "failed", "stopped"):
+                break
+        time.sleep(0.5)
+    step("runtime_record", record=_record_facts(record))
+    if _record_shape(record) is not None or record.get("status") != "ready":
+        return  # nothing to reach; the verdict says what was not observed
+    port = record["port"]
+    for path in ("/api/runtime", "/api/state", "/"):
+        try:
+            status, body, content_type = _get(port, path)
+        except (OSError, http.client.HTTPException) as error:
+            step("get", path=path, status=None, error=_fact(f"{type(error).__name__}: {error}"))
+            continue
+        facts: dict[str, Any] = {"status": status, "bytes": len(body),
+                                 "content_type": _fact(content_type)}
+        if path != "/":
+            payload, facts["json"] = _parse_object(body)
+            if path == "/api/runtime" and payload is not None:
+                facts["schema"] = _fact(payload.get("schema"))
+                facts["instance"] = _fact(payload.get("instance"))
+            if path == "/api/state" and payload is not None:
+                facts["initialized"] = _fact(payload.get("initialized"))
+        step("get", path=path, **facts)
+    try:
+        status, body = _post_json(port, "/api/runtime/stop", {"actor": SMOKE_ACTOR})
+    except (OSError, http.client.HTTPException) as error:
+        step("stop", status=None, error=_fact(f"{type(error).__name__}: {error}"))
+    else:
+        payload, parsed = _parse_object(body)
+        step("stop", status=status, json=parsed,
+             stopping=_fact(payload.get("stopping")) if payload is not None else None,
+             instance=_fact(payload.get("instance")) if payload is not None else None,
+             body=_fact(body[:FACT_LIMIT].decode("utf-8", "replace")))
+    stopped = None
+    deadline = time.monotonic() + stop_timeout
+    while time.monotonic() < deadline:
+        current = _read_record(record_path)
+        if isinstance(current, dict) and current.get("status") == "stopped":
+            stopped = current
+            break
+        time.sleep(0.5)
+    step("stopped", record=_record_facts(stopped))
+
+
+def smoke_bundle(dist: Path, *, timeout: float = 180.0, stop_timeout: float = 60.0) -> dict:
+    """Run the built folder's OWN launcher, record what happened, and judge it.
 
     This is the operator's real-runtime evidence, measured rather than
     observed by eye: `Forge.cmd` is invoked exactly as a double-click would
@@ -355,69 +759,30 @@ def smoke_bundle(dist: Path, *, timeout: float = 180.0) -> dict:
     directory so the operator's own project and records are untouched), the
     runtime record is polled until it says ready, the operational and
     onboarding routes are read, the runtime is stopped through its own route,
-    and every step is reported. Nothing here is a verdict about governance.
+    and every step is reported with the facts that explain it. `result` is
+    then DERIVED from those recorded facts by `evaluate_smoke_observations`
+    and has no other source: `pass` means every observation the smoke
+    contract names succeeded, and a failure names which did not. Nothing
+    here is a verdict about governance.
     """
     import tempfile  # noqa: PLC0415
 
     scratch = Path(tempfile.mkdtemp(prefix="forge-bundle-smoke-"))
-    project = scratch / "project"
-    runtime_dir = scratch / "runtime"
-    report: dict = {"schema": "nornyx.forge.windows_bundle_smoke.v1", "dist": str(dist),
-                    "launcher": "Forge.cmd", "steps": []}
+    report: dict = {"schema": SMOKE_SCHEMA, "dist": str(dist), "launcher": "Forge.cmd",
+                    "steps": []}
 
     def step(name: str, **facts) -> None:
         report["steps"].append({"step": name, **facts})
 
-    # A scratch profile for the child: the scratch project's seal and any
-    # failure trail land under it, not in the operator's own `~/.nornyx`.
-    profile = scratch / "profile"
-    profile.mkdir()
-    environment = {**os.environ, "USERPROFILE": str(profile), "HOME": str(profile)}
-    completed = subprocess.run(
-        ["cmd.exe", "/c", str(dist / "Forge.cmd"), "--project-dir", str(project),
-         "--runtime-dir", str(runtime_dir), "--port", "0", "--no-browser"],
-        capture_output=True, text=True, timeout=120, cwd=str(scratch), env=environment,
-    )
-    step("launcher", returncode=completed.returncode, stdout=completed.stdout[-500:],
-         stderr=completed.stderr[-500:])
-    record = None
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        candidates = list(runtime_dir.glob("*.json")) if runtime_dir.exists() else []
-        if candidates:
-            try:
-                record = json.loads(candidates[0].read_text(encoding="utf-8"))
-            except ValueError:
-                record = None
-            if record and record.get("status") in ("ready", "failed", "stopped"):
-                break
-        time.sleep(0.5)
-    step("runtime_record", record=record)
-    if not record or record.get("status") != "ready":
-        report["result"] = "not ready"
+    try:
+        _observe_launch(dist, scratch, step, timeout=timeout, stop_timeout=stop_timeout)
+    finally:
+        # Whatever happened -- every observation made, an early end, or a
+        # raise -- the scratch does not outlive the smoke (measured under
+        # review: a raise mid-observation had left it behind).
         shutil.rmtree(scratch, ignore_errors=True)
-        return report
-    port = record["port"]
-    for path in ("/api/runtime", "/api/state", "/"):
-        status, body = _get(port, path)
-        step("get", path=path, status=status, bytes=len(body),
-             runtime_instance_matches=(
-                 json.loads(body).get("instance") == record["instance"]
-                 if path == "/api/runtime" else None))
-    status, body = _post_json(port, "/api/runtime/stop",
-                              {"actor": {"kind": "human", "ident": "bundle-smoke"}})
-    step("stop", status=status, body=body[:200].decode("utf-8", "replace"))
-    stopped = None
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        current = json.loads(next(iter(runtime_dir.glob("*.json"))).read_text(encoding="utf-8"))
-        if current.get("status") == "stopped":
-            stopped = current
-            break
-        time.sleep(0.5)
-    step("stopped", record=stopped)
-    report["result"] = "pass" if stopped is not None else "did not stop"
-    shutil.rmtree(scratch, ignore_errors=True)
+    report["verdict"] = evaluate_smoke_observations(report["steps"])
+    report["result"] = report["verdict"]["result"]
     return report
 
 
@@ -455,8 +820,9 @@ def main(argv: list[str] | None = None) -> None:
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="")
         print(json.dumps(report, indent=2))
         print(f"smoke report: {report_path}")
-        if report.get("result") != "pass":
-            raise BundleError(f"the bundle smoke did not pass: {report.get('result')}")
+        if report["result"] != "pass":
+            raise BundleError("the bundle smoke did not pass: "
+                              + "; ".join(report["verdict"]["failed"]))
 
 
 if __name__ == "__main__":

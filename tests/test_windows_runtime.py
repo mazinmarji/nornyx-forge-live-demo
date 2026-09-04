@@ -507,13 +507,6 @@ def test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token(
     status, body = _get(ready["port"], "/api/state")
     assert status == 200 and json.loads(body)["project"] == str(run.project)
     assert _get(ready["port"], "/")[0] == 200
-    # A rebinding page reaches the port with a foreign Host header: refused.
-    foreign = http.client.HTTPConnection(ONBOARDING_HOST, ready["port"], timeout=5)
-    try:
-        foreign.request("GET", "/api/runtime", headers={"Host": "evil.example"})
-        assert foreign.getresponse().status == 400
-    finally:
-        foreign.close()
     served = json.loads(_get(ready["port"], "/api/runtime")[1])
     assert served["bundle_root"] == str(run.bundle.resolve()) and served["project_dir"] == str(run.project)
     assert run.stop()[0] == 200
@@ -848,14 +841,11 @@ def _real_surface(tmp_path: Path):
     return assemble_real
 
 
-def test_w18_runtime_metadata_cannot_reach_the_governance_answer(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """The real surface through the SERVED composition (`assemble`, the
-    runtime's default), with the packaged root pointed at the bundle so the
-    marker is the one `assemble` would see: a forged record and a forged
-    marker beside it change nothing `/api/state` says, and neither module of
-    the surface mentions the runtime's state. A review measured that the
-    same pin over `create_app` alone missed a leak placed in `assemble`."""
+def _served_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A bundle folder the SERVED composition (`assemble`, the runtime's
+    default seam) will run over: the packaged root pointed at it so the
+    marker is the one `assemble` would see, the shipped contracts beside it,
+    the seals kept out of the home, and no real flow constructible."""
     from nornyx_forge import development_flow, onboarding_serve
 
     bundle = _marker(tmp_path / "bundle")
@@ -865,6 +855,67 @@ def test_w18_runtime_metadata_cannot_reach_the_governance_answer(
     (bundle / ".nornyx" / "contracts").mkdir(parents=True)
     for contract in CONTRACTS.glob("*.nyx"):
         (bundle / ".nornyx" / "contracts" / contract.name).write_bytes(contract.read_bytes())
+    return bundle
+
+
+def _request(port: int, method: str, path: str, host: str, body: dict | None = None) -> int:
+    """One request on the real socket carrying an explicit Host header."""
+    connection = http.client.HTTPConnection(ONBOARDING_HOST, port, timeout=5)
+    try:
+        headers = {"Host": host}
+        payload = None
+        if body is not None:
+            payload = json.dumps(body).encode("utf-8")
+            headers["content-type"] = "application/json"
+        connection.request(method, path, body=payload, headers=headers)
+        response = connection.getresponse()
+        response.read()
+        return response.status
+    finally:
+        connection.close()
+
+
+def test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Through the SERVED composition on the real socket: a rebinding page's
+    foreign Host is refused on every route, reads and the stop alike; both
+    loopback identities answer, with or without a port; and the runtime adds
+    no second copy of the rule -- the policy is `assemble`'s (N3 of the
+    independent PR-18 review), so this launcher and the console `onboard`
+    path inherit one and the same rule rather than each remembering it."""
+    from nornyx_forge import onboarding_serve
+
+    bundle = _served_bundle(tmp_path, monkeypatch)
+    run = Launch(tmp_path, bundle, assemble_app=onboarding_serve.assemble, browser=False).start()
+    ready = run.wait_for("ready")
+    port = ready["port"]
+    for host in ("evil.example", f"evil.example:{port}", "testserver", "192.168.1.20",
+                 "127.0.0.1.evil.example", ""):
+        for path in ("/api/runtime", "/api/state", "/"):
+            assert _request(port, "GET", path, host) == 400, (host, path)
+        assert _request(port, "POST", "/api/runtime/stop", host, {"actor": HUMAN}) == 400, host
+    assert run.record()["status"] == "ready", "a foreign Host stopped the runtime"
+    for host in ("127.0.0.1", "localhost", f"127.0.0.1:{port}", f"localhost:{port}"):
+        for path in ("/api/runtime", "/api/state", "/"):
+            assert _request(port, "GET", path, host) == 200, (host, path)
+    runtime_source = Path(windows_runtime.__file__).read_text(encoding="utf-8")
+    assert "TrustedHostMiddleware" not in runtime_source and "allowed_hosts" not in runtime_source, (
+        "the runtime must inherit the Host rule from assemble, not restate it")
+    assert run.stop()[0] == 200
+    assert run.join() == 0
+
+
+def test_w18_runtime_metadata_cannot_reach_the_governance_answer(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The real surface through the SERVED composition (`assemble`, the
+    runtime's default), with the packaged root pointed at the bundle so the
+    marker is the one `assemble` would see: a forged record and a forged
+    marker beside it change nothing `/api/state` says, and neither module of
+    the surface mentions the runtime's state. A review measured that the
+    same pin over `create_app` alone missed a leak placed in `assemble`."""
+    from nornyx_forge import onboarding_serve
+
+    bundle = _served_bundle(tmp_path, monkeypatch)
     run = Launch(tmp_path, bundle, assemble_app=onboarding_serve.assemble, browser=False).start()
     ready = run.wait_for("ready")
     before = json.loads(_get(ready["port"], "/api/state")[1])

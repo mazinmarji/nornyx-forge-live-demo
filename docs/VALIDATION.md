@@ -82,9 +82,12 @@ evidence; a model's report is not a human observation.
   a scratch project and a scratch runtime directory), waits for the runtime
   record to say ready, reads `/api/runtime`, `/api/state` and `/`, stops the
   runtime through its own route, and writes `<dist>-smoke.json` beside the
-  folder. A manual double-click and the browser opening are observed by the
-  operator, not by a test. Neither had been performed when this section was
-  written; the section says so instead of implying otherwise.
+  folder. Its `result` is derived from the recorded observations (see the
+  post-PR-18 hardening below): `pass` means every one of them succeeded,
+  and a failure names the observation. A manual double-click and the
+  browser opening are observed by the operator, not by a test. Neither had
+  been performed when this section was written, and neither has been
+  performed since; the section says so instead of implying otherwise.
 
 Which interpretation of Windows CI the repository supports: A-020 reserves
 release CI, packaging, signing and the installer for the distribution
@@ -149,6 +152,147 @@ app did not discriminate the removed probe, because the server was
 listening by the time the opener looked -- the test now starts its app
 slowly and probes briefly, and the mutation is red three times out of
 three.
+
+### Post-PR-18 hardening: the smoke verdict (N1) and the common Host boundary (N3)
+
+Two findings of the independent review of PR-18, both P2 and non-blocking
+at merge, closed in a maintenance slice before the next programme tranche.
+Their provenance is kept here because a repair that forgets its finding
+is a repair nobody can check. The review record itself is held by the
+founder outside this repository -- it is not a comment on PR #39 -- and its
+two findings reached this slice through the founder's instruction for it;
+this section is their in-tree record, and the labels N1 and N3 are the
+review's own.
+
+**N1 -- the smoke result could say `pass` without the observations it
+claimed.** Non-blocking at merge because no operator smoke evidence had
+yet been recorded. Measured at the base (`1ed49f6`) with the launcher, the
+listener and the record scripted: an exit code of 7, HTTP 500 on all three
+routes, an instance token that was not the record's and a failed stop
+request still produced `"result": "pass"`, because the only condition was
+that a stopped record existed. Now `smoke_bundle` records every
+observation its contract names -- launcher exit code; the record's schema,
+token, port and `ready`; for each route the status, the parse outcome and,
+on `/api/runtime`, the schema and instance; the stop status, `stopping` and
+instance; the stopped record -- and `result` is derived from those
+recorded steps by `evaluate_smoke_observations` and from nothing else. A
+pass requires all seven observations, each made exactly once and each
+succeeding, with the instance compared against the recorded runtime's own
+token. Bodies are not archived: a recorded string is cut at 200
+characters, the runtime record is kept as five bounded fields (the four
+the verdict reads, plus `reason` so a failed record explains itself), a
+body is read within a byte bound, every exchange ends within twice its
+time budget (a watchdog plus the receive timeout, measured), and a body
+shorter than its declared length is a broken answer,
+and a token longer than the recorded-fact bound is refused at the record
+rather than compared truncated. The report schema is `nornyx.forge.windows_bundle_smoke.v2`,
+because a v1 `pass` and a v2 `pass` do not mean the same thing. This
+strengthens the instrument the operator's embedded-interpreter run will be
+measured with; it performs no such run, so it creates no operator evidence,
+and it is not governance evidence about approval, READY, eligibility or
+model safety. Proved without an interpreter, in `tests/test_windows_bundle.py`:
+S1 all observations correct -> pass; S2 `/api/runtime` non-success -> not
+pass; S3 expected schema with the wrong, absent or schema-only instance ->
+not pass; S4 invalid JSON -> not pass; S5 `/api/state` failed or unusable ->
+not pass; S6 `/` failed or missing -> not pass; S7 stop refused, failed or
+unreachable -> not pass; S8 never stopped -> not pass; S9 a stopped record
+alone -> not pass, both over scripted observations and through the smoke
+over a scripted launcher; plus a missing or duplicated observation, an
+unready record ending the smoke with the rest reported unobserved, and the
+static pin that `result` has one source. Three in-session read-only
+inspections (test adequacy, architecture, security) then hardened the
+instrument and its tests, each finding P3 and each reproduced before it was
+applied: a deeply nested body or record is recorded as invalid rather than
+raised; the scratch directory is removed on every exit, a raise included;
+the record is kept as five bounded fields; a token longer than the
+recorded-fact bound is refused; every exchange ends within twice its time
+budget (the round-2 security inspection measured that a deadline checked between
+reads did NOT hold against a real trickling socket, because `read` loops
+receives internally, so the bound is now a watchdog that shuts the socket
+down, pinned by a real loopback listener trickling its body and its
+headers; round 3 then measured that the shutdown does not wake a receive
+already pending on Windows, so the bound is twice the budget, stated as
+such and pinned by a trickle slower than the budget); a body shorter than
+its declared length, as far as it is read, is refused, the length taken
+from http.client's own parse rather than a parse of our own (round 4
+measured that a hostile header raised out of the smoke, and that a length
+above the read bound escaped the comparison); the launcher's `timed_out`
+is recorded on both branches; and the
+exception-recording paths, the output bounds and the reason strings gained
+through-smoke tests. Two observations stay outside this slice, disclosed
+rather than absorbed: both launchers `start` a detached child while the
+smoke captures output, so the launcher-timeout branch is untested against
+the real launcher (pre-existing at the base); and
+`test_a_finished_runs_record_is_provisional_for_a_moment`, untouched here,
+failed once in eight runs on the development host with a
+record-read-during-write refusal -- a pre-existing race in the join path,
+not repaired by this slice.
+
+**N3 -- the Host boundary protected one composition of the surface and not
+the other.** Non-blocking at merge because the governed Windows entry was
+protected while the older console composition remained weaker. At the base
+`onboarding_serve.assemble` built the surface with no Host middleware
+(measured: `Host: evil.example` and `Host: testserver` answered 200), and
+only `windows_runtime._own_runtime` added `TrustedHostMiddleware` around
+the app it was handed. The rule now lives in `assemble`, the one
+composition every production launch path serves -- the console `onboard`
+path runs `onboarding_serve.main` over it, and the Windows runtime receives
+it through a seam whose default is `assemble` -- with exactly `127.0.0.1`
+and `localhost`; the runtime's own copy is removed so the policy is applied
+once. It is a Host-header check, not authentication: A-015's single-person,
+loopback, unauthenticated boundary is unchanged. Two tests that used the
+test client's default `testserver` Host now carry a loopback base URL; the
+rule was not widened to admit it. Proved in `tests/test_onboarding_launch.py`
+and `tests/test_windows_runtime.py`: H1/H2 `127.0.0.1` and `localhost`
+(with and without a port) answer; H3 `evil.example`, `testserver`, a LAN
+address, look-alike suffixes and an empty Host are refused with 400 on
+reads and on a write that would have created the store; H4 the console
+composition `main` serves inherits the rule; H5 the Windows runtime, through
+the served composition on a real socket, refuses foreign, look-alike, LAN,
+`testserver` and empty Hosts on every route and on the stop, answers both
+loopback identities with and without a port, and restates no rule of its
+own; H6 a census over `src/` finds the surface constructed once,
+composed once inside `assemble`, the rule installed once with exactly the
+declared identities, no other module naming it, and every server
+construction fed by `assemble`.
+
+Composition census, measured over `src/` at this head: `FastAPI(` is
+constructed in `nornyx_forge/onboarding_app.py` (the onboarding surface)
+and `demo_app/main.py` (the governed demonstration application, a
+different surface that neither imports nor composes onboarding);
+`create_app(` is called only inside `onboarding_serve.assemble`; `uvicorn`
+serves at two sites, `onboarding_serve.main` (the console path, over
+`assemble(...)` directly) and `windows_runtime._own_runtime` (over the
+`assemble_app` seam, default `assemble`, pinned); `TrustedHostMiddleware`
+appears only in `onboarding_serve`. Both production paths therefore inherit
+the boundary, and no third composition exists.
+
+Mutation session on the development host, same method as PR-18's: each
+regression applied to the named file alone with the pristine bytes held in
+memory, the named tests run, the file restored byte-for-byte and verified,
+and a baseline of the same selection run green before the session. The
+count is the number of tests that went red.
+
+| Regression introduced | Tests run | Red |
+| --- | --- | --- |
+| runtime-token matching ignored on /api/runtime | `test_windows_bundle.py` | 2 (test_a_recorded_fact_is_bounded_and_a_hostile_listener_is_not_this_runtime, test_s3_the_expected_schema_with_the_wrong_instance_is_not_a_pass) |
+| endpoint statuses ignored | `test_windows_bundle.py` | 6 (test_a_stop_request_that_raises_is_recorded_and_the_stopped_wait_still_runs, test_an_unreachable_route_is_recorded_and_the_remaining_routes_are_still_read, test_s2_a_non_success_status_on_the_runtime_route_is_not_a_pass, test_s5_a_failed_or_unusable_state_response_is_not_a_pass, test_s6_a_failed_or_missing_root_page_is_not_a_pass, test_s9_a_stopped_record_alone_is_insufficient) |
+| result reduced to 'a stopped record exists' | `test_windows_bundle.py` | 11 (test_a_launcher_that_never_returns_is_recorded_as_timed_out, test_a_nested_body_or_record_is_invalid_not_a_raise, test_a_record_that_never_says_ready_ends_the_smoke_with_the_rest_unobserved, test_a_recorded_fact_is_bounded_and_a_hostile_listener_is_not_this_runtime, test_a_stop_request_that_raises_is_recorded_and_the_stopped_wait_still_runs, test_a_token_longer_than_the_fact_bound_is_not_a_forge_record, test_an_unreachable_route_is_recorded_and_the_remaining_routes_are_still_read, test_s4_through_the_smoke_a_body_that_is_not_json_is_recorded_not_raised, test_s8_through_the_smoke_a_runtime_that_never_stops_is_not_a_pass, test_s9_through_the_smoke_the_base_defect_no_longer_passes, test_the_result_has_one_source_and_the_smoke_shares_the_runtimes_schema) |
+| a missing observation is not a failure | `test_windows_bundle.py` | 5 (test_a_record_that_never_says_ready_ends_the_smoke_with_the_rest_unobserved, test_s6_a_failed_or_missing_root_page_is_not_a_pass, test_s8_a_runtime_that_never_reaches_stopped_is_not_a_pass, test_s9_a_stopped_record_alone_is_insufficient, test_the_launcher_and_the_ready_record_are_required_too) |
+| the stopped record's instance not compared | `test_windows_bundle.py` | 1 (test_s8_a_runtime_that_never_reaches_stopped_is_not_a_pass) |
+| any Forge-schema answer accepted (schema-only) | `test_windows_bundle.py` | 4 (test_a_recorded_fact_is_bounded_and_a_hostile_listener_is_not_this_runtime, test_a_token_longer_than_the_fact_bound_is_not_a_forge_record, test_s3_the_expected_schema_with_the_wrong_instance_is_not_a_pass, test_the_launcher_and_the_ready_record_are_required_too) |
+| the common Host middleware removed from assemble | `test_onboarding_launch.py`, H5 and the seam pin in `test_windows_runtime.py`, E5 in `test_governed_provider_eligibility.py` | 4 (test_h3_a_foreign_host_is_refused_before_any_route_runs, test_h4_the_console_onboard_composition_inherits_the_host_rule, test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host, test_h6_no_production_composition_of_the_surface_omits_the_host_rule) |
+| foreign hosts accepted (wildcard) | `test_onboarding_launch.py`, H5 and the seam pin in `test_windows_runtime.py`, E5 in `test_governed_provider_eligibility.py` | 4 (test_h3_a_foreign_host_is_refused_before_any_route_runs, test_h4_the_console_onboard_composition_inherits_the_host_rule, test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host, test_h6_no_production_composition_of_the_surface_omits_the_host_rule) |
+| testserver admitted for test convenience | `test_onboarding_launch.py`, H5 and the seam pin in `test_windows_runtime.py`, E5 in `test_governed_provider_eligibility.py` | 3 (test_h3_a_foreign_host_is_refused_before_any_route_runs, test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host, test_h6_no_production_composition_of_the_surface_omits_the_host_rule) |
+| a LAN address admitted | `test_onboarding_launch.py`, H5 and the seam pin in `test_windows_runtime.py`, E5 in `test_governed_provider_eligibility.py` | 3 (test_h3_a_foreign_host_is_refused_before_any_route_runs, test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host, test_h6_no_production_composition_of_the_surface_omits_the_host_rule) |
+| the policy moved back to the Windows runtime alone (the base arrangement) | `test_onboarding_launch.py`, H5 and the seam pin in `test_windows_runtime.py`, E5 in `test_governed_provider_eligibility.py` | 4 (test_h3_a_foreign_host_is_refused_before_any_route_runs, test_h4_the_console_onboard_composition_inherits_the_host_rule, test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host, test_h6_no_production_composition_of_the_surface_omits_the_host_rule) |
+
+Not claimed by this slice: the real embedded-Python operator run (NOT
+PERFORMED), a human observation of the double-click, provider confinement
+or admission, an installer, signing, release readiness, A-018, or any
+change to the Experience stages, the human-only CONFIRM and READY, provider
+eligibility, the seal, the runtime lock, the instance token or the port
+handling, all of which the PR-17 and PR-18 suites re-ran unchanged.
 
 ## Requires a normal internet-connected machine or GitHub Actions
 
