@@ -236,3 +236,40 @@ jobs:
         # What proves strict behaviour is the demo and lock steps above, which
         # request the governed backend and fail closed.
         run: python scripts/smoke_http.py
+
+  # PR-18: the Windows basic-user runtime, on a Windows host. RUNTIME
+  # VALIDATION ONLY -- no release publication, no installer, no signing, no
+  # MSI, no ForgeSetup.exe; those belong to the later distribution tranche
+  # (A-020). The Linux census declares the Windows-hosted tests' skips by
+  # identity; this job is where they execute, and a skip HERE fails the job
+  # -- the container-launch census applied again -- because a Windows job
+  # that skipped every Windows test would be green over nothing. The
+  # interpreter is the runner's installed CPython, i.e. the developer-bundle
+  # arrangement; the operator-supplied embeddable interpreter is never
+  # downloaded here or anywhere (A-017), so that run stays operator evidence.
+  windows-runtime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e '.[demo,dev]'
+
+      - name: Windows runtime, bundle builder and launch tests, with no skips
+        run: |
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py -q -rs --junitxml=windows.xml
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
+          skipped = [c.get("name") for c in cases if c.find("skipped") is not None]
+          print(f"windows job: {len(cases)} collected, {len(skipped)} skipped")
+          if skipped:
+              print("These must run in this job; a skip here proves nothing:")
+              for name in skipped:
+                  print(f"  {name}")
+              sys.exit(1)
+          if len(cases) < 60:
+              print("the windows job collected fewer tests than its four modules carry")
+              sys.exit(1)
+          PY

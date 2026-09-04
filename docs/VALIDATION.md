@@ -52,6 +52,104 @@
 - Local demonstration evidence stream validated, with its event count and
   stream digest recorded in the run output rather than fixed in this file.
 
+## Windows basic-user runtime (PR-18)
+
+Three evidence classes, kept apart and labelled. A synthetic zip is not an
+interpreter; a Linux test of Windows-style strings is not Windows runtime
+evidence; a model's report is not a human observation.
+
+- **Cross-platform deterministic** -- `tests/test_windows_runtime.py` and
+  `tests/test_windows_bundle.py`: real loopback sockets, real file locks,
+  real records, a real uvicorn loop driven in-process, the real onboarding
+  surface where the property is about it, and the builder over synthetic
+  archives. Run by every Linux census job and on a Windows workstation.
+- **Windows-hosted automated** -- `tests/test_windows_host_runtime.py`: the
+  runtime as a real child process from a real bundle folder (the builder's
+  own copy step) at a path with spaces and non-ASCII characters, started
+  from an unrelated working directory, on the host's own CPython -- the
+  DEVELOPER-bundle arrangement, through the developer launcher's bootstrap
+  verbatim. Skipped by declaration off Windows; executed by the
+  `windows-runtime` CI job on `windows-latest`, which fails on any skip.
+- **Operator evidence** -- the real embedded-interpreter run. The repository
+  supplies no embeddable archive and the builder never downloads one
+  (A-017), so this run needs the operator's archive and its SHA-256:
+
+  ```bash
+  python scripts/build_windows_bundle.py --python-embed <python-3.13.x-embed-amd64.zip> --python-embed-sha256 <sha256> --smoke
+  ```
+
+  `--smoke` invokes the built folder's own `Forge.cmd` (plus `--no-browser`,
+  a scratch project and a scratch runtime directory), waits for the runtime
+  record to say ready, reads `/api/runtime`, `/api/state` and `/`, stops the
+  runtime through its own route, and writes `<dist>-smoke.json` beside the
+  folder. A manual double-click and the browser opening are observed by the
+  operator, not by a test. Neither had been performed when this section was
+  written; the section says so instead of implying otherwise.
+
+Which interpretation of Windows CI the repository supports: A-020 reserves
+release CI, packaging, signing and the installer for the distribution
+tranche; nothing in the repository reserved runtime validation. A Windows job
+that runs four test modules and publishes nothing is runtime validation, so
+one was added; it is not a release pipeline and does not build
+`ForgeSetup.exe`.
+
+Proof matrix. "Established" means a test that runs on every commit holds it;
+"Windows-hosted" means the `windows-runtime` job and a Windows workstation
+hold it with real processes; "operator" means it awaits the operator's act.
+
+| Property | Result | Evidence class |
+| --- | --- | --- |
+| W1 bundle-root independence: the launch directory cannot select a different Forge | established | deterministic (the launched folder must equal the resolved package root; the real resolver refuses any other folder from any cwd) + Windows-hosted (unrelated cwd) |
+| W2 the runtime imports the code carried in the bundle | established | Windows-hosted (`/api/runtime` reports the copied folder as its root and the shipped module answers) |
+| W3 loopback only | established | deterministic (bind and probe are pinned to `127.0.0.1`) + Windows-hosted (`netstat` shows `127.0.0.1:port` only; a LAN address refuses) |
+| W4 no terminal command required | established for the launcher text; operator for the double-click | deterministic (the launcher passes root, project and entry itself; the person types nothing) + operator |
+| W5 readiness before browser | established | deterministic (the opener records the server's own token at the moment of the call; a stalled startup times out visibly and opens nothing) |
+| W6 duplicate launch | established | deterministic + Windows-hosted (a second process exits 0, starts no listener, replaces no record; another folder is refused) |
+| W7 stale runtime metadata | established | deterministic + Windows-hosted (a record naming an impostor's port is overwritten; the impostor is untouched) |
+| W8 unrelated port owner | established | deterministic + Windows-hosted (an occupant of the preferred port costs a port; a non-Forge answer is not Forge) |
+| W9 runtime restart | established | deterministic + Windows-hosted (stop through the route, exit 0, lock released, start again as a new instance) |
+| W10 project authority explicit and bounded | established | deterministic (a relative project is refused before anything starts; cwd changes nothing) |
+| W11 paths with spaces | established | Windows-hosted (bundle and project paths both carry spaces) |
+| W12 non-ASCII paths | established | Windows-hosted (bundle `Forge Bündle 測試`, project `Forge Prøject 專案`, git-backed store created there) |
+| W13 self-contained interpreter integrity | established for the builder; operator for the real archive | deterministic (a wrong digest and a one-byte change refuse before extraction; an archive without `pythonw.exe` refuses) |
+| W14 no system-Python substitution | established for the runtime and the launcher text; operator for the real archive | deterministic (a self-contained bundle refuses a foreign interpreter; the launcher names no fallback) + Windows-hosted (the literal launcher without its interpreter exits 2 with a message) |
+| W15 no runtime download | structurally indicated | deterministic (the runtime's only HTTP is a loopback probe; the builder fetches nothing); no network capture was taken |
+| W16 PR-17 provider refusal survives | established | Windows-hosted (the governed build refuses `codex` before BUILD through a real runtime; the lifecycle stays at CONFIRM) + the existing eligibility module |
+| W17 browser journey survives | established up to the governed boundary | Windows-hosted (create, propose, confirm, provider, BRD, confirm scope, refused build) |
+| W18 operational state cannot create governance authority | established | deterministic (a forged record and marker change nothing `/api/state` says; the surface's source never reads runtime state) |
+| W19 ordinary-user execution | structurally indicated, and measured once | deterministic (no registry, service, task, firewall or privileged port anywhere; state under the profile); on the development host the Windows-hosted module ran with `IsUserAnAdmin` = 0 |
+| W20 restart persistence | established | deterministic + Windows-hosted (a project created before a stop is read back after a restart with its revision and lifecycle) |
+
+Not claimed by any row: a self-contained runtime observed on the operator's
+embeddable interpreter, a human observation of the double-click, provider
+confinement, an installer, signing, release readiness, A-018.
+
+Mutation session on the development host: each mutation applied to
+`windows_runtime.py` alone, the named modules run, the file restored from
+the bytes read before the mutation, and the restored tree run green
+afterwards. The count is the number of tests that went red.
+
+| Regression introduced | Modules run | Red |
+| --- | --- | --- |
+| readiness check removed: the browser opens without the probe | deterministic | 2 (the readiness test, three repeats out of three, and the bounded-timeout test) |
+| the working directory becomes the bundle authority | deterministic + Windows-hosted | 24 |
+| the probe accepts any answer on the port as Forge | deterministic | 1 |
+| the duplicate-instance lock always reports acquired | deterministic | 5 |
+| the server binds every interface instead of loopback | deterministic | 2 |
+| a self-contained bundle accepts a foreign interpreter | deterministic | 1 |
+| the join path accepts a schema answer without the recorded token | deterministic | 1 (added after the test-adequacy inspection found no red) |
+| the served composition reads the bundle marker into `/api/state` | deterministic | 1 (the pin now runs through `assemble`, where the inspection placed the leak) |
+| `ready` recorded before the probe answered | deterministic | 1 |
+
+Two things the session taught, kept as tests rather than memory: a
+regressed lock turned the second-launch tests into servers that never
+returned, so those launches are now held to a deadline and a regression is
+a red test rather than a hang; and a readiness test with a fast-starting
+app did not discriminate the removed probe, because the server was
+listening by the time the opener looked -- the test now starts its app
+slowly and probes briefly, and the mutation is red three times out of
+three.
+
 ## Requires a normal internet-connected machine or GitHub Actions
 
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:

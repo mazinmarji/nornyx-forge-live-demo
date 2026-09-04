@@ -2,6 +2,46 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The Windows folder bundle is a runtime a basic user can double-click
+  (PR-18). At b1780ee `Forge.cmd` ran `onboard` through `os.execvp`, which
+  on Windows spawns the server and returns at once, hardcoded an
+  interpreter a developer bundle does not carry, opened no browser, and let
+  a second launch die on a bind error nobody could see. Now
+  `nornyx_forge.windows_runtime` (entered through the standard-library-only
+  `windows_launch`) refuses unless the launched folder is the code that is
+  running, refuses a self-contained bundle started on a foreign interpreter,
+  takes the project directory as an explicit absolute argument, holds one
+  runtime per project under an operating-system file lock, binds a loopback
+  port before the server exists (the preferred port when free, otherwise
+  one the system hands out), and opens the browser only after a thread has
+  read the server's own instance token back through the socket, within a
+  bounded timeout that fails visibly. A second double-click opens the
+  running page; the same project served from another folder is refused; a
+  stale record identifies nothing; an unrelated occupant of the port costs
+  a port, never a process. Failures are message boxes under `pythonw` and a
+  launch-failure trail. The record, lock and log are operational state
+  under the profile, outside every project, never read by the onboarding
+  surface, and pinned unable to reach a governance answer. The builder
+  writes `forge-bundle.json` naming the bundle's kind, a self-contained
+  launcher that names no fallback interpreter, a developer launcher that
+  says it carries none, refuses an embeddable archive without
+  `pythonw.exe`, and can run the built folder's own launcher (`--smoke`).
+  The page gained a "Stop Forge" control. A `windows-runtime` CI job runs
+  the Windows-hosted tests on `windows-latest` under a skip census. The
+  real embedded-interpreter run stays the operator's act (A-017); the
+  console flash of `cmd.exe`, the git prerequisite, and the developer
+  launcher's quoting limit are disclosed in A-023. Three in-session
+  read-only inspections then hardened it: both launchers turn off
+  `cmd.exe`'s current-directory command lookup before naming any command
+  (a planted `pyw.cmd` in the launch directory had run in place of the
+  Python launcher); the browser adapter parses the URL and accepts only a
+  loopback authority; the runtime answers only to a loopback Host header;
+  a joining launch retries the lock and treats a finished run's record as
+  provisional; notices quote and cut what they echo from disk or a socket;
+  the readiness-timeout notice is raised from the main thread; the stop
+  route validates its actor as the surface does; an out-of-range port and
+  a runtime directory inside the project or the seals are refusals; and a
+  crash after the import guard is still a message box and a trail entry.
 - Declared is not eligible: the governed basic-user build executes an
   engineering provider only when Forge has established that the provider is
   confined to the project subject, and today that is neither of them

@@ -899,6 +899,9 @@ this page, are the authority.</p>
 <fieldset><legend>Sharing preview — reviewed here, never sent</legend>
  <button onclick="sharingPreview()">Show sharing preview</button><pre id="share"></pre></fieldset>
 <fieldset><legend>What governs this project</legend><pre id="gov">loading…</pre></fieldset>
+<fieldset><legend>Forge on this computer</legend>
+ <div id="runtime">runtime: —</div>
+ <button id="b_stop" onclick="stopForge()" disabled>Stop Forge</button></fieldset>
 <script>
 const actor = () => ({kind: "human", ident: document.getElementById("who").value || "user"});
 const json = (r) => r.json();
@@ -982,6 +985,20 @@ async function governance(){
   document.getElementById("gov").textContent =
     (g.contracts || []).map(c => c.view).join("\\n\\n" + "=".repeat(60) + "\\n\\n");
 }
-refresh(); governance();
+async function runtime(){
+  const r = await fetch("/api/runtime");
+  if(!r.ok){ text("runtime", "runtime: started from a console, not by the Windows launcher"); return; }
+  const d = await r.json();
+  text("runtime", "runtime: running from " + d.bundle_root + " on port " + d.port + " (instance " + d.instance.slice(0, 8) + ")");
+  document.getElementById("b_stop").disabled = false;
+}
+async function stopForge(){
+  const r = await fetch("/api/runtime/stop", {method: "POST", headers: {"content-type": "application/json"},
+                                              body: JSON.stringify({actor: actor()})});
+  const d = await r.json();
+  text("notice", r.ok ? "Forge is stopping. Close this page; double-click Forge to start it again."
+                      : ("Refused: " + (d.refused || JSON.stringify(d))));
+}
+refresh(); governance(); runtime();
 </script>
 """

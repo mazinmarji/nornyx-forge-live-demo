@@ -1884,6 +1884,9 @@ PROCESS_STARTERS = (
     "subprocess.run", "subprocess.Popen", "subprocess.call",
     "subprocess.check_call", "subprocess.check_output",
     "os.system", "os.popen", "os.exec", "os.spawn", "os.posix_spawn",
+    # The shell starting the person's browser is a process start too; the
+    # Windows launcher adapter is the one place it happens.
+    "os.startfile",
 )
 
 

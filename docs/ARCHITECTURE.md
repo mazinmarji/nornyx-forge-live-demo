@@ -49,7 +49,21 @@
   it: soft and hard are set together so the subject cannot raise it back, and
   the recorded policy names the increment rather than a total. A host whose
   task count cannot be measured fails closed.
-- `app_launcher`: bounded adapter that starts the application server process.
+- `app_launcher`: bounded adapter that starts the application server process,
+  and the one place the person's default browser is started -- on a loopback
+  URL only, as presentation, never as a decision.
+- `windows_runtime`: the Windows basic-user runtime behind `Forge.cmd`. It
+  verifies that the launched folder is the code that is running, refuses a
+  self-contained bundle on a foreign interpreter, takes an explicit absolute
+  project directory, holds one runtime per project under an operating-system
+  file lock, binds a loopback port before the server exists, composes the
+  onboarding surface, opens the browser only after the server has answered
+  with its own instance token, and stops on a person's request. Its record,
+  lock and log are operational state under the person's profile, outside
+  every project; nothing in them is read by the onboarding surface or can
+  reach a governance answer. `windows_launch` is its standard-library-only
+  entry, so a folder whose code does not import is a visible failure under
+  `pythonw` rather than a silent one.
 - `nornyx_runtime`: official Nornyx authorization path with an explicitly labeled offline fallback.
 - `approval_trust`: Ed25519 verification of action-specific human approvals. A leaf
   by construction — it holds no signing key and reaches no effect code.

@@ -16,9 +16,45 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 APPLICATION_TARGET = "demo_app.main:app"
 ONBOARDING_TARGET = "nornyx_forge.onboarding_serve"
+#: The only URLs this adapter will hand to a browser: the loopback onboarding
+#: surface. Presentation, bounded to the one address the surface may bind.
+LOOPBACK_URL_PREFIX = "http://127.0.0.1:"
+
+
+def open_in_default_browser(url: str) -> None:
+    """Hand the loopback onboarding URL to the person's default browser.
+
+    Presentation, not authority: nothing about the runtime's health or the
+    project's state is decided here, and the caller opens the browser only
+    after it has evidence the server answered. `os.startfile` is process
+    execution (the shell starts the browser), which is why this lives in the
+    declared launcher adapter and not in the runtime module that decides
+    when to call it. Windows only, by the programme's one-OS scope; elsewhere
+    the URL is refused with the address a person can open by hand.
+    """
+    parts = urlsplit(url)
+    if (
+        not url.startswith(LOOPBACK_URL_PREFIX)
+        or parts.scheme != "http"
+        or parts.hostname != "127.0.0.1"
+        or parts.username is not None
+        or parts.password is not None
+        or parts.port is None
+    ):
+        raise ValueError(
+            "only the loopback onboarding surface may be opened in the browser, "
+            f"not {url!r}"
+        )
+    if sys.platform != "win32":
+        raise OSError(
+            "opening the default browser is implemented for Windows only; "
+            f"open {url} yourself"
+        )
+    os.startfile(url)  # noqa: S606 - the declared browser-start site
 
 
 def launch_application(*, port: int, worker_mode: str) -> None:
