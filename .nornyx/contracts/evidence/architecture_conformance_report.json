@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-03T19:04:52Z",
-  "governed_input_digest": "sha256:7c0865ffd6603292a3c79b7556d639590fb5faa2522f7440a1f1e385a7761585",
+  "generated_at": "2026-09-04T01:32:33Z",
+  "governed_input_digest": "sha256:bdbd8d876796afa272d09af5679e1e47eaafdca0add12f93743af9e3392d1676",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -54,7 +54,9 @@
       "nornyx_forge.runtime_preparation",
       "nornyx_forge.subject_bootstrap",
       "nornyx_forge.subject_observer",
-      "nornyx_forge.util"
+      "nornyx_forge.util",
+      "nornyx_forge.windows_launch",
+      "nornyx_forge.windows_runtime"
     ],
     "declared_modules": [
       "module.api",
@@ -94,6 +96,8 @@
       "module.shared_util",
       "module.subject_bootstrap",
       "module.subject_observer",
+      "module.windows_launch",
+      "module.windows_runtime",
       "module.worker_adapter"
     ],
     "schema": "nornyx.forge.architecture_report.v1",
@@ -102,5 +106,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:8f348a509bc95d994cb71e74a169bc9b7f0737eb"
+  "subject_revision": "git:f08ffb95d49375f52b8a2b806296db882ac33215"
 }

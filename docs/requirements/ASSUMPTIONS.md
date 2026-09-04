@@ -717,3 +717,157 @@ trust boundary of A-015 is unchanged and A-018 has not occurred.
 
 **Serves.** the founder's basic-user strategy, the progress-authority rule
 of the Experience Contract, and the claim discipline in `CLAUDE.md`.
+
+## A-023 The Windows launcher manages execution and creates no authority
+
+**Ambiguity.** The interim Windows delivery is a folder and `Forge.cmd`
+(A-020). At b1780ee that launcher ran `onboard` through `os.execvp`, which
+on Windows spawns the server and returns at once (measured: the launcher
+exited in 5.5 s while its server survived detached); it hardcoded
+`python\python.exe`, so a developer bundle's launcher could not start at all
+("the system cannot find the path specified"); it opened no browser; a
+second launch on the same port died on WinError 10048 with nothing a person
+could see; and no record of a running instance existed anywhere. Turning the
+folder into a runtime a basic user can double-click raises questions the
+programme had deferred -- which Forge runs, on which interpreter, over which
+project, once or twice, on which port, when the browser may open, how a
+failure is shown, and how any of that state relates to governance.
+
+**Resolution.** The launcher may manage execution mechanics; it may not
+create, infer, weaken or replace governance authority. Concretely:
+
+*Which Forge.* `Forge.cmd` passes its own folder as the bundle root and the
+runtime refuses unless `resolve_packaged_root()` -- derived from where the
+running package's file actually is -- names the same folder. The launch
+directory, PATH, PYTHONPATH, an environment variable and another installed
+`nornyx_forge` therefore select nothing: a shadowed import is a refusal,
+not a substitution. The embedded interpreter's path file lists the bundle's
+`src` before its `pylib` and admits no site directory at all; the developer
+bundle's bootstrap places the same two directories first under isolated
+mode.
+
+*Which interpreter.* A bundle is one of two kinds, recorded in
+`forge-bundle.json`. A self-contained bundle carries the interpreter the
+operator supplied with its expected SHA-256 (A-017, unchanged: the builder
+verifies the digest before extracting, refuses a mismatch, refuses an
+archive without both `python.exe` and `pythonw.exe`, and never downloads),
+and its launcher runs `python\pythonw.exe` and nothing else -- no fallback
+to a Python installed on the computer, and the runtime itself refuses a
+self-contained bundle started on a foreign interpreter. A developer bundle
+carries no interpreter, says so in its launcher, and runs on an installed
+Python through the Windows `py` launcher. The two kinds are never mistaken
+for each other; a forged marker can only make a launch refuse or run a
+developer bundle on the interpreter it was given.
+
+*Which project.* The launcher passes `%USERPROFILE%\ForgeProject`
+explicitly, the runtime refuses a relative path, and the working directory
+is never consulted. That location is kept rather than replaced: it is user
+data (a BRD, a capsule, a built application), which belongs under the
+person's profile and not under application data. The profile is the one
+ambient input that selects a LOCATION, and it is the same input the seal
+directory (`~/.nornyx/forge/seals`) and the runtime directory
+(`~/.nornyx/forge/runtime`) already derive from: it selects the person's own
+places, never which Forge runs and never another person's project without
+the operating system having changed the user. PATH is consulted too, and
+only to refuse: `shutil.which("git")` decides whether a machine without
+Git for Windows is refused by name, and the developer launcher finds the
+installed Python through the `py` launcher (`where pyw`, then `pyw -3`,
+whose own selection reads `PY_PYTHON` and `py.ini`) -- a choice of
+interpreter for the developer arrangement only, never of Forge code, which
+the bootstrap places first under isolated mode. Both launchers set
+`NoDefaultCurrentDirectoryInExePath` before running anything, because
+`cmd.exe` otherwise resolves a command from the launch directory before
+PATH (measured under review: a `pyw.cmd` planted in the working directory
+ran in place of the Python launcher). Two spellings of the same NTFS
+directory are one runtime key (case-folded) and, once the store exists,
+one seal (resolved). The runtime directory may not lie inside the project
+directory or the seal directory; a launch that asks for that is refused.
+
+*Once.* One runtime per project, held by an exclusive byte-range lock on a
+file under the runtime directory for the life of the process. The operating
+system releases it however the process ends, so it is the liveness oracle;
+identity is an instance token the process generates, records, and serves on
+`/api/runtime`. A recorded pid is informational and never consulted for
+either. A second double-click on the same Forge over the same project finds
+the lock held, reads the record, confirms the token on the recorded port,
+and opens the running page; the same project served by a Forge in another
+folder is a visible refusal, never a silent substitution; a holder that
+does not answer within the readiness timeout is a visible failure; a record
+whose lock nobody holds identifies nothing and is overwritten. Nothing is
+ever terminated: an unrelated occupant of the preferred port costs a
+different port, an answer on the recorded port without this runtime's
+schema and token is not this runtime, and the occupant is left alone.
+
+*Which port.* The socket is bound by the runtime before the server exists
+-- the preferred port when free, otherwise one the operating system hands
+out -- and handed to the server, so there is no window between "checked"
+and "bound". The record and `/api/runtime` say which port was taken; the
+browser is sent to that port and no other.
+
+*When the browser opens.* Only after a thread inside the server process has
+round-tripped a request through the bound socket and read its own instance
+token back, within a bounded readiness timeout. A timeout records a failure,
+tells the person, and stops the server. A browser that cannot be opened
+leaves the runtime ready and tells the person the address; it manufactures
+no failure and no success. Opening the browser is the one process the
+runtime causes to start, and it is started by the declared launcher adapter
+against a loopback address only.
+
+*How failure is shown.* Under `pythonw` there is no console, so a refusal
+-- an incomplete bundle, a foreign interpreter, git absent from PATH, a
+relative project, a corrupted runtime record beside a held lock, a
+readiness timeout, an assembly failure -- is a Windows message box, and
+every refusal is appended to a launch-failure trail under the runtime
+directory. A folder whose code does not import at all (a partial copy) is
+caught one layer earlier by a standard-library-only entry that says so. A
+console launch keeps its console. No telemetry, no reporting service, no
+remote control plane exists.
+
+*Operational state is not governance state.* The record (schema
+`nornyx.forge.windows_runtime.v1`: instance token, port, pid, interpreter,
+bundle root and mode, project, status, timestamps, browser outcome, log
+path), the lock and the log live under the runtime directory, outside every
+project and outside the seal directory beside it. They answer one question
+-- is the local Windows runtime running? -- and the onboarding surface never
+reads them; a forged record or marker changes nothing `/api/state` reports,
+which is pinned. `/api/runtime` and `/api/runtime/stop` are operational
+routes on the same loopback, single-person, unauthenticated surface as
+everything else (A-015); stopping is a person's act, validated as the
+surface validates every actor, and a model actor is refused. The runtime's
+composition answers only to a loopback Host header, because a page that
+rebinds a name to 127.0.0.1 would otherwise reach the surface (measured
+under review); the developer's console `onboard` path composes the same
+surface without that check and is unchanged by this slice. Nothing here
+advances an Experience stage, creates or implies an
+approval, makes a provider eligible, validates a contract, or stands in for
+an inspection. The PR-17 result is unchanged and was re-measured through a
+real Windows runtime: both declared providers remain refused before BUILD,
+the lifecycle stays at CONFIRM, and no fallback is tried. Process isolation
+added here for launch mechanics is not evidence of provider confinement,
+which is a separate property nobody has established.
+
+**What remains, stated rather than implied away.** Double-clicking
+`Forge.cmd` still opens a console window for the instant `cmd.exe` takes to
+start `pythonw.exe` detached; the interim delivery is not "no console",
+it is "no console to keep or read". The bundle ships no git and the capsule
+store needs one, so a machine without Git for Windows on PATH is refused by
+name at launch rather than failing inside the page; bundling git belongs to
+the distribution tranche. The developer launcher's bootstrap cannot survive
+a bundle path containing a single quote. `pythonw.exe` on the profile's
+default browser association is the mechanism for opening the page; an
+account with no browser association sees the address in a message box. The
+real embedded-interpreter run remains the operator's act, because no
+embeddable archive is supplied by the repository and the builder never
+fetches one; `build_windows_bundle.py --smoke` measures that run and
+records it when the operator performs it. Windows-hosted automated evidence
+in this repository runs the runtime as a real child process from a real
+bundle folder on the runner's own CPython -- the developer arrangement --
+and is labelled as exactly that.
+
+**Scope.** Not an installer, not signing, not release publication, not
+auto-update, not a Windows service, not provider confinement or admission,
+not A-018, not R3 monotonic anchoring, not P17-03.
+
+**Serves.** the founder's basic-user strategy's Windows-first delivery, the
+FORGE_ROOT doctrine extended to the launcher, and the claim discipline in
+`CLAUDE.md`.

@@ -94,6 +94,32 @@ python scripts/check_test_coverage.py
 python scripts/validate_repository.py
 ```
 
+## Windows folder bundle (interim basic-user delivery)
+
+The interim Windows delivery is a folder and `Forge.cmd` (A-020; the eventual
+target is `ForgeSetup.exe`, which does not exist yet). A person double-clicks
+`Forge.cmd`; the runtime starts under their profile's `ForgeProject`, opens
+their default browser on the local onboarding page once the server has
+answered for itself, and stops from the page's "Stop Forge" button. A second
+double-click opens the running page rather than a second server. That is the
+design the tests hold; the double-click itself and the browser opening on the
+operator's embeddable interpreter are operator evidence, and
+`docs/VALIDATION.md` says which parts have and have not been observed.
+
+```bash
+python scripts/build_windows_bundle.py --python-embed <embeddable zip> --python-embed-sha256 <sha256> --smoke
+```
+
+Without `--python-embed` the result is a DEVELOPER bundle that carries no
+interpreter and runs on an installed Python; its launcher says so. The
+builder never downloads an interpreter: the operator supplies the archive and
+its digest, and a mismatch refuses the build (A-017). Git for Windows must be
+on the PATH: the project capsule is a git repository, and a launch without
+git is refused by name. Runtime state (a record, a lock, a log) lives under
+`~/.nornyx/forge/runtime` and is operational only; it decides nothing about
+any project's governance (A-023). The governed build still refuses both
+declared providers on this baseline, exactly as on every other surface.
+
 ## Full live mode
 
 Prerequisites:

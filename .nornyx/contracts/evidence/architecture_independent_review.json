@@ -1,19 +1,233 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-09-03T19:04:52Z",
-  "governed_input_digest": "sha256:7c0865ffd6603292a3c79b7556d639590fb5faa2522f7440a1f1e385a7761585",
+  "generated_at": "2026-09-04T01:32:33Z",
+  "governed_input_digest": "sha256:bdbd8d876796afa272d09af5679e1e47eaafdca0add12f93743af9e3392d1676",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
-  "reviewers": [],
+  "reviewers": [
+    {
+      "role": "test-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "architecture-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "security-inspector",
+      "status": "pass"
+    }
+  ],
   "schema": "nornyx.forge.independent_review_record.v1",
   "self_reported_builder_independence": false,
   "session_report": {
     "authoritative": false,
-    "reviews": null,
+    "reviews": {
+      "builder_self_approval": false,
+      "human_review": "not_performed",
+      "reviews": [
+        {
+          "evidence": [
+            "round 1: byte-identical scratch copies, baseline 46 passed; mutations M1 2 red, M2 18 red, M3a 1, M3b 0, M4 5, M4b 2, M5 2, M6 1, M7 1, M8 1, M9 2, M10 0, M11 0 (71 passed)",
+            "round 2: fresh scratch copy of the current tree, baseline 36 passed; M3b 1 red, M11 1 red, M10 1 red; census inert gate read as satisfied",
+            "not executed by the inspector: the full suite, scripts/check_test_coverage.py, tests/test_windows_host_runtime.py, the windows-runtime CI job"
+          ],
+          "findings": [
+            {
+              "disposition": "applied: tests/test_windows_runtime.py::test_w7_an_answer_without_this_runtimes_token_is_not_this_runtime; mutation M3b now 1 red",
+              "round": 1,
+              "severity": "P2",
+              "title": "join accepted any Forge-schema answer on the recorded port; the token half of W6/W7 had no test"
+            },
+            {
+              "disposition": "applied: test_w18 launches through onboarding_serve.assemble with the packaged root and seal dir redirected, and scans both surface modules; mutation M11 now 1 red",
+              "round": 1,
+              "severity": "P2",
+              "title": "W18's pin composed create_app directly, so a marker read placed in assemble() stayed green"
+            },
+            {
+              "disposition": "applied: per-test windows_only marks and test_the_windows_runtime_job_runs_this_module_under_its_own_skip_census, which runs everywhere and pins the CI job; reproduction is the test job's census on Linux",
+              "round": 1,
+              "severity": "P2",
+              "title": "the Linux census refuses a required module with zero executed cases; the host module executed nothing off Windows"
+            },
+            {
+              "disposition": "applied: runtime dir and project passed through %* and asserted absent afterwards",
+              "round": 1,
+              "severity": "P3",
+              "title": "test_w13_w14's no-fallback assertion was vacuous"
+            },
+            {
+              "disposition": "applied: test_w16_w17 parametrized over PROVIDERS (EXPECTED_SKIP_CASES 2)",
+              "round": 1,
+              "severity": "P3",
+              "title": "A-023 said both providers were re-measured through a real runtime; the host test used codex only"
+            },
+            {
+              "disposition": "applied: test_w5 asserts the record is not ready on any poll the probe leaves unanswered; M10 now 1 red",
+              "round": 1,
+              "severity": "P3",
+              "title": "ready could be recorded before the probe (M10) without a red"
+            },
+            {
+              "disposition": "applied: the CI-job pin test; README points at the operator-evidence paragraph",
+              "round": 1,
+              "severity": "P3",
+              "title": "the windows-runtime job claims were unpinned; README lacked VALIDATION's caveat"
+            },
+            {
+              "disposition": "applied: three rows added",
+              "round": 2,
+              "severity": "P3",
+              "title": "the VALIDATION mutation table lacked the three motivating mutations"
+            }
+          ],
+          "role": "test-inspector",
+          "status": "pass",
+          "summary": "PR-18 Windows basic-user runtime, round 2 after round-1 findings were applied. Round 1 was FAIL: the join path's instance-token check had no red test (M3b), W18's pin bypassed the served assemble() composition (M11), and the Linux census would have refused a required module that executes nothing off Windows. Round 2 measured M3b, M11 and M10 each turning exactly one named test red on a byte-identical scratch copy of the current tree, and read the census inert gate as satisfied by the one test in the host module that runs everywhere."
+        },
+        {
+          "evidence": [
+            "python scripts/check_architecture.py: pass, violations []; python scripts/check_security.py: pass, findings []",
+            "ast listing of first-party imports equals module.windows_runtime.depends_on and the component mirror",
+            "FORGE_ROOT comparison measured through junctions, case changes, trailing dot; foreign folder refused",
+            "not established by the inspector: the embedded-interpreter arrangement (operator evidence), the windows-runtime job, the developer arrangement's trust in the installed Python beyond -I, IPv6 Host forms"
+          ],
+          "findings": [
+            {
+              "disposition": "applied: A-023 reworded, PATH row added to RUNTIME_INPUT_AUDIT.md",
+              "round": 1,
+              "severity": "P2",
+              "title": "A-023 and the input audit called the profile the only ambient input; PATH is read too (git preflight; the developer launcher's py launcher)"
+            },
+            {
+              "disposition": "applied: windows_launch wraps launch() with the same trail/notify/exit-2",
+              "round": 1,
+              "severity": "P3",
+              "title": "a non-refusal exception after the import guard was invisible under pythonw"
+            },
+            {
+              "disposition": "applied: refused before anything is created",
+              "round": 1,
+              "severity": "P3",
+              "title": "--runtime-dir was not fenced off the project or the seal directory"
+            },
+            {
+              "disposition": "applied: Actor.validate() then the kind rule",
+              "round": 1,
+              "severity": "P3",
+              "title": "the stop route's actor rule was looser than the surface's"
+            },
+            {
+              "disposition": "applied: urlsplit-based bound",
+              "round": 1,
+              "severity": "P3",
+              "title": "the browser adapter's loopback bound was a string prefix"
+            },
+            {
+              "disposition": "applied: fence before mkdir, no trail into a refused place, test redirects DEFAULT_SEAL_DIR and asserts nothing was created; the real seal directory cleaned of the scratch seals",
+              "round": 2,
+              "severity": "P2",
+              "title": "the fence refused after creating the fenced directory and logging into it; the pinning test wrote into the real seal directory"
+            },
+            {
+              "disposition": "applied",
+              "round": 2,
+              "severity": "P3",
+              "title": "audit row 41 still said 'the one ambient input'"
+            },
+            {
+              "disposition": "applied: children and the builder's --smoke run under a scratch profile",
+              "round": 2,
+              "severity": "P3",
+              "title": "Windows-hosted children wrote scratch-project seals into the developer's real seal directory"
+            }
+          ],
+          "role": "architecture-inspector",
+          "status": "pass",
+          "summary": "PR-18 Windows basic-user runtime, round 2. The authority boundary traced: every runtime write lands under the runtime directory outside every project and outside the seals, the onboarding surface never reads runtime state, the two operational routes touch no capsule, lifecycle, eligibility or governance state, identity is token equality only, the pid is informational, nothing is terminated; the contract's declared dependencies equal the imports and both gates pass. Round-1 P2 (PATH is also an ambient input) and P3s applied; round-2 P2 (the runtime-directory fence created the fenced directory and wrote its trail inside it) applied: the fence now runs before anything is created and writes nothing into a refused place."
+        },
+        {
+          "evidence": [
+            "python scripts/check_security.py: pass, findings []",
+            "hijack.py against the current DEVELOPER_LAUNCHER from a cwd holding pyw.cmd: HIJACKED.txt not written (round 1: written)",
+            "stop route: 422 for no Content-Type, text/plain, form, multipart, empty ident; 409 for model; 200 for application/json human",
+            "foreign Host -> 400 on the runtime composition; lock: unlink/rename/replace of the held file refused, released after a tree kill",
+            "not established by the inspector: the first strict-content-type FastAPI release, browser-level PNA/LNA behaviour, file-symlink following, the self-contained launcher on a real embeddable interpreter, the host module's execution"
+          ],
+          "findings": [
+            {
+              "disposition": "applied: set NoDefaultCurrentDirectoryInExePath=1 is line 2 of both launchers, pinned; re-measured not hijacked",
+              "round": 1,
+              "severity": "P1",
+              "title": "the developer launcher resolved pyw/where/timeout from the launch directory before PATH; a planted pyw.cmd ran"
+            },
+            {
+              "disposition": "applied: urlsplit bound with the disguised forms in the test",
+              "round": 1,
+              "severity": "P2",
+              "title": "open_in_default_browser guarded by string prefix; a userinfo URL passed"
+            },
+            {
+              "disposition": "applied on the runtime's composition (TrustedHostMiddleware); the console onboard path unchanged and disclosed in A-023",
+              "round": 1,
+              "severity": "P3",
+              "title": "no Host header validation (DNS rebinding could read /api/runtime)"
+            },
+            {
+              "disposition": "test added for no/foreign Content-Type bodies; the floor not raised (first strict release not establishable offline)",
+              "round": 1,
+              "severity": "P3",
+              "title": "preflight-less cross-origin stop refused only by a FastAPI default"
+            },
+            {
+              "disposition": "applied: _shown() quotes and cuts to 200 chars",
+              "round": 1,
+              "severity": "P3",
+              "title": "message-box text unbounded, echoing attacker-writable strings"
+            },
+            {
+              "disposition": "applied: told from the main thread after the server exits",
+              "round": 1,
+              "severity": "P3",
+              "title": "readiness-timeout notice raised on the daemon watcher thread"
+            },
+            {
+              "disposition": "applied: refusal by name; bind tolerant",
+              "round": 1,
+              "severity": "P3",
+              "title": "an out-of-range --port escaped as OverflowError"
+            },
+            {
+              "disposition": "applied: lock retried while joining; finished-run record provisional across fresh reads",
+              "round": 1,
+              "severity": "P3",
+              "title": "a same-instant second launch could read the previous run's terminal record"
+            },
+            {
+              "disposition": "disclosed in A-023; the console path is outside this slice",
+              "round": 2,
+              "severity": "P3",
+              "title": "the Host check lives in the runtime composition only"
+            },
+            {
+              "disposition": "held by the test; floor unchanged",
+              "round": 2,
+              "severity": "P3",
+              "title": "the FastAPI floor admits releases without the strict Content-Type default"
+            }
+          ],
+          "role": "security-inspector",
+          "status": "pass",
+          "summary": "PR-18 Windows basic-user runtime, round 2. Round 1 was FAIL: the developer launcher resolved pyw (and where, timeout) from the current directory first, so a planted pyw.cmd ran in place of the Python launcher (P1, reproduced). Round 2 re-ran the hijack against the current launcher text: not hijacked; the URL bound, Host check, bounded notices, main-thread timeout notice, port range, actor validation and the same-instant join were each re-measured as resolved. No path by which the runtime creates or weakens governance authority; nothing reads process isolation as provider confinement."
+        }
+      ],
+      "schema": "nornyx.forge.in_session_reviews.v1"
+    },
     "source": ".nornyx/in-session/reviews.json",
-    "source_sha256": null
+    "source_sha256": "sha256:9fe77d841c03cd1fbd7ff1e1c1a7bd1dd94f05c0e8f7a50850f60faa3fe7dc9b"
   },
   "statement": "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any reviewer rows below come from an in-session report that is not part of the governed content and decides nothing. This record asserts no independence: an unauthenticated file cannot establish that the party who produced it was independent of it.",
-  "subject_revision": "git:8f348a509bc95d994cb71e74a169bc9b7f0737eb",
+  "subject_revision": "git:f08ffb95d49375f52b8a2b806296db882ac33215",
   "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (C:\\Users\\mazin.LAPTOP-EMF4NEOK\\.nornyx\\forge_reviewer_trust.json (absent)))"
 }

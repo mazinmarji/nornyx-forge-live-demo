@@ -124,6 +124,28 @@ EXPECTED_SKIPS = {
         "The ambient baseline is read from /proc, which a Windows workstation does not have; there the verifier is confined by a Job Object whose limit needs no baseline. The property is not weakened: every CI test job runs Linux and executes this proof.",
     "tests/test_trusted_greenfield_acceptance.py::test_posix_limits_fail_closed_when_the_ambient_count_cannot_be_measured":
         "The POSIX baseline and its fail-closed path do not exist on a Windows workstation, where a Job Object confines the verifier instead. The property is not weakened: every CI test job runs Linux and executes this proof, and the parent's resource-limits refusal is proved on every platform.",
+    # PR-18's Windows-hosted runtime evidence: a real child process started
+    # from a real bundle folder on a Windows host. The Linux census cannot
+    # express these; the windows-runtime CI job runs the module on
+    # windows-latest under a skip census of its own, so a skip THERE fails
+    # that job rather than passing quietly, and the cross-platform half of
+    # the same properties runs here in tests/test_windows_runtime.py.
+    "tests/test_windows_host_runtime.py::test_w1_w2_w11_w12_the_bundles_own_code_serves_from_an_unrelated_directory":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w3_the_windows_runtime_binds_loopback_only":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w6_a_second_process_joins_the_running_instance_and_starts_nothing":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w7_w8_stale_metadata_and_an_impostor_are_not_this_runtime":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w9_w20_a_stopped_runtime_restarts_over_the_same_persisted_project":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refused":
+        "Windows-hosted runtime evidence: a real child process from a real bundle folder on a Windows host, once per declared provider. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_w13_w14_the_self_contained_launcher_refuses_visibly_without_its_interpreter":
+        "Windows-hosted runtime evidence: the literal self-contained launcher run through cmd.exe on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    "tests/test_windows_host_runtime.py::test_the_entry_guard_speaks_when_the_folder_cannot_load":
+        "Windows-hosted runtime evidence: the entry guard exercised on a real child process under a redirected profile on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
 }
 
 
@@ -219,11 +241,34 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # let a fragment leak through -- the specimen caught the guard), the
     # never-sent state as data, and no network path in the module.
     "tests/test_experience_sharing.py": 9,
-    # The Windows bundle builder: 10 collected at introduction, floor at
-    # band(10) = 9. The Dockerfile-parsed anti-drift pin, the resolver's
-    # markers, the src-before-pylib shadowing order, the probed installer,
-    # and the refusal of an unverified interpreter.
-    "tests/test_windows_bundle.py": 9,
+    # The Windows bundle builder: 10 collected at introduction, 18 after
+    # PR-18 and its inspections, floor at band(18) = 17. The
+    # Dockerfile-parsed anti-drift pin, the resolver's markers, the
+    # src-before-pylib shadowing order with no site line, the probed
+    # installer, the refusal of an unverified or incomplete interpreter
+    # archive, the mode marker, the two launchers -- the self-contained one
+    # naming no fallback interpreter -- and the launch-directory command
+    # lookup turned off before any command.
+    "tests/test_windows_bundle.py": 17,
+    # PR-18's Windows runtime, cross-platform deterministic: 36 collected
+    # after the three in-session inspections, floor at band(36) = 33. The
+    # launched folder as the running code, the carried interpreter or none,
+    # explicit project authority, one owner per project under a file lock
+    # (retried while a launch waits; a finished run's record provisional),
+    # loopback-only binding and a loopback-only Host, the browser only
+    # after the server answered its own probe, stale metadata and impostors
+    # refused without terminating anything, bounded notices, operational
+    # state kept out of the governance answer, the project and the seals,
+    # and capsule authority persisting across a runtime restart.
+    "tests/test_windows_runtime.py": 33,
+    # PR-18's Windows-hosted evidence: 10 collected after the inspections
+    # (the journey once per declared provider, and the one test that runs
+    # everywhere and pins the windows-runtime job), floor at band(10) = 9.
+    # Real child processes from a real bundle folder at a path with spaces
+    # and non-ASCII characters, from an unrelated working directory;
+    # declared skips off Windows, run by the windows-runtime CI job under
+    # its own skip census.
+    "tests/test_windows_host_runtime.py": 9,
     # The BRD derivation: 9 collected at introduction, floor at band(9) = 9.
     # Round-tripped against the real parse_brd; a proposal-only capsule
     # refuses; open proposals author nothing; heading collisions refused.
@@ -285,7 +330,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Raised 160 -> 162 for the anchored-measurement isolation round: the
     # re-execution gained its enclosing-repository and reader-hook proofs
     # (179 collected, band(179) = 162).
-    "tests/test_recorded_measurements.py": 162,
+    # Raised 162 -> 166 for the Windows-runtime round: A-023, the Windows
+    # section of docs/VALIDATION.md and the README bundle section entered
+    # the document sweep (184 collected, band(184) = 166) -- the sweep
+    # growing when governed prose lands is the sweep working.
+    "tests/test_recorded_measurements.py": 166,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -455,6 +504,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # rows is written here: it said seven while the table held ten, in the
     # block whose subject is stale prose beside a live constant.
     "tests/test_attack_classes.py::test_reverting_one_fix_reddens_its_own_specimen": 1,
+    # ONE CASE PER DECLARED PROVIDER, off Windows. The journey-to-the-boundary
+    # proof runs a real runtime once for each provider PROVIDERS declares; a
+    # third provider would be a diff here as well as in the contract.
+    "tests/test_windows_host_runtime.py::test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refused": 2,
 }
 
 # Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the
@@ -517,6 +570,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_recorded_measurements.py (105 modules). Both module floors were
 # raised to their bands, which lifted the module-floor sum past the aggregate,
 # so the aggregate moves up by the same eight and keeps its margin --
+# Re-measured for the Windows-runtime round (PR-18), after its three
+# in-session inspections: 36 collected in tests/test_windows_runtime.py, 10
+# in tests/test_windows_host_runtime.py, 8 more in
+# tests/test_windows_bundle.py and 5 more in
+# tests/test_recorded_measurements.py (108 -> 110 modules); the module-floor
+# sum rose by 54 and the aggregate by 55.
 # `test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors` caught
 # it, not a reader. Re-measured for the reader-configuration round: 19 new
 # collected in tests/test_absence_is_not_success.py (105 modules); that
@@ -537,12 +596,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     2708   (108 modules)
-#     sum of the module floors    2491
-#     band(2708) = ceil(0.9*n)    2438
-#     MINIMUM_COLLECTED           2498
-#     above the module sum         7
-#     below what collects         210
+#     collected across tests/     2767   (110 modules)
+#     sum of the module floors    2545
+#     band(2767) = ceil(0.9*n)    2491
+#     MINIMUM_COLLECTED           2553
+#     above the module sum         8
+#     below what collects         214
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -563,7 +622,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 217 in total, and the aggregate refuses
+# per-module bands already grant 222 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -584,7 +643,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2498
+MINIMUM_COLLECTED = 2553
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -672,6 +731,8 @@ REQUIRED_MODULES = (
     "tests/test_capsule_selection.py",
     "tests/test_experience_sharing.py",
     "tests/test_windows_bundle.py",
+    "tests/test_windows_runtime.py",
+    "tests/test_windows_host_runtime.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
     "tests/test_basic_user_journey.py",
