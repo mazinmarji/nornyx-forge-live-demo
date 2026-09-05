@@ -26,6 +26,7 @@ not to stand in for that validation.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -223,3 +224,135 @@ def test_an_invalid_task_is_refused_before_any_execution(tmp_path: Path):
     with pytest.raises(Exception, match="goal"):
         adapter.run_task(bad)
     assert not marker.exists(), "an invalid task reached the executable"
+
+
+# ---------------------------------------------------------------------------
+# Non-ASCII provider output (PA-01)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("right_single_quote", b"\xe2\x80\x99"),
+        ("right_double_quote", b"\xe2\x80\x9d"),
+        ("box_drawing", b"\xe2\x94\x80"),
+    ],
+)
+def test_utf8_provider_output_neither_raises_nor_is_corrupted(
+    tmp_path: Path, name: str, payload: bytes
+):
+    """The real CLI's output is UTF-8 and carries typographic characters.
+
+    Measured under PA-01 against the shipped adapter, `text=True` with no
+    encoding named decoded with the locale codec -- cp1252 on the Windows
+    basic-user host -- and failed two different ways on real Codex output.
+    A right single quote became mojibake and was passed through verbatim into
+    the WorkerResult, so corrupted text reached evidence while everything
+    looked healthy. A right double quote carries byte 0x9d, unmapped in
+    cp1252, so the reader thread raised, `stdout` came back None, and the
+    adapter turned that into an AttributeError escaping `run()` -- an
+    exception where the Provider Contract requires a WorkerResult.
+
+    Both directions are asserted: the text must survive intact, AND the call
+    must return rather than raise. Asserting only the second would pass on an
+    adapter that silently mangled every quotation mark.
+    """
+    emitter = tmp_path / f"emit_{name}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'before ' + " + repr(payload) + " + b' after')\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        cli = tmp_path / f"utf8-codex-{name}.bat"
+        cli.write_text(
+            f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+            encoding="utf-8", newline="",
+        )
+    else:
+        cli = tmp_path / f"utf8-codex-{name}.sh"
+        cli.write_text(
+            f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+            encoding="utf-8", newline="",
+        )
+        cli.chmod(0o755)
+
+    worker = CodexWorker(str(cli))
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), timeout_seconds=60,
+    )
+    assert result.success is True
+    assert result.output == "before " + payload.decode("utf-8") + " after", (
+        "the provider's own bytes must reach the result undamaged; "
+        f"got {result.output!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("lone_continuation", b"\x80"),
+        ("truncated_sequence", b"\xe2\x80"),
+        ("invalid_start_byte", b"\xff\xfe"),
+    ],
+)
+def test_malformed_output_is_recorded_as_an_integrity_failure_not_replaced(
+    tmp_path: Path, name: str, payload: bytes
+):
+    """Bytes that are not UTF-8 must not become text that looks like prose.
+
+    `errors="replace"` was the first repair and it is the one that looks
+    right: it stops the crash, and it converts every malformed byte into
+    U+FFFD, which then travels into the WorkerResult and onward into evidence
+    as ordinary characters. The run reports SUCCESS and its output reads as
+    something the provider wrote. That is a worse failure than the crash it
+    replaced, because nothing about it looks wrong.
+
+    So the three properties asserted here are separate on purpose:
+
+      * `run()` does not raise -- the Provider Contract requires a
+        WorkerResult, and an exception for task failure is a contract
+        violation;
+      * the result is NOT successful, whatever the process exited with, so a
+        clean exit cannot launder unreadable output;
+      * the output NAMES the decode failure and does not carry U+FFFD, so no
+        substituted character can be mistaken for provider text.
+    """
+    emitter = tmp_path / f"emit_{name}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'before ' + " + repr(payload) + " + b' after')\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        cli = tmp_path / f"bad-codex-{name}.bat"
+        cli.write_text(f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+                       encoding="utf-8", newline="")
+    else:
+        cli = tmp_path / f"bad-codex-{name}.sh"
+        cli.write_text(f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+                       encoding="utf-8", newline="")
+        cli.chmod(0o755)
+
+    worker = CodexWorker(str(cli))
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), timeout_seconds=60,
+    )
+
+    assert result.success is False, (
+        "output that could not be decoded must not be reported as a successful "
+        f"run; got {result.output!r}"
+    )
+    assert "�" not in result.output, (
+        "the replacement character reached the result, so malformed bytes are "
+        "being carried as though they were text the provider wrote"
+    )
+    assert "UTF-8" in result.output and "integrity" in result.output, (
+        f"the failure does not say what went wrong: {result.output!r}"
+    )
+    assert "sha256:" in result.output, (
+        "the undecodable payload is neither rendered nor identified, so the "
+        "evidence cannot be traced back to what was actually emitted"
+    )

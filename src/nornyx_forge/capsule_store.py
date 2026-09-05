@@ -43,13 +43,22 @@ revision, working tree, and file bytes -- before trusting anything on disk.
 A store that does not match its seal is `CapsuleSealError`, a tamper finding
 that carries the sealed snapshot so the caller can restore it. The seal is
 Forge-owned persistence; it is not the provider's file and not the provider's
-repository. WHAT IT DOES NOT ESTABLISH: Codex is declared not to write outside
-its workspace (a sandbox flag its adapter passes, which Forge has not
-independently established), and a Claude worker with Bash runs as the same
-operating-system user and can reach the seal directory. Within the current
-local trust boundary (A-015) that is the bound, and it is stated here rather
-than implied away; it is why neither provider is eligible for the governed
-build (the Provider Contract's decision). A store that was ever sealed also carries a
+repository. WHAT IT DOES AND DOES NOT ESTABLISH, now measured rather than
+assumed. A Claude worker with Bash still runs as the same operating-system
+user and can reach the seal directory; nothing about that changed. Codex is
+no longer the same case: PA-01 measured its Windows sandbox through the CLI's
+own entry point, with no model deciding whether the attempt was made, and it
+REFUSED every write to the real seal directory -- including through a
+junction planted inside the workspace and proved live first. On Windows the
+seal is genuinely outside that provider's filesystem reach. It is still not
+enough for admission, for a reason no seal can address: the same measurement
+found loopback egress unconfined, and Forge's onboarding surface is an
+unauthenticated loopback surface whose routes move authority, so a provider
+that cannot rewrite the seal can still ask Forge to change its own mind
+through the front door. Within the current local trust boundary (A-015) that
+is the bound, and it is stated here rather than implied away; it is why
+neither provider is eligible for the governed build (the Provider Contract's
+decision). A store that was ever sealed also carries a
 committed marker naming its seal, so a protected store whose seal is gone is
 refused rather than mistaken for a store from before sealing existed; only a
 store with neither marker nor seal is the legacy case, reported unsealed. The
