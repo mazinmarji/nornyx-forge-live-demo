@@ -3,7 +3,10 @@
 **Result: NOT ESTABLISHED.** `PROVIDER_CONFINEMENT["codex"]` stays `declared`.
 The governed basic-user build still executes no provider.
 
-Measured at `7ce306b1` on 2026-09-05, against `codex-cli 0.128.0` on Windows 11
+Measured at `7ce306b1` on 2026-09-05 against `codex-cli 0.128.0`, and
+re-measured on 2026-09-06 against `codex-cli 0.153.4` after the host's CLI was
+updated — same verdict, and a sharper network finding; see the re-measurement
+section below. Windows 11
 Home 10.0.22000. The probe data behind every claim below — and the full
 revision the measurement was taken at, which belongs in the record rather than
 in prose that goes stale on the next commit — is
@@ -141,6 +144,63 @@ loopback services, including Forge's own unauthenticated authority surface.
 
 Nothing was measured about Claude. Its row stays `none` for the reason it
 always had.
+
+---
+
+## Re-measured on codex-cli 0.153.4 — same verdict, sharper finding
+
+The host's CLI was updated after the original measurement, so the record no
+longer described the installed environment. Confinement is a property of a
+particular sandbox implementation; a version bump is a new subject, not a
+footnote. Re-measured 2026-09-06.
+
+**The mechanism had to be re-derived, not replayed.** 0.153.4 removed the
+`codex sandbox windows` subcommand — the top-level `codex sandbox` *is* the
+Windows restricted-token sandbox now — and renamed `--permissions-profile` to
+`-P/--permission-profile`. Replaying the 0.128.0 invocation errors out, and an
+errored probe looks exactly like a denial. A re-measurement that reused the old
+command line would have reported confinement it never observed.
+
+**Every property came back the same**, each with its unsandboxed control still
+passing: the in-workspace write permitted; the seal, a sibling, Forge material,
+the provider's own `~/.codex`, the real `DEFAULT_SEAL_DIR`, and an escape
+through a junction proved live — all refused with `Access is denied.`. The real
+seal directory listing was byte-identical before and after. Loopback remained
+**reachable**, listener-confirmed. So `control_plane_reachability` is still
+ALLOWED where the criterion requires denied, and Codex stays `declared`.
+
+**One thing is newly visible, and it makes the finding worse rather than
+better.** Network egress was measured in both directions this time:
+
+| Direction | Sandboxed | Unsandboxed control |
+|---|---|---|
+| External (`https://example.com`) | **BLOCKED** — exit 35, HTTP 000 | HTTP 200 |
+| Loopback (`127.0.0.1`, listener-confirmed) | **REACHABLE** | — |
+
+The sandbox confines the direction that is not Forge's threat model and permits
+the one that is. Forge's control plane is an unauthenticated loopback surface;
+external egress was never the risk. A reader who saw only "the sandbox blocks
+network" would draw precisely the wrong conclusion.
+
+**The new flag was evaluated and changed nothing observable.** 0.153.4 adds
+`--sandbox-state-disable-network`. External was already blocked without it, and
+loopback stayed reachable with it. Its help says the flag disables network *"in
+the supplied sandbox state"*, so it may only mutate a state passed via
+`--sandbox-state-json` and be inert otherwise — that was **not** established, so
+what is recorded is what the flag did, not why.
+`sandbox_workspace_write.network_access=false` and `sandbox_mode="read-only"`
+also left loopback open, as on 0.128.0.
+
+**NOT claimed:** external egress was never measured on 0.128.0 — only loopback
+was. The external result is therefore a new observation about 0.153.4, **not**
+evidence that 0.153.4 introduced external blocking. Nothing here says the two
+versions differ on that point, because nothing measured it.
+
+Both versions' observations are kept in the record rather than the newer
+replacing the older, so every required property now carries two authoritative
+witnesses. They agree, and the verifier's unanimity rule decides from both —
+had they disagreed, the property would be unmet, which is the intended
+behaviour and not a special case.
 
 ---
 
