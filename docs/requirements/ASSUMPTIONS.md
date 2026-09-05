@@ -928,8 +928,8 @@ evidence fails, and a measurement that genuinely closed the gap would pass.
 
 **A second assumption, learned from the verifier rather than the sandbox.** A
 criterion expressed as data is not yet a criterion that cannot be satisfied
-dishonestly. Founder review found three routes to "established" that required
-no such property to hold: satisfaction by `any(...)`, which resolves a
+dishonestly. The first verifier admitted three routes to "established" that
+required no such property to hold: satisfaction by `any(...)`, which resolves a
 contradiction by keeping its convenient half; one global list of evidence
 mechanisms, which let a CLIENT's return code testify to whether a LISTENER was
 reached; and probes with no provider on them, so evidence gathered against one
