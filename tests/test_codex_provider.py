@@ -26,6 +26,7 @@ not to stand in for that validation.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -223,3 +224,66 @@ def test_an_invalid_task_is_refused_before_any_execution(tmp_path: Path):
     with pytest.raises(Exception, match="goal"):
         adapter.run_task(bad)
     assert not marker.exists(), "an invalid task reached the executable"
+
+
+# ---------------------------------------------------------------------------
+# Non-ASCII provider output (PA-01)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("right_single_quote", b"\xe2\x80\x99"),
+        ("right_double_quote", b"\xe2\x80\x9d"),
+        ("box_drawing", b"\xe2\x94\x80"),
+    ],
+)
+def test_utf8_provider_output_neither_raises_nor_is_corrupted(
+    tmp_path: Path, name: str, payload: bytes
+):
+    """The real CLI's output is UTF-8 and carries typographic characters.
+
+    Measured under PA-01 against the shipped adapter, `text=True` with no
+    encoding named decoded with the locale codec -- cp1252 on the Windows
+    basic-user host -- and failed two different ways on real Codex output.
+    A right single quote became mojibake and was passed through verbatim into
+    the WorkerResult, so corrupted text reached evidence while everything
+    looked healthy. A right double quote carries byte 0x9d, unmapped in
+    cp1252, so the reader thread raised, `stdout` came back None, and the
+    adapter turned that into an AttributeError escaping `run()` -- an
+    exception where the Provider Contract requires a WorkerResult.
+
+    Both directions are asserted: the text must survive intact, AND the call
+    must return rather than raise. Asserting only the second would pass on an
+    adapter that silently mangled every quotation mark.
+    """
+    emitter = tmp_path / f"emit_{name}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'before ' + " + repr(payload) + " + b' after')\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        cli = tmp_path / f"utf8-codex-{name}.bat"
+        cli.write_text(
+            f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+            encoding="utf-8", newline="",
+        )
+    else:
+        cli = tmp_path / f"utf8-codex-{name}.sh"
+        cli.write_text(
+            f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+            encoding="utf-8", newline="",
+        )
+        cli.chmod(0o755)
+
+    worker = CodexWorker(str(cli))
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), timeout_seconds=60,
+    )
+    assert result.success is True
+    assert result.output == "before " + payload.decode("utf-8") + " after", (
+        "the provider's own bytes must reach the result undamaged; "
+        f"got {result.output!r}"
+    )

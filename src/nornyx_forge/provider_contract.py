@@ -38,12 +38,31 @@ So the contract carries, as data, what Forge itself can ESTABLISH about each
 adapter's confinement, and `governed_build_eligibility` decides from that
 table alone -- never from the request, the capsule, the project directory,
 or anything the provider says about itself. Today no adapter's confinement
-is established: Claude runs with no filesystem confinement, and Codex's
-workspace-write sandbox is a flag the adapter passes to a CLI, declared and
-not independently established by Forge. Both are therefore ineligible, and
-the governed build fails closed rather than executing either. That is a
-deliberate outcome, not a gap in the table: promotion to "established"
-requires Forge to verify a confinement, which is future work.
+is established, and the two rows are unequal for different reasons. Claude
+runs with no filesystem confinement at all. Codex HAS now been measured
+(PA-01, Windows, codex-cli 0.128.0, at 7ce306b1): driven through the CLI's
+own `codex sandbox windows` entry point, with no model in the loop to decide
+whether the forbidden operation was attempted, its sandbox refused every
+write outside the workspace -- the external seal, a sibling directory, the
+provider's own configuration home, and an escape through a junction that was
+proved live first -- while permitting the intended write inside. That is
+real enforcement, and saying otherwise would now be false.
+
+IT IS STILL NOT ADMISSION. The same measurement found the sandbox does not
+confine loopback egress: a confined process reached a controlled listener on
+127.0.0.1 and its POST was accepted under the very Host rule the onboarding
+surface applies. Forge's control plane IS a local unauthenticated loopback
+surface whose routes move authority, so a provider that cannot rewrite the
+seal can still walk in the front door and ask Forge to change its own mind.
+No setting closed it -- not `network_access=false`, not a permissions-profile
+network table, not even `sandbox_mode=read-only`. Filesystem confinement is
+therefore established and network confinement is not, the row stays
+`declared`, and both providers remain ineligible.
+
+`CONFINEMENT_PROPERTIES` and `assess_confinement` below are what keep that
+distinction from being edited away: the criterion for promotion is data, the
+recorded measurement is checked against it, and a test holds the table and
+the evidence to each other in both directions.
 
 PURITY. `layer.domain`: no filesystem, no clock, no process. Validation and
 normalization only; execution lives in adapters.
@@ -91,10 +110,170 @@ _CONFINEMENT_REASON: Mapping[str, str] = {
     ),
     "declared": (
         "is run under a workspace-write sandbox flag that Forge's adapter passes to the "
-        "provider's CLI, whose enforcement Forge has not independently established"
+        "provider's CLI, whose enforcement Forge has not established across every "
+        "property admission requires"
     ),
     "established": "Forge has established that it is confined to the project subject",
 }
+
+#: What a per-provider row may add: the measured finding behind it, so the
+#: reason a person reads names evidence rather than a category. Absent for a
+#: provider Forge has not measured, and absence says exactly that.
+_CONFINEMENT_FINDING: Mapping[str, str] = {
+    "codex": (
+        "measured on Windows at 7ce306b1 (docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md): "
+        "its sandbox DOES refuse every write outside the workspace, including Forge's "
+        "external seal, but it does NOT confine loopback egress, and Forge's own control "
+        "plane is an unauthenticated loopback surface"
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# What a confinement measurement has to show before a row may move
+# ---------------------------------------------------------------------------
+
+#: The properties a measurement must cover before an adapter's row may be
+#: promoted to `established`, and the outcome each one must show. This is the
+#: admission criterion as data: `subject_write` must be ALLOWED (a sandbox that
+#: refuses the intended work is not confinement, it is breakage), and every
+#: other property must be REFUSED.
+#:
+#: `control_plane_reachability` is here because filesystem confinement is not
+#: the whole of authority. Forge's onboarding surface is a local,
+#: unauthenticated, authority-bearing loopback surface -- `/api/journey/ready`
+#: and `/api/proposals/{id}/confirm` move authority -- so a provider that
+#: cannot rewrite the seal but CAN post to that surface has acquired the
+#: authority anyway, by the front door.
+CONFINEMENT_PROPERTIES: Mapping[str, str] = MappingProxyType({
+    "subject_write": "allowed",
+    "external_seal_write": "denied",
+    "sibling_write": "denied",
+    "forge_code_write": "denied",
+    "link_escape_write": "denied",
+    "control_plane_reachability": "denied",
+})
+
+#: What one probe may report. `inconclusive` exists so that "the attempt was
+#: never observed" has somewhere to go that is not "refused".
+PROBE_OUTCOMES = ("allowed", "denied", "inconclusive")
+
+#: Observations that can carry a confinement claim: the actual result of the
+#: process that attempted the operation, or the record of the service that was
+#: (or was not) reached.
+ENFORCEMENT_MECHANISMS = ("observed_process_result", "observed_listener_record")
+
+#: Named so they can be REFUSED by name rather than merely omitted. That an
+#: adapter constructs a command carrying `--sandbox workspace-write` is a fact
+#: about the adapter, not an observation of a sandbox enforcing anything; and a
+#: model's account of what happened to it is the provider describing itself,
+#: which `governed_build_eligibility` already refuses to read.
+NON_ENFORCEMENT_MECHANISMS = ("command_construction", "model_report")
+
+
+@dataclass(frozen=True)
+class ConfinementProbe:
+    """One measured attempt at one property, on one platform."""
+
+    property: str
+    platform: str
+    attempt_observed: bool
+    outcome: str
+    mechanism: str
+
+    def validate(self) -> None:
+        if self.property not in CONFINEMENT_PROPERTIES:
+            raise ProviderError(
+                f"probe property {self.property!r} is not one of "
+                f"{tuple(CONFINEMENT_PROPERTIES)}"
+            )
+        if not isinstance(self.platform, str) or not self.platform.strip():
+            raise ProviderError("a probe must name the platform it was taken on")
+        if not isinstance(self.attempt_observed, bool):
+            raise ProviderError("attempt_observed must be a bool")
+        if self.outcome not in PROBE_OUTCOMES:
+            raise ProviderError(
+                f"probe outcome {self.outcome!r} is not one of {PROBE_OUTCOMES}"
+            )
+        if not isinstance(self.mechanism, str) or not self.mechanism.strip():
+            raise ProviderError("a probe must name the mechanism it rests on")
+
+    def satisfies(self, required_outcome: str) -> bool:
+        """Whether this probe LICENSES the required outcome.
+
+        Three ways to fail, kept separate on purpose. An attempt that was never
+        observed establishes nothing, however clean the aftermath looked -- the
+        model may simply not have tried. A mechanism that is not an enforcement
+        observation establishes nothing, however emphatic. And an outcome that
+        is not the required one is the plain negative case.
+        """
+        if not self.attempt_observed:
+            return False
+        if self.mechanism not in ENFORCEMENT_MECHANISMS:
+            return False
+        return self.outcome == required_outcome
+
+
+@dataclass(frozen=True)
+class ConfinementAssessment:
+    """Whether a measurement licenses `established`, and what is missing."""
+
+    provider: str
+    platform: str
+    establishes: bool
+    unmet: tuple[str, ...]
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider, "platform": self.platform,
+            "establishes": self.establishes, "unmet": list(self.unmet),
+            "reason": self.reason,
+        }
+
+
+def assess_confinement(
+    provider: str, platform: str, probes: tuple[ConfinementProbe, ...]
+) -> ConfinementAssessment:
+    """Decide whether a measurement establishes confinement. Evidence only.
+
+    Nothing here reads `PROVIDER_CONFINEMENT`, so this cannot agree with the
+    table by construction: the table is a claim, this is the check on it, and
+    a test holds them to each other. A property with no probe on this platform
+    is unmet -- silence is not a refusal, and a measurement taken elsewhere
+    does not travel.
+    """
+    if provider not in PROVIDERS:
+        raise ProviderError(f"provider {provider!r} is not one of {PROVIDERS}")
+    for probe in probes:
+        probe.validate()
+
+    unmet: list[str] = []
+    for prop, required in CONFINEMENT_PROPERTIES.items():
+        on_platform = [
+            p for p in probes if p.property == prop and p.platform == platform
+        ]
+        if not on_platform or not any(p.satisfies(required) for p in on_platform):
+            unmet.append(prop)
+
+    establishes = not unmet
+    if establishes:
+        reason = (
+            f"every confinement property required for admission was measured on "
+            f"{platform} and showed the required outcome"
+        )
+    else:
+        reason = (
+            f"confinement is not established on {platform}: "
+            + ", ".join(unmet)
+            + " (a property is unmet when it was not probed on this platform, when "
+            "the attempt was not observed, when the observation was not an "
+            "enforcement result, or when the outcome was not the required one)"
+        )
+    return ConfinementAssessment(
+        provider=provider, platform=platform, establishes=establishes,
+        unmet=tuple(unmet), reason=reason,
+    )
 
 
 class ProviderError(CapsuleValidationError):
@@ -221,6 +400,9 @@ def governed_build_eligibility(provider: str) -> GovernedEligibility:
             f"it {_CONFINEMENT_REASON[confinement]}; the build is refused and no other "
             "provider is tried"
         )
+    finding = _CONFINEMENT_FINDING.get(provider)
+    if finding:
+        reason = f"{reason}. {finding}"
     return GovernedEligibility(
         provider=provider, eligible=eligible, confinement=confinement, reason=reason,
     )

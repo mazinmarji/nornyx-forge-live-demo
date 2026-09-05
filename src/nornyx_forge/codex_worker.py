@@ -26,6 +26,12 @@ dishonesty the contract exists to prevent:
     tool names are recorded in the prompt so the model sees the intent, but
     the MECHANISM is the sandbox, and this docstring is the disclosure.
 
+THE STREAM IS UTF-8, AND IS DECODED AS UTF-8. Not a detail: `text=True` on its
+own decodes with the locale encoding, and PA-01 measured that going wrong two
+ways on this adapter's real output under cp1252 -- silent mojibake carried
+verbatim into evidence, and an unmapped byte raising out of `run()` where the
+contract requires a WorkerResult. See the comment at the call.
+
 The session identifier is parsed from the JSONL event stream when one appears
 (`session_id` or `thread_id` keys); absence is recorded as None, never
 invented.
@@ -102,6 +108,21 @@ class CodexWorker:
                 command,
                 cwd=workspace,
                 text=True,
+                # The CLI emits UTF-8. `text=True` alone decodes with the
+                # locale encoding, which on a Windows basic-user host is
+                # cp1252, and the PA-01 measurement caught both ways that
+                # goes wrong on this adapter's REAL output: a right single
+                # quote decoded to mojibake and was passed through verbatim
+                # into evidence, and a right double quote (byte 0x9d, unmapped
+                # in cp1252) raised UnicodeDecodeError on the reader thread,
+                # left `stdout` as None, and turned the `result.stdout.strip()`
+                # below into an AttributeError escaping `run()` -- which the
+                # Provider Contract forbids outright, failure being a
+                # WorkerResult and never an exception. Naming the encoding
+                # fixes both; `replace` keeps a stray byte from resurrecting
+                # the raise.
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 check=False,
                 timeout=timeout_seconds,
