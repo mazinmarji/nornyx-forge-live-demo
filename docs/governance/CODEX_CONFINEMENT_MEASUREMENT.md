@@ -174,6 +174,47 @@ there, and a test must prove it does not.
 
 ---
 
+## The criterion, and three ways the first verifier could be talked into a yes
+
+Founder review found the measurement sound and the **verifier** unsound in
+three places. The result below is unchanged; what changed is that it can no
+longer be reached by a record that does not deserve it.
+
+**A property is met when at least one observation competent for it reported an
+observed attempt, and every such observation agrees with the required
+outcome.** Written out, because each clause closes one of the three:
+
+- **Unanimity among competent witnesses, not existence of a helpful one.**
+  The rule was `any(...)`, so one observed DENIED probe beside one observed
+  ALLOWED probe for the same property returned *established* — a verifier
+  accepting the convenient half of a contradiction. A write that got through
+  happened; a compliant observation elsewhere does not un-happen it. A single
+  credible counterexample now **dominates** any number of agreeable ones, and
+  because the rule is `all`, the order probes arrive in cannot change the
+  answer. Non-authoritative probes are **silent, not exculpatory**: they
+  cannot satisfy a property and cannot cancel a contradiction, so burying a
+  counterexample under agreeable `model_report`s does not work either.
+
+- **Competence is per-property data** (`PROPERTY_EVIDENCE_MECHANISMS`). One
+  global mechanism list let `observed_process_result` license
+  `control_plane_reachability` — judging whether a listener was reached by
+  asking the *caller*. That is the exact observation the four-state
+  discrimination above exists to distrust. Filesystem writes are decided by
+  the result of the process that attempted the write; reachability is decided
+  by the listener's own record.
+
+- **Evidence carries its subject** (`ConfinementMeasurement`, and `provider`
+  on every probe). Probes had no provider, so the Codex record would have
+  answered an assessment of Claude. A record now names the provider, platform
+  and revision it was taken at, refuses to hold a probe that disagrees with
+  any of them — a header cannot re-subject the observations beneath it — and
+  a bare tuple of probes is not acceptable evidence at all, because evidence
+  about nobody in particular can be about anybody.
+
+The verifier still never reads `PROVIDER_CONFINEMENT`; it judges the table
+rather than agreeing with it, and a test asks that of the parsed function body
+rather than of its source text.
+
 ## Adapter defects found while measuring
 
 Both in `codex_worker.py`, both from `subprocess.run(..., text=True)` with no
@@ -188,8 +229,25 @@ encoding named, decoding real CLI output with the locale codec (`cp1252` here):
   `WorkerResult` and permits an exception only for an invalid task.
 
 Both were hit on genuine Codex output during D1 (byte `0x9d` at offset 56154).
-Fixed here by naming the encoding; pinned by
-`test_utf8_provider_output_neither_raises_nor_is_corrupted`.
+
+**And the first repair was wrong in a quieter way.** Naming the encoding with
+`errors="replace"` stops the crash and converts every malformed byte to U+FFFD,
+which then travels into the `WorkerResult` and onward into evidence as ordinary
+characters: the run reports **success** and its output reads as prose the
+provider wrote. That is worse than the crash it replaced, because nothing about
+it looks wrong. Both are the same failure — evidence that is not what the
+provider emitted — and replacement is the harder one to notice.
+
+Decoding is therefore **strict**. Valid UTF-8 is preserved exactly. A stream
+that fails to decode yields a `WorkerResult` that is **not successful whatever
+the process exited with**, whose output names the decode failure and its byte
+offset and identifies the payload by length and SHA-256 rather than rendering
+it. No substituted character can be mistaken for provider text, and `run()`
+still never raises. Pinned by
+`test_utf8_provider_output_neither_raises_nor_is_corrupted` (three valid
+typographic specimens) and
+`test_malformed_output_is_recorded_as_an_integrity_failure_not_replaced`
+(lone continuation byte, truncated sequence, invalid start byte).
 
 **`claude_worker.py` has the identical defect and was deliberately left
 unchanged** — this tranche is scoped to Codex. It is recorded here so the

@@ -926,6 +926,27 @@ measurement is a recorded artifact, and a test holds the table and the evidence
 to each other in both directions -- so promoting the row without qualifying
 evidence fails, and a measurement that genuinely closed the gap would pass.
 
+**A second assumption, learned from the verifier rather than the sandbox.** A
+criterion expressed as data is not yet a criterion that cannot be satisfied
+dishonestly. Founder review found three routes to "established" that required
+no such property to hold: satisfaction by `any(...)`, which resolves a
+contradiction by keeping its convenient half; one global list of evidence
+mechanisms, which let a CLIENT's return code testify to whether a LISTENER was
+reached; and probes with no provider on them, so evidence gathered against one
+provider would answer for another. So the assumption is stated explicitly:
+**an admission verifier must require unanimity among observers competent for
+the specific property, and the evidence must name the subject it measured.**
+A counterexample dominates a compliant observation; a non-authoritative
+observation is silent rather than exculpatory; and a record's header may not
+re-subject the observations beneath it.
+
+**A third, about evidence integrity.** A decoding failure must not be
+converted into silent evidence mutation. `errors="replace"` was the repair
+that looked right: it ends the crash and turns malformed bytes into U+FFFD,
+which then reach evidence as ordinary text while the run reports success.
+Strict decoding, with the failure recorded as the result, is the fail-closed
+form.
+
 **What this does NOT assume.** Nothing about POSIX: Linux and macOS were not
 measured, junction semantics are not symlink semantics, and the Windows result
 does not travel. Nothing about model behaviour: two production-path runs left
