@@ -1,10 +1,22 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-09-04T08:57:48Z",
-  "governed_input_digest": "sha256:ffd4df9e6a7db3668f5b1ef94ddf9e655e36eff6564788c470d2e3cd272830d7",
+  "generated_at": "2026-09-05T16:32:55Z",
+  "governed_input_digest": "sha256:fc4579c5851a6fbdaf887f5e40cafe0ae61b77717457c8f1c2ff35726ba0d4a3",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [
+    {
+      "role": "test-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "architecture-inspector",
+      "status": "pass"
+    },
+    {
+      "role": "security-inspector",
+      "status": "pass"
+    },
     {
       "role": "test-inspector",
       "status": "pass"
@@ -23,185 +35,225 @@
   "session_report": {
     "authoritative": false,
     "reviews": {
+      "bounded_review_result": "P1=0 and P2=0 on all three lenses",
       "builder_self_approval": false,
+      "exact_head_reviewed": "13c3d5d",
       "human_review": "not_performed",
+      "release_contract": "docs/governance/RELEASE_CONTRACT_V1.md",
       "reviews": [
         {
           "evidence": [
-            "round 1, read-only in the worktree: bundle + launch + E5 + H5 + the no-seam pin + W5 + W18: 55 passed; --collect-only over the three changed modules: 13/37/37; base blobs collected in a copy: 9/18/36",
-            "round 1, scratch copies (imports confirmed inside the copy): inspector_spec_n1.py 19 entries -- baseline 0 red, I1-I11 0 red, C1-C7 red on the expected tests, R-N1c 6 red; inspector_spec_n3.py -- R-N3a 4 red, R-N3c 3 red, R-N3e 4 red (identical to the builder's), I-H1 1 red (H6), I-H2 4 red, I-H3 2 red, I-H4 1 red; copies restored byte-for-byte then deleted",
-            "INCIDENT, the inspector's own (round 1): robocopy /XD .git did not exclude the linked worktree's .git POINTER FILE, so `git init; git add -A; git commit -m scratch` inside scratch copy 1 acted on the real worktree and created 0b50502 'scratch' (author 'inspector') on the branch, content identical to the candidate, nothing pushed; disclosed by the inspector, recovered by the builder with `git reset --mixed 1ed49f6` (HEAD and index to base, working tree untouched); the stray commit remains only in the reflog; round 2 forbade worktree copies",
-            "round 2, read-only, no copies: 58 passed (bundle + launch); collected 45/13/37; band(45)=41, band(13)=12, band(37)=34; sum(REQUIRED_MODULE_MINIMUMS)=2573 over 110 entries, MINIMUM_COLLECTED=2581, band(2799)=2520; 14 in-memory mutants via a pytest plugin registering a mutated module (the worktree file read, never written): R1a-R1h, R2a-R2c, R3a-R3c each red on the named tests, R3d 0 red (the P4 above)",
-            "not executed by the inspector: scripts/check_test_coverage.py, tests/test_windows_host_runtime.py, the whole suite, any bundle build or --smoke"
+            "pytest -q -> exit 0",
+            "nornyx-forge demo --offline --strict-nornyx -> exit 2, structured governed refusal",
+            "scripts/smoke_http.py -> exit 0, all five checks true",
+            "docker compose config -> exit 0"
           ],
           "findings": [
             {
-              "disposition": "applied: reason strings asserted for the timed-out launcher, the unreachable route and the broken-record loop; port True and port 0 added to the broken-record list; a stopped record with a foreign schema added to S8; a stop with invalid JSON but stopping=true added to S7; round 2 measured each red",
+              "id": "TEST-B1",
+              "residual": "The underlying cause (missing human approval_record) is unresolved and is a declared hard stop, honestly documented rather than papered over.",
+              "resolution": "NornyxRuntimeUnavailable added in src/nornyx_forge/nornyx_runtime.py; CLI emits a structured governed refusal and exits 2; API maps it to HTTP 503. Re-verified by execution.",
               "round": 1,
-              "severity": "P3",
-              "title": "eight verdict predicates/guards survived removal (reason-only or unreachable corners)"
+              "severity": "blocking",
+              "status": "resolved",
+              "summary": "Strict Nornyx path crashed with an unhandled RuntimeError instead of failing closed legibly."
             },
             {
-              "disposition": "applied: three scripted cases -- a launcher that raises TimeoutExpired, a route that raises with the remaining routes still read, a stop that raises with the stopped wait still running; round 2 measured each red under its mutant",
+              "id": "TEST-B2",
+              "residual": "The reviewer could not witness the live test because port 8000 was held by the running demonstration container; the builder observed it pass separately. The live test is not wired into .github/workflows/ci.yml.",
+              "resolution": "tests/test_container_launch.py adds 5 static checks plus an opt-in live launch test gated by FORGE_DOCKER_TESTS=1.",
               "round": 1,
-              "severity": "P3",
-              "title": "the exception-recording paths (launcher TimeoutExpired, _get/_post_json raising) had no through-smoke test"
+              "severity": "blocking",
+              "status": "partially_resolved",
+              "summary": "BRD-005 criterion 'docker compose up --build starts the application' had zero automated coverage."
             },
             {
-              "disposition": "applied: the scripted launcher returns output longer than OUTPUT_LIMIT and the scripted stop a body longer than FACT_LIMIT; both recorded lengths asserted",
-              "round": 1,
-              "severity": "P3",
-              "title": "the launcher-output bound and the stop-body bound were untested"
-            },
-            {
-              "disposition": "applied: the scripted stop body carries multi-byte padding and the recorded string is asserted equal to the first FACT_LIMIT bytes decoded with replacement",
+              "id": "TEST-N1",
+              "resolution": "run_demo_scenarios now resolves worker_mode and allow_policy_fallback from the environment like run_case; two regression tests added.",
               "round": 2,
-              "severity": "P4",
-              "title": "the comment 'cut in BYTES before decoding' was not pinned by an ASCII-only stop body"
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "/api/demo/run ignored FORGE_ALLOW_POLICY_FALLBACK=false because run_demo_scenarios hard-defaulted the fallback to True, contradicting the fail-closed compose default."
+            },
+            {
+              "id": "TEST-N2",
+              "severity": "non_blocking",
+              "status": "open",
+              "summary": "Residual coverage gaps: test_public_contracts_exist is existence-only; BRD-F-007 GitHub-search half untested; test_evidence.py covers only the success path; DevelopmentFlow.run() and the bounded-repair loop untested; ClaudeCodeWorker has no direct unit test; test_demo_flow.py cannot distinguish a real CrewAI kickoff from a silent sequential fallback."
+            },
+            {
+              "id": "TEST-N3",
+              "severity": "informational",
+              "status": "open",
+              "summary": "On Windows, FastAPI TestClient uses a loopback socketpair emulation; a blanket socket guard flags it as network use. With a loopback-aware guard all tests pass with external network blocked, so BRD-004 holds."
             }
           ],
           "role": "test-inspector",
+          "round": 3,
           "status": "pass",
-          "summary": "Post-PR-18 hardening (N1 smoke verdict, N3 common Host boundary), two rounds over the candidate working tree at base 1ed49f6. Round 1 PASS with three P3s: the S-tests hold the verdict where it matters (the builder's six N1 mutations plus seven inspector controls each red on the named tests; N1c reproduced at the same 6 red), three of the builder's five N3 mutations re-run in a scratch copy gave identical red sets, H6's exact-kwargs pin is the only guard against widening to an unenumerated identity, the removed W5 assertion is fully replaced by H5 plus the no-seam pin, and the census floors were consistent. Round 2 PASS after the P3s were applied: 58 passed over the bundle and launch modules; collected 45/13/37 with floors 41/12/34 equal to band(collected); the six rows beside MINIMUM_COLLECTED hold against the constants (2573 + 8 = 2581, 2799 - 2581 = 218, slack 226); fourteen in-memory mutants aimed at the reason strings, the exception branches and the bounds each went red on the tests the dispositions name. No test-adequacy finding remains open."
+          "summary": "Round 1 FAIL with 2 blocking findings; both addressed and re-verified. Round 3 on the evaluation-time repair: 45 collected, 44 passed, 1 correctly skipped (opt-in Docker launch), identical with and without FORGE_RUNTIME_AS_OF pinned. Verified the fail-closed setting at the HTTP layer for both /api/cases and /api/demo/run (503 governed refusal). Reviewer is read-only and did not modify the implementation."
         },
         {
           "evidence": [
-            "round 1: grep of report['result'] in the builder yields the one assignment and the one read in main; every _SMOKE_CHECKS predicate corresponds one-to-one to SMOKE_REQUIRED; census of src/: FastAPI( at demo_app/main.py and onboarding_app.py, create_app( only in onboarding_serve.assemble, uvicorn.run at onboarding_serve.main, uvicorn.Server/Config at windows_runtime._own_runtime, TrustedHostMiddleware/allowed_hosts only in onboarding_serve; scratch copies with PYTHONPATH verified reproduced the base N1 and N3 measurements and all eleven mutation rows; check_architecture.py, check_security.py, validate_repository.py --quick pass",
-            "round 2, read-only, no copies: report['result'] occurs at exactly two sites (the assignment in smoke_bundle and the read in main); _observe_launch has one early return and otherwise completes or propagates, a raise escaping through the try/finally that removes the scratch before any verdict; TrustedHostMiddleware/allowed_hosts under src/ only in onboarding_serve.py (one add_middleware inside assemble); the diff touches only the 12 listed files; ASSUMPTIONS hunks fall inside A-015 and A-023 only; all 24 test names cited in the mutation table resolve; 58 passed; collected 45/13/37; three gates pass",
-            "not executed: scripts/check_test_coverage.py, tests/test_windows_host_runtime.py, the whole suite, any bundle build or --smoke, the embedded-interpreter operator run, any GitHub lookup; no git write in either round"
+            "scripts/check_architecture.py -> exit 0",
+            "pytest tests/test_architecture_security.py -> 5 passed",
+            "nornyx check .nornyx/contracts/architecture_governance.nyx -> exit 1 (approval_record only)"
           ],
           "findings": [
             {
-              "disposition": "applied: README names /api/runtime and the stop as token-compared, /api/state as a usable state object, / as HTML; round 2 confirmed",
+              "id": "ARCH-B1",
+              "resolution": "component.worker_adapter and module.worker_adapter declared; scripts/check_architecture.py rewritten to derive dependency direction from the contract and AST-scan every declared module. Verified by the inspector.",
               "round": 1,
-              "severity": "P3",
-              "title": "README overstated which routes are token-compared (only /api/runtime and the stop carry the instance token)"
+              "severity": "blocking",
+              "status": "resolved",
+              "summary": "demo_app.agentic imported nornyx_forge.claude_worker, a subprocess-spawning module absent from the architecture contract, violating the contract's own undeclared_component_dependency denial. The architecture gate could not see it."
             },
             {
-              "disposition": "applied: timed_out=False recorded on the completed branch and asserted by the through-smoke test; round 2 confirmed",
+              "id": "ARCH-B2",
+              "residual": "Irreducible without a genuine human approval_record. Evidence artifacts were confirmed byte-identical and non-fabricated across both rounds. Correct behaviour for an autonomous demonstration per BRD-005.",
               "round": 1,
-              "severity": "P3",
-              "title": "timed_out is judged but was recorded only on the launcher's failure branch"
+              "severity": "blocking",
+              "status": "not_resolved",
+              "summary": "nornyx check rejects architecture_governance.nyx and runtime_network.nyx."
             },
             {
-              "disposition": "disclosed in docs/VALIDATION.md as a pre-existing race in the join path, not repaired by this slice; tracked separately",
-              "round": 1,
-              "severity": "P3",
-              "title": "one flaky failure outside the diff: test_a_finished_runs_record_is_provisional_for_a_moment failed once in eight runs with a record-read-during-write refusal"
-            },
-            {
-              "disposition": "actor identified as the test-adequacy inspector (see its evidence); reverted with git reset --mixed 1ed49f6; round 2 confirmed HEAD is the base and no ref carries the stray commit",
-              "round": 1,
-              "severity": "P3",
-              "title": "the candidate was committed during the inspection by another actor (0b50502 'scratch')"
-            },
-            {
-              "disposition": "applied: the RECORD_FACTS comment, VALIDATION and CHANGELOG say five bounded fields (four the verdict reads, plus reason so a failed record explains itself); the record-facts test renamed accordingly; README says the launcher returned exit code 0 within its timeout; H5's sentence names the identities it refuses",
+              "id": "ARCH-N1",
+              "resolution": "Replaced with a narrow layer.adapter; layer.application may now depend only on layer.domain and layer.adapter, so direct persistence access remains forbidden.",
               "round": 2,
-              "severity": "P3",
-              "title": "wording precision: RECORD_FACTS keeps four verdict-read fields plus reason, README's 'the launcher returned' understated the exit-code rule, H5's host list was not identical to H3's"
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "layer.application.may_depend_on was widened to the whole of layer.infrastructure, which also permitted application-to-persistence access nobody requested."
             },
             {
-              "disposition": "applied: docs/VALIDATION.md states that the review record is held by the founder outside the repository (not a PR #39 comment), that its two findings reached this slice through the founder's instruction, and that the section is their in-tree record",
+              "id": "ARCH-N2",
+              "resolution": "The gate now flags first-party imports of modules not modelled in the contract; nornyx_forge.models and nornyx_forge.util are declared as a shared kernel. Regression test added.",
               "round": 2,
-              "severity": "P3",
-              "title": "provenance: the labels N1/N3 and their severity at merge are recorded in no tracked file at the base"
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "declared_dependencies_only overclaimed: a first import of a real but unmodelled first-party module produced zero violations."
             }
           ],
           "role": "architecture-inspector",
+          "round": 3,
           "status": "pass",
-          "summary": "Post-PR-18 hardening, two rounds. Round 1 PASS: the smoke verdict has one source (report['result'] assigned once from evaluate_smoke_observations over the recorded steps; the early return for an unready record reaches the same path; main names verdict['failed'] and decides nothing); the Host rule is installed once in onboarding_serve.assemble and every production path that serves the onboarding surface reaches it (console onboard -> launch_onboarding -> -m onboarding_serve -> main -> assemble; both Windows entries -> launch with the pinned default seam); src/demo_app builds a different application; the src diff touches only the middleware lines, a constant and prose; both 'measured at the base' claims and all eleven mutation rows reproduced from scratch copies; the gates pass; the W18 pin holds. Round 2 PASS after the refactor into _observe_launch with a try/finally: the single truth path survived (two occurrences of report['result'], the assignment and main's read), the four round-1 dispositions are in place, the Host rule is still installed once and nowhere else under src/, no preserved boundary is touched, the added document sentences describe the smoke as operator evidence only and state the operator run NOT PERFORMED; 58 passed; three gates pass; collected 45/13/37."
+          "summary": "Round 1 FAIL with 2 blocking findings; finding 1 resolved, finding 2 is the declared human-approval hard stop. Round 3 confirmed the layer.adapter split is a genuine double-enforced barrier (application cannot reach persistence), the shared kernel accurately models reality, the action callable is textually absent from the deny branch, and defaulting the evaluation instant to real time strengthens rather than weakens temporal control. Reviewer is read-only and did not modify the implementation."
         },
         {
           "evidence": [
-            "round 1: live probe of assemble + attach_runtime_routes under uvicorn auto (httptools) and h11 -- accepted 127.0.0.1, localhost, both with a port; refused 400 evil.example, testserver, 192.168.1.20, 127.0.0.1.evil.example, localhost.evil.example, empty, LOCALHOST, [::1], ::1, localhost., 127.0.0.1., www.localhost, 0.0.0.0, 127.1, 127.0.0.2, absent Host; POSTs under foreign Hosts: route hits {}, stop callbacks [], capsule absent; hostile-listener probe of thirteen modes: all fail with the observation named, nested JSON -> crash (applied), trickle -> hang (applied), 3 MiB record -> 3.1 MB report (applied), long honest token -> false negative (applied); check_security.py pass",
-            "round 2, read-only, no copies: fixes 1, 3, 4 reproduced on live listeners; fix 2 did not hold -- body trickle 1 B / 2 s under Content-Length 100000 still running at 15 s (also with Connection: close, TCP_NODELAY, chunked), cause HTTPResponse.read -> BufferedReader.read looping recv; 59 passed (bundle + launch + H5); check_security.py pass",
-            "round 3, read-only, no copies: body trickle 6.02 s (budget TimeoutError, watchdog at 5.03 s), Connection: close 6.00 s, chunked 6.02 s, stall 5.00 s, silent 5.01 s, header trickle 5.00-5.03 s in 6 runs, whole body 0.03 s intact; decoupled wake test 8/8: shutdown does not wake the pending receive, the exchange ends at the next inbound byte (WinError 10053) or the receive's own timeout, worst case 9.00-9.03 s for a 5 s budget with a 4.5 s trickle; through smoke_bundle with a scripted Forge.cmd a trickling /api/runtime -> result fail naming the observation in 6.20 s, no scratch left; round-1 fixes 1, 3, 4 re-measured; check_security.py pass; 45 and 13 passed; one unreproduced probe stall disclosed and not counted",
-            "round 4, read-only, no copies: trickle 1 B / 3 s ended 1.02 s / 1.02 s / 1.01 s under a 1 s budget and 6.02 s / 6.02 s under 5 s (1 B / 12 s: 5.02 s); worst shape (one byte at budget minus 70 ms, then silence) 1.94 s / 1.95 s and 9.92 s -- all the budget's TimeoutError with the socket's timeout or WinError 10053 as cause, inside twice the budget; short body under declared 100000 -> IncompleteRead(8 bytes read, 99992 more expected); equal length, no Content-Length (with and without Connection: close), and 2 MiB declared with 1 MiB read all intact; through smoke_bundle a short / body -> result fail, get / named, 0.22 s, no scratch; F-1 and F-2 reproduced as recorded; check_security.py pass; 45 and 13 passed; note: with _Budget._expire disabled the slow sub-case still passes (it pins the bound), the fast sub-case is the discriminating pin (watchdog off: 25.09 s)",
-            "round 5, read-only, no copies: direct _get -- Content-Length \\xb2 + 8 B -> (200, 8 B, text/html) 0.03 s; 5000 digits + 8 B -> same 0.02 s; 2097152 + 8 B -> IncompleteRead; 2097152 + 1 MiB -> 1048576 B intact; equal length and no Content-Length intact; 100000 + 8 B -> IncompleteRead(8 read, 99992 expected); slow trickle -> TimeoutError at 1.03 s; boundary variations 4300 digits, -5, 0, 1048576/1048577 declared with 1 MiB, 1048576 with 1 MiB-1 all as designed; through smoke_bundle with a scripted Forge.cmd and a multi-route listener: \\xb2 and 5000 digits -> pass with the page facts recorded, 2 MiB + 8 B -> fail with only get / named and the stop still reached, 2 MiB + 1 MiB -> pass, 4300 digits + 8 B -> fail with get / named and the error fact cut at the bound; 0.30 s each, no scratch left; check_security.py pass; 45 passed, 13 passed; 20/20 probe checks passed",
-            "measured on this workstation (rounds 2-3, and by the builder): an HTTP-aware host filter aborts a loopback connection whose response headers arrive incomplete (WinError 10053), sometimes before the watchdog fires, and holds an incomplete header block; the header-trickle case therefore accepts any OSError within the budget",
-            "unreproduced observation, disclosed not found (round 1): both launchers `start` a detached child while smoke_bundle captures output, so inherited pipe handles may keep subprocess.run blocked and the TimeoutExpired branch is untested against the real launcher (pre-existing at the base)",
-            "not executed in any round: scripts/check_test_coverage.py, tests/test_windows_host_runtime.py, any bundle build or real Forge.cmd run; no git write in any round; the round-1 scratch copies were the inspector's own under Temp and were removed"
+            "scripts/check_security.py -> exit 0",
+            "scripts/validate_repository.py -> exit 0 over the full tree including .nornyx/contracts/evidence/",
+            "repo-wide secret-pattern scan -> zero matches"
           ],
           "findings": [
             {
-              "disposition": "applied: _parse_object and _read_record catch RecursionError as invalid; the observations live in _observe_launch and smoke_bundle removes the scratch in a finally; rounds 2-3 re-measured: invalid, no raise, no scratch",
-              "round": 1,
-              "severity": "P3",
-              "title": "smoke_bundle crashed on a deeply nested JSON body (RecursionError is not a ValueError) and leaked its scratch directory"
+              "id": "SEC-N5",
+              "resolution": "Set-but-blank now raises; the fail-closed test covers empty and whitespace values.",
+              "round": 3,
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "FORGE_RUNTIME_AS_OF set but blank silently fell back to the live clock instead of raising, hiding a broken pin."
             },
             {
-              "disposition": "applied twice: a deadline checked between reads (round 2 measured it did NOT hold: read loops receives internally, and the fake-reader test proved nothing), then a _Budget watchdog around the whole exchange pinned by a real trickling listener (round 3 measured closed: within twice the budget, never at the trickle's pace)",
-              "round": 1,
-              "severity": "P3",
-              "title": "the 5 s timeout was per receive, not per response: a trickling listener held _get open for RESPONSE_LIMIT receives"
+              "id": "SEC-N6",
+              "resolution": "Both are handled; returns the documented git:unbound. Test added.",
+              "round": 3,
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "runtime_revision() caught OSError but not UnicodeDecodeError, so a non-UTF-8 contract raised out of an evidence-labelling path."
             },
             {
-              "disposition": "applied: _record_facts keeps five bounded fields; round 3 re-measured a 359 KB record -> 1,927-byte report with exactly the five fields",
-              "round": 1,
-              "severity": "P3",
-              "title": "the runtime record was archived in full (a 3 MiB record produced a 3 MiB report)"
+              "id": "SEC-N7",
+              "resolution": "Scoped to the revision and subject_revision keys. The approval declaration's own expires_at was verified untouched in both contracts.",
+              "round": 3,
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "--sync-contracts replaced any git:<sha> anywhere in the contract, context-free, so a field intentionally holding a superseded revision could be rewritten."
             },
             {
-              "disposition": "applied: _record_shape refuses an instance token longer than FACT_LIMIT; round 3 re-measured: refused at the record, zero requests sent",
-              "round": 1,
-              "severity": "P3",
-              "title": "truncation asymmetry: a token longer than FACT_LIMIT could never match (recorded cut, expected whole)"
-            },
-            {
-              "disposition": "no action: none of the accepted forms is producible by a rebinding browser, whose Host is the attacker's name",
-              "round": 1,
-              "severity": "P3",
-              "title": "informational: Host matching is a first-colon split, case-sensitive, first-header-wins under httptools; no allowed pattern can trigger the www redirect"
-            },
-            {
-              "disposition": "no action: production passes no seam (pinned); only test doubles are affected, and H5 runs the real composition",
-              "round": 1,
-              "severity": "P3",
-              "title": "informational: the assemble_app seam is now the rule's only carrier in the Windows runtime"
-            },
-            {
-              "disposition": "applied: replaced by _Budget/_exchange (watchdog shutdown at one budget per exchange); the test uses a real loopback listener trickling its body and its headers; round 3 measured closed",
+              "id": "SEC-N1",
+              "resolution": "Replaced with AST call-expression detection covering os.system, os.popen, os.exec*, os.spawn*, os.posix_spawn and pty. Regression test added.",
               "round": 2,
-              "severity": "P3",
-              "title": "_read_within's deadline did not cut off a trickling body on a real socket, and its test measured a fake reader"
+              "severity": "non_blocking",
+              "status": "resolved",
+              "summary": "The bounded_external_adapter check contained dead code: 'and banned == \"subprocess\"' made the os.system and pty branches unreachable, so only a bare subprocess import was ever detected."
             },
             {
-              "disposition": "applied: the _Budget docstring states the measured bound (twice timeout per exchange, at most 40 s across the smoke's four exchanges; connect bounded by the socket timeout alone) and the test gained a trickle slower than the budget asserting a TimeoutError within twice the budget plus a margin; VALIDATION and CHANGELOG say 'within twice its time budget'",
-              "round": 3,
-              "severity": "low",
-              "title": "the watchdog's shutdown does not wake a receive already pending on Windows; the effective bound is budget + one receive timeout, tighter than the docstring and test claimed"
+              "id": "SEC-N2",
+              "severity": "non_blocking",
+              "status": "acknowledged",
+              "summary": "check_security.py's own secret scan skips .nornyx/ and evidence/; mitigated because validate_repository.py scans the full tree in the same gate pipeline."
             },
             {
-              "disposition": "applied: _exchange raises IncompleteRead when the body is shorter than a declared Content-Length at or below RESPONSE_LIMIT, pinned by a listener declaring 100000 and sending 8 bytes; round 4 verified, then found the guard's own two defects below",
-              "round": 3,
-              "severity": "low",
-              "title": "pre-existing: a body shorter than its declared Content-Length that ends with a close was returned as a complete answer"
+              "id": "SEC-N3",
+              "severity": "non_blocking",
+              "status": "by_design",
+              "summary": ".nornyx/contracts/evidence/ is intentionally not gitignored: governance evidence must be committed because the contracts bind it by sha256. Contents confirmed free of secrets."
             },
             {
-              "disposition": "applied: the declared length is http.client's own parse (response.length, taken before the read; None when absent, chunked or unparseable) and no parse of our own remains; pinned by listeners sending Content-Length \\xb2 and a 5000-digit value with an 8-byte body, which return the body with no raise",
-              "round": 4,
-              "severity": "low",
-              "title": "F-1: the Content-Length guard parsed the header itself (isdigit then int) and a hostile value (a one-byte latin-1 digit, or 5000 digits) raised ValueError out of smoke_bundle -- the class of round-1 finding 1, via a header"
-            },
-            {
-              "disposition": "applied: the comparison is against min(declared, RESPONSE_LIMIT); pinned by a 2 MiB declaration with 8 bytes then close raising IncompleteRead; VALIDATION says 'as far as it is read' and names the round-4 measurement; the two wording residues (a sentence leading with 'one time budget', a test docstring saying 'at the budget') corrected to 'within twice'",
-              "round": 4,
-              "severity": "low",
-              "title": "F-2: the guard skipped the comparison when the declared length exceeded RESPONSE_LIMIT, so a 2 MiB declaration with an 8-byte body passed, and the documents claimed a property the code did not have"
+              "id": "SEC-N4",
+              "severity": "non_blocking",
+              "status": "open",
+              "summary": "Demonstration limitations, not vulnerabilities: no authentication on the API with 0.0.0.0 binding; no rate limiting or request-size ceiling; the client-supplied risk field selects the authorization tier without server-side re-derivation, which is inert today because the gated action is a fixed inert stub."
             }
           ],
           "role": "security-inspector",
+          "round": 3,
           "status": "pass",
-          "summary": "Post-PR-18 hardening, four rounds. Round 1 PASS: the Host rule installed once in onboarding_serve.assemble and measured on a real socket under both uvicorn parsers (loopback identities 200; every foreign, empty, absent, IPv6, uppercase, look-alike-suffix and trailing-dot Host 400 before any route runs, POSTs included); the only protection removed is the runtime's own copy; probe_instance's Host is admitted; smoke_bundle never produced pass against thirteen hostile listener modes; four P3s applied. Round 2 FAIL: the applied body deadline did not hold on a real socket -- HTTPResponse.read loops receives internally, so a trickling listener held _get open past its budget -- and its pinning test used a fake reader; the builder replaced the design with a _Budget watchdog that shuts the socket down at the end of one budget per exchange, pinned by a real loopback trickling listener. Round 3 PASS, finding 2 closed: body trickle 1 B / 2 s ended in 6.02 s as the budget TimeoutError (also with Connection: close and chunked), stall 5.00 s, silent 5.01 s, header trickle 5.03 s, whole body intact; through smoke_bundle a trickling /api/runtime gave result fail naming the observation with no scratch left; two LOW notes: the shutdown does not wake a receive already pending on Windows (the bound is twice the budget, tighter than the docstring claimed) and a body shorter than its declared Content-Length was accepted as complete. Round 4 (narrow) FAIL: both round-3 dispositions verified exactly as claimed (slow trickles 1.02 s / 6.02 s under 1 s / 5 s budgets, worst shape 1.95 s / 9.92 s, all the budget's TimeoutError; short body IncompleteRead; through the smoke a short page gave result fail naming get /), but the Content-Length guard added for the second note held two new LOW defects -- a parse of our own raised ValueError out of the smoke on a hostile header, and a declared length above the read bound escaped the comparison. Round 5 (narrow) PASS, no findings: F-1 and F-2 closed by live measurement -- a Content-Length of one latin-1 byte and one of 5000 digits each return the body through _get and pass through the smoke with the page judged on its own facts and no ValueError; a 2 MiB declaration with 8 bytes raises IncompleteRead and through the smoke gives result fail naming get /; a 2 MiB declaration with a 1 MiB body returns intact and passes; equal-length and close-delimited bodies intact; the slow trickle ends at 1.03 s; check_security.py pass; 45 and 13 passed. No security finding from any round remains open."
+          "summary": "PASS in all three rounds. No committed secrets, no shell injection, cloned repository content never executed, and no fabricated or overstated assurance claim. Round 3 probed the evaluation-time repair adversarially: naive and malformed time pins, oversized and non-UTF-8 contract content, revision injection via environment override, approval-expiry tampering, and P7D bypass. Reviewer is read-only and did not modify the implementation."
+        },
+        {
+          "evidence": "pytest --collect-only 2218/89 modules; test_attack_classes 42 passed; 7 revert rows passed in 126s; test_false_green_audit 328 passed 0 skips; documented_claims + recorded_measurements + claim_surface_boundary 334 passed.",
+          "findings": [
+            "P3: EXPECTED_SKIP_CASES has no specimen; its refusal path was driven by hand only.",
+            "P3: _specimen_sources treats any skipif as remediation regardless of its condition.",
+            "P3: feature_version does not model PEP 701 f-strings; disclosed in the probe at 13c3d5d.",
+            "P3: _unguarded_imports accepts a try/except ImportError with no fallback as guarded.",
+            "P3: the floor probe reaches only tests/test_*.py module attributes; 16 helpers checked by hand, 0 offenders.",
+            "P3: single-line post-floor specimens are invisible to the floor probe.",
+            "P3: AC07 measures the floor of the declared range, not its ceiling; CI is the named backstop.",
+            "P3: test_git_environment_does_not_reach_the_observer_by_accident measures determinism, not GIT_DIR immunity.",
+            "P3: two docstrings narrate historical inventory counts against a live inventory of 42.",
+            "P3: the contract's (42) was unparsed -- FIXED at 13c3d5d, both counts now compared to the live corpora.",
+            "P3: module floors count collected cases, so a growing parametrisation can absorb lost distinct proofs.",
+            "P3: unused skip exemptions are reported, never failed, so a stale permission never expires."
+          ],
+          "role": "test-inspector",
+          "round": 4,
+          "status": "pass",
+          "summary": "Bounded review under docs/governance/RELEASE_CONTRACT_V1.md at exact head 85d47b5; the fix landed since is in the security lens's scope, not this one. P1=0, P2=0, P3=12. Re-derived every census number independently: 2218 collected, module-floor sum 2038, band 1997, MINIMUM_COLLECTED 2053, and every module floor equal to band(collected) with zero above-band drift. All six REVERTIBLE_FIXES rows drove their named specimen RED on a copied tree under the four-question protocol, and the no-op control refused a semantics-preserving reformat. Proved AC07's floor is derived rather than restated by changing requires-python to >=3.12 in a scratch copy and observing the over-reach control fire."
+        },
+        {
+          "evidence": "test_execution_mode_truth 23/23; test_authority_config -k execution_backend 2/2 driving a real kickoff; architecture suites 37/37; --verify integrity_state intact / problems []; bound artifact digest 001c8333 matches the contract's artifact_sha256.",
+          "findings": [
+            "P3: component.depends_on in architecture_governance.nyx is consumed by nothing; stripping all 26 edges still passes. Module-level enforcement covers the same facts and docs say 'declared', not 'enforced'.",
+            "P3: the 9-name checks array is a hardcoded literal with no test binding each name to a decision point, unlike policies[].deny/require.",
+            "P3: layer.infrastructure sits outside DELEGATING_LAYERS, so store.py is exempt from the process-capability scan."
+          ],
+          "role": "architecture-inspector",
+          "round": 4,
+          "status": "pass",
+          "summary": "Bounded review at exact head 85d47b5. P1=0, P2=0, P3=3. Verified the execution-backend truth property in both directions: observed_execution_backend is derived from the driver (_record_observed_backend reads _sequential_driver, set only by run_sequential), an explicit crewai selection drives a real CustomerCaseFlow.kickoff() and observes crewai_flow, and an unavailable backend RAISES ExecutionBackendUnavailable rather than downgrading. Demonstrated the capability-laundering defence fires: a re-exported os.system reached through a first-party module produced rc=2 with the adapter violation named. integrity_state and assurance_state confirmed to be two separate claims."
+        },
+        {
+          "evidence": "Ed25519 reviewer store built outside the repo, attestations issued by the shipped scripts/issue_inspection_attestation.py; end-to-end against live subject sha256:9f12a086 with ATTESTATION_DIR redirected outside the tree; signature_verified True in every refusing case, so the binding is the sole refuser.",
+          "findings": [
+            "P3: _authenticated_inspections catches only UnicodeDecodeError/JSONDecodeError, so four malformed attestation shapes raise past the reporter. Fails closed, not to a false verdict; its sibling load_canonical_approval guards isinstance(payload, dict) and this one does not.",
+            "P3: _parse_reviewers refuses a duplicate key_id but not a duplicate public_key, so one private key under three identities satisfies three roles. Inside ASSURANCE_BOUNDARY's declared non-claim about key vetting.",
+            "P3: app_launcher binds 0.0.0.0 unconditionally and no HTTP surface has authentication; the unauthenticated surface is undisclosed in README/ASSURANCE_BOUNDARY.",
+            "P3: produced_at is signed but never evaluated, so attestations have no freshness bound; bound instead by inspection_subject_digest, which moves with content."
+          ],
+          "role": "security-inspector",
+          "round": 5,
+          "status": "pass",
+          "summary": "Re-run at exact head 13c3d5d after the P2 fix. P1=0, P2=0, P3=4. Round 4 of this lens reported the findings_digest gap as P3 on impact grounds; the builder RECLASSIFIED it UPWARD to P2 under the frozen contract, whose severity turns on violation of a named property rather than blast radius, and fixed it. This round verified the fix against the production verifier under twelve evasion attempts -- scrubbed findings, rewritten P1, wholly fabricated list, single sub-field edit, omitted findings key, null digest, homoglyph swap, duplicate JSON key, canonical-string type collision, key reordering, unsigned and stale-signature variants -- all refused or correctly authenticated. Confirmed reachable on the real consumer path: refresh_governance_evidence derives assurance THROUGH this verifier, three honest attestations still reach independently_inspected, and a scrub yields ATTESTATION_FINDINGS_UNBOUND."
         }
       ],
       "schema": "nornyx.forge.in_session_reviews.v1"
     },
     "source": ".nornyx/in-session/reviews.json",
-    "source_sha256": "sha256:410e051743d83d165dd1bb9f4727af0277cb0a8b75ad91dfc8cc43774706bea7"
+    "source_sha256": "sha256:c56ad67cab82ec21fe13fbd13caef85628f07c8e3eac59b74ae0a11cfc5d2c59"
   },
   "statement": "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any reviewer rows below come from an in-session report that is not part of the governed content and decides nothing. This record asserts no independence: an unauthenticated file cannot establish that the party who produced it was independent of it.",
-  "subject_revision": "git:1ed49f615d44c2054fc4658baa03f9212c68f187",
+  "subject_revision": "git:d2c15e582aa199d2d1d45b09e608a8e8d270153e",
   "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (C:\\Users\\mazin.LAPTOP-EMF4NEOK\\.nornyx\\forge_reviewer_trust.json (absent)))"
 }

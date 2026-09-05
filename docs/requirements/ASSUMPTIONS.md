@@ -890,3 +890,50 @@ not A-018, not R3 monotonic anchoring, not P17-03.
 **Serves.** the founder's basic-user strategy's Windows-first delivery, the
 FORGE_ROOT doctrine extended to the launcher, and the claim discipline in
 `CLAUDE.md`.
+
+## A-024 A decoding failure must not become silent evidence mutation
+
+**Assumption.** Text that reaches a `WorkerResult` is what the provider
+actually emitted, or the result says it could not be read. There is no third
+option in which unreadable bytes arrive as ordinary characters.
+
+**Why it needs stating.** `subprocess.run(..., text=True)` with no encoding
+named decodes with the locale codec, which on the Windows basic-user host is
+cp1252 while both provider CLIs emit UTF-8. Measured against the shipped
+`ClaudeCodeWorker` at 7ce306b, on real byte sequences those CLIs produce:
+
+- a right single quote (U+2019) decoded to `before a<euro>(tm) after` -- mojibake
+  carried verbatim into the result with `success=True`;
+- a right double quote (U+201D) carries byte 0x9d, unmapped in cp1252, so the
+  reader thread raised, `stdout` came back `None`, and `result.stdout.strip()`
+  became an `AttributeError` ESCAPING `run()` -- an exception where the
+  Provider Contract requires a WorkerResult and permits one only for an
+  invalid task;
+- genuinely malformed UTF-8 (`\x80`, `\xe2\x80`, `\xff\xfe`) decoded into
+  PLAUSIBLE text (`before <euro> after`, `before yth after`) and was reported as a
+  SUCCESSFUL run. Not a replacement character anyone would notice -- confident
+  wrong text.
+
+**And `errors="replace"` is not the repair.** It ends the crash and converts
+malformed bytes to U+FFFD, which then travel into evidence as ordinary
+characters while the run still reports success. That is the same defect as the
+mojibake case, one step better disguised: the failure mode is evidence which is
+not what the provider emitted, and replacement makes it harder to notice rather
+than less true.
+
+**Consequence.** Decoding is strict. Valid UTF-8 is preserved exactly; a stream
+that fails to decode yields a `WorkerResult` that is not successful whatever the
+process exited with, names the decode failure and its byte offset, and
+identifies the payload by length and SHA-256 rather than rendering it. `run()`
+still never raises. Both directions are pinned by test, because asserting only
+"does not raise" would pass on an adapter that silently mangles every quotation
+mark.
+
+**Scope.** `claude_worker.py` only. No provider confinement, eligibility or
+admission change: `PROVIDER_CONFINEMENT["claude"]` stays `none`. The sibling
+`codex_worker.py` carries the same defect and is repaired in its own bounded
+change; this one does not touch it.
+
+**Serves.** the Provider Contract's rule that failure is a WorkerResult and
+never an exception, and the claim discipline in `CLAUDE.md` that forbids
+substituting a label for the thing measured -- here, text for bytes.

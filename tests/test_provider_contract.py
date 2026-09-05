@@ -22,6 +22,7 @@ the worker's actual subprocess handling, including the 127/124 conventions.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -274,3 +275,141 @@ def test_normalization_never_improves_the_news():
 
     with pytest.raises(ProviderError, match="boolean success"):
         result_from_worker("claude", {"success": "yes", "returncode": 0})
+
+
+# ---------------------------------------------------------------------------
+# Non-ASCII provider output: preserved exactly, or refused as an integrity
+# failure -- never silently replaced
+# ---------------------------------------------------------------------------
+
+def _emitting_cli(tmp_path: Path, name: str, payload: bytes) -> str:
+    """A controlled executable that writes exact BYTES to stdout.
+
+    `_fake_cli` echoes through the shell, which cannot express an arbitrary
+    byte; these specimens are about bytes, so the payload is written by a
+    Python one-liner through `sys.stdout.buffer`.
+    """
+    emitter = tmp_path / f"emit_{name}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(b'before ' + " + repr(payload) + " + b' after')\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        path = tmp_path / f"bytes-provider-{name}.bat"
+        path.write_text(f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+                        encoding="utf-8", newline="")
+    else:
+        path = tmp_path / f"bytes-provider-{name}.sh"
+        path.write_text(f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+                        encoding="utf-8", newline="")
+        path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("right_single_quote", b"\xe2\x80\x99"),
+        ("right_double_quote", b"\xe2\x80\x9d"),
+        ("box_drawing", b"\xe2\x94\x80"),
+    ],
+)
+def test_utf8_provider_output_neither_raises_nor_is_corrupted(
+    tmp_path: Path, name: str, payload: bytes
+):
+    """Valid UTF-8 must reach the result as itself.
+
+    The CLI emits UTF-8 and its prose carries typographic characters.
+    `subprocess.run(..., text=True)` with no encoding named decodes with the
+    LOCALE codec, which on a Windows basic-user host is cp1252: a right single
+    quote then decodes to mojibake and is passed through verbatim into
+    evidence, while a right double quote (byte 0x9d, unmapped in cp1252)
+    raises on the reader thread, leaves `stdout` as None, and turns the next
+    line into an AttributeError escaping `run()` -- an exception where the
+    Provider Contract requires a WorkerResult.
+
+    Asserted on the exact text, not merely on "did not raise": an adapter that
+    silently mangled every quotation mark would satisfy the weaker check.
+    """
+    worker = ClaudeCodeWorker(_emitting_cli(tmp_path, name, payload))
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is True
+    assert result.output == "before " + payload.decode("utf-8") + " after", (
+        f"the provider's own bytes must reach the result undamaged; "
+        f"got {result.output!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("lone_continuation", b"\x80"),
+        ("truncated_sequence", b"\xe2\x80"),
+        ("invalid_start_byte", b"\xff\xfe"),
+    ],
+)
+def test_malformed_output_is_recorded_as_an_integrity_failure_not_replaced(
+    tmp_path: Path, name: str, payload: bytes
+):
+    """Bytes that are not UTF-8 must not become text that looks like prose.
+
+    `errors="replace"` is the repair that looks right: it stops the crash, and
+    it converts every malformed byte into U+FFFD, which then travels into the
+    WorkerResult and onward into evidence as ordinary characters. The run
+    reports SUCCESS and its output reads as something the provider wrote. That
+    is a worse failure than the crash it replaces, because nothing about it
+    looks wrong.
+
+    Three properties, separate on purpose:
+
+      * `run()` does not raise -- the Provider Contract requires a
+        WorkerResult, and an exception for task failure is a contract
+        violation;
+      * the result is NOT successful, whatever the process exited with, so a
+        clean exit cannot launder unreadable output;
+      * the output NAMES the decode failure and carries no U+FFFD, so no
+        substituted character can be mistaken for provider text.
+    """
+    worker = ClaudeCodeWorker(_emitting_cli(tmp_path, name, payload))
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+
+    assert result.success is False, (
+        "output that could not be decoded must not be reported as a successful "
+        f"run; got {result.output!r}"
+    )
+    assert "\ufffd" not in result.output, (
+        "the replacement character reached the result, so malformed bytes are "
+        "being carried as though they were text the provider wrote"
+    )
+    assert "UTF-8" in result.output and "integrity" in result.output, (
+        f"the failure does not say what went wrong: {result.output!r}"
+    )
+    assert "sha256:" in result.output, (
+        "the undecodable payload is neither rendered nor identified, so the "
+        "evidence cannot be traced back to what was actually emitted"
+    )
+
+
+def test_a_malformed_run_still_lands_in_the_failure_vocabulary(tmp_path: Path):
+    """The contract's own view: a decode failure is an `error`, never `ok`.
+
+    Held through `result_from_worker`, the one mapping, because an adapter
+    that returned a not-successful result with a zero returncode would
+    otherwise be free to normalize back into the success class.
+    """
+    worker = ClaudeCodeWorker(_emitting_cli(tmp_path, "vocab", b"\xff\xfe"))
+    raw = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    normalized = result_from_worker("claude", raw)
+    assert normalized.failure_class == "error"
+    assert normalized.success is False
+    normalized.validate()
