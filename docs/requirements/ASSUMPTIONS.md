@@ -890,3 +890,72 @@ not A-018, not R3 monotonic anchoring, not P17-03.
 **Serves.** the founder's basic-user strategy's Windows-first delivery, the
 FORGE_ROOT doctrine extended to the launcher, and the claim discipline in
 `CLAUDE.md`.
+
+## A-024 Provider confinement is two properties, and Forge measured one of them
+
+**Assumption.** A provider is confined enough for the governed basic-user
+build only when it can neither rewrite Forge's authority on disk nor reach
+Forge's authority-bearing control plane. Filesystem confinement alone is not
+the property; it is half of it.
+
+**Why it is stated as an assumption rather than derived.** Before PA-01 the
+repository treated "confined to the project workspace" as one thing, and
+`PROVIDER_CONFINEMENT` carried one value per provider to say whether Forge had
+established it. That framing quietly assumed the workspace boundary was where
+authority lived. It is not. The onboarding surface is local, unauthenticated,
+and carries routes that move authority, and it is reachable by anything that
+can open a socket to loopback. A provider held out of the filesystem and let
+into that surface has acquired the authority regardless.
+
+**Measured at 7ce306b1** (`docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md`),
+Windows 11, codex-cli 0.128.0, through the CLI's own `codex sandbox windows`
+entry point so no model decided whether the forbidden operation was attempted:
+
+- Codex's sandbox REFUSES every write outside the declared workspace -- the
+  real seal directory, a sibling, Forge material, its own configuration home,
+  and an escape through a junction proved live first -- while permitting the
+  intended in-workspace write. That is real OS enforcement, and the repository
+  may no longer say Forge has established nothing about it.
+- Codex's sandbox does NOT confine loopback egress. A confined process reached
+  a controlled listener on 127.0.0.1 and its POST was accepted under the Host
+  rule the real surface applies. No configuration was found that closes it.
+
+**Consequence.** `codex` stays `declared` and both providers stay ineligible.
+The criterion is now data (`CONFINEMENT_PROPERTIES`) rather than prose, the
+measurement is a recorded artifact, and a test holds the table and the evidence
+to each other in both directions -- so promoting the row without qualifying
+evidence fails, and a measurement that genuinely closed the gap would pass.
+
+**A second assumption, learned from the verifier rather than the sandbox.** A
+criterion expressed as data is not yet a criterion that cannot be satisfied
+dishonestly. The first verifier admitted three routes to "established" that
+required no such property to hold: satisfaction by `any(...)`, which resolves a
+contradiction by keeping its convenient half; one global list of evidence
+mechanisms, which let a CLIENT's return code testify to whether a LISTENER was
+reached; and probes with no provider on them, so evidence gathered against one
+provider would answer for another. So the assumption is stated explicitly:
+**an admission verifier must require unanimity among observers competent for
+the specific property, and the evidence must name the subject it measured.**
+A counterexample dominates a compliant observation; a non-authoritative
+observation is silent rather than exculpatory; and a record's header may not
+re-subject the observations beneath it.
+
+**A third, about evidence integrity.** A decoding failure must not be
+converted into silent evidence mutation. `errors="replace"` was the repair
+that looked right: it ends the crash and turns malformed bytes into U+FFFD,
+which then reach evidence as ordinary text while the run reports success.
+Strict decoding, with the failure recorded as the result, is the fail-closed
+form.
+
+**What this does NOT assume.** Nothing about POSIX: Linux and macOS were not
+measured, junction semantics are not symlink semantics, and the Windows result
+does not travel. Nothing about model behaviour: two production-path runs left
+every canary pristine because the model executed nothing at all, including the
+control, and both are recorded as inconclusive rather than counted. Nothing
+about Claude, which was not measured and keeps the row it had.
+
+**Scope.** Not an admission, not a control-plane authenticator, not a Claude
+sandbox, not A-018.
+
+**Serves.** the governed build's fail-closed decision, and the claim discipline
+in `CLAUDE.md` that forbids substituting a label for the thing measured.
