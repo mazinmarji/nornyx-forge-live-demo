@@ -494,8 +494,17 @@ def test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token(
     assert unanswered_polls > 0, "the slow app never left the runtime unanswered"
     ready = run.wait_for("ready")
     assert ready["url"].startswith(f"http://{ONBOARDING_HOST}:")
+    # WAIT FOR BOTH CHANNELS THIS TEST READS -- here, the browser seam and the
+    # record. The runtime opens the browser first and publishes the record
+    # saying so afterwards: measured at 1.3-1.8 ms, always in that order,
+    # because publishing costs a whole-file replace. `wait_for("ready")` below
+    # cannot cover that gap -- the status was already `ready` before the
+    # browser was opened, so it returns the record as it stands, with
+    # `browser.opened` possibly still None. The asserts are unchanged, so a
+    # record that never settles still fails rather than hangs.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and not run.opened:
+    while time.monotonic() < deadline and (
+            not run.opened or run.record()["browser"]["opened"] is None):
         time.sleep(0.05)
     assert run.opened == [ready["url"]]
     assert run.probe_at_open[0] is not None, "the browser was opened before the server answered"
@@ -535,8 +544,18 @@ def test_a_browser_failure_does_not_unmake_a_ready_runtime(tmp_path: Path):
     run.seams["open_browser"] = broken
     run.start()
     ready = run.wait_for("ready")
+    # The same two-channel wait, in the other direction. The runtime records the
+    # failed opening and TELLS the person one statement later, on its own daemon
+    # thread; record-then-tell is deliberate there and is not the defect. A poll
+    # that waits only for the record samples `notices` inside that gap --
+    # measured at 0.09-0.29 ms, always in that order, and observed once as a CI
+    # failure where `opened is False` and the error text both matched and only
+    # the notice was missing. The assertion below is unchanged and outlives the
+    # bounded poll, so a notice that never arrives is still a red test.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and run.record()["browser"]["opened"] is None:
+    while time.monotonic() < deadline and (
+            run.record()["browser"]["opened"] is None
+            or not any(ready["url"] in text for _, text in run.notices)):
         time.sleep(0.05)
     record = run.record()
     assert record["status"] == "ready"
