@@ -959,3 +959,130 @@ sandbox, not A-018.
 
 **Serves.** the governed build's fail-closed decision, and the claim discipline
 in `CLAUDE.md` that forbids substituting a label for the thing measured.
+
+## A-025 A decoding failure must not become silent evidence mutation
+
+**Assumption.** Text that reaches a `WorkerResult` is what the provider
+actually emitted, or the result says it could not be read. There is no third
+option in which unreadable bytes arrive as ordinary characters.
+
+**Why it needs stating.** `subprocess.run(..., text=True)` with no encoding
+named decodes with the locale codec, which is cp1252 on this project's Windows
+hosts while both provider CLIs emit UTF-8. Not only the basic-user target: the
+DEVELOPER host reproduces it too -- `locale.getpreferredencoding(False)` is
+cp1252, `sys.flags.utf8_mode` is 0 and `PYTHONUTF8` is unset there -- so the
+defect is not confined to the delivery environment and a developer would not
+have been protected from it. Measured against the shipped `ClaudeCodeWorker`
+at 7ce306b, on real byte sequences those CLIs produce:
+
+- a right single quote (U+2019) decoded to `before â€™ after` -- mojibake
+  carried verbatim into the result with `success=True`;
+- a right double quote (U+201D) carries byte 0x9d, unmapped in cp1252, so the
+  reader thread raised, `stdout` came back `None`, and `result.stdout.strip()`
+  became an `AttributeError` ESCAPING `run()` -- an exception where the
+  Provider Contract requires a WorkerResult and permits one only for an
+  invalid task;
+- genuinely malformed UTF-8 (`\x80`, `\xe2\x80`, `\xff\xfe`) decoded into
+  PLAUSIBLE text (`before € after`, `before â€ after`, `before ÿþ after`) and
+  was reported as a SUCCESSFUL run. Not a replacement character anyone would
+  notice -- confident wrong text.
+
+**And `errors="replace"` is not the repair.** It ends the crash and converts
+malformed bytes to U+FFFD, which then travel into evidence as ordinary
+characters while the run still reports success. That is the same defect as the
+mojibake case, one step better disguised: the failure mode is evidence which is
+not what the provider emitted, and replacement makes it harder to notice rather
+than less true.
+
+**Consequence.** Decoding is strict. Valid UTF-8 is preserved exactly; a stream
+that fails to decode yields a `WorkerResult` that is not successful whatever the
+process exited with, names the decode failure and its byte offset, and
+identifies the payload by length and SHA-256 rather than rendering it -- on the
+timeout branch as well as the completed-process branch, so unreadable output
+from a run that outlived its budget can still be correlated with the bytes
+emitted. `run()` still never raises. Both directions are pinned by test,
+because asserting only "does not raise" would pass on an adapter that silently
+mangles every quotation mark -- and the fingerprint is pinned as a fingerprint,
+the digest recomputed from the emitted bytes, because review showed a constant
+digest satisfying a `"sha256:" in output` check, and a latin-1 rendering of the
+payload satisfying a `"\ufffd" not in output` check. Both are red now.
+
+Two consequences of capturing bytes are stated rather than left implicit.
+First, `text=True` also performed universal-newline translation, so a
+carriage return the provider emits now survives into the result exactly as
+emitted instead of being folded into `\n`; that is the rule (the result is
+what the provider wrote), canonical evidence files escape it, and
+`test_a_carriage_return_survives_exactly_as_emitted` pins it. Second, the
+cp1252 shapes above are observable only where the locale codec is not UTF-8.
+The CI test matrix runs on Linux under a UTF-8 locale, where the same
+strict-decode regression is still caught -- there the malformed specimens
+raise out of `run()` -- but the mojibake and the escaping `AttributeError`
+are not reproduced; those were measured on this Windows host. No CI job
+exercises this module's decode path on Windows: `tests/test_provider_contract.py`
+runs only in the Linux matrix, and the `windows-runtime` job imports the
+module without ever calling `run()`. The specimens cover both streams,
+because the adapter refuses the run when either fails to decode.
+
+**Scope.** `claude_worker.py` only, brought to the rule `codex_worker.py`
+already applies: the Codex half of this defect was found and repaired first,
+under the PA-01 measurement recorded in A-024. The two adapters are not
+identical on every point: on the timeout branch the Claude adapter now
+fingerprints a stream that failed to decode, where the Codex timeout branch
+records reason and offset only. OPEN ITEM, not closed by this change and
+recorded here so the next Codex-adapter change carries it: bring the Codex
+timeout branch to the same point. No provider confinement, eligibility or
+admission change: `PROVIDER_CONFINEMENT["claude"]` stays `none`. Reading a
+provider's bytes correctly says nothing about what that provider may reach.
+
+**Serves.** the Provider Contract's rule that failure is a WorkerResult and
+never an exception, and the claim discipline in `CLAUDE.md` that forbids
+substituting a label for the thing measured -- here, text for bytes.
+
+## A-026 A clean checkout is not evidence of what was executed
+
+**Assumption.** A measurement of this repository names the tree it measured
+only when the RUNNING code has been shown to come from that tree. Checking out
+a clean copy establishes what the files say; it does not establish what Python
+imported.
+
+**The mechanism, reproduced rather than reasoned about.** An editable install
+writes an absolute path into
+`site-packages/__editable__.nornyx_forge_live_demo-<version>.pth`, and that
+path is prepended to `sys.path` for every interpreter using that environment,
+whatever directory it runs from. Measured: with the working directory inside a
+freshly cloned copy of the subject and `PYTHONPATH` unset,
+`nornyx_forge.__file__` and `importlib.util.find_spec("nornyx_forge").origin`
+both resolved to `<main checkout>/src/nornyx_forge/__init__.py`. The clone
+supplied the TEST FILES; a different checkout supplied the CODE UNDER TEST.
+Nothing in the run reported this, and the run would have looked identical had
+the two trees disagreed.
+
+**Consequence for the census.** `check_test_coverage.py` reports how many
+tests executed in a tree, so a run whose subject is unproved does not measure
+the tree it names -- however clean that tree is. Such a run is
+NON-AUTHORITATIVE, not "slightly contaminated": the distinction is whether the
+subject was established, and an unestablished subject is not weak evidence but
+absent evidence.
+
+**What makes a measurement authoritative instead.** A fresh clone at the exact
+head, a fresh virtual environment built from a base interpreter that never
+carried another checkout's editable install, the repository's own supported
+install into it, and -- before any test runs -- a check that both
+`nornyx_forge.__file__` and `find_spec(...).origin` resolve under the subject
+and that no `sys.path` entry reaches another checkout. A `.pth` file is not
+itself the fault; the question is only what source it binds to.
+
+**Where the authority for this repository actually sits.** CI satisfies this by
+construction rather than by care: `actions/checkout@v4` puts exactly one copy of
+the repository on a clean runner, `pip install -e '.[demo,dev]'` binds the
+editable install to that copy, and there is no second checkout for a `.pth` to
+name. That is why a census claim rests on the exact-head CI run across all four
+supported interpreters, and a local run is corroboration -- most usefully on
+Windows, which the CI test matrix does not cover.
+
+**Scope.** A measurement-provenance rule. It changes no product behaviour, no
+confinement or eligibility state, and no gate threshold.
+
+**Serves.** the same claim discipline as A-021 -- a governed tree answers for
+itself -- extended to the interpreter that runs it, because a tree cannot
+answer for code that was loaded from somewhere else.
