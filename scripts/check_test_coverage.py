@@ -199,7 +199,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The provider seam: 16 collected at introduction, floor at band(16) = 15.
     # The conformance suite and the invariance proof that wrapping the Claude
     # path changed nothing observable.
-    "tests/test_provider_contract.py": 15,
+    "tests/test_provider_contract.py": 26,
     # The Codex adapter's conformance: 10 collected at introduction, floor at
     # band(10) = 9. Same harness technique as the Claude conformance,
     # separate proof -- and the two mapping limits pinned, not hidden.
@@ -626,16 +626,25 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 18 -> 35) and the malformed-UTF-8 specimens took
 # tests/test_codex_provider.py from 13 to 16 (floor 12 -> 15). No module
 # was added, so the count stays at 111; the module-floor sum rises by 20
-# and the aggregate follows:
+# and the aggregate follows. Re-measured for the Claude adapter's UTF-8
+# decode repair, the PA-01 sibling: 12 new collected in
+# tests/test_provider_contract.py (16 -> 28; three valid typographic
+# specimens, six malformed ones -- three payloads on each of the two
+# streams, because review found the stderr half of the decode branch
+# had no specimen -- the failure-vocabulary check, the carriage-return
+# specimen, and the timed-out malformed stream that must still be
+# fingerprinted), floor 15 -> 26 at its band. No module added, so
+# 111 stands; the module-floor sum rises by 11 and the aggregate
+# follows:
 #
 # (rows below):
 #
-#     collected across tests/     2848   (111 modules)
-#     sum of the module floors    2619
-#     band(2848) = ceil(0.9*n)    2564
-#     MINIMUM_COLLECTED           2627
+#     collected across tests/     2860   (111 modules)
+#     sum of the module floors    2630
+#     band(2860) = ceil(0.9*n)    2574
+#     MINIMUM_COLLECTED           2638
 #     above the module sum         8
-#     below what collects         221
+#     below what collects         222
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -656,7 +665,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 229 in total, and the aggregate refuses
+# per-module bands already grant 230 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -677,7 +686,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2627
+MINIMUM_COLLECTED = 2638
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
