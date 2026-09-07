@@ -26,6 +26,7 @@ import http.client
 import http.server
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -55,6 +56,7 @@ from build_windows_bundle import (  # noqa: E402
 )
 
 from nornyx_forge.capsule import PROVIDERS  # noqa: E402
+from nornyx_forge.control_plane_session import NO_SESSION  # noqa: E402
 from nornyx_forge.windows_runtime import (  # noqa: E402
     RUNTIME_SCHEMA,
     RuntimePaths,
@@ -82,21 +84,25 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return dist
 
 
-def _get(port: int, path: str) -> tuple[int, bytes]:
+def _get(port: int, path: str, token: str | None = None) -> tuple[int, bytes]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
-        connection.request("GET", path)
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         return response.status, response.read()
     finally:
         connection.close()
 
 
-def _post(port: int, path: str, payload: dict | None = None) -> tuple[int, dict]:
+def _post(port: int, path: str, payload: dict | None = None,
+          token: str | None = None) -> tuple[int, dict]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
     try:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {} if payload is None else {"content-type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         connection.request("POST", path, body=body, headers=headers)
         response = connection.getresponse()
         return response.status, json.loads(response.read().decode("utf-8"))
@@ -113,6 +119,10 @@ class HostRuntime:
         self.bundle = bundle
         self.project = project or (work / PROJECT_NAME)
         self.runtime_dir = work / "runtime state"
+        # The gate needs the bearer on /api/state and the authority routes; the
+        # test drives them over a socket with no browser to redeem a nonce, so
+        # the runtime writes the token to this explicit scratch path.
+        self.session_path = work / "session.json"
         self.cwd = work / "unrelated cwd"
         self.cwd.mkdir(exist_ok=True)
         bootstrap = DEVELOPER_BOOTSTRAP.format(src=bundle / "src", pylib=bundle / "pylib")
@@ -122,6 +132,7 @@ class HostRuntime:
             "--bundle-root", str(bundle) + "\\.",
             "--project-dir", str(self.project),
             "--runtime-dir", str(self.runtime_dir),
+            "--session-file", str(self.session_path),
             "--port", str(port), "--readiness-timeout", "240", "--no-browser",
         ]
         self.output = work / f"{label}-stdout.log"
@@ -130,6 +141,14 @@ class HostRuntime:
     @property
     def paths(self) -> RuntimePaths:
         return RuntimePaths.for_project(self.runtime_dir, self.project)
+
+    @property
+    def token(self) -> str | None:
+        """This run's bearer, from the explicit session file, once ready."""
+        try:
+            return json.loads(self.session_path.read_text(encoding="utf-8"))["token"]
+        except (OSError, ValueError, KeyError):
+            return None
 
     def start(self) -> "HostRuntime":
         stream = open(self.output, "w", encoding="utf-8")  # noqa: SIM115 - closed in stop
@@ -151,16 +170,33 @@ class HostRuntime:
             return None
 
     def wait_for(self, status: str, timeout: float = 240.0) -> dict:
+        """The record at `status`. For `ready`, ALSO the session file: the
+        runtime writes the bearer AFTER it records readiness (pinned by
+        `test_the_session_file_is_written_only_after_readiness`), so a test
+        that read `.token` on the record alone could read nothing and send its
+        first request bare -- measured once on this host as a `401` on the
+        first `/api/project` of the restart specimen, with one child ever
+        started and its record `ready`.
+
+        THE DEAD-CHILD CHECK IS A SIBLING `if`, not an `elif` (round-4
+        architecture F-P4-4 and test P3). As an `elif` it was unreachable in
+        exactly the case the session-file wait created: a child that records
+        `ready` and then dies before writing the file takes the first branch,
+        does not return, and never reaches the poll -- so eight `wait_for`
+        sites spun the full 240 s before failing. As a sibling it fires on
+        every pass, and a dead child raises in the time it takes to notice."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             record = self.record()
             if record is not None and record["status"] == status:
-                return record
+                if status != "ready" or self.session_path.exists():
+                    return record
             if self.process is not None and self.process.poll() is not None and status != "stopped":
                 break
             time.sleep(0.1)
         raise AssertionError(
-            f"the runtime never reached {status}; record={self.record()} "
+            f"the runtime never reached {status} with its session file; record={self.record()} "
+            f"session file present={self.session_path.exists()} "
             f"exit={self.process.poll() if self.process else None} "
             f"output={self.output.read_text(encoding='utf-8', errors='replace')[-2000:]}"
         )
@@ -168,7 +204,7 @@ class HostRuntime:
     def stop(self) -> int:
         record = self.record()
         if record is not None and record["status"] == "ready":
-            _post(record["port"], "/api/runtime/stop", {"actor": HUMAN})
+            _post(record["port"], "/api/runtime/stop", {"actor": HUMAN}, token=self.token)
         try:
             code = self.process.wait(timeout=60)
         except subprocess.TimeoutExpired:
@@ -184,6 +220,45 @@ class HostRuntime:
             subprocess.run(["taskkill", "/PID", str(self.process.pid), "/T", "/F"],
                            capture_output=True)
         self._stream.close()
+
+
+def test_the_harness_stops_waiting_the_moment_its_child_is_dead(tmp_path: Path):
+    """Round-4 architecture F-P4-4 and test P3, and one of the two tests here
+    that runs on EVERY platform: this is a property of the HARNESS, not of a
+    Windows runtime, and no child of the runtime is started.
+
+    The case is the one round 4's session-file wait created. A child that
+    records `ready` and then dies before writing the bearer matched the first
+    branch, did not return, and -- while the dead-child check was an `elif` --
+    never reached the poll at all, so each of the eight `wait_for("ready")`
+    sites spun its whole 240 s timeout before failing. With the sibling `if`
+    the death is seen on the next pass, in a tenth of a second.
+
+    Restore the `elif` and this does not fail: it HANGS to the timeout given,
+    which is why the timeout given here is twenty seconds and the assertion
+    is on the elapsed time."""
+    work = tmp_path / "work"
+    work.mkdir()
+    run = HostRuntime(tmp_path / "no such bundle", work)
+    run.runtime_dir.mkdir(parents=True)
+    write_record(run.paths.record, {"schema": RUNTIME_SCHEMA, "instance": "dead-child",
+                                    "status": "ready", "port": 8710,
+                                    "url": "http://127.0.0.1:8710/"})
+    assert run.record()["status"] == "ready", "the record the harness reads says ready"
+    assert not run.session_path.exists(), "the specimen is a child that never wrote the bearer"
+    # A REAL dead process: `poll()` answers a real exit code, which is the
+    # thing the loop reads.
+    run.process = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+    assert run.process.wait(timeout=60) == 3
+    run._stream = open(run.output, "w", encoding="utf-8")  # noqa: SIM115 - closed below
+    try:
+        started = time.monotonic()
+        with pytest.raises(AssertionError, match="never reached ready"):
+            run.wait_for("ready", timeout=20.0)
+        elapsed = time.monotonic() - started
+    finally:
+        run._stream.close()
+    assert elapsed < 5.0, f"the dead child was not noticed; the wait ran {elapsed:.1f}s"
 
 
 @pytest.fixture()
@@ -218,23 +293,91 @@ def _listeners_on(port: int) -> list[str]:
 # W1 / W2 / W11 / W12  the bundle's own code, from anywhere, at any path
 # ---------------------------------------------------------------------------
 
+def _windows_runtime_job(workflow: str) -> str:
+    """The `windows-runtime` job's text, bounded at the NEXT job key. It is
+    the last job today, so the bound changes nothing yet; unbounded, a module
+    list in a job added after it would satisfy this module's reader."""
+    assert "\n  windows-runtime:\n" in workflow, "the windows-runtime job is gone"
+    after = workflow.split("\n  windows-runtime:\n", 1)[1]
+    return re.split(r"\n  [A-Za-z][\w-]*:", after, maxsplit=1)[0]
+
+
+def _windows_job_pytest_commands(workflow: str) -> list[str]:
+    """The job's `python -m pytest ...` invocation lines, comments dropped.
+
+    Round-7 finding F-6: this test asked whether the module path appeared
+    anywhere in the job block, which a YAML COMMENT naming the module
+    satisfies -- and one was added to that block in round 7, which is how the
+    same construction in `tests/test_provider_execution.py` went green with
+    the module deleted from the command (F-1). A comment is not a run."""
+    return [line for line in _windows_runtime_job(workflow).splitlines()
+            if "python -m pytest" in line and not line.lstrip().startswith("#")]
+
+
+def _windows_job_code(workflow: str) -> str:
+    """The job's non-comment lines: `# if skipped:` is not a guard either."""
+    return "\n".join(line for line in _windows_runtime_job(workflow).splitlines()
+                     if not line.lstrip().startswith("#"))
+
+
+#: A job that MENTIONS this module in a comment and runs a different one --
+#: built here as text, so the control is the specimen. The pre-round-8
+#: assertion accepts it; the reader above must not.
+_COMMENT_ONLY_JOB = (
+    "jobs:\n"
+    "  windows-runtime:\n"
+    "    runs-on: windows-latest\n"
+    "    steps:\n"
+    "      # tests/test_windows_host_runtime.py is what this job is for\n"
+    "      - name: Windows runtime tests\n"
+    "        run: |\n"
+    "          python -m pytest tests/test_windows_runtime.py -q -rs\n"
+    "  a-later-job:\n"
+    "    runs-on: ubuntu-latest\n"
+)
+
+
 def test_the_windows_runtime_job_runs_this_module_under_its_own_skip_census():
     """Runs everywhere. The census declares every Windows-hosted test here as
     an expected skip off Windows on the strength of the `windows-runtime`
     job; this pins that the job exists, runs this module, lists skips, and
-    fails on any -- so the declaration cannot outlive the job."""
+    fails on any -- so the declaration cannot outlive the job.
+
+    "Runs this module" is read from the job's PYTEST COMMAND, not from the job
+    text: round-7 finding F-6 is that a YAML comment naming the module
+    satisfied the old assertion, so the module could be dropped from the
+    command with this test still green and every Windows-hosted skip here
+    still declared expected. The comment-only specimen below is refused and
+    the same job with the module in its command is accepted."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "\n  windows-runtime:\n" in workflow
-    job = workflow.split("\n  windows-runtime:\n", 1)[1]
-    assert "runs-on: windows-latest" in job
-    assert "'.[demo,dev]'" in job, "the job must install what the runtime needs"
-    assert "tests/test_windows_host_runtime.py" in job and "-rs" in job
-    assert "if skipped:" in job and "sys.exit(1)" in job, "a skip in the Windows job must fail it"
+    code = _windows_job_code(workflow)
+    assert "runs-on: windows-latest" in code
+    assert "'.[demo,dev]'" in code, "the job must install what the runtime needs"
+    commands = _windows_job_pytest_commands(workflow)
+    assert commands, "the windows-runtime job invokes pytest on no line"
+    assert any("tests/test_windows_host_runtime.py" in line and "-rs" in line
+               for line in commands), (
+        "the windows-runtime job's pytest command does not run this module with -rs, "
+        f"so this module's declared skips rest on nothing: {commands}")
+    assert "if skipped:" in code and "sys.exit(1)" in code, "a skip in the Windows job must fail it"
     # Runtime validation only: no step of the job publishes, signs or packages.
-    steps = [line for line in job.splitlines() if line.strip().startswith(("run:", "- run:", "python", "pip"))]
+    steps = [line for line in code.splitlines() if line.strip().startswith(("run:", "- run:", "python", "pip"))]
     for line in steps:
         for other in ("gh release", "signtool", "ForgeSetup", "msi", "pyinstaller", "wix"):
             assert other.lower() not in line.lower(), (other, line)
+    # The reader's controls. NEGATIVE first: the comment-only job satisfied
+    # the pre-round-8 assertion and must not satisfy this one.
+    assert "tests/test_windows_host_runtime.py" in _windows_runtime_job(_COMMENT_ONLY_JOB), (
+        "the specimen no longer reproduces the finding it exists to reproduce")
+    assert not any("tests/test_windows_host_runtime.py" in line
+                   for line in _windows_job_pytest_commands(_COMMENT_ONLY_JOB)), (
+        "a job that only MENTIONS this module in a comment satisfies the reader (F-6)")
+    runs_it = _COMMENT_ONLY_JOB.replace(
+        "python -m pytest tests/test_windows_runtime.py -q -rs",
+        "python -m pytest tests/test_windows_host_runtime.py -q -rs")
+    assert any("tests/test_windows_host_runtime.py" in line and "-rs" in line
+               for line in _windows_job_pytest_commands(runs_it)), (
+        "the reader does not see a module that IS in the pytest command")
 
 
 @windows_only
@@ -247,7 +390,7 @@ def test_w1_w2_w11_w12_the_bundles_own_code_serves_from_an_unrelated_directory(h
     assert os.path.normcase(served["bundle_root"]) == os.path.normcase(str(runtime.bundle.resolve()))
     assert os.path.normcase(served["python"]) == os.path.normcase(str(Path(sys.executable).resolve()))
     assert served["bundle_mode"] == "developer" and served["pid"] != os.getpid()
-    status, body = _get(ready["port"], "/api/state")
+    status, body = _get(ready["port"], "/api/state", token=runtime.token)
     assert status == 200 and json.loads(body) == {"initialized": False, "providers": list(PROVIDERS)}
     status, page = _get(ready["port"], "/")
     assert status == 200 and b"Nornyx Forge" in page and b"Stop Forge" in page
@@ -269,6 +412,31 @@ def test_w3_the_windows_runtime_binds_loopback_only(host):
         with pytest.raises(OSError):
             socket.create_connection((lan, ready["port"]), timeout=2).close()
     assert runtime.stop() == 0
+
+
+@windows_only
+def test_an_unbearered_stop_against_the_real_child_is_refused_and_leaves_it_serving(host):
+    """Round-2 test P2-2: the host suite discriminates the gate. Against the
+    REAL child process, `POST /api/runtime/stop` without the bearer -- and
+    with a wrong one -- is 401 with the fixed body; the record still says
+    ready, the process is alive and answers with the same instance; and
+    `<key>.log` carries no request line and no traceback afterwards. Then
+    the bearered stop ends it."""
+    runtime = host().start()
+    ready = runtime.wait_for("ready")
+    for token in (None, "not-this-runs-bearer"):
+        status, body = _post(ready["port"], "/api/runtime/stop", {"actor": HUMAN}, token=token)
+        assert status == 401 and body == NO_SESSION, (token, status, body)
+    time.sleep(0.5)
+    assert runtime.process.poll() is None, "the child exited on an un-bearered stop"
+    assert runtime.record()["status"] == "ready"
+    assert probe_instance(ready["port"])["instance"] == ready["instance"]
+    log = runtime.paths.log.read_text(encoding="utf-8", errors="replace")
+    assert "Traceback" not in log
+    for request_line in ('"POST ', '"GET ', 'HTTP/1.1"', "/api/runtime/stop"):
+        assert request_line not in log, f"an access-log line reached the runtime log: {request_line!r}"
+    assert runtime.stop() == 0
+    assert runtime.record()["status"] == "stopped"
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +502,7 @@ def test_w9_w20_a_stopped_runtime_restarts_over_the_same_persisted_project(host)
     first = host(label="first").start()
     ready = first.wait_for("ready")
     status, created = _post(ready["port"], "/api/project", {
-        "project_id": "proj-host", "project_name": "Persists", "actor": HUMAN})
+        "project_id": "proj-host", "project_name": "Persists", "actor": HUMAN}, token=first.token)
     assert status == 200, created
     assert (first.project / "capsule" / ".git").is_dir(), "the store is git-backed at a non-ASCII path"
     assert first.stop() == 0
@@ -342,7 +510,7 @@ def test_w9_w20_a_stopped_runtime_restarts_over_the_same_persisted_project(host)
     second = host(label="second").start()
     again = second.wait_for("ready")
     assert again["instance"] != ready["instance"]
-    state = json.loads(_get(again["port"], "/api/state")[1])
+    state = json.loads(_get(again["port"], "/api/state", token=second.token)[1])
     assert state["initialized"] is True and state["project_id"] == "proj-host"
     assert state["revision"] == created["revision"]
     assert state["experience"]["stage"] == "DISCOVER" and state["authority"]["anchor"] == "sealed"
@@ -358,29 +526,32 @@ def test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refu
     anything executes."""
     runtime = host(project=host_project(provider)).start()
     port = runtime.wait_for("ready")["port"]
+    tok = runtime.token
     assert _post(port, "/api/project", {"project_id": "proj-j", "project_name": "Portal",
-                                        "actor": HUMAN})[0] == 200
+                                        "actor": HUMAN}, token=tok)[0] == 200
     status, intent = _post(port, "/api/proposals", {
-        "field": "intent", "value": "Build a customer support portal.", "actor": MODEL})
+        "field": "intent", "value": "Build a customer support portal.", "actor": MODEL}, token=tok)
     assert status == 200
-    assert _post(port, f"/api/proposals/{intent['proposal_id']}/confirm", {"actor": HUMAN})[0] == 200
+    assert _post(port, f"/api/proposals/{intent['proposal_id']}/confirm",
+                 {"actor": HUMAN}, token=tok)[0] == 200
     status, chosen = _post(port, "/api/proposals", {
-        "field": "provider", "value": {"name": provider}, "actor": HUMAN})
+        "field": "provider", "value": {"name": provider}, "actor": HUMAN}, token=tok)
     assert status == 200
-    assert _post(port, f"/api/proposals/{chosen['proposal_id']}/confirm", {"actor": HUMAN})[0] == 200
-    assert _post(port, "/api/brd")[0] == 200
-    status, confirmed = _post(port, "/api/journey/confirm-scope", {"actor": HUMAN})
+    assert _post(port, f"/api/proposals/{chosen['proposal_id']}/confirm",
+                 {"actor": HUMAN}, token=tok)[0] == 200
+    assert _post(port, "/api/brd", token=tok)[0] == 200
+    status, confirmed = _post(port, "/api/journey/confirm-scope", {"actor": HUMAN}, token=tok)
     assert status == 200 and confirmed["stage"] == "CONFIRM"
 
-    status, refused = _post(port, "/api/build", {"actor": HUMAN})
+    status, refused = _post(port, "/api/build", {"actor": HUMAN}, token=tok)
     assert status == 409 and "not eligible" in refused["refused"] and provider in refused["refused"]
     assert refused["eligibility"]["eligible"] is False
-    state = json.loads(_get(port, "/api/state")[1])
+    state = json.loads(_get(port, "/api/state", token=tok)[1])
     assert state["journey"]["stage"] == "CONFIRM" and state["journey"]["status"] == "active"
     assert "start_build" not in state["journey"]["actions"]
     assert state["provider_eligibility"]["eligible"] is False
     assert state["providers"] == list(PROVIDERS)
-    assert json.loads(_get(port, "/api/build")[1]) == {"status": "never_run"}
+    assert json.loads(_get(port, "/api/build", token=tok)[1]) == {"status": "never_run"}
     assert runtime.stop() == 0
 
 

@@ -256,9 +256,16 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install -e '.[demo,dev]'
 
-      - name: Windows runtime, bundle builder and launch tests, with no skips
+      # `tests/test_provider_execution.py` is here because the CHANGELOG said
+      # it was and it was not (round-6 test T-P3-2). What that suite pins on
+      # this host is `_provider_env()`'s stripping, read back from the
+      # environment a REAL child process received; the environment a child
+      # inherits is a platform property, and asserting it only on Linux left
+      # the Windows behaviour asserted by nothing. It is hermetic -- fake
+      # executables, no network, no provider CLI -- so it adds no skip.
+      - name: Windows runtime, bundle builder, launch and provider tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -269,7 +276,10 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 60:
-              print("the windows job collected fewer tests than its four modules carry")
+          if len(cases) < 180:
+              print("the windows job collected fewer than 180 tests. Its five modules "
+                    "carry 191 here (12/15/23/53/88), so this floor is 191 - 12 + 1: "
+                    "below it, at least one WHOLE module is no longer running in this "
+                    "job. The old floor of 60 was clear of any four of the five.")
               sys.exit(1)
           PY

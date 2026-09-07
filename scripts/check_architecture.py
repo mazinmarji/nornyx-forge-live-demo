@@ -584,6 +584,13 @@ forbidden = {
     "src/nornyx_forge/policy.py": {"fastapi", "demo_app"},
     "src/nornyx_forge/nornyx_runtime.py": {"fastapi", "demo_app"},
     "src/demo_app/agentic.py": {"fastapi", "demo_app.store"},
+    # The control-plane session gate is a pure ASGI callable in layer.domain:
+    # its docstring claims no dependency on the web framework and no process
+    # capability, and the layer rules alone did not make that claim a gate --
+    # an injected `import fastapi` passed (Tranche B third review, F1). The
+    # entry makes the claim checkable: verified by injecting each name and
+    # requiring a failure.
+    "src/nornyx_forge/control_plane_session.py": {"fastapi", "starlette", "uvicorn", "subprocess"},
     # Module-specific purity, stronger than anything the layer rules impose.
     # Other domain modules legitimately touch a filesystem or SQLite; this one
     # must not, because a subject primitive able to reach ambient state could

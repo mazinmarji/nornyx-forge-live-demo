@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-09-07T04:09:06Z",
-  "governed_input_digest": "sha256:b0636566256c21130a9d7cc99bc36b2d1dd3bdc6dec2e1ca1ecb4b60ab329b60",
+  "generated_at": "2026-09-07T12:46:47Z",
+  "governed_input_digest": "sha256:4dbe3495075572d774f474daa0be3ac5a1dca06b8938f9acb482e7b58c7a88fc",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -29,6 +29,7 @@
       "nornyx_forge.cli",
       "nornyx_forge.codex_worker",
       "nornyx_forge.contract_generator",
+      "nornyx_forge.control_plane_session",
       "nornyx_forge.development_flow",
       "nornyx_forge.evidence",
       "nornyx_forge.experience",
@@ -66,6 +67,7 @@
       "module.capsule_store",
       "module.codex_worker",
       "module.contract_authoring",
+      "module.control_plane_session",
       "module.evidence",
       "module.experience",
       "module.experience_build",
@@ -106,5 +108,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:f62656f787b62ce9be14fee46c181f822cf028fc"
+  "subject_revision": "git:45387c637570cea6fe050a02f4f095a138be9fea"
 }

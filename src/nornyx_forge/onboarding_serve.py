@@ -94,10 +94,35 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--project-dir", required=True)
     arguments = parser.parse_args(argv)
+    application = assemble(Path(arguments.project_dir))
+    # The console IS the presentation here (unlike the windowless Windows
+    # runtime), so the start link is printed for the person to open. What its
+    # fragment carries is the bootstrap NONCE, never the bearer, and a browser
+    # does not send a fragment to the server.
+    #
+    # WHAT BOUNDS IT is the nonce itself: single use, consumed under a lock,
+    # and dead after `NONCE_TTL_S` (120 s). Not the medium. A console is NOT
+    # off disk -- review measured a redirected stdout carrying this very
+    # fragment into a file, and redeemed it from there for this run's bearer
+    # -- so redirecting or transcribing this launcher's console is a
+    # disclosed residual of the console path (A-027), and one reason the
+    # shipped Windows launcher, which has no console, prints no start link
+    # and puts no nonce on any stream. It is not that it presents no URL:
+    # its notices and its log name the FRAGMENTLESS URL, and the exception
+    # text on the browser-failure path is scrubbed of both the nonce and the
+    # target. What it never emits is the credential (round-6 security S-3).
+    nonce = application.state.session.mint()
+    print(f"Open Forge in your browser: http://{ONBOARDING_HOST}:{arguments.port}/#{nonce}",
+          flush=True)
+    # access_log=False: uvicorn's access logger walks to the root logger, and a
+    # request path could otherwise land in a file handler. The onboarding
+    # surface puts no secret in a path, but the access log is turned off on
+    # every launch path as defence in depth (A-027).
     uvicorn.run(
-        assemble(Path(arguments.project_dir)),
+        application,
         host=ONBOARDING_HOST,
         port=arguments.port,
+        access_log=False,
     )
 
 

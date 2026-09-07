@@ -21,11 +21,14 @@ the production rule, and the rule is not widened to admit it.
 
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 import pytest
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.testclient import TestClient
+from session_client import authed_client
 from typer.testing import CliRunner
 
 from nornyx_forge import app_launcher, cli, onboarding_serve
@@ -55,7 +58,7 @@ def test_the_contracts_come_from_the_package_not_the_launch_directory(
     """Structural derivation: chdir anywhere, the governed contracts are the
     packaged ones — the launch directory selects nothing."""
     monkeypatch.chdir(tmp_path)
-    response = TestClient(assemble(tmp_path), base_url=LOOPBACK).get("/api/governance")
+    response = authed_client(assemble(tmp_path), base_url=LOOPBACK).get("/api/governance")
     assert response.status_code == 200
     assert [c["file"] for c in response.json()["contracts"]] == [
         "architecture_governance.nyx", "forge_control.nyx", "runtime_network.nyx",
@@ -70,14 +73,106 @@ def test_main_serves_on_loopback_with_the_explicit_directory(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     observed = {}
 
-    def fake_run(application, *, host, port):
-        observed.update(app=application, host=host, port=port)
+    def fake_run(application, *, host, port, access_log=None):
+        observed.update(app=application, host=host, port=port, access_log=access_log)
 
     monkeypatch.setattr(onboarding_serve.uvicorn, "run", fake_run)
     main(["--port", "8710", "--project-dir", str(tmp_path)])
     assert observed["host"] == ONBOARDING_HOST == "127.0.0.1"
     assert observed["port"] == 8710
     assert observed["app"].state.project_dir == str(tmp_path)
+    assert observed["access_log"] is False, "the access log carries request paths; it is off"
+
+
+def test_main_prints_a_start_link_whose_fragment_is_a_single_use_nonce_not_the_bearer(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        caplog: pytest.LogCaptureFixture):
+    """Test P1 (Tranche B round 3): the console `onboard` path mints a launch
+    nonce and prints the start link, and nothing read what it printed --
+    printing the BEARER instead (M26) or deleting the mint and the print (M27)
+    passed 157 tests. Now, with the server loop replaced: exactly one printed
+    line carries `/#`; its fragment is NOT the token; the fragment redeems on
+    the app's own session for the token exactly once; and neither stdout,
+    stderr nor any log record carries the token."""
+    observed = {}
+
+    def fake_run(application, *, host, port, access_log=None):
+        observed.update(app=application)
+
+    monkeypatch.setattr(onboarding_serve.uvicorn, "run", fake_run)
+    caplog.set_level(logging.DEBUG)
+    main(["--port", "8710", "--project-dir", str(tmp_path)])
+    out, err = capsys.readouterr()
+    session = observed["app"].state.session
+    token = session.token
+    links = [line for line in out.splitlines() if "/#" in line]
+    assert len(links) == 1, f"expected exactly one start link on stdout, got {links!r}"
+    url = links[0].rpartition(" ")[2].strip()
+    assert url.startswith(f"http://{ONBOARDING_HOST}:8710/#"), url
+    fragment = url.split("#", 1)[1]
+    assert fragment and fragment != token, "the start link carried the bearer itself"
+    assert token not in out and token not in err and token not in caplog.text, "the bearer was printed or logged"
+    # THE FRAGMENT TOO, not the bearer alone (round-4 test P3). The nonce is
+    # single-use and expires with its TTL, but it is LIVE while it is
+    # outstanding, and it is the credential the console prints; logging it at
+    # INFO would put it in whatever file the root logger is writing to. This
+    # test read out/err/caplog for the BEARER only, so adding
+    # `_log.info("start link %s", nonce)` to `main` survived it. stdout is
+    # where it belongs and the only place it may appear, once.
+    assert fragment not in caplog.text, "the launch nonce reached a log record"
+    assert fragment not in err, "the launch nonce reached stderr"
+    assert out.count(fragment) == 1, "the launch nonce was printed more than once"
+    assert session.redeem(fragment) == token, "the printed fragment is not this session's nonce"
+    assert session.redeem(fragment) is None, "the start link's nonce is single-use"
+
+
+def test_the_console_start_link_is_not_described_as_staying_off_disk():
+    """Round-5 security Finding 1, pinned LEXICALLY on the source `main` is
+    read from -- the same class as the round-2 CHANGELOG sentence, and the
+    same remedy.
+
+    The comment beside the `print` said the nonce "stays off disk" because
+    "this console output is not a log file". The reviewer measured it FALSE:
+    a redirected stdout carried the fragment into a file, and that fragment
+    redeemed for the run's bearer. A console is a stream, and where a stream
+    goes is the operator's choice, not this module's.
+
+    What stands in its place is the bound that IS true -- the nonce is single
+    use and TTL-bounded, and it is not the bearer -- plus the disclosure that
+    a redirected console puts it on disk (A-027). Restore the false clause and
+    this is red on the sentence itself, whatever the rest of the paragraph
+    says.
+
+    The disclosure is pinned on the SENTENCE, not on the identifier. `"A-027"
+    in source` was satisfied without the disclosure at all: the module already
+    mentioned A-027 beside `access_log=False`, three lines further down, and
+    would go on doing so with this whole paragraph deleted (round-6 test
+    P4-6). What is asserted instead is the clause that carries the claim."""
+    source = Path(onboarding_serve.__file__).read_text(encoding="utf-8")
+    for false_claim in ("stays off disk", "not a log file"):
+        assert false_claim not in source, (
+            f"onboarding_serve still claims the console nonce {false_claim!r}; "
+            "a redirected stdout was measured carrying it to a file")
+    # The replacement says what IS true, and discloses the residual by name.
+    assert "NONCE_TTL_S" in source and "single use" in source, (
+        "the console comment no longer states the bound that limits the nonce")
+    # Read as prose, not as lines: the comment may be re-wrapped, and a pin
+    # that a reflow breaks teaches the next reader to delete the pin.
+    prose = re.sub(r"\n\s*#\s*", " ", source)
+    assert ("redirecting or transcribing this launcher's console is a disclosed "
+            "residual of the console path (A-027)") in prose, (
+        "the redirected-console residual is no longer disclosed against A-027 in "
+        "the console comment itself; a bare A-027 elsewhere in the module is not "
+        "this disclosure")
+    assert "never the bearer" in source, "the comment no longer says the fragment is not the bearer"
+    # And the loose half of the same paragraph (round-6 security S-3): the
+    # windowless launcher does present a URL -- fragmentless -- so what it is
+    # said not to do is emit the credential, not to name a link.
+    assert "prints no link at all" not in source, (
+        "the comment still says the Windows launcher prints no link at all; its "
+        "notices name the fragmentless URL")
+    assert "puts no nonce on any stream" in source, (
+        "the comment no longer says what the windowless launcher actually withholds")
 
 
 def test_main_refuses_a_relative_directory_before_serving(
@@ -170,7 +265,7 @@ def test_h1_h2_assemble_answers_both_loopback_host_identities(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     application = _served(tmp_path, monkeypatch)
     for host in ("127.0.0.1", "localhost", "127.0.0.1:8710", "localhost:8710"):
-        response = TestClient(application, base_url=f"http://{host}").get("/api/state")
+        response = authed_client(application, base_url=f"http://{host}").get("/api/state")
         assert response.status_code == 200, host
         assert response.json()["initialized"] is False
         assert TestClient(application, base_url=f"http://{host}").get("/").status_code == 200
@@ -209,14 +304,14 @@ def test_h4_the_console_onboard_composition_inherits_the_host_rule(
     monkeypatch.setattr(onboarding_serve, "SEAL_DIR", tmp_path / "seals")
     observed = {}
 
-    def fake_run(application, *, host, port):
+    def fake_run(application, *, host, port, access_log=None):
         observed.update(app=application, host=host, port=port)
 
     monkeypatch.setattr(onboarding_serve.uvicorn, "run", fake_run)
     main(["--port", "8710", "--project-dir", str(tmp_path)])
     served = observed["app"]
     assert TestClient(served, base_url="http://evil.example").get("/api/state").status_code == 400
-    assert TestClient(served, base_url=LOOPBACK).get("/api/state").status_code == 200
+    assert authed_client(served, base_url=LOOPBACK).get("/api/state").status_code == 200
     assert TestClient(served, base_url="http://localhost").get("/").status_code == 200
     assert observed["host"] == ONBOARDING_HOST
 

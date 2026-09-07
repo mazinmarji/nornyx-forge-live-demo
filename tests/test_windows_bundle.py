@@ -350,6 +350,7 @@ def _canonical() -> dict[str, dict]:
     return {
         "launcher": {"step": "launcher", "returncode": 0, "stdout": "", "stderr": ""},
         "record": {"step": "runtime_record", "record": _ready_record()},
+        "session": {"step": "session_file", "present": True, "token_read": True},
         "runtime": {"step": "get", "path": "/api/runtime", "status": 200, "bytes": 320,
                     "content_type": "application/json", "json": "object",
                     "schema": RUNTIME_SCHEMA, "instance": TOKEN},
@@ -395,9 +396,26 @@ def test_s1_every_required_observation_correct_is_a_pass():
     verdict = evaluate_smoke_observations(_observations())
     assert verdict["result"] == "pass" and verdict["failed"] == []
     assert verdict["required"] == list(SMOKE_REQUIRED) == [
-        "launcher", "runtime_record", "get /api/runtime", "get /api/state", "get /",
-        "stop", "stopped"]
+        "launcher", "runtime_record", "session_file", "get /api/runtime", "get /api/state",
+        "get /", "stop", "stopped"]
     assert set(builder._SMOKE_CHECKS) == set(SMOKE_REQUIRED), "one judge per required observation"
+
+
+def test_the_smoke_contract_counts_the_observations_it_lists():
+    """Round-5 security P4. The comment above `SMOKE_REQUIRED` said "all
+    seven" while the tuple had held eight since `session_file` joined it a
+    round earlier -- prose beside a collection, stating a number nothing
+    read. This reads it.
+
+    The rule, so a rename cannot quietly satisfy it: the sentence that states
+    the conjunction must spell the number the tuple actually has."""
+    words = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+             6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+    source = Path(builder.__file__).read_text(encoding="utf-8")
+    stated = re.search(r"conjunction of all ([A-Za-z]+) is a pass", source)
+    assert stated is not None, "the smoke contract no longer states how many observations it needs"
+    assert stated.group(1).lower() == words[len(SMOKE_REQUIRED)], (
+        f"the contract says {stated.group(1)!r} and the tuple has {len(SMOKE_REQUIRED)}")
 
 
 def test_s2_a_non_success_status_on_the_runtime_route_is_not_a_pass():
@@ -530,13 +548,21 @@ def test_an_observation_made_twice_is_not_judged_as_either():
 
 _DEFAULT = object()
 
+#: The bearer the scripted runtime writes to its session file by default. The
+#: real runtime always writes one (the smoke always passes `--session-file`),
+#: so the default script does too; a test that wants the file absent or late
+#: says so by name.
+SMOKE_BEARER = "SESSION-BEARER-XYZ"
+
 
 def _scripted_runtime(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
                       record=_DEFAULT, answers: dict | None = None,
                       stop: tuple | None = None, stops: bool = True,
                       run_raises: BaseException | None = None,
                       get_raises: dict | None = None,
-                      post_raises: BaseException | None = None) -> dict:
+                      post_raises: BaseException | None = None,
+                      session_token: str | None = SMOKE_BEARER,
+                      session_release: threading.Event | None = None) -> dict:
     state: dict = {}
     if record is _DEFAULT:
         record = _ready_record()
@@ -558,25 +584,59 @@ def _scripted_runtime(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
     def run(argv, **kwargs):
         assert argv[:2] == ["cmd.exe", "/c"] and argv[2].endswith("Forge.cmd")
         assert "--no-browser" in argv and argv[argv.index("--port") + 1] == "0"
+        state["argv"] = list(argv)
         runtime_dir = Path(argv[argv.index("--runtime-dir") + 1])
         runtime_dir.mkdir(parents=True)
         state["record"] = runtime_dir / "project.json"
         if record is not None:
             state["record"].write_text(json.dumps(record), encoding="utf-8")
+        if session_token is not None:
+            target = Path(argv[argv.index("--session-file") + 1])
+            payload = json.dumps({"schema": "nornyx.forge.runtime_session.v1",
+                                  "instance": TOKEN, "token": session_token})
+
+            def write_session() -> None:
+                target.write_text(payload, encoding="utf-8")
+
+            if session_release is not None:
+                # AFTER readiness, exactly as the real runtime writes it -- the
+                # record above is already on disk -- and after an EVENT rather
+                # than after a delay. `threading.Timer(0.3)` used to stand
+                # here and the test read the ordering off `time.monotonic()`,
+                # which on Windows CPython <= 3.12 is GetTickCount64 at 15.6 ms
+                # resolution: 46 of 300 reads of a 0.3 s wait came back under
+                # 0.3, and the module failed 2 of 9 unmutated runs (round-5
+                # test P2, and the unexplained failure round-5 security saw).
+                # The caller fires `session_release` when the observation it
+                # wants ordered has been made, so the ordering is a
+                # happens-before and not a measurement of a clock.
+                # BOUNDED: if it is never fired this thread ends without
+                # writing, and the smoke fails on its own timeout.
+                def wait_then_write() -> None:
+                    if session_release.wait(timeout=30.0):
+                        write_session()
+
+                writer = threading.Thread(target=wait_then_write, daemon=True)
+                state["session_writer"] = writer
+                writer.start()
+            else:
+                write_session()
         state["env"] = kwargs["env"]
         state["cwd"] = kwargs["cwd"]
         if run_raises is not None:
             raise run_raises
         return subprocess.CompletedProcess(argv, returncode, launcher_output, "")
 
-    def get(port, path, timeout=5.0):
+    def get(port, path, timeout=5.0, token=None):
         state.setdefault("gets", []).append((port, path))
+        state.setdefault("get_tokens", {})[path] = token
         if get_raises and path in get_raises:
             raise get_raises[path]
         return answers[path]
 
-    def post(port, path, payload, timeout=5.0):
+    def post(port, path, payload, timeout=5.0, token=None):
         state["stop"] = (port, path, payload)
+        state["stop_token"] = token
         if post_raises is not None:
             raise post_raises
         if stops:
@@ -603,12 +663,12 @@ def test_the_smoke_records_every_observation_and_derives_its_result_from_them(
     assert state["stop"][1:] == ("/api/runtime/stop", {"actor": SMOKE_ACTOR})
     assert state["gets"] == [(8710, "/api/runtime"), (8710, "/api/state"), (8710, "/")]
     assert state["env"]["USERPROFILE"] == state["env"]["HOME"] != os.environ.get("USERPROFILE")
-    runtime_step = report["steps"][2]
+    runtime_step = report["steps"][3]
     assert runtime_step["schema"] == RUNTIME_SCHEMA and runtime_step["instance"] == TOKEN
-    assert report["steps"][3]["initialized"] is False
-    assert report["steps"][4]["content_type"].startswith("text/html")
-    assert report["steps"][5]["stopping"] is True and report["steps"][5]["instance"] == TOKEN
-    assert report["steps"][6]["record"]["status"] == "stopped"
+    assert report["steps"][4]["initialized"] is False
+    assert report["steps"][5]["content_type"].startswith("text/html")
+    assert report["steps"][6]["stopping"] is True and report["steps"][6]["instance"] == TOKEN
+    assert report["steps"][7]["record"]["status"] == "stopped"
     assert not Path(state["cwd"]).exists(), "the scratch is removed after the run"
     assert report["steps"][0]["timed_out"] is False, "the judged fact is recorded on both branches"
     # The bounds, measured: launcher output and the stop body are cut.
@@ -619,7 +679,7 @@ def test_the_smoke_records_every_observation_and_derives_its_result_from_them(
     # FACT_LIMIT characters (measured under inspection: only a multi-byte
     # body tells the two apart).
     raw = state["stop_body"]
-    assert report["steps"][5]["body"] == raw[:builder.FACT_LIMIT].decode("utf-8", "replace")
+    assert report["steps"][6]["body"] == raw[:builder.FACT_LIMIT].decode("utf-8", "replace")
     assert len(raw[:builder.FACT_LIMIT].decode("utf-8", "replace")) < builder.FACT_LIMIT
 
 
@@ -634,7 +694,8 @@ def test_a_launcher_that_never_returns_is_recorded_as_timed_out(
     assert len(launcher["stdout"]) == builder.OUTPUT_LIMIT and launcher["stderr"] == ""
     assert report["result"] == "fail"
     assert report["verdict"]["failed"] == ["launcher: the launcher did not return within its timeout"]
-    assert len(report["steps"]) == 7, "the runtime the launcher started is still observed"
+    assert len(report["steps"]) == len(SMOKE_REQUIRED) == 8, (
+        "the runtime the launcher started is still observed")
 
 
 def test_an_unreachable_route_is_recorded_and_the_remaining_routes_are_still_read(
@@ -642,7 +703,7 @@ def test_an_unreachable_route_is_recorded_and_the_remaining_routes_are_still_rea
     refused = ConnectionRefusedError("[WinError 10061] refused")
     state = _scripted_runtime(monkeypatch, get_raises={"/api/state": refused})
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
-    assert report["steps"][3] == {"step": "get", "path": "/api/state", "status": None,
+    assert report["steps"][4] == {"step": "get", "path": "/api/state", "status": None,
                                   "error": "ConnectionRefusedError: [WinError 10061] refused"}
     assert [path for _, path in state["gets"]] == ["/api/runtime", "/api/state", "/"]
     assert report["result"] == "fail"
@@ -654,9 +715,9 @@ def test_a_stop_request_that_raises_is_recorded_and_the_stopped_wait_still_runs(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     _scripted_runtime(monkeypatch, post_raises=ConnectionResetError("reset by the listener"))
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=0.6)
-    assert report["steps"][5] == {"step": "stop", "status": None,
+    assert report["steps"][6] == {"step": "stop", "status": None,
                                   "error": "ConnectionResetError: reset by the listener"}
-    assert report["steps"][6] == {"step": "stopped", "record": None}
+    assert report["steps"][7] == {"step": "stopped", "record": None}
     assert report["result"] == "fail"
     assert report["verdict"]["failed"] == [
         "stop: HTTP None, not 200 (ConnectionResetError: reset by the listener)",
@@ -687,8 +748,8 @@ def test_s4_through_the_smoke_a_body_that_is_not_json_is_recorded_not_raised(
     _scripted_runtime(monkeypatch, answers=answers)
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
     assert report["result"] == "fail"
-    assert report["steps"][2]["json"] == "invalid" and "instance" not in report["steps"][2]
-    assert report["steps"][3]["json"] == "not an object"
+    assert report["steps"][3]["json"] == "invalid" and "instance" not in report["steps"][3]
+    assert report["steps"][4]["json"] == "not an object"
     assert report["verdict"]["failed"] == [
         "get /api/runtime: body is 'invalid', not a JSON object",
         "get /api/state: body is 'not an object', not a JSON object"]
@@ -727,8 +788,8 @@ def test_a_recorded_fact_is_bounded_and_a_hostile_listener_is_not_this_runtime(
                "/": (200, b"<title>x</title>", "text/html")}
     _scripted_runtime(monkeypatch, answers=answers)
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
-    assert len(report["steps"][2]["instance"]) == builder.FACT_LIMIT + 3
-    assert report["steps"][3]["initialized"] == "dict"
+    assert len(report["steps"][3]["instance"]) == builder.FACT_LIMIT + 3
+    assert report["steps"][4]["initialized"] == "dict"
     assert report["result"] == "fail"
     assert report["verdict"]["failed"][0].startswith("get /api/runtime: instance 'xxx")
     assert report["verdict"]["failed"][1] == (
@@ -785,14 +846,14 @@ def test_a_nested_body_or_record_is_invalid_not_a_raise(
                "/": (200, b"<title>x</title>", "text/html")}
     state = _scripted_runtime(monkeypatch, answers=answers)
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
-    assert report["result"] == "fail" and report["steps"][2]["json"] == "invalid"
+    assert report["result"] == "fail" and report["steps"][3]["json"] == "invalid"
     assert not Path(state["cwd"]).exists()
 
 
 def test_the_scratch_does_not_outlive_a_raise(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     state = _scripted_runtime(monkeypatch)
 
-    def exploding(port, path, timeout=5.0):
+    def exploding(port, path, timeout=5.0, token=None):
         raise RuntimeError("listener exploded")
 
     monkeypatch.setattr(builder, "_get", exploding)
@@ -811,7 +872,7 @@ def test_the_record_is_kept_as_five_bounded_fields_not_archived(
     assert set(kept) <= set(builder.RECORD_FACTS) and "blob" not in kept and "pid" not in kept
     assert len(kept["reason"]) == builder.FACT_LIMIT + 3
     assert len(json.dumps(report)) < 4000, "the report explains; it does not archive"
-    assert set(report["steps"][6]["record"]) <= set(builder.RECORD_FACTS)
+    assert set(report["steps"][7]["record"]) <= set(builder.RECORD_FACTS)
 
 
 def test_a_token_longer_than_the_fact_bound_is_not_a_forge_record(
@@ -834,9 +895,51 @@ def test_a_token_longer_than_the_fact_bound_is_not_a_forge_record(
         "runtime_record: record instance token is longer than the recorded-fact bound")
 
 
+def _read_request(connection: socket.socket) -> bytes:
+    """The COMPLETE request on `connection`: the head up to its blank line,
+    then exactly the body the head's Content-Length declares.
+
+    Every listener script here reads through this before it answers, and the
+    reason is a CI failure, not tidiness. `http.client` sends a request's head
+    and its body in SEPARATE `send` calls; a script that did ONE `recv` and
+    answered would, whenever the body had not yet arrived, answer and close
+    with unread data on the socket -- and a close with unread data is a RST,
+    on which Windows discards the response bytes the client had already
+    received, so the client read `ConnectionResetError 10054` instead of the
+    200 it had been sent (round-3 windows-runtime job, run 34074115930; then
+    reproduced here at 1 in 300 with the same one-recv script). A GET has no
+    body and never split, which is why only the POST exchange ever failed.
+    Bounded: a peer that stops short of what it declared ends the read at
+    the socket timeout or at its own close, never in a hang.
+    """
+    connection.settimeout(5.0)
+    received = b""
+    while b"\r\n\r\n" not in received:
+        chunk = connection.recv(65536)
+        if not chunk:
+            return received
+        received += chunk
+    head, _, body = received.partition(b"\r\n\r\n")
+    declared = 0
+    for line in head.split(b"\r\n")[1:]:
+        name, _, value = line.partition(b":")
+        if name.strip().lower() == b"content-length":
+            try:
+                declared = int(value.strip())
+            except ValueError:
+                declared = 0
+    while len(body) < declared:
+        chunk = connection.recv(65536)
+        if not chunk:
+            break
+        body += chunk
+    return head + b"\r\n\r\n" + body
+
+
 def _listener(script) -> int:
     """A real loopback listener running `script(connection)` for one client.
-    Each script reads the request before it answers."""
+    Each script reads the WHOLE request, through `_read_request`, before it
+    answers (see there for the reset this prevents)."""
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
     server.listen(1)
@@ -856,6 +959,225 @@ def _listener(script) -> int:
     return port
 
 
+def test_the_smoke_passes_a_session_file_and_authenticates_state_and_stop(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The smoke has no browser to redeem a nonce, so it passes --session-file,
+    reads the bearer the runtime writes there, and carries it on /api/state and
+    the stop route -- the two calls the gate refuses without it."""
+    state = _scripted_runtime(monkeypatch, session_token="SESSION-BEARER-XYZ")
+    report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
+    assert report["result"] == "pass", report["verdict"]["failed"]
+    assert "--session-file" in state["argv"]
+    assert state["get_tokens"]["/api/state"] == "SESSION-BEARER-XYZ"
+    assert state["stop_token"] == "SESSION-BEARER-XYZ"
+
+
+def test_the_smoke_session_file_lies_outside_the_childs_relocated_profile_and_dirs(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """The runtime fences --session-file out of the project, the runtime
+    directory, the seal directory and the user profile. The smoke's path must
+    therefore lie outside the profile it gives its child and outside the
+    project and runtime directories it passes -- or the real smoke would be
+    refused at the fence. It sits directly in the scratch, beside them."""
+    state = _scripted_runtime(monkeypatch, session_token="SESSION-BEARER-XYZ")
+    assert smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)["result"] == "pass"
+    argv = state["argv"]
+    session_file = Path(argv[argv.index("--session-file") + 1]).resolve()
+    assert session_file.is_absolute() and session_file.name == "session.json"
+    profile = Path(state["env"]["USERPROFILE"]).resolve()
+    assert Path(state["env"]["HOME"]).resolve() == profile
+    for fenced in (profile, Path(argv[argv.index("--project-dir") + 1]).resolve(),
+                   Path(argv[argv.index("--runtime-dir") + 1]).resolve()):
+        assert session_file != fenced and fenced not in session_file.parents, (session_file, fenced)
+        assert session_file.parent == fenced.parent, "the session file is not beside the scratch dirs"
+
+
+def test_the_smoke_waits_for_the_session_file_the_runtime_writes_after_readiness(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Architecture F-P3-1. The real runtime records `ready` and writes the
+    session file AFTER; the two test harnesses were taught to wait in round 4
+    and the shipped smoke was not, so it read the token the instant the record
+    said ready, got None, and sent every later call bare -- three 401s naming
+    no cause.
+
+    THE ORDERING IS AN EVENT, not a clock (round-5 test P2, and the one
+    unexplained failure round-5 security saw in a 4-module run). This test
+    used to stand a `threading.Timer(0.3)` beside the record and assert
+    `time.monotonic() - started >= 0.3`; on Windows CPython <= 3.12
+    `monotonic` is GetTickCount64 with 15.6 ms resolution, so 46 of 300 reads
+    of that wait came back UNDER 0.3 and the module failed 2 of 9 unmutated
+    runs. A slower threshold would have hidden the flake, not the defect.
+
+    What is asserted instead is a happens-before, observed on both sides. The
+    smoke's own `_read_session_token` is spied: its FIRST call is made while
+    the file provably does not exist -- nothing has released the writer yet --
+    and only after that call has returned None is the writer released. So the
+    smoke is measured reading nothing first and a bearer later, which is
+    exactly the race the wait closes, with no clock anywhere in the judgment.
+
+    Delete the smoke's wait loop and this is red (the token stays None,
+    `session_file` fails the verdict, and the state and stop calls go bare).
+    Write the file before readiness instead and this is red too, on the first
+    read, which is then not None."""
+    release = threading.Event()
+    state = _scripted_runtime(monkeypatch, session_release=release)
+    reads: list[str | None] = []
+    real_read = builder._read_session_token
+
+    def spy(path: Path) -> str | None:
+        # The real read FIRST, then the release: were the order reversed the
+        # writer could win the race and the first read could see a token,
+        # which is the very thing this test is here to exclude.
+        answer = real_read(path)
+        reads.append(answer)
+        if len(reads) == 1:
+            release.set()
+        return answer
+
+    monkeypatch.setattr(builder, "_read_session_token", spy)
+    report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
+    state["session_writer"].join(timeout=30)
+    assert not state["session_writer"].is_alive(), "the scripted writer outlived the smoke"
+    assert report["result"] == "pass", report["verdict"]["failed"]
+    # THE ORDERING, both halves: nothing on the first look, a bearer on a later
+    # one. Either half alone is satisfied by a smoke that never waits.
+    assert reads[0] is None, (
+        "the session file existed on the smoke's first read, so this run never "
+        "presented the race the wait exists to close")
+    assert len(reads) >= 2, "the smoke read the session file once and gave up"
+    assert reads[-1] == SMOKE_BEARER, reads[-1]
+    assert state["get_tokens"]["/api/state"] == SMOKE_BEARER
+    assert state["stop_token"] == SMOKE_BEARER
+    session_step = [s for s in report["steps"] if s["step"] == "session_file"]
+    assert session_step == [{"step": "session_file", "present": True, "token_read": True}]
+    assert SMOKE_BEARER not in json.dumps(report), "the report carries the bearer itself"
+
+
+def test_a_session_file_that_never_arrives_is_named_by_the_report(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Architecture F-P3-1, the other direction: a runtime that never writes
+    the file is a recorded observation with a named cause, not a silent None
+    that surfaces as three unexplained refusals.
+
+    AND THE BUDGET, which was a claim with no witness (round-5 test P3-c):
+    the docstring said the wait is bounded by the smoke's own `timeout` and
+    that there is no second budget to keep in step with it, while giving the
+    wait a 60 s budget of its own left the module GREEN at 70.7 s against
+    11 s. So the bound is asserted here. The wait shares the record wait's
+    deadline, so a smoke that never gets a file must end within `timeout` and
+    a little; the assertion allows twice that and still separates one budget
+    from any second one worth having. `perf_counter`, not `monotonic`: on
+    Windows CPython <= 3.12 `monotonic` is GetTickCount64 at 15.6 ms, and
+    while that resolution cannot trouble a 4 s threshold, no elapsed
+    assertion in this module reads that clock any more.
+
+    HOW IT CATCHES A SECOND BUDGET, said because the shape is unusual here
+    and a reader should not have to infer it (round-6 test P4-4): POST HOC. A
+    wait given 60 s of its own does not fail fast -- it runs its 60 s and is
+    then found by the elapsed comparison, so this row costs what the mutant
+    costs, which is what the round-5 measurement of 70.7 s was. That is
+    accepted deliberately: an assertion that could cut the wait short would
+    have to bound it from outside, and a bound from outside is itself a second
+    budget. What is not accepted, and what this closes, is round 5's state,
+    where the same mutant cost nothing and was found by nothing."""
+    state = _scripted_runtime(monkeypatch, session_token=None)
+    timeout = 2.0
+    started = time.perf_counter()
+    report = smoke_bundle(tmp_path / "dist", timeout=timeout, stop_timeout=timeout)
+    elapsed = time.perf_counter() - started
+    assert report["result"] == "fail"
+    assert elapsed < 2 * timeout, (
+        f"the session-file wait took {elapsed:.1f}s against a {timeout:g}s smoke timeout, "
+        "which is a second budget, not the one the docstring claims")
+    assert state["get_tokens"]["/api/state"] is None and state["stop_token"] is None
+    assert report["steps"][2] == {"step": "session_file", "present": False, "token_read": False}
+    assert report["verdict"]["failed"][0].startswith(
+        "session_file: no bearer was read from the session file (present=False)")
+
+
+def test_the_smoke_helpers_send_the_bearer_only_when_a_token_is_given():
+    """On a REAL loopback listener: the Authorization header is present exactly
+    when a token is passed, and absent otherwise."""
+    captured: list[bytes] = []
+
+    def capture(response: bytes):
+        def script(connection: socket.socket) -> None:
+            captured.append(_read_request(connection))
+            connection.sendall(response)
+        return script
+
+    ok = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}"
+    empty = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 0\r\n\r\n"
+    builder._get(_listener(capture(ok)), "/api/state", timeout=2.0, token="abc123")
+    assert b"Authorization: Bearer abc123" in captured[-1]
+    builder._get(_listener(capture(empty)), "/", timeout=2.0)
+    assert b"Authorization" not in captured[-1]
+    builder._post_json(_listener(capture(ok)), "/api/runtime/stop", {"actor": SMOKE_ACTOR},
+                       timeout=2.0, token="xyz789")
+    assert b"Authorization: Bearer xyz789" in captured[-1]
+    assert captured[-1].endswith(json.dumps({"actor": SMOKE_ACTOR}).encode("utf-8")), (
+        "the listener answered before the POST body had arrived")
+
+
+def test_the_listener_helper_reads_a_request_that_arrives_in_two_segments():
+    """The DETERMINISTIC witness for the round-3 CI failure. A raw client sends
+    the head, waits 50 ms, then sends the body -- the split `http.client`
+    makes on its own schedule, forced. The listener must capture head AND body
+    and the client must read the 200 it was sent. A script that answered after
+    one `recv` captures the head alone here, every time (the mutation row for
+    this fix), and on Windows its close-with-unread-data reset the client."""
+    captured: list[bytes] = []
+    ok = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}"
+
+    def capture(connection: socket.socket) -> None:
+        captured.append(_read_request(connection))
+        connection.sendall(ok)
+
+    port = _listener(capture)
+    body = json.dumps({"actor": SMOKE_ACTOR}).encode("utf-8")
+    head = (b"POST /api/runtime/stop HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+            b"Content-Type: application/json\r\nAuthorization: Bearer xyz789\r\n"
+            b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n")
+    response = b""
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as client:
+        client.sendall(head)
+        time.sleep(0.05)
+        client.sendall(body)
+        while not response.endswith(b"\r\n\r\n{}"):
+            chunk = client.recv(65536)
+            if not chunk:
+                break
+            response += chunk
+    assert captured == [head + body], captured
+    assert response == ok, response
+
+
+def test_two_hundred_post_exchanges_complete_without_a_reset():
+    """The STATISTICAL witness beside the deterministic one above: the smoke's
+    own `_post_json` against a fresh listener, two hundred times, bounded by
+    each exchange's own 2 s budget. Before the fix the one-recv script reset 1
+    exchange in about 300 on this host and the first on the CI runner; the
+    fixed helper resets none. A `ConnectionResetError` here is the defect."""
+    ok = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}"
+
+    def answer(connection: socket.socket) -> None:
+        _read_request(connection)
+        connection.sendall(ok)
+
+    started = time.monotonic()
+    resets = 0
+    for _ in range(200):
+        try:
+            outcome = builder._post_json(_listener(answer), "/api/runtime/stop",
+                                         {"actor": SMOKE_ACTOR}, timeout=2.0, token="xyz789")
+        except ConnectionResetError:
+            resets += 1
+            continue
+        assert outcome[0] == 200 and outcome[1] == b"{}", outcome
+    assert resets == 0, f"{resets} of 200 POST exchanges were reset"
+    assert time.monotonic() - started < 120.0, "two hundred loopback exchanges took over two minutes"
+
+
 def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     """A REAL loopback listener, not a fake reader: measured under
     inspection, a fake that returned after one byte proved nothing, because
@@ -864,7 +1186,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     twice the budget, whether the listener trickles its body or its
     headers, and a whole answer still arrives intact."""
     def trickle_body(connection: socket.socket) -> None:
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                            b"Content-Length: 100000\r\n\r\n")
         for _ in range(100):
@@ -872,7 +1194,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
             time.sleep(0.25)
 
     def trickle_headers(connection: socket.socket) -> None:
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\n")
         for _ in range(100):
             connection.sendall(b"X-Slow: a\r\n")
@@ -900,7 +1222,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     # that receive's own timeout instead -- within twice the budget, never
     # at the trickle's pace.
     def slow_trickle(connection: socket.socket) -> None:
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                            b"Content-Length: 100000\r\n\r\n")
         for _ in range(10):
@@ -916,7 +1238,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     def whole(connection: socket.socket) -> None:
         # Read the request first: a listener that closes with the request
         # unread provokes a reset, which is not the property under test.
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                            b"Content-Length: 6\r\n\r\nabcdef")
 
@@ -926,7 +1248,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     # (measured under inspection: an early close delivered it without an
     # IncompleteRead, and the page predicate would have accepted it).
     def short(connection: socket.socket) -> None:
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                            b"Content-Length: 100000\r\n\r\n<html>hi")
 
@@ -939,7 +1261,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
     # a one-byte latin-1 header and a 5000-digit one each raised ValueError
     # out of the smoke).
     def short_oversize(connection: socket.socket) -> None:
-        connection.recv(65536)
+        _read_request(connection)
         connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                            b"Content-Length: 2097152\r\n\r\n<html>hi")
 
@@ -947,7 +1269,7 @@ def test_a_trickling_listener_cannot_hold_the_smoke_past_its_budget():
         builder._get(_listener(short_oversize), "/", timeout=2.0)
     for header in (b"\xb2", b"9" * 5000):
         def unparseable(connection: socket.socket, header: bytes = header) -> None:
-            connection.recv(65536)
+            _read_request(connection)
             connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
                                b"Content-Length: " + header + b"\r\n\r\n<html>hi")
 

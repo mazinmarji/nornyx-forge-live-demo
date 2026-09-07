@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from session_client import authed_client
 
 from nornyx_forge import onboarding_serve, provider_contract
 from nornyx_forge.capsule import PROVIDERS, Actor, confirm, create_document, propose
@@ -83,8 +84,8 @@ def _seam_eligibility(provider: str) -> GovernedEligibility:
 def _client(tmp_path: Path, factory, *, seam: bool = False) -> TestClient:
     """The shipped decision unless `seam` is asked for explicitly."""
     kwargs = {"eligibility": _seam_eligibility} if seam else {}
-    return TestClient(create_app(tmp_path / "capsule", CONTRACTS, flow_factory=factory,
-                                 seal_dir=tmp_path / "seals", **kwargs))
+    return authed_client(create_app(tmp_path / "capsule", CONTRACTS, flow_factory=factory,
+                                    seal_dir=tmp_path / "seals", **kwargs))
 
 
 def _ok(response) -> dict:
@@ -235,7 +236,7 @@ def test_e5_the_assembled_surface_refuses_the_governed_build(tmp_path: Path, mon
     monkeypatch.setattr(onboarding_serve, "SEAL_DIR", tmp_path / "seals")
     # A loopback base URL: the served composition refuses the test client's
     # default `testserver` Host, and the production rule is not widened for it.
-    client = TestClient(onboarding_serve.assemble(tmp_path), base_url="http://127.0.0.1")
+    client = authed_client(onboarding_serve.assemble(tmp_path), base_url="http://127.0.0.1")
     _confirmed(client, "claude")
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409

@@ -232,6 +232,11 @@ Note the ordering constraint: the token must be excluded from what the provider
 can read, and the workspace is writable by the provider — so it cannot live
 there, and a test must prove it does not.
 
+Forward pointer: Tranche B implemented mechanism (2) as the control-plane
+bearer (A-027); the loopback REACHABILITY recorded above is unchanged, because
+authenticating the control plane is not confinement, and both providers stay
+`declared` and ineligible.
+
 ---
 
 ## The criterion, and three ways the first verifier could be talked into a yes

@@ -367,9 +367,12 @@ OUTPUT_LIMIT = 500
 #: smoke makes them. Each name is judged by exactly one predicate in
 #: `_SMOKE_CHECKS` over the facts the report records for that step. An
 #: observation that is absent, duplicated or failed is a named failure, and
-#: only the conjunction of all seven is a pass.
-SMOKE_REQUIRED = ("launcher", "runtime_record", "get /api/runtime", "get /api/state",
-                  "get /", "stop", "stopped")
+#: only the conjunction of all EIGHT is a pass. Seven until `session_file`
+#: joined them in round 4, and this line still said seven a round later
+#: (round-5 security P4) -- prose beside a tuple, again. The count is checked
+#: against the tuple by `test_the_smoke_contract_counts_the_observations_it_lists`.
+SMOKE_REQUIRED = ("launcher", "runtime_record", "session_file", "get /api/runtime",
+                  "get /api/state", "get /", "stop", "stopped")
 
 
 class _Budget:
@@ -452,14 +455,37 @@ def _exchange(port: int, method: str, path: str, *, body: bytes | None = None,
     return response.status, data, content_type
 
 
-def _get(port: int, path: str, timeout: float = 5.0) -> tuple[int, bytes, str]:
-    return _exchange(port, "GET", path, timeout=timeout)
+def _bearer(token: str | None, base: dict[str, str] | None = None) -> dict[str, str]:
+    """Request headers carrying this run's control-plane bearer, if the smoke
+    read one from the session file. `/api/state` and the stop route require it;
+    the allowlisted `/api/runtime` and `/` ignore it."""
+    headers = dict(base or {})
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    return headers
 
 
-def _post_json(port: int, path: str, payload: dict, timeout: float = 5.0) -> tuple[int, bytes]:
+def _get(port: int, path: str, timeout: float = 5.0, token: str | None = None) -> tuple[int, bytes, str]:
+    return _exchange(port, "GET", path, headers=_bearer(token), timeout=timeout)
+
+
+def _post_json(port: int, path: str, payload: dict, timeout: float = 5.0,
+               token: str | None = None) -> tuple[int, bytes]:
     status, data, _ = _exchange(port, "POST", path, body=json.dumps(payload).encode("utf-8"),
-                                headers={"content-type": "application/json"}, timeout=timeout)
+                                headers=_bearer(token, {"content-type": "application/json"}),
+                                timeout=timeout)
     return status, data
+
+
+def _read_session_token(path: Path) -> str | None:
+    """The bearer the runtime wrote to the explicit session file, or None.
+    Only the smoke passes `--session-file`; the shipped launchers never do."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    token = data.get("token") if isinstance(data, dict) else None
+    return token if isinstance(token, str) and token else None
 
 
 def _fact(value: Any) -> Any:
@@ -622,9 +648,22 @@ def _record_stopped(step: dict, expected: str | None) -> str | None:
     return None
 
 
+def _session_file_written(step: dict, expected: str | None) -> str | None:
+    """The smoke's bearer arrived, or the reason nothing downstream could be
+    authenticated. Without it `/api/state` and the stop route answer 401 and
+    the report says only that -- so this is judged FIRST of the reachable
+    observations, and names the cause once instead of three times."""
+    if step.get("token_read") is not True:
+        return ("no bearer was read from the session file "
+                f"(present={step.get('present')!r}); the runtime writes it after it "
+                "records readiness, so nothing downstream could be authenticated")
+    return None
+
+
 _SMOKE_CHECKS: dict[str, Callable[[dict, str | None], str | None]] = {
     "launcher": _launcher_completed,
     "runtime_record": _record_ready,
+    "session_file": _session_file_written,
     "get /api/runtime": _runtime_route,
     "get /api/state": _state_route,
     "get /": _page_route,
@@ -686,8 +725,22 @@ def _observe_launch(dist: Path, scratch: Path, step: Callable[..., None], *,
     profile = scratch / "profile"
     profile.mkdir()
     environment = {**os.environ, "USERPROFILE": str(profile), "HOME": str(profile)}
+    # The gate needs the bearer on /api/state and the stop route. The smoke has
+    # no browser to redeem a nonce, so it asks the runtime to write the token to
+    # an EXPLICIT scratch path (the shipped launchers never pass one), reads it
+    # after readiness, and authenticates those two calls. WHERE IT LANDS, stated
+    # exactly: `scratch` is `tempfile.mkdtemp()`, which on the operator's machine
+    # is %LOCALAPPDATA%\Temp -- under the operator's profile, and a directory
+    # A-027 records as Modify for CodexSandboxUsers. The runtime's own fence
+    # admits it only because the child's profile is relocated to scratch/profile
+    # (below), which the file is not under. Acceptable for the smoke, and only
+    # the smoke: no provider runs during it, the runtime it authenticates to
+    # serves a throwaway scratch project, and the file is removed at stop and
+    # the scratch with it.
+    session_file = scratch / "session.json"
     command = ["cmd.exe", "/c", str(dist / "Forge.cmd"), "--project-dir", str(project),
-               "--runtime-dir", str(runtime_dir), "--port", "0", "--no-browser"]
+               "--runtime-dir", str(runtime_dir), "--port", "0", "--no-browser",
+               "--session-file", str(session_file)]
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=120,
                                    cwd=str(scratch), env=environment)
@@ -713,9 +766,25 @@ def _observe_launch(dist: Path, scratch: Path, step: Callable[..., None], *,
     if _record_shape(record) is not None or record.get("status") != "ready":
         return  # nothing to reach; the verdict says what was not observed
     port = record["port"]
+    # THE RACE THE TEST HARNESSES ALREADY CLOSED, left here. The runtime writes
+    # the session file AFTER it records readiness, so reading the token the
+    # instant the record says `ready` reads nothing, every later call goes bare,
+    # and the report carries three 401s that name no cause (round-4
+    # architecture F-P3-1). Await it inside the record wait's OWN deadline: the
+    # bound is the `timeout` already given and there is no second one to keep
+    # in step with it.
+    token = _read_session_token(session_file)
+    while token is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        token = _read_session_token(session_file)
+    # AN OBSERVATION, not a silent None. A bearer that never arrived is the
+    # cause of everything that follows, so the verdict names it rather than
+    # leaving a reader to infer it from the refusals downstream. The token
+    # itself is never recorded -- only that one was read.
+    step("session_file", present=session_file.exists(), token_read=token is not None)
     for path in ("/api/runtime", "/api/state", "/"):
         try:
-            status, body, content_type = _get(port, path)
+            status, body, content_type = _get(port, path, token=token)
         except (OSError, http.client.HTTPException) as error:
             step("get", path=path, status=None, error=_fact(f"{type(error).__name__}: {error}"))
             continue
@@ -730,7 +799,7 @@ def _observe_launch(dist: Path, scratch: Path, step: Callable[..., None], *,
                 facts["initialized"] = _fact(payload.get("initialized"))
         step("get", path=path, **facts)
     try:
-        status, body = _post_json(port, "/api/runtime/stop", {"actor": SMOKE_ACTOR})
+        status, body = _post_json(port, "/api/runtime/stop", {"actor": SMOKE_ACTOR}, token=token)
     except (OSError, http.client.HTTPException) as error:
         step("stop", status=None, error=_fact(f"{type(error).__name__}: {error}"))
     else:

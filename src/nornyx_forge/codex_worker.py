@@ -121,6 +121,19 @@ from pathlib import Path
 from .models import WorkerResult
 
 
+def _provider_env() -> dict[str, str]:
+    """The environment the provider process runs in: the current one minus any
+    FORGE_* variable and a bare `FORGE` one. Forge's operational variables are
+    not the provider's to read, and the control-plane bearer never enters
+    os.environ (it lives in process memory only), so handing the child an
+    explicit environment keeps the secret out of its reach by construction,
+    not by hope (A-027, INV-B2). The bare name is dropped for the same reason
+    the prefix is: a variable parked under Forge's own name is Forge's, and a
+    `startswith("FORGE_")` rule let it through (third review, P4-3)."""
+    return {key: value for key, value in os.environ.items()
+            if key != "FORGE" and not key.startswith("FORGE_")}
+
+
 class CodexWorker:
     """Bounded bridge to an authenticated local Codex CLI installation."""
 
@@ -227,6 +240,7 @@ class CodexWorker:
                 capture_output=True,
                 check=False,
                 timeout=timeout_seconds,
+                env=_provider_env(),
             )
         except subprocess.TimeoutExpired as exc:
             out, out_problem = _decode(exc.stdout, "stdout")

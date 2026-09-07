@@ -294,6 +294,66 @@ change to the Experience stages, the human-only CONFIRM and READY, provider
 eligibility, the seal, the runtime lock, the instance token or the port
 handling, all of which the PR-17 and PR-18 suites re-ran unchanged.
 
+## Control-plane session (Tranche B)
+
+The onboarding surface now admits an authority-moving request only when it
+carries this run's bearer (A-027). The gate is a pure ASGI middleware installed
+in `create_app`, the token and the bootstrap nonce live in process memory and
+the page only, and the workers pass the provider an environment stripped of
+`FORGE_*`. "Established" means a test that runs on every commit holds it.
+
+| Property | Result | Evidence class |
+| --- | --- | --- |
+| INV-B1 no un-bearered request moves state | established | deterministic (every authority route refuses `401` without the bearer; a refused write leaves the digest chain unchanged) |
+| INV-B2 token and nonce reach no argv Forge controls, env, prompt, workspace, record, log, trail, `/api/runtime`, unauthenticated page or response header | established | deterministic (a real runtime bootstrap over a socket, on the success AND the browser-failure branch, with every response header checked against a declared set; the real build route with the REAL `DevelopmentFlow` and a fake provider executable resolved by name, whose received environment, argv, cwd and workspace listing are read back -- `test_the_real_build_route_runs_the_real_flow_and_the_provider_process_sees_neither_secret`; a real child process launched with the provider environment) |
+| INV-B3 a foreign, guessed, partial or one-byte-off token is refused, constant-time | established | deterministic (`hmac.compare_digest` over bytes on BOTH call sites, pinned by an AST walk over the imported `verify` and `redeem` that forbids any `==`/`!=`/`in`/`not in` comparison in either -- red under all four operand-order mutants; every proper prefix, suffix and single character of the token, the token with a byte added, and a previous run's token are refused with the fixed body; a nonce presented as a bearer is refused) |
+| INV-B4 no other browser context moves authority | established | deterministic (redeem and reopen compare the full Origin serialization against `http://<Host>` and `Sec-Fetch-Site`; from a browser, which sets both headers itself, a prefix of the port and a suffix on the host are refused; a NON-browser caller sets both headers and passes the check, which is browser provenance and not caller authentication -- what it then reaches is a redeem that needs a nonce it lacks and a reopen that returns no secret, and every other route needs the bearer; a navigation POST is refused; a `forge_session*` cookie is refused on gated requests and IGNORED on the allowlisted routes, because cookies are host-scoped and a listener on another loopback port can set one for `127.0.0.1`) |
+| INV-B5 the gate covers every route of the COMPOSED surface, attached ones included | established | deterministic (`test_the_composed_route_census_refuses_everything_but_the_four_allowlisted_pairs`: over `assemble` plus `attach_runtime_routes`, every (method, path) but a HARDCODED four -- HEAD, OPTIONS, PUT, PATCH and DELETE included -- refuses `401` without a bearer, with persisted bytes and lifecycle unchanged and stop never requested; the census fails on any live route it cannot probe, a `Mount` or a `WebSocketRoute`; a websocket handshake is closed before accept) |
+| INV-B6 per run fresh token and nonce; the previous run's dead | established | deterministic (a second mint kills the first; two sessions share no secret) |
+| INV-B7 an app has a session and gate by construction | established | deterministic (`create_app` always installs the gate and exposes no disable parameter) |
+| the docs and schema routes are off | established | deterministic (`openapi_url`, `docs_url`, `redoc_url` are `None`; each 404s under a bearer) |
+| the smoke authenticates its own calls | established | deterministic (the smoke passes `--session-file`, reads the token, and sends the bearer on `/api/state` and stop; a real listener confirms the header; the path lies outside the child's relocated profile and the scratch project and runtime dirs. It WAITS for the file, which the runtime writes after it records `ready` — reading the instant the record said ready got None and sent every later call bare, three `401`s naming no cause — and `session_file` is one of the eight REQUIRED observations, so a bearer that never arrives is a named failure rather than a silent None: `test_the_smoke_waits_for_the_session_file_the_runtime_writes_after_readiness` orders the two by an event, not by a clock, and `test_a_session_file_that_never_arrives_is_named_by_the_report` holds the wait inside the smoke's single `timeout`) + operator (the real embedded-interpreter smoke remains NOT PERFORMED) |
+| a malformed credential is a fixed refusal, never a `500` | established | deterministic (a non-ASCII bearer is `401` and a non-ASCII nonce `404` on the TestClient and on the real runtime, where 100 such requests leave no traceback in `<key>.log`; a scope the gate cannot parse is the fixed `401`; a lax `Authorization` shape is refused) |
+| the launch nonce survives a reopen; a local reopen cannot evict the person's pending Reconnect nonce; reopen is refused on a `--no-browser` run | established | deterministic (the launch slot and a reopen QUEUE on the session and over the composed surface: person Reconnect `200`, local reopen 11 s later `200`, the person's redeem `200` and each nonce single-use; the queue's depth is what the 10 s rate limit admits within one 120 s TTL -- floor(120/10)+1 = 13 -- proved under an injected clock stepping at exactly the interval, and the two constants are pinned together; `409` with a fixed body under `--no-browser`; an owner whose browser adapter raises, whatever the exception's class and even when its own `__str__` raises, answers `503` with a fixed body and scrubs the exception; a joining launcher told `409`/`429`/`503` notifies with the fragmentless URL) |
+| `--session-file` is fenced and written only after readiness | established | deterministic (relative, in-project, in-runtime-dir, in-seal-dir, under-profile, missing-directory and directory paths are refused before anything is created; the `\\?\` spelling of each of the four roots, the `\\.\` and `//?/` spellings and a UNC spelling are refused BY NAME before resolution, over a real launch that creates nothing, after `\\?\<profile>\stolen.json` had launched ready and written the bearer inside the profile; the `--runtime-dir` fence refuses the same prefixes on the runtime and the project directory; an 8.3 short name and a junction alias resolve into their root and are refused by it; a trailing dot or space stays inside its root; the `[seal]` case fences against a seal directory of its own, outside the profile; the file follows the `ready` record and never precedes it; created exclusively, and a pre-existing file is left as found, told by path and not removed at stop; the fence resolves the runtime directory itself; `0600` on POSIX) |
+| the page declares a Content-Security-Policy and a Reconnect branch per refusal | established (lexical) | deterministic (a pin on the page source, not a browser observation: the meta precedes style and script with `default-src 'none'`, inline script and style, same-origin connect, no base and no form action; the page has branches for `404`, `409`, `429` and `503`) |
+| no test hangs under a regression | established | deterministic (every launch that must return is held to a watched deadline that reads the record a runaway server writes and stops it with the bearer; the `[profile]` session-file case makes its precondition true and asserts it; measured under mutation: the fence-removed and parent-check-removed mutants are red within seconds, not hung) |
+| the runtime writes no access-log line | established | deterministic (the `uvicorn.Config` the runtime builds carries `access_log=False`, and after real requests `<key>.log` holds no request line) |
+| the fragment survives ShellExecute into the default browser | NOT PERFORMED | operator (Tranche I/J: the page's own redeem succeeding in a launcher-opened browser is the witness; A-027) |
+
+Not claimed by any row: any change to `PROVIDER_CONFINEMENT`,
+`CONFINEMENT_PROPERTIES` or `governed_build_eligibility` (both providers stay
+ineligible); defence against an unconfined same-user provider that can read
+process memory (Claude's eligibility is unchanged); the non-HTTP authority
+paths (the build thread's TEST/GOVERN translation, the seal-break failure,
+`brd_present()`, the restore TOCTOU), which A-027 leaves to Tranches D and F;
+any confinement claim about the shipped `codex exec` path, which A-024
+records as unmeasured; the browser handler's own command line, which receives
+the fragment URL and is bounded by principal separation only (A-027); the
+browser's persistent history store, which records the opened URL, fragment
+included -- measured on this host as NOT readable by the sandbox group for
+the two stores checked, with other browsers, profiles and hosts unmeasured
+(A-027); the reopen trigger, which a local process may still pull once per
+10 s and which mints a fresh nonce onto those two channels each time, bounded
+by the nonce's single use, TTL and the page's redeem race, and the one reopen
+RATE-LIMIT slot it shares with the person's Reconnect (the nonce it can no
+longer evict is established above); a UNC alias of a fenced root against the
+launch fence, on BOTH of its operands -- the first disclosure named the
+`--runtime-dir` side alone, and the project side is the same hole from the
+other direction: a UNC alias of the PROJECT with a plain `--runtime-dir`
+passes the fence and the runtime directory is created inside the project
+(measured on a scratch project) (A-027); the start link the console `onboard`
+path prints, which carries a LIVE launch nonce on stdout and so lands on disk
+for that nonce's 120 s wherever the console is redirected to a file, bounded
+by the nonce's single use and TTL and never the bearer itself (A-027); the
+post-resolution half of the session-file and runtime-directory fences, whose
+witness presents the resolution through a seam because no plain path on this
+host resolves to a prefixed one and `subst`/`net use` would change the host,
+not the scratch (A-027); the bundle smoke's own session file under
+`%LOCALAPPDATA%\Temp` (A-027); and any
+behaviour of the page in a real browser, its CSP included, which is pinned
+lexically here and observed only in the operator run.
+
 ## Requires a normal internet-connected machine or GitHub Actions
 
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:

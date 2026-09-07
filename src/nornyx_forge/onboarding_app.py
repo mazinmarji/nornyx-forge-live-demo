@@ -90,7 +90,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -112,6 +113,13 @@ from .capsule_store import (
     CapsuleSealMissing,
     CapsuleStore,
     CapsuleStoreError,
+)
+from .control_plane_session import (
+    BAD_SHAPE,
+    NONCE_INVALID,
+    REDEEM_PATH,
+    ControlPlaneSession,
+    SessionGate,
 )
 from .experience import fail as fail_lifecycle
 from .experience_journey import (
@@ -182,6 +190,10 @@ class ProposalPayload(BaseModel):
 
 class ResolvePayload(BaseModel):
     actor: ActorPayload
+
+
+class RedeemPayload(BaseModel):
+    nonce: str
 
 
 def _refusal(error: CapsuleError) -> JSONResponse:
@@ -260,7 +272,19 @@ def create_app(
     if flow_factory is None:
         from .development_flow import DevelopmentFlow
         flow_factory = DevelopmentFlow
-    app = FastAPI(title="Nornyx Forge — Onboarding", version="0.1.0")
+    # THE DOCS ROUTES ARE OFF. FastAPI's defaults serve /openapi.json, /docs,
+    # /docs/oauth2-redirect and /redoc; a schema of every route and its shape
+    # is exactly what an unauthenticated authority surface should not publish,
+    # and the gate below would have to allowlist or refuse each. None exist.
+    app = FastAPI(title="Nornyx Forge — Onboarding", version="0.1.0",
+                  openapi_url=None, docs_url=None, redoc_url=None)
+    # THE CONTROL-PLANE SESSION. Minted here, in the real composition root:
+    # nine test modules and `attach_runtime_routes` compose or extend this app,
+    # and the bearer must cover every one of them. Held only in memory
+    # (app.state) and handed to the gate; never written to any default path,
+    # never a cookie, never in a record, log, argv, env or prompt (A-027).
+    session = ControlPlaneSession()
+    app.state.session = session
     app.state.build = {"status": "never_run"}
     build_lock = threading.Lock()
     # ONE STORE, ONE WRITER AT A TIME. The capsule and the lifecycle are two
@@ -351,6 +375,28 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def page() -> str:
         return _PAGE
+
+    @app.post(REDEEM_PATH)
+    def redeem_session(payload: RedeemPayload):
+        """Trade this run's outstanding bootstrap nonce for the bearer token.
+
+        The launcher opened `/#<nonce>` and the page reads the fragment and
+        posts it here; the fragment never reached the server, so this is the
+        one place the nonce is seen. A valid, unexpired, unused nonce returns
+        the token once; anything else is the fixed nonce-invalid refusal that
+        echoes nothing. The gate allowlists this route and applies the
+        browser-provenance checks; nothing here reads a bearer, because the
+        caller does not have one yet.
+        """
+        token = session.redeem(payload.nonce)
+        if token is None:
+            return JSONResponse(status_code=404, content=dict(NONCE_INVALID))
+        # The one response that carries the token is marked uncacheable: a
+        # browser or an intermediary that stored it would hold the bearer
+        # past the page's closure. `no-store` for HTTP/1.1 caches, `Pragma`
+        # for the HTTP/1.0 ones a loopback proxy might still be.
+        return JSONResponse(content={"token": token},
+                            headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
 
     @app.get("/api/state")
     def state():
@@ -844,11 +890,25 @@ def create_app(
             views.append({"file": path.name, "view": rendered})
         return {"contracts": views}
 
+    @app.exception_handler(RequestValidationError)
+    async def _malformed_request(_request: Request, _exc: RequestValidationError):
+        """A body the route's model could not accept, refused without echoing
+        it. FastAPI's default handler returns the submitted `input` and pydantic
+        `ctx`; on an unauthenticated authority surface that is a reflection
+        channel, so the handler is overridden to a fixed shape."""
+        return JSONResponse(status_code=422, content=dict(BAD_SHAPE))
+
+    # THE GATE, OUTERMOST. Installed last as a user middleware so it wraps the
+    # whole app -- every route above and every route `attach_runtime_routes`
+    # adds afterwards. `onboarding_serve.assemble` adds the Host rule after
+    # this returns, which then sits outside the gate; both run before serving.
+    app.add_middleware(SessionGate, session=session)
     return app
 
 
 _PAGE = """<!doctype html>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Nornyx Forge — Onboarding</title>
 <style>
  body{font-family:system-ui,sans-serif;max-width:44rem;margin:2rem auto;padding:0 1rem;line-height:1.5}
@@ -859,12 +919,23 @@ _PAGE = """<!doctype html>
  #stage{font-weight:bold}
  .failed{color:#a00}
  ul{margin:0.25rem 0}
+ [hidden]{display:none}
+ .prop{margin:0.25rem 0}
 </style>
 <h1>Nornyx Forge</h1>
 <p>Describe what you need. It becomes a <em>proposal</em>; nothing is
 authoritative until you confirm it. The governance shown below is rendered
 from the contracts that actually govern this project — the contracts, not
 this page, are the authority.</p>
+<div id="nosession" hidden>
+ <fieldset><legend>This page has no Forge session</legend>
+  <p>Start Forge from its launcher, or press Reconnect. Reloading this page
+  loses the session by design — the token is never stored, so a fresh page
+  must be opened from Forge itself.</p>
+  <div id="session_msg"></div>
+  <button id="b_reconnect" onclick="reconnect()">Reconnect</button></fieldset>
+</div>
+<div id="app" hidden>
 <fieldset><legend>Your name</legend>
  <input id="who" placeholder="your name"></fieldset>
 <fieldset><legend>1 · Create the project</legend>
@@ -902,14 +973,27 @@ this page, are the authority.</p>
 <fieldset><legend>Forge on this computer</legend>
  <div id="runtime">runtime: —</div>
  <button id="b_stop" onclick="stopForge()" disabled>Stop Forge</button></fieldset>
+</div>
 <script>
+// The bearer for this run. Kept in this closure ONLY: never a cookie, never
+// web storage, never the URL. A reload loses it by design, which is why the
+// no-session state offers Reconnect and beforeunload warns while it is held.
+let token = null;
 const actor = () => ({kind: "human", ident: document.getElementById("who").value || "user"});
 const json = (r) => r.json();
 const text = (id, value) => { document.getElementById(id).textContent = value; };
+// Every call carries the bearer and no ambient credential. Allowlisted reads
+// (/, /api/runtime) tolerate its absence; everything else needs it.
+function authFetch(url, opts){
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers || {});
+  if(token){ headers["Authorization"] = "Bearer " + token; }
+  return fetch(url, Object.assign({}, opts, {headers: headers, credentials: "omit"}));
+}
 async function call(url, body){
-  const r = await fetch(url, {method: "POST", headers: {"content-type": "application/json"},
-                              body: JSON.stringify(body)});
-  const data = await r.json();
+  const r = await authFetch(url, {method: "POST", headers: {"content-type": "application/json"},
+                                  body: JSON.stringify(body)});
+  const data = await r.json().catch(() => ({}));
   text("notice", r.ok ? "" : ("Refused: " + (data.refused || JSON.stringify(data))));
   await refresh();
 }
@@ -918,13 +1002,13 @@ function createProject(){ call("/api/project", {project_id: pid.value, project_n
 function proposeNeed(){ call("/api/proposals", {field: "intent", value: need.value, actor: actor()}); }
 function proposeProvider(){ call("/api/proposals", {field: "provider", value: {name: provider.value}, actor: actor()}); }
 async function deriveBrd(){
-  const r = await fetch("/api/brd", {method: "POST"});
-  const data = await r.json();
+  const r = await authFetch("/api/brd", {method: "POST"});
+  const data = await r.json().catch(() => ({}));
   text("notice", r.ok ? "BRD derived from the confirmed capsule." : ("Refused: " + (data.refused || JSON.stringify(data))));
   await refresh();
 }
 async function sharingPreview(){
-  const r = await fetch("/api/sharing-preview");
+  const r = await authFetch("/api/sharing-preview");
   text("share", JSON.stringify(await r.json(), null, 1));
 }
 const BUTTONS = {b_start: "start_tracking", b_confirm: "confirm_scope", b_build: "start_build",
@@ -956,7 +1040,7 @@ function renderJourney(s){
   document.getElementById("b_restore").disabled = !(s.finding && s.restorable);
 }
 async function refreshBuild(){
-  const b = await fetch("/api/build").then(json);
+  const b = await authFetch("/api/build").then(json);
   let line = b.status;
   if(b.status === "finished"){ line += b.accepted ? " · accepted by the flow" : " · not accepted by the flow"; }
   if(b.status === "failed"){ line += " · " + b.error; }
@@ -965,23 +1049,52 @@ async function refreshBuild(){
   text("build", line);
   if(b.status === "running"){ setTimeout(refresh, 2000); }
 }
+// The provider options and the proposal rows are built with DOM APIs and
+// textContent, never a markup-string template (F15): store content -- a capsule
+// identifier, a provider name -- is DATA on this origin, and a page that spun
+// it into markup would let the store decide what script runs here.
+function renderProviders(providers){
+  const sel = document.getElementById("provider");
+  sel.replaceChildren();
+  for(const p of (providers || [])){
+    const option = document.createElement("option");
+    option.textContent = p;
+    option.value = p;
+    sel.append(option);
+  }
+}
+function proposalButton(label, url){
+  const button = document.createElement("button");
+  button.textContent = label;
+  button.addEventListener("click", () => call(url, {actor: actor()}));
+  return button;
+}
+function renderProposals(proposals){
+  const host = document.getElementById("proposals");
+  host.replaceChildren();
+  const open = (proposals || []).filter(p => p.status === "open");
+  if(!open.length){ host.textContent = "none"; return; }
+  for(const p of open){
+    const row = document.createElement("div");
+    row.className = "prop";
+    row.append(document.createTextNode(p.proposal_id + " · " + p.field + " · by " + p.author + " (" + p.kind + ") "));
+    row.append(proposalButton("Confirm", "/api/proposals/" + p.proposal_id + "/confirm"));
+    row.append(document.createTextNode(" "));
+    row.append(proposalButton("Reject", "/api/proposals/" + p.proposal_id + "/reject"));
+    host.append(row);
+  }
+}
 async function refresh(){
-  const r = await fetch("/api/state");
+  const r = await authFetch("/api/state");
   const s = await r.json();
   document.getElementById("state").textContent = JSON.stringify(s, null, 1);
   renderJourney(s);
-  const sel = document.getElementById("provider");
-  sel.innerHTML = (s.providers || []).map(p => `<option>${p}</option>`).join("");
-  const open = (s.proposals || []).filter(p => p.status === "open");
-  document.getElementById("proposals").innerHTML = open.map(p =>
-    `<div>${p.proposal_id} · ${p.field} · by ${p.author} (${p.kind})
-     <button onclick='call("/api/proposals/${p.proposal_id}/confirm", {actor: actor()})'>Confirm</button>
-     <button onclick='call("/api/proposals/${p.proposal_id}/reject", {actor: actor()})'>Reject</button></div>`
-  ).join("") || "none";
+  renderProviders(s.providers);
+  renderProposals(s.proposals);
   await refreshBuild();
 }
 async function governance(){
-  const g = await fetch("/api/governance").then(json);
+  const g = await authFetch("/api/governance").then(json);
   document.getElementById("gov").textContent =
     (g.contracts || []).map(c => c.view).join("\\n\\n" + "=".repeat(60) + "\\n\\n");
 }
@@ -993,12 +1106,60 @@ async function runtime(){
   document.getElementById("b_stop").disabled = false;
 }
 async function stopForge(){
-  const r = await fetch("/api/runtime/stop", {method: "POST", headers: {"content-type": "application/json"},
-                                              body: JSON.stringify({actor: actor()})});
-  const d = await r.json();
+  const r = await authFetch("/api/runtime/stop", {method: "POST", headers: {"content-type": "application/json"},
+                                                  body: JSON.stringify({actor: actor()})});
+  const d = await r.json().catch(() => ({}));
   text("notice", r.ok ? "Forge is stopping. Close this page; double-click Forge to start it again."
                       : ("Refused: " + (d.refused || JSON.stringify(d))));
 }
-refresh(); governance(); runtime();
+// Reconnect asks the OWNING Forge process to open a fresh page with a new
+// nonce; this page never receives the token that way, a browser window does.
+// On the console path there are no runtime routes, so it says so.
+async function reconnect(){
+  const r = await fetch("/api/runtime/reopen", {method: "POST", credentials: "omit",
+                                                headers: {"content-type": "application/json"}, body: "{}"});
+  if(r.status === 404){
+    text("session_msg", "This page was opened from a console. Start Forge again from that console.");
+  } else if(r.status === 409){
+    text("session_msg", "Forge was started without a browser and will not open one. Start Forge again from its launcher.");
+  } else if(r.status === 429){
+    text("session_msg", "Forge opened a page a moment ago. If you do not see it, wait ten seconds and press Reconnect again.");
+  } else if(r.status === 503){
+    text("session_msg", "Forge is running but could not open a browser on this computer. Start Forge again from its launcher.");
+  } else if(r.ok){
+    text("session_msg", "A fresh Forge page is opening. You can close this one.");
+  } else {
+    text("session_msg", "Could not reconnect just now. Start Forge again from its launcher.");
+  }
+}
+async function boot(){
+  const nonce = location.hash.replace(/^#/, "");
+  if(nonce){
+    // The fragment never reached the server. Strip it from the ADDRESS BAR and
+    // from this entry of the SESSION history, then trade it for the bearer
+    // exactly once. That is the reach of replaceState and no further: the
+    // browser's own persistent history store may already have recorded the
+    // navigated URL, fragment included, when this navigation committed; A-027
+    // lists that store beside the browser handler's command line and states
+    // the bound (a single-use nonce, dead after 120 s).
+    history.replaceState(null, "", location.pathname + location.search);
+    const r = await fetch("/api/session/redeem", {method: "POST", credentials: "omit",
+                                                  headers: {"content-type": "application/json"},
+                                                  body: JSON.stringify({nonce: nonce})});
+    if(r.ok){ token = (await r.json()).token || null; }
+  }
+  if(token){
+    document.getElementById("nosession").hidden = true;
+    document.getElementById("app").hidden = false;
+    refresh(); governance(); runtime();
+  } else {
+    document.getElementById("app").hidden = true;
+    document.getElementById("nosession").hidden = false;
+  }
+}
+window.addEventListener("beforeunload", (event) => {
+  if(token){ event.preventDefault(); event.returnValue = ""; }
+});
+boot();
 </script>
 """

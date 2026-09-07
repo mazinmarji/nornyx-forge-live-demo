@@ -298,6 +298,13 @@ header other than `127.0.0.1` or `localhost`, installed once in
 Host-header check against a page that rebinds a name to loopback; it is not
 authentication of the person, and this boundary is unchanged by it.
 
+**Partly superseded by A-027.** For authority-moving routes, "trusts its
+loopback" no longer holds: since Tranche B those routes admit only a request
+carrying this run's bearer, so a local process that reaches loopback is refused.
+The boundary A-015 describes -- the machine's logged-in user, unauthenticated at
+the browser -- is otherwise unchanged, and A-027 states exactly what the bearer
+does and does not defend against.
+
 **Serves.** The founder's basic-user strategy, correction C2.
 
 ## A-016 A fresh user project is greenfield, never certified
@@ -1483,3 +1490,289 @@ confinement or eligibility state, and no gate threshold.
 **Serves.** the same claim discipline as A-021 -- a governed tree answers for
 itself -- extended to the interpreter that runs it, because a tree cannot
 answer for code that was loaded from somewhere else.
+
+## A-027 The onboarding surface admits only this run's bearer, held off disk
+
+**Assumption.** No HTTP request may move authority on the onboarding surface --
+persisted state, the lifecycle, provider selection, `BRD.md`, or the runtime --
+unless it carries a secret minted for this run and given only to the person's
+page. Loopback reachability is not admission.
+
+**Why it needs stating.** A-024 measured the second half of provider
+confinement and found it open: a Codex worker confined to the project workspace
+still reaches loopback, and its POST is accepted under the Host rule, which
+defends against a browser rebinding a name and does nothing against a local
+process. A-015 disclosed the surface as "trusts its loopback"; that is true of
+the machine's logged-in user and was never meant to admit a confined provider.
+So a per-run capability is added: a bearer token minted in `create_app` (the
+real composition root -- nine test modules and `attach_runtime_routes` compose
+or extend the app, and `assemble` is not where it is minted), required by a
+middleware gate on every route but four, and deliberately excluded from
+everything the provider can read.
+
+**The token stays off disk, and the reason is measured.** Read-only probes on
+this host (Windows 11 Home, the development workstation) found an EXPLICIT
+`CodexSandboxUsers:(OI)(CI)(RX)` ACE on `~/.nornyx`, written by the Codex
+installation whose sandbox principals are that group's members;
+`~/.nornyx/forge`, the seal directory, `%LOCALAPPDATA%` and `%APPDATA%` inherit
+read, and `%LOCALAPPDATA%\Temp` is modify. A secret on any of those paths is a
+secret a confined Codex worker can read. Chromium persists `localStorage` and
+`sessionStorage` as plaintext under `%LOCALAPPDATA%`; a cookie set by one
+loopback port is sent to every loopback port and can be discarded from another;
+`os.open(..., 0o600)` sets no ACL on Windows; and uvicorn's access logger walks
+to the root logger, which the Windows runtime gives a file handler, so a
+credential in a URL PATH would land in `<key>.log` for good. Therefore the
+token lives ONLY in Forge's process memory (`app.state.session`) and the page's
+JavaScript closure, the bootstrap nonce travels in a URL fragment (never sent
+to a server, never logged), Forge sets no cookie anywhere, the access log is
+off, the FastAPI docs and schema routes are off, and the validation-error
+handler echoes nothing. The only file that ever carries the token is the
+explicit `--session-file` the bundle smoke and the runtime tests pass; the
+shipped launchers pass none, and a test pins that a launch without it writes
+only a record, a lock and a log.
+
+**What is established.** A request without this run's bearer, on any route the
+gate does not allowlist -- known path or not, and any route attached after
+composition -- is refused `401` with a fixed body that echoes nothing, and
+moves nothing; comparison is constant-time, and it is `hmac.compare_digest`
+on both call sites by an AST walk over the imported methods, not by a grep --
+two lexical pins in a row let a swapped-operand `==` through (third review,
+test P1). The four allowlisted routes are the
+static page, the operational `/api/runtime` identity, the nonce redemption, and
+`/api/runtime/reopen`, and the two unauthenticated POSTs carry browser-
+provenance checks (Origin serialized against the Host, `Sec-Fetch-Site`, a
+navigation POST refused) so that no other browser context can make the
+human's browser move authority. `/api/runtime` stays unauthenticated by
+design -- a launcher probes it before it holds anything to present -- and it
+discloses to ANY local process exactly the served identity and nothing more:
+the record schema, the instance token (an identity a probe compares, not a
+credential anything verifies), the bundle root, the bundle mode, the project
+directory, the port, the pid, the interpreter path and the start time. None
+of it moves authority and none of it is a secret; that it names the
+interpreter and the project directory to any local caller is the disclosure
+(third review, P4-1). Every unrouted or near-miss path (`/nope`, `//api/state`,
+`/api/runtime/`, `/API/RUNTIME`, `/api/runtime/../state` as spelled) is the
+same fixed `401`, never a router `404` that would enumerate the surface. Forge reads no cookie and the page sends none
+(`credentials: "omit"`): a `forge_session*` cookie on a GATED request is
+refused `400` as an ambient credential this surface never issued, and the four
+allowlisted pairs IGNORE cookies. The scope matters: cookies are host-scoped,
+not port-scoped, so a listener on another loopback port can set
+`forge_session` for `127.0.0.1`, and the earlier rule, which judged `GET /` by
+it, let such a listener deny the person their own page (measured under the
+second review; the page's own calls were never affected). Each run mints a
+fresh token and nonce; the previous run's are dead. The workers pass the
+provider an explicit environment stripped of `FORGE_*` and of a bare `FORGE`
+(a `startswith("FORGE_")` rule let the bare name through; third review,
+P4-3), and that is measured on
+the PROCESS, not read from the source: a fake provider executable resolved by
+name through the real build route and the real `DevelopmentFlow` received
+exactly that environment, and neither secret in its argv, its cwd or its
+workspace. The token and nonce appear in no argv Forge controls (the worker
+command lines, the launchers, the server), in no environment, prompt,
+workspace file, runtime record, runtime log, launch-failures trail,
+`/api/runtime`, unauthenticated page or response header -- on the browser-open
+FAILURE branch as well as on success: the record, the log and the notice are
+composed from the fragmentless URL and scrubbed of the target and the nonce,
+because every exception source (the adapter's own refusal, the
+`OSError.filename` that `os.startfile` raises) embeds the URL it was given,
+fragment included -- measured under review before the repair, when a nonce
+read from the record redeemed for the token. One argv Forge does NOT control
+carries the nonce: the browser handler's. `os.startfile` hands the fragment
+URL to ShellExecute, which places it on the default browser's command line
+(`--single-argument %1`), readable by any process of the same user for the
+life of that command line. The bound is principal separation -- a provider
+under a different OS principal cannot read another user's command lines --
+and it is already conceded for the same-user provider, which can read Forge's
+memory in any case. A SECOND channel Forge does not control sits beside it:
+the browser's own persistent history store. `history.replaceState` clears the
+fragment from the address bar and from the session-history entry, and from
+nothing else; the browser's on-disk history records the navigated URL,
+fragment included, when the navigation commits, and `replaceState` does not
+reach back into that record. The bound is the nonce's own: single-use,
+consumed by the page's redeem in the same page load, and dead after 120 s if
+never redeemed. WHO CAN READ THOSE STORES was overstated here as an inference
+and is now measured (third review, P3-3; `icacls`, this host, 2026-09-07).
+`%LOCALAPPDATA%` and `%LOCALAPPDATA%\Microsoft` do carry the inherited
+`CodexSandboxUsers:(I)(OI)(CI)(RX)` ACE. The inheritance is BROKEN one level
+down: `%LOCALAPPDATA%\Google` and `%LOCALAPPDATA%\Microsoft\Edge` each carry
+an explicit DACL of exactly `NT AUTHORITY\SYSTEM`, `BUILTIN\Administrators`
+and the user, all `(OI)(CI)(F)`, with no inherited entry and no
+`CodexSandboxUsers`; and the two history stores measured --
+`...\Google\Chrome\User Data\Default\History` and
+`...\Microsoft\Edge\User Data\Default\History` -- inherit exactly that: SYSTEM,
+Administrators and the user, `(I)(F)`, nothing else. So on this host the
+sandbox group reads the containing directory and does NOT reach either
+measured store. Other browsers, other profiles and other hosts are
+unmeasured; the handler command-line channel stands as stated, bounded by
+principal separation alone. AND THESE TWO CHANNELS ARE NOT PASSIVE:
+`/api/runtime/reopen` is an unauthenticated, on-demand trigger that any local
+process may pull once per 10 s, and each pull mints a fresh nonce and places
+it on exactly those channels -- the handler's command line at once, and the
+browser's history when the page commits. The bound on what such a caller
+gains is therefore NOT "a visible nuisance, not authority", which an earlier
+revision of this entry said; it is the nonce's: single use, a 120 s TTL, and
+the race against the page's own redeem, which fires in the same page load. A
+same-user process that wins that race by reading the command line before the
+page redeems holds the token -- which the same-user provider already holds by
+reading Forge's memory, the boundary this entry concedes below; a reader of
+the history store after the page redeemed holds a dead nonce. That is the
+residual, stated as one, with its trigger.
+
+**Hardened under the first review round, and the residuals.** Credentials are
+compared as bytes after an alphabet check, so a non-ASCII bearer or nonce is
+the fixed `401`/`404` rather than a `500` with a traceback in the runtime log
+(measured before the repair: about 2 KB per request, no rotation); the gate's
+own decision cannot raise; `Authorization` is accepted only as exactly
+`Bearer <credential>`; a websocket handshake is closed before acceptance and
+any non-HTTP scope other than `lifespan` is dropped; the Origin check compares
+the full serialization, so from a BROWSER a prefix of the port or a suffix on
+the host is refused. That check is browser provenance, not caller
+authentication: a browser sets `Origin` and `Host` itself and a page cannot
+forge them, which is what keeps another browser context from driving the two
+unauthenticated POSTs; a non-browser process sets both headers to whatever it
+likes and passes it (third review, P4-2, measured). What such a caller
+reaches is what those two routes give anyone -- redeem needs a nonce it does
+not have, reopen returns no secret -- and admission to everything else is the
+bearer. `TrustedHost` splits the header on `:`, so `Host: 127.0.0.1:8888.evil`
+is admitted by it; the Origin check then compares against that Host string,
+which is one more reason it is not the admission. The bootstrap nonce has two
+independent slots, `launch` (minted once at readiness, replaced only by the
+next launch mint) and `reopen` (minted by the reopen route), every nonce
+single-use with a 120 s TTL, so a local process calling `/api/runtime/reopen`
+cannot invalidate the launch bootstrap the person's page is about to redeem.
+The reopen slot is a QUEUE, not one nonce: a single reopen nonce let any local
+caller's reopen invalidate the one the person's own Reconnect had just minted
+(third review, P3-1, measured: Reconnect `200`, local reopen at t+11 s `200`,
+the person's redeem `404`). Reopen nonces now queue up to
+`REOPEN_PENDING_BOUND`, which is derived, not chosen: one mint per 10 s
+interval against a 120 s TTL inclusive of its expiry instant admits at most
+floor(120/10)+1 = 13 outstanding nonces, so under the rate limit no unexpired
+nonce is ever evicted; a direct mint past the bound evicts the oldest; a test
+joins the two constants. Reopen refuses `409` on a run started with
+`--no-browser`, and a second launcher told `409` or `429` says so to the
+person with the fragmentless URL instead of returning in silence. RESIDUAL,
+disclosed: a local process may still call reopen once per 10 s and pop a
+browser window on the human's Forge, and each call mints a nonce onto the two
+channels described above -- the bound is the nonce's, stated there. The reopen
+RATE-LIMIT slot is still ONE, shared by the joining launcher, the page's
+Reconnect and any local caller: a caller holding it busy makes the person's
+Reconnect answer `429`, which the page reports as such, and the person retries
+or opens the page by hand; what such a caller can no longer do is kill the
+nonce a Reconnect that got through had minted. On a run started with
+`--no-browser`, reopen answers a fixed `409` before the rate limit, so polling
+it is unbounded and stateless: no nonce is minted, no state moves, no log line
+is written per call. When the owner's browser adapter raises -- whatever the
+exception's class; each is caught, rendered through a guard so that an
+exception whose own `__str__` raises cannot throw from inside the handler, and
+scrubbed -- reopen answers `503` with a fixed body and the joining launcher
+tells the person with the fragmentless URL; a `200` there was read as success
+and returned in silence (measured under the second review). The redeem
+response, the one that carries the token, is `Cache-Control: no-store`.
+`--session-file`
+is reachable by an operator through `Forge.cmd %*`; it is refused unless
+absolute, in an existing directory, and outside the project directory, the
+runtime directory, the seal directory and the user profile -- the roots the
+measured ACEs reach -- decided before anything is created. Three of those
+roots are fixed by the launch (the project and the runtime directory from
+argv, the seal directory a constant) and ONE is environment-derived: the user
+profile is `Path.home()`, which is `USERPROFILE` (or `HOME`), so that fence
+is exactly as good as that variable, and the smoke relocates it on purpose.
+The candidate's SPELLING is judged before it is resolved: a path beginning
+with a double separator -- a Windows namespace prefix (`\\?\`, `\\.\`, their
+`//?/` spellings) or a UNC share, `\\localhost\C$\...` included -- is refused
+by name, because `Path.resolve()` keeps those prefixes and the plain roots are
+then never among the candidate's parents (third review, P2-1, measured end to
+end before the repair: `--session-file \\?\<profile>\stolen.json` launched
+READY and wrote the bearer inside the profile; the UNC spelling was admitted
+by the fence function as well). An 8.3 short name resolves to its long form
+and a trailing dot or space stays inside its root, so each is caught by the
+root it lives under (measured on this host). The `--runtime-dir` fence,
+pre-existing and bypassed the same way, now refuses the namespace prefixes on
+the runtime directory AND on the project directory (a prefixed project would
+make the project root a spelling no plain runtime directory can be under);
+it does NOT refuse a UNC runtime directory, because a profile on a share is a
+configuration this launch has not measured, so a UNC alias of a fenced root
+is a disclosed residual of THAT fence -- and the residual is on BOTH of its
+operands, not the runtime directory alone, which is what the first
+disclosure said. The round-4 security review measured the other direction on
+a scratch project: a UNC ALIAS OF THE PROJECT (`\\localhost\C$\...\project`)
+passed with a plain `--runtime-dir`, because the project fence root is then a
+spelling no plain runtime directory is under, and the runtime directory was
+created INSIDE the project -- the exact placement the fence exists to
+prevent. Both operands are namespace-prefix-refused and neither is
+UNC-refused; the two clauses are one residual with two spellings, and it is
+bounded the same way in both: `--runtime-dir` and `--project-dir` are the
+LAUNCHER's argv, a share on `C$` needs Administrators, and creating a share
+is an administrative act -- so a confined local process cannot reach this. The
+POST-RESOLUTION half of both fences -- the refusal that reads what a plain
+spelling RESOLVED to, rather than how it was spelled -- is witnessed through a
+resolution seam rather than by a real alias: no plain path on this host
+resolves to a doubled-separator path, and `subst`/`net use` change the host
+rather than the scratch. Round-4 test review measured what that cost: with no
+witness at all, deleting either block left the whole module green while the
+docstrings claimed spellings are refused "before resolving, and again after".
+The seam applies to the CALLER-supplied candidate only; every fenced root is
+resolved for real. The file is
+written only after readiness, with mode `0600` where the OS honours a mode
+(Windows sets no ACL from a mode, which is why the fence is the protection
+there), and removed at stop. It is created EXCLUSIVELY: a file already at the
+path -- stale, or planted -- is left as found, neither overwritten nor
+removed at stop, the person is told by path, and this run's bearer is written
+nowhere, so a stale file authenticates nothing, visibly. The fence resolves
+every root itself rather than trusting its caller to. The protection of a
+location that passes the
+fence is the operator's choice. The bundle smoke's own session file lands
+under `tempfile.mkdtemp()` -- `%LOCALAPPDATA%\Temp`, which the read-only ACE
+probe above records as Modify for `CodexSandboxUsers` -- and the fence admits
+it only because the smoke relocates its child's profile into its scratch. That
+is stated HERE and not only in a source comment, because it is a bearer on a
+provider-writable path and a reader of this document should not have to find
+it in the builder. It is acceptable for the smoke ALONE, on four counts, each
+of which has to hold: no provider runs during it; the runtime it
+authenticates to serves a throwaway scratch project; the token is minted per
+RUN, so the file can only ever hold a bearer for a runtime that is being
+stopped moments later; and the file and the scratch are removed at stop. None
+of those holds for a shipped launch, which is why no shipped launcher passes
+`--session-file` at all. The console `onboard` path is disclosed on the same
+terms and is NOT the same thing: it prints the start link, whose fragment is a
+LIVE launch nonce, to stdout. A console redirected to a file therefore puts
+that nonce on disk for its 120 s TTL, wherever the redirection points -- which
+may be a path the measured ACEs reach. It is bounded by the nonce's single use
+and that TTL, and it is not the bearer: redeeming it needs the surface, over
+loopback, before it expires or the person's own page consumes it. The bearer
+itself is never printed and never logged, which a test reads on stdout,
+stderr and the log records alike. UNMEASURED until the operator run (Tranche I/J): that the fragment
+survives `os.startfile` -> ShellExecute -> the default browser intact. The
+witness will be the page's own redeem succeeding in a real browser the
+launcher opened; until then the bootstrap is established over the seam (the
+URL handed to the adapter carries the fragment) and not end to end.
+
+**What B does NOT establish, stated rather than implied away.**
+`PROVIDER_CONFINEMENT`, `CONFINEMENT_PROPERTIES` and `governed_build_eligibility`
+are untouched; both providers stay ineligible and the governed build still
+executes no provider, so this capability is not yet load-bearing for any real
+build. It does not defend against an unconfined SAME-USER provider: Claude runs
+on this path as the machine's user with general shell capability and can read
+Forge's process memory and the browser's, so B changes nothing for Claude's
+eligibility (the A-015 boundary -- the logged-in user -- is unchanged). Its
+value against Codex is CONDITIONAL on the provider actually running under the
+restricted token: A-024 measured `codex sandbox windows`, not the shipped
+`codex exec --sandbox workspace-write` path, whose production runs were
+inconclusive, and that measurement is Tranche C's, not made here. Authority
+also moves WITHOUT HTTP, and B closes none of it: the build thread turns gate
+results over the provider's own workspace into TEST/GOVERN through
+`experience_build.flow_evidence`; a broken seal makes `restored()` record a
+system failure; `brd_present()` reads the workspace; and `CapsuleStore.restore()`
+re-seals whatever is on disk after a reset, a TOCTOU an actor who can write the
+workspace could exploit. Those are owned by Tranches D and F. A compromised
+browser or extension can read the page's token; that is out of scope, as is a
+hostile host. No sandboxing, authenticated human identity, cryptographic
+provenance, freshness anchor, provider admission, or A-018 is claimed.
+
+**Scope.** A control-plane session capability. It changes no Experience stage,
+no CONFIRM or READY semantics, no confinement vocabulary, declaration or
+admission, and no seal, lock or port behaviour.
+
+**Serves.** the loopback half of A-024's measured gap, the claim discipline in
+`CLAUDE.md`, and the trust boundary A-015 discloses -- narrowed for
+authority-moving routes, not redrawn.
