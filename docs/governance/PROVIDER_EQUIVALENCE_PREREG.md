@@ -122,3 +122,40 @@ criteria. The criteria do not move after the freeze.
 > is tested neutral between them. Behavioral equivalence of the underlying
 > models is not claimed, and lifecycle-driven equivalence is not yet
 > provable because no lifecycle consumer of provider results exists yet."
+
+## 11. Amendment (provider-adapter parity slice): what "session present" means
+
+Builder-proposed under the founder's standing instruction; not
+founder-ratified. Recorded in its own commit, BEFORE the slice commit that
+applies the rule it records, as the freeze protocol above requires: at this
+commit the adapters still carry the rule this document was frozen against,
+and the commit that follows brings the code to the rule stated here.
+
+Section 5's session PRESENCE clause ("both have one, or neither does") is
+unchanged in wording, and untouched in meaning for every already-recorded
+(task x ending) pair: no frozen pair flips. What narrows is what a session
+identifier must look like to COUNT as present at all. `session_present` in
+`tests/test_provider_equivalence.py` is derived as `result.session_id is not
+None`, so the projection inherits whatever the adapters record as a session
+-- and the adapters' rule becomes stricter than it was when this document
+was frozen. At the freeze, the Claude adapter recorded whatever value the
+parsed JSON carried under `session_id` (a dict or a number included) and the
+Codex adapter any non-empty string. Two narrowings, recorded as ONE
+amendment because they arrive in one slice:
+
+- An identifier counts as present only when it PASSED VALIDATION: a `str`,
+  non-empty, at most 200 characters, free of surrogate code points, with no
+  unprintable character and no whitespace -- a NUL, a newline, a bidi
+  override such as U+202E each make it count as absent.
+- The rule is an ASCII IDENTIFIER: every character printable ASCII and none
+  of them whitespace (each in `!`..`~`), identical in both adapters and held
+  identical by test over one shared specimen table. A strong right-to-left
+  letter such as U+05D0, which the category rule above accepts, counts as
+  absent too.
+
+`session_present` therefore means "an identifier that passed validation,"
+not "a value the provider happened to emit." Every session identifier either
+CLI emits on the frozen task set is a UUID-shaped run of ASCII letters,
+digits and hyphens, well inside the rule, which is why no frozen pair
+flips. Recorded here because the projection in section 5 is defined in
+terms of that derived boolean, and the boolean's own definition moves.

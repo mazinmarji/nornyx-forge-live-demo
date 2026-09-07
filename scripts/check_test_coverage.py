@@ -146,6 +146,37 @@ EXPECTED_SKIPS = {
         "Windows-hosted runtime evidence: the literal self-contained launcher run through cmd.exe on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
     "tests/test_windows_host_runtime.py::test_the_entry_guard_speaks_when_the_folder_cannot_load":
         "Windows-hosted runtime evidence: the entry guard exercised on a real child process under a redirected profile on a Windows host. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    # The Windows 8.3 short name is produced by a Windows API on a volume that
+    # generates short names; off Windows there is nothing to compare, and the
+    # two sibling tests (None for a missing path on every host; None off
+    # Windows via the platform-name seam) run everywhere. Declared here so
+    # the Linux census can name the skip by identity; on a Windows workstation
+    # with 8.3 generation enabled the test executes and this exemption is
+    # reported unused, which is the platform-dependent shape the census
+    # already tolerates for the POSIX-only proofs. The skip's precondition is
+    # asked of the API directly, not of the function under test, so a
+    # `_short_path_name` that answers None on a volume that generates short
+    # names FAILS the test there rather than turning it into this skip.
+    "tests/test_independent_inspection.py::test_short_path_name_is_the_real_8_3_form_on_windows":
+        "GetShortPathNameW is a Windows API, and a volume may have 8.3 generation disabled; the test asks the API directly whether a short form exists and skips only when the API is absent or yields none. The property is not weakened: the missing-path and off-Windows None branches run on every host, and the real 8.3 form is exercised on any Windows workstation whose volume generates one.",
+    # Parity repair round six (security F-1 and F-2). `CreateProcess` is the
+    # only spawn API that answers error 206 for an over-long EXECUTABLE PATH,
+    # and its 32767-character command-line bound is the only bound the
+    # adapters' WINDOWS_COMMAND_LINE_LIMIT can be held against by a real
+    # spawn. Off Windows there is nothing to spawn against, so these three
+    # skip there and the Linux census names them by identity; on a Windows
+    # workstation they execute and the exemptions are reported unused, the
+    # platform-dependent shape the census already tolerates for the 8.3 test
+    # above. The property is not weakened: the classifier's rule -- a 206 is
+    # the length refusal only when the computed line exceeds the bound --
+    # runs on every host over synthesised 206s on either side of the bound in
+    # both adapter suites' classifier tests.
+    "tests/test_provider_contract.py::test_an_over_long_executable_path_is_unavailable_not_a_length_refusal":
+        "Only CreateProcess answers error 206 for an over-long executable path, so the real-spawn half of this proof exists on Windows alone; it also skips on a Windows volume without long-path support, which cannot hold the 300-character path. The property is not weakened: the classifier's rule runs on every host over synthesised 206s in both adapter suites' classifier tests.",
+    "tests/test_codex_provider.py::test_an_over_long_executable_path_is_unavailable_not_a_length_refusal":
+        "Only CreateProcess answers error 206 for an over-long executable path, so the real-spawn half of this proof exists on Windows alone; it also skips on a Windows volume without long-path support, which cannot hold the 300-character path. The property is not weakened: the classifier's rule runs on every host over synthesised 206s in both adapter suites' classifier tests.",
+    "tests/test_provider_contract.py::test_the_windows_command_line_limit_is_the_operating_systems_not_a_copy_of_the_rule":
+        "The 32767-character bound is CreateProcess's, and the two real spawns that hold WINDOWS_COMMAND_LINE_LIMIT against it (a 32766-character line accepted, 32767 refused with 206) exist on Windows alone. The property is not weakened: the classifier's boundary semantics are held on every host by synthesised specimens on either side of the constant, and the routed tool-list specimen exceeds the bound on both CI platforms.",
 }
 
 
@@ -196,14 +227,80 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # band(20) = 18 exactly. The stages a model cannot move and the READY a
     # JSON edit cannot spell are held by these.
     "tests/test_experience_contract.py": 18,
-    # The provider seam: 16 collected at introduction, floor at band(16) = 15.
-    # The conformance suite and the invariance proof that wrapping the Claude
-    # path changed nothing observable.
-    "tests/test_provider_contract.py": 26,
+    # The provider seam: 16 collected at introduction, floor at band(16) = 15,
+    # raised to 26 for the Claude UTF-8 decode repair (PA-01 sibling), to 37
+    # for the provider-adapter parity round (13 new, 41 total), and to 48 for
+    # the parity REPAIR round -- 12 new collected (53 total): deeply nested
+    # JSON specimens proving `run()` survives a `RecursionError` out of
+    # `json.loads` (array and object shapes, two exit codes each), a
+    # directory and a zero-byte executable proving the added `OSError` catch
+    # around `subprocess.run`, a lingering mixed-stream specimen closing the
+    # timeout branch's unpinned `+ out + err`, three new session_id character-
+    # class specimens (NUL, embedded newline, bidi override) plus their
+    # direct helper assertions, and a both-streams-malformed specimen pinning
+    # no trailing newline. Floor at band(53) = 48. Raised 48 -> 57 for the
+    # parity repair ROUND THREE -- 10 new collected (63 total): a NUL in the
+    # goal reported not raised, a NUL in the executable name unavailable not
+    # raised, three workspace shapes (missing, a file, a NUL) reported as the
+    # error class naming the workspace, the two adapters' shared malformed-
+    # invocation code and delimiter held equal, a timed-out run with nothing
+    # readable carrying no delimiter, the strong-RTL session_id specimen, the
+    # ASCII-identifier helper test, and the direct digest-raises test that
+    # replaced an inert assertion. Floor at band(63) = 57. Raised 57 -> 60
+    # for the parity repair ROUND FOUR -- 3 new collected (66 total): an
+    # over-long argument list reported as the error class naming its length
+    # (a 1 MB goal through the direct worker), the argument-length classifier
+    # exercised on both platforms' refusals (E2BIG, and Windows error 206
+    # arriving as errno 2), and the cross-module identity test holding both
+    # adapters' session rules and bound equal over the shared specimen table.
+    # Floor at band(66) = 60. Raised 60 -> 61 for the parity repair ROUND
+    # FIVE -- 1 new collected (67 total): the reported command-line length
+    # held to the line the platform counts (the quoted `CreateProcess` line
+    # plus its terminator on Windows, the per-argument sum elsewhere),
+    # against the function and against a real refusal's sentence. Floor at
+    # band(67) = 61. Raised 61 -> 63 for the parity repair ROUND SIX -- 2
+    # new collected (69 total): an existing executable at an over-long path
+    # (CreateProcess answers the same error 206 as the length refusal) held
+    # to the unavailable class under the executable's sentence, and the
+    # 32767-character bound held against two real spawns of the operating
+    # system rather than against a copy of the rule; the classifier test
+    # was rewritten in place to take the command. Both new tests skip off
+    # Windows by declared exemption. Floor at band(69) = 63.
+    "tests/test_provider_contract.py": 63,
     # The Codex adapter's conformance: 10 collected at introduction, floor at
     # band(10) = 9. Same harness technique as the Claude conformance,
     # separate proof -- and the two mapping limits pinned, not hidden.
-    "tests/test_codex_provider.py": 15,
+    # Raised 9 -> 12 for the PA-01 UTF-8 specimens, 12 -> 15 for the
+    # verifier-repair round, 15 -> 32 for the provider-adapter parity round
+    # (19 new, 35 total), and 32 -> 43 for the parity REPAIR round -- 12 new
+    # collected (47 total), mirroring the Claude additions exactly: deeply
+    # nested JSON (parsed per JSONL line via `_session_from_jsonl`), the
+    # directory/zero-byte-executable `OSError` specimens, the lingering
+    # mixed-stream timeout specimen, the three new session_id character-class
+    # specimens plus their direct helper assertions, and the both-streams-
+    # malformed no-trailing-newline specimen. Floor at band(47) = 43. Raised
+    # 43 -> 51 for the parity repair ROUND THREE -- 9 new collected (56
+    # total), mirroring the Claude additions minus the cross-adapter constant
+    # pin (which lives in the contract module): NUL in the goal, NUL in the
+    # executable name, the three workspace shapes, the delimiter-free timeout,
+    # the strong-RTL specimen, the ASCII-identifier helper test, and the
+    # direct digest-raises test. Floor at band(56) = 51. Raised 51 -> 53 for
+    # the parity repair ROUND FOUR -- 2 new collected (58 total): the
+    # over-long argument list reported as the error class naming its length,
+    # mirroring the Claude specimen, and THIS adapter's argument-length
+    # classifier exercised on both platforms' refusals in this suite -- added
+    # because the round-4 mutation matrix found the Codex E2BIG arm unpinned
+    # here (the 1 MB specimen takes the Windows error-206 arm on the Windows
+    # host, and the contract module's classifier test is not run against a
+    # Codex mutant). The identity test stays in the contract module. Floor at
+    # band(58) = 53. Raised 53 -> 54 for the parity repair ROUND FIVE -- 1
+    # new collected (59 total): the same command-line-length rule held for
+    # THIS adapter's own function and refusal sentence. Floor at
+    # band(59) = 54. Parity repair ROUND SIX -- 1 new collected (60 total):
+    # the over-long executable path specimen mirrored for THIS adapter
+    # (Windows only, by declared exemption); the classifier test rewritten
+    # in place to take the command. band(60) = 54, so the floor stands.
+    "tests/test_codex_provider.py": 54,
     # The pre-registered equivalence proof: 18 collected at introduction,
     # floor at band(18) = 17. The criteria were frozen in
     # docs/governance/PROVIDER_EQUIVALENCE_PREREG.md one commit before this
@@ -233,8 +330,28 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Provider-routed engineering execution: 9 collected at introduction,
     # floor at band(9) = 9. The default path preserved structurally, the
     # no-silent-fallback rule, and a real flow call site recording the
-    # provider that actually ran.
-    "tests/test_provider_execution.py": 9,
+    # provider that actually ran. Raised 9 -> 12 for the parity repair ROUND
+    # THREE -- 4 new collected (13 total): the repair-goal composition driven
+    # from a real provider emitting a NUL, through the direct Claude worker
+    # and the routed Codex worker
+    # (`test_a_nul_in_provider_output_is_escaped_when_composed_into_the_repair_goal`),
+    # the exact C0 character set the composition escapes, and a static pin
+    # that the flow composes only through `compose_repair_goal`. Floor at
+    # band(13) = 12. Raised 12 -> 17 for the parity repair ROUND FOUR -- 5
+    # new collected (18 total): one control-heavy gate cannot push the
+    # composed goal past the contract (both provider shapes, from a real
+    # provider flooding 2500 NULs), four ordinary failing gates compose
+    # within the bound while the record does not, each gate's escaped tail
+    # bounded on its own, and the bound's relation to the contract's own
+    # ceiling; the static composition pin became the behavioural one that
+    # drives `acceptance()` with a spy in `compose_repair_goal`'s place.
+    # Floor at band(18) = 17. Raised 17 -> 18 for the parity repair ROUND
+    # FIVE -- 2 new collected (20 total): a routed task with a short goal
+    # and a long tool list reaches the adapters' argument-length branch on
+    # both adapters, which `ProviderTask.validate` does not prevent (it
+    # bounds the goal, not the tool list or the workspace). Floor at
+    # band(20) = 18.
+    "tests/test_provider_execution.py": 18,
     # The confirmed capsule provider drives the build; proposals never do:
     # 7 collected at introduction, floor at band(7) = 7. The authority
     # split extended to execution, over the real CLI and a real store.
@@ -354,7 +471,26 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_evidence_binding.py": 19,
     "tests/test_clause_reachability.py": 7,
     "tests/test_reviewer_authentication.py": 25,
-    "tests/test_independent_inspection.py": 16,
+    # Raised 16 -> 17 for the provider-adapter parity round: the
+    # home-relative reviewer-trust-store-path specimen (18 collected),
+    # floor at band(18) = 17. Raised 17 -> 22 for the parity REPAIR round --
+    # 6 new collected (24 total): five direct store-path rendering specimens
+    # (lowercase drive/user, an 8.3 short name, a different user, a
+    # different drive, the POSIX shape) and one static regression grepping
+    # the COMMITTED evidence tree for the reader's login name, machine name,
+    # and host-path patterns. Floor at band(24) = 22. Raised 22 -> 37 for the
+    # parity repair ROUND THREE -- 17 new collected (41 total): the case seam
+    # pinned to `os.path.normcase` and BOTH of its behaviours exercised on
+    # every host (Windows folds case, POSIX does not), the after-home boundary,
+    # five whole-token redaction specimens (a space, parentheses, UNC in two
+    # spellings, a POSIX space) plus the under-home space, the home-forms
+    # assembly, three `_short_path_name` tests (one of which skips off
+    # Windows -- declared below), and the leak detector's known-positive and
+    # known-negative controls with the committed-evidence sweep run under the
+    # CI runner's identity too
+    # (`test_committed_evidence_is_clean_for_the_ci_runners_identity_too`).
+    # Floor at band(41) = 37.
+    "tests/test_independent_inspection.py": 37,
     "tests/test_trust_directionality.py": 9,
     "tests/test_content_binding.py": 19,
     "tests/test_subject_scope.py": 13,
@@ -634,17 +770,100 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # had no specimen -- the failure-vocabulary check, the carriage-return
 # specimen, and the timed-out malformed stream that must still be
 # fingerprinted), floor 15 -> 26 at its band. No module added, so
-# 111 stands; the module-floor sum rises by 11 and the aggregate
-# follows:
+# 111 stands; the module-floor sum rises by 11 and the aggregate follows.
+# Re-measured for the provider-adapter parity round: 19 new collected in
+# tests/test_codex_provider.py (16 -> 35; the timeout branch now
+# fingerprints a failed stream, closing A-025's open item; both-stream
+# malformed parametrization and the carriage-return specimen mirrored from
+# Claude via the new shared tests/provider_specimens.py; the stderr
+# valid-UTF-8 fallback; readable-sibling-kept specimens on the
+# completed-process branch, both adapters; session_id validation specimens
+# and their direct unit test; the recomputed-offset and real-exit-code
+# pins; and the direct `_decode`/`_fingerprint` type-refusal tests), floor
+# 15 -> 32 at its band; 13 more in tests/test_provider_contract.py
+# (28 -> 41; the Claude-side half of the same additions), floor 26 -> 37 at
+# its band; and 1 more in tests/test_independent_inspection.py (17 -> 18;
+# the home-relative reviewer-trust-store-path specimen, closing a
+# host-specific absolute path that had reached committed governance
+# evidence), floor 16 -> 17 at its band. No module added, so 111 stands;
+# the module-floor sum rises by 29 and the aggregate follows. Re-measured for
+# the provider-adapter parity REPAIR round, closing three independent
+# reviewers' findings against b52abd7: 12 new collected in
+# tests/test_provider_contract.py (41 -> 53; deeply nested JSON specimens
+# proving `run()` survives a `RecursionError`, a directory and a zero-byte
+# executable proving the added `OSError` catch, a lingering mixed-stream
+# timeout specimen, three session_id character-class specimens plus their
+# direct helper assertions, and a both-streams-malformed no-trailing-newline
+# specimen), floor 37 -> 48 at its band; 12 more in
+# tests/test_codex_provider.py (35 -> 47; the same additions mirrored),
+# floor 32 -> 43 at its band; and 6 more in
+# tests/test_independent_inspection.py (18 -> 24; five direct store-path
+# rendering specimens, against the helper then called `_home_relative` and
+# since replaced by `_store_display` -- lowercase drive/user, an 8.3 short
+# name, a different user, a different drive, the POSIX shape -- and one static
+# regression grepping the COMMITTED evidence tree for the reader's login
+# name, machine name, and host-path patterns), floor 17 -> 22 at its band.
+# No module added, so 111 stands; the module-floor sum rises by 27 and the
+# aggregate follows. Re-measured for the parity repair ROUND THREE, closing
+# the second model-only bounded review against dce970a (two of whose findings
+# would have turned the Linux CI matrix red): 10 new collected in
+# tests/test_provider_contract.py (53 -> 63; NUL in the goal and in the
+# executable name, three workspace shapes, the shared malformed-invocation
+# code and delimiter, the delimiter-free timeout, the strong-RTL and
+# ASCII-identifier session_id specimens, the direct digest-raises test),
+# floor 48 -> 57 at its band; 9 more in tests/test_codex_provider.py
+# (47 -> 56; the same minus the cross-adapter pin), floor 43 -> 51; 17 more
+# in tests/test_independent_inspection.py (24 -> 41; the case seam exercised
+# under both platforms' rules, the boundary, whole-token redaction specimens,
+# the home-forms assembly, the short-name tests, and the leak detector's
+# positive and negative controls -- the CI-red login-as-substring defect is
+# pinned by the NEGATIVE control,
+# `test_the_leak_detector_stays_silent_on_a_login_that_is_inside_a_word`
+# (a bare-substring detector fires on `runner` inside `gate_runner` there,
+# and on the committed tree under the CI runner's identity), while its
+# positive sibling
+# `test_the_leak_detector_fires_on_the_json_escaped_windows_shape` pins the
+# doubled-backslash shape), floor 22 -> 37; and 4 more in
+# tests/test_provider_execution.py (9 -> 13; the repair-goal composition
+# driven from a real provider emitting a NUL), floor 9 -> 12. No module
+# added, so 111 stands; the module-floor sum rises by 35 and the aggregate
+# follows. Re-measured for the parity repair ROUND FOUR, closing the third
+# model-only bounded review against 60c4374 (the composed repair goal
+# bounded under the contract, the over-long argument list classified, the
+# 8.3 test's precondition asked of the API, the composition pin made
+# behavioural): 3 new collected in tests/test_provider_contract.py
+# (63 -> 66), floor 57 -> 60; 2 more in tests/test_codex_provider.py
+# (56 -> 58; the second added when the round-4 mutation matrix found the
+# Codex E2BIG arm unpinned in that suite), floor 51 -> 53; 5 more in
+# tests/test_provider_execution.py (13 -> 18), floor 12 -> 17;
+# tests/test_independent_inspection.py stays at 41 (the 8.3 test was
+# rewritten in place). No module added, so 111 stands; the module-floor sum
+# rises by 10 and the aggregate follows. Re-measured for the parity repair
+# ROUND FIVE, closing the fourth model-only bounded review (the routed
+# path's reachability of the argument-length branch pinned, the reported
+# length made the line the platform counts): 1 new collected in
+# tests/test_provider_contract.py (66 -> 67), floor 60 -> 61; 1 more in
+# tests/test_codex_provider.py (58 -> 59), floor 53 -> 54; 2 more in
+# tests/test_provider_execution.py (18 -> 20), floor 17 -> 18. No module
+# added, so 111 stands; the module-floor sum rises by 3 and the aggregate
+# follows. Re-measured for the parity repair ROUND SIX, closing the fifth
+# model-only bounded review against 6ea2a09 (Windows error 206 shared
+# between the length refusal and an over-long executable path, the arm
+# gated on the computed line exceeding the bound, the bound held against
+# the operating system): 2 new collected in tests/test_provider_contract.py
+# (67 -> 69), floor 61 -> 63; 1 more in tests/test_codex_provider.py
+# (59 -> 60), floor unchanged at band(60) = 54;
+# tests/test_provider_execution.py stays at 20. No module added, so 111
+# stands; the module-floor sum rises by 2 and the aggregate follows:
 #
 # (rows below):
 #
-#     collected across tests/     2860   (111 modules)
-#     sum of the module floors    2630
-#     band(2860) = ceil(0.9*n)    2574
-#     MINIMUM_COLLECTED           2638
+#     collected across tests/     2980   (111 modules)
+#     sum of the module floors    2736
+#     band(2980) = ceil(0.9*n)    2682
+#     MINIMUM_COLLECTED           2744
 #     above the module sum         8
-#     below what collects         222
+#     below what collects         236
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -665,7 +884,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 230 in total, and the aggregate refuses
+# per-module bands already grant 244 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -686,7 +905,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2638
+MINIMUM_COLLECTED = 2744
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

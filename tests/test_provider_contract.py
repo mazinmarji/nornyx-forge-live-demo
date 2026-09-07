@@ -21,15 +21,32 @@ the worker's actual subprocess handling, including the 127/124 conventions.
 
 from __future__ import annotations
 
+import errno
 import hashlib
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from nornyx_forge import codex_worker as _codex_worker_module
 from nornyx_forge.capsule import PROVIDERS
-from nornyx_forge.claude_worker import ClaudeCodeWorker
+from nornyx_forge.claude_worker import (
+    MALFORMED_INVOCATION_RETURNCODE,
+    PROVIDER_TEXT_DELIMITER,
+    SESSION_ID_MAX_LENGTH,
+    WINDOWS_COMMAND_LINE_LIMIT,
+    ClaudeCodeWorker,
+)
+from nornyx_forge.claude_worker import (
+    _argument_list_too_long as _claude_argument_list_too_long,
+)
+from nornyx_forge.claude_worker import _command_line_length as _claude_command_line_length
+from nornyx_forge.claude_worker import _decode as _claude_decode
+from nornyx_forge.claude_worker import _fingerprint as _claude_fingerprint
+from nornyx_forge.claude_worker import _validated_session_id as _claude_validated_session_id
 from nornyx_forge.provider_contract import (
     FAILURE_CLASSES,
     TIMEOUT_RETURNCODE,
@@ -42,6 +59,29 @@ from nornyx_forge.provider_contract import (
     validate_adapter_identity,
 )
 from nornyx_forge.providers import ClaudeProviderAdapter, get_provider
+from nornyx_forge.util import digest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tests"))
+
+from provider_specimens import PREFIX as _PREFIX  # noqa: E402
+from provider_specimens import RENDERINGS as _RENDERINGS  # noqa: E402
+from provider_specimens import SESSION_ID_SPECIMENS as _SESSION_ID_SPECIMENS  # noqa: E402
+from provider_specimens import (  # noqa: E402
+    assert_forge_account_precedes_provider_text as _assert_forge_account_precedes_provider_text,
+)
+from provider_specimens import (  # noqa: E402
+    assert_identified_not_rendered as _assert_identified_not_rendered,
+)
+from provider_specimens import deep_nested_json as _deep_nested_json  # noqa: E402
+from provider_specimens import emitted as _emitted  # noqa: E402
+from provider_specimens import emitting_cli as _emitting_cli  # noqa: E402
+from provider_specimens import emitting_cli_mixed as _emitting_cli_mixed  # noqa: E402
+from provider_specimens import (  # noqa: E402
+    expected_command_line_length as _expected_command_line_length,
+)
+from provider_specimens import raw_stdout_cli as _raw_stdout_cli  # noqa: E402
+from provider_specimens import segment as _segment  # noqa: E402
 
 
 def _fake_cli(tmp_path: Path, *, exit_code: int = 0, sleep_seconds: int = 0,
@@ -283,144 +323,11 @@ def test_normalization_never_improves_the_news():
 # failure -- never silently replaced
 # ---------------------------------------------------------------------------
 
-_PREFIX = b"before "
-_SUFFIX = b" after"
-#: Renderings a maintainer could plausibly substitute for strict decoding on
-#: the hosts this defect was measured on: the eight-bit identity and the
-#: Windows locale codec. Not "every codec": an enumerated denylist, checked
-#: alongside the backslash-escape and surrogateescape shapes below.
-_RENDERINGS = ("latin-1", "cp1252")
-
-
-def _emitted(payload: bytes) -> bytes:
-    """The exact bytes `_emitting_cli` puts on the pipe for a payload."""
-    return _PREFIX + payload + _SUFFIX
-
-
-def _emitting_cli(tmp_path: Path, name: str, payload: bytes,
-                  linger_seconds: int = 0, stream: str = "stdout") -> str:
-    """A controlled executable that writes exact BYTES to one stream.
-
-    `_fake_cli` echoes through the shell, which cannot express an arbitrary
-    byte; these specimens are about bytes, so the payload is written by a
-    Python one-liner through `sys.stdout.buffer` or `sys.stderr.buffer` --
-    the adapter decodes BOTH, and a specimen set that only ever wrote to
-    stdout left the stderr half of the branch unmeasured. With
-    `linger_seconds` the emitter flushes the payload and then outlives the
-    caller's budget, which is how the timeout branch is reached with real
-    bytes already on the pipe.
-    """
-    assert stream in ("stdout", "stderr"), stream
-    # Short file names on purpose: `tmp_path` can sit under a long basetemp,
-    # and a specimen name spelled out in two file names pushed a Windows
-    # path past MAX_PATH under review, failing `CreateProcess` for the
-    # long-named parameters only -- a failure that reads like a defect.
-    tag = hashlib.sha256(f"{name}:{stream}".encode("utf-8")).hexdigest()[:6]
-    emitter = tmp_path / f"e{tag}.py"
-    emitter.write_text(
-        "import sys, time\n"
-        f"out = sys.{stream}.buffer\n"
-        "out.write(" + repr(_emitted(payload)) + ")\n"
-        "out.flush()\n"
-        f"time.sleep({linger_seconds})\n",
-        encoding="utf-8",
-    )
-    if os.name == "nt":
-        path = tmp_path / f"p{tag}.bat"
-        path.write_text(f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
-                        encoding="utf-8", newline="")
-    else:
-        path = tmp_path / f"p{tag}.sh"
-        path.write_text(f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
-                        encoding="utf-8", newline="")
-        path.chmod(0o755)
-    return str(path)
-
-
-def _segment(stream: str, data: bytes) -> str:
-    """The fingerprint the adapter must write for ONE stream, as one string:
-    the stream name, the byte length and the SHA-256 together, so a digest
-    cannot be credited to the wrong stream and a length cannot be matched as
-    a substring of a larger number ("14 bytes" inside "114 bytes")."""
-    return f"{stream}: {len(data)} bytes, sha256:{hashlib.sha256(data).hexdigest()}."
-
-
-def _assert_identified_not_rendered(output: str, payload: bytes, stream: str, *,
-                                    other_stream_empty: bool) -> None:
-    """The undecodable payload is IDENTIFIED, BOUND TO ITS STREAM, and NOT RENDERED.
-
-    Identified means the exact byte length and SHA-256 of what the provider
-    emitted on THAT stream, and the offset of the first byte that is not
-    UTF-8 -- recomputed here from the bytes and compared, because review
-    showed the earlier `"sha256:" in output` satisfied by a CONSTANT digest,
-    by a digest of the empty string, and by a fingerprint with the length
-    dropped: a marker that identifies nothing is not a fingerprint. Bound
-    means the name, length and digest sit in one segment and the decode
-    message names the same stream, because a second review showed the
-    fingerprint sources swapped between streams, a stdout digest credited to
-    stderr, and a stdout failure labelled stderr all passing when each fact
-    only had to appear SOMEWHERE in the output. When the sibling stream was
-    silent, its segment must say so (zero bytes, the digest of nothing).
-
-    Not rendered is held as a POSITIVE property first: the adapter's own
-    account of an unreadable stream is pure ASCII (the banner, the codec's
-    reason, a decimal offset and length, a hex digest), and every specimen
-    payload here holds bytes above 0x7F that decode to a non-ASCII character
-    under every single-byte codec and to non-ASCII noise under the wide
-    ones, so `output.isascii()` refuses any rendering under any codec -- a
-    review showed a cp437 rendering slipping past a list of named codecs.
-    The named renderings a maintainer could plausibly substitute on the
-    measured hosts (`_RENDERINGS`, the backslash-escape shape, the
-    surrogateescape range, U+FFFD) stay as diagnostics that say WHICH
-    mistake was made: `"\ufffd" not in output` alone catches
-    `errors="replace"` and nothing else, and an earlier review showed a
-    latin-1 rendering -- the exact mojibake this adapter exists to keep out
-    of evidence -- passing every test before the list existed.
-    """
-    other = "stderr" if stream == "stdout" else "stdout"
-    emitted = _emitted(payload)
-    assert _segment(stream, emitted) in output, (
-        f"the {stream} segment (name, {len(emitted)} bytes, digest of the bytes actually "
-        f"emitted) is not in the result, so whatever fingerprint it carries identifies "
-        f"something else or credits it to another stream: {output!r}"
-    )
-    if other_stream_empty:
-        assert _segment(other, b"") in output, (
-            f"the silent {other} stream must be recorded as zero bytes with the digest "
-            f"of nothing; got {output!r}"
-        )
-    assert f"{stream} is not valid UTF-8 (" in output, (
-        f"the decode failure does not name {stream}: {output!r}"
-    )
-    assert f"{other} is not valid UTF-8" not in output, (
-        f"a decode failure was attributed to {other}, which decoded: {output!r}"
-    )
-    # The first byte that is not UTF-8 sits right after the prefix for every
-    # malformed specimen; the closing parenthesis anchors the exact number.
-    assert f"at byte {len(_PREFIX)})" in output, (
-        f"the byte offset is not recorded: {output!r}"
-    )
-    assert any(byte > 0x7F for byte in payload), "specimen payloads must carry non-ASCII bytes"
-    assert output.isascii(), (
-        "the account of an unreadable stream is pure ASCII by construction, so a "
-        f"non-ASCII character in it is the payload rendered under SOME codec: {output!r}"
-    )
-    for codec in _RENDERINGS:
-        rendered = payload.decode(codec, "replace")
-        assert rendered not in output, (
-            f"the payload rendered under {codec} ({rendered!r}) reached the result: "
-            "malformed bytes are being carried as text again"
-        )
-    assert payload.decode("utf-8", "backslashreplace") not in output, (
-        "the payload rendered with backslash escapes reached the result"
-    )
-    assert not any("\udc80" <= ch <= "\udcff" for ch in output), (
-        "surrogateescape code points reached the result"
-    )
-    assert "\ufffd" not in output, (
-        "the replacement character reached the result, so malformed bytes are "
-        "being carried as though they were text the provider wrote"
-    )
+#: The four specimen-building helpers above this section used to be defined
+#: here, duplicated near-verbatim in tests/test_codex_provider.py. They now
+#: live in tests/provider_specimens.py, imported above, so a fix to what
+#: "identified, not rendered" means reaches both adapters' proofs from one
+#: place instead of two copies that can drift.
 
 
 @pytest.mark.parametrize(
@@ -586,3 +493,961 @@ def test_a_malformed_run_still_lands_in_the_failure_vocabulary(tmp_path: Path):
     assert normalized.failure_class == "error"
     assert normalized.success is False
     normalized.validate()
+
+
+# ---------------------------------------------------------------------------
+# Valid UTF-8 on stderr alone: the success path's `stdout.strip() or
+# stderr.strip()` fallback, exercised rather than assumed
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_valid_utf8_reaches_the_result_from_either_stream(tmp_path: Path, stream: str):
+    """The success path is `output = stdout.strip() or stderr.strip()`.
+
+    Every specimen above wrote its valid-UTF-8 payload to stdout, so the
+    `or stderr.strip()` half of that line had never been exercised by a
+    specimen carrying real non-ASCII bytes: a mutant that dropped the stderr
+    fallback entirely, or one that decoded stderr with a different codec,
+    would still pass every existing test here. Parametrized over the stream
+    that carries the payload, with the other left completely silent, so
+    stdout-empty-stderr-full is measured as a real run rather than assumed
+    from the stdout case.
+    """
+    payload = b"\xe2\x80\x99"  # right single quote -- valid UTF-8, non-ASCII
+    worker = ClaudeCodeWorker(_emitting_cli(tmp_path, f"fallback-{stream}", payload, stream=stream))
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is True
+    assert result.output == "before " + payload.decode("utf-8") + " after", (
+        f"valid UTF-8 emitted on {stream} alone must reach the result byte-exact "
+        f"through the stdout.strip() or stderr.strip() fallback; got {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# `_decode`/`_fingerprint` accept bytes or None only; a `str` is a defect
+# ---------------------------------------------------------------------------
+
+def test_decode_refuses_a_str_instead_of_silently_skipping_the_check():
+    """The dead `str` branch used to return `problem=None` unconditionally --
+    a caller handing already-decoded text would have it reported as verified
+    UTF-8 without the check ever running. It is annotated `bytes | None` now
+    and a `str` argument raises."""
+    with pytest.raises(TypeError, match="bytes or None"):
+        _claude_decode("already decoded", "stdout")
+
+
+def test_fingerprint_refuses_a_str_instead_of_silently_accepting_it():
+    with pytest.raises(TypeError, match="bytes or None"):
+        _claude_fingerprint("stdout", "already decoded")
+
+
+def test_decode_and_fingerprint_still_accept_the_two_real_shapes():
+    """The positive control: bytes and None are not merely tolerated by
+    accident of the type check, they still behave exactly as before."""
+    assert _claude_decode(None, "stdout") == ("", None)
+    assert _claude_decode(b"hello", "stdout") == ("hello", None)
+    assert _claude_fingerprint("stdout", None) == "stdout: absent."
+    assert "0 bytes" in _claude_fingerprint("stdout", b"")
+
+
+# ---------------------------------------------------------------------------
+# Readable-sibling asymmetry: a decoded stream's text is kept beside a failed
+# sibling's fingerprint, on the completed-process branch too
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_stream", ["stdout", "stderr"])
+def test_a_readable_sibling_streams_text_survives_beside_a_failed_ones_fingerprint(
+    tmp_path: Path, bad_stream: str
+):
+    """The timeout branch already keeps a decoded sibling's text. The
+    completed-process branch used to drop it: when one stream failed to
+    decode and the other decoded perfectly good UTF-8, the good stream's text
+    never reached the result at all -- only the two fingerprints and the
+    decode-failure sentence. Both branches now behave the same way, and both
+    put the sibling's text AFTER `PROVIDER_TEXT_DELIMITER`, so the adapter's
+    own account (fingerprints first) is separable from text the provider
+    wrote -- which could otherwise append a forged second integrity sentence
+    that a reader had no way to tell from the adapter's.
+    """
+    good_stream = "stderr" if bad_stream == "stdout" else "stdout"
+    good_payload = b"\xe2\x80\x99"
+    bad_payload = b"\xff\xfe"
+    cli = _emitting_cli_mixed(
+        tmp_path, f"asym-{bad_stream}", good_stream=good_stream,
+        good_payload=good_payload, bad_payload=bad_payload,
+    )
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is False
+
+    readable_text = _emitted(good_payload).decode("utf-8")
+    assert readable_text in result.output, (
+        f"the {good_stream} stream decoded cleanly but its text was dropped once "
+        f"{bad_stream} failed to decode: {result.output!r}"
+    )
+    assert _segment(bad_stream, _emitted(bad_payload)) in result.output, (
+        f"the failed {bad_stream} stream's fingerprint is missing: {result.output!r}"
+    )
+    _assert_forge_account_precedes_provider_text(
+        result.output, delimiter=PROVIDER_TEXT_DELIMITER,
+        forge_account=_segment(bad_stream, _emitted(bad_payload)),
+        provider_text=readable_text,
+    )
+    for codec in _RENDERINGS:
+        rendered = bad_payload.decode(codec, "replace")
+        assert rendered not in result.output, (
+            f"the failed stream's payload reached the result rendered under {codec}: "
+            f"{result.output!r}"
+        )
+    assert "�" not in result.output, (
+        "the replacement character reached the result for the failed stream"
+    )
+
+
+# ---------------------------------------------------------------------------
+# session_id validation: bounded str, no surrogate code points, or None
+# ---------------------------------------------------------------------------
+
+def _json_stdout_cli(tmp_path: Path, name: str, payload: object) -> str:
+    """A controlled executable that writes `payload` as JSON to stdout.
+
+    `_fake_cli` echoes its stdout argument through the shell, which breaks
+    down for a 200,000-character line (a genuine "the batch file crashed"
+    failure was measured trying it, not a defect in the adapter). Writing
+    through a Python one-liner, as `provider_specimens.emitting_cli` already
+    does for byte specimens, sidesteps every shell length and escaping limit.
+    """
+    import json as _json
+
+    tag = hashlib.sha256(name.encode("utf-8")).hexdigest()[:6]
+    emitter = tmp_path / f"j{tag}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.write(" + repr(_json.dumps(payload)) + ")\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        path = tmp_path / f"jp{tag}.bat"
+        path.write_text(f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+                        encoding="utf-8", newline="")
+    else:
+        path = tmp_path / f"jp{tag}.sh"
+        path.write_text(f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+                        encoding="utf-8", newline="")
+        path.chmod(0o755)
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    ("name", "session_id_value"),
+    [
+        ("a_dict", {"nested": True}),
+        ("an_oversized_string", "x" * 200_000),
+        ("a_lone_surrogate_escape", "\ud800"),
+        ("a_nul_character", "s-\x00-1"),
+        ("an_embedded_newline", "s-1\ns-2"),
+        ("a_bidi_override", "s-\u202e-1"),
+        ("a_strong_rtl_letter", "s-\u05d0-1"),
+    ],
+    # EXPLICIT IDS. Without them pytest derives the id from the parameter
+    # value, and the 200,000-character string became the id verbatim -- which
+    # pytest's tmp_path fixture then folds into the per-test directory name,
+    # pushing it past MAX_PATH on Windows and erroring the fixture before the
+    # test body ever ran (an ERROR, not a FAILED, and not this test's own
+    # assertion). The id is a label, not the specimen.
+    ids=[
+        "a_dict", "an_oversized_string", "a_lone_surrogate_escape",
+        "a_nul_character", "an_embedded_newline", "a_bidi_override",
+        "a_strong_rtl_letter",
+    ],
+)
+def test_an_invalid_session_id_becomes_none_not_a_forged_value(
+    tmp_path: Path, name: str, session_id_value: object
+):
+    """`session_id` is accepted only as a bounded ASCII identifier: printable
+    ASCII, no whitespace. A dict, an oversized string, a lone surrogate code
+    point (the shape a JSON `\\ud800` escape decodes to), a NUL byte, an
+    embedded newline, a bidi override character (U+202E, which can make a
+    rendered string display in an order its characters do not actually
+    hold), and a strong right-to-left LETTER (U+05D0, printable by every
+    category rule and reordering its neighbours when rendered all the same)
+    are seven different ways the raw parsed value is NOT that, and all seven
+    must become `None` -- the same absence a stream that never mentioned a
+    session already records -- rather than being carried through as whatever
+    `json.loads` happened to produce.
+    """
+    cli = _json_stdout_cli(tmp_path, name, {"session_id": session_id_value})
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success is True
+    assert result.session_id is None, (
+        f"an invalid session_id ({name}) was recorded rather than treated as absent: "
+        f"{result.session_id!r}"
+    )
+
+
+def test_digest_raises_on_a_lone_surrogate_which_is_why_session_id_is_validated():
+    """WHY the surrogate case matters, pinned where it can fail. An earlier
+    form of the run-level test above ended with `digest(asdict(result))`,
+    which cannot fail once `session_id` is `None` and so discriminated
+    nothing. This is the discriminating half: `canonical_json` serialises a
+    lone surrogate without complaint, and it is `digest`'s `.encode("utf-8")`
+    that raises `UnicodeEncodeError` -- deep inside evidence serialisation,
+    which is exactly where an unvalidated `session_id` would have taken it.
+    """
+    from nornyx_forge.util import canonical_json  # noqa: PLC0415
+
+    canonical_json({"session_id": "\ud800"})  # serialises; nothing refuses it here
+    with pytest.raises(UnicodeEncodeError):
+        digest({"session_id": "\ud800"})
+
+
+def test_validated_session_id_accepts_only_a_bounded_surrogate_free_str():
+    """The helper directly, since the run-level tests above only prove the
+    named shapes; this pins the bound and the surrogate range exactly."""
+    assert _claude_validated_session_id("s-1") == "s-1"
+    assert _claude_validated_session_id("") is None
+    assert _claude_validated_session_id(None) is None
+    assert _claude_validated_session_id(42) is None
+    assert _claude_validated_session_id({"a": 1}) is None
+    assert _claude_validated_session_id("x" * SESSION_ID_MAX_LENGTH) == "x" * SESSION_ID_MAX_LENGTH
+    assert _claude_validated_session_id("x" * (SESSION_ID_MAX_LENGTH + 1)) is None
+    assert SESSION_ID_MAX_LENGTH == 200
+    assert _claude_validated_session_id("\ud800") is None
+    assert _claude_validated_session_id("\udfff") is None
+
+
+def test_validated_session_id_is_an_ascii_identifier():
+    """The rule is ASCII, not merely printable: every character between `!`
+    and `~` inclusive is accepted (in one 94-character run, which is also
+    inside the bound), and any character outside ASCII is refused however
+    printable -- a Hebrew letter, an accented Latin letter, a non-breaking
+    space (which `isspace()` would also catch) and an emoji. DEL (0x7F) is
+    ASCII but not printable and is refused by the second check. The
+    round-2 security question this answers: a character-category rule
+    admitted strong right-to-left LETTERS, which reorder a rendering just as
+    an override does, and no category rule can tell such a letter from an
+    ordinary one -- an ASCII rule can.
+    """
+    printable_ascii = "".join(chr(code) for code in range(0x21, 0x7F))
+    assert len(printable_ascii) == 94
+    assert _claude_validated_session_id(printable_ascii) == printable_ascii
+    assert _claude_validated_session_id("s-\u05d0-1") is None, "a strong RTL letter"
+    assert _claude_validated_session_id("s-\u00e9-1") is None, "an accented letter"
+    assert _claude_validated_session_id("s-\u00a0-1") is None, "a non-breaking space"
+    assert _claude_validated_session_id("s-\U0001f600-1") is None, "an emoji"
+    assert _claude_validated_session_id("s-\x7f-1") is None, "DEL is ASCII, not printable"
+    assert _claude_validated_session_id(" ") is None, "a space is printable, not an identifier"
+
+
+def test_validated_session_id_refuses_unprintable_and_whitespace_characters():
+    """The character-class rule, pinned directly: printable and whitespace-
+    free, beyond the bound and the surrogate range the test above already
+    covers.
+
+    A plain ASCII space is deliberately its own case: `str.isprintable()`
+    accepts U+0020 (it excludes only non-space separators and "Other"
+    category characters), so `isprintable()` ALONE would let `"a b"` through.
+    The explicit `any(ch.isspace() ...)` check is what actually closes that
+    gap; asserting only the NUL/newline/bidi cases below would leave a
+    mutant that dropped the whitespace check (but kept `isprintable()`)
+    alive, because none of them is a plain space.
+    """
+    assert _claude_validated_session_id("s-\x00-1") is None, "NUL is not printable"
+    assert _claude_validated_session_id("s-1\ns-2") is None, "a newline is not printable"
+    assert _claude_validated_session_id("s-\t-1") is None, "a tab is not printable"
+    assert _claude_validated_session_id("s-\u202e-1") is None, (
+        "U+202E (right-to-left override) is not printable"
+    )
+    assert _claude_validated_session_id("a b") is None, (
+        "an ASCII space is printable by isprintable() alone, so a value "
+        "containing one must be refused by the explicit whitespace check"
+    )
+    assert _claude_validated_session_id("a-b_c.d:9") == "a-b_c.d:9", (
+        "an ordinary printable, whitespace-free identifier is still accepted"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Renderings: an offset that is not hardcoded, and the real exit code on a
+# malformed run
+# ---------------------------------------------------------------------------
+
+def test_the_byte_offset_is_recomputed_not_a_hardcoded_seven(tmp_path: Path):
+    """Every other specimen in this module uses the default `PREFIX` (7
+    bytes), so `at byte 7)` would pass even against an adapter that hardcoded
+    the number 7 instead of computing `exc.start`. A prefix of a different
+    length proves the offset is recomputed from the real bytes.
+    """
+    long_prefix = b"a substantially longer prefix than usual, "
+    assert len(long_prefix) != len(_PREFIX)
+    payload = b"\xff\xfe"
+    cli = _emitting_cli(tmp_path, "offset", payload, prefix=long_prefix)
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is False
+    assert f"at byte {len(long_prefix)})" in result.output, result.output
+    assert f"at byte {len(_PREFIX)})" not in result.output, (
+        f"the default prefix's offset appeared even though this specimen used a "
+        f"different prefix length: {result.output!r}"
+    )
+    _assert_identified_not_rendered(
+        result.output, payload, "stdout", other_stream_empty=True, prefix=long_prefix
+    )
+
+
+def test_a_malformed_run_names_its_real_nonzero_exit_code(tmp_path: Path):
+    """Every other malformed specimen exits 0 (the emitter never calls
+    `sys.exit`), so `Process exited 0.` would pass even against an adapter
+    that hardcoded that sentence. A specimen that also exits nonzero pins the
+    real `result.returncode` is what gets named."""
+    payload = b"\xff\xfe"
+    cli = _emitting_cli(tmp_path, "nonzero-exit", payload, exit_code=17)
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is False
+    assert result.returncode == 17
+    assert "Process exited 17." in result.output, result.output
+
+
+# ---------------------------------------------------------------------------
+# `run()` never raises: pathological JSON on stdout, an unusable executable
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("shape", ["array", "object"])
+@pytest.mark.parametrize("exit_code", [0, 9])
+def test_deeply_nested_json_stdout_does_not_escape_run_as_a_recursionerror(
+    tmp_path: Path, shape: str, exit_code: int
+):
+    """`json.loads(stdout)` over deeply enough nested JSON raises
+    `RecursionError`, not `json.JSONDecodeError` -- measured directly, not
+    assumed, against `provider_specimens.deep_nested_json`. The Provider
+    Contract requires a `WorkerResult` for every ending; an uncaught
+    `RecursionError` escaping `run()` is exactly as much a contract violation
+    as the `AttributeError` A-025 already closed. `exit_code` is
+    parametrized, not fixed at 0, so `success` is proven to REFLECT the real
+    exit code rather than being hardcoded True by whatever handles the catch.
+    """
+    text = _deep_nested_json(shape)
+    # THE SPECIMEN'S POWER, PINNED ON THE RUNNING INTERPRETER. Without this
+    # line a depth that no longer exhausts the guard on some future CPython
+    # would leave the test below green over a specimen that merely fails to
+    # parse -- the ordinary `JSONDecodeError` path, which was never in doubt.
+    with pytest.raises(RecursionError):
+        json.loads(text)
+    cli = _raw_stdout_cli(tmp_path, f"deep-{shape}-{exit_code}", text, exit_code=exit_code)
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success == (exit_code == 0), result.output
+    assert result.returncode == exit_code
+    assert result.session_id is None, (
+        "a session identifier was invented out of pathological JSON that "
+        f"was never actually parsed: {result.session_id!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# An invocation that cannot be formed: a NUL the OS refuses, or a workspace
+# that is not a directory. Neither is `unavailable` (127) nor `timeout` (124)
+# ---------------------------------------------------------------------------
+
+def _assert_malformed_invocation(result, *, sentence: str) -> None:
+    assert result.success is False
+    assert result.returncode == MALFORMED_INVOCATION_RETURNCODE
+    assert result.returncode not in (0, TIMEOUT_RETURNCODE, UNAVAILABLE_RETURNCODE)
+    assert classify_result(result.success, result.returncode) == "error"
+    assert sentence in result.output, result.output
+
+
+def test_a_nul_in_the_goal_is_reported_not_raised(tmp_path: Path):
+    """`subprocess.run` refuses an argument carrying a NUL with `ValueError`
+    before any process exists -- measured: `embedded null character` on
+    Windows, `embedded null byte` on POSIX. The goal is the one argument a
+    caller composes, and a provider's own output can put a NUL there (see
+    tests/test_provider_execution.py for the composition path). The adapter
+    must report it, in the `error` class, rather than let the `ValueError`
+    escape `run()`. The fake CLI never runs, so `ok.bat` exiting 0 cannot
+    make this pass.
+    """
+    worker = ClaudeCodeWorker(_fake_cli(tmp_path))
+    result = worker.run(  # must not raise
+        role="builder", goal="repair a\x00b", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    _assert_malformed_invocation(result, sentence="could not be formed")
+
+
+def test_a_nul_in_the_executable_name_is_unavailable_not_raised(tmp_path: Path):
+    """ON WINDOWS `shutil.which("a\\x00b")` raises `ValueError` (measured on
+    CPython 3.12 for a bare name; a name WITH a directory part returns None
+    instead). On POSIX the same lookup returns None, so there the adapter's
+    catch is never entered and this test exercises only the None path; the
+    catch itself is a Windows-host fact. On every host `available()` must
+    answer False rather than raise -- the contract says it never raises --
+    and `run()` then reports the ordinary `unavailable` class, because a
+    name the OS cannot even look up is not available.
+    """
+    worker = ClaudeCodeWorker("claude\x00fake")
+    assert worker.available() is False
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success is False
+    assert result.returncode == UNAVAILABLE_RETURNCODE
+
+
+def test_an_over_long_argument_list_is_an_error_naming_its_length_not_unavailable(
+    tmp_path: Path,
+):
+    """Round-3 security P3-1. A 1 MB goal makes a command line no operating
+    system accepts. Windows refuses it at `CreateProcess` with error 206,
+    which CPython raises as `FileNotFoundError` with errno 2 -- the ABSENT-
+    EXECUTABLE errno, which is how this used to be reported as `unavailable`
+    (127) under a sentence blaming the executable (measured: a 33000-
+    character argument fails this way on the Windows host, 32000 runs);
+    POSIX `execve` refuses with `E2BIG` (a single argument above the kernel's
+    per-argument limit). Both must land in the `error` class with the sizes
+    in the sentence, and the fake CLI never runs. Reached through the DIRECT
+    worker because the specimen is the GOAL: the routed path refuses a goal
+    above 8000 characters at `ProviderTask.validate` before any adapter sees
+    it. The routed path still reaches this branch through the tool list,
+    which `validate` does not bound -- pinned in
+    tests/test_provider_execution.py (round-5 security P2-NEW-1).
+    """
+    worker = ClaudeCodeWorker(_fake_cli(tmp_path))
+    goal = "x" * 1_000_000
+    result = worker.run(  # must not raise
+        role="builder", goal=goal, workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    _assert_malformed_invocation(
+        result, sentence="exceeds the operating system's command-line length"
+    )
+    assert str(len(goal)) in result.output, result.output
+    assert "could not be started" not in result.output, (
+        "the argument length was blamed on the executable"
+    )
+
+
+class _WindowsLengthRefusal(OSError):
+    """The shape `CreateProcess`'s error 206 takes in CPython: an `OSError`
+    whose `winerror` is 206 and whose `errno` is 2. A subclass carrying the
+    attribute so the classifier can be exercised on POSIX hosts too, where
+    a real `OSError` has no `winerror` at all."""
+
+    winerror = 206
+
+
+def test_the_argument_length_classifier_knows_both_platforms_refusals():
+    """Both spellings, on every host: `E2BIG` (POSIX) and Windows error 206
+    -- which arrives with errno 2, so a classifier reading errno alone would
+    call it an absent executable -- while a plain ENOENT stays about the
+    executable. The two adapters' classifiers are duplicated, not shared, and
+    must agree on every specimen.
+
+    ROUND SIX (security F-1): 206 IS SHARED. `CreateProcess` answers the
+    same 206 for an executable whose PATH is too long -- measured on the
+    Windows host, an existing 333-character `.cmd` shim under a
+    738-character Claude line (a 10-character goal; the line carries no
+    workspace path) -- and the round-five rule took every 206 as the
+    length refusal, so that executable came back as an over-long invocation
+    of 738 characters against a bound of 32767: a real, sub-bound quantity
+    named as the refused one. Round six wrote 343 here, the path and the
+    goal summed by hand, which no adapter ever emitted; round seven
+    re-measured by running the round-five tree. The classifier now reads
+    the command too, and the 206 arm holds only when
+    `_command_line_length(command)` EXCEEDS `WINDOWS_COMMAND_LINE_LIMIT`:
+    the specimens sit exactly on either side of it (a count equal to the
+    bound is False, one above it True), and a 206 under a short line
+    answers False so the caller reports the executable. `E2BIG` is
+    unambiguous and stays True under any line; ENOENT stays False under any
+    line. Synthesised, so the rule runs on every host; the real spawns are
+    the two Windows-only specimens below.
+    """
+    short = ("claude", "-p", "probe")
+    at_the_bound = ("x" * (WINDOWS_COMMAND_LINE_LIMIT - 1),)
+    past_the_bound = ("x" * WINDOWS_COMMAND_LINE_LIMIT,)
+    assert _claude_command_line_length(at_the_bound) == WINDOWS_COMMAND_LINE_LIMIT
+    assert _claude_command_line_length(past_the_bound) == WINDOWS_COMMAND_LINE_LIMIT + 1
+    too_long = "The filename or extension is too long"
+    specimens = (
+        (OSError(errno.E2BIG, "Argument list too long"), short, True),
+        (OSError(errno.E2BIG, "Argument list too long"), past_the_bound, True),
+        (_WindowsLengthRefusal(2, too_long), past_the_bound, True),
+        (_WindowsLengthRefusal(2, too_long), at_the_bound, False),
+        (_WindowsLengthRefusal(2, too_long), short, False),
+        (OSError(errno.ENOENT, "No such file or directory"), short, False),
+        (OSError(errno.ENOENT, "No such file or directory"), past_the_bound, False),
+        (OSError(errno.EACCES, "Permission denied"), short, False),
+        (PermissionError(errno.EACCES, "Permission denied"), short, False),
+    )
+    codex_rule = _codex_worker_module._argument_list_too_long
+    assert codex_rule is not _claude_argument_list_too_long
+    assert WINDOWS_COMMAND_LINE_LIMIT == _codex_worker_module.WINDOWS_COMMAND_LINE_LIMIT
+    for exc, command, expected in specimens:
+        specimen = (exc, len(command), len(command[0]))
+        assert _claude_argument_list_too_long(exc, command) is expected, specimen
+        assert codex_rule(exc, command) is expected, specimen
+
+
+def _over_long_executable_shim(tmp_path: Path) -> str:
+    """An EXISTING `.cmd` shim at a path of at least 300 characters: long
+    enough for `CreateProcess` to refuse the PATH with error 206 while the
+    whole line stays far below the 32767-character bound. A chain of
+    40-character directories under `tmp_path`; `os.makedirs` needs
+    long-path support past 260 characters, and the caller skips, with the
+    reason declared in the census, when the volume refuses to build it.
+    Duplicated in tests/test_codex_provider.py, like `_fake_cli`."""
+    chain = tmp_path
+    while len(str(chain)) < 300:
+        chain = chain / ("d" * 40)
+    os.makedirs(chain, exist_ok=True)
+    shim = chain / "provider.cmd"
+    shim.write_text("@echo off\r\nexit /b 0\r\n", encoding="ascii", newline="")
+    return str(shim)
+
+
+def test_an_over_long_executable_path_is_unavailable_not_a_length_refusal(tmp_path: Path):
+    """Round-6 security F-1. `CreateProcess` answers error 206 for an
+    executable whose PATH is too long, exactly as it does for a command line
+    past 32767 characters -- and the round-five classifier read only the
+    number, so an existing `.cmd` shim at a 333-character path with a
+    10-character goal came back as `error` (2) under "exceeds the operating
+    system's command-line length: 738 characters across 9 arguments, the
+    goal alone 10 characters" -- measured by running the round-five tree;
+    round six wrote 343 here, a hand sum no adapter emitted -- so a real,
+    sub-bound quantity was named as the refused one, and the round-four
+    class split inverted, because an executable that cannot
+    be started is the `unavailable` class (127). The classifier now gates
+    the 206 arm on the computed line exceeding `WINDOWS_COMMAND_LINE_LIMIT`,
+    so this specimen lands in the executable arm.
+
+    The premise is measured, not assumed: the shim exists, passes
+    `available()` unmodified, its line is below the bound, and a direct
+    spawn of it raises 206 -- with long paths enabled on this host; a host
+    that refuses the path with another number is not exercising the shared
+    206, and this test says so rather than passing on the class alone.
+    Then the real worker runs it with a short goal and must report the
+    executable, in the `unavailable` class, and NOT the length sentence.
+    Windows only, by a skip declared in the census: only `CreateProcess`
+    answers 206 for a path, and the synthesised half of the proof runs on
+    every host in the classifier test above.
+    """
+    if os.name != "nt":
+        pytest.skip(
+            "only CreateProcess answers error 206 for an over-long executable "
+            "path; the classifier's rule is held on every host by the "
+            "synthesised specimens above"
+        )
+    try:
+        shim = _over_long_executable_shim(tmp_path)
+    except OSError as exc:  # long paths disabled on this volume
+        pytest.skip(f"this volume cannot hold a 300-character path: {exc}")
+    assert len(shim) >= 300 and os.path.isfile(shim)
+    worker = ClaudeCodeWorker(shim)
+    assert worker.available() is True, "the specimen must pass available() unmodified"
+    with pytest.raises(OSError) as raised:
+        subprocess.run([shim], capture_output=True, timeout=30)
+    measured = getattr(raised.value, "winerror", None)
+    assert measured == 206, (
+        f"this host refused the {len(shim)}-character path with winerror "
+        f"{measured}, not the 206 it shares with the length refusal, so the "
+        "specimen does not reach the arm under test here"
+    )
+
+    result = worker.run(  # must not raise
+        role="builder", goal="ten chars.", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert _claude_command_line_length(result.command) <= WINDOWS_COMMAND_LINE_LIMIT, (
+        "the premise is a SUB-bound line; this one is not"
+    )
+    assert result.success is False
+    assert result.returncode == UNAVAILABLE_RETURNCODE, (result.returncode, result.output[:300])
+    assert classify_result(result.success, result.returncode) == "unavailable"
+    assert "could not be started" in result.output, result.output[:300]
+    assert "[WinError 206]" in result.output, result.output[:300]
+    assert "command-line length" not in result.output, (
+        "an over-long executable path was reported as an over-long invocation"
+    )
+
+
+def test_the_windows_command_line_limit_is_the_operating_systems_not_a_copy_of_the_rule():
+    """Round-6 security F-2. `WINDOWS_COMMAND_LINE_LIMIT` is the number the
+    classifier compares the computed line against; a test comparing the
+    constant with 32767 would hold a copy of the rule against itself. This
+    holds it against `CreateProcess`: two real spawns of the base
+    interpreter with `-c pass` and one padding argument, the quoted line
+    `subprocess.list2cmdline` builds sized to exactly 32766 characters and
+    then 32767. Measured on the Windows host this was written on: 32766
+    spawns (exit 0), 32767 is refused with error 206. In the adapters'
+    count -- the line plus its terminating NUL -- those are 32767 and
+    32768, so the accepted line's count EQUALS the constant and the refused
+    line's is the first to EXCEED it, which is exactly the classifier's
+    test for a 206. Both adapters' constants and counts are held, and both
+    classifiers are run over the real refusal and over a synthesised 206 on
+    the accepted line.
+
+    The BASE interpreter (`sys._base_executable`), because the venv
+    launcher re-executes it with a longer path in front of the same
+    arguments and fails on its own re-composed line (measured: exit 101,
+    "Unable to create process") -- a spawn that succeeded and a child that
+    failed, which is not the operating-system verdict this test is about.
+    Windows only, by a skip declared in the census; two spawns, bounded.
+    """
+    if os.name != "nt":
+        pytest.skip("the bound under test is CreateProcess's; nothing on POSIX answers it")
+    python = getattr(sys, "_base_executable", sys.executable)
+    assert WINDOWS_COMMAND_LINE_LIMIT == _codex_worker_module.WINDOWS_COMMAND_LINE_LIMIT
+
+    def line_of(length: int) -> tuple[str, ...]:
+        head = (python, "-c", "pass")
+        fixed = len(subprocess.list2cmdline(head)) + 1  # the space before the pad
+        command = head + ("x" * (length - fixed),)
+        assert len(subprocess.list2cmdline(command)) == length
+        return command
+
+    accepted = line_of(WINDOWS_COMMAND_LINE_LIMIT - 1)
+    refused = line_of(WINDOWS_COMMAND_LINE_LIMIT)
+    for count in (_claude_command_line_length, _codex_worker_module._command_line_length):
+        assert count(accepted) == WINDOWS_COMMAND_LINE_LIMIT
+        assert count(refused) == WINDOWS_COMMAND_LINE_LIMIT + 1
+
+    ran = subprocess.run(accepted, capture_output=True, timeout=120)  # must not raise
+    assert ran.returncode == 0, (ran.returncode, ran.stderr[:200])
+    with pytest.raises(OSError) as raised:
+        subprocess.run(refused, capture_output=True, timeout=120)
+    assert getattr(raised.value, "winerror", None) == 206, raised.value
+
+    for rule in (_claude_argument_list_too_long, _codex_worker_module._argument_list_too_long):
+        assert rule(raised.value, refused) is True
+        assert rule(_WindowsLengthRefusal(2, "synthesised on the accepted line"), accepted) is False
+
+
+def test_the_reported_command_line_length_is_the_line_the_platform_counts(
+    tmp_path: Path,
+):
+    """Round-5 security P3-NEW-1. The number in the refusal sentence was a
+    sum over the raw arguments; Windows counts the ONE quoted line
+    `CreateProcess` receives -- `subprocess.list2cmdline(command)`, exactly
+    what `Popen` builds -- against 32767, terminator included. Quoting is
+    not free (every quote inside an argument gains a backslash, the argument
+    gains surrounding quotes), so the raw sum could name a number BELOW the
+    bound it was explaining: measured on the Windows host, a goal of 17000
+    double quotes summed to 17590 while the line was 34591.
+
+    The rule is computed HERE, independently of the adapter, for the
+    platform this test runs on -- the quoted line plus its terminating NUL
+    on Windows, the arguments plus one terminator each elsewhere -- so the
+    assertion holds on every host without a skip. First against the
+    function over a quote-heavy vector; then against the sentence of a real
+    refusal through the real worker: 140000 double quotes as the goal, one
+    argument above Linux's `MAX_ARG_STRLEN` and a quoted line far above
+    Windows's 32767, whose sentence must name the rule's number for the
+    command the result carries. The fake CLI never runs.
+    """
+    quote_heavy = ("claude", "-p", 'say "hi" then "bye"', "--allowedTools", 'Read,"Write"')
+    expected = _expected_command_line_length(quote_heavy)
+    assert _claude_command_line_length(quote_heavy) == expected
+    raw_sum = sum(len(argument) + 1 for argument in quote_heavy)
+    assert expected >= raw_sum
+    if os.name == "nt":
+        assert expected > raw_sum, "the quoted line is longer than the raw sum here"
+
+    worker = ClaudeCodeWorker(_fake_cli(tmp_path))
+    goal = '"' * 140_000
+    result = worker.run(  # must not raise
+        role="builder", goal=goal, workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    _assert_malformed_invocation(
+        result, sentence="exceeds the operating system's command-line length"
+    )
+    reported = _expected_command_line_length(result.command)
+    assert (
+        f"command-line length: {reported} characters across "
+        f"{len(result.command)} arguments, the goal alone {len(goal)} characters"
+    ) in result.output, result.output[:300]
+
+
+def test_both_adapters_apply_the_same_session_identifier_rule():
+    """Cross-module identity (round-3 architecture P4-2). The two
+    `_validated_session_id` functions are duplicated rather than imported --
+    the adapters do not import each other -- so their agreement is a fact to
+    hold by test, over ONE shared table of accepted and refused values, and
+    not something each adapter's own suite can see. The bound they share is
+    held equal the same way.
+    """
+    assert SESSION_ID_MAX_LENGTH == _codex_worker_module.SESSION_ID_MAX_LENGTH
+    assert any(accepted for _, accepted in _SESSION_ID_SPECIMENS)
+    assert any(not accepted for _, accepted in _SESSION_ID_SPECIMENS)
+    for value, accepted in _SESSION_ID_SPECIMENS:
+        claude = _claude_validated_session_id(value)
+        codex = _codex_worker_module._validated_session_id(value)
+        assert claude == codex, (value, claude, codex)
+        assert (claude is not None) is accepted, (value, claude)
+        if accepted:
+            assert claude == value
+
+
+@pytest.mark.parametrize("shape", ["missing", "file", "nul"])
+def test_a_workspace_that_is_not_a_directory_is_an_error_naming_the_workspace(
+    tmp_path: Path, shape: str
+):
+    """The round-2 finding: a missing or non-directory workspace raised
+    `NotADirectoryError` out of `subprocess.run(cwd=...)` -- an `OSError`
+    the adapter caught and reported as `unavailable` (127) under a sentence
+    blaming the EXECUTABLE. The workspace is checked before spawning, so the
+    result names the workspace, lands in the `error` class, and the fake CLI
+    (which exits 0) never runs. Three shapes: a path that does not exist, a
+    path that is a file, and a path carrying a NUL (`os.path.isdir` answers
+    False for it without raising, so it never reaches `subprocess.run`).
+    """
+    if shape == "missing":
+        workspace = tmp_path / "no-such-workspace"
+    elif shape == "file":
+        workspace = tmp_path / "a-file-not-a-directory"
+        workspace.write_text("", encoding="utf-8")
+    else:
+        workspace = Path(str(tmp_path / "with-nul") + "\x00x")
+    worker = ClaudeCodeWorker(_fake_cli(tmp_path))
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=workspace,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    _assert_malformed_invocation(result, sentence="workspace is not an existing directory")
+    assert str(workspace) in result.output, result.output
+    assert "could not be started" not in result.output, (
+        "the workspace was blamed on the executable"
+    )
+
+
+def test_both_adapters_share_the_malformed_invocation_code_and_the_delimiter():
+    """The two constants are duplicated in `codex_worker.py` rather than
+    imported (the adapters do not import each other), so their equality is a
+    fact to hold by test, not by construction. The code must also be neither
+    of the two the contract already gives a meaning to.
+    """
+    assert MALFORMED_INVOCATION_RETURNCODE == _codex_worker_module.MALFORMED_INVOCATION_RETURNCODE
+    assert MALFORMED_INVOCATION_RETURNCODE not in (0, TIMEOUT_RETURNCODE, UNAVAILABLE_RETURNCODE)
+    assert classify_result(False, MALFORMED_INVOCATION_RETURNCODE) == "error"
+    assert PROVIDER_TEXT_DELIMITER == _codex_worker_module.PROVIDER_TEXT_DELIMITER
+    assert PROVIDER_TEXT_DELIMITER.isascii() and "\n" not in PROVIDER_TEXT_DELIMITER
+
+
+def test_a_directory_as_the_executable_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`subprocess.run` raises `PermissionError` (an `OSError`) when the
+    executable it is handed is a directory. `available()` already refuses a
+    directory -- `shutil.which`'s own `_access_check` excludes anything
+    `os.path.isdir` reports true, on every platform -- so `run()` can never
+    reach `subprocess.run` with a directory through its own public surface.
+    `available` is monkeypatched True here specifically to reach the second,
+    independent guard this repair adds: even if that first gate were ever
+    bypassed (a TOCTOU replacement, a future caller that skips `available()`),
+    `subprocess.run`'s own failure must still come back as a `WorkerResult`,
+    not an exception -- defense in depth proven by actually removing the
+    first line of defense for this one test.
+    """
+    directory = tmp_path / "not-a-real-cli"
+    directory.mkdir()
+    worker = ClaudeCodeWorker(str(directory))
+    monkeypatch.setattr(worker, "available", lambda: True)
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success is False
+    assert result.returncode == UNAVAILABLE_RETURNCODE
+    assert "could not be started" in result.output, result.output
+
+
+def test_a_non_executable_file_as_the_executable_is_reported_not_raised(tmp_path: Path):
+    """A zero-byte file passes `available()` and then fails to execute --
+    reached WITHOUT monkeypatching, unlike the directory case above.
+
+    On Windows, `shutil.which` treats a path ending in a recognised
+    executable extension as available purely by extension and existence; it
+    does not open the file. Measured directly: a zero-byte `.exe` passes
+    `shutil.which` and then `subprocess.run` raises
+    `OSError: [WinError 193] %1 is not a valid Win32 application`. On other
+    platforms the equivalent is a file WITH the execute bit set but no valid
+    executable format (no shebang, not a binary), which `os.access(...,
+    os.X_OK)` -- what `shutil.which` actually checks -- accepts on
+    permission bits alone, and which `subprocess.run` then refuses at exec
+    time with `OSError: [Errno 8] Exec format error`.
+    """
+    if os.name == "nt":
+        broken = tmp_path / "broken.exe"
+        broken.write_bytes(b"")
+    else:
+        broken = tmp_path / "broken"
+        broken.write_bytes(b"")
+        broken.chmod(0o755)
+    worker = ClaudeCodeWorker(str(broken))
+    assert worker.available() is True, (
+        "the specimen must pass available() unmodified, or this test proves "
+        "nothing about the OSError branch inside run() itself"
+    )
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success is False
+    assert result.returncode == UNAVAILABLE_RETURNCODE
+    assert "could not be started" in result.output, result.output
+
+
+# ---------------------------------------------------------------------------
+# Lingering readable sibling: the timeout branch's `+ out + err` is reached
+# with a genuinely readable sibling live, not merely a silent one
+# ---------------------------------------------------------------------------
+
+def test_a_timed_out_run_keeps_its_readable_siblings_text(tmp_path: Path):
+    """Every existing timeout specimen (`test_a_timed_out_run_with_malformed_
+    output_is_still_fingerprinted`) leaves the OTHER stream completely
+    silent, so `+ out + err` on the timeout branch contributes nothing
+    observable there: deleting it survived every test until this specimen
+    existed. Here one stream carries valid, non-ASCII UTF-8 text and the
+    other carries malformed bytes, and BOTH outlive the budget.
+    """
+    good_payload = b"\xe2\x80\x99"
+    bad_payload = b"\xff\xfe"
+    cli = _emitting_cli_mixed(
+        tmp_path, "linger-mixed", good_stream="stdout",
+        good_payload=good_payload, bad_payload=bad_payload, linger_seconds=5,
+    )
+    worker = ClaudeCodeWorker(cli)
+    result = worker.run(  # must not raise
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=3,
+    )
+    assert result.success is False
+    assert result.returncode == TIMEOUT_RETURNCODE
+
+    readable_text = _emitted(good_payload).decode("utf-8")
+    assert readable_text in result.output, (
+        f"the readable stdout sibling's text was dropped on the timeout "
+        f"branch even though it decoded cleanly: {result.output!r}"
+    )
+    assert _segment("stderr", _emitted(bad_payload)) in result.output, (
+        f"the failed stderr stream's fingerprint is missing: {result.output!r}"
+    )
+    _assert_forge_account_precedes_provider_text(
+        result.output, delimiter=PROVIDER_TEXT_DELIMITER,
+        forge_account=_segment("stderr", _emitted(bad_payload)),
+        provider_text=readable_text,
+    )
+    for codec in _RENDERINGS:
+        rendered = bad_payload.decode(codec, "replace")
+        assert rendered not in result.output, (
+            f"the failed stream's payload reached the result rendered under "
+            f"{codec}: {result.output!r}"
+        )
+    assert "�" not in result.output
+
+
+def test_a_timed_out_run_with_nothing_readable_carries_no_delimiter(tmp_path: Path):
+    """The delimiter marks provider text; when a timed-out run decoded no
+    text at all (the only stream that spoke failed to decode, the other was
+    silent), there is nothing to mark, and neither the delimiter nor a
+    trailing newline is added -- the same rule the completed-process branch
+    applies when both streams fail. Pinned so the delimiter cannot become an
+    unconditional suffix that reads as "provider text follows" over nothing.
+    """
+    payload = b"\xff\xfe"
+    worker = ClaudeCodeWorker(
+        _emitting_cli(tmp_path, "linger-silent", payload, linger_seconds=5)
+    )
+    result = worker.run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=3,
+    )
+    assert result.returncode == TIMEOUT_RETURNCODE, result.output
+    # The failed stream was SEEN, not missed: its fingerprint segment is in
+    # the account. Without this, a host where the bytes never reached the
+    # adapter before the kill (a POSIX pipe timing miss) would satisfy the
+    # two negatives below over an output that says nothing at all.
+    assert _segment("stdout", _emitted(payload)) in result.output, result.output
+    assert PROVIDER_TEXT_DELIMITER not in result.output, result.output
+    assert not result.output.endswith("\n"), result.output
+
+
+# ---------------------------------------------------------------------------
+# No trailing newline when BOTH streams fail to decode: the readable-sibling
+# concatenation must contribute nothing, not a bare newline, when there is no
+# readable sibling at all
+# ---------------------------------------------------------------------------
+
+def test_both_streams_malformed_leaves_no_trailing_newline(tmp_path: Path):
+    """When only one stream failed, `"\\n" + stdout + stderr` appends a real
+    sibling's text after the newline. When BOTH streams fail, `stdout` and
+    `stderr` are both `""`, and appending unconditionally left a bare
+    trailing newline that nothing in the provider's actual output produced --
+    a small version of the exact mistake this module exists to prevent:
+    something in the result the provider did not emit.
+    """
+    # A single-stream helper leaves the other stream silent (valid empty
+    # UTF-8), which is not "both malformed" -- build a specimen that fails
+    # BOTH streams by running two single-stream emitters is not possible
+    # through `emitting_cli` (one process, one stream), so a small emitter is
+    # built directly, mirroring the internals of `emitting_cli_mixed`.
+    tag = "both-malformed"
+    emitter = tmp_path / f"{tag}.py"
+    emitter.write_text(
+        "import sys\n"
+        "sys.stdout.buffer.write(" + repr(b"\xff\xfe") + ")\n"
+        "sys.stderr.buffer.write(" + repr(b"\x80") + ")\n",
+        encoding="utf-8",
+    )
+    if os.name == "nt":
+        cli_path = tmp_path / f"{tag}.bat"
+        cli_path.write_text(
+            f'@echo off\r\n"{sys.executable}" "{emitter}"\r\n',
+            encoding="utf-8", newline="",
+        )
+    else:
+        cli_path = tmp_path / f"{tag}.sh"
+        cli_path.write_text(f'#!/bin/sh\n"{sys.executable}" "{emitter}"\n',
+                             encoding="utf-8", newline="")
+        cli_path.chmod(0o755)
+
+    result = ClaudeCodeWorker(str(cli_path)).run(
+        role="builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=60,
+    )
+    assert result.success is False
+    assert not result.output.endswith("\n"), (
+        f"a trailing newline survived even though neither stream decoded, so "
+        f"nothing readable was appended: {result.output!r}"
+    )
+    # Both streams' fingerprints must still be present and bound to the
+    # right stream -- `_assert_identified_not_rendered` is not reusable here
+    # (it asserts the OTHER stream did NOT fail, which is false when both
+    # did), so both halves are checked directly instead.
+    assert _segment("stdout", b"\xff\xfe") in result.output, result.output
+    assert _segment("stderr", b"\x80") in result.output, result.output
+    assert "stdout is not valid UTF-8 (" in result.output, result.output
+    assert "stderr is not valid UTF-8 (" in result.output, result.output
+    assert result.output.isascii(), result.output
+    assert "�" not in result.output

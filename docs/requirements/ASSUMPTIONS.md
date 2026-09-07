@@ -1010,9 +1010,14 @@ payload satisfying a `"\ufffd" not in output` check. Both are red now.
 Two consequences of capturing bytes are stated rather than left implicit.
 First, `text=True` also performed universal-newline translation, so a
 carriage return the provider emits now survives into the result exactly as
-emitted instead of being folded into `\n`; that is the rule (the result is
-what the provider wrote), canonical evidence files escape it, and
-`test_a_carriage_return_survives_exactly_as_emitted` pins it. Second, the
+emitted instead of being folded into `\n` -- except at the very ends, which
+`.strip()` removes on the success path (`output = stdout.strip() or
+stderr.strip()`) exactly as it would remove a leading or trailing space. So
+the rule is precisely that the result is the provider's bytes with only the
+ends stripped, not a claim that carriage-return translation has been
+reintroduced under a different name; canonical evidence files escape the
+byte that does survive, and `test_a_carriage_return_survives_exactly_as_emitted`
+pins it. Second, the
 cp1252 shapes above are observable only where the locale codec is not UTF-8.
 The CI test matrix runs on Linux under a UTF-8 locale, where the same
 strict-decode regression is still caught -- there the malformed specimens
@@ -1025,14 +1030,406 @@ because the adapter refuses the run when either fails to decode.
 
 **Scope.** `claude_worker.py` only, brought to the rule `codex_worker.py`
 already applies: the Codex half of this defect was found and repaired first,
-under the PA-01 measurement recorded in A-024. The two adapters are not
-identical on every point: on the timeout branch the Claude adapter now
-fingerprints a stream that failed to decode, where the Codex timeout branch
-records reason and offset only. OPEN ITEM, not closed by this change and
-recorded here so the next Codex-adapter change carries it: bring the Codex
-timeout branch to the same point. No provider confinement, eligibility or
-admission change: `PROVIDER_CONFINEMENT["claude"]` stays `none`. Reading a
-provider's bytes correctly says nothing about what that provider may reach.
+under the PA-01 measurement recorded in A-024. The one point where the two
+adapters were not identical -- the Codex timeout branch recording reason and
+offset only, where the Claude timeout branch and both adapters'
+completed-process branches fingerprint a failed stream with length and
+SHA-256 -- was an OPEN ITEM here. **CLOSED by the provider-adapter parity
+slice** that follows this entry: the Codex timeout branch now fingerprints a
+stream that failed to decode exactly as the other three branches already do,
+mirrored test for test in `tests/test_codex_provider.py` against the same
+`tests/provider_specimens.py` helpers the Claude suite uses. No provider
+confinement, eligibility or admission change: `PROVIDER_CONFINEMENT["claude"]`
+stays `none`. Reading a provider's bytes correctly says nothing about what
+that provider may reach.
+
+**Addendum (provider-adapter parity slice).** Four further points, measured
+and closed at the same head, kept here because they are the same claim
+discipline applied to what was left asymmetric or unguarded once the timeout
+branches matched:
+
+- **The readable sibling was being dropped.** When one stream failed to
+  decode and the other decoded cleanly, the completed-process branch of
+  BOTH adapters reported only the failed stream's fingerprint and the
+  decode-failure sentence -- the sibling's own text, which the timeout
+  branch already keeps by appending `out + err` unconditionally, never
+  reached the result. Both completed-process branches now append the
+  decoded text the same way, so a readable sibling's words are not lost
+  merely because something else in the same run could not be read.
+- **`_decode` and `_fingerprint` accepted a `str` and silently did nothing
+  with it.** Both helpers carried a dead branch, `isinstance(raw, str)`,
+  returning the text unexamined as `problem=None`. Every real call site only
+  ever hands these functions bytes or `None`, so the branch never executed
+  in this adapter's own path; it is removed, both helpers are annotated
+  `bytes | None`, and a `str` argument now raises `TypeError` rather than
+  being reported as verified UTF-8 without the check ever running.
+- **`session_id` was carried through unvalidated.** The raw parsed JSON value
+  reached `WorkerResult.session_id` whatever shape it was -- a dict, an
+  oversized string, or a JSON `\ud800` escape that `json.loads` turns into a
+  Python string holding a lone surrogate code point, which
+  `nornyx_forge.util.canonical_json` can serialize but a downstream
+  UTF-8 encode of that JSON text cannot. Both adapters now accept a session
+  identifier only as a non-empty `str` of at most 200 characters (the
+  character rule was tightened twice more in the rounds below); anything
+  else becomes `None`, the same absence a stream that never mentioned a
+  session already records.
+- **A host-specific path was reaching committed evidence.** Unrelated to
+  decoding, found in the same slice:
+  `scripts/refresh_governance_evidence.py`'s independent-review record named
+  the absent default reviewer trust store (`Path.home() / ".nornyx" /
+  "forge_reviewer_trust.json"`) by its full path in `verdict_basis`, so a
+  clean regeneration on any two machines produced governance evidence
+  differing by whichever account and computer ran it. The generator now
+  renders that path home-relative before it reaches an emitted artifact;
+  `ReviewerTrustStore.source` itself is untouched.
+
+**Addendum (parity repair round).** Three further points, closing the first
+of the model-only bounded reviews of the slice above (three read-only model
+inspectors, each attacking one commit -- a builder-arranged check, and
+nothing more than that is asserted for any of these rounds):
+
+- **`json.loads` over unbounded provider stdout could raise `RecursionError`,
+  not merely `json.JSONDecodeError`.** Measured directly: text deep enough in
+  nested brackets or braces (no closing bracket required) exhausts CPython's
+  own recursion guard before it ever notices the document is incomplete. Both
+  adapters call `json.loads` on provider-controlled stdout --
+  `claude_worker.py` on the whole payload, `codex_worker.py` per JSONL line --
+  and the Provider Contract requires a `WorkerResult` for that ending too,
+  never an exception. Both now catch `RecursionError` alongside `ValueError`
+  (which already covers `json.JSONDecodeError`); `session_id` becomes `None`,
+  the same absence an ordinary parse failure already records. A sibling
+  defect in the same functions, pre-existing and unrelated to JSON: `OSError`
+  raised by `subprocess.run` itself (an executable path that is a directory,
+  or a file `available()`'s `shutil.which` check accepted but the OS loader
+  then refuses -- measured directly with a zero-byte file carrying an
+  executable extension, `OSError: [WinError 193] %1 is not a valid Win32
+  application` on Windows) is now caught the same way, reported as the
+  `unavailable` class (127) rather than escaping `run()`.
+- **The session-identifier character class admitted control and bidi
+  characters.** `_validated_session_id` bounded the length and refused
+  surrogate code points, but a NUL byte, an embedded newline, or a bidi
+  override character such as U+202E (which can make a rendered string
+  display in an order its characters do not actually hold) all passed
+  through as an accepted identifier. Both adapters then additionally
+  required `value.isprintable()` and no whitespace character in `value`;
+  the two checks are both needed because `isprintable()` alone accepts an
+  ordinary ASCII space. Tightened once more in the round below.
+- **The store-path rendering recognised only ONE exact spelling of home,
+  and rendered a store outside home verbatim.** A lowercase drive letter or
+  account name, or a Windows 8.3 short name landing on the same directory as
+  the long form `Path.home()` returns, did not match a plain substring
+  check, and a `FORGE_REVIEWER_TRUST_STORE` pointed outside home reached
+  `verdict_basis` as a raw path -- the same class of leak the original fix
+  closed for the default location, reopened for every other spelling of it.
+  The generator now compares under `os.path.normcase` against `Path.home()`,
+  its resolved form, and (Windows only) its 8.3 short name where the volume
+  generates one; renders a home-relative path with FORWARD SLASHES ALWAYS,
+  so a Windows and a Linux regeneration of the same evidence agree byte for
+  byte; and renders a store path outside every known form of home by its
+  CONFIGURATION NAME (`<FORGE_REVIEWER_TRUST_STORE>`). This round's first
+  form of that rule searched composed prose for something path-shaped and
+  fell back to a regular expression that truncated at a space or a
+  parenthesis and missed a UNC path -- corrected in the round below, where
+  the claim is restated to what is now true.
+
+**Addendum (parity repair round three).** Closing the second model-only
+bounded review (the same three read-only inspectors, attacking the round
+above); two of its findings would have turned the Linux CI matrix red, and
+the rest are the same claim discipline again:
+
+- **Redaction is at the source now, and the claim is exactly this.** The
+  store path is a value the generator holds (`reviewer_store_path()`, the
+  same resolution `ReviewerTrustStore.load()` performs), so `_store_display`
+  computes its rendering from that value -- `~/...` when it begins with a
+  known spelling of home followed by a separator or the end, the
+  configuration name otherwise -- and `_redact_store_path` composes every
+  message that can reach `verdict_basis` by replacing that exact value.
+  There is no path-shaped search and no regular-expression fallback. What is
+  tested: a path with a space (`C:\Users\John Doe\...`), one with
+  parentheses (`D:\Program Files (x86)\...`), a UNC path in both spellings,
+  and a POSIX path with a space are each replaced whole, every occurrence;
+  the boundary holds (`C:\Users\DevuserX` is not `C:\Users\Devuser`); the
+  case rule is the platform's own `os.path.normcase`, and BOTH of its
+  behaviours are exercised on every host by substituting `ntpath.normcase`
+  and `posixpath.normcase` -- Windows folds case, POSIX does not, because
+  `/home/Devuser` and `/home/devuser` are different directories there and
+  folding them would render another account's store as the reader's. What is
+  NOT claimed: that the message could never carry a path spelled differently
+  from the resolved value. The store's own messages are all built from that
+  value, and the committed-evidence sweep below is the backstop.
+- **The committed-evidence sweep searched for the reader's login name as a
+  bare substring.** On ubuntu-latest `getpass.getuser()` is `runner`, and
+  `architecture_conformance_report.json` legitimately contains
+  `module.gate_runner` -- red on every CI interpreter over a file that
+  leaked nothing. The sweep now matches the login and machine name only as
+  PATH SEGMENTS (a separator before -- the one that ends `Users` or `home`
+  serves, so neither word is named -- and a separator, dot, quote,
+  whitespace or the end after; or the machine half
+  of a Windows `account.MACHINE` profile folder), in both the raw and the
+  JSON-escaped (doubled-backslash) spellings, plus generic host-path shapes
+  (`X:\Users\`, any drive letter, `/home/`, `/Users/`). Its power is pinned
+  by known-positive controls (the JSON-escaped Windows shape, the raw
+  Windows shape, the POSIX shape) and its silence by a known-negative one
+  (`runner` inside `gate_runner`, `ann` inside `cannot`, a URL), and the
+  same sweep is run with the CI runner's identity on every host.
+- **The session identifier is an ASCII identifier.** A character-category
+  rule admitted strong right-to-left LETTERS (U+05D0 is printable and
+  contains no whitespace), which reorder a rendering just as an override
+  does, and no category rule can tell such a letter from an ordinary one.
+  Both adapters now require, identically: `str`, non-empty, at most 200
+  characters, `isascii()`, `isprintable()`, and no whitespace -- every
+  character in `!`..`~`. Every session identifier either CLI has been
+  observed to emit is a UUID-shaped run of ASCII letters, digits and
+  hyphens, well inside the rule. This narrows what `session_present` means
+  in the frozen equivalence projection; it is recorded as section 11 of
+  `docs/governance/PROVIDER_EQUIVALENCE_PREREG.md`, in the amendment's own
+  commit, which PRECEDES the slice commit that applies the rule, as the
+  freeze protocol requires (see the pre-registration amendment paragraph
+  at the end of this entry).
+- **A NUL in provider output made the next invocation unrunnable.** A
+  literal NUL is valid UTF-8 and both adapters carry it into `output`
+  exactly as emitted (correctly). `development_flow` then composed the
+  repair `goal` from that output, and `subprocess.run` refuses a NUL in any
+  argument with `ValueError` before a process exists -- measured on both
+  adapters: `a\x00b` on a failing provider's stdout raised out of the repair
+  step. Two repairs, kept apart. Both adapters catch `ValueError` from
+  `subprocess.run` (argument, working directory or executable; raised on
+  every platform) and report a WorkerResult in the `error` class, and catch
+  it from `shutil.which` in `available()` -- which raises for a bare name
+  carrying a NUL ON WINDOWS ONLY (measured on CPython 3.12); on POSIX the
+  same lookup returns None and that catch is never entered -- answering
+  False there, so `run()` reports the ordinary `unavailable` class on every
+  host; and the flow escapes
+  C0 control characters other than tab, newline and carriage return -- as
+  `\xNN`, legibly -- at the ONE place it composes provider text into a new
+  goal (`compose_repair_goal`), while the ledger's record of what the gates
+  said stays verbatim. The composition is Forge-authored text, so it is
+  Forge's to sanitise; the provider's record is not.
+- **A missing workspace was blamed on the executable.** `subprocess.run`
+  with a `cwd` that is missing or a file raises `NotADirectoryError`, an
+  `OSError` the adapters reported as `unavailable` (127) under the sentence
+  for an executable that could not be started. Both adapters now check
+  `os.path.isdir(workspace)` before spawning and report a WorkerResult in
+  the `error` class that names the workspace; `OSError` at spawn stays 127
+  and stays about the executable. The window between the check and the
+  spawn is not closed and is stated in the code.
+- **Provider text is delimited from Forge's account.** On the two branches
+  that keep a decoded stream's text beside the adapter's own account (a
+  timeout, a sibling stream that failed to decode), a provider could append
+  a forged second integrity sentence and a reader had no way to tell where
+  the adapter stopped speaking. Both adapters now write a fixed delimiter
+  line before any provider text; everything after its first occurrence is
+  provider-authored and may contain anything, including a forged copy of the
+  delimiter; nothing in Forge parses that prose -- the failure class is
+  derived from `success` and `returncode` alone. No delimiter is written when
+  there is no provider text.
+- **The specimen's power is pinned, and its rationale corrected.** The
+  deep-nesting specimen's constant was justified by `sys.getrecursionlimit()`
+  (1000); the guard that actually fires is the C-level recursion check
+  inside CPython's C json scanner, measured by bisection on CPython 3.12.10
+  at depth 2997 (array) and 2998 (object) with the Python limit at 1000.
+  Both adapters' tests now assert `json.loads(deep_nested_json(shape))`
+  raises `RecursionError` on the running interpreter before handing the
+  text to an adapter, so an interpreter that parsed the specimen would turn
+  the test red. The object-shape specimen closes its braces; the earlier
+  docstring said no closing bracket ever appears.
+- **Two pre-existing limits, disclosed rather than closed** -- open items
+  for the provider-execution tranche, not this slice: `WorkerResult.output`
+  has no ceiling (an arbitrarily large stream is retained in memory whole,
+  and a `MemoryError` there is not caught); and `timeout_seconds` bounds
+  the provider process, not wall time -- after the kill, `subprocess.run`
+  keeps collecting for as long as a GRANDCHILD of the provider LIVES, not
+  merely while it holds the inherited pipe. Measured on the Windows host
+  with a 2 s budget against a grandchild that sleeps 5 s: 5.2 s of wall
+  time when the grandchild keeps its standard handles, and 5.1 s when it
+  closes all three of them first -- the same overrun, so releasing the
+  handles a grandchild can name does not end the wait; its exit does. (An
+  earlier measurement of the same shape, 6.2 s against 2 s, described the
+  cause as the pipe being held; the control corrects the cause, not the
+  fact.) Both were recorded in the maintenance census before this round and
+  are repeated here so that A-025 does not read as though the adapters
+  bound what they do not. The round-five addendum below gathers these two
+  with two more into one open-items list.
+
+**Addendum (parity repair round four).** Closing the third model-only
+bounded review (the same three read-only inspectors, attacking the round
+above). Nothing here changes confinement, eligibility or the Provider
+Contract:
+
+- **The composed repair goal is bounded, and was not.** `ProviderTask.
+  validate` refuses a goal above 8000 characters by raising `ProviderError`
+  out of the routed worker's `run`, which `acceptance()` does not catch --
+  so an over-long composed goal ended the flow with an exception rather
+  than a repair attempt. That exposure PRE-DATES this slice: four failing
+  gates quoting 2500 characters each were already more than 8000. The
+  round-three escaping made it more likely: each control character becomes
+  four (`\xNN`), so ONE failing gate whose 2500-character tail is
+  control-heavy was enough, from provider-controlled text (for the
+  `application-builder` gate at attempt 1, measured: 1789 or more of the
+  2500 characters being C0 controls). `compose_repair_goal` now bounds the goal
+  twice. Each gate's ESCAPED tail is held to 2500 characters, keeping its
+  end (where the verdict is) behind a marker that names how many characters
+  were left out, so one gate can neither crowd the others out nor alone
+  exceed the bound; then the whole goal is held to 7000 characters, keeping
+  its start (the gates in the order they failed) behind the same kind of
+  marker on its own line. 7000 sits under the contract's 8000 with headroom
+  for a longer opening sentence, and the relation is pinned against the
+  contract's own validation by test. The markers appear in the composed
+  goal only: the ledger's `repair_requested` record still holds each
+  failing gate's full 2500-character tail, un-escaped and uncut. Specimens:
+  a real provider flooding stdout with 2500 NUL characters composes to a
+  goal the routed worker runs without raising, and four ordinary failing
+  gates compose to exactly the bound; both un-capped forms are shown to be
+  refused by the contract as it stands.
+- **An argument list too long for the operating system was reported as an
+  absent executable.** Windows bounds a command line at 32767 characters;
+  `CreateProcess` refuses a longer one with `ERROR_FILENAME_EXCED_RANGE`
+  (206), which CPython raises as `FileNotFoundError` with errno 2 -- the
+  absent-executable errno -- and both adapters reported that as
+  `unavailable` (127) under the sentence for an executable that could not
+  be started. Measured on this Windows host: a 33000-character argument
+  fails that way and a 32000-character one runs; a 1 MB goal on either
+  adapter fails the same way. A POSIX `execve` refuses with `E2BIG`. Both
+  adapters now recognise the two (`winerror` 206, or `errno` `E2BIG`) at
+  the `OSError` catch and report a WorkerResult in the `error` class whose
+  sentence names the command line's length, the argument count and the
+  goal's length; every other `OSError` there stays `unavailable` and stays
+  about the executable. This bullet first ended "the routed path cannot
+  reach this: the contract refuses a goal above 8000 characters first" --
+  true of the goal, false of the invocation; corrected in the round-five
+  addendum below.
+- **Two sentences were broader than the measurement.** The adapters'
+  docstrings said Forge's account is ALWAYS the part before the first
+  delimiter; that holds on the two delimited failure branches only -- on
+  the success path `output` is the provider's text from its first
+  character, by design, and a delimiter-shaped line there is the provider's
+  own. And every sentence saying `shutil.which` raises `ValueError` for a
+  NUL is now qualified: Windows only (measured on CPython 3.12); POSIX
+  returns None, and the catch in `available()` is not exercised there. The
+  catch stays.
+- **The 8.3 short-name test asked the function under test for its own
+  precondition.** It skipped whenever `_short_path_name` returned None, so
+  a `_short_path_name` that always returned None turned the test into a
+  skip on a volume that generates short names. The test now asks
+  `GetShortPathNameW` directly and FAILS wherever the API yields a short
+  form the function does not return; it skips only where the API is absent
+  or yields none.
+- **Pinned behaviourally rather than by grep.** That the flow composes the
+  repair goal only through `compose_repair_goal` is proven by driving
+  `acceptance()` with a spy in that function's place and a stub worker: the
+  spy must be called with the failing gates, and the worker must receive
+  exactly what the spy returned; the one source scan that remains -- the
+  opening sentence spelled once across all of `src/` -- is a question a
+  grep can honestly answer. The two adapters' session rules are held
+  identical over one shared specimen table of accepted and refused values,
+  and their bound equal, rather than inferred from mirrored suites.
+
+**Addendum (parity repair round five).** Closing the fourth model-only
+bounded review (the same three read-only inspectors, attacking the round
+above; two found nothing blocking and left notes, the third returned one
+prose finding). Nothing here changes confinement, eligibility or the
+Provider Contract:
+
+- **"The routed path cannot reach the argument-length branch" was false.**
+  Five sentences said it -- both adapters' module docstrings, the comments
+  at their `OSError` catch, and the round-four bullet above -- on the ground
+  that `ProviderTask.validate` refuses a goal above 8000 characters first.
+  `validate` bounds the GOAL. It bounds neither `allowed_tools` (each tool
+  must be a non-empty string without a comma; no length, no count) nor the
+  workspace path (a non-empty string). Measured through the real
+  `ProviderRoutedWorker` on this Windows host: a 12-character goal and 90
+  tools whose joined list is 36449 characters ends in the `error` class (2)
+  on both adapters -- `command-line length: 37047 characters across 9
+  arguments, the goal alone 12 characters: [WinError 206]` on Claude,
+  `37392 characters across 11 arguments` on Codex. The behaviour was right;
+  the claim was not. All five sentences now say what `validate` bounds and
+  what it does not, and the reachability is pinned by one routed specimen
+  run on both adapters
+  (`test_a_routed_task_reaches_the_argument_length_branch_through_its_tool_list`):
+  a 12-character goal beside 150 tools of 1000 characters, a joined list of
+  150149 characters -- above the 32767-character line Windows accepts and,
+  as ONE argument, above Linux's `MAX_ARG_STRLEN` (131072), so both CI
+  platforms refuse it by construction. The class and the sentence's three
+  fragments are asserted, not the number. Not measured on macOS, which is
+  not in the CI matrix and bounds the total rather than one argument.
+- **The reported length could sit below the bound it explained.** The
+  number in the sentence was a sum of the raw arguments plus one separator
+  each. Windows counts the ONE quoted line `subprocess.list2cmdline` builds
+  -- exactly what `Popen` hands `CreateProcess` -- against 32767, terminator
+  included, and quoting is not free: every quote inside an argument gains a
+  backslash and the argument gains surrounding quotes. Measured: a goal of
+  17000 double quotes was reported as `17590 characters` while the line was
+  34591 (Codex: 17840 against 34841). Both adapters' `_command_line_length`
+  now count `len(list2cmdline(command)) + 1` on Windows -- the quoted line
+  plus the terminating NUL the bound includes -- and keep the per-argument
+  sum, in characters, elsewhere; the docstring says which is measured where,
+  and that the POSIX figure is a character count under a kernel that counts
+  bytes. Pinned in both adapter suites without a skip
+  (`test_the_reported_command_line_length_is_the_line_the_platform_counts`,
+  once per suite): the rule is computed in the test for the running
+  platform and held against the function on a quote-heavy vector, then
+  against the sentence of a real refusal -- 140000 double quotes as the
+  goal, refused by both CI platforms -- over the command the result carries.
+  Corrected in round six: the round-five sentence could still name a
+  sub-bound length when 206 came from the executable path -- `CreateProcess`
+  answers the same 206 for an over-long executable path, measured as an
+  existing 333-character `.cmd` shim, run with a 10-character goal,
+  reported in the `error` class as `738 characters across 9 arguments` on
+  Claude and `988 characters across 11 arguments` on Codex (the Codex line
+  carries the workspace path, 187 characters in that measurement, as
+  `--cd`; the Claude line carries none) -- so round six gates the arm on
+  the computed line exceeding 32767 (`WINDOWS_COMMAND_LINE_LIMIT`, held
+  against two real spawns: a 32766-character line accepted, 32767 refused
+  with 206) and sends a sub-bound 206 to the executable arm, `unavailable`
+  (127). Corrected in round seven: round six had recorded that specimen as
+  `343 characters`, the 333-character path and the 10-character goal
+  summed by hand -- a quantity neither adapter ever emitted. The figures
+  above come from running the round-five tree (`git archive 6ea2a09`)
+  against the specimen in round seven; the current tree reports the same
+  specimen on both adapters as `unavailable` (127) under
+  `executable could not be started: [WinError 206]`.
+- **Open items, gathered in one place.** None is closed here; the first two
+  are restated from the round-three addendum above so that the list is in
+  one place:
+  - `WorkerResult.output` has no ceiling: an arbitrarily large stream is
+    retained in memory whole, and a `MemoryError` there is not caught.
+  - `timeout_seconds` bounds the provider process, not wall time: after the
+    kill, `subprocess.run` keeps collecting for as long as a grandchild of
+    the provider lives.
+  - Pre-existing and host-dependent, recorded from the round-five review's
+    measurement: a workspace path long enough to pass `os.path.isdir` and
+    still be refused by `CreateProcess` (12117 characters with long paths
+    enabled, `[WinError 267] The directory name is invalid`) lands in the
+    `OSError` arm as `unavailable` (127) under the executable's sentence --
+    a second way into the check-to-spawn window the round-three bullet
+    leaves open.
+  - Pre-existing and host-measured (round-six review; confirmed through
+    both adapters by the round-seven builder): a `.cmd` or `.bat`
+    executable is run through the command processor, so its line is
+    refused BELOW `WINDOWS_COMMAND_LINE_LIMIT` -- from a count of 32737
+    up to 32767 with `[WinError 122] The data area passed to a system call
+    is too small` (errno 22), which the classifier does not read, so the
+    refusal lands as `unavailable` (127) under the executable's sentence
+    rather than as a length refusal, while at 32736 the process spawns and
+    `cmd.exe` itself answers `The command line is too long.` (exit 1), and
+    from 32768 the 206 arm holds as for a `.exe`. Only a `.exe` target is
+    refused exactly at the bound, which is the case the constant's comment
+    names as measured.
+  - C1 controls and bidi formatting characters in composed prompts:
+    `compose_repair_goal` escapes the C0 controls other than tab, newline
+    and carriage return; U+0080..U+009F and the bidi controls (U+202A..
+    U+202E, U+2066..U+2069) pass into the composed goal as they are.
+    Carried in the pull request since round three; durable here now.
+
+**Pre-registration amendment.** The provider-adapter parity slice narrows
+what `session_present` means in the frozen equivalence projection
+(`docs/governance/PROVIDER_EQUIVALENCE_PREREG.md`, section 5): a session
+identifier counts as present only when it passed validation as an ASCII
+identifier. That narrowing is recorded as section 11 of the
+pre-registration in its own commit, which precedes the slice commit that
+applies it, as the freeze protocol requires; the amendment is
+builder-proposed under the founder's standing instruction and not
+founder-ratified.
 
 **Serves.** the Provider Contract's rule that failure is a WorkerResult and
 never an exception, and the claim discipline in `CLAUDE.md` that forbids

@@ -23,8 +23,13 @@ result.
 
 from __future__ import annotations
 
+import getpass
 import json
+import ntpath
 import os
+import platform
+import posixpath
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +47,7 @@ from cryptography.hazmat.primitives.serialization import (
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import refresh_governance_evidence as rge  # noqa: E402
 from issue_inspection_attestation import (  # noqa: E402
     build_attestation,
     sign_attestation,
@@ -270,6 +276,496 @@ def test_an_inspection_nobody_can_authenticate_establishes_nothing(settled):
     assert state["assurance_state"] == "not_independently_inspected"
     assert any("no reviewer trust store" in p for p in state["assurance_problems"])
     assert state["independent"] is False
+
+
+def test_the_absent_default_store_is_reported_without_the_readers_identity(settled):
+    """The generator's own evidence must not embed WHO ran it or WHERE.
+
+    `reviewer_store_path()` falls back to `Path.home()/".nornyx"/...` when
+    `FORGE_REVIEWER_TRUST_STORE` is unset. Measured before this test existed:
+    on a clean regeneration that absent default's FULL path -- which on a real
+    developer's machine names their actual Windows account and computer name
+    -- reached `.nornyx/contracts/evidence/architecture_independent_review.json`'s
+    `verdict_basis` verbatim, a file this repository commits. A fake HOME
+    stands in for a real one here so the test does not depend on, or leak,
+    whoever actually runs it; the fake directory's own name is exactly the
+    kind of machine-specific string that must not survive into governed
+    evidence.
+    """
+    work, _reviewers = settled
+    fake_home = work.parent / "definitely-not-a-real-home.SOMEMACHINE-01"
+    fake_home.mkdir()
+    env = {**os.environ, "PYTHONPATH": str(work / "src")}
+    env.pop("FORGE_REVIEWER_TRUST_STORE", None)
+    env["FORGE_BUILDER_IDENTITY"] = BUILDER
+    env["HOME"] = str(fake_home)
+    env["USERPROFILE"] = str(fake_home)
+    completed = subprocess.run(
+        [sys.executable, REFRESH, "--as-of", "2026-08-02T00:00:00Z"],
+        cwd=work, capture_output=True, text=True, encoding="utf-8", env=env,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    record = json.loads((work / RECORD_RELATIVE).read_text(encoding="utf-8"))
+    basis = record["verdict_basis"]
+    assert fake_home.name not in basis, (
+        f"the fake home directory's own name leaked into governed evidence: {basis!r}"
+    )
+    assert str(fake_home) not in basis, (
+        f"the fake home directory's full path leaked into governed evidence: {basis!r}"
+    )
+    # THE EXACT RENDERING, not merely "~" in basis. A bare substring check is
+    # satisfiable by an UNRELATED "~" -- an 8.3 Windows short name literally
+    # contains one (e.g. "DEVUSE~1.SOM"), so a regression that stopped
+    # home-relativizing but happened to print a short name elsewhere in the
+    # sentence would still pass a check that only asked whether "~" appears
+    # anywhere at all. Forward slashes always, per `_store_display`.
+    assert "~/.nornyx/forge_reviewer_trust.json (absent)" in basis, (
+        f"the absent default store is not rendered as the exact expected "
+        f"home-relative form: {basis!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# `_store_display` directly: the rendering rule for the store PATH, in every
+# spelling two review rounds found unmet. SYNTHETIC NAMES THROUGHOUT. An
+# earlier form of these specimens spelled the developer's real account and
+# machine name as string literals -- putting into the committed test tree
+# exactly the identity the rule exists to keep out of the committed evidence
+# tree. `Devuser`, `SOMEBOX-07` and `DEVUSE~1.SOM` belong to nobody.
+# --------------------------------------------------------------------------
+
+HOME_LONG = r"C:\Users\Devuser.SOMEBOX-07"
+HOME_SHORT = r"C:\Users\DEVUSE~1.SOM"
+HOME_POSIX = "/home/devuser"
+STORE_TAIL = ".nornyx/forge_reviewer_trust.json"
+OUTSIDE = "<FORGE_REVIEWER_TRUST_STORE>"
+
+
+def _with_home_forms(monkeypatch: pytest.MonkeyPatch, *forms: str) -> None:
+    monkeypatch.setattr(rge, "_home_directory_forms", lambda: forms)
+
+
+def _under_the_windows_case_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows semantics on ANY host: case folded, `/` and `\\` equal."""
+    monkeypatch.setattr(rge, "_path_normcase", ntpath.normcase)
+
+
+def _under_the_posix_case_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """POSIX semantics on ANY host: the identity, because paths there are
+    case-sensitive and two spellings that differ in case are two directories."""
+    monkeypatch.setattr(rge, "_path_normcase", posixpath.normcase)
+
+
+def test_the_case_rule_is_the_platforms_own():
+    """`_path_normcase` is a NAME for `os.path.normcase`, not a
+    reimplementation of it: the seam exists so the tests below can exercise
+    both platforms' behaviour on one host, and this pins that in production
+    the seam is exactly the platform's rule. Without this pin the branch
+    tests could pass against a seam that had quietly become a hand-written
+    lowercase on every platform."""
+    assert rge._path_normcase is os.path.normcase
+
+
+def test_store_display_folds_case_under_the_windows_rule(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A lowercase drive letter and account name spell the SAME directory as
+    the mixed-case form `Path.home()` returns on Windows, and must render as
+    home. The round-2 test finding: the earlier form of this test relied on
+    the HOST's `os.path.normcase` and so asserted Windows behaviour while
+    running on ubuntu-latest, where `normcase` is the identity -- red on
+    every CI interpreter. The case rule is substituted here, so this branch
+    is exercised on every host."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_LONG)
+    lowercase = r"c:\users\devuser.somebox-07\.nornyx\forge_reviewer_trust.json"
+    assert rge._store_display(lowercase) == "~/" + STORE_TAIL
+    # And separators: a forward-slash spelling of a Windows home is still home.
+    assert rge._store_display("C:/Users/Devuser.SOMEBOX-07/.nornyx/x.json") == "~/.nornyx/x.json"
+
+
+def test_store_display_does_not_fold_case_under_the_posix_rule(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The other branch of the same rule. `/HOME/DEVUSER` is a DIFFERENT
+    directory from `/home/devuser` on a case-sensitive filesystem, so under
+    the POSIX rule the uppercase spelling is not the reader's home and is
+    rendered by its configuration name -- treating it as home would render
+    some other account's store as the reader's own. The exact-case spelling
+    renders as home. Both assertions run on every host."""
+    _under_the_posix_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_POSIX)
+    assert rge._store_display("/HOME/DEVUSER/" + STORE_TAIL) == OUTSIDE
+    assert rge._store_display("/home/devuser/" + STORE_TAIL) == "~/" + STORE_TAIL
+
+
+def test_store_display_matches_an_8_3_short_name(monkeypatch: pytest.MonkeyPatch):
+    """The 8.3 short form of the SAME directory the long form names. Real
+    Windows accounts and computer names routinely exceed 8 characters, and
+    `GetShortPathNameW` then produces a `NAME~1`-shaped alias for the
+    identical directory -- a path built from that alias must still be
+    recognised as home, matched against the SECOND form
+    `_home_directory_forms` returns, not merely the first."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_LONG, HOME_SHORT)
+    assert rge._store_display(HOME_SHORT + r"\.nornyx\forge_reviewer_trust.json") == "~/" + STORE_TAIL
+
+
+def test_store_display_redacts_a_different_users_directory(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A path under the SAME drive but a DIFFERENT account is not home --
+    `FORGE_REVIEWER_TRUST_STORE` pointed there is rendered by its
+    configuration name, never verbatim, because a different account's
+    directory layout is exactly the kind of machine-specific string this
+    generator exists to keep out of committed evidence."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_LONG)
+    assert rge._store_display(r"C:\Users\otheruser\.nornyx\forge_reviewer_trust.json") == OUTSIDE
+
+
+def test_store_display_redacts_a_different_drive(monkeypatch: pytest.MonkeyPatch):
+    """A path on a DIFFERENT drive entirely -- the other shape an override
+    outside home can take."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_LONG)
+    assert rge._store_display(r"D:\ops\forge_reviewer_trust.json") == OUTSIDE
+
+
+def test_store_display_matches_the_posix_shape(monkeypatch: pytest.MonkeyPatch):
+    """The rule is host-independent BY RENDERING, not merely by the platform
+    this test happens to run on: forward slashes always, so a Linux
+    regeneration produces the SAME `~/...` bytes a Windows one does over the
+    same relative path."""
+    _under_the_posix_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, HOME_POSIX)
+    assert rge._store_display("/home/devuser/" + STORE_TAIL) == "~/" + STORE_TAIL
+
+
+def test_store_display_holds_the_boundary_after_home(monkeypatch: pytest.MonkeyPatch):
+    """`C:\\Users\\DevuserX` is not `C:\\Users\\Devuser`: a longer name that
+    merely STARTS like home is another account's directory. The boundary
+    rule is that the character after the matched home form must be a
+    separator or the end of the path. Home itself, with or without a
+    trailing separator, renders as a bare `~`."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, r"C:\Users\Devuser")
+    assert rge._store_display(r"C:\Users\DevuserX\.nornyx\forge_reviewer_trust.json") == OUTSIDE
+    assert rge._store_display(r"C:\Users\Devuser") == "~"
+    assert rge._store_display("C:\\Users\\Devuser\\") == "~"
+    assert rge._store_display(r"C:\Users\Devuser\x") == "~/x"
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        r"C:\Users\John Doe\.nornyx\forge_reviewer_trust.json",
+        r"D:\Program Files (x86)\Nornyx\store.json",
+        r"\\fileserver01\team$\devuser\store.json",
+        "//fileserver01/team$/devuser/store.json",
+        "/home/john doe/.nornyx/forge_reviewer_trust.json",
+    ],
+    ids=["a-space", "parentheses", "unc", "forward-slash-unc", "posix-space"],
+)
+def test_redaction_replaces_the_whole_store_path_whatever_it_contains(
+    monkeypatch: pytest.MonkeyPatch, location: str
+):
+    """The round-2 security finding, closed by construction. The earlier
+    helper searched composed prose with a regular expression that stopped at
+    the first space -- so `C:\\Users\\John Doe\\...` rendered as the placeholder
+    followed by ` Doe\\...` -- cut a path at `(x86)`, and matched a UNC path
+    not at all. There is no regular expression now: the store path is a value
+    the generator holds, and `_redact_store_path` replaces that exact value.
+    Each of these shapes therefore vanishes WHOLE, and every occurrence of it
+    does, with the surrounding prose untouched."""
+    _with_home_forms(monkeypatch, HOME_LONG)  # none of these sits under home
+    message = (
+        f"{location} is unreadable: Expecting value: line 1 column 1 (char 0); "
+        f"retried {location}"
+    )
+    redacted = rge._redact_store_path(message, location)
+    assert location not in redacted
+    assert redacted == (
+        f"{OUTSIDE} is unreadable: Expecting value: line 1 column 1 (char 0); "
+        f"retried {OUTSIDE}"
+    )
+
+
+def test_redaction_renders_a_store_under_home_relative_even_with_a_space(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The same whole-token rule when the path IS under home: an account
+    name with a space in it renders home-relative, and the ` (absent)` the
+    store appends to its `source` survives beside it."""
+    _under_the_windows_case_rule(monkeypatch)
+    _with_home_forms(monkeypatch, r"C:\Users\John Doe")
+    location = r"C:\Users\John Doe\.nornyx\forge_reviewer_trust.json"
+    assert rge._redact_store_path(f"{location} (absent)", location) == f"~/{STORE_TAIL} (absent)"
+    assert rge._redact_store_path("no path mentioned here", location) == "no path mentioned here"
+
+
+# --------------------------------------------------------------------------
+# The home forms themselves, and the Windows short name
+# --------------------------------------------------------------------------
+
+
+def test_home_directory_forms_returns_home_its_resolved_form_and_the_short_form(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Three spellings, in order: what `Path.home()` returns, its resolved
+    form when that differs, and the 8.3 short name when the platform
+    produces one -- each de-duplicated, so a host where two of them coincide
+    yields fewer forms rather than a repeated one. `Path.home` and
+    `_short_path_name` are both substituted, so the test asserts the
+    ASSEMBLY of the forms and not whatever this host's home happens to be."""
+    home = tmp_path / "HomeDirectoryForForms"
+    home.mkdir()
+    monkeypatch.setattr(rge.Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(rge, "_short_path_name", lambda path: r"C:\HOMEDI~1")
+
+    forms = rge._home_directory_forms()
+    assert forms[0] == str(home)
+    assert str(home.resolve()) in forms
+    assert r"C:\HOMEDI~1" in forms
+    assert len(set(forms)) == len(forms), f"a form is repeated: {forms}"
+
+    monkeypatch.setattr(rge, "_short_path_name", lambda path: None)
+    assert r"C:\HOMEDI~1" not in rge._home_directory_forms()
+
+
+def test_short_path_name_is_none_for_a_path_that_does_not_exist(tmp_path: Path):
+    """On Windows `GetShortPathNameW` returns 0 for a path that does not
+    exist; off Windows the function answers None before asking. Both are the
+    documented None, so this runs on every host without a skip."""
+    assert rge._short_path_name(tmp_path / "does-not-exist") is None
+
+
+def test_short_path_name_is_none_where_the_api_does_not_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """The first thing the function checks is the platform name, and off
+    Windows it returns None for an EXISTING path too. Exercised on every host
+    by substituting that name, so a Windows workstation also proves the
+    off-Windows branch rather than leaving it to CI."""
+    monkeypatch.setattr(rge.os, "name", "posix")
+    assert rge._short_path_name(tmp_path) is None
+
+
+def _short_form_from_the_windows_api(path: Path) -> str | None:
+    """The 8.3 form as `GetShortPathNameW` itself reports it, called here
+    directly -- INDEPENDENTLY of `_short_path_name`, the function under test
+    -- or None when the API is absent or answers 0. This is what makes the
+    test below able to fail: its precondition no longer comes from the code
+    it is checking."""
+    try:
+        import ctypes  # noqa: PLC0415
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    except (ImportError, AttributeError):
+        return None
+    buffer = ctypes.create_unicode_buffer(260)
+    length = kernel32.GetShortPathNameW(str(path), buffer, 260)
+    return buffer.value if length else None
+
+
+def test_short_path_name_is_the_real_8_3_form_on_windows(tmp_path: Path):
+    """On a Windows volume that generates short names, a directory whose
+    name exceeds eight characters gets a `NAME~1` alias that names the SAME
+    directory -- proven with `os.path.samefile`, not by string shape alone.
+
+    THE PRECONDITION IS OBTAINED FROM THE API, NOT FROM THE FUNCTION UNDER
+    TEST. The earlier form asked `_short_path_name` whether a short form
+    existed and skipped when it said no -- so a `_short_path_name` that
+    always returned None turned this test into a skip on a volume that does
+    generate short names (round-3 test NEW-1). Now `GetShortPathNameW` is
+    asked directly; wherever it yields a short form, `_short_path_name` must
+    return exactly that or this test FAILS. It skips, with the reason
+    declared in the census, only off Windows (no such API) and where the API
+    itself yields no short form (8.3 generation disabled on the volume, when
+    it returns the long form unchanged)."""
+    if os.name != "nt":
+        pytest.skip(
+            "GetShortPathNameW is a Windows API; off Windows _short_path_name "
+            "returns None by design (pinned by the two tests above)"
+        )
+    long_dir = tmp_path / "LongDirectoryNameForShortForm"
+    long_dir.mkdir()
+    api_short = _short_form_from_the_windows_api(long_dir)
+    if api_short is None or os.path.normcase(api_short) == os.path.normcase(str(long_dir)):
+        pytest.skip(
+            "GetShortPathNameW, asked directly, yielded no short form for a "
+            "long-named directory on this volume (8.3 generation is off), so "
+            "there is no short form to compare against the long one"
+        )
+    assert "~" in api_short and os.path.samefile(api_short, long_dir), (
+        f"the API's own answer is not a short alias of the directory: {api_short!r}"
+    )
+    assert rge._short_path_name(long_dir) == api_short, (
+        "the API yields a short form for this directory and _short_path_name "
+        f"did not return it: {rge._short_path_name(long_dir)!r} != {api_short!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# The committed evidence tree carries nobody's identity
+# --------------------------------------------------------------------------
+
+#: Every host-path shape, raw or JSON-escaped: inside a JSON string a
+#: backslash is doubled, so `[\\/]{1,2}` matches `\`, `\\` and `/` alike.
+#: The drive pattern refuses a letter preceded by an alphanumeric so that
+#: `http://` (whose `p:/` is a letter, a colon and a separator) is not one.
+_HOST_PATH_PATTERNS = (
+    ("a Windows user-profile path", re.compile(rb"(?<![A-Za-z0-9])[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}", re.I)),
+    ("a drive-letter path", re.compile(rb"(?<![A-Za-z0-9])[A-Za-z]:[\\/]{1,2}")),
+    ("a POSIX home path", re.compile(rb"/home/")),
+    ("a macOS home path", re.compile(rb"/Users/")),
+)
+
+
+def _identity_leaks(raw: bytes, *, login: str, node: str) -> list[str]:
+    """Where `raw` carries a host path, or the reader's login or machine name
+    AS A PATH SEGMENT. One description per pattern that fires.
+
+    Segments, never bare substrings: the round-2 P1 finding was that the
+    earlier grep searched for `getpass.getuser()` as a substring, and on
+    ubuntu-latest that is `runner`, which `architecture_conformance_report.
+    json` legitimately contains inside `module.gate_runner` -- red on every
+    CI interpreter over a file that leaked nothing. A name counts here only
+    when a path separator (raw or JSON-escaped) immediately precedes it AND
+    a separator, a dot, a quote, whitespace or the end follows -- so
+    `Users\\devuser` and `/home/devuser` both count, through the separator
+    that ends `Users` or `home`, without naming either word -- or when it is
+    the machine half of a Windows `account.MACHINE` profile-folder segment.
+    Case-insensitive, because Windows paths are and over-detection here is
+    the safe direction.
+    """
+    patterns = list(_HOST_PATH_PATTERNS)
+    for label, name in (("login name", login), ("machine name", node)):
+        if not name:
+            continue
+        escaped = re.escape(name.encode("utf-8"))
+        patterns.append((
+            f"the reader's {label} as a path segment",
+            re.compile(
+                rb"[\\/]{1,2}" + escaped + rb"(?=[\\/]{1,2}|[.\"'\s]|$)",
+                re.I,
+            ),
+        ))
+        patterns.append((
+            f"the reader's {label} as the machine half of an account.MACHINE folder",
+            re.compile(
+                rb"[\\/]{1,2}[A-Za-z0-9_-]+\." + escaped + rb"(?=[\\/]{1,2}|[\"'\s]|$)",
+                re.I,
+            ),
+        ))
+    hits: list[str] = []
+    for label, pattern in patterns:
+        match = pattern.search(raw)
+        if match:
+            hits.append(f"{label}: {match.group(0)!r} at byte {match.start()}")
+    return hits
+
+
+def _reader_identity() -> tuple[str, str]:
+    try:
+        login = getpass.getuser()
+    except (KeyError, OSError):  # a container with no passwd entry
+        login = ""
+    return login, platform.node()
+
+
+def _committed_evidence_files() -> list[Path]:
+    files = sorted((ROOT / ".nornyx" / "contracts" / "evidence").rglob("*.json"))
+    assert files, "the committed evidence tree is empty; nothing to check"
+    return files
+
+
+def test_the_leak_detector_fires_on_the_json_escaped_windows_shape():
+    """KNOWN POSITIVE. The shape a Windows path takes INSIDE a JSON file --
+    every backslash doubled -- which the round-2 finding showed the earlier
+    single-backslash pattern missing entirely. The detector must fire on the
+    profile path, the drive, the login segment and the machine name, with
+    and without knowing whose identity it is looking for."""
+    document = json.dumps({
+        "verdict_basis": "no reviewer trust store, so no inspection can be "
+                         r"authenticated (C:\Users\Devuser.SOMEBOX-07\.nornyx"
+                         r"\forge_reviewer_trust.json (absent))",
+    }).encode("utf-8")
+    assert rb"C:\\Users\\Devuser.SOMEBOX-07\\" in document, "the specimen is not JSON-escaped"
+    hits = _identity_leaks(document, login="devuser", node="SOMEBOX-07")
+    labels = "\n".join(hits)
+    assert "a Windows user-profile path" in labels, labels
+    assert "a drive-letter path" in labels, labels
+    assert "login name as a path segment" in labels, labels
+    assert "machine name as the machine half" in labels, labels
+    assert _identity_leaks(document, login="", node=""), "the generic patterns alone must fire"
+
+
+def test_the_leak_detector_fires_on_the_raw_windows_and_posix_shapes():
+    """KNOWN POSITIVES for the two other shapes: a raw (single-backslash)
+    Windows path, as it would appear outside a JSON string, and the POSIX
+    home shape a Linux regeneration would leak."""
+    raw_windows = rb"store at C:\Users\Devuser.SOMEBOX-07\.nornyx\x.json"
+    hits = _identity_leaks(raw_windows, login="devuser", node="SOMEBOX-07")
+    assert any("Windows user-profile path" in h for h in hits), hits
+    assert any("login name as a path segment" in h for h in hits), hits
+    assert any("machine half" in h for h in hits), hits
+
+    posix = json.dumps({"verdict_basis": "(/home/devuser/.nornyx/forge_reviewer_trust.json (absent))"}).encode()
+    hits = _identity_leaks(posix, login="devuser", node="somebox-07")
+    assert any("POSIX home path" in h for h in hits), hits
+    assert any("login name as a path segment" in h for h in hits), hits
+
+
+def test_the_leak_detector_stays_silent_on_a_login_that_is_inside_a_word():
+    """KNOWN NEGATIVE, the CI case. `runner` inside `module.gate_runner`,
+    `ann` inside `cannot`, `test` inside `tests/test_x.py`, and `p:/` inside
+    a URL are none of them a path segment naming the reader, and a detector
+    that fired on them would be red on ubuntu-latest over a file that leaked
+    nothing -- exactly what happened."""
+    document = json.dumps({
+        "module": "module.gate_runner",
+        "note": "cannot; the runner ran tests/test_runner_x.py; see https://example.invalid/x",
+        "path": "src/nornyx_forge/gates.py",
+    }).encode("utf-8")
+    assert _identity_leaks(document, login="runner", node="fv-az123-456") == []
+    assert _identity_leaks(document, login="ann", node="") == []
+    assert _identity_leaks(document, login="test", node="") == []
+    assert _identity_leaks(document, login="", node="") == []
+
+
+def test_committed_evidence_carries_no_readers_identity():
+    """Static regression over the COMMITTED evidence tree, not a fixture.
+
+    The specimens above prove the rendering rule in isolation; this proves
+    the rule is actually APPLIED to what this repository ships.
+    `.nornyx/contracts/evidence/*.json` is read as BYTES, not decoded text,
+    and the detector knows the JSON-escaped spelling of a Windows path, so a
+    leaked account name inside a doubled-backslash path is found rather than
+    missed. The detector's own power and silence are pinned by the three
+    control tests above.
+    """
+    login, node = _reader_identity()
+    offenders = [
+        f"{path.relative_to(ROOT)}: {hit}"
+        for path in _committed_evidence_files()
+        for hit in _identity_leaks(path.read_bytes(), login=login, node=node)
+    ]
+    assert not offenders, "\n".join(offenders)
+
+
+def test_committed_evidence_is_clean_for_the_ci_runners_identity_too():
+    """The same sweep with the identity the Linux CI matrix runs under,
+    checked on EVERY host -- so the developer's workstation observes the
+    exact condition that made the round-2 finding a CI-red, rather than
+    learning it from the CI log."""
+    offenders = [
+        f"{path.relative_to(ROOT)}: {hit}"
+        for path in _committed_evidence_files()
+        for hit in _identity_leaks(path.read_bytes(), login="runner", node="fv-az000-000")
+    ]
+    assert not offenders, "\n".join(offenders)
 
 
 def test_an_incomplete_inspection_is_not_an_independent_one(settled):
