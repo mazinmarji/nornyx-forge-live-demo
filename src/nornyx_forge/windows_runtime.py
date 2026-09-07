@@ -58,6 +58,7 @@ started by the declared launcher adapter, not here.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import http.client
 import json
@@ -222,6 +223,178 @@ def _said(exc: BaseException) -> str:
         return str(exc)
     except Exception:  # noqa: BLE001 - a __str__ that raises is the case handled
         return f"<{type(exc).__name__} whose message could not be rendered>"
+
+
+def _move_onto(staging: Path, path: Path) -> bool:
+    """Move `staging` onto `path` by an operation that REFUSES an existing
+    target, and answer whether the staging NAME went with it.
+
+    `os.rename` on Windows, which consumes the name (`os.replace` would
+    silently overwrite the target); `os.link` on POSIX, which leaves the name
+    holding a second link to the same file (`os.rename` would overwrite there
+    too).
+
+    Windows refuses to rename a file another process holds open at that
+    instant, and the session file is polled by exactly such readers -- the
+    harnesses, and the bundle smoke -- so a `PermissionError` here is
+    ordinarily a reader mid-read, which is milliseconds long. A handful of
+    short retries covers it. The sibling `write_record` retries its own
+    `os.replace` for the same reason and with the same 20 x 50 ms; this is
+    that loop (round-2 P3-2), and the sharing violation it exists for was
+    observed once at the move instant under review.
+
+    On POSIX a `PermissionError` from `os.link` is a PERMANENT refusal -- a
+    filesystem that forbids hard links -- so it is raised at once rather than
+    waited on for a second that would change nothing.
+    """
+    for attempt in range(20):
+        try:
+            if sys.platform == "win32":
+                os.rename(staging, path)
+                return True
+            os.link(staging, path)
+            return False
+        except PermissionError:
+            if sys.platform != "win32" or attempt == 19:
+                raise
+            time.sleep(0.05)
+    raise AssertionError(  # unreachable: the last attempt above raises
+        f"{staging} was neither moved onto {path} nor refused")
+
+
+def _is_the_same_file(staging: Path, made: os.stat_result) -> bool:
+    """True unless `staging` demonstrably names a DIFFERENT file from the one
+    `made` describes.
+
+    The staging file is unlinked on every path that did not consume its name,
+    and the identity check is what keeps that unlink from deleting a file
+    this call did not make: `st_dev`/`st_ino`, which Windows fills from the
+    volume serial and the file index, taken from the descriptor at creation.
+
+    UNKNOWN IS NOT "DIFFERENT". A platform that reports no inode gets the
+    unlink, because a staging file left holding a live bearer is the worse of
+    the two outcomes.
+    """
+    if not made.st_ino:
+        return True
+    try:
+        found = os.stat(staging)
+    except OSError:
+        return False  # nothing is there; there is nothing to remove
+    return (found.st_dev, found.st_ino) == (made.st_dev, made.st_ino)
+
+
+def _place_session_file(path: Path, payload: str) -> None:
+    """Put `payload` at `path` COMPLETE OR NOT AT ALL, and never over a file
+    already there.
+
+    The payload is written to `<name>.tmp` beside the target -- created
+    exclusively, mode `0600` where the OS honours a mode, flushed and fsynced
+    -- and only then moved onto the final name by an operation that REFUSES an
+    existing target: `os.rename` on Windows (`os.replace` would silently
+    overwrite), `os.link` on POSIX, where `os.rename` would. So the final name
+    never exists holding partial content: a reader that finds it reads a whole
+    record or nothing.
+
+    The previous shape created the FINAL name and wrote afterwards, and a
+    reader between the two found an empty file, parsed no bearer and sent its
+    first request bare. That is not hypothetical: the windows-runtime CI job
+    failed once on `POST /api/project` answering `401`, with one child ever
+    started and its record `ready`. Tranche B closed the same race class for
+    the harnesses' EXISTENCE wait -- the file follows the `ready` record -- and
+    left the CONTENT window open; this closes it at the writer, where a poller
+    cannot be raced at all rather than merely being unlikely to be.
+
+    `FileExistsError` still names the FINAL path and still means what it meant:
+    a file already at the target is left as found, so the caller's refusal
+    branch is unchanged. It is now decided BEFORE the bearer is written
+    anywhere: a target that is already there is refused by the check below,
+    with no staging file created and no payload on disk, so the caller's
+    "this run's bearer was written nowhere" is exact for that case (round-2
+    P3-1). The check is not the refusal, though -- the MOVE is, and stays
+    so: a file that appears between the two is refused by an operation that
+    cannot be raced, and the check merely keeps the ordinary case from
+    writing a secret it was always going to delete.
+
+    A staging name already taken is a DIFFERENT fact -- the target may be
+    free -- and is reported as one rather than being laundered into "already
+    exists" about a path that does not exist. The staging file this call made
+    is gone before it returns, on success and on every failure, EXCEPT where
+    the name no longer holds this call's file (`_is_the_same_file`); nothing
+    named `.tmp` that this call made is left for the person to find or for
+    the next launch to trip over.
+
+    RESIDUAL, stated rather than implied: a hard kill -- `TerminateProcess`,
+    a power loss -- between the fsync and the move leaves `<name>.tmp`
+    holding a live bearer in the fenced directory, because a `finally` does
+    not run when a process dies. The window is the move itself and the
+    protection is the fence, which judged that directory (A-027).
+
+    FOUR FAILURES, each naming the file it could not use: no staging name can
+    be formed beside `path`; the target already exists (`FileExistsError`, on
+    the target); the staging file cannot be written or flushed; the staging
+    file cannot be moved onto the target. All but the second are a plain
+    `OSError`, which is the caller's notice branch.
+
+    The staging name sits in the target's own directory, which `launch` already
+    fenced and found existing before anything was created (A-027): staging
+    elsewhere -- a temporary directory, say -- would put the bearer on a path
+    no fence judged.
+    """
+    try:
+        staging = path.with_name(path.name + ".tmp")
+    except ValueError as exc:
+        # A path with no name -- a drive root -- has no sibling to stage in.
+        # `launch`'s fence refuses one long before this, but this runs on the
+        # READINESS THREAD, where a `ValueError` is not the `OSError` the
+        # caller catches and would take the notice with it (round-2 P4-2).
+        raise OSError(f"no staging name can be formed beside {path}: {_said(exc)}") from exc
+    if os.path.lexists(path):
+        # `lexists`, not `exists`: a dangling symlink at the target is a file
+        # already there for the move's purposes and must be reported as one.
+        raise FileExistsError(f"{path} already exists")
+    try:
+        descriptor = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        # ONE argument, deliberately: `OSError(errno, text)` is remapped by the
+        # constructor to the errno's own subclass -- `FileExistsError` for 17 --
+        # and would reach the caller's refusal branch as if the TARGET were
+        # taken.
+        raise OSError(f"the staging file {staging} already exists") from exc
+    # Taken from the DESCRIPTOR, before anything can rename or replace the
+    # name it was opened under, and before `os.fdopen` takes ownership of it.
+    made = os.fstat(descriptor)
+    consumed = False
+    try:
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as sink:
+                sink.write(payload)
+                sink.flush()
+                os.fsync(sink.fileno())
+        except OSError as exc:
+            raise OSError(
+                f"the staging file {staging} could not be written: {_said(exc)}") from exc
+        try:
+            consumed = _move_onto(staging, path)
+        except FileExistsError:
+            # The target, and the caller's refusal branch: it names the final
+            # path and must not be reworded into a staging failure.
+            raise
+        except OSError as exc:
+            raise OSError(
+                f"the staging file {staging} could not be moved onto {path}: "
+                f"{_said(exc)}") from exc
+    finally:
+        # `consumed` is true only where the move took the staging NAME with it
+        # (`os.rename`), and there the name is free for anyone -- a second
+        # launch, the person -- so touching it would delete a file this call
+        # did not make (round-2 P4-3). On POSIX success it drops the second
+        # name the link made, and on every failure on either platform it is
+        # what keeps the staging file from outliving the call.
+        if not consumed:
+            with contextlib.suppress(OSError):
+                if _is_the_same_file(staging, made):
+                    os.unlink(staging)
 
 
 def _namespace_prefixed(path: Path | str) -> bool:
@@ -1273,17 +1446,32 @@ def _own_runtime(
         keeps serving, so a smoke reading the stale file authenticates with a
         dead token and fails visibly. Nothing this branch logs or tells names
         a secret.
+
+        VISIBLE ONLY COMPLETE: `_place_session_file` stages the whole payload
+        beside the target and moves it onto the final name exclusively, so no
+        reader ever finds the path holding an empty or half-written record.
+        The exclusive create moved with it and means the same thing.
+
+        "WRITTEN NOWHERE" IS EXACT for the case this branch names: a target
+        already there is refused before the staging file is created, so the
+        bearer reaches no disk at all (round-2 P3-1). The residual is stated
+        where it belongs, on `_place_session_file` and in A-027: a hard kill
+        between the fsync and the move leaves the staging file behind, inside
+        the directory the fence judged.
         """
         nonlocal session_file_written
         if not arguments.session_file or session is None:
             return
         # The path passed the fence in `launch` and its directory exists;
-        # nothing is created here but the file. 0o600 where the OS honours
-        # a mode (POSIX); on Windows a mode sets no ACL (A-027), which is
-        # why the fence, not the mode, is the protection there.
+        # nothing is created here but the file and the staging name beside it.
+        # 0o600 where the OS honours a mode (POSIX); on Windows a mode sets no
+        # ACL (A-027), which is why the fence, not the mode, is the protection
+        # there.
         path = Path(arguments.session_file)
         try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            _place_session_file(path, json.dumps(
+                {"schema": RUNTIME_SESSION_SCHEMA, "instance": token,
+                 "token": session.token}) + "\n")
         except FileExistsError:
             _log.warning("session file not written: %s already exists", path)
             notify("Forge is running",
@@ -1298,9 +1486,6 @@ def _own_runtime(
             notify("Forge is running",
                    f"the session file {path} could not be created: {_said(exc)}")
             return
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as sink:
-            sink.write(json.dumps({"schema": RUNTIME_SESSION_SCHEMA, "instance": token,
-                                   "token": session.token}) + "\n")
         session_file_written = True
 
     def remove_session_file() -> None:

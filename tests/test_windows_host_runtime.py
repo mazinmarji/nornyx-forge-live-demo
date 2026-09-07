@@ -14,10 +14,13 @@ supplies, and stays operator evidence, measured by the builder's `--smoke`.
 On a non-Windows host every runtime test skips, declared by identity in
 the census. The `windows-runtime` CI job runs this module with a skip
 census of its own, so a skip there fails the job rather than passing
-quietly -- and ONE test here runs on every platform: the pin that the job
-exists and does exactly that, which is what makes the declared skips
-truthful and keeps this module from being a required module that executes
-nothing on the Linux census.
+quietly -- and THREE tests here run on every platform, because each is a
+property of the HARNESS and starts no runtime: the pin that the job exists
+and does exactly that, which is what makes the declared skips truthful and
+keeps this module from being a required module that executes nothing on the
+Linux census, and the two pins on `wait_for` -- that it stops the moment its
+child is dead, and that it waits for a bearer it can PARSE rather than for a
+file that merely exists.
 """
 
 from __future__ import annotations
@@ -110,6 +113,14 @@ def _post(port: int, path: str, payload: dict | None = None,
         connection.close()
 
 
+def _parsed(token: str | None) -> bool:
+    """True when a bearer was actually read: a non-empty string. `.token`
+    answers None for a file that is absent, unreadable, not JSON, or JSON
+    without a `token` -- and the empty string for one that carries an empty
+    one, which is not a bearer either and would be sent as `Bearer `."""
+    return isinstance(token, str) and bool(token)
+
+
 class HostRuntime:
     """The runtime as a real child process, exactly as the developer
     launcher's bootstrap starts it, from an unrelated working directory."""
@@ -170,13 +181,27 @@ class HostRuntime:
             return None
 
     def wait_for(self, status: str, timeout: float = 240.0) -> dict:
-        """The record at `status`. For `ready`, ALSO the session file: the
+        """The record at `status`. For `ready`, ALSO A PARSEABLE BEARER: the
         runtime writes the bearer AFTER it records readiness (pinned by
         `test_the_session_file_is_written_only_after_readiness`), so a test
         that read `.token` on the record alone could read nothing and send its
         first request bare -- measured once on this host as a `401` on the
         first `/api/project` of the restart specimen, with one child ever
         started and its record `ready`.
+
+        THE WAIT IS ON `.token`, NOT ON THE FILE'S EXISTENCE. Waiting for the
+        path to appear closed the window the record opened and left a narrower
+        one inside it: `.token` swallows every read and parse error and answers
+        None, so a reader that arrived after the create and before the content
+        got a bare request out of exactly the same `wait_for` that had just
+        returned. The windows-runtime job failed that way once at PR #46's
+        head -- the first bearered `POST /api/project` answered `401` -- with
+        six modules loading the host. The WRITER now moves the file into place
+        complete (`_place_session_file`), so the window is closed there too;
+        this wait is what makes the harness independent of that, and what makes
+        the failure legible when it is not: the message says whether the file
+        was there and whether it parsed, which "session file present=True" on
+        its own never did.
 
         THE DEAD-CHILD CHECK IS A SIBLING `if`, not an `elif` (round-4
         architecture F-P4-4 and test P3). As an `elif` it was unreachable in
@@ -189,14 +214,15 @@ class HostRuntime:
         while time.monotonic() < deadline:
             record = self.record()
             if record is not None and record["status"] == status:
-                if status != "ready" or self.session_path.exists():
+                if status != "ready" or _parsed(self.token):
                     return record
             if self.process is not None and self.process.poll() is not None and status != "stopped":
                 break
             time.sleep(0.1)
         raise AssertionError(
-            f"the runtime never reached {status} with its session file; record={self.record()} "
-            f"session file present={self.session_path.exists()} "
+            f"the runtime never reached {status} with a parseable session file; "
+            f"record={self.record()} session file present={self.session_path.exists()} "
+            f"bearer parsed={_parsed(self.token)} "
             f"exit={self.process.poll() if self.process else None} "
             f"output={self.output.read_text(encoding='utf-8', errors='replace')[-2000:]}"
         )
@@ -259,6 +285,75 @@ def test_the_harness_stops_waiting_the_moment_its_child_is_dead(tmp_path: Path):
     finally:
         run._stream.close()
     assert elapsed < 5.0, f"the dead child was not noticed; the wait ran {elapsed:.1f}s"
+
+
+def test_the_harness_waits_for_a_bearer_it_can_parse_not_for_a_file(tmp_path: Path):
+    """The THIRD test here that runs on every platform: a property of the
+    HARNESS, and no runtime is started.
+
+    `wait_for("ready")` used to return the moment the session file EXISTED.
+    `.token` swallows every read and parse error and answers None, so a
+    reader arriving between the create and the content got None and sent its
+    first request bare -- which is how the windows-runtime job failed at
+    PR #46's head: a `401` on the first bearered `POST /api/project`, one
+    child ever started, its record `ready`. The writer no longer opens that
+    window (`_place_session_file` moves the file into place complete), and
+    this is the harness half, which does not depend on the writer's shape.
+
+    The specimen is a writer that exposes an EMPTY file and completes it
+    0.3 s later -- exactly what the old writer did under load. The wait must
+    not return inside that window. Restore `self.session_path.exists()` and
+    this is red: the wait returns while `.token` is still None.
+
+    The child is alive throughout, so the dead-child branch decides nothing
+    here; it has its own test above."""
+    work = tmp_path / "work"
+    work.mkdir()
+    run = HostRuntime(tmp_path / "no such bundle", work)
+    run.runtime_dir.mkdir(parents=True)
+    write_record(run.paths.record, {"schema": RUNTIME_SCHEMA, "instance": "slow-writer",
+                                    "status": "ready", "port": 8711,
+                                    "url": "http://127.0.0.1:8711/"})
+    # A REAL live process: `poll()` answers None, which is what the sibling
+    # dead-child branch reads, so this test turns on the session file alone.
+    run.process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    seen: dict = {}
+
+    def slow_writer() -> None:
+        run.session_path.write_bytes(b"")
+        seen["empty_at"] = time.monotonic()
+        seen["empty_token"] = run.token
+        time.sleep(0.3)
+        seen["content_at"] = time.monotonic()
+        run.session_path.write_text(
+            json.dumps({"schema": "x", "instance": "slow-writer", "token": "THE-BEARER"}) + "\n",
+            encoding="utf-8")
+
+    writer = threading.Thread(target=slow_writer, name="slow-writer", daemon=True)
+    run._stream = open(run.output, "w", encoding="utf-8")  # noqa: SIM115 - closed below
+    try:
+        writer.start()
+        record = run.wait_for("ready", timeout=20.0)
+        returned_at = time.monotonic()
+    finally:
+        writer.join(timeout=10)
+        run.process.kill()
+        run.process.wait(timeout=30)
+        run._stream.close()
+    assert record["instance"] == "slow-writer"
+    assert seen["empty_token"] is None, (
+        "the empty file still parsed to a bearer; the window was never open and "
+        "this test proved nothing")
+    # The moment CONTENT began, not the moment it finished: an assertion on
+    # the finish could be beaten by microseconds and would be flaky in the
+    # direction of passing.
+    assert returned_at >= seen["content_at"], (
+        f"the wait returned {seen['content_at'] - returned_at:.3f}s before the bearer "
+        "was written, on a file that existed and parsed to nothing")
+    assert returned_at - seen["empty_at"] >= 0.25, (
+        f"the wait returned {returned_at - seen['empty_at']:.3f}s after the empty file "
+        "appeared, which is inside the 0.3s window")
+    assert run.token == "THE-BEARER"
 
 
 @pytest.fixture()
@@ -378,6 +473,125 @@ def test_the_windows_runtime_job_runs_this_module_under_its_own_skip_census():
     assert any("tests/test_windows_host_runtime.py" in line and "-rs" in line
                for line in _windows_job_pytest_commands(runs_it)), (
         "the reader does not see a module that IS in the pytest command")
+
+
+#: The job's collected-count guard, read from the CODE and not from the
+#: sentence beside it: the two disagreeing is the finding this pins.
+_FLOOR = re.compile(r"if len\(cases\) < (\d+):")
+
+
+def _windows_job_floor(workflow: str) -> int:
+    """The one collected-count floor the job enforces."""
+    floors = _FLOOR.findall(_windows_job_code(workflow))
+    assert len(floors) == 1, (
+        f"the windows-runtime job has {len(floors)} collected-count guards, not one: {floors}")
+    return int(floors[0])
+
+
+def _windows_job_modules(workflow: str) -> list[str]:
+    """The test modules the job's pytest command names. ONE command: a floor
+    that covers one invocation while a second runs other modules would be a
+    floor over part of the job."""
+    commands = _windows_job_pytest_commands(workflow)
+    assert len(commands) == 1, (
+        f"the windows-runtime job runs pytest on {len(commands)} lines; the floor below "
+        f"is arithmetic over one command: {commands}")
+    return [word for word in commands[0].split() if word.endswith(".py")]
+
+
+def _collected_per_module(modules: list[str]) -> dict[str, int]:
+    """How many tests each module COLLECTS, measured by collecting them.
+
+    One bounded child, `--collect-only`, so nothing here runs a test. pytest 8
+    summarises `-q` collection as `<path>: <count>`; a node id per line is the
+    older shape and is counted too, and a module the output does not account
+    for is a loud failure rather than a zero."""
+    finished = subprocess.run(  # noqa: S603 - this repository's own interpreter and tests
+        [sys.executable, "-m", "pytest", *modules, "--collect-only", "-q",
+         "-p", "no:cacheprovider"],
+        cwd=ROOT, capture_output=True, text=True, timeout=600, check=False)
+    assert finished.returncode == 0, (
+        f"collecting the windows job's modules failed ({finished.returncode}): "
+        f"{finished.stdout[-3000:]}{finished.stderr[-2000:]}")
+    counts: dict[str, int] = {}
+    for line in finished.stdout.splitlines():
+        summary = re.fullmatch(r"(\S+\.py): (\d+)", line.strip())
+        if summary:
+            counts[summary.group(1).replace("\\", "/")] = int(summary.group(2))
+    if not counts:
+        for line in finished.stdout.splitlines():
+            head = line.strip().split("::", 1)[0].replace("\\", "/")
+            if "::" in line and head.endswith(".py"):
+                counts[head] = counts.get(head, 0) + 1
+    missing = [module for module in modules if module not in counts]
+    assert not missing, (
+        f"the collection accounted for {sorted(counts)} and not for {missing}, so the "
+        f"floor below would be arithmetic over an unread output: {finished.stdout[-2000:]}")
+    return counts
+
+
+def _floor_matches(modules: list[str], floor: int, counts: dict[str, int]) -> bool:
+    """THE RULE, in one place: the floor is one above what the job would
+    collect with its SMALLEST module gone, so any whole module dropping out
+    trips it and no smaller loss does."""
+    picked = [counts[module] for module in modules]
+    return floor == sum(picked) - min(picked) + 1
+
+
+def test_the_windows_job_floor_is_the_arithmetic_it_states():
+    """Runs everywhere. Round-2 P2-1: the floor was moved to `196 - 15 + 1`
+    and called "the smallest of the five" when the smallest of the five was
+    13, this module. At 182 the whole 13-test module could vanish from the
+    job -- reproduced by the reviewer with the job's own reader over its own
+    junit, at 183 collected and the guard silent -- and nothing anywhere read
+    the number, which is why the prose and the arithmetic could drift apart
+    at all.
+
+    So the number is DERIVED here, from a live collection of the modules the
+    job's own command names, and the sentence beside the guard is held to the
+    same measurement. Both controls are specimens rather than edits: the
+    round-1 mistake itself -- the second-smallest module in the subtraction
+    -- must be refused, and so must the real floor once any one module has
+    left the command."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    modules = _windows_job_modules(workflow)
+    assert len(modules) > 2, f"the windows-runtime job names {modules}"
+    counts = _collected_per_module(modules)
+    ascending = sorted(counts[module] for module in modules)
+    total, smallest = sum(ascending), ascending[0]
+    floor = _windows_job_floor(workflow)
+    assert _floor_matches(modules, floor, counts), (
+        f"the windows job's floor is {floor}; its {len(modules)} modules collect {total} "
+        f"({'/'.join(str(n) for n in ascending)}) and the smallest is {smallest}, so the "
+        f"floor that catches a whole module leaving is {total - smallest + 1}. Below that, "
+        "the smallest module can vanish with the job still green.")
+    # The sentence must say what the guard does. It did not, and the sentence
+    # is what a reader of this job believes.
+    code = _windows_job_code(workflow)
+    assert f"fewer than {floor} tests" in code, (
+        f"the job's message does not repeat its own floor of {floor}")
+    assert f"carry {total} here" in code, (
+        f"the job's message does not state the {total} tests its modules collect")
+    assert f"({'/'.join(str(n) for n in ascending)})" in code, (
+        f"the job's message does not state the measured breakdown "
+        f"{'/'.join(str(n) for n in ascending)}")
+    assert f"{total} - {smallest} + 1" in code, (
+        f"the job's message does not state the arithmetic {total} - {smallest} + 1")
+    # CONTROL 1: the round-1 error. The second-smallest module in the
+    # subtraction leaves the smallest one free to disappear.
+    second = ascending[1]
+    assert second != smallest or len(set(ascending)) == 1, "the specimen needs two sizes"
+    assert not _floor_matches(modules, total - second + 1, counts), (
+        f"a floor of {total - second + 1} -- the SECOND smallest module subtracted, which "
+        "is exactly how this job came to accept a whole module vanishing -- satisfies the "
+        "rule above, so the rule is not the one that was broken")
+    # CONTROL 2: this floor must stop being right the moment the command
+    # stops running any one of the modules it was computed over.
+    for dropped in modules:
+        rest = [module for module in modules if module != dropped]
+        assert not _floor_matches(rest, floor, counts), (
+            f"the floor {floor} still satisfies the rule with {dropped} gone from the "
+            "command, so it does not pin what it claims to")
 
 
 @windows_only

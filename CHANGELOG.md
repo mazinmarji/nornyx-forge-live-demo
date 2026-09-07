@@ -2,6 +2,52 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The runtime's session file is visible only when it is complete, and the
+  Windows host harness waits for a bearer it can PARSE. The windows-runtime CI
+  job failed once at PR #46's head with a `401` on the first bearered
+  `POST /api/project`, one child ever started and its record `ready`. The
+  cause was a write in two steps: `write_session_file` created the FINAL name
+  with `O_EXCL` and wrote the payload afterwards, and `HostRuntime.wait_for`
+  returned as soon as that name EXISTED, so a reader landing between the
+  create and the content parsed nothing, got `None` from `.token`, and sent
+  its first request bare — out of exactly the wait that had just returned.
+  Tranche B closed this race class for the harnesses' EXISTENCE wait and left
+  the CONTENT window open; the bundle smoke was immune only because it polls
+  until the token parses. The payload is now staged as `<name>.tmp` beside the
+  target — created with `O_EXCL` at mode `0600`, flushed and fsynced — and
+  moved onto the final name by an operation that REFUSES an existing target
+  (`os.rename` on Windows, `os.link` then unlink on POSIX), so the final path
+  never holds partial content and the pre-existing-file semantics are
+  unchanged: a file already there is left as found, the person is told by
+  path, and this run's bearer is written nowhere — exactly, because a target
+  already there is refused BEFORE the staging file is created, so no bearer
+  reaches any disk for that case. The check is not the refusal: the move
+  still is, and a target that appears after the check is refused by it just
+  the same. A staging name already taken is reported as the different fact it
+  is rather than as "the target already exists"; the move retries a Windows
+  sharing violation on the sibling `write_record`'s own 20 × 50 ms, because
+  the file is polled by exactly the readers that cause one; the staging file
+  this call made never outlives it, on success or failure; and a file that
+  took the staging name AFTER a successful move is left alone rather than
+  deleted. ONE RESIDUAL, stated in A-027 rather than implied: a hard kill
+  between the fsync and the move leaves `<name>.tmp` holding a live bearer in
+  the fenced directory, because a `finally` does not run when a process dies.
+  Both harness waits now poll `.token` rather than the path, with a failure
+  message that says whether the file existed and whether it parsed. TESTS:
+  nine, mutation-checked — the final path never observable with partial
+  content under a 200 ms pause between create and content (reverting to
+  create-then-write is red on the first observation inside the window), the
+  move refusing a target already there, no staging file outliving a placement
+  either way, both waits held against a writer that deliberately exposes an
+  empty file (existence-only waits are red with `None` for a bearer),
+  `os.open` never reached for a target already there, two sharing violations
+  survived with the two pauses they cost, a foreign staging file surviving a
+  successful move, and every placement failure naming the file it could not
+  use. The windows-runtime job's collected-count floor is now DERIVED from a
+  live collection of the modules its own command names, rather than restated
+  in prose — the prose had gone false, and nothing was reading it. Nothing
+  about the fence, the mode, the after-readiness ordering or the shipped
+  launchers changed; no shipped launcher passes `--session-file` at all.
 - Control-plane session capability (Tranche B). The onboarding surface is
   local and unauthenticated, and A-024 measured that a Codex worker confined
   to the project workspace still reaches loopback and its POST is accepted
