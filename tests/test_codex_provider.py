@@ -42,6 +42,7 @@ from nornyx_forge.codex_worker import (
     _session_from_jsonl,
 )
 from nornyx_forge.codex_worker import _argument_list_too_long as _codex_argument_list_too_long
+from nornyx_forge.codex_worker import _command_line_length as _codex_command_line_length
 from nornyx_forge.codex_worker import _decode as _codex_decode
 from nornyx_forge.codex_worker import _fingerprint as _codex_fingerprint
 from nornyx_forge.codex_worker import _validated_session_id as _codex_validated_session_id
@@ -70,6 +71,9 @@ from provider_specimens import deep_nested_json as _deep_nested_json  # noqa: E4
 from provider_specimens import emitted as _emitted  # noqa: E402
 from provider_specimens import emitting_cli as _emitting_cli  # noqa: E402
 from provider_specimens import emitting_cli_mixed as _emitting_cli_mixed  # noqa: E402
+from provider_specimens import (  # noqa: E402
+    expected_command_line_length as _expected_command_line_length,
+)
 from provider_specimens import raw_stdout_cli as _raw_stdout_cli  # noqa: E402
 from provider_specimens import segment as _segment  # noqa: E402
 
@@ -834,8 +838,11 @@ def test_an_over_long_argument_list_is_an_error_naming_its_length_not_unavailabl
     (Windows error 206 raised as `FileNotFoundError` errno 2; POSIX `E2BIG`).
     The adapter must report it in the `error` class with the sizes in the
     sentence, not as `unavailable` under the executable's sentence; the fake
-    CLI never runs. Through the DIRECT worker: the routed path refuses such a
-    goal at `ProviderTask.validate` before any adapter sees it.
+    CLI never runs. Through the DIRECT worker because the specimen is the
+    GOAL: the routed path refuses such a goal at `ProviderTask.validate`
+    before any adapter sees it, and still reaches this branch through the
+    tool list, which `validate` does not bound -- pinned in
+    tests/test_provider_execution.py (round-5 security P2-NEW-1).
     """
     worker = CodexWorker(_fake_cli(tmp_path))
     goal = "x" * 1_000_000
@@ -881,6 +888,48 @@ def test_the_argument_length_classifier_knows_both_platforms_refusals():
     )
     for exc, expected in specimens:
         assert _codex_argument_list_too_long(exc) is expected, exc
+
+
+def test_the_reported_command_line_length_is_the_line_the_platform_counts(
+    tmp_path: Path,
+):
+    """Mirrors the identical Claude specimen (round-5 security P3-NEW-1),
+    for THIS adapter's own `_command_line_length`: the number in the
+    refusal sentence must be the length the refusing platform counts -- on
+    Windows the ONE quoted line `CreateProcess` receives (exactly
+    `subprocess.list2cmdline`, which is what `Popen` builds) plus its
+    terminating NUL, elsewhere the arguments plus one terminator each. The
+    raw sum named a number below the bound it explained (measured on the
+    Windows host: 17000 double quotes summed to 17840 while the line was
+    34841). The rule is computed in the shared specimens module, held here
+    against the function over a quote-heavy vector, then against the
+    sentence of a real refusal -- 140000 double quotes as the goal, which
+    sits inside the prompt, the LAST element of the Codex command vector --
+    over the command the result carries. No skip on any host; the fake CLI
+    never runs.
+    """
+    quote_heavy = ("codex", "exec", "--json", "--sandbox", "read-only", 'say "hi" then "bye"')
+    expected = _expected_command_line_length(quote_heavy)
+    assert _codex_command_line_length(quote_heavy) == expected
+    raw_sum = sum(len(argument) + 1 for argument in quote_heavy)
+    assert expected >= raw_sum
+    if os.name == "nt":
+        assert expected > raw_sum, "the quoted line is longer than the raw sum here"
+
+    worker = CodexWorker(_fake_cli(tmp_path))
+    goal = '"' * 140_000
+    result = worker.run(  # must not raise
+        role="builder", goal=goal, workspace=tmp_path,
+        allowed_tools=("Read", "Write"), timeout_seconds=30,
+    )
+    _assert_malformed_invocation(
+        result, sentence="exceeds the operating system's command-line length"
+    )
+    reported = _expected_command_line_length(result.command)
+    assert (
+        f"command-line length: {reported} characters across "
+        f"{len(result.command)} arguments, the goal alone {len(goal)} characters"
+    ) in result.output, result.output[:300]
 
 
 @pytest.mark.parametrize("shape", ["missing", "file", "nul"])

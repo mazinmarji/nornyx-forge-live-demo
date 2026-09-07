@@ -235,8 +235,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # exercised on both platforms' refusals (E2BIG, and Windows error 206
     # arriving as errno 2), and the cross-module identity test holding both
     # adapters' session rules and bound equal over the shared specimen table.
-    # Floor at band(66) = 60.
-    "tests/test_provider_contract.py": 60,
+    # Floor at band(66) = 60. Raised 60 -> 61 for the parity repair ROUND
+    # FIVE -- 1 new collected (67 total): the reported command-line length
+    # held to the line the platform counts (the quoted `CreateProcess` line
+    # plus its terminator on Windows, the per-argument sum elsewhere),
+    # against the function and against a real refusal's sentence. Floor at
+    # band(67) = 61.
+    "tests/test_provider_contract.py": 61,
     # The Codex adapter's conformance: 10 collected at introduction, floor at
     # band(10) = 9. Same harness technique as the Claude conformance,
     # separate proof -- and the two mapping limits pinned, not hidden.
@@ -263,8 +268,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # here (the 1 MB specimen takes the Windows error-206 arm on the Windows
     # host, and the contract module's classifier test is not run against a
     # Codex mutant). The identity test stays in the contract module. Floor at
-    # band(58) = 53.
-    "tests/test_codex_provider.py": 53,
+    # band(58) = 53. Raised 53 -> 54 for the parity repair ROUND FIVE -- 1
+    # new collected (59 total): the same command-line-length rule held for
+    # THIS adapter's own function and refusal sentence. Floor at
+    # band(59) = 54.
+    "tests/test_codex_provider.py": 54,
     # The pre-registered equivalence proof: 18 collected at introduction,
     # floor at band(18) = 17. The criteria were frozen in
     # docs/governance/PROVIDER_EQUIVALENCE_PREREG.md one commit before this
@@ -309,8 +317,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # bounded on its own, and the bound's relation to the contract's own
     # ceiling; the static composition pin became the behavioural one that
     # drives `acceptance()` with a spy in `compose_repair_goal`'s place.
-    # Floor at band(18) = 17.
-    "tests/test_provider_execution.py": 17,
+    # Floor at band(18) = 17. Raised 17 -> 18 for the parity repair ROUND
+    # FIVE -- 2 new collected (20 total): a routed task with a short goal
+    # and a long tool list reaches the adapters' argument-length branch on
+    # both adapters, which `ProviderTask.validate` does not prevent (it
+    # bounds the goal, not the tool list or the workspace). Floor at
+    # band(20) = 18.
+    "tests/test_provider_execution.py": 18,
     # The confirmed capsule provider drives the build; proposals never do:
     # 7 collected at introduction, floor at band(7) = 7. The authority
     # split extended to execution, over the real CLI and a real store.
@@ -797,16 +810,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_provider_execution.py (13 -> 18), floor 12 -> 17;
 # tests/test_independent_inspection.py stays at 41 (the 8.3 test was
 # rewritten in place). No module added, so 111 stands; the module-floor sum
-# rises by 10 and the aggregate follows:
+# rises by 10 and the aggregate follows. Re-measured for the parity repair
+# ROUND FIVE, closing the fourth model-only bounded review (the routed
+# path's reachability of the argument-length branch pinned, the reported
+# length made the line the platform counts): 1 new collected in
+# tests/test_provider_contract.py (66 -> 67), floor 60 -> 61; 1 more in
+# tests/test_codex_provider.py (58 -> 59), floor 53 -> 54; 2 more in
+# tests/test_provider_execution.py (18 -> 20), floor 17 -> 18. No module
+# added, so 111 stands; the module-floor sum rises by 3 and the aggregate
+# follows:
 #
 # (rows below):
 #
-#     collected across tests/     2973   (111 modules)
-#     sum of the module floors    2731
-#     band(2973) = ceil(0.9*n)    2676
-#     MINIMUM_COLLECTED           2739
+#     collected across tests/     2977   (111 modules)
+#     sum of the module floors    2734
+#     band(2977) = ceil(0.9*n)    2680
+#     MINIMUM_COLLECTED           2742
 #     above the module sum         8
-#     below what collects         234
+#     below what collects         235
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -827,7 +848,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 242 in total, and the aggregate refuses
+# per-module bands already grant 243 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -848,7 +869,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2739
+MINIMUM_COLLECTED = 2742
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

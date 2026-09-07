@@ -84,8 +84,16 @@ exception and errno an absent executable produces, told apart only by
 line's length in the sentence, rather than as `unavailable` (127) under a
 sentence blaming the executable. Measured on the Windows host this was written
 on: a 33000-character argument fails that way and a 32000-character one runs.
-The routed path never reaches this -- `ProviderTask.validate` refuses a goal
-above 8000 characters first -- so it guards the direct worker's callers.
+The length the sentence names is the one the refusing platform counts: on
+Windows the ONE quoted line `CreateProcess` receives plus its terminating NUL,
+elsewhere the arguments plus one terminator each (`_command_line_length`).
+The routed path reaches this too. `ProviderTask.validate` bounds the GOAL
+(8000 characters) but neither the tool list nor the workspace path, so a
+routed caller with a short goal and a long `allowed_tools` arrives here
+through the joined list -- measured through the real routed worker on this
+host: a 12-character goal and 90 tools joined to 36449 characters ended here
+on both adapters. An earlier form of this paragraph said the routed path
+never reaches it; that was true of the goal and false of the invocation.
 """
 
 from __future__ import annotations
@@ -274,9 +282,12 @@ class CodexWorker:
                 # the composition, and "executable could not be started"
                 # would send it looking in the wrong place. Here the goal
                 # sits inside the prompt, the LAST element of the command
-                # vector. The routed path cannot reach this line:
-                # `ProviderTask.validate` refuses a goal above 8000
-                # characters before any adapter runs.
+                # vector, and so does the joined tool list. The routed path
+                # reaches this line too: `ProviderTask.validate` bounds the
+                # goal (8000 characters) but neither the tool list nor the
+                # workspace path, so a short goal beside a long
+                # `allowed_tools` arrives here through that list (pinned in
+                # tests/test_provider_execution.py).
                 return WorkerResult(
                     role=role,
                     goal=goal,
@@ -463,11 +474,26 @@ def _argument_list_too_long(exc: OSError) -> bool:
 
 
 def _command_line_length(command: tuple[str, ...]) -> int:
-    """How many characters the argument vector occupies: the arguments plus
-    one separator each. A platform-neutral count of what was handed to the
-    operating system (Windows quotes some arguments and counts the result
-    against 32767; POSIX counts bytes with terminators), so the sentence that
-    reports the refusal names a size and not only the fact."""
+    """How many characters the invocation occupies, counted the way the
+    platform that refused it counts -- so the sentence that reports the
+    refusal names a size the bound can be compared with, not only the fact.
+
+    ON WINDOWS (`os.name == "nt"`): the length of the ONE quoted line
+    `CreateProcess` receives -- `subprocess.list2cmdline(command)`, which is
+    exactly what `Popen` builds from the argument vector -- plus its
+    terminating NUL, because the 32767-character bound includes that
+    terminator. Quoting is not free: an argument with a space or a quote
+    gains surrounding quotes and every quote inside it a backslash, so a sum
+    over the raw arguments can name a number BELOW the bound it is
+    explaining. Measured on the Windows host: a goal of 17000 double quotes
+    summed to 17590 while the line handed to `CreateProcess` was 34591.
+
+    ON POSIX: each argument plus one terminator, in CHARACTERS. The kernel
+    counts bytes, so for non-ASCII text this is a lower bound on what
+    `execve` saw; no quoting happens there, the vector is passed as it is.
+    Identical to `claude_worker.py`'s rule."""
+    if os.name == "nt":
+        return len(subprocess.list2cmdline(command)) + 1
     return sum(len(argument) + 1 for argument in command)
 
 #: The line Forge writes between its own account of a run and any decoded

@@ -104,6 +104,13 @@ def _within(text: str, limit: int, *, keep: str) -> str:
     puts the marker last, on its own line. The marker's own length counts
     against `limit`, and the number in it is settled against that length, so
     the count it names is the count actually omitted.
+
+    PRECONDITION for "exactly `limit`": `limit` is at least the marker plus
+    the glue -- 29 fixed characters plus the omitted count's digits, plus
+    one newline for `keep="head"` and nothing for `keep="tail"`. Below that
+    the kept length bottoms out at zero and the result is the marker (and
+    glue) alone, LONGER than `limit` (measured: `limit=5` over 100
+    characters returns 33). Both callers pass 2500 and 7000.
     """
     if len(text) <= limit:
         return text
@@ -136,8 +143,9 @@ def _failing_gate_quotes(gates: list[GateResult]) -> list[tuple[str, str]]:
 def failing_gate_details(gates: list[GateResult]) -> str:
     """What the failing gates said, as the ledger records it: each failing
     gate's name and the last `REPAIR_DETAIL_TAIL_CHARACTERS` (2500)
-    characters of its detail, un-escaped, with no bound on the total -- a
-    record, not an argument, so nothing here is sanitised or capped."""
+    characters of its detail. That per-gate tail is the only cut: nothing
+    is escaped, and the total is not bounded -- a record, not an argument,
+    so it is neither sanitised nor held to the composed goal's ceiling."""
     return "\n\n".join(f"{name}: {tail}" for name, tail in _failing_gate_quotes(gates))
 
 

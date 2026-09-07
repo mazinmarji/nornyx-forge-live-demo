@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -251,6 +252,19 @@ def deep_nested_json(shape: str) -> str:
     if shape == "object":
         return ('{"a":' * DEEP_NESTING_DEPTH) + "1" + ("}" * DEEP_NESTING_DEPTH)
     raise ValueError(f"unknown deep_nested_json shape: {shape!r}")
+
+
+def expected_command_line_length(command: tuple[str, ...]) -> int:
+    """The length the platform that refuses an over-long invocation counts,
+    computed here independently of either adapter's `_command_line_length`
+    so both suites hold both adapters to ONE rule (round-5 security
+    P3-NEW-1). Windows: the ONE quoted line `CreateProcess` receives --
+    `subprocess.list2cmdline`, exactly what `Popen` builds from the vector
+    -- plus its terminating NUL, which the 32767-character bound includes.
+    POSIX: each argument plus one terminator, in characters."""
+    if os.name == "nt":
+        return len(subprocess.list2cmdline(command)) + 1
+    return sum(len(argument) + 1 for argument in command)
 
 
 def raw_stdout_cli(tmp_path: Path, name: str, text: str, *, exit_code: int = 0) -> str:

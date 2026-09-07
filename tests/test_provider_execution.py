@@ -204,6 +204,60 @@ def test_the_routed_worker_refuses_an_impostor_adapter():
         ProviderRoutedWorker(Impostor())
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_a_routed_task_reaches_the_argument_length_branch_through_its_tool_list(
+    tmp_path: Path, provider: str
+):
+    """Round-5 security P2-NEW-1. Five sentences said the routed path never
+    reaches the adapters' argument-too-long branch because
+    `ProviderTask.validate` refuses a goal above 8000 characters first.
+    `validate` bounds the GOAL; it bounds neither the tool list (each tool:
+    a non-empty `str` with no comma -- no length rule, no count rule) nor
+    the workspace path. So a routed task with a 12-character goal and a long
+    `allowed_tools` passes the contract and reaches the operating system's
+    refusal through the joined list: `--allowedTools a,b,...` on Claude,
+    `Intended tools: a, b, ...` inside the prompt on Codex. Measured through
+    the real routed worker on the Windows host: 90 tools joined to 36449
+    characters ended in `error` (2) with `[WinError 206]` on both adapters.
+
+    The specimen is refused on both CI platforms BY CONSTRUCTION: Windows
+    bounds the whole line at 32767 characters; Linux bounds a SINGLE
+    argument at `MAX_ARG_STRLEN` (131072 bytes) and answers `E2BIG`, and the
+    joined list here is one argument of 150149 characters. The class and the
+    sentence's three fragments are asserted, not the number. The fake CLI
+    exits 0 with a session event, so a run that had spawned would have
+    reported success. Not measured on macOS (not in the CI matrix), which
+    bounds the total rather than one argument.
+    """
+    tools = tuple(f"tool{index:03d}" + "x" * 993 for index in range(150))
+    goal = "twelve chars"
+    assert len(",".join(tools)) >= 140_000 and len(goal) < CONTRACT_GOAL_MAX_CHARACTERS
+    # The contract admits the task -- the sentences this test replaces said
+    # it would not. Asked of the contract, not assumed.
+    ProviderTask(role="builder", goal=goal, workspace=str(tmp_path),
+                 allowed_tools=tools, max_turns=1, timeout_seconds=30).validate()
+
+    cli = _fake_cli(tmp_path, f"ok-{provider}", stdout=JSONL_EVENT)
+    adapter = (ClaudeProviderAdapter(ClaudeCodeWorker(cli)) if provider == "claude"
+               else CodexProviderAdapter(CodexWorker(cli)))
+    result = ProviderRoutedWorker(adapter).run(  # must not raise ProviderError
+        role="builder", goal=goal, workspace=tmp_path,
+        allowed_tools=tools, max_turns=1, timeout_seconds=30,
+    )
+    assert result.provider == provider
+    assert result.success is False
+    assert result.failure_class == "error", (result.failure_class, result.output[:200])
+    assert result.returncode == MALFORMED_INVOCATION_RETURNCODE
+    assert "exceeds the operating system's command-line length" in result.output, (
+        result.output[:300]
+    )
+    assert f"across {len(result.command)} arguments" in result.output, result.output[:300]
+    assert f"the goal alone {len(goal)} characters" in result.output, result.output[:300]
+    assert "could not be started" not in result.output, (
+        "the argument length was blamed on the executable"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Composition: provider output becomes the repair goal. A NUL in it must not
 # become a NUL in the next invocation's arguments, and the composed goal must

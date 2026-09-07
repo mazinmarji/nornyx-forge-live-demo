@@ -41,6 +41,7 @@ from nornyx_forge.claude_worker import (
 from nornyx_forge.claude_worker import (
     _argument_list_too_long as _claude_argument_list_too_long,
 )
+from nornyx_forge.claude_worker import _command_line_length as _claude_command_line_length
 from nornyx_forge.claude_worker import _decode as _claude_decode
 from nornyx_forge.claude_worker import _fingerprint as _claude_fingerprint
 from nornyx_forge.claude_worker import _validated_session_id as _claude_validated_session_id
@@ -74,6 +75,9 @@ from provider_specimens import deep_nested_json as _deep_nested_json  # noqa: E4
 from provider_specimens import emitted as _emitted  # noqa: E402
 from provider_specimens import emitting_cli as _emitting_cli  # noqa: E402
 from provider_specimens import emitting_cli_mixed as _emitting_cli_mixed  # noqa: E402
+from provider_specimens import (  # noqa: E402
+    expected_command_line_length as _expected_command_line_length,
+)
 from provider_specimens import raw_stdout_cli as _raw_stdout_cli  # noqa: E402
 from provider_specimens import segment as _segment  # noqa: E402
 
@@ -921,9 +925,11 @@ def test_an_over_long_argument_list_is_an_error_naming_its_length_not_unavailabl
     POSIX `execve` refuses with `E2BIG` (a single argument above the kernel's
     per-argument limit). Both must land in the `error` class with the sizes
     in the sentence, and the fake CLI never runs. Reached through the DIRECT
-    worker on purpose: the routed path refuses a goal above 8000 characters
-    at `ProviderTask.validate` before any adapter sees it, which is exactly
-    why this guard belongs to the direct worker's callers.
+    worker because the specimen is the GOAL: the routed path refuses a goal
+    above 8000 characters at `ProviderTask.validate` before any adapter sees
+    it. The routed path still reaches this branch through the tool list,
+    which `validate` does not bound -- pinned in
+    tests/test_provider_execution.py (round-5 security P2-NEW-1).
     """
     worker = ClaudeCodeWorker(_fake_cli(tmp_path))
     goal = "x" * 1_000_000
@@ -968,6 +974,52 @@ def test_the_argument_length_classifier_knows_both_platforms_refusals():
     for exc, expected in specimens:
         assert _claude_argument_list_too_long(exc) is expected, exc
         assert codex_rule(exc) is expected, exc
+
+
+def test_the_reported_command_line_length_is_the_line_the_platform_counts(
+    tmp_path: Path,
+):
+    """Round-5 security P3-NEW-1. The number in the refusal sentence was a
+    sum over the raw arguments; Windows counts the ONE quoted line
+    `CreateProcess` receives -- `subprocess.list2cmdline(command)`, exactly
+    what `Popen` builds -- against 32767, terminator included. Quoting is
+    not free (every quote inside an argument gains a backslash, the argument
+    gains surrounding quotes), so the raw sum could name a number BELOW the
+    bound it was explaining: measured on the Windows host, a goal of 17000
+    double quotes summed to 17590 while the line was 34591.
+
+    The rule is computed HERE, independently of the adapter, for the
+    platform this test runs on -- the quoted line plus its terminating NUL
+    on Windows, the arguments plus one terminator each elsewhere -- so the
+    assertion holds on every host without a skip. First against the
+    function over a quote-heavy vector; then against the sentence of a real
+    refusal through the real worker: 140000 double quotes as the goal, one
+    argument above Linux's `MAX_ARG_STRLEN` and a quoted line far above
+    Windows's 32767, whose sentence must name the rule's number for the
+    command the result carries. The fake CLI never runs.
+    """
+    quote_heavy = ("claude", "-p", 'say "hi" then "bye"', "--allowedTools", 'Read,"Write"')
+    expected = _expected_command_line_length(quote_heavy)
+    assert _claude_command_line_length(quote_heavy) == expected
+    raw_sum = sum(len(argument) + 1 for argument in quote_heavy)
+    assert expected >= raw_sum
+    if os.name == "nt":
+        assert expected > raw_sum, "the quoted line is longer than the raw sum here"
+
+    worker = ClaudeCodeWorker(_fake_cli(tmp_path))
+    goal = '"' * 140_000
+    result = worker.run(  # must not raise
+        role="builder", goal=goal, workspace=tmp_path,
+        allowed_tools=("Read", "Write"), max_turns=1, timeout_seconds=30,
+    )
+    _assert_malformed_invocation(
+        result, sentence="exceeds the operating system's command-line length"
+    )
+    reported = _expected_command_line_length(result.command)
+    assert (
+        f"command-line length: {reported} characters across "
+        f"{len(result.command)} arguments, the goal alone {len(goal)} characters"
+    ) in result.output, result.output[:300]
 
 
 def test_both_adapters_apply_the_same_session_identifier_rule():

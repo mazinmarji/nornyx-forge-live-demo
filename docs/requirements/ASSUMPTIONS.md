@@ -1248,7 +1248,8 @@ the rest are the same claim discipline again:
   cause as the pipe being held; the control corrects the cause, not the
   fact.) Both were recorded in the maintenance census before this round and
   are repeated here so that A-025 does not read as though the adapters
-  bound what they do not.
+  bound what they do not. The round-five addendum below gathers these two
+  with two more into one open-items list.
 
 **Addendum (parity repair round four).** Closing the third model-only
 bounded review (the same three read-only inspectors, attacking the round
@@ -1293,8 +1294,10 @@ Contract:
   the `OSError` catch and report a WorkerResult in the `error` class whose
   sentence names the command line's length, the argument count and the
   goal's length; every other `OSError` there stays `unavailable` and stays
-  about the executable. The routed path cannot reach this: the contract
-  refuses a goal above 8000 characters first.
+  about the executable. This bullet first ended "the routed path cannot
+  reach this: the contract refuses a goal above 8000 characters first" --
+  true of the goal, false of the invocation; corrected in the round-five
+  addendum below.
 - **Two sentences were broader than the measurement.** The adapters'
   docstrings said Forge's account is ALWAYS the part before the first
   delimiter; that holds on the two delimited failure branches only -- on
@@ -1320,6 +1323,73 @@ Contract:
   grep can honestly answer. The two adapters' session rules are held
   identical over one shared specimen table of accepted and refused values,
   and their bound equal, rather than inferred from mirrored suites.
+
+**Addendum (parity repair round five).** Closing the fourth model-only
+bounded review (the same three read-only inspectors, attacking the round
+above; two found nothing blocking and left notes, the third returned one
+prose finding). Nothing here changes confinement, eligibility or the
+Provider Contract:
+
+- **"The routed path cannot reach the argument-length branch" was false.**
+  Five sentences said it -- both adapters' module docstrings, the comments
+  at their `OSError` catch, and the round-four bullet above -- on the ground
+  that `ProviderTask.validate` refuses a goal above 8000 characters first.
+  `validate` bounds the GOAL. It bounds neither `allowed_tools` (each tool
+  must be a non-empty string without a comma; no length, no count) nor the
+  workspace path (a non-empty string). Measured through the real
+  `ProviderRoutedWorker` on this Windows host: a 12-character goal and 90
+  tools whose joined list is 36449 characters ends in the `error` class (2)
+  on both adapters -- `command-line length: 37047 characters across 9
+  arguments, the goal alone 12 characters: [WinError 206]` on Claude,
+  `37392 characters across 11 arguments` on Codex. The behaviour was right;
+  the claim was not. All five sentences now say what `validate` bounds and
+  what it does not, and the reachability is pinned by one routed specimen
+  run on both adapters
+  (`test_a_routed_task_reaches_the_argument_length_branch_through_its_tool_list`):
+  a 12-character goal beside 150 tools of 1000 characters, a joined list of
+  150149 characters -- above the 32767-character line Windows accepts and,
+  as ONE argument, above Linux's `MAX_ARG_STRLEN` (131072), so both CI
+  platforms refuse it by construction. The class and the sentence's three
+  fragments are asserted, not the number. Not measured on macOS, which is
+  not in the CI matrix and bounds the total rather than one argument.
+- **The reported length could sit below the bound it explained.** The
+  number in the sentence was a sum of the raw arguments plus one separator
+  each. Windows counts the ONE quoted line `subprocess.list2cmdline` builds
+  -- exactly what `Popen` hands `CreateProcess` -- against 32767, terminator
+  included, and quoting is not free: every quote inside an argument gains a
+  backslash and the argument gains surrounding quotes. Measured: a goal of
+  17000 double quotes was reported as `17590 characters` while the line was
+  34591 (Codex: 17840 against 34841). Both adapters' `_command_line_length`
+  now count `len(list2cmdline(command)) + 1` on Windows -- the quoted line
+  plus the terminating NUL the bound includes -- and keep the per-argument
+  sum, in characters, elsewhere; the docstring says which is measured where,
+  and that the POSIX figure is a character count under a kernel that counts
+  bytes. Pinned in both adapter suites without a skip
+  (`test_the_reported_command_line_length_is_the_line_the_platform_counts`,
+  once per suite): the rule is computed in the test for the running
+  platform and held against the function on a quote-heavy vector, then
+  against the sentence of a real refusal -- 140000 double quotes as the
+  goal, refused by both CI platforms -- over the command the result carries.
+- **Open items, gathered in one place.** None is closed here; the first two
+  are restated from the round-three addendum above so that the list is in
+  one place:
+  - `WorkerResult.output` has no ceiling: an arbitrarily large stream is
+    retained in memory whole, and a `MemoryError` there is not caught.
+  - `timeout_seconds` bounds the provider process, not wall time: after the
+    kill, `subprocess.run` keeps collecting for as long as a grandchild of
+    the provider lives.
+  - Pre-existing and host-dependent, recorded from the round-five review's
+    measurement: a workspace path long enough to pass `os.path.isdir` and
+    still be refused by `CreateProcess` (12117 characters with long paths
+    enabled, `[WinError 267] The directory name is invalid`) lands in the
+    `OSError` arm as `unavailable` (127) under the executable's sentence --
+    a second way into the check-to-spawn window the round-three bullet
+    leaves open.
+  - C1 controls and bidi formatting characters in composed prompts:
+    `compose_repair_goal` escapes the C0 controls other than tab, newline
+    and carriage return; U+0080..U+009F and the bidi controls (U+202A..
+    U+202E, U+2066..U+2069) pass into the composed goal as they are.
+    Carried in the pull request since round three; durable here now.
 
 **Pre-registration amendment.** The provider-adapter parity slice narrows
 what `session_present` means in the frozen equivalence projection
