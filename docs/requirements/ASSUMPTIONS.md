@@ -1034,6 +1034,16 @@ timeout branch to the same point. No provider confinement, eligibility or
 admission change: `PROVIDER_CONFINEMENT["claude"]` stays `none`. Reading a
 provider's bytes correctly says nothing about what that provider may reach.
 
+**Pre-registration amendment.** The provider-adapter parity slice narrows
+what `session_present` means in the frozen equivalence projection
+(`docs/governance/PROVIDER_EQUIVALENCE_PREREG.md`, section 5): a session
+identifier counts as present only when it passed validation as an ASCII
+identifier. That narrowing is recorded as section 11 of the
+pre-registration in its own commit, which precedes the slice commit that
+applies it, as the freeze protocol requires; the amendment is
+builder-proposed under the founder's standing instruction and not
+founder-ratified.
+
 **Serves.** the Provider Contract's rule that failure is a WorkerResult and
 never an exception, and the claim discipline in `CLAUDE.md` that forbids
 substituting a label for the thing measured -- here, text for bytes.
