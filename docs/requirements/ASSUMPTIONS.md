@@ -1370,6 +1370,14 @@ Provider Contract:
   platform and held against the function on a quote-heavy vector, then
   against the sentence of a real refusal -- 140000 double quotes as the
   goal, refused by both CI platforms -- over the command the result carries.
+  Corrected in round six: the round-five sentence could still name a
+  sub-bound length when 206 came from the executable path -- `CreateProcess`
+  answers the same 206 for an over-long executable path, measured as an
+  existing 333-character `.cmd` shim reported in the `error` class as
+  `343 characters` -- so round six gates the arm on the computed line
+  exceeding 32767 (`WINDOWS_COMMAND_LINE_LIMIT`, held against two real
+  spawns: a 32766-character line accepted, 32767 refused with 206) and
+  sends a sub-bound 206 to the executable arm, `unavailable` (127).
 - **Open items, gathered in one place.** None is closed here; the first two
   are restated from the round-three addendum above so that the list is in
   one place:

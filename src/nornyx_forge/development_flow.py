@@ -110,7 +110,8 @@ def _within(text: str, limit: int, *, keep: str) -> str:
     one newline for `keep="head"` and nothing for `keep="tail"`. Below that
     the kept length bottoms out at zero and the result is the marker (and
     glue) alone, LONGER than `limit` (measured: `limit=5` over 100
-    characters returns 33). Both callers pass 2500 and 7000.
+    characters returns 33 with `keep="head"` -- the marker plus its newline
+    -- and 32 with `keep="tail"`). Both callers pass 2500 and 7000.
     """
     if len(text) <= limit:
         return text

@@ -159,6 +159,24 @@ EXPECTED_SKIPS = {
     # names FAILS the test there rather than turning it into this skip.
     "tests/test_independent_inspection.py::test_short_path_name_is_the_real_8_3_form_on_windows":
         "GetShortPathNameW is a Windows API, and a volume may have 8.3 generation disabled; the test asks the API directly whether a short form exists and skips only when the API is absent or yields none. The property is not weakened: the missing-path and off-Windows None branches run on every host, and the real 8.3 form is exercised on any Windows workstation whose volume generates one.",
+    # Parity repair round six (security F-1 and F-2). `CreateProcess` is the
+    # only spawn API that answers error 206 for an over-long EXECUTABLE PATH,
+    # and its 32767-character command-line bound is the only bound the
+    # adapters' WINDOWS_COMMAND_LINE_LIMIT can be held against by a real
+    # spawn. Off Windows there is nothing to spawn against, so these three
+    # skip there and the Linux census names them by identity; on a Windows
+    # workstation they execute and the exemptions are reported unused, the
+    # platform-dependent shape the census already tolerates for the 8.3 test
+    # above. The property is not weakened: the classifier's rule -- a 206 is
+    # the length refusal only when the computed line exceeds the bound --
+    # runs on every host over synthesised 206s on either side of the bound in
+    # both adapter suites' classifier tests.
+    "tests/test_provider_contract.py::test_an_over_long_executable_path_is_unavailable_not_a_length_refusal":
+        "Only CreateProcess answers error 206 for an over-long executable path, so the real-spawn half of this proof exists on Windows alone; it also skips on a Windows volume without long-path support, which cannot hold the 300-character path. The property is not weakened: the classifier's rule runs on every host over synthesised 206s in both adapter suites' classifier tests.",
+    "tests/test_codex_provider.py::test_an_over_long_executable_path_is_unavailable_not_a_length_refusal":
+        "Only CreateProcess answers error 206 for an over-long executable path, so the real-spawn half of this proof exists on Windows alone; it also skips on a Windows volume without long-path support, which cannot hold the 300-character path. The property is not weakened: the classifier's rule runs on every host over synthesised 206s in both adapter suites' classifier tests.",
+    "tests/test_provider_contract.py::test_the_windows_command_line_limit_is_the_operating_systems_not_a_copy_of_the_rule":
+        "The 32767-character bound is CreateProcess's, and the two real spawns that hold WINDOWS_COMMAND_LINE_LIMIT against it (a 32766-character line accepted, 32767 refused with 206) exist on Windows alone. The property is not weakened: the classifier's boundary semantics are held on every host by synthesised specimens on either side of the constant, and the routed tool-list specimen exceeds the bound on both CI platforms.",
 }
 
 
@@ -240,8 +258,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # held to the line the platform counts (the quoted `CreateProcess` line
     # plus its terminator on Windows, the per-argument sum elsewhere),
     # against the function and against a real refusal's sentence. Floor at
-    # band(67) = 61.
-    "tests/test_provider_contract.py": 61,
+    # band(67) = 61. Raised 61 -> 63 for the parity repair ROUND SIX -- 2
+    # new collected (69 total): an existing executable at an over-long path
+    # (CreateProcess answers the same error 206 as the length refusal) held
+    # to the unavailable class under the executable's sentence, and the
+    # 32767-character bound held against two real spawns of the operating
+    # system rather than against a copy of the rule; the classifier test
+    # was rewritten in place to take the command. Both new tests skip off
+    # Windows by declared exemption. Floor at band(69) = 63.
+    "tests/test_provider_contract.py": 63,
     # The Codex adapter's conformance: 10 collected at introduction, floor at
     # band(10) = 9. Same harness technique as the Claude conformance,
     # separate proof -- and the two mapping limits pinned, not hidden.
@@ -271,7 +296,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # band(58) = 53. Raised 53 -> 54 for the parity repair ROUND FIVE -- 1
     # new collected (59 total): the same command-line-length rule held for
     # THIS adapter's own function and refusal sentence. Floor at
-    # band(59) = 54.
+    # band(59) = 54. Parity repair ROUND SIX -- 1 new collected (60 total):
+    # the over-long executable path specimen mirrored for THIS adapter
+    # (Windows only, by declared exemption); the classifier test rewritten
+    # in place to take the command. band(60) = 54, so the floor stands.
     "tests/test_codex_provider.py": 54,
     # The pre-registered equivalence proof: 18 collected at introduction,
     # floor at band(18) = 17. The criteria were frozen in
@@ -818,16 +846,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # tests/test_codex_provider.py (58 -> 59), floor 53 -> 54; 2 more in
 # tests/test_provider_execution.py (18 -> 20), floor 17 -> 18. No module
 # added, so 111 stands; the module-floor sum rises by 3 and the aggregate
-# follows:
+# follows. Re-measured for the parity repair ROUND SIX, closing the fifth
+# model-only bounded review against 6ea2a09 (Windows error 206 shared
+# between the length refusal and an over-long executable path, the arm
+# gated on the computed line exceeding the bound, the bound held against
+# the operating system): 2 new collected in tests/test_provider_contract.py
+# (67 -> 69), floor 61 -> 63; 1 more in tests/test_codex_provider.py
+# (59 -> 60), floor unchanged at band(60) = 54;
+# tests/test_provider_execution.py stays at 20. No module added, so 111
+# stands; the module-floor sum rises by 2 and the aggregate follows:
 #
 # (rows below):
 #
-#     collected across tests/     2977   (111 modules)
-#     sum of the module floors    2734
-#     band(2977) = ceil(0.9*n)    2680
-#     MINIMUM_COLLECTED           2742
+#     collected across tests/     2980   (111 modules)
+#     sum of the module floors    2736
+#     band(2980) = ceil(0.9*n)    2682
+#     MINIMUM_COLLECTED           2744
 #     above the module sum         8
-#     below what collects         235
+#     below what collects         236
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -848,7 +884,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 243 in total, and the aggregate refuses
+# per-module bands already grant 244 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -869,7 +905,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2742
+MINIMUM_COLLECTED = 2744
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

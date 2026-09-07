@@ -70,18 +70,28 @@ into a NEW invocation is the caller's act, and `development_flow` sanitises
 control characters -- and bounds the length -- at that composition.
 
 AN ARGUMENT LIST CAN ALSO BE TOO LONG for the operating system, and that is
-reported as what it is. Windows bounds a command line at 32767 characters and
-`CreateProcess` refuses a longer one with `ERROR_FILENAME_EXCED_RANGE` (206),
-which CPython raises as `FileNotFoundError` with errno 2 -- the same
-exception and errno an absent executable produces, told apart only by
-`winerror`; a POSIX `execve` refuses with `E2BIG`. Both are recognised at the
-`OSError` catch below and reported in the `error` class with the command
-line's length in the sentence, rather than as `unavailable` (127) under a
-sentence blaming the executable. Measured on the Windows host this was written
-on: a 33000-character argument fails that way and a 32000-character one runs.
+reported as what it is. Windows bounds a command line at 32767 characters
+(`WINDOWS_COMMAND_LINE_LIMIT`, terminator included) and `CreateProcess`
+refuses a longer one with `ERROR_FILENAME_EXCED_RANGE` (206), which CPython
+raises as `FileNotFoundError` with errno 2 -- the same exception and errno an
+absent executable produces, told apart only by `winerror`; a POSIX `execve`
+refuses with `E2BIG`. Both are recognised at the `OSError` catch below and
+reported in the `error` class with the command line's length in the sentence,
+rather than as `unavailable` (127) under a sentence blaming the executable.
+Measured on the Windows host this was written on: a 33000-character argument
+fails that way and a 32000-character one runs. 206 IS NOT ONLY THE LENGTH
+REFUSAL: `CreateProcess` answers the same 206 for an executable whose PATH is
+too long -- measured, an existing 333-character `.cmd` shim under a
+343-character line -- so `winerror` alone cannot say which bound was hit. The
+two are told apart by the line Forge built: the length arm holds only when
+`_command_line_length(command)` exceeds `WINDOWS_COMMAND_LINE_LIMIT`, and a
+206 under a sub-bound line is the executable's and lands in `unavailable`
+(127) under the executable's sentence. An earlier form of this rule took
+every 206 as the length refusal and named a sub-bound length in its sentence.
 The length the sentence names is the one the refusing platform counts: on
 Windows the ONE quoted line `CreateProcess` receives plus its terminating NUL,
-elsewhere the arguments plus one terminator each (`_command_line_length`).
+elsewhere the arguments' characters plus one terminator each
+(`_command_line_length`).
 The routed path reaches this too. `ProviderTask.validate` bounds the GOAL
 (8000 characters) but neither the tool list nor the workspace path, so a
 routed caller with a short goal and a long `allowed_tools` arrives here
@@ -247,13 +257,15 @@ class ClaudeCodeWorker:
                 returncode=MALFORMED_INVOCATION_RETURNCODE,
             )
         except OSError as exc:
-            if _argument_list_too_long(exc):
+            if _argument_list_too_long(exc, command):
                 # The operating system refused the INVOCATION for its length,
                 # not the executable. Windows bounds a command line at 32767
                 # characters and `CreateProcess` answers error 206, which
                 # CPython raises as `FileNotFoundError` with errno 2 -- the
                 # absent-executable errno -- so only `winerror` tells the two
-                # apart; a POSIX `execve` answers `E2BIG`. Reported in the
+                # apart, and 206 is itself shared with an over-long EXECUTABLE
+                # PATH, so the classifier also reads the computed line against
+                # the bound; a POSIX `execve` answers `E2BIG`. Reported in the
                 # `error` class with the length in the sentence, because a
                 # caller that composed an argument this long has a defect in
                 # the composition, and "executable could not be started"
@@ -452,27 +464,55 @@ SESSION_ID_MAX_LENGTH = 200
 MALFORMED_INVOCATION_RETURNCODE = 2
 
 #: The Windows system error `CreateProcess` answers when the command line
-#: exceeds its 32767-character bound: ERROR_FILENAME_EXCED_RANGE. CPython maps
-#: it to errno ENOENT (2), so `OSError.errno` cannot tell it from an absent
-#: executable; `OSError.winerror` can. Duplicated in `codex_worker.py`.
+#: exceeds its bound: ERROR_FILENAME_EXCED_RANGE. CPython maps it to errno
+#: ENOENT (2), so `OSError.errno` cannot tell it from an absent executable;
+#: `OSError.winerror` can -- but 206 is SHARED. `CreateProcess` answers the
+#: same 206 for an executable whose PATH is too long (measured on the Windows
+#: host: an existing 333-character `.cmd` shim, and a 335-character copy of
+#: `python.exe`, each under a line of about 343 characters), so the number
+#: alone does not say which bound was hit. Duplicated in `codex_worker.py`.
 _ARGUMENT_TOO_LONG_WINERROR = 206
 
+#: The longest command line `CreateProcess` accepts, counted the way
+#: `_command_line_length` counts on Windows: the quoted line INCLUDING its
+#: terminating NUL. Measured against the operating system on the Windows host
+#: this was written on, not against a copy of the rule: a line of 32766
+#: characters (32767 with its terminator) spawned, a line of 32767 (32768
+#: with its terminator) was refused with error 206. So a spawn is refused for
+#: its length exactly when `_command_line_length(command)` EXCEEDS this
+#: value, which is the test `_argument_list_too_long` applies to a 206.
+#: Held against two real spawns in tests/test_provider_contract.py on
+#: Windows. Duplicated in `codex_worker.py`; a test holds the two equal.
+WINDOWS_COMMAND_LINE_LIMIT = 32767
 
-def _argument_list_too_long(exc: OSError) -> bool:
+
+def _argument_list_too_long(exc: OSError, command: tuple[str, ...]) -> bool:
     """Whether the operating system refused the spawn for the LENGTH of its
-    arguments: `E2BIG` from a POSIX `execve`, or Windows error 206 from
-    `CreateProcess` (measured: a 33000-character argument on the Windows host
-    this was written on). Any other `OSError` is about the executable."""
+    arguments. `E2BIG` from a POSIX `execve` is unambiguous and answers
+    True on its own. Windows error 206 is not: `CreateProcess` answers it
+    both for a command line beyond `WINDOWS_COMMAND_LINE_LIMIT` and for an
+    executable whose path is too long, so the 206 arm holds only when the
+    line Forge actually built -- `command`, as `_command_line_length`
+    counts it -- exceeds the bound. A 206 under a sub-bound line is about
+    the executable, like any other `OSError`, and answers False so the
+    caller reports it as `unavailable`. An earlier form took every 206 as
+    the length refusal; measured, that classed an existing executable at a
+    333-character path as an over-long invocation of 343 characters.
+    Duplicated in `codex_worker.py`; a test holds the two rules equal."""
+    if exc.errno == errno.E2BIG:
+        return True
     return (
         getattr(exc, "winerror", None) == _ARGUMENT_TOO_LONG_WINERROR
-        or exc.errno == errno.E2BIG
+        and _command_line_length(command) > WINDOWS_COMMAND_LINE_LIMIT
     )
 
 
 def _command_line_length(command: tuple[str, ...]) -> int:
-    """How many characters the invocation occupies, counted the way the
-    platform that refused it counts -- so the sentence that reports the
-    refusal names a size the bound can be compared with, not only the fact.
+    """How many characters the invocation occupies -- on Windows, counted
+    the way the platform that refused it counts, so the sentence that
+    reports the refusal names a size the bound can be compared with; on
+    POSIX, a count of the arguments' characters only, which is NOT the
+    figure the kernel compared (below).
 
     ON WINDOWS (`os.name == "nt"`): the length of the ONE quoted line
     `CreateProcess` receives -- `subprocess.list2cmdline(command)`, which is
@@ -484,9 +524,14 @@ def _command_line_length(command: tuple[str, ...]) -> int:
     explaining. Measured on the Windows host: a goal of 17000 double quotes
     summed to 17590 while the line handed to `CreateProcess` was 34591.
 
-    ON POSIX: each argument plus one terminator, in CHARACTERS. The kernel
-    counts bytes, so for non-ASCII text this is a lower bound on what
-    `execve` saw; no quoting happens there, the vector is passed as it is.
+    ON POSIX: each argument plus one terminator, in CHARACTERS, and the
+    arguments ONLY. That is not how the kernel counts: `execve` counts
+    BYTES, and counts the environment and the pointer array as well, against
+    `ARG_MAX`; and the bound the specimens in the suites actually exceed is
+    the per-argument `MAX_ARG_STRLEN` (131072 bytes on Linux), which no
+    total describes. So the figure is a lower bound on what `execve` saw,
+    named for the reader of the sentence, not the number the kernel
+    compared. No quoting happens there; the vector is passed as it is.
     Duplicated in `codex_worker.py`; a test in each adapter suite holds it
     to the same rule."""
     if os.name == "nt":

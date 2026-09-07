@@ -29,6 +29,7 @@ import errno
 import hashlib
 import json as _json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from nornyx_forge.codex_worker import (
     MALFORMED_INVOCATION_RETURNCODE,
     PROVIDER_TEXT_DELIMITER,
     SESSION_ID_MAX_LENGTH,
+    WINDOWS_COMMAND_LINE_LIMIT,
     CodexWorker,
     _session_from_jsonl,
 )
@@ -878,16 +880,113 @@ def test_the_argument_length_classifier_knows_both_platforms_refusals():
     Windows error 206 (which arrives with errno 2, so a classifier reading
     errno alone would call it an absent executable), while a plain ENOENT
     or EACCES stays about the executable.
+
+    ROUND SIX (security F-1): 206 IS SHARED. `CreateProcess` answers the
+    same 206 for an executable whose PATH is too long -- measured on the
+    Windows host, an existing 333-character `.cmd` shim under a
+    343-character line -- and the round-five rule took every 206 as the
+    length refusal. THIS adapter's classifier now reads the command too,
+    and the 206 arm holds only when `_command_line_length(command)` EXCEEDS
+    `WINDOWS_COMMAND_LINE_LIMIT`: the specimens sit exactly on either side
+    of it (a count equal to the bound is False, one above it True), and a
+    206 under a short line answers False. `E2BIG` stays True under any
+    line; ENOENT stays False under any line. Synthesised, so the rule runs
+    on every host; the real spawn is the Windows-only specimen below, and
+    the bound itself is held against the operating system in
+    tests/test_provider_contract.py.
     """
+    short = ("codex", "exec", "probe")
+    at_the_bound = ("x" * (WINDOWS_COMMAND_LINE_LIMIT - 1),)
+    past_the_bound = ("x" * WINDOWS_COMMAND_LINE_LIMIT,)
+    assert _codex_command_line_length(at_the_bound) == WINDOWS_COMMAND_LINE_LIMIT
+    assert _codex_command_line_length(past_the_bound) == WINDOWS_COMMAND_LINE_LIMIT + 1
+    too_long = "The filename or extension is too long"
     specimens = (
-        (OSError(errno.E2BIG, "Argument list too long"), True),
-        (_WindowsLengthRefusal(2, "The filename or extension is too long"), True),
-        (OSError(errno.ENOENT, "No such file or directory"), False),
-        (OSError(errno.EACCES, "Permission denied"), False),
-        (PermissionError(errno.EACCES, "Permission denied"), False),
+        (OSError(errno.E2BIG, "Argument list too long"), short, True),
+        (OSError(errno.E2BIG, "Argument list too long"), past_the_bound, True),
+        (_WindowsLengthRefusal(2, too_long), past_the_bound, True),
+        (_WindowsLengthRefusal(2, too_long), at_the_bound, False),
+        (_WindowsLengthRefusal(2, too_long), short, False),
+        (OSError(errno.ENOENT, "No such file or directory"), short, False),
+        (OSError(errno.ENOENT, "No such file or directory"), past_the_bound, False),
+        (OSError(errno.EACCES, "Permission denied"), short, False),
+        (PermissionError(errno.EACCES, "Permission denied"), short, False),
     )
-    for exc, expected in specimens:
-        assert _codex_argument_list_too_long(exc) is expected, exc
+    for exc, command, expected in specimens:
+        specimen = (exc, len(command), len(command[0]))
+        assert _codex_argument_list_too_long(exc, command) is expected, specimen
+
+
+def _over_long_executable_shim(tmp_path: Path) -> str:
+    """An EXISTING `.cmd` shim at a path of at least 300 characters: long
+    enough for `CreateProcess` to refuse the PATH with error 206 while the
+    whole line stays far below the 32767-character bound. A chain of
+    40-character directories under `tmp_path`; `os.makedirs` needs
+    long-path support past 260 characters, and the caller skips, with the
+    reason declared in the census, when the volume refuses to build it.
+    Duplicated from tests/test_provider_contract.py, like `_fake_cli`."""
+    chain = tmp_path
+    while len(str(chain)) < 300:
+        chain = chain / ("d" * 40)
+    os.makedirs(chain, exist_ok=True)
+    shim = chain / "provider.cmd"
+    shim.write_text("@echo off\r\nexit /b 0\r\n", encoding="ascii", newline="")
+    return str(shim)
+
+
+def test_an_over_long_executable_path_is_unavailable_not_a_length_refusal(tmp_path: Path):
+    """Mirrors the identical Claude specimen (round-6 security F-1) for
+    THIS adapter. `CreateProcess` answers error 206 for an executable whose
+    PATH is too long, exactly as it does for a command line past 32767
+    characters; the round-five classifier read only the number, so an
+    existing `.cmd` shim at a 333-character path with a 10-character goal
+    came back as `error` (2) under a length sentence naming 343 characters
+    -- a false quantity, and the round-four class split inverted. The
+    classifier now gates the 206 arm on the computed line exceeding
+    `WINDOWS_COMMAND_LINE_LIMIT`, so this specimen lands in the executable
+    arm: `unavailable` (127), the executable's sentence, NOT the length
+    sentence. The premise is measured (the shim exists, passes
+    `available()` unmodified, its line is sub-bound, a direct spawn raises
+    206). Windows only, by a skip declared in the census; the synthesised
+    half of the proof runs on every host in the classifier test above.
+    """
+    if os.name != "nt":
+        pytest.skip(
+            "only CreateProcess answers error 206 for an over-long executable "
+            "path; the classifier's rule is held on every host by the "
+            "synthesised specimens above"
+        )
+    try:
+        shim = _over_long_executable_shim(tmp_path)
+    except OSError as exc:  # long paths disabled on this volume
+        pytest.skip(f"this volume cannot hold a 300-character path: {exc}")
+    assert len(shim) >= 300 and os.path.isfile(shim)
+    worker = CodexWorker(shim)
+    assert worker.available() is True, "the specimen must pass available() unmodified"
+    with pytest.raises(OSError) as raised:
+        subprocess.run([shim], capture_output=True, timeout=30)
+    measured = getattr(raised.value, "winerror", None)
+    assert measured == 206, (
+        f"this host refused the {len(shim)}-character path with winerror "
+        f"{measured}, not the 206 it shares with the length refusal, so the "
+        "specimen does not reach the arm under test here"
+    )
+
+    result = worker.run(  # must not raise
+        role="builder", goal="ten chars.", workspace=tmp_path,
+        allowed_tools=("Read", "Write"), timeout_seconds=30,
+    )
+    assert _codex_command_line_length(result.command) <= WINDOWS_COMMAND_LINE_LIMIT, (
+        "the premise is a SUB-bound line; this one is not"
+    )
+    assert result.success is False
+    assert result.returncode == UNAVAILABLE_RETURNCODE, (result.returncode, result.output[:300])
+    assert classify_result(result.success, result.returncode) == "unavailable"
+    assert "could not be started" in result.output, result.output[:300]
+    assert "[WinError 206]" in result.output, result.output[:300]
+    assert "command-line length" not in result.output, (
+        "an over-long executable path was reported as an over-long invocation"
+    )
 
 
 def test_the_reported_command_line_length_is_the_line_the_platform_counts(
