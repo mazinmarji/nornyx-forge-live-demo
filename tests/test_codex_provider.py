@@ -884,8 +884,13 @@ def test_the_argument_length_classifier_knows_both_platforms_refusals():
     ROUND SIX (security F-1): 206 IS SHARED. `CreateProcess` answers the
     same 206 for an executable whose PATH is too long -- measured on the
     Windows host, an existing 333-character `.cmd` shim under a
-    343-character line -- and the round-five rule took every 206 as the
-    length refusal. THIS adapter's classifier now reads the command too,
+    988-character Codex line (a 10-character goal and a 187-character
+    workspace path, which this adapter's line carries as `--cd` and the
+    Claude line, 738 characters for the same specimen, does not) -- and the
+    round-five rule took every 206 as the length refusal, naming that
+    sub-bound line as the refused quantity. Round six wrote 343 here, a
+    hand sum no adapter emitted; round seven re-measured by running the
+    round-five tree. THIS adapter's classifier now reads the command too,
     and the 206 arm holds only when `_command_line_length(command)` EXCEEDS
     `WINDOWS_COMMAND_LINE_LIMIT`: the specimens sit exactly on either side
     of it (a count equal to the bound is False, one above it True), and a
@@ -940,8 +945,11 @@ def test_an_over_long_executable_path_is_unavailable_not_a_length_refusal(tmp_pa
     PATH is too long, exactly as it does for a command line past 32767
     characters; the round-five classifier read only the number, so an
     existing `.cmd` shim at a 333-character path with a 10-character goal
-    came back as `error` (2) under a length sentence naming 343 characters
-    -- a false quantity, and the round-four class split inverted. The
+    came back as `error` (2) under a length sentence naming 988 characters
+    (a 187-character `--cd` workspace path inside it; measured by running
+    the round-five tree, where round six had written 343, a hand sum no
+    adapter emitted) -- a real, sub-bound quantity named as the refused
+    one, and the round-four class split inverted. The
     classifier now gates the 206 arm on the computed line exceeding
     `WINDOWS_COMMAND_LINE_LIMIT`, so this specimen lands in the executable
     arm: `unavailable` (127), the executable's sentence, NOT the length

@@ -1373,11 +1373,21 @@ Provider Contract:
   Corrected in round six: the round-five sentence could still name a
   sub-bound length when 206 came from the executable path -- `CreateProcess`
   answers the same 206 for an over-long executable path, measured as an
-  existing 333-character `.cmd` shim reported in the `error` class as
-  `343 characters` -- so round six gates the arm on the computed line
-  exceeding 32767 (`WINDOWS_COMMAND_LINE_LIMIT`, held against two real
-  spawns: a 32766-character line accepted, 32767 refused with 206) and
-  sends a sub-bound 206 to the executable arm, `unavailable` (127).
+  existing 333-character `.cmd` shim, run with a 10-character goal,
+  reported in the `error` class as `738 characters across 9 arguments` on
+  Claude and `988 characters across 11 arguments` on Codex (the Codex line
+  carries the workspace path, 187 characters in that measurement, as
+  `--cd`; the Claude line carries none) -- so round six gates the arm on
+  the computed line exceeding 32767 (`WINDOWS_COMMAND_LINE_LIMIT`, held
+  against two real spawns: a 32766-character line accepted, 32767 refused
+  with 206) and sends a sub-bound 206 to the executable arm, `unavailable`
+  (127). Corrected in round seven: round six had recorded that specimen as
+  `343 characters`, the 333-character path and the 10-character goal
+  summed by hand -- a quantity neither adapter ever emitted. The figures
+  above come from running the round-five tree (`git archive 6ea2a09`)
+  against the specimen in round seven; the current tree reports the same
+  specimen on both adapters as `unavailable` (127) under
+  `executable could not be started: [WinError 206]`.
 - **Open items, gathered in one place.** None is closed here; the first two
   are restated from the round-three addendum above so that the list is in
   one place:
@@ -1393,6 +1403,18 @@ Provider Contract:
     `OSError` arm as `unavailable` (127) under the executable's sentence --
     a second way into the check-to-spawn window the round-three bullet
     leaves open.
+  - Pre-existing and host-measured (round-six review; confirmed through
+    both adapters by the round-seven builder): a `.cmd` or `.bat`
+    executable is run through the command processor, so its line is
+    refused BELOW `WINDOWS_COMMAND_LINE_LIMIT` -- from a count of 32737
+    up to 32767 with `[WinError 122] The data area passed to a system call
+    is too small` (errno 22), which the classifier does not read, so the
+    refusal lands as `unavailable` (127) under the executable's sentence
+    rather than as a length refusal, while at 32736 the process spawns and
+    `cmd.exe` itself answers `The command line is too long.` (exit 1), and
+    from 32768 the 206 arm holds as for a `.exe`. Only a `.exe` target is
+    refused exactly at the bound, which is the case the constant's comment
+    names as measured.
   - C1 controls and bidi formatting characters in composed prompts:
     `compose_repair_goal` escapes the C0 controls other than tab, newline
     and carriage return; U+0080..U+009F and the bidi controls (U+202A..

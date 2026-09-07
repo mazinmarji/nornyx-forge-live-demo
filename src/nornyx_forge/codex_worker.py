@@ -87,7 +87,9 @@ Measured on the Windows host this was written on: a 33000-character argument
 fails that way and a 32000-character one runs. 206 IS NOT ONLY THE LENGTH
 REFUSAL: `CreateProcess` answers the same 206 for an executable whose PATH is
 too long -- measured, an existing 333-character `.cmd` shim under a
-343-character line -- so `winerror` alone cannot say which bound was hit. The
+988-character line, this adapter's line for a 10-character goal and a
+187-character workspace path (carried as `--cd`) as `_command_line_length`
+counts it -- so `winerror` alone cannot say which bound was hit. The
 two are told apart by the line Forge built: the length arm holds only when
 `_command_line_length(command)` exceeds `WINDOWS_COMMAND_LINE_LIMIT`, and a
 206 under a sub-bound line is the executable's and lands in `unavailable`
@@ -471,9 +473,12 @@ MALFORMED_INVOCATION_RETURNCODE = 2
 #: ENOENT (2), so `OSError.errno` cannot tell it from an absent executable;
 #: `OSError.winerror` can -- but 206 is SHARED. `CreateProcess` answers the
 #: same 206 for an executable whose PATH is too long (measured on the Windows
-#: host: an existing 333-character `.cmd` shim, and a 335-character copy of
-#: `python.exe`, each under a line of about 343 characters), so the number
-#: alone does not say which bound was hit. Identical in `claude_worker.py`.
+#: host through this adapter with a 10-character goal and a 187-character
+#: `--cd` workspace path: an existing 333-character `.cmd` shim under a
+#: 988-character line, and a 335-character copy of `python.exe` under a
+#: 990-character line, both as `_command_line_length` counts them), so the
+#: number alone does not say which bound was hit. Identical in
+#: `claude_worker.py`.
 _ARGUMENT_TOO_LONG_WINERROR = 206
 
 #: The longest command line `CreateProcess` accepts, counted the way
@@ -481,27 +486,44 @@ _ARGUMENT_TOO_LONG_WINERROR = 206
 #: terminating NUL. Measured against the operating system on the Windows host
 #: this was written on, not against a copy of the rule: a line of 32766
 #: characters (32767 with its terminator) spawned, a line of 32767 (32768
-#: with its terminator) was refused with error 206. So a spawn is refused for
-#: its length exactly when `_command_line_length(command)` EXCEEDS this
-#: value, which is the test `_argument_list_too_long` applies to a 206.
-#: Held against two real spawns in tests/test_provider_contract.py on
-#: Windows. Identical in `claude_worker.py`; a test holds the two equal.
+#: with its terminator) was refused with error 206. Both spawns were of a
+#: `.exe`, and for a `.exe` target a spawn is refused for its length exactly
+#: when `_command_line_length(command)` EXCEEDS this value, which is the
+#: test `_argument_list_too_long` applies to a 206. A `.cmd` or `.bat`
+#: target is not held to that edge: `CreateProcess` runs it through the
+#: command processor, and measured through this adapter on the same host a
+#: `.cmd` shim's line was refused from a count of 32737 (32736 spawned) up
+#: to 32767 -- a band of 31 below this value -- with error 122
+#: (ERROR_INSUFFICIENT_BUFFER, errno 22), which this rule does not read, so
+#: such a refusal is reported as `unavailable` (127) under the executable's
+#: sentence; from 32768 the 206 arm holds as for a `.exe`. Pre-existing,
+#: recorded as an open item under A-025 in docs/requirements/ASSUMPTIONS.md,
+#: not closed here. Held against two real spawns in
+#: tests/test_provider_contract.py on Windows. Identical in
+#: `claude_worker.py`; a test holds the two equal.
 WINDOWS_COMMAND_LINE_LIMIT = 32767
 
 
 def _argument_list_too_long(exc: OSError, command: tuple[str, ...]) -> bool:
     """Whether the operating system refused the spawn for the LENGTH of its
     arguments. `E2BIG` from a POSIX `execve` is unambiguous and answers
-    True on its own. Windows error 206 is not: `CreateProcess` answers it
+    True on its own; on Windows the same errno is also what CPython maps
+    winerror 10 (`ERROR_BAD_ENVIRONMENT`) to, not reached in measurement --
+    a 200000-character environment variable was accepted on this host --
+    so the arm is unconditional on that evidence only. Windows error 206
+    is not: `CreateProcess` answers it
     both for a command line beyond `WINDOWS_COMMAND_LINE_LIMIT` and for an
     executable whose path is too long, so the 206 arm holds only when the
     line Forge actually built -- `command`, as `_command_line_length`
     counts it -- exceeds the bound. A 206 under a sub-bound line is about
     the executable, like any other `OSError`, and answers False so the
     caller reports it as `unavailable`. An earlier form took every 206 as
-    the length refusal; measured, that classed an existing executable at a
-    333-character path as an over-long invocation of 343 characters.
-    Identical to `claude_worker.py`'s rule; a test holds the two equal."""
+    the length refusal; measured by running the round-five tree, that
+    classed an existing `.cmd` shim at a 333-character path, run with a
+    10-character goal and a 187-character `--cd` workspace path, as an
+    over-long invocation of 988 characters -- the sub-bound line this
+    adapter built, named as if it were the refused quantity. Identical to
+    `claude_worker.py`'s rule; a test holds the two equal."""
     if exc.errno == errno.E2BIG:
         return True
     return (

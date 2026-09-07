@@ -967,9 +967,13 @@ def test_the_argument_length_classifier_knows_both_platforms_refusals():
     ROUND SIX (security F-1): 206 IS SHARED. `CreateProcess` answers the
     same 206 for an executable whose PATH is too long -- measured on the
     Windows host, an existing 333-character `.cmd` shim under a
-    343-character line -- and the round-five rule took every 206 as the
+    738-character Claude line (a 10-character goal; the line carries no
+    workspace path) -- and the round-five rule took every 206 as the
     length refusal, so that executable came back as an over-long invocation
-    of 343 characters against a bound of 32767. The classifier now reads
+    of 738 characters against a bound of 32767: a real, sub-bound quantity
+    named as the refused one. Round six wrote 343 here, the path and the
+    goal summed by hand, which no adapter ever emitted; round seven
+    re-measured by running the round-five tree. The classifier now reads
     the command too, and the 206 arm holds only when
     `_command_line_length(command)` EXCEEDS `WINDOWS_COMMAND_LINE_LIMIT`:
     the specimens sit exactly on either side of it (a count equal to the
@@ -1028,8 +1032,11 @@ def test_an_over_long_executable_path_is_unavailable_not_a_length_refusal(tmp_pa
     past 32767 characters -- and the round-five classifier read only the
     number, so an existing `.cmd` shim at a 333-character path with a
     10-character goal came back as `error` (2) under "exceeds the operating
-    system's command-line length: 343 characters": a false quantity, and
-    the round-four class split inverted, because an executable that cannot
+    system's command-line length: 738 characters across 9 arguments, the
+    goal alone 10 characters" -- measured by running the round-five tree;
+    round six wrote 343 here, a hand sum no adapter emitted -- so a real,
+    sub-bound quantity was named as the refused one, and the round-four
+    class split inverted, because an executable that cannot
     be started is the `unavailable` class (127). The classifier now gates
     the 206 arm on the computed line exceeding `WINDOWS_COMMAND_LINE_LIMIT`,
     so this specimen lands in the executable arm.
