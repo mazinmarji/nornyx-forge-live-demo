@@ -38,6 +38,141 @@ except Exception:  # pragma: no cover - optional dependency
         return lambda fn: fn
 
 
+#: How much of each failing gate's detail the repair goal quotes: the TAIL,
+#: where a test runner or a gate puts its verdict. The same number bounds the
+#: ESCAPED form of that tail inside the composed goal (`compose_repair_goal`):
+#: escaping may not buy a gate more of the goal than its raw tail would have.
+REPAIR_DETAIL_TAIL_CHARACTERS = 2500
+
+#: The ceiling on the goal `compose_repair_goal` hands the repair worker. The
+#: Provider Contract refuses a task goal above 8000 characters
+#: (`ProviderTask.validate`), and refuses it by RAISING `ProviderError` out of
+#: the routed worker's `run` -- which `acceptance()` does not catch, so an
+#: over-long composed goal ended the flow with an exception rather than a
+#: repair attempt. Four ordinary failing gates quoting 2500 characters each
+#: could already do that before any escaping existed; the `\xNN` escaping
+#: (four characters per control character) made ONE control-heavy gate
+#: enough. Set under the contract's number with room to spare, so a longer
+#: opening sentence cannot quietly close the gap. The contract exposes no
+#: constant to derive this from, so the relation is pinned by test
+#: (tests/test_provider_execution.py) against the contract's own validation.
+COMPOSED_GOAL_MAX_CHARACTERS = 7000
+
+#: The characters provider-authored text may not carry into an argument Forge
+#: composes: NUL and the other C0 controls, EXCEPT tab, newline and carriage
+#: return, which are ordinary text layout. Each is replaced by its Python
+#: escape (`\x00`), so what was there is still legible rather than silently
+#: gone. Built as a `str.translate` table: one pass, no pattern.
+_CONTROL_CHARACTER_ESCAPES = {
+    code: f"\\x{code:02x}" for code in range(0x20) if chr(code) not in "\t\n\r"
+}
+
+
+def sanitised_for_composition(text: str) -> str:
+    """Provider-authored text with the characters the operating system
+    refuses in a process argument escaped, so it can be COMPOSED into a new
+    invocation. Safe in that one respect only: the escaping lengthens the
+    text (four characters per control character), and length is the other
+    way a composed goal fails, bounded in `compose_repair_goal`, not here.
+
+    A `WorkerResult.output` is the provider's bytes, decoded strictly and
+    otherwise untouched -- and a literal NUL is valid UTF-8, so a provider can
+    put one there. The adapters are right to carry it: the result is what the
+    provider wrote. What must not happen is that text travelling, unaltered,
+    into the NEXT invocation's arguments: the operating system refuses a NUL
+    in any process argument (the adapters' launcher raises `ValueError`
+    before a process exists), so a provider that emitted one would have made
+    the repair step unrunnable. Measured directly on both adapters before this
+    existed: `a\\x00b` on a failing provider's stdout reached the repair
+    `goal` and raised out of the adapter's `run()`. This module starts no
+    process itself; the adapters do, and `docs/ARCHITECTURE.md` lists them.
+
+    This is the ONE place that transformation belongs. The flow is the party
+    composing provider output into something new, so it is the flow's own
+    text it is sanitising -- not the provider's record, which stays exactly
+    as emitted in the ledger and the gate result. Tab, newline and carriage
+    return are left alone: they are layout, not control, in a goal.
+    """
+    return text.translate(_CONTROL_CHARACTER_ESCAPES)
+
+
+def _within(text: str, limit: int, *, keep: str) -> str:
+    """`text` unchanged when it fits `limit`; otherwise exactly `limit`
+    characters -- the kept end of the text and a marker saying how many
+    characters were left out. `keep="tail"` keeps the END (a gate's verdict
+    sits there) and puts the marker first; `keep="head"` keeps the START and
+    puts the marker last, on its own line. The marker's own length counts
+    against `limit`, and the number in it is settled against that length, so
+    the count it names is the count actually omitted.
+    """
+    if len(text) <= limit:
+        return text
+    glue = "" if keep == "tail" else "\n"
+    omitted = len(text) - limit
+    marker = ""
+    for _ in range(4):  # the count's own digits lengthen the marker; settle it
+        marker = f"[... {omitted} characters omitted ...]"
+        settled = len(text) - (limit - len(marker) - len(glue))
+        if settled == omitted:
+            break
+        omitted = settled
+    kept = max(limit - len(marker) - len(glue), 0)
+    if keep == "tail":
+        return marker + text[len(text) - kept:]
+    return text[:kept] + glue + marker
+
+
+def _failing_gate_quotes(gates: list[GateResult]) -> list[tuple[str, str]]:
+    """Each failing gate's name and the tail of its detail, exactly as the
+    gate said it -- the ONE source both the ledger's record and the composed
+    goal quote from, so the two can never quote different text."""
+    return [
+        (gate.name, gate.detail[-REPAIR_DETAIL_TAIL_CHARACTERS:])
+        for gate in gates
+        if not gate.passed
+    ]
+
+
+def failing_gate_details(gates: list[GateResult]) -> str:
+    """What the failing gates said, as the ledger records it: each failing
+    gate's name and the last `REPAIR_DETAIL_TAIL_CHARACTERS` (2500)
+    characters of its detail, un-escaped, with no bound on the total -- a
+    record, not an argument, so nothing here is sanitised or capped."""
+    return "\n\n".join(f"{name}: {tail}" for name, tail in _failing_gate_quotes(gates))
+
+
+def compose_repair_goal(attempt: int, gates: list[GateResult]) -> str:
+    """The goal handed to the repair worker, composed from the failing gates.
+
+    Every character a provider could have authored passes through
+    `sanitised_for_composition` here, at the composition, and nowhere else --
+    so the sanitising cannot be skipped by a caller that builds the goal by
+    hand, and cannot leak into the record of what the gates said, which
+    `failing_gate_details` renders from the same quotes, untouched.
+
+    AND THE RESULT IS BOUNDED, twice. Each gate's ESCAPED tail is held to
+    `REPAIR_DETAIL_TAIL_CHARACTERS`, keeping its end (where the verdict is)
+    behind a marker naming what was left out -- so one gate whose tail is all
+    control characters (2500 of them escape to 10000) can neither crowd the
+    other gates out nor, alone, push the goal past the contract. Then the
+    whole goal is held to `COMPOSED_GOAL_MAX_CHARACTERS`, keeping its start
+    (the gates in the order they failed) behind the same kind of marker. The
+    markers appear in the composed goal only: the ledger's record is neither
+    escaped nor cut by either of these two bounds.
+    """
+    quotes = [
+        (name, _within(sanitised_for_composition(tail),
+                       REPAIR_DETAIL_TAIL_CHARACTERS, keep="tail"))
+        for name, tail in _failing_gate_quotes(gates)
+    ]
+    goal = (
+        f"Repair only these failing gates for attempt {attempt}. "
+        "Do not weaken governance, tests, architecture, or security checks.\n\n"
+        + "\n\n".join(f"{name}: {tail}" for name, tail in quotes)
+    )
+    return _within(goal, COMPOSED_GOAL_MAX_CHARACTERS, keep="head")
+
+
 class DevelopmentFlow(Flow):  # type: ignore[misc]
     """CrewAI Flow coordinating bounded Claude Code workers and hard gates."""
 
@@ -306,9 +441,14 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             if self.repair_attempts >= max_repairs:
                 break
             self.repair_attempts += 1
-            failures = "\n\n".join(
-                f"{gate.name}: {gate.detail[-2500:]}" for gate in gates if not gate.passed
-            )
+            # The ledger records what the gates said, verbatim; the GOAL is
+            # composed from the same failing gates through
+            # `compose_repair_goal`, which is where provider-authored control
+            # characters are escaped and where the result is bounded. Two
+            # values on purpose: the record is evidence and stays exact, the
+            # goal is an argument to a new process and must be one the OS
+            # will accept and the Provider Contract will not refuse.
+            failures = failing_gate_details(gates)
             self.ledger.append(
                 "repair_requested",
                 mission_id=self.mission,
@@ -318,11 +458,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             )
             repair = self.worker.run(
                 role="application-builder",
-                goal=(
-                    f"Repair only these failing gates for attempt {self.repair_attempts}. "
-                    "Do not weaken governance, tests, architecture, or security checks.\n\n"
-                    + failures
-                ),
+                goal=compose_repair_goal(self.repair_attempts, gates),
                 workspace=self.root,
                 allowed_tools=("Read", "Glob", "Grep", "Edit", "Write", "Bash"),
                 max_turns=35,

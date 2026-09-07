@@ -2270,6 +2270,135 @@ def current_inspection_subject() -> str:
 ATTESTATION_DIR = EVIDENCE_DIR / "attestations"
 
 
+#: The rendering of a reviewer-trust-store path that sits outside every known
+#: spelling of the reader's home directory: its CONFIGURATION NAME, never the
+#: path. A path outside home carries another account's, machine's or CI
+#: runner's layout just as readily as one inside it, and this generator's only
+#: job with the path is to say the store was unusable, not where.
+_STORE_OUTSIDE_HOME_DISPLAY = "<FORGE_REVIEWER_TRUST_STORE>"
+
+#: The case rule `_store_display` compares paths under, named so a test can
+#: substitute `ntpath.normcase` and `posixpath.normcase` and exercise BOTH
+#: behaviours on one host. It IS `os.path.normcase` -- a test pins the
+#: identity -- and the two behaviours are both correct for their platform:
+#: on Windows it lowercases and turns `/` into `\`, because two spellings of
+#: a Windows path that differ only so name the same directory; on POSIX it is
+#: the identity, because `/home/Devuser` and `/home/devuser` are DIFFERENT
+#: directories there, and a rule that folded them would render some other
+#: account's store as the reader's own.
+_path_normcase = os.path.normcase
+
+
+def _short_path_name(path: Path) -> str | None:
+    """The Windows 8.3 short form of `path`, or `None` when it cannot be
+    obtained: not Windows, short-name generation disabled on the volume, the
+    path does not exist, or the API call fails for any other reason.
+
+    Never raises. This is an EXTRA spelling of home for `_store_display` to
+    recognise, not a requirement for it to function at all -- a host where
+    short names are unavailable simply has one fewer form to match against,
+    and still matches on the long form `Path.home()` already returns.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(260)
+        length = ctypes.windll.kernel32.GetShortPathNameW(  # type: ignore[attr-defined]
+            str(path), buf, 260
+        )
+        return buf.value if length else None
+    except Exception:
+        return None
+
+
+def _home_directory_forms() -> tuple[str, ...]:
+    """Every spelling of the reader's home directory `_store_display`
+    recognises: the value `Path.home()` returns, its OS-resolved form
+    (symlinks/junctions followed, where resolvable), and -- Windows only,
+    where the volume actually generates one -- its 8.3 short name.
+
+    `_store_display` compares each of these under `_path_normcase`, so a
+    lowercase drive letter or account name, or an 8.3 short name landing on
+    the SAME directory as the long one, is still recognised as home rather
+    than leaking into evidence merely because its spelling differs from
+    whichever single form `Path.home()` happened to return on a given run.
+    """
+    home = Path.home()
+    forms = [str(home)]
+    try:
+        resolved = home.resolve()
+    except OSError:
+        resolved = None
+    if resolved is not None and str(resolved) not in forms:
+        forms.append(str(resolved))
+    short = _short_path_name(home)
+    if short and short not in forms:
+        forms.append(short)
+    return tuple(forms)
+
+
+def _store_display(location: Path | str) -> str:
+    """The ONE rendering of a reviewer-trust-store PATH that may reach an
+    emitted artifact: `~/...` with FORWARD SLASHES ALWAYS when the path sits
+    under any known spelling of the reader's home directory (so a Windows and
+    a Linux regeneration of the same evidence produce the SAME bytes), and
+    `_STORE_OUTSIDE_HOME_DISPLAY` when it does not.
+
+    Takes a PATH, not prose. The earlier form of this helper searched
+    composed sentences for something path-shaped and fell back to a regular
+    expression when no home form matched -- and that expression stopped at
+    the first space, so `C:\\Users\\John Doe\\...` rendered as the placeholder
+    followed by ` Doe\\...`, a path with `(x86)` in it was cut at the
+    parenthesis, and a UNC path matched nothing at all. There is no such
+    fallback here because there is nothing to search: the store path is a
+    value this generator already holds, so the display is computed from that
+    value and the messages are composed from the display. The only question a
+    path can pose is whether it is under home, and that is a prefix test.
+
+    Under home means: the path, compared under `_path_normcase`, BEGINS with
+    a home form and the next character is a separator or the end -- so
+    `C:\\Users\\DevuserX` is not under `C:\\Users\\Devuser`. Every form
+    `_home_directory_forms()` returns is tried (the long form, its resolved
+    form, and on Windows the 8.3 short name), so a lowercase drive letter or
+    account name and a short-name spelling of the same directory are both
+    recognised on Windows; on POSIX the comparison is case-sensitive because
+    the filesystem is, and a differently-cased spelling names a different
+    directory that is correctly rendered as outside home.
+    """
+    text = str(location)
+    text_norm = _path_normcase(text)
+    for home in _home_directory_forms():
+        if not home:
+            continue
+        home_norm = _path_normcase(home)
+        if not text_norm.startswith(home_norm):
+            continue
+        rest = text[len(home):]
+        if rest and rest[0] not in "\\/":
+            continue
+        rest = rest.lstrip("\\/").replace("\\", "/")
+        return "~/" + rest if rest else "~"
+    return _STORE_OUTSIDE_HOME_DISPLAY
+
+
+def _redact_store_path(text: str, location: Path | str) -> str:
+    """`text` with every exact occurrence of the store path `location` replaced
+    by `_store_display(location)`.
+
+    Exact-token replacement of a value this generator already holds -- not a
+    search for path-shaped text. `ReviewerTrustStore.load` builds both its
+    `source` (`"<location> (absent)"`) and every `ReviewerStoreUnavailable`
+    message (`"<location> is unreadable: ..."`, `"<location> has no reviewers
+    list"`, ...) from the same `location` it resolved, so the spelling in the
+    text is the spelling of the value, and `str.replace` finds every one of
+    them whatever the path contains -- spaces, parentheses, a UNC prefix. A
+    message that does not mention the path is returned unchanged.
+    """
+    return text.replace(str(location), _store_display(location))
+
+
 def _authenticated_inspections(subject_digest: str) -> tuple[dict, list[str]]:
     """Every attestation that authenticates, keyed by inspector role.
 
@@ -2281,18 +2410,27 @@ def _authenticated_inspections(subject_digest: str) -> tuple[dict, list[str]]:
         ReviewerStoreUnavailable,
         ReviewerTrustStore,
         excluded_inspector_identities,
+        reviewer_store_path,
         verify_signed_attestation,
     )
 
     problems: list[str] = []
+    # The path the store resolves -- the same call `ReviewerTrustStore.load()`
+    # makes with no argument -- held here so that every message below that
+    # could name it is composed through `_redact_store_path` against the
+    # exact value, at the source, before anything reaches `verdict_basis`.
+    # `store.source` itself is never modified.
+    location = reviewer_store_path()
     try:
         store = ReviewerTrustStore.load()
     except ReviewerStoreUnavailable as exc:
-        return {}, [f"reviewer trust store unusable: {exc}"]
+        return {}, [
+            _redact_store_path(f"reviewer trust store unusable: {exc}", location)
+        ]
     if not store.available:
         return {}, [
             "no reviewer trust store, so no inspection can be authenticated "
-            f"({store.source})"
+            f"({_redact_store_path(store.source, location)})"
         ]
 
     # A set, not a name. `FORGE_BUILDER_IDENTITY` can add an identity that may
