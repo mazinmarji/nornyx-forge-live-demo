@@ -460,8 +460,20 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # in round 6, because routing them through the candidate seam had survived
     # all 87 of the above (round-6 test T-P3-3). The NUL case gained a FOURTH
     # operand, `--bundle-root`, inside the cases it already had. 88 collected,
-    # floor at band(88) = 80.
-    "tests/test_windows_runtime.py": 80,
+    # floor at band(88) = 80. The session-file visibility repair added FOUR:
+    # the final path never observable with partial content under a slow write,
+    # the move refusing a target already there while a taken STAGING name is a
+    # different fact, no staging file outliving a placement that succeeded or
+    # failed, and the scripted wait holding until the bearer PARSES rather than
+    # until the file exists. 92 collected, floor at band(92) = 83. That
+    # repair's second round added FOUR more on the same function: a target
+    # already there refused before any bearer reaches disk (`os.open` never
+    # called) while the MOVE still refuses one that appears after the check,
+    # the move's 20 x 50 ms sharing-violation retry, a staging name taken
+    # after a successful move left alone rather than deleted, and every
+    # placement failure naming the file it could not use. 96 collected, floor
+    # at band(96) = 87.
+    "tests/test_windows_runtime.py": 87,
     # Tranche B's control-plane session: 43 collected at introduction, 77 after
     # the repair round, 80 after round 3 (the allowlisted routes ignoring
     # cookies, the owner-failure 503 on the composed surface, the page's CSP
@@ -503,13 +515,21 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # round 3 added the un-bearered stop against the real child (refused,
     # record still ready, log clean), 12 after round 5 added the harness's
     # own dead-child pin -- the second test here that runs on every platform,
-    # because it is a property of the harness and starts no runtime -- floor
-    # at band(12) = 11.
+    # because it is a property of the harness and starts no runtime -- and 13
+    # after the session-file visibility repair added the THIRD such pin: the
+    # wait holds until the bearer PARSES, not merely until the file exists,
+    # which is the window the job's one `401` at PR #46's head came through.
+    # Floor at band(13) = 12. 14 after that repair's second round added the
+    # FOURTH platform-independent pin here: the windows job's collected-count
+    # floor, derived from a live collection of the modules the job's own
+    # command names, after the floor and the sentence beside it drifted apart
+    # and the whole of THIS module could have vanished from the job unnoticed.
+    # Floor at band(14) = 13.
     # Real child processes from a real bundle folder at a path with spaces
     # and non-ASCII characters, from an unrelated working directory;
     # declared skips off Windows, run by the windows-runtime CI job under
     # its own skip census.
-    "tests/test_windows_host_runtime.py": 11,
+    "tests/test_windows_host_runtime.py": 13,
     # The BRD derivation: 9 collected at introduction, floor at band(9) = 9.
     # Round-tripped against the real parse_brd; a proposal-only capsule
     # refuses; open proposals author nothing; heading collisions refused.
@@ -1024,16 +1044,40 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the suite: collected 3145 -> 3146, `band(n)` 2831 -> 2832, and the working
 # room below the floor 251 -> 252. The slack the bands grant rises by the
 # same one, 259 -> 260, because that module now collects one more test above
-# a floor that did not follow it:
+# a floor that did not follow it.
+# Re-measured for the session-file visibility repair:
+# tests/test_windows_runtime.py 88 -> 92 (floor 80 -> 83) and
+# tests/test_windows_host_runtime.py 12 -> 13 (11 -> 12). Five tests: four on
+# the writer that now stages the bearer and moves it into place complete, one
+# on the host harness that waits for a bearer it can PARSE. 112 modules stand;
+# the module-floor sum rises by 4 to 2890 and the aggregate follows to 2898,
+# keeping the same 8 above it. collected 3146 -> 3151, `band(n)` 2832 -> 2836,
+# and the working room below the floor 252 -> 253. The slack the bands grant
+# rises by one, 260 -> 261: the runtime module gained four collected against
+# three of floor, and the host module one against one.
+# Re-measured for that repair's second round, which closes the review's own
+# findings on it: tests/test_windows_runtime.py 92 -> 96 (floor 83 -> 87) and
+# tests/test_windows_host_runtime.py 13 -> 14 (12 -> 13). Five tests: four on
+# the placement -- a target already there refused before any bearer reaches
+# disk, the move's sharing-violation retry, a staging name taken after a
+# successful move left alone, and every failure naming the file it could not
+# use -- and one on the windows job's collected-count floor, which is now
+# DERIVED from a live collection rather than restated in prose that had gone
+# false. 112 modules stand; the module-floor sum rises by 5 to 2895 and the
+# aggregate follows to 2903, keeping the same 8 above it. collected
+# 3151 -> 3156, `band(n)` 2836 -> 2841, and the working room below the floor
+# stays 253. The slack the bands grant stays 261, which is arithmetic and not
+# luck: `ceil(0.9n)` moved by four at 96 and by one at 14, exactly the
+# collected gain at each:
 #
 # (rows below):
 #
-#     collected across tests/     3146   (112 modules)
-#     sum of the module floors    2886
-#     band(3146) = ceil(0.9*n)    2832
-#     MINIMUM_COLLECTED           2894
+#     collected across tests/     3156   (112 modules)
+#     sum of the module floors    2895
+#     band(3156) = ceil(0.9*n)    2841
+#     MINIMUM_COLLECTED           2903
 #     above the module sum         8
-#     below what collects         252
+#     below what collects         253
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1054,7 +1098,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 260 in total, and the aggregate refuses
+# per-module bands already grant 261 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1075,7 +1119,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2894
+MINIMUM_COLLECTED = 2903
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

@@ -1718,7 +1718,28 @@ written only after readiness, with mode `0600` where the OS honours a mode
 there), and removed at stop. It is created EXCLUSIVELY: a file already at the
 path -- stale, or planted -- is left as found, neither overwritten nor
 removed at stop, the person is told by path, and this run's bearer is written
-nowhere, so a stale file authenticates nothing, visibly. The fence resolves
+nowhere, so a stale file authenticates nothing, visibly. "Written nowhere" is
+exact and is kept so: a target already there is refused BEFORE the staging
+file below is created, so the ordinary pre-existing case puts no bearer on
+any disk. The check is not the refusal, though -- the move is, and a target
+that appears after the check is refused by it just the same. It is also
+VISIBLE ONLY COMPLETE: the payload is staged as `<name>.tmp` beside the
+target and moved onto the final name by an operation that refuses an existing
+target (`os.rename` on Windows, `os.link` on POSIX), so a reader that finds
+the path reads a whole record or nothing, where the previous shape created
+the final name and wrote afterwards and a reader arriving between the two
+parsed no bearer and sent its first request bare -- measured on the
+windows-runtime CI job as a `401` on the first bearered `POST /api/project`,
+with one child ever started and its record `ready`. The staging file this run
+made is removed before the call returns whether it succeeded or failed, and
+only while the name still holds THAT file: after a successful move the name
+is free for anyone, and deleting whatever took it would be deleting another
+launch's bearer. ONE RESIDUAL, stated rather than implied: a hard kill --
+`TerminateProcess`, a power loss -- between the fsync and the move leaves
+`<name>.tmp` holding a live bearer, because a `finally` does not run when a
+process dies. It is bounded by that window and by the directory, which is the
+fenced one; the protection there is the fence, exactly as it is for the target
+itself. The fence resolves
 every root itself rather than trusting its caller to. The protection of a
 location that passes the
 fence is the operator's choice. The bundle smoke's own session file lands

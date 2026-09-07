@@ -20,6 +20,7 @@ as Forge; a runtime record or bundle marker reaching a governance answer.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import http.server
 import inspect
@@ -70,6 +71,21 @@ MODEL = {"kind": "model", "ident": "builder-model"}
 # ---------------------------------------------------------------------------
 # Fixtures: a bundle folder, a light surface, a launch held in a thread
 # ---------------------------------------------------------------------------
+
+def _parsed(token: str | None) -> bool:
+    """True when a bearer was actually read: a non-empty string. `.token`
+    answers None for a session file that is absent, unreadable, not JSON, or
+    JSON without a `token` -- and the empty string for one carrying an empty
+    one, which is not a bearer either and would be sent as `Bearer `."""
+    return isinstance(token, str) and bool(token)
+
+
+def _staging(path: Path) -> Path:
+    """The staging name `_place_session_file` writes beside its target. Named
+    once here so that every pin on "nothing named `.tmp` survives" reads the
+    same rule the writer uses."""
+    return path.with_name(path.name + ".tmp")
+
 
 def _marker(root: Path, mode: str = "developer", **extra) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -163,31 +179,49 @@ class Launch:
 
     def wait_for(self, status: str, timeout: float = 60.0) -> dict:
         """The record at `status`. For `ready` with a session file configured,
-        ALSO that file: the bearer is written AFTER readiness is recorded
+        ALSO A BEARER THAT PARSES out of that file: the bearer is written
+        AFTER readiness is recorded
         (`test_the_session_file_is_written_only_after_readiness`), so `.token`
         read on the record alone can be None for an instant and a test's first
-        bearered request would go bare (measured in the host suite as a `401`)."""
+        bearered request would go bare (measured in the host suite as a `401`).
+
+        Waiting for the file to EXIST closed that window and left a narrower
+        one inside it, for a writer that creates the path and fills it
+        afterwards: the file is there, `.token` answers None, and the request
+        goes bare out of exactly the `wait_for` that just returned. That is
+        the shape the windows-runtime job failed on at PR #46's head. The
+        writer no longer opens the window at all -- `_place_session_file`
+        moves the file into place complete -- and this wait is the harness's
+        own guarantee, held by
+        `test_the_scripted_wait_holds_until_the_bearer_parses`."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             record = self.record()
             if record is not None and record["status"] == status:
-                if status != "ready" or self.session_path is None or self.session_path.exists():
+                if status != "ready" or self.session_path is None or _parsed(self.token):
                     return record
             elif self.code is not None and not self.thread.is_alive():
                 break
             time.sleep(0.05)
         raise AssertionError(
-            f"runtime never reached {status} (with its session file, if any): record={self.record()} "
-            f"code={self.code} notices={self.notices}"
+            f"runtime never reached {status} (with a parseable session file, if any): "
+            f"record={self.record()} session file present="
+            f"{self.session_path is not None and self.session_path.exists()} "
+            f"bearer parsed={_parsed(self.token)} code={self.code} notices={self.notices}"
         )
 
     @property
     def token(self) -> str | None:
         """This run's bearer, read from the explicit session file, or None for a
-        stand-in surface that has no session."""
-        if self.session_path is None or not self.session_path.exists():
+        stand-in surface that has no session -- and None, not an exception, for
+        a file that is unreadable or does not parse, so that a harness polling
+        it can tell "no bearer yet" from "a bearer"."""
+        if self.session_path is None:
             return None
-        return json.loads(self.session_path.read_text(encoding="utf-8"))["token"]
+        try:
+            return json.loads(self.session_path.read_text(encoding="utf-8"))["token"]
+        except (OSError, ValueError, KeyError):
+            return None
 
     def stop(self, actor: dict = HUMAN) -> tuple[int, dict]:
         record = self.record()
@@ -1727,6 +1761,482 @@ def test_a_pre_existing_session_file_is_left_as_found_and_the_person_is_told(
     assert _post(ready["port"], "/api/runtime/stop", {"actor": HUMAN}, token=real_token)[0] == 200
     assert run.join() == 0
     assert run.session_path.read_bytes() == planted, "stop removed a file this run did not write"
+    assert not _staging(run.session_path).exists(), "a staging file outlived the refusal"
+
+
+def test_the_session_file_is_never_observable_with_partial_content(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The window this PR closes, at the writer.
+
+    The old shape created the FINAL name with `O_EXCL` and wrote the payload
+    afterwards. A reader between the two -- and the harnesses were readers,
+    waiting for exactly that name to appear -- found an empty file, parsed no
+    bearer and sent its first request bare. The windows-runtime job failed
+    that way once at PR #46's head: the first bearered `POST /api/project`
+    answered `401`, one child ever started, its record `ready`. The bundle
+    smoke was immune because it polls until the token PARSES; nothing else
+    was.
+
+    The specimen is a slow writer: a 200 ms pause between the create and the
+    content, on whichever file the placement opens. A reader polls the FINAL
+    path throughout, and EVERY observation must be either the path absent or
+    a complete record carrying the bearer -- never the empty or half-written
+    file the old shape exposed. The count of absent observations is asserted
+    too, so a test that raced past the window proves nothing quietly.
+
+    Revert `_place_session_file` to create-then-write on the final name and
+    this is red on the first observation inside the pause."""
+    path = tmp_path / "session.json"
+    payload = json.dumps({"schema": windows_runtime.RUNTIME_SESSION_SCHEMA,
+                          "instance": "this-run", "token": "THE-BEARER"}) + "\n"
+    inside = threading.Event()
+    watched: set[int] = set()
+    real_open, real_fdopen = os.open, os.fdopen
+
+    def watching_open(file, flags, mode=0o777, **kwargs):
+        descriptor = real_open(file, flags, mode, **kwargs)
+        # The final name (the old shape) or the staging name beside it (the
+        # new one): whichever this placement opens for the payload.
+        if str(file).startswith(str(path)):
+            watched.add(descriptor)
+        return descriptor
+
+    class _Paused:
+        """The sink, with the pause between the create and the content."""
+
+        def __init__(self, sink):
+            self._sink = sink
+
+        def __enter__(self):
+            self._sink.__enter__()
+            return self
+
+        def __exit__(self, *info):
+            return self._sink.__exit__(*info)
+
+        def write(self, text):
+            inside.set()
+            time.sleep(0.2)
+            return self._sink.write(text)
+
+        def flush(self):
+            return self._sink.flush()
+
+        def fileno(self):
+            return self._sink.fileno()
+
+    def slow_fdopen(descriptor, *args, **kwargs):
+        sink = real_fdopen(descriptor, *args, **kwargs)
+        if descriptor in watched:
+            # Once: a closed descriptor's NUMBER is reusable, and an unrelated
+            # open that inherited it must not be slowed.
+            watched.discard(descriptor)
+            return _Paused(sink)
+        return sink
+
+    monkeypatch.setattr(windows_runtime.os, "open", watching_open)
+    monkeypatch.setattr(windows_runtime.os, "fdopen", slow_fdopen)
+    failed: list[BaseException] = []
+
+    def place() -> None:
+        try:
+            windows_runtime._place_session_file(path, payload)
+        except BaseException as exc:  # noqa: BLE001 - reported by the assertion below
+            failed.append(exc)
+
+    writer = threading.Thread(target=place, name="placing", daemon=True)
+    writer.start()
+    assert inside.wait(30), "the write step was never reached; the test proved nothing"
+    partial: list[bytes] = []
+    absent = observations = 0
+    while writer.is_alive():
+        observations += 1
+        try:
+            seen = path.read_bytes()
+        except FileNotFoundError:
+            absent += 1
+            time.sleep(0.002)
+            continue
+        except OSError:
+            # A sharing refusal at the instant of the move is not an
+            # observation of content, and is not counted as one either way.
+            time.sleep(0.002)
+            continue
+        try:
+            complete = json.loads(seen.decode("utf-8")).get("token") == "THE-BEARER"
+        except (UnicodeDecodeError, ValueError):
+            complete = False
+        if complete:
+            break
+        partial.append(seen)
+        time.sleep(0.002)
+    writer.join(timeout=30)
+    assert not failed, failed
+    assert not partial, (
+        f"the final path held incomplete content {partial[0]!r} while it was being "
+        f"written ({len(partial)} of {observations} observations)")
+    assert absent >= 3, (
+        f"the write window was never observed ({observations} observations, {absent} "
+        "with the path absent); the test proved nothing")
+    assert json.loads(path.read_text(encoding="utf-8"))["token"] == "THE-BEARER"
+    assert [entry.name for entry in tmp_path.iterdir()] == ["session.json"], (
+        "the placement left something beside its target")
+
+
+def test_placing_a_session_file_refuses_one_already_there_and_leaves_it_as_found(
+        tmp_path: Path):
+    """The exclusive create moved to the MOVE and still means what it meant.
+
+    Staging and then moving could have become an overwrite by accident:
+    `os.replace` and POSIX `os.rename` both silently clobber the target, and
+    either would have turned a stale or planted bearer into this run's
+    without a word. The move is `os.rename` on Windows and `os.link` on
+    POSIX, each of which REFUSES an existing target, so the caller's
+    `FileExistsError` branch -- the notice, by path, that this run's bearer
+    was written nowhere -- is reached by the same exception as before.
+
+    A staging name already taken is a DIFFERENT fact: the target may be free,
+    and reporting it as "already exists" would name a path that does not
+    exist. It is raised as a plain `OSError`, which is also why the raise
+    carries ONE argument: `OSError(errno, text)` is remapped by the
+    constructor to the errno's own subclass, and 17 is `FileExistsError`."""
+    path = tmp_path / "session.json"
+    planted = json.dumps({"schema": windows_runtime.RUNTIME_SESSION_SCHEMA,
+                          "instance": "stale", "token": "PLANTED"}).encode("utf-8")
+    path.write_bytes(planted)
+    with pytest.raises(FileExistsError):
+        windows_runtime._place_session_file(path, '{"token": "THIS-RUNS"}\n')
+    assert path.read_bytes() == planted, "the pre-existing file was overwritten"
+    assert not _staging(path).exists(), "a staging file outlived the refusal"
+
+    free = tmp_path / "other.json"
+    _staging(free).write_bytes(b"a staging file from somewhere else")
+    with pytest.raises(OSError) as caught:  # noqa: PT011 - the class IS the assertion below
+        windows_runtime._place_session_file(free, '{"token": "THIS-RUNS"}\n')
+    assert not isinstance(caught.value, FileExistsError), (
+        "a taken staging name was reported as the target already existing")
+    assert "staging" in str(caught.value) and str(_staging(free)) in str(caught.value)
+    assert not free.exists(), "the target was created after the staging name was refused"
+    assert _staging(free).read_bytes() == b"a staging file from somewhere else", (
+        "a staging file this call did not make was removed")
+
+
+def test_no_staging_file_outlives_a_placement_that_succeeded_or_failed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The staging name is an implementation detail and must never become
+    litter the person finds, or a `FileExistsError` the NEXT launch trips
+    over: the file is gone before the call returns, on success and on
+    failure alike.
+
+    The failure specimen is one that strikes AFTER the staging file exists
+    and holds the bearer -- the only interesting shape, and the one a `finally`
+    exists for. `os.fsync` is refused rather than the move, because the move
+    is platform-split and the flush is not."""
+    placed = tmp_path / "ok.json"
+    windows_runtime._place_session_file(placed, '{"token": "THE-BEARER"}\n')
+    assert json.loads(placed.read_text(encoding="utf-8"))["token"] == "THE-BEARER"
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["ok.json"]
+
+    def refusing_fsync(descriptor):
+        raise OSError("the write could not be flushed")
+
+    monkeypatch.setattr(windows_runtime.os, "fsync", refusing_fsync)
+    refused = tmp_path / "bad.json"
+    with pytest.raises(OSError, match="could not be flushed"):
+        windows_runtime._place_session_file(refused, '{"token": "THE-BEARER"}\n')
+    assert not refused.exists(), "a failed placement left the target behind"
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["ok.json"], (
+        "a failed placement left its staging file behind")
+
+
+def test_the_scripted_wait_holds_until_the_bearer_parses(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The harness half, and it does not depend on the writer's shape.
+
+    `Launch.wait_for("ready")` used to return the moment the session file
+    EXISTED. `.token` answers None for a file it cannot parse, so a reader
+    that arrived between a create and its content got None out of exactly the
+    `wait_for` that had just returned, and sent its first request bare. The
+    real writer no longer opens that window; this pins that the WAIT would
+    survive one that did.
+
+    So the placement is replaced by the adversary: a create that exposes an
+    empty file and completes it 0.3 s later. The wait must not return inside
+    that window, and what it returns with must be a bearer. Restore
+    `self.session_path.exists()` and this is red on the first assertion, with
+    `None` for a token."""
+    _scratch_profile(monkeypatch, tmp_path)
+    seen: dict = {}
+
+    def exposing_placement(path: Path, payload: str) -> None:
+        path.write_bytes(b"")
+        seen["empty_at"] = time.monotonic()
+        time.sleep(0.3)
+        seen["content_at"] = time.monotonic()
+        path.write_text(payload, encoding="utf-8", newline="")
+
+    monkeypatch.setattr(windows_runtime, "_place_session_file", exposing_placement)
+    bundle = _marker(tmp_path / "bundle")
+    run = Launch(tmp_path, bundle, assemble_app=_real_surface(tmp_path), browser=False,
+                 session_file=True).start()
+    run.wait_for("ready")
+    returned_at = time.monotonic()
+    assert _parsed(run.token), f"the wait returned with no bearer: {run.token!r}"
+    # The moment content BEGAN, not the moment it finished: an assertion on
+    # the finish could be beaten by microseconds and would be flaky in the
+    # direction of passing.
+    assert returned_at >= seen["content_at"], (
+        f"the wait returned {seen['content_at'] - returned_at:.3f}s before the bearer was "
+        "written, on a file that existed and parsed to nothing")
+    assert returned_at - seen["empty_at"] >= 0.25, (
+        f"the wait returned {returned_at - seen['empty_at']:.3f}s after the empty file "
+        "appeared, which is inside the 0.3s window")
+    assert run.stop()[0] == 200 and run.join() == 0
+
+
+def _mover() -> str:
+    """The name of the `os` function `_move_onto` actually calls here, so a
+    test patches the arm this platform runs rather than the one it does
+    not: `rename` on Windows, `link` on POSIX."""
+    return "rename" if sys.platform == "win32" else "link"
+
+
+def test_a_target_already_there_is_refused_before_any_bearer_reaches_disk(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Round-2 P3-1. The refusal notice says this run's bearer was written
+    NOWHERE, and staging made that inexact: the whole payload was written to
+    `<name>.tmp` and fsynced before the move discovered the target, then
+    unlinked. A hard kill in between would have left a live bearer on disk
+    for a case the person was told wrote none.
+
+    So the ordinary case is decided FIRST, and the instrument is the file
+    system call itself: with a file at the target, `os.open` is never reached
+    and the directory gains nothing.
+
+    The check is not the refusal. The MOVE still is, and the second half
+    proves it: a target planted AFTER the check -- at the instant the staging
+    file is created, which is inside the window a check cannot cover -- is
+    still refused, still by `FileExistsError`, and is still left as found.
+    Delete the `lexists` check and the first half is red; delete the move's
+    refusal and the second half is."""
+    planted = b'{"schema": "x", "instance": "stale", "token": "PLANTED"}\n'
+    payload = json.dumps({"schema": windows_runtime.RUNTIME_SESSION_SCHEMA,
+                          "instance": "this-run", "token": "THE-BEARER"}) + "\n"
+    path = tmp_path / "session.json"
+    path.write_bytes(planted)
+    opened: list[str] = []
+    real_open = os.open
+
+    def watching_open(file, flags, mode=0o777, **kwargs):
+        opened.append(str(file))
+        return real_open(file, flags, mode, **kwargs)
+
+    monkeypatch.setattr(windows_runtime.os, "open", watching_open)
+    with pytest.raises(FileExistsError) as caught:
+        windows_runtime._place_session_file(path, payload)
+    assert str(path) in str(caught.value), caught.value
+    assert opened == [], f"a file was created for a target already there: {opened}"
+    assert [entry.name for entry in tmp_path.iterdir()] == ["session.json"]
+    assert path.read_bytes() == planted, "the pre-existing file was touched"
+    assert "THE-BEARER" not in path.read_text(encoding="utf-8")
+
+    # The window the check cannot cover: the target appears while the staging
+    # file is being created. The move is what refuses it.
+    late = tmp_path / "late.json"
+
+    def open_then_plant(file, flags, mode=0o777, **kwargs):
+        descriptor = real_open(file, flags, mode, **kwargs)
+        if str(file) == str(_staging(late)):
+            late.write_bytes(planted)
+        return descriptor
+
+    monkeypatch.setattr(windows_runtime.os, "open", open_then_plant)
+    with pytest.raises(FileExistsError):
+        windows_runtime._place_session_file(late, payload)
+    assert late.read_bytes() == planted, "the target that appeared late was overwritten"
+    assert not _staging(late).exists(), "a staging file outlived the late refusal"
+
+    # The residual this leaves is STATED, not implied: what a `finally` cannot
+    # cover is a process that dies before it runs.
+    assumptions = (ROOT / "docs" / "requirements" / "ASSUMPTIONS.md").read_text(encoding="utf-8")
+    assert "between the fsync and the move" in assumptions, (
+        "A-027 does not state the residual: a hard kill between the fsync and the move "
+        "leaves the staging file holding a live bearer")
+
+
+def test_the_move_retries_a_sharing_violation_and_never_leaves_a_staging_survivor(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Round-2 P3-2. Windows refuses to rename a file another process holds
+    open at that instant, and the session file is polled by exactly such
+    readers; one `ERROR_SHARING_VIOLATION` was observed at the move instant
+    under review. The sibling `write_record` has retried its own replace for
+    that reason all along; the move had no retry, so a reader mid-read turned
+    a placement into a notice and a run into a bearer nobody could read.
+
+    Windows: two refusals then a success is a SUCCESS, and it WAITED between
+    them -- the pauses are counted at `time.sleep`, and the elapsed time is
+    asserted as well, so neither a loop that spun without pausing nor a test
+    that never entered it is mistaken for the repair. The count is the
+    instrument and the clock is the corroboration, not the other way round:
+    two nominal 50 ms sleeps measured 0.094 s on this host, so a threshold
+    set at the nominal 0.1 s fails a loop that did exactly what it should.
+
+    POSIX: the asymmetry is deliberate and is pinned as such. `os.link`
+    refusing with `PermissionError` is a filesystem that forbids hard links,
+    which no amount of waiting changes, so the first one is raised at once.
+
+    Both: a mover that ALWAYS refuses ends in the caller's notice branch -- a
+    plain `OSError` -- with no target and no staging survivor."""
+    payload = json.dumps({"token": "THE-BEARER"}) + "\n"
+    real_move = getattr(os, _mover())
+    real_sleep = time.sleep
+    refusals = {"left": 2}
+    paused: list[float] = []
+
+    def sticky(source, destination):
+        if refusals["left"]:
+            refusals["left"] -= 1
+            raise PermissionError(32, "the file is in use by another process")
+        return real_move(source, destination)
+
+    def counting_sleep(seconds):
+        paused.append(seconds)
+        return real_sleep(seconds)
+
+    monkeypatch.setattr(windows_runtime.os, _mover(), sticky)
+    monkeypatch.setattr(windows_runtime.time, "sleep", counting_sleep)
+    path = tmp_path / "retried.json"
+    started = time.monotonic()
+    if sys.platform == "win32":
+        windows_runtime._place_session_file(path, payload)
+        assert json.loads(path.read_text(encoding="utf-8"))["token"] == "THE-BEARER"
+        assert paused == [0.05, 0.05], (
+            f"two refusals were survived with pauses of {paused}, not the sibling "
+            "`write_record`'s two of 50 ms")
+        assert time.monotonic() - started >= 0.05, "the recorded pauses did not happen"
+        assert refusals["left"] == 0, "the retry loop was never entered"
+    else:
+        with pytest.raises(OSError) as caught:  # noqa: PT011 - the class IS the assertion
+            windows_runtime._place_session_file(path, payload)
+        assert "in use by another process" in str(caught.value)
+        assert refusals["left"] == 1, "a POSIX link refusal was retried; it is permanent"
+        assert paused == [], f"a POSIX link refusal was waited on: {paused}"
+        assert not path.exists()
+    assert not _staging(path).exists(), "a staging file outlived the retried move"
+
+    def always(source, destination):
+        raise PermissionError(32, "the file is in use by another process")
+
+    monkeypatch.setattr(windows_runtime.os, _mover(), always)
+    hopeless = tmp_path / "hopeless.json"
+    with pytest.raises(OSError) as refused:  # noqa: PT011 - the class IS the assertion below
+        windows_runtime._place_session_file(hopeless, payload)
+    assert not isinstance(refused.value, FileExistsError), (
+        "a mover that refuses forever was reported as the target already existing")
+    assert not hopeless.exists(), "a placement that never moved left a target behind"
+    assert not _staging(hopeless).exists(), "a staging file outlived a move that never happened"
+
+
+def test_a_staging_name_taken_after_a_successful_move_is_left_alone(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Round-2 P4-3. The unlink in the `finally` ran on every path, including
+    the successful one -- where, on Windows, the rename has already taken the
+    staging NAME and whatever holds it now belongs to somebody else: a second
+    launch staging its own bearer, or the person. Deleting it was silent.
+
+    The specimen is that race made deterministic: the mover does the real
+    move and a foreign file takes the staging name in the same instant. The
+    placement must succeed and the foreign file must survive, on both arms --
+    on POSIX the link leaves the staging name in place, so the unlink DOES
+    run and the identity check is the whole protection there.
+
+    Remove the identity check (or the `consumed` flag) and this is red with
+    the foreign file gone."""
+    payload = json.dumps({"token": "THE-BEARER"}) + "\n"
+    path = tmp_path / "session.json"
+    real_move = getattr(os, _mover())
+    foreign = b"a staging file another launch made"
+
+    def move_then_take_the_name(source, destination):
+        real_move(source, destination)
+        with contextlib.suppress(OSError):
+            os.unlink(source)          # the POSIX arm leaves the link behind
+        Path(source).write_bytes(foreign)
+
+    monkeypatch.setattr(windows_runtime.os, _mover(), move_then_take_the_name)
+    windows_runtime._place_session_file(path, payload)
+    assert json.loads(path.read_text(encoding="utf-8"))["token"] == "THE-BEARER"
+    assert _staging(path).exists(), "a file this call did not make was deleted"
+    assert _staging(path).read_bytes() == foreign
+
+
+def test_every_placement_failure_names_the_file_it_could_not_use(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Round-2 P4-1 and P4-2, and the failures read uniformly.
+
+    A staging failure was announced against the FINAL path -- "the session
+    file <target> could not be created" for a target that was never touched
+    -- so the person was sent to look at the wrong file. Each failure now
+    names the file the placement could not use.
+
+    `path.with_name` is the second half: it raises `ValueError`, not
+    `OSError`, for a path with no name, and this runs on the readiness
+    thread, where the caller catches `OSError` and a `ValueError` would take
+    the notice with it. A drive root is refused by `launch`'s fence long
+    before this; the guard is here because the distance between the fence and
+    this call is where that kind of assumption rots."""
+    payload = json.dumps({"token": "THE-BEARER"}) + "\n"
+
+    # 1. no staging name can be formed: a path whose name is empty.
+    root = Path(tmp_path.anchor)
+    with pytest.raises(OSError) as no_name:  # noqa: PT011 - the class IS the assertion
+        windows_runtime._place_session_file(root, payload)
+    assert not isinstance(no_name.value, ValueError), (
+        "a ValueError escaped the placement onto the readiness thread")
+    assert str(root) in str(no_name.value) and "staging name" in str(no_name.value)
+
+    # 2. the target is already there: the ONE failure that names the target,
+    #    because it is the caller's refusal branch.
+    taken = tmp_path / "taken.json"
+    taken.write_bytes(b"{}")
+    with pytest.raises(FileExistsError) as exists:
+        windows_runtime._place_session_file(taken, payload)
+    assert str(taken) in str(exists.value)
+
+    # 3. the staging name is already taken.
+    free = tmp_path / "free.json"
+    _staging(free).write_bytes(b"somebody else's staging file")
+    with pytest.raises(OSError) as staged:  # noqa: PT011 - the class IS the assertion
+        windows_runtime._place_session_file(free, payload)
+    assert not isinstance(staged.value, FileExistsError)
+    assert str(_staging(free)) in str(staged.value)
+
+    # 4. the payload cannot be flushed.
+    def refusing_fsync(descriptor):
+        raise OSError("the write could not be flushed")
+
+    monkeypatch.setattr(windows_runtime.os, "fsync", refusing_fsync)
+    unwritable = tmp_path / "unwritable.json"
+    with pytest.raises(OSError) as write_failed:  # noqa: PT011 - the class IS the assertion
+        windows_runtime._place_session_file(unwritable, payload)
+    assert str(_staging(unwritable)) in str(write_failed.value), (
+        f"a staging failure was announced against the wrong file: {write_failed.value}")
+    assert "could not be flushed" in str(write_failed.value), "the cause was dropped"
+    monkeypatch.undo()
+
+    # 5. the move fails for a reason that is not the target.
+    def refusing_move(source, destination):
+        raise OSError("the volume is full")
+
+    monkeypatch.setattr(windows_runtime.os, _mover(), refusing_move)
+    unmovable = tmp_path / "unmovable.json"
+    with pytest.raises(OSError) as move_failed:  # noqa: PT011 - the class IS the assertion
+        windows_runtime._place_session_file(unmovable, payload)
+    assert str(_staging(unmovable)) in str(move_failed.value)
+    assert str(unmovable) in str(move_failed.value)
+    assert "the volume is full" in str(move_failed.value)
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["free.json.tmp", "taken.json"], (
+        "a failed placement left a file behind")
 
 
 class _Mute(Exception):
@@ -1795,7 +2305,10 @@ def test_a_session_file_error_that_cannot_render_itself_is_still_a_notice(
     real_open = os.open
 
     def refusing_open(path, flags, mode=0o777, **kwargs):
-        if str(path) == str(run.session_path):
+        # The target AND the staging name beside it: the bearer is written to
+        # `<name>.tmp` and moved onto the final name complete, so the open
+        # this run makes is the staging one.
+        if str(path).startswith(str(run.session_path)):
             raise _MuteOSError()
         return real_open(path, flags, mode, **kwargs)
 
@@ -1824,6 +2337,7 @@ def test_a_session_file_error_that_cannot_render_itself_is_still_a_notice(
     assert str(run.session_path) in text, text
     assert "_MuteOSError" in text and "could not be rendered" in text, text
     assert not run.session_path.exists(), "a file was created after the open was refused"
+    assert not _staging(run.session_path).exists(), "a staging file outlived the refused open"
     token = _redeem(record["port"], _nonce_of(run.opened[0]))[1]["token"]
     assert token not in json.dumps(run.notices), "the bearer reached a notice"
     log_text = run.paths.log.read_text(encoding="utf-8")
