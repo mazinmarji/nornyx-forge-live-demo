@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from session_client import authed_client
 
 from nornyx_forge.capsule import PROVIDERS
 from nornyx_forge.governance_rendering import parse_business
@@ -44,7 +45,7 @@ def _clock():
 def client(tmp_path: Path) -> TestClient:
     app = create_app(tmp_path / "capsule", CONTRACTS_DIR, clock=_clock(),
                      seal_dir=tmp_path / "seals")
-    return TestClient(app)
+    return authed_client(app)
 
 
 def _created(client: TestClient) -> None:
@@ -215,7 +216,7 @@ def test_an_unrenderable_contract_is_a_reported_failure(tmp_path: Path):
                                           encoding="utf-8", newline="")
     app = create_app(tmp_path / "capsule", contracts, clock=_clock(),
                      seal_dir=tmp_path / "seals")
-    response = TestClient(app).get("/api/governance")
+    response = authed_client(app).get("/api/governance")
     assert response.status_code == 502
     assert "broken.nyx" in response.json()["refused"]
 

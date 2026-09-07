@@ -106,6 +106,14 @@ design the tests hold; the double-click itself and the browser opening on the
 operator's embeddable interpreter are operator evidence, and
 `docs/VALIDATION.md` says which parts have and have not been observed.
 
+The start link the runtime opens carries a one-time code in its `#fragment`;
+the page trades it for this run's session and keeps that session in memory
+only. Reloading the page loses the session by design -- the code was never
+stored -- so the page then shows a **Reconnect** button, which asks the
+running Forge to open a fresh page. Every request the page makes after that
+carries the session; a local process that opens the page without the code
+sees the no-session state and moves nothing (A-027).
+
 ```bash
 python scripts/build_windows_bundle.py --python-embed <embeddable zip> --python-embed-sha256 <sha256> --smoke
 ```

@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from session_client import authed_client
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge import onboarding_app as onboarding
@@ -181,9 +182,9 @@ class BlockingFlow(GovernedFlow):
 def _client(tmp_path: Path, factory=GovernedFlow) -> TestClient:
     GovernedFlow.instances = []
     BlockingFlow.hold.clear()
-    return TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                 flow_factory=factory, seal_dir=tmp_path / "seals",
-                                 eligibility=_seam_eligibility))
+    return authed_client(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
+                                    flow_factory=factory, seal_dir=tmp_path / "seals",
+                                    eligibility=_seam_eligibility))
 
 
 def _ok(response) -> dict:
@@ -909,10 +910,10 @@ def test_a_crash_before_the_build_starts_does_not_hold_the_build_lock(
     later build was refused as "already running" for the session."""
     monkeypatch.setattr(onboarding, "begin_build",
                         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("git vanished")))
-    client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
-                                   eligibility=_seam_eligibility),
-                        raise_server_exceptions=False)
+    client = authed_client(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
+                                      flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
+                                      eligibility=_seam_eligibility),
+                           raise_server_exceptions=False)
     GovernedFlow.instances = []
     _confirmed(client)
     crashed = client.post("/api/build", json={"actor": HUMAN})

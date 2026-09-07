@@ -15,6 +15,7 @@ import threading
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from session_client import authed_client
 
 from nornyx_forge.capsule import Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleStore
@@ -89,9 +90,9 @@ def _seam_eligibility(provider: str) -> GovernedEligibility:
 
 def _client(tmp_path: Path, factory=RecordingFlow) -> TestClient:
     RecordingFlow.instances = []
-    return TestClient(create_app(tmp_path / "capsule", CONTRACTS,
-                                 flow_factory=factory, seal_dir=tmp_path / "seals",
-                                 eligibility=_seam_eligibility))
+    return authed_client(create_app(tmp_path / "capsule", CONTRACTS,
+                                    flow_factory=factory, seal_dir=tmp_path / "seals",
+                                    eligibility=_seam_eligibility))
 
 
 def _wait_finished(client: TestClient) -> dict:

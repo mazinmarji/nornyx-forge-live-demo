@@ -43,6 +43,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from session_client import authed_client
 
 from nornyx_forge import onboarding_app as onboarding
 from nornyx_forge import onboarding_serve
@@ -196,9 +197,9 @@ def _client(tmp_path: Path, factory=GovernedFlow) -> TestClient:
     HostileFlow.release.clear()
     HostileFlow.instances = []
     GovernedFlow.instances = []
-    return TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                 flow_factory=factory, seal_dir=tmp_path / "seals",
-                                 eligibility=_seam_eligibility))
+    return authed_client(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
+                                    flow_factory=factory, seal_dir=tmp_path / "seals",
+                                    eligibility=_seam_eligibility))
 
 
 def _ok(response) -> dict:
@@ -785,9 +786,9 @@ def test_the_served_seal_directory_is_forges_own_outside_any_project(tmp_path: P
 
 def test_a_thread_that_fails_to_start_releases_the_build_lock_and_the_seal(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    client = TestClient(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
-                                   flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
-                                   eligibility=_seam_eligibility),
+    client = authed_client(create_app(tmp_path / "capsule", CONTRACTS, clock=_clock(),
+                                      flow_factory=GovernedFlow, seal_dir=tmp_path / "seals",
+                                      eligibility=_seam_eligibility),
                         raise_server_exceptions=False)
     GovernedFlow.instances = []
     _confirmed(client)

@@ -82,25 +82,25 @@ approvals:
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       exact: true
     invalidation_conditions: [revision_change, scope_change]
     expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+  subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
   records:
     - id: architecture_conformance_report
       type: architecture_evidence
       schema_id: nornyx.architecture_evidence.v1
       producer: {id: tool:check_architecture, type: tool}
       artifact: evidence/architecture_conformance_report.json
-      content_hash: sha256:5f1be0556d660664b782c6120ec5b0d8f5bf5635109c083bb60851c5e67c664a
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:ed5cc735344a0124a95dcddd86660eadc68272d17a64a9f2c634a76fd1045e85
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool: {name: check_architecture, version: "0.3.0"}
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: pass
       dependencies: []
     - id: independent_review_record
@@ -108,11 +108,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:in_session_inspectors, type: tool}
       artifact: evidence/architecture_independent_review.json
-      content_hash: sha256:5e033de275d5e24fbc27acb592d33f8610d3485084ecdc904ed9fb7b7b5eaba6
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:ca04a29b0d2102dbcd1dc048f3d139696b866b621ff6bf7c305f262dfbc8104a
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool: {name: in_session_inspectors, version: "0.3.0"}
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: observed
       dependencies: []
     - id: exception_review_record
@@ -120,11 +120,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_exception_review.json
-      content_hash: sha256:3780321101ffd953d3e57bcbd66f2e6f97dda1cb3d917a273f141458ce8b2759
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:8c22144f05a3fe4e894332a99f84163af97f425cf5445c86be7e9fe146442840
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: pass
       dependencies: []
     - id: change_record
@@ -132,11 +132,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_change_record.json
-      content_hash: sha256:2832f1c499908ebad9014d7b427de8e03a55b629852511621401b26405288057
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:28feba7c439ec22aa8d6139dac87a1801373b8a55eaba0acc39a98360f1f4b8a
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: pass
       dependencies: [architecture_conformance_report]
     - id: evidence_manifest
@@ -144,11 +144,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/architecture_evidence_manifest.json
-      content_hash: sha256:a6bb85e24aaed6cb4460fad59328cecf39fe1d1db46ccf13c8ab2bc5fa5f1b0c
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:9209b3c1979ac7d7df8589e7313f6d3cca8b0d72632bd03236998886c79332a5
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
 
@@ -160,13 +160,13 @@ governance_evidence:
         id: system:autonomous_demonstration
         type: system
       artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:2c79ac7051b3a293cbb1cab1332ea0e74c165ab885604dfa33735ccfac99131a
-      subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      content_hash: sha256:506a788c1f6e89f3016f1b80cf01fef8d24bf111269217c46fe81e9fa55587ae
+      subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       tool:
         name: refresh_governance_evidence
         version: 0.3.0
-      generated_at: "2026-09-07T04:09:06Z"
-      expires_at: "2027-09-07T04:09:06Z"
+      generated_at: "2026-09-07T12:46:47Z"
+      expires_at: "2027-09-07T12:46:47Z"
       status: observed
       dependencies: []
     # <<< managed:approval_record
@@ -205,7 +205,7 @@ changes:
       disjoint: true
     revision_binding:
       kind: git
-      revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+      revision: git:45387c637570cea6fe050a02f4f095a138be9fea
       exact: true
       scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
     approval_invalidated_on: [revision_change, scope_change]
@@ -232,7 +232,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
+  subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -248,7 +248,7 @@ architecture:
   systems:
     - id: system.forge
       name: Nornyx Forge
-      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel, component.governed_subject, component.nornyx_cli, component.runtime_preparation, component.subject_observation, component.subject_bootstrap, component.app_launcher, component.forge_cli, component.forge_flow, component.forge_authoring, component.forge_probes, component.reviewer_trust, component.project_capsule, component.capsule_store, component.experience, component.experience_build, component.provider_contract, component.providers, component.codex_worker, component.governance_rendering, component.forge_onboarding, component.experience_sharing, component.brd_authoring, component.experience_journey, component.windows_runtime]
+      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel, component.governed_subject, component.nornyx_cli, component.runtime_preparation, component.subject_observation, component.subject_bootstrap, component.app_launcher, component.forge_cli, component.forge_flow, component.forge_authoring, component.forge_probes, component.reviewer_trust, component.project_capsule, component.capsule_store, component.experience, component.experience_build, component.provider_contract, component.providers, component.codex_worker, component.governance_rendering, component.forge_onboarding, component.experience_sharing, component.brd_authoring, component.experience_journey, component.windows_runtime, component.control_plane_session]
   components:
     - id: component.api
       name: FastAPI and dashboard boundary
@@ -432,7 +432,22 @@ architecture:
       bounded_context: context.operations
       canonical: true
       modules: [module.onboarding_app, module.onboarding_serve]
-      depends_on: [component.project_capsule, component.capsule_store, component.governance_rendering, component.subject_bootstrap, component.experience_sharing, component.brd_authoring, component.forge_flow, component.experience_journey, component.experience, component.provider_contract]
+      depends_on: [component.project_capsule, component.capsule_store, component.governance_rendering, component.subject_bootstrap, component.experience_sharing, component.brd_authoring, component.forge_flow, component.experience_journey, component.experience, component.provider_contract, component.control_plane_session]
+    # The control-plane session (Tranche B): one per-run bearer, and the pure
+    # ASGI gate that enforces it over every route. Pure domain -- hmac,
+    # secrets, time, threading and no web framework -- so it can be the
+    # middleware create_app installs without inverting the dependency onto
+    # FastAPI. It closes the loopback half of A-024/A-027: a provider that can
+    # reach loopback still cannot move authority without this run's token,
+    # which lives only in Forge's memory and the human's page.
+    - id: component.control_plane_session
+      name: Control-plane session and gate
+      system: system.forge
+      layer: layer.domain
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.control_plane_session]
+      depends_on: []
     # The Windows basic-user runtime (PR-18): launch mechanics and nothing
     # else. It verifies that the launched folder is the code that is running,
     # holds one runtime per project under an OS file lock, binds a loopback
@@ -450,7 +465,7 @@ architecture:
       bounded_context: context.operations
       canonical: true
       modules: [module.windows_runtime, module.windows_launch]
-      depends_on: [component.forge_onboarding, component.app_launcher, component.subject_bootstrap, component.governed_subject, component.capsule_store, component.project_capsule]
+      depends_on: [component.forge_onboarding, component.app_launcher, component.subject_bootstrap, component.governed_subject, component.capsule_store, component.project_capsule, component.control_plane_session]
     # The sharing preview: minimized by a closed field registry and closed
     # value shapes, displayed for review, never transmitted -- the module
     # has no network path and the payload records its own never-sent state.
@@ -674,7 +689,17 @@ architecture:
       name: nornyx_forge.onboarding_app
       component: component.forge_onboarding
       layer: layer.application
-      depends_on: [module.project_capsule, module.capsule_store, module.governance_rendering, module.experience_sharing, module.brd_authoring, module.forge_flow, module.experience_journey, module.experience, module.provider_contract]
+      depends_on: [module.project_capsule, module.capsule_store, module.governance_rendering, module.experience_sharing, module.brd_authoring, module.forge_flow, module.experience_journey, module.experience, module.provider_contract, module.control_plane_session]
+    # The per-run bearer and the pure ASGI gate. Pure domain: hmac, secrets,
+    # time and threading only, and no first-party dependency, so it can be
+    # composed as the outermost middleware without depending on anything it
+    # gates. onboarding_app installs it; windows_runtime imports the
+    # allowlisted route paths from it so route and gate cannot drift.
+    - id: module.control_plane_session
+      name: nornyx_forge.control_plane_session
+      component: component.control_plane_session
+      layer: layer.domain
+      depends_on: []
     - id: module.experience_sharing
       name: nornyx_forge.experience_sharing
       component: component.experience_sharing
@@ -703,7 +728,7 @@ architecture:
       name: nornyx_forge.windows_runtime
       component: component.windows_runtime
       layer: layer.application
-      depends_on: [module.onboarding_serve, module.onboarding_app, module.app_launcher, module.subject_bootstrap, module.governed_subject, module.capsule_store, module.project_capsule]
+      depends_on: [module.onboarding_serve, module.onboarding_app, module.app_launcher, module.subject_bootstrap, module.governed_subject, module.capsule_store, module.project_capsule, module.control_plane_session]
     # The launcher's entry: standard library only, so that a folder whose
     # code does not import is a visible failure rather than a silent one
     # under pythonw. Imports the runtime inside its guard and delegates.
@@ -911,9 +936,9 @@ architecture_evidence:
     tool: scripts/check_architecture.py
     tool_version: "0.3.0"
     status: pass
-    subject_revision: git:f62656f787b62ce9be14fee46c181f822cf028fc
-    generated_at: "2026-09-07T04:09:06Z"
-    expires_at: "2027-09-07T04:09:06Z"
+    subject_revision: git:45387c637570cea6fe050a02f4f095a138be9fea
+    generated_at: "2026-09-07T12:46:47Z"
+    expires_at: "2027-09-07T12:46:47Z"
     violations: []
     artifact: evidence/architecture_conformance_report.json
-    artifact_sha256: sha256:5f1be0556d660664b782c6120ec5b0d8f5bf5635109c083bb60851c5e67c664a
+    artifact_sha256: sha256:ed5cc735344a0124a95dcddd86660eadc68272d17a64a9f2c634a76fd1045e85

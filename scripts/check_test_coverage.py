@@ -177,6 +177,8 @@ EXPECTED_SKIPS = {
         "Only CreateProcess answers error 206 for an over-long executable path, so the real-spawn half of this proof exists on Windows alone; it also skips on a Windows volume without long-path support, which cannot hold the 300-character path. The property is not weakened: the classifier's rule runs on every host over synthesised 206s in both adapter suites' classifier tests.",
     "tests/test_provider_contract.py::test_the_windows_command_line_limit_is_the_operating_systems_not_a_copy_of_the_rule":
         "The 32767-character bound is CreateProcess's, and the two real spawns that hold WINDOWS_COMMAND_LINE_LIMIT against it (a 32766-character line accepted, 32767 refused with 206) exist on Windows alone. The property is not weakened: the classifier's boundary semantics are held on every host by synthesised specimens on either side of the constant, and the routed tool-list specimen exceeds the bound on both CI platforms.",
+    "tests/test_windows_host_runtime.py::test_an_unbearered_stop_against_the_real_child_is_refused_and_leaves_it_serving":
+        "Windows-hosted runtime evidence: an un-bearered stop sent to a real child process from a real bundle folder on a Windows host, refused with the record still ready. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
 }
 
 
@@ -320,13 +322,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # absence, the governance route serving only the guarded rendering.
     "tests/test_onboarding_app.py": 13,
     # The launch path: 9 collected at introduction, 13 after the post-PR-18
-    # hardening (the common Host rule, N3), floor at band(13) = 12. The
+    # hardening (the common Host rule, N3), 14 after Tranche B round 4 (the
+    # console start link read from stdout: a nonce, not the bearer, redeemed
+    # once), 15 after Tranche B round 6 (a LEXICAL pin that the comment beside
+    # that print no longer claims the nonce "stays off disk" -- a redirected
+    # stdout was measured carrying it to a file and redeeming for the bearer),
+    # floor at band(15) = 14. The
     # FORGE_ROOT doctrine held at every layer -- relative directories
     # refused in assemble, main and the launcher alike, the loopback
     # binding pinned -- and the loopback Host rule held on the common
     # composition, on the console path, and by a census of `src/` for any
     # composition that omits it.
-    "tests/test_onboarding_launch.py": 12,
+    "tests/test_onboarding_launch.py": 14,
     # Provider-routed engineering execution: 9 collected at introduction,
     # floor at band(9) = 9. The default path preserved structurally, the
     # no-silent-fallback rule, and a real flow call site recording the
@@ -350,8 +357,24 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # and a long tool list reaches the adapters' argument-length branch on
     # both adapters, which `ProviderTask.validate` does not prevent (it
     # bounds the goal, not the tool list or the workspace). Floor at
-    # band(20) = 18.
-    "tests/test_provider_execution.py": 18,
+    # band(20) = 18. Raised 18 -> 20 for Tranche B ROUND SIX -- 2 new
+    # collected (22 total): the routed provider process, on BOTH routes, is
+    # handed an environment carrying no FORGE_* and no bare FORGE, read back
+    # from what the child actually received. `_provider_env()` was pinned only
+    # in tests/test_control_plane_session.py, which the windows-runtime CI job
+    # does not run, so on that job the stripping was asserted by nothing.
+    # ROUND SEVEN completed that move: the job did not run THIS module either
+    # when round six wrote the sentence above, so the pin was still Linux-only
+    # (round-6 test T-P3-2); `.github/workflows/ci.yml` now names it in the
+    # windows-runtime module list -- and 1 new collected (23 total) reads that
+    # list. ROUND EIGHT corrects what that reader read: it asked whether the
+    # module's path appeared anywhere in the job BLOCK, which the YAML comment
+    # round seven added to that block satisfied on its own, so removing the
+    # module from the pytest command left it green (round-7 finding F-1). It
+    # now reads the `python -m pytest` invocation line, with the comment-only
+    # job built in the test as the specimen it must refuse. Floor at
+    # band(23) = 21.
+    "tests/test_provider_execution.py": 21,
     # The confirmed capsule provider drives the build; proposals never do:
     # 7 collected at introduction, floor at band(7) = 7. The authority
     # split extended to execution, over the real CLI and a real store.
@@ -373,8 +396,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # any command, and the smoke's `pass` bound to the conjunction of its
     # recorded observations (S1-S9, over scripted observations and through
     # the smoke over a scripted launcher, its exception paths and bounds
-    # included, and against a hostile listener on its scratch port).
-    "tests/test_windows_bundle.py": 41,
+    # included, and against a hostile listener on its scratch port). Tranche B
+    # added the smoke's bearer (three tests) and its repair round the fence
+    # position of the smoke's session file (49 collected); round 4 added the
+    # two-segment request witness and the 200-exchange no-reset witness for
+    # the listener helper behind the CI failure: 51 collected, floor at
+    # band(51) = 46. Round 5 replaced the "no bearer sent" specimen with the
+    # pair that pins the smoke's session-file WAIT -- a runtime writing the
+    # file 300 ms after readiness, and one that never writes it -- and the
+    # `session_file` observation is required, so a missing bearer is named
+    # once: 52 collected, floor at band(52) = 47. Round 6 made that wait's
+    # ordering an EVENT rather than a reading of `time.monotonic()` (15.6 ms
+    # on Windows <= 3.12, which put 46 of 300 reads of a 0.3 s wait under
+    # 0.3 and failed the module 2 of 9 unmutated runs), gave the "never
+    # arrives" case the budget witness its docstring had been claiming
+    # without one, and added the guard that the smoke contract counts the
+    # observations it lists: 53 collected, floor at band(53) = 48.
+    "tests/test_windows_bundle.py": 48,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -386,16 +424,92 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # after the server answered its own probe, stale metadata and impostors
     # refused without terminating anything, bounded notices, operational
     # state kept out of the governance answer, the project and the seals,
-    # and capsule authority persisting across a runtime restart.
-    "tests/test_windows_runtime.py": 34,
+    # and capsule authority persisting across a runtime restart. Tranche B and
+    # its repair round added the control-plane session over the REAL runtime
+    # (57 collected): the nonce bootstrap and the
+    # secrets absent from record, log, trail, page, identity and every
+    # response header, on the browser-failure branch too; the two-slot reopen,
+    # its 409 under --no-browser and the joiner's notices; the session-file
+    # fence and its after-readiness ordering; the access log off; and a
+    # flood of non-ASCII credentials leaving no traceback. Round 3 added the
+    # owner-failure 503 across four exception shapes and the joiner told of
+    # it, a handler's own exception class on the browser-failure branch, the
+    # pre-existing session file left as found, and the fence resolving the
+    # runtime directory itself (64 collected). Round 4 added the `\\?\`,
+    # `\\.\`, `//?/` and UNC spellings of every fenced root over real
+    # launches that create nothing, the `[seal]` case on a seal directory of
+    # its own, the namespace-prefix specimens on the fence function, the 8.3
+    # and junction aliases, the trailing dot and space, and an adapter whose
+    # `__str__` raises on both failure branches: 76 collected, floor at
+    # band(76) = 69. Round 5 added the two POST-RESOLUTION fence witnesses
+    # through the candidate-resolution seam (a plain spelling that RESOLVES
+    # prefixed, on the session file and on the runtime directory: both blocks
+    # had been deletable with the module green), the embedded-NUL notice on
+    # both caller-supplied operands, and the join path's own `_said`
+    # specimen: 80 collected, floor at band(80) = 72. Round 6 rebuilt that NUL
+    # case as the four combinations its CI failure demanded -- both
+    # resolutions (`Path.resolve`, which raises on <= 3.12, and the 3.13 shape,
+    # which answers) crossed with the candidate under the relocated profile and
+    # outside it -- over all THREE fenced operands, with a control that the two
+    # resolutions really differ here; and added the witness that the fenced
+    # ROOTS are resolved for real and never through the candidate seam, plus
+    # specimens for the assembly-failure and session-file `_said` sites, which
+    # no test referenced: 87 collected, floor at band(87) = 79. Round 7 added
+    # ONE: `launch`'s own fenced roots -- the seal directory and the candidate
+    # project -- get the aliasing-resolver witness the session-file fence got
+    # in round 6, because routing them through the candidate seam had survived
+    # all 87 of the above (round-6 test T-P3-3). The NUL case gained a FOURTH
+    # operand, `--bundle-root`, inside the cases it already had. 88 collected,
+    # floor at band(88) = 80.
+    "tests/test_windows_runtime.py": 80,
+    # Tranche B's control-plane session: 43 collected at introduction, 77 after
+    # the repair round, 80 after round 3 (the allowlisted routes ignoring
+    # cookies, the owner-failure 503 on the composed surface, the page's CSP
+    # pinned lexically), 97 after round 4 (the AST pin over verify AND redeem,
+    # the reopen queue -- A/B/C at the session and on the wire under an
+    # injected clock, bound, expiry, the derivation joining the two
+    # constants -- the default TTL through create_app's own session, the
+    # near-miss census, the read-only refusal bodies, the redeem cache
+    # headers, the bare FORGE drop, the raising __str__ adapter, and the
+    # architecture gate's forbidden entry proved by injection), 98 after
+    # round 5 (the comparison detector's own positive and negative controls,
+    # once it was taught to read a comparison written as a CALL), floor at
+    # band(98) = 89. The gate over the bare and the
+    # COMPOSED surface (every method on every route against a hardcoded
+    # allowlist, state bytes and lifecycle unchanged, stop never requested),
+    # the token and two-slot nonce unit (TTL, constant-time over bytes, the
+    # credential alphabet), strict bearer parsing and every partial bearer
+    # refused, the redeem and reopen browser-provenance checks with Origin
+    # serialization specimens, websocket and unknown scopes refused, a gate
+    # that cannot raise, the docs routes off, the echo-free refusals, every
+    # response's headers against a declared set, and the provider exclusion
+    # over the real build route with the REAL flow and a fake provider process.
+    # Raised 89 -> 90 for ROUND SEVEN -- 1 new collected (99 total): the
+    # comparison detector reads the IMPORT, and a per-method AST pin cannot
+    # see a module-scope alias at all, so the binding is forbidden at every
+    # scope of the module (round-6 test T-P3-1, where
+    # `from operator import eq as _same` survived all 98). ROUND EIGHT --
+    # 1 new collected (100 total): a comparison helper DEFINED at module scope
+    # is neither an operator inside the method nor an import, and
+    # `def _same(a, b): return a == b` called from `verify` survived all 99
+    # (round-7 finding F-2(b)); the new test enumerates exactly which
+    # module-scope callables `verify` and `redeem` reach and exactly what the
+    # one they do reach compares. Floor UNCHANGED at band(100) = 90, which
+    # band(99) already was.
+    "tests/test_control_plane_session.py": 90,
     # PR-18's Windows-hosted evidence: 10 collected after the inspections
     # (the journey once per declared provider, and the one test that runs
-    # everywhere and pins the windows-runtime job), floor at band(10) = 9.
+    # everywhere and pins the windows-runtime job), 11 after Tranche B
+    # round 3 added the un-bearered stop against the real child (refused,
+    # record still ready, log clean), 12 after round 5 added the harness's
+    # own dead-child pin -- the second test here that runs on every platform,
+    # because it is a property of the harness and starts no runtime -- floor
+    # at band(12) = 11.
     # Real child processes from a real bundle folder at a path with spaces
     # and non-ASCII characters, from an unrelated working directory;
     # declared skips off Windows, run by the windows-runtime CI job under
     # its own skip census.
-    "tests/test_windows_host_runtime.py": 9,
+    "tests/test_windows_host_runtime.py": 11,
     # The BRD derivation: 9 collected at introduction, floor at band(9) = 9.
     # Round-tripped against the real parse_brd; a proposal-only capsule
     # refuses; open proposals author nothing; heading collisions refused.
@@ -854,16 +968,72 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (67 -> 69), floor 61 -> 63; 1 more in tests/test_codex_provider.py
 # (59 -> 60), floor unchanged at band(60) = 54;
 # tests/test_provider_execution.py stays at 20. No module added, so 111
-# stands; the module-floor sum rises by 2 and the aggregate follows:
+# stands; the module-floor sum rises by 2 and the aggregate follows.
+# Re-measured for the Tranche B control-plane session and its
+# repair round together: a new module tests/test_control_plane_session.py
+# collects 77 (floor at band(77) = 70), tests/test_windows_runtime.py gained
+# twenty session tests over the real runtime (37 -> 57, floor 34 -> 52) and
+# tests/test_windows_bundle.py four (45 -> 49, floor 41 -> 45); 111 -> 112
+# modules, the module-floor sum rises by 92 and the aggregate follows.
+# Re-measured for Tranche B round 3: tests/test_windows_runtime.py 57 -> 64
+# (floor 52 -> 58), tests/test_control_plane_session.py 77 -> 80 (floor
+# 70 -> 72), tests/test_windows_host_runtime.py 10 -> 11 (floor 9 -> 10);
+# 112 modules stand; the module-floor sum rises by 9 to 2731, which would
+# have left the aggregate floor of 2730 BELOW the sum -- no gate at all --
+# so the aggregate rises to 2739 and keeps the same 8 of headroom above it.
+# Re-measured for Tranche B round 4: tests/test_control_plane_session.py
+# 80 -> 97 (floor 72 -> 88), tests/test_windows_runtime.py 64 -> 76 (floor
+# 58 -> 69), tests/test_windows_bundle.py 49 -> 51 (floor 45 -> 46),
+# tests/test_onboarding_launch.py 13 -> 14 (floor 12 -> 13); 112 modules
+# stand; the module-floor sum rises by 29 to 2760 and the aggregate follows
+# to 2768, keeping the same 8 above it. RE-MEASURED FROM SCRATCH for round 5,
+# where Tranche B was rebased onto the provider-adapter parity slice: the two
+# branches raised floors on disjoint modules, so the merged table is the union
+# of both and every number below is a fresh measurement of the merged tree
+# rather than either branch's arithmetic carried across. Round 5's own changes
+# move four modules: tests/test_control_plane_session.py 97 -> 98 (floor
+# 88 -> 89), tests/test_windows_bundle.py 51 -> 52 (46 -> 47),
+# tests/test_windows_host_runtime.py 11 -> 12 (10 -> 11) and
+# tests/test_windows_runtime.py 76 -> 80 (69 -> 72). 112 modules stand; the
+# module-floor sum is 2872 and the aggregate follows to 2880, keeping the same
+# 8 above it. Re-measured for Tranche B round 6, which repairs round 5's CI
+# failure and its two reviewers' findings: tests/test_windows_runtime.py
+# 80 -> 87 (floor 72 -> 79), tests/test_windows_bundle.py 52 -> 53 (47 -> 48),
+# tests/test_provider_execution.py 20 -> 22 (18 -> 20) and
+# tests/test_onboarding_launch.py 14 -> 15 (13 -> 14).
+# tests/test_control_plane_session.py stays at 98: its detector was widened
+# and its positive control given more specimens, inside the tests it already
+# had. 112 modules stand; the module-floor sum rises by 11 to 2883 and the
+# aggregate follows to 2891, keeping the same 8 above it.
+# Re-measured for Tranche B round 7, which closes the sixth review's findings:
+# tests/test_windows_runtime.py 87 -> 88 (floor 79 -> 80),
+# tests/test_control_plane_session.py 98 -> 99 (89 -> 90) and
+# tests/test_provider_execution.py 22 -> 23 (20 -> 21). One test each: the
+# witness for `launch`'s own fenced roots, the module-scope comparison-binding
+# check, and the read of the windows-runtime job's module list. 112 modules
+# stand; the module-floor sum rises by 3 to 2886 and the aggregate follows to
+# 2894, keeping the same 8 above it. Both margins below are unchanged, which
+# is arithmetic and not luck: each of the three modules gained one collected
+# test and one floor, and `ceil(0.9n)` moved by exactly one at each of 88, 99
+# and 23, so every per-module slack is what it was.
+# Re-measured for Tranche B round 8, which closes the seventh review's
+# findings: tests/test_control_plane_session.py 99 -> 100, and this time the
+# floor does NOT move -- `ceil(0.9*99)` and `ceil(0.9*100)` are both 90. So
+# the module-floor sum stays 2886, MINIMUM_COLLECTED stays 2894, "above the
+# module sum" stays 8, and the two rows that DO move are the ones that read
+# the suite: collected 3145 -> 3146, `band(n)` 2831 -> 2832, and the working
+# room below the floor 251 -> 252. The slack the bands grant rises by the
+# same one, 259 -> 260, because that module now collects one more test above
+# a floor that did not follow it:
 #
 # (rows below):
 #
-#     collected across tests/     2980   (111 modules)
-#     sum of the module floors    2736
-#     band(2980) = ceil(0.9*n)    2682
-#     MINIMUM_COLLECTED           2744
+#     collected across tests/     3146   (112 modules)
+#     sum of the module floors    2886
+#     band(3146) = ceil(0.9*n)    2832
+#     MINIMUM_COLLECTED           2894
 #     above the module sum         8
-#     below what collects         236
+#     below what collects         252
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -884,7 +1054,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 244 in total, and the aggregate refuses
+# per-module bands already grant 260 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -905,7 +1075,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2744
+MINIMUM_COLLECTED = 2894
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -995,6 +1165,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_bundle.py",
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
+    "tests/test_control_plane_session.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
     "tests/test_basic_user_journey.py",

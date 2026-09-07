@@ -2,6 +2,270 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Control-plane session capability (Tranche B). The onboarding surface is
+  local and unauthenticated, and A-024 measured that a Codex worker confined
+  to the project workspace still reaches loopback and its POST is accepted
+  under the Host rule -- so any local process could drive the authority-moving
+  routes as if it were the person. It now admits an authority-moving request
+  only when it carries this run's bearer. A per-run token is minted in
+  `create_app` (the real composition root, not `assemble`) and enforced by a
+  pure ASGI middleware (`nornyx_forge.control_plane_session.SessionGate`,
+  `layer.domain`, no web framework) installed so it wraps every route,
+  including the operational routes attached afterwards; everything but four
+  allowlisted routes (`GET /`, `GET /api/runtime`, `POST /api/session/redeem`,
+  `POST /api/runtime/reopen`) is refused `401` with a fixed body unless the
+  `Authorization: Bearer` matches, compared with `hmac.compare_digest`. The
+  token and the bootstrap nonce live only in Forge's process memory and the
+  page's JavaScript closure: no cookie, no web storage, no session file on any
+  default path, and no secret in any log, record, URL path, environment, prompt
+  or argv Forge controls (the browser handler's command line receives the
+  fragment URL; A-027 states the bound) -- because the measured
+  `CodexSandboxUsers` ACLs give a confined
+  provider read over the profile, the runtime dir and the seal dir (A-027).
+  The launcher opens the page at `/#<nonce>`; the fragment is never sent to a
+  server, the page redeems it once for the token, and a reload loses the
+  session by design (a Reconnect button asks the owning process to open a
+  fresh page; the second launcher uses the same reopen route; the console
+  composition has no runtime routes, so reopen is 404 there and the page
+  says so). The two unauthenticated POSTs carry Origin/`Sec-Fetch-Site`
+  checks, a navigation POST is refused `403`, and a `forge_session*` cookie
+  is refused `400` on gated requests while the allowlisted routes ignore
+  cookies (round 3 below); the
+  FastAPI docs and schema routes are off, `access_log` is off on every launch
+  path, and the validation-error handler echoes nothing. The workers pass the
+  provider an explicit environment stripped of `FORGE_*`. The bundle smoke and
+  the runtime tests read the token from an explicit `--session-file` the
+  shipped launchers never pass. `PROVIDER_CONFINEMENT`,
+  `CONFINEMENT_PROPERTIES` and `governed_build_eligibility` are untouched;
+  both providers stay ineligible; no Experience stage, CONFIRM, READY, seal,
+  lock, token or port semantics changed. The non-HTTP authority paths, the
+  same-user provider, and the shipped `codex exec` confinement are out of
+  scope and disclosed in A-027.
+- Tranche B repair round, closing the first review's findings. Credentials
+  are compared as bytes after an alphabet check, so a non-ASCII bearer or
+  nonce is the fixed `401`/`404` instead of a `500` with a traceback in the
+  runtime log (security F-1, measured); the gate's own decision cannot raise;
+  `Authorization` is accepted only as `Bearer <credential>` — one space, no
+  surrounding or embedded whitespace, no second field — with the scheme name
+  matched case-insensitively as RFC 6750 requires (F-5);
+  a websocket handshake is closed before accept and non-HTTP scopes other
+  than `lifespan` are dropped (F-4). On the browser-open FAILURE branch the
+  record, log and notice no longer carry the fragment URL: they name the
+  fragmentless URL and scrub the nonce from the exception text (architecture
+  P1-1, measured: a nonce read from the record redeemed for the token). The
+  bootstrap nonce lives in two independent slots, each single-use, and the
+  second is a QUEUE rather than one slot: `launch` holds ONE nonce, replaced
+  by the next launch mint, while `reopen` holds up to `REOPEN_PENDING_BOUND`
+  = `floor(NONCE_TTL_S / REOPEN_INTERVAL_S) + 1` = 13, the most nonces the
+  reopen route's own rate limit can leave outstanding within one TTL -- so
+  under that limit no unexpired reopen nonce is evicted by another caller's
+  reopen either. A local process calling reopen therefore invalidates neither
+  the person's pending launch bootstrap nor a Reconnect nonce their own page
+  minted; reopen refuses `409` on a `--no-browser` run and
+  a joining launcher told `409`/`429` notifies with the fragmentless URL (F-3,
+  P3-2). `--session-file` is fenced like `--runtime-dir` -- absolute, in an
+  existing directory, outside the project, the runtime directory, the seal
+  directory and the user profile -- before anything is created, written only
+  after readiness with mode `0600` where the OS honours a mode, and the
+  bundle smoke's comment now says where its file lands and why that is
+  acceptable for the smoke alone (F-2, P3-1). Evidence made to pin the
+  prose: a route census over the COMPOSED surface against a hardcoded
+  allowlist with state bytes, lifecycle and stop checked; every partial
+  bearer refused behaviourally; a declared response-header set on every
+  response; Origin full-serialization specimens; `access_log=False` on the
+  Windows runtime pinned by Config and by the log; the session file's
+  after-readiness ordering pinned; and INV-B2's provider leg driven through
+  the REAL `DevelopmentFlow` with a fake provider executable resolved by
+  name, whose received environment, argv, cwd and workspace are read back.
+  A-027 now scopes "no argv" to argv Forge controls, discloses the browser
+  handler's command line, the two-slot design and the residual reopen
+  nuisance, the `--session-file` reachability and fence, and that fragment
+  preservation through ShellExecute is unmeasured until the operator run.
+- Tranche B round 3, closing the second review's findings. TESTS: no launch
+  that must return is called synchronously any more -- each is held to a
+  watched deadline (`_returns`) that reads the record such a launch would
+  write if it became a server, so a fence-removed or lock-broken regression
+  is a red test within about a second rather than a hang (test P1-1/P1-2;
+  measured: the `[profile]` session-file case assumed pytest's temp root lay
+  under the profile, true on the workstation and false on the Linux matrix,
+  where the unfenced launch served forever and the CI run had to be
+  cancelled); that case now relocates the profile so it CONTAINS the
+  candidate and asserts it; the composed route census FAILS on any live
+  route it cannot probe (a `Mount`, a `WebSocketRoute`) instead of skipping
+  it (P2-1); the Windows host suite sends an un-bearered and a wrong-bearer
+  stop to the real child and requires `401` with the record still `ready`,
+  the process alive, and the log free of request lines and tracebacks
+  (P2-2); the runaway recovery posts stop with the bearer (P3-2); the
+  source-grep tests read the IMPORTED package (P4-2); the web-storage pin
+  says it is lexical (P3-1). RUNTIME: a `forge_session*` cookie is refused
+  `400` on GATED requests only and ignored on the four allowlisted pairs --
+  cookies are host-scoped, so a listener on another loopback port could set
+  one for `127.0.0.1` and the previous rule let it deny the person `GET /`
+  (security N-1); an owner whose browser adapter raises answers reopen `503`
+  with a fixed body, and the joining launcher tells the person with the
+  fragmentless URL instead of reading a `200` as success (N-2, architecture
+  P4-3); the readiness, reopen and join branches catch EVERY exception class
+  and scrub it, so no class can carry the fragment URL into a traceback
+  (specimen: a handler's own exception class); the session file is created
+  exclusively, and a file already there is left as found, told by path, and
+  not removed at stop (P4-2); the fence resolves the runtime directory
+  itself (P4-1). PAGE: a `Content-Security-Policy` meta (`default-src
+  'none'`, inline script and style, same-origin connect only, no base, no
+  form action), Reconnect branches for `429` and `503` (N-4, N-7), and the
+  `replaceState` comment scoped to the address bar and the session-history
+  entry (architecture P3). DOCS: the sentence that said the console path
+  uses the reopen route is corrected -- the console composition has no
+  runtime routes (N-3); A-027 discloses the browser's persistent history
+  store as a channel beside the handler command line, bounded by the nonce's
+  single use and TTL and NOT by principal separation on this host, the
+  single reopen slot shared with the person's Reconnect, and that
+  `--no-browser` reopen polling is unbounded but stateless (N-4, N-5, P3).
+- Tranche B round 4, closing the third review's findings and the CI failure.
+  CI: the windows-runtime job failed on a TEST listener that did one `recv`
+  and answered -- `http.client` sends a POST's head and body in separate
+  sends, and a close with the body unread is a RST that discards the
+  client's received response on Windows (10054; reproduced at 1 in 300).
+  Every listener script now reads the whole request through one helper,
+  proved with a forced two-segment request and 200 exchanges with no reset.
+  SECURITY (P2-1, blocking): `\\?\`, `\\.\`, `//?/` and UNC spellings
+  bypassed the `--session-file` fence and the pre-existing `--runtime-dir`
+  fence -- `Path.resolve()` keeps the prefix, so the plain roots are never
+  among the parents; measured end to end, `\\?\<profile>\stolen.json`
+  launched ready and wrote the bearer inside the profile. Both fences now
+  refuse those spellings by name before resolution (the session-file fence
+  refuses every double-separator spelling, UNC included; the runtime-dir
+  fence refuses the namespace prefixes on the runtime AND the project
+  directory), pinned per root over real launches that create nothing, plus
+  8.3, junction, trailing-dot and trailing-space specimens. The reopen slot
+  is a bounded QUEUE (P3-1): a local caller's reopen no longer evicts the
+  nonce the person's Reconnect just minted; the depth is derived from the
+  rate limit and the TTL (13) and the two constants are pinned together.
+  `_provider_env()` also drops a bare `FORGE` (P4-3); the redeem 200 is
+  `Cache-Control: no-store` (P4-4); a browser adapter whose `__str__` raises
+  can no longer throw from inside the scrubbing `except` (P4-4). ARCHITECTURE:
+  `control_plane_session.py` is in the gate's `forbidden` map for `fastapi`,
+  `starlette`, `uvicorn`, `subprocess` (F1; an injected `import fastapi` had
+  passed), the refusal bodies are read-only views (F5), the composed census
+  covers near-miss and unrouted paths (F4), and the continuation lines left
+  misaligned by the `authed_client` rename are aligned (F6). TESTS: the
+  constant-time pin is an AST walk over BOTH `verify` and `redeem` (P1; two
+  lexical pins had let a swapped `==` through), the console start link is
+  read from stdout with `uvicorn.run` replaced (P1; printing the bearer had
+  passed), `NONCE_TTL_S` is pinned through `create_app`'s own session under
+  an injected clock (P2), the `[seal]` fence case fences against a seal
+  directory of its own (P4), and the test harnesses wait for the session
+  file as well as the `ready` record (a measured `401` on a first request
+  sent before the after-readiness write). DOCS: A-027 measures the history
+  stores' DACLs instead of inferring them (P3-3: the sandbox group reads
+  `%LOCALAPPDATA%` and not the two stores), joins the reopen trigger with the
+  two channels it feeds (F2, P3-2), softens the Origin claim to browser
+  provenance (P4-2), lists what `/api/runtime` discloses (P4-1), names the
+  profile root as the one environment-derived fence root (F3), and discloses
+  the UNC-alias residual of the runtime-dir fence.
+- Tranche B round 5, rebased onto the provider-adapter parity slice and
+  closing the fourth review's findings. TESTS (blocking, P2): the two
+  POST-RESOLUTION fence refusals had no witness -- deleting
+  `_double_separator(resolved)` in the session-file fence, or the second
+  `_namespace_prefixed(runtime_dir)` in `launch`, left the whole runtime
+  module green, because no plain path on this host resolves to a prefixed
+  one while the docstrings said spellings are refused "before resolving, and
+  again after". The CALLER-SUPPLIED candidate's resolution is now a seam
+  (`resolve=Path.resolve`, threaded from `launch` into the fence; the fenced
+  roots are still resolved for real and `main` passes no seam, pinned), and a
+  test presents the resolution a substituted drive or junction chain onto a
+  UNC share would give -- red for both blocks on both platforms. The AST
+  constant-time pin also reads comparisons written as CALLS (`__eq__`,
+  `__ne__`, `__contains__`, `operator.eq/ne/contains`): `candidate.__eq__(...)`
+  in `verify` and in `redeem` had each survived the whole module. Queue
+  pruning is measured on the queue's LENGTH (re-appending expired entries had
+  survived), `NEAR_MISS_PATHS` asserts its own count, the console start
+  link's FRAGMENT is read on stderr and the log records as well as the
+  bearer, and the join path's `_said` site has its first specimen (a browser
+  adapter whose `__str__` raises: exit 3, the fixed notice, no traceback).
+  ARCHITECTURE: the bundle smoke awaited nothing before reading the session
+  file the runtime writes AFTER readiness -- the race the two test harnesses
+  closed in round 4, left in the shipped smoke -- so it read None and sent
+  three bare requests; it now waits inside the record wait's own deadline and
+  records `session_file` as a REQUIRED observation, so a bearer that never
+  arrived is named once instead of surfacing as three unexplained 401s. The
+  dead `reopen_interval` parameter is deleted in favour of the module
+  constant it always held; the last two raw `str(exc)` sites are guarded with
+  `_said`; the host harness's dead-child check is a sibling `if` again, so a
+  child that records ready and dies no longer spins to 240 s (pinned in
+  seconds, on every platform); and an embedded NUL in either caller-supplied
+  path is the fixed "Forge could not start" rather than a `ValueError`
+  traceback. DOCS: A-027 and VALIDATION carry the UNC residual on BOTH fence
+  operands (a UNC alias of the PROJECT with a plain runtime directory passes
+  and creates the runtime directory inside the project, measured), the
+  console path's live nonce on stdout, the smoke's session file under
+  `%LOCALAPPDATA%\Temp` on its four conditions, and the seam the
+  post-resolution witnesses use.
+- Tranche B round 6, closing round 5's CI failure and the fifth review's
+  findings. SECURITY (blocking): an embedded NUL in a caller-supplied path is
+  now refused EXPLICITLY and FIRST in every fence — the session file, the
+  runtime directory and the project directory — before the spelling checks,
+  before `resolve` and before any root comparison, with a fixed notice that
+  echoes no path. It had been caught in an `except ValueError`, which made the
+  ANSWER a property of the interpreter: `ntpath.realpath` non-strict RETURNS a
+  NUL-bearing path (leaving an 8.3 segment unexpanded), and on CPython ≤ 3.12
+  `Path.resolve` raises only because of the trailing `p.stat()` it adds in
+  non-strict mode, which 3.13 no longer does — so on 3.13 the fence compared
+  an UNRESOLVED spelling against its roots and the profile refusal answered
+  first. That is an ordering hole, not only the windows-latest test failure it
+  produced; and on ≤ 3.12 a NUL in `--project-dir` was a traceback, because
+  that operand was resolved while building the fence list, outside every
+  `try`. The console launcher's comment claiming its start-link nonce "stays
+  off disk" is replaced by what is true — the nonce is single use and
+  TTL-bounded and is not the bearer — and by the disclosure that a redirected
+  console puts it in a file, from which review redeemed it for that run's
+  bearer (A-027); a lexical pin holds the sentence gone. TESTS: the smoke's
+  session-file wait is ordered by an EVENT rather than by
+  `time.monotonic()`, whose 15.6 ms resolution on Windows ≤ 3.12 put 46 of 300
+  readings of a 0.3 s wait under 0.3 and failed that module 2 of 9 unmutated
+  runs; the "no second budget" claim beside it now has a witness; the fenced
+  roots of `_session_file_refusal` are witnessed as resolved for real and
+  never through the candidate seam (`launch`'s own roots were not, and are
+  witnessed in round 7); the constant-time AST pin reads a comparison method
+  REFERENCED rather than only called, so `checker = candidate.__eq__` and
+  `getattr(candidate, "__eq__")` are caught, and it states that it is a
+  spelling pin and cannot prove constant time; the two `_said` sites added in
+  round 5 get their first specimens; and `_provider_env`'s stripping is pinned
+  in the provider suite — which the windows-runtime CI job did NOT run when
+  this was written, and runs from round 7 on.
+  DOCS: the smoke contract says eight and is checked against its tuple, the
+  VALIDATION smoke row carries the wait, and `Bearer` is described as it is
+  handled — the scheme name matched case-insensitively, nothing else lax
+  (round 6 credited that rule to RFC 6750; round 7 corrects the attribution).
+- Tranche B round 7, closing the sixth review's findings. SECURITY
+  (blocking): `--bundle-root` is `launch`'s FOURTH caller-supplied path and
+  was outside the NUL rule while that rule's own docstring claimed "every
+  fence". It is refused now with the other three, before anything is created:
+  `verify_launched_bundle` resolves the launched folder outside every `try`
+  and is reached from a `try` that catches only `RuntimeRefusal`, so on
+  CPython ≤ 3.12 a NUL there was a traceback — and it runs AFTER
+  `runtime_dir.mkdir()`, so that refusal had already created the runtime
+  directory it was refusing. The rule now ENUMERATES the four paths it
+  quantifies over (and the three flags that are not paths) instead of
+  asserting a universal, and names both resolutions that catch nothing rather
+  than one. TESTS: the constant-time pin reads the IMPORT, not only the use —
+  `from operator import eq as _same` with `_same(candidate, ...)` survived all
+  98 tests because the only node carrying the word `eq` was the `ast.alias`,
+  which the detector never looked at — and the binding is forbidden at every
+  scope of `control_plane_session`, since a per-method AST pin cannot see a
+  module-scope alias at all. `launch`'s own fenced roots get the
+  aliasing-resolver witness `_session_file_refusal` got in round 6: routing
+  the seal directory and the candidate project through the candidate seam had
+  survived all 87 tests of that module. The NUL case now crosses FOUR
+  operands, both resolutions and both profile placements. CI: the
+  windows-runtime job runs `tests/test_provider_execution.py`, which round 6's
+  entry above said it already did. DOCS: `Bearer`'s case-insensitivity is
+  attributed to RFC 7235 §2.1, which makes every auth scheme name
+  case-insensitive and which RFC 6750 inherits; the console comment says the
+  windowless launcher prints no start link and puts no nonce on any stream —
+  it does present the fragmentless URL — rather than "no link at all"; and the
+  NUL test states the mutant mechanism that was MEASURED (`Path.is_dir`
+  swallows the `ValueError`, so a fence without the rule ADMITS the path and
+  the runtime becomes a server) instead of a raise that does not happen.
 - Post-PR-18 hardening: the two non-blocking findings of the independent
   review of PR-18, closed before the next programme tranche. N1: the
   bundle builder's `--smoke` said `pass` whenever a stopped runtime record

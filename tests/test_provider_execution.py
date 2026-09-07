@@ -73,17 +73,35 @@ CONTRACT_GOAL_MAX_CHARACTERS = 8000
 _OMISSION_MARKER = re.compile(r"\[\.\.\. (\d+) characters omitted \.\.\.\]")
 
 
-def _fake_cli(tmp_path: Path, name: str, *, stdout: str, exit_code: int = 0) -> str:
+def _fake_cli(tmp_path: Path, name: str, *, stdout: str, exit_code: int = 0,
+              env_dump: Path | None = None) -> str:
+    """A controlled provider executable. With `env_dump`, it also writes the
+    environment IT RECEIVED to that file before answering, so a test can read
+    what actually reached the child rather than what was meant to."""
     if os.name == "nt":
+        dump = f'set > "{env_dump}"\r\n' if env_dump is not None else ""
         path = tmp_path / f"{name}.bat"
-        path.write_text(f"@echo off\r\necho {stdout}\r\nexit /b {exit_code}\r\n",
+        path.write_text(f"@echo off\r\n{dump}echo {stdout}\r\nexit /b {exit_code}\r\n",
                         encoding="utf-8", newline="")
     else:
+        dump = f"env > '{env_dump}'\n" if env_dump is not None else ""
         path = tmp_path / f"{name}.sh"
-        path.write_text(f"#!/bin/sh\nprintf '%s\\n' '{stdout}'\nexit {exit_code}\n",
+        path.write_text(f"#!/bin/sh\n{dump}printf '%s\\n' '{stdout}'\nexit {exit_code}\n",
                         encoding="utf-8", newline="")
         path.chmod(0o755)
     return str(path)
+
+
+def _dumped_environment(dump: Path) -> dict[str, str]:
+    """The `NAME=VALUE` lines the fake CLI wrote, as a mapping. Continuation
+    lines of a multi-line value carry no `=` and are ignored: no variable this
+    test sets has one, and a stray line must not become a name."""
+    seen: dict[str, str] = {}
+    for line in dump.read_text(encoding="utf-8", errors="replace").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name:
+            seen[name] = value
+    return seen
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +206,55 @@ def test_the_claude_route_reports_claude_the_same_way(tmp_path: Path):
     )
     assert result.provider == "claude"
     assert result.success is True and result.session_id == "exec-2"
+
+
+@pytest.mark.parametrize("provider", ["codex", "claude"])
+def test_the_routed_provider_process_receives_no_forge_variable(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str):
+    """Round-5 test P4-b (INV-B2, A-027). `_provider_env()` is what keeps
+    Forge's operational variables -- and anything parked under Forge's own
+    name -- out of the provider process. It was pinned in ONE module,
+    `tests/test_control_plane_session.py`, which the windows-runtime CI job
+    does not run: on that job the stripping was asserted by nothing, and the
+    suites that actually exercise the routed path did not defend it.
+
+    Pinned here on both routes, through the ROUTED worker over a real child
+    process, reading the environment the child received rather than the one
+    it was meant to receive. A decoy secret is parked in `FORGE_*` and in a
+    bare `FORGE` -- the spelling a `startswith("FORGE_")` rule once let
+    through -- and an ordinary variable, plus one whose name merely BEGINS
+    with FORGE, must survive."""
+    decoy = "decoy-secret-not-a-real-bearer-8a1f"
+    monkeypatch.setenv("FORGE_WORKER_MODE", "claude-code")
+    monkeypatch.setenv("FORGE_SECRET_DECOY", decoy)
+    monkeypatch.setenv("FORGE", decoy)
+    monkeypatch.setenv("ORDINARY_KEEP", "keep-me")
+    monkeypatch.setenv("FORGERY_KEEP", "not-forges")
+    dump = tmp_path / f"{provider}-child-env.txt"
+    if provider == "codex":
+        adapter = CodexProviderAdapter(CodexWorker(
+            _fake_cli(tmp_path, "env-codex", stdout=JSONL_EVENT, env_dump=dump)))
+    else:
+        adapter = ClaudeProviderAdapter(ClaudeCodeWorker(
+            _fake_cli(tmp_path, "env-claude", stdout='{"session_id": "env-1"}',
+                      env_dump=dump)))
+    result = ProviderRoutedWorker(adapter).run(
+        role="application-builder", goal="probe", workspace=tmp_path,
+        allowed_tools=("Read",), max_turns=1, timeout_seconds=30,
+    )
+    assert result.success is True and result.provider == provider, result
+    assert dump.exists(), "the provider process did not report its environment"
+    child = _dumped_environment(dump)
+    assert child, "the environment dump was empty, so this pin measured nothing"
+    assert not [key for key in child if key.upper().startswith("FORGE_")], sorted(child)
+    assert "FORGE" not in {key.upper() for key in child}, sorted(child)
+    assert decoy not in dump.read_text(encoding="utf-8", errors="replace"), (
+        "the decoy secret reached the provider process")
+    # The control: the environment was PASSED, not emptied. A child given
+    # nothing would satisfy every assertion above and prove nothing.
+    assert child.get("ORDINARY_KEEP") == "keep-me", sorted(child)
+    assert child.get("FORGERY_KEEP") == "not-forges", (
+        "a name that merely begins with FORGE was dropped")
 
 
 def test_the_routed_worker_refuses_an_impostor_adapter():
@@ -589,3 +656,103 @@ def test_the_flows_repair_path_composes_the_goal_only_through_compose_repair_goa
         for _ in range(path.read_text(encoding="utf-8").count(sentence))
     ]
     assert spelled_in == ["src/nornyx_forge/development_flow.py"], spelled_in
+
+
+def _windows_runtime_job(workflow: str) -> str:
+    """The `windows-runtime` job's text, bounded at the NEXT job key, so a
+    module list somewhere else in the workflow cannot satisfy a reader of it.
+    A job key is a name at exactly two spaces; everything inside a job is
+    indented further."""
+    assert "\n  windows-runtime:\n" in workflow, "the windows-runtime job is gone"
+    after = workflow.split("\n  windows-runtime:\n", 1)[1]
+    return re.split(r"\n  [A-Za-z][\w-]*:", after, maxsplit=1)[0]
+
+
+def _windows_job_pytest_commands(workflow: str) -> list[str]:
+    """The job's `python -m pytest ...` INVOCATION lines -- what the job runs
+    -- and nothing else in its YAML.
+
+    Round-7 finding F-1: the round-7 assertion asked whether this module's
+    path appeared anywhere in the job block, and the SAME COMMIT added a YAML
+    comment inside that block naming it. Deleting the module from the pytest
+    command therefore stayed green everywhere; only deleting the comment too
+    went red. A comment is not a run. Comment lines are dropped here and only
+    lines that invoke pytest survive, so what is read is the command."""
+    return [line for line in _windows_runtime_job(workflow).splitlines()
+            if "python -m pytest" in line and not line.lstrip().startswith("#")]
+
+
+def _windows_job_code(workflow: str) -> str:
+    """The job's non-comment lines, for reading the job's own guards. Same
+    reason as above: `# if skipped:` inside a comment is not a guard."""
+    return "\n".join(line for line in _windows_runtime_job(workflow).splitlines()
+                     if not line.lstrip().startswith("#"))
+
+
+#: A `windows-runtime` job that MENTIONS this module in a comment and does not
+#: run it -- built here as text, so the negative control IS the specimen and
+#: not a description of one. This is the shape round 7's assertion accepted.
+_COMMENT_ONLY_JOB = (
+    "jobs:\n"
+    "  windows-runtime:\n"
+    "    runs-on: windows-latest\n"
+    "    steps:\n"
+    "      # tests/test_provider_execution.py is here because the CHANGELOG said so\n"
+    "      - name: Windows runtime tests\n"
+    "        run: |\n"
+    "          python -m pytest tests/test_windows_runtime.py -q -rs\n"
+    "  a-later-job:\n"
+    "    runs-on: ubuntu-latest\n"
+)
+
+
+def test_this_suite_is_named_by_the_windows_runtime_ci_job():
+    """The claim that this suite runs on Windows CI, made checkable.
+
+    `_provider_env()`'s stripping is a property of the environment a REAL
+    child process inherits, and that is a platform property: asserting it only
+    on the Linux matrix leaves the Windows behaviour asserted by nothing. The
+    CHANGELOG said the windows-runtime job ran this module; it did not, and
+    nothing was reading the workflow to notice (round-6 test T-P3-2). This
+    reads it.
+
+    A pin on the sentence would have been the smaller fix and the wrong one:
+    what was false was not the wording but the module list, so what is pinned
+    is the module list -- as it is SPELLED IN THE PYTEST COMMAND. Round 7
+    pinned it as "appears anywhere in the job block", and the YAML comment
+    that same commit added satisfied that, so removing this module from the
+    command alone stayed green (round-7 finding F-1). What is asserted now is
+    the invocation line; the comment-only specimen below is the job that must
+    be REFUSED, and the same specimen with the module added to the command is
+    the job that must be ACCEPTED, so the reader is falsified here rather than
+    trusted."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    commands = _windows_job_pytest_commands(workflow)
+    assert commands, "the windows-runtime job invokes pytest on no line"
+    assert any("tests/test_provider_execution.py" in line for line in commands), (
+        "the windows-runtime CI job's pytest command does not name this module, so "
+        "`_provider_env()`'s stripping is asserted on Linux only -- which is what "
+        f"round 6 claimed it was not: {commands}")
+    # The job's own guards, which is what makes running there mean anything: a
+    # skip fails it, so this module cannot arrive and quietly skip. Read from
+    # the job's CODE, for the same reason the module list is.
+    code = _windows_job_code(workflow)
+    assert "if skipped:" in code and "sys.exit(1)" in code, (
+        "the windows-runtime job no longer fails on a skip")
+
+    # The reader's own controls. NEGATIVE: the comment-only job satisfies
+    # round 7's assertion, and must not satisfy this one.
+    assert "tests/test_provider_execution.py" in _windows_runtime_job(_COMMENT_ONLY_JOB), (
+        "the specimen no longer reproduces the round-7 finding it exists to reproduce")
+    assert not any("tests/test_provider_execution.py" in line
+                   for line in _windows_job_pytest_commands(_COMMENT_ONLY_JOB)), (
+        "a job that only MENTIONS this module in a comment satisfies the reader, which "
+        "is exactly round-7 finding F-1")
+    # POSITIVE: the same job with the module in its command is accepted, so
+    # the negative above is not a reader that finds nothing at all.
+    runs_it = _COMMENT_ONLY_JOB.replace(
+        "python -m pytest tests/test_windows_runtime.py -q -rs",
+        "python -m pytest tests/test_windows_runtime.py tests/test_provider_execution.py -q -rs")
+    assert any("tests/test_provider_execution.py" in line
+               for line in _windows_job_pytest_commands(runs_it)), (
+        "the reader does not see a module that IS in the pytest command")
