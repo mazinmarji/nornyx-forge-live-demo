@@ -1840,6 +1840,19 @@ def test_the_recorded_c3_measurement_translates_to_the_verdict_it_states():
     assert measurement.measured_at_commit == C3_MEASURED_REVISION
     assert subject["subject"]["tree_git_sha"] == C3_MEASURED_REVISION
 
+    # AND THE SAME TWO ON THE CONTROL ARM, which round 2 pinned on the subject
+    # only. The control is the POSITIVE CONTROL the C3-F4 and C3-F5
+    # differentials rest on, and "the query completed for the control and did
+    # not complete for the confined principal" is evidence only if both arms
+    # are the same instrument, on the same host, at the same revision,
+    # differing in the SID. The instance each arm ran against is held by the
+    # producer's own validator re-run above, and the SIDs are asserted to
+    # differ; the control's PLATFORM and REVISION were held by nothing, and
+    # rewriting either -- to `linux`, to forty zeros, and both at once -- was
+    # 106/106 green.
+    assert control["subject"]["principal"]["platform"] == C3_PLATFORM
+    assert control["subject"]["tree_git_sha"] == C3_MEASURED_REVISION
+
     # THE PROVENANCE ROWS, which nothing outside the two documents read. One
     # round-2 mutation set `measured_at_commit`, both `tree_git_sha`, both
     # principal platforms, `probe_module_blob` and `parent_revision` to bogus
@@ -2146,12 +2159,25 @@ _MEASURED_COUNT_DOCUMENTS = (
 def test_every_document_stating_the_measured_counts_states_the_measured_ones():
     """The 129 gated cells and the 133-cell matrix, wherever prose says them.
 
-    Every number captured by one of these patterns must be the measured one,
-    and every document in the net must still state at least one of them -- so
-    dropping the claim reddens as well as changing it. The patterns for the
-    gated rows are built from the status the record actually carries, so a
-    record whose gated cells stopped answering 401 makes every pattern miss and
-    the "still stated" assertion fire.
+    EACH FAMILY IS REQUIRED INDEPENDENTLY IN EVERY FILE. Round 2 shared one
+    counter between the two, so a file stayed netted by a sentence about the
+    OTHER count while its own claim went false or vanished. Both halves of that
+    hole were measured green at the previous head: rewording
+    `129 gated cells refused 401` in `docs/VALIDATION.md` to a false `3`, and
+    DELETING the real claim from `provider_contract.py`'s docstring -- the very
+    file round 1 named -- which was netted only by an unrelated
+    `answered all 133 cells` comment 840 lines further down. Both are red now,
+    and the sentence this docstring used to carry ("dropping the claim reddens
+    as well as changing it") was false for that file when it was written.
+
+    WHAT THIS DOES NOT DO, said rather than implied: it does not know WHICH
+    sentence carries a claim. A file stating one family twice can lose one of
+    the two silently, and a claim reworded out of reach of every pattern in its
+    family is indistinguishable here from a claim deleted -- the assertion
+    names both possibilities because it cannot choose between them. The gated
+    patterns are built from the status the record actually carries, so a record
+    whose gated cells stopped answering 401 makes every one of them miss and
+    that family's assertion fire.
     """
     document = json.loads(C3_RECORD.read_text(encoding="utf-8"))
     subject = document["records"]["sandboxed_subject"]
@@ -2163,32 +2189,46 @@ def test_every_document_stating_the_measured_counts_states_the_measured_ones():
     cells = subject["coverage"]["expected_cells"]
     assert subject["coverage"]["answered_cells"] == cells
 
-    gated_patterns = (
-        re.compile(r"(\d+) (?:other )?gated cells"),
-        re.compile(rf"refused `?{status}`? on all (\d+)"),
-        re.compile(rf"(\d+) refused {status}"),
-    )
-    matrix_patterns = (
-        re.compile(r"(\d+)-cell matrix"),
-        re.compile(r"all (\d+) cells"),
-        re.compile(r"(\d+) of (\d+) (?:matrix )?cells answered"),
-        re.compile(r"at (\d+)/(\d+)"),
-        re.compile(r"`coverage` (\d+) of (\d+)"),
+    # A CLOSING BACKTICK may sit between the number and the words that anchor
+    # it. `CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`'s own account of this net
+    # reads ``the `129` gated cells and the `133`-cell matrix``, and round 2's
+    # patterns missed BOTH numbers in it -- the anchored section's restatement
+    # of the counts was outside the net it was describing.
+    families = (
+        ("gated-cell count", len(gated), (
+            re.compile(r"(\d+)`? (?:other )?gated cells"),
+            re.compile(rf"refused `?{status}`? on all (\d+)"),
+            re.compile(rf"(\d+) refused {status}"),
+        )),
+        # `at (\d+)/(\d+)` stood here in round 2 and is deliberately gone. It
+        # was the one shape in this net anchored on no domain word, so an
+        # ordinary release line -- "CI green at 8/8" in `CHANGELOG.md`, this
+        # slice's own context -- failed this test with a message about measured
+        # cell counts. Measured at the previous head: it did. The four patterns
+        # left all name `matrix`, `cells` or `coverage`, and every file in the
+        # net still states this count through one of them.
+        ("matrix-cell count", cells, (
+            re.compile(r"(\d+)`?-cell matrix"),
+            re.compile(r"all (\d+) cells"),
+            re.compile(r"(\d+) of (\d+) (?:matrix )?cells answered"),
+            re.compile(r"`coverage` (\d+) of (\d+)"),
+        )),
     )
     for relative in _MEASURED_COUNT_DOCUMENTS:
         text = " ".join((ROOT / relative).read_text(encoding="utf-8").split())
-        found = 0
-        for pattern, measured in ([(p, len(gated)) for p in gated_patterns]
-                                  + [(p, cells) for p in matrix_patterns]):
-            for match in pattern.finditer(text):
-                found += 1
-                for group in match.groups():
-                    assert int(group) == measured, (
-                        f"{relative} states {group} where the record measures {measured} "
-                        f"(matched {match.group(0)!r})"
-                    )
-        assert found, (
-            f"{relative} no longer states either measured count, so this net holds "
-            "nothing there: either the claim was dropped or it was reworded out of "
-            "reach of these patterns"
-        )
+        for family, measured, patterns in families:
+            found = 0
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    found += 1
+                    for group in match.groups():
+                        assert int(group) == measured, (
+                            f"{relative} states {group} where the record measures "
+                            f"{measured} (matched {match.group(0)!r})"
+                        )
+            assert found, (
+                f"{relative} states no {family} in a form this net can read, and every "
+                "file here must state BOTH measured counts. Either the claim was "
+                "dropped or it was reworded out of reach of these patterns; this net "
+                "cannot tell those apart and does not pretend to"
+            )

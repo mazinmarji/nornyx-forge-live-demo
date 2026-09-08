@@ -2411,10 +2411,11 @@ enforced. Each repair uses an instrument this repository already owned.
   tests green. Every row of its three tables is now compared with a value
   derived from the embedded records or computed by running the shipped code, in
   BOTH directions, so a deleted row is as loud as a changed one. The measured
-  counts (129 gated cells, a 133-cell matrix) are held wherever this repository
-  states them: `CHANGELOG.md`, `docs/VALIDATION.md`, this file, the document,
+  counts (129 gated cells, a 133-cell matrix) are held in the five files that
+  state them: `CHANGELOG.md`, `docs/VALIDATION.md`, this file, the document,
   and the contract's own docstring, where `129` could be changed to `3` with
-  every test green.
+  every test green. Round 2's net held those five files WEAKLY, and round 3
+  below says how.
 - **`not_applicable` is no longer read back as a denial.** The document said the
   confined caller "was DENIED" the browser-handler channel and headed the
   finding "the sandbox DOES CLOSE the other channel". The differential is real
@@ -2428,7 +2429,11 @@ enforced. Each repair uses an instrument this repository already owned.
   `splitroot` does not exist; the `codex exec` invocation is quoted with the
   note that `--sandbox read-only` is the other form the shipped code builds.
 
-**What round 2 left as PROSE, stated here rather than implied to be covered.**
+**What round 2 left as PROSE.** The list OF RECORD is the "NOT anchored" section
+of `docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`, which round 3
+completed. The three items below are the largest of them and CLAIM NO
+COMPLETENESS: round 2's version of this heading did claim it, in both copies, and
+both were wrong -- each omitted the whole of C3-F6.
 
 - The two C3-F4 falsifications (the `winlogon` denial with error 5, the 64-byte
   planted-marker read) and the workspace-write confinement control are OPERATOR
@@ -2455,6 +2460,102 @@ the failure observed through that call was a `PermissionError: [WinError 5]`,
 which C3-F6 records by name -- but the record cannot itself distinguish the
 cause, and that is stated in its `not_claimed` list. The next slice that
 re-measures should carry the repair with it.
+
+**THE MODULE ITSELF CARRIES NO NOTICE OF THIS, and round 3 deliberately did not
+add one.** An author who opens `scripts/probe_control_plane.py` to make the
+three-line repair above meets the constraint only when a test goes red. A
+four-line module docstring saying so was scoped for round 3 and NOT WRITTEN,
+because a comment is bytes: it would change the file's git blob, and the only way
+to make the suite green again would be to rewrite `probe_module_blob` to the new
+id. That row means "this is the module that RAN this measurement", so rewriting
+it to match an edit made after the measurement would leave the row green and the
+proposition under it false -- a binding downgraded to a tautology, which is the
+substitution `CLAUDE.md` forbids and the exact thing the row exists to prevent.
+The disclosure therefore lives here and in the measurement document, and the
+gate's own failure message names the constraint and the repair. Re-measuring is
+what closes this, and it needs an authorisation no autonomous slice has.
+
+**ROUND 3: the second delta review, and what it changed.** Two independent
+reviewers verified round 2 against the previous head. Nothing shipped was found
+false in the record or in git, and no verdict moved. The founder split the merge
+bar for this round -- a finding blocks only if something SHIPPED IS FALSE or a
+gate FAILS TO CATCH A REAL DEFECT; a claim merely broader than its gate is a
+tracked follow-up -- and the four repairs below are the whole of it. Each was
+proved by a mutation that was GREEN at the previous head and is RED now.
+
+- **The measured-count net requires EACH COUNT INDEPENDENTLY IN EVERY FILE.** The
+  two number families shared one counter, so a file stayed netted by a sentence
+  about the OTHER count while its own claim went false or vanished. Measured
+  green at the previous head, both halves: `129 gated cells refused 401` reworded
+  to a false `3` in `docs/VALIDATION.md`, and the DELETION of the real claim from
+  `provider_contract.py` -- the file round 1 named -- which was netted only by an
+  unrelated `answered all 133 cells` comment 840 lines below it. The test's own
+  docstring said "dropping the claim reddens as well as changing it", which was
+  FALSE for that file at the head that shipped it; it now describes the
+  mechanism, including that the net cannot tell a reworded claim from a deleted
+  one. The patterns also tolerate a closing backtick, so the measurement
+  document's own restatement of the two counts -- which sat OUTSIDE the net it
+  was describing -- is inside it.
+- **A pattern anchored on no domain word is gone.** `at (\d+)/(\d+)` asserted
+  both its groups equal 133 across a net that includes `CHANGELOG.md`. Measured:
+  a release line reading "CI green at 8/8" FAILED the test, with a message about
+  measured cell counts. Dropped rather than tightened; the four matrix patterns
+  left all name `matrix`, `cells` or `coverage`, and every file in the net still
+  states both counts through them. The one sentence that only that pattern
+  reached, `inconclusive at 133/133` in `docs/VALIDATION.md`, is no longer held
+  -- its file still is.
+- **The CONTROL arm's platform and revision are pinned to the same literals as
+  the subject's.** Round 2 pinned the subject only. Measured green at the
+  previous head: the control's `principal.platform` rewritten to `linux`, its
+  `tree_git_sha` to forty zeros, separately and together. The control is the
+  POSITIVE CONTROL the C3-F4 and C3-F5 differentials rest on -- "completed for
+  the control, did not complete for the confined principal" is evidence only if
+  both arms are the same instrument, on the same host, at the same revision,
+  differing in the SID. Same instance is enforced by the producer's own
+  validator and the SIDs are asserted to differ; platform and revision were held
+  by nothing.
+- **The measurement document's "What is anchored" section was untrue in both
+  halves, and is NARROWED AND COMPLETED rather than chased.** The anchored half
+  claimed "every row of the three tables" (the gate is table-blind) and the two
+  counts "wherever this repository states them in prose" (they were not); the
+  prose half omitted the whole of C3-F6 and six other items. Narrowing was
+  preferred to gate-strengthening on purpose: a narrowing repair terminates,
+  while every new gate is itself a claim that can be under-anchored.
+
+**WHAT ROUND 3 LEAVES OPEN, named rather than implied closed.**
+
+- **The table gate is TABLE-BLIND and FENCE-BLIND** (tracked follow-up).
+  `_documented_table_rows` keys rows by first cell across the WHOLE FILE, records
+  no table identity, and does not skip fenced regions. Measured green: a row
+  moved from the assessment table into the Subject-binding table, an artefact row
+  moved into the two-arm table, and the entire assessment table wrapped in a code
+  fence so that it no longer renders as a table. Every VALUE stays true, so
+  nothing false ships; the document's description of the gate is narrowed to what
+  it does.
+- **Two hand-maintained copies of the not-anchored list** (tracked follow-up).
+  Nothing compares this file's summary with the measurement document's list, and
+  nothing checks that a claim added to that document arrives on the list. Round 3
+  makes the DOCUMENT the list of record and this file an explicit pointer, which
+  shrinks the exposure without closing it.
+- **The `ast` closure gate is satisfiable by DEAD CODE** (tracked follow-up). An
+  `if False:` block around a real `ConfinementProbe` construction is green.
+  Materially narrower than the round-1 defect it replaced: a stale comment is
+  what an ordinary refactor leaves behind, an `if False:` block is a deliberate
+  act.
+- **The measurement document is now CLOSED TO NEW TABLES** (recorded, not a
+  defect). Every markdown table row in it must be one the test derives, and
+  duplicate first-cell labels are refused file-wide. Deliberate; the cost lands
+  on a future author, and the error messages name it.
+- **F-1 is still open, and still undisclosed at the module**, for the reason set
+  out above.
+- **Everything on the measurement document's NOT-ANCHORED list** stays prose: the
+  whole of C3-F6, both C3-F4 falsifications, the confinement control, the `15`
+  browser command lines and the `2 of 2` paths, C3-F3's git observation, the
+  header's CLI version and measurement date, the `codex sandbox` invocation
+  transcript, and three sentences of context. Anchoring any of them requires a
+  re-measurement.
+- **The permanently-blocked approval and inspection diagnostics** are untouched,
+  as they are by every autonomous slice.
 
 ### Scope and serves, for all three slices
 

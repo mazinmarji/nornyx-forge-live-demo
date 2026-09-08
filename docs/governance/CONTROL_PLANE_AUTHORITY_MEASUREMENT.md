@@ -357,27 +357,69 @@ covered half would repeat the defect it exists to close.
 
 **Anchored, and falsifiable by mutating this file or the record.**
 
-- Every row of the three tables above (`test_the_c3_document_states_the_measured_record`):
-  the cell counts, the four allowlisted statuses, the gated count and its
-  status, the classification, the separation word, every artefact outcome word,
-  the assessment's outcome / mechanism / platform / revision / `establishes`,
-  both provider rows and both eligibility answers, and the three provenance
-  rows. Each is compared with a value derived from the two embedded records or
-  computed by running the shipped code, never with itself.
+- Every markdown table row in this file, keyed by its first cell
+  (`test_the_c3_document_states_the_measured_record`): the cell counts, the four
+  allowlisted statuses, the gated count and its status, the classification, the
+  separation word, every artefact outcome word, the assessment's outcome /
+  mechanism / platform / revision / `establishes`, both provider rows and both
+  eligibility answers, and the three provenance rows. Each is compared with a
+  value derived from the two embedded records or computed by running the shipped
+  code, never with itself, in both directions — so a deleted row is as loud as a
+  changed one, and a duplicate label is refused rather than merged.
+
+  What that gate reads is **labels, file-wide**. It records no table identity and
+  it does not skip fenced regions, so a row moved out of one of these tables into
+  another, or a whole table wrapped in a code fence so that it stops rendering as
+  a table at all, leaves every value true and the gate green — measured, all
+  three. It holds what each labelled row SAYS; it does not hold that this
+  document still presents those rows as the tables described above. Tracked as a
+  follow-up rather than repaired here.
 - The subject and control SIDs, and that they differ.
-- The emitted platform and the bound revision, against **literals** as well as
-  against the record — a comparison of a translated value with the field it was
-  copied from is a tautology, and three round-2 mutations passed through one.
-- The `129` gated cells and the `133`-cell matrix wherever this repository
-  states them in prose: `CHANGELOG.md`, `docs/VALIDATION.md`,
-  `docs/requirements/ASSUMPTIONS.md` and `provider_contract.py`'s own docstring
-  are held to the record's own arithmetic
+- The platform and the bound revision **of both arms**, against **literals** as
+  well as against the record — a comparison of a translated value with the field
+  it was copied from is a tautology, and three round-2 mutations passed through
+  one. The CONTROL arm's two were pinned in round 3; until then nothing held
+  them, and rewriting the control's platform to `linux` and its revision to forty
+  zeros, separately and together, was green. It is the positive control C3-F4 and
+  C3-F5 rest on, and "completed for the control, did not complete for the
+  confined principal" is evidence only if both arms are the same instrument, on
+  the same host, at the same revision, differing in the SID.
+- The `129` gated cells and the `133`-cell matrix in `CHANGELOG.md`,
+  `docs/VALIDATION.md`, `docs/requirements/ASSUMPTIONS.md`, this file and
+  `provider_contract.py`'s own docstring: **each of those five files must state
+  each of the two counts**, and every number the net's patterns capture must
+  equal the record's own arithmetic
   (`test_every_document_stating_the_measured_counts_states_the_measured_ones`).
-- That the shipped `scripts/probe_control_plane.py` is byte-identical to the
-  module this measurement ran, by its git blob id.
+  Through round 2 the two counts shared one counter, so a file stayed netted by a
+  sentence about the other one: a false `3` in `docs/VALIDATION.md`, and the
+  DELETION of the real claim from `provider_contract.py`, were both green. What
+  the net still cannot do is say WHICH sentence carries a claim — a file stating
+  one count twice can lose one of them silently, and a claim reworded out of
+  reach of the patterns reads here exactly like a claim deleted.
+- That the shipped `scripts/probe_control_plane.py` has the git blob id this
+  record names, recomputed from its bytes, and that the provenance row above
+  abbreviates that same id. Editing the module reddens both. It is not a lock —
+  an author can edit the module and update the two rows, and the gate goes green
+  again — but doing so takes a second, visible, deliberate edit to a row whose
+  meaning is "this is the module that ran", which turns a silent drift into an
+  explicit falsification.
 
-**NOT anchored. Prose, and only prose.**
+**NOT anchored. Prose, and only prose.** This list is kept true BY HAND, and a
+second copy of it lives in A-028 with nothing comparing the two; nothing checks
+that a claim added to this document arrives on this list either. Both are tracked
+follow-ups. Round 2's version of this list was already incomplete when it shipped
+— it omitted the whole of C3-F6 — so read it as what was found the last time
+someone looked, not as a gate.
 
+- **The whole of C3-F6** — the 5.2 s failing run, the `PermissionError:
+  [WinError 5]` raised out of `_browser_history`, exit 1 with no record, the
+  unexpired 45 s deadline, and the 4.02 s re-run that produced a valid record.
+  That finding is an operator account of two runs at the PARENT revision; neither
+  run's record ships, and no test reads any of those numbers. What IS anchored is
+  the REPAIR the finding motivated — `_presence` answering None and a denied
+  check being `refused` rather than `not_applicable`, held by
+  `tests/test_control_plane_authority.py` against a path whose every `stat` is
+  denied — but not the run that found it.
 - **Both C3-F4 falsifications** — the `winlogon` denial with error 5 and the
   64-byte planted-marker read. They are operator observations from the
   measurement session; neither is in either record and no test reads them. The
@@ -385,6 +427,26 @@ covered half would repeat the defect it exists to close.
 - **The confinement control** — the write refused outside the declared
   workspace and accepted inside it. Same status: observed, recorded here, not
   in the record.
+- **The counts around the C3-F5 differential** — the `15` browser command lines
+  the control read, and the `2 of 2` paths behind each `browser_history` word.
+  The differential itself is anchored, because the two arms' outcome words are
+  compared row by row; these numbers are not. The `1 browser command line` that a
+  test does assert is a synthetic seam in `tests/test_control_plane_authority.py`,
+  not this record.
+- **C3-F3's git observation** — that the confined caller's bare `git rev-parse`
+  refused with `detected dubious ownership` and printed both SIDs. The SIDs are
+  anchored, from `whoami /user`; git's independent confirmation of them is prose.
+- **The header line** — `codex-cli 0.153.4` and `measured 2026-09-08`. The record
+  carries a `codex_cli_version` field of its own and nothing compares this
+  sentence with it.
+- **The `codex sandbox` invocation transcript** quoted at the top of this
+  document. The record's `invocation` field is read by no test, and neither is
+  the quotation of it here.
+- **Three sentences of context**: that no host or user configuration was written
+  for this run; that the confined arm's `200` on `POST /api/runtime/reopen` came
+  before the control's `429`; and that the measured revision resolves on no
+  remote. The statuses themselves are anchored — their ORDER is not, and neither
+  is the absence of a remote.
 - **`codex sandbox`'s own behaviour.** That the confined process ran under a
   Windows restricted token, and the host's `[windows] sandbox = "elevated"`
   setting, are the CLI's account of itself and this document's, not
