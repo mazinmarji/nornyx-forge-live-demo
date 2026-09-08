@@ -66,20 +66,27 @@ marker sits inside the store and so inside any provider's workspace; it is
 trustworthy because the governed path executes no provider (the Provider
 Contract's eligibility decision), not the other way round, and a wholesale
 rollback of the store carries the marker back with it -- it is not a
-freshness mechanism. That basis is `MARKER_TRUST_BASIS` below: a value
-rather than a paragraph, so the day any provider becomes eligible a test
-objects instead of a sentence going quietly false. Forge's own RESTORATION
-was itself the cheapest way to remove the marker, and that is now closed:
-`_rebuild` used to wipe the marker BEFORE it corrected the authority bytes,
-so a death in that instant left the worker's forgery on disk with the marker
-gone -- `protected()` False, and a later load reading that forgery as a
-legacy store. The rebuild below writes the sealed bytes and the marker FIRST
-and wipes afterwards, so no instant of it holds forged authority under an
-absent marker. The seal establishes what Forge last wrote, not that it
-is the LATEST thing Forge wrote: an actor who can replace the store, marker
-and seal together with an earlier consistent set is not detected, so the
-surface reports the seal's currency as not independently anchored, and
-monotonic external anchoring is deferred rather than claimed.
+freshness mechanism. That basis is `MARKER_TRUST_BASIS` below, whose exact
+value is `no_provider_executes_on_the_governed_path`: a value rather than a
+paragraph, so a promotion has something to collide with. What the interlock
+in `test_the_marker_trust_basis_cannot_survive_an_eligible_provider` does is
+narrower than "a test objects the day any provider becomes eligible", and
+round 2 measured the difference: it objects to a promotion made while this
+value still reads that literal, and the value is separately pinned so it
+cannot be quietly retired in advance. It licenses nothing, and it records a
+human decision rather than establishing anything about the marker. Forge's
+own RESTORATION was itself the cheapest way to remove the marker, and that
+is now closed: `_rebuild` used to wipe the marker BEFORE it corrected the
+authority bytes, so a death in that instant left the worker's forgery on
+disk with the marker gone -- `protected()` False, and a later load reading
+that forgery as a legacy store. The rebuild below writes the marker FIRST,
+then the sealed bytes, and wipes afterwards, so no instant of it holds
+forged authority under an absent marker. The seal establishes what Forge
+last wrote, not that it is the LATEST thing Forge wrote: an actor who can
+replace the store, marker and seal together with an earlier consistent set
+is not detected, so the surface reports the seal's currency as not
+independently anchored, and monotonic external anchoring is deferred rather
+than claimed.
 """
 
 from __future__ import annotations
@@ -220,6 +227,32 @@ def _remove_tree(path: Path) -> None:
         function(target)
 
     shutil.rmtree(path, onerror=_clear_and_retry)
+
+
+def _write_fresh(path: Path, text: str) -> None:
+    """Put these bytes at `path` as a NEW file, whatever shape is there now.
+
+    `write_text` alone writes THROUGH what it finds. A directory raises; a
+    symlink follows to its target; and a HARDLINK -- which needs no privilege
+    on NTFS -- writes the bytes into every other name for the same inode.
+    Measured under review at the parent of this commit: a hardlink planted at
+    an authority path made a restoration overwrite a file OUTSIDE the store
+    with the sealed capsule bytes. The wipe cannot help, because it preserves
+    the authority files and the seal marker BY NAME regardless of shape.
+
+    Removing the entry first closes all three: a directory goes by shape, a
+    symlink is unlinked rather than followed, and unlinking a hardlink drops
+    this name from the inode so the write creates a file no other name
+    shares. It is the removal `_write_seal_marker` already did for the first
+    two, applied to every write the recovery path makes. Scope is that path:
+    `_write_document` and `_write_experience` on the ordinary save path still
+    write through, unchanged, and ASSUMPTIONS A-022 records that.
+    """
+    if path.is_dir() and not path.is_symlink():
+        _remove_tree(path)
+    else:
+        path.unlink(missing_ok=True)
+    path.write_text(text, encoding="utf-8", newline="")
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -461,22 +494,18 @@ class CapsuleStore:
         restoration has to correct -- and the conditional form would leave it
         standing. No-op only when sealing is not in force at all.
 
-        Removes by shape first, like the rebuild's own wipe: a worker may have
-        left a directory or a link where the marker belongs, and `write_text`
-        would raise on it. Before this method existed the wipe ran first and
-        happened to clear that; the order that closes the fall-open would
-        otherwise have lost the recovery with it.
+        Writes through `_write_fresh`, which removes by shape first, like the
+        rebuild's own wipe: a worker may have left a directory, a link or a
+        hardlink where the marker belongs, and `write_text` would raise on the
+        first and write through the other two. Before this method existed the
+        wipe ran first and happened to clear a directory there; the order that
+        closes the fall-open would otherwise have lost the recovery with it.
         """
         if self.seal_dir is None:
             return
-        marker = self.root / _SEAL_MARKER_FILE
-        if marker.is_dir() and not marker.is_symlink():
-            _remove_tree(marker)
-        elif marker.is_symlink():
-            marker.unlink(missing_ok=True)
-        marker.write_text(
+        _write_fresh(
+            self.root / _SEAL_MARKER_FILE,
             canonical_json({"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}) + "\n",
-            encoding="utf-8", newline="",
         )
 
     def snapshot(self) -> AuthoritySnapshot:
@@ -662,25 +691,42 @@ class CapsuleStore:
         `['.forge-capsule', 'capsule.json', 'experience.json']`, `protected()`
         False, and a seal-less load returning the forged `stage == "READY"`.
 
-        So: sealed bytes first, then the seal marker unconditionally, then the
-        store marker, and only then the wipe and a fresh repository. Every
-        instant after the first write holds either the pre-existing state or
-        sealed authority under a marker demanding a seal; no instant holds
-        forged authority under an absent marker. The commit is last because a
-        commit is not what makes the bytes trustworthy -- the seal is.
+        So: the seal marker FIRST and unconditionally, then the sealed bytes,
+        then the store marker, and only then the wipe and a fresh repository.
+        No instant of it holds forged authority under an absent marker.
+
+        THE MARKER GOES FIRST, and the first ordering that closed the
+        permanent fall-open did not. It wrote the sealed bytes and only then
+        the marker, which leaves a window two statements wide: `snapshot.files`
+        is `capsule.json` then `experience.json`, so a death BETWEEN THE TWO
+        left the worker's forged `experience.json` -- an authority file by this
+        module's own definition -- on disk with the marker still gone.
+        Measured under review at the parent: `protected()` False, and a load
+        whose seal file had also gone returned the forged `stage == "READY"`.
+        A window rather than a permanent state, but the same fall-open, and
+        the marker names the STORE rather than the bytes, so writing it before
+        them costs nothing and is true at every instant after it. Pinned by
+        the fourth crash instant in
+        `test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy`.
+
+        Between the marker and the last byte write the store therefore holds
+        forged authority under a marker that DEMANDS a seal -- refused, not
+        read: that is the property, not that the bytes are correct at every
+        instant. The commit is last because a commit is not what makes the
+        bytes trustworthy -- the seal is.
         """
         self.root.mkdir(parents=True, exist_ok=True)
+        self._write_seal_marker()
         for name, text in snapshot.files.items():
             path = self.root / name
             if text is None:
                 path.unlink(missing_ok=True)
             else:
-                path.write_text(text, encoding="utf-8", newline="")
-        self._write_seal_marker()
-        (self.root / _MARKER_FILE).write_text(
+                _write_fresh(path, text)
+        _write_fresh(
+            self.root / _MARKER_FILE,
             "Forge capsule store. Managed by nornyx_forge.capsule_store; "
             "not a user-facing repository.\n",
-            encoding="utf-8", newline="",
         )
         # The seal marker joins the keep set only where sealing is in force.
         # With no seal directory there is no seal for a marker to name, and one

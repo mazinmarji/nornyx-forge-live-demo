@@ -680,13 +680,37 @@ that makes any provider eligible must revisit this before it does so, or it
 silently reopens R2 -- and that is no longer a request that a human
 remember. The basis is `capsule_store.MARKER_TRUST_BASIS`
 (`no_provider_executes_on_the_governed_path`), and
-`test_the_marker_trust_basis_cannot_survive_an_eligible_provider` is an
-implication over the eligibility decision: if any provider is eligible, that
-constant may no longer read that literal. It objects only once a provider
-actually is, so a real confinement measurement turns it red instead of
-relying on the person who took it to recall this paragraph. It RECORDS the
-human decision as a code change and establishes nothing on its own -- editing
-the constant says a person considered the marker, not that the marker holds.
+`test_the_marker_trust_basis_cannot_survive_an_eligible_provider` is a
+BICONDITIONAL over the eligibility decision: if any provider is eligible that
+constant may no longer read that literal, and while none is it must still
+read exactly that literal.
+
+Both directions, because round 2 measured what one direction alone was worth.
+As a bare implication guarded by `if eligible:` the interlock could be SPENT
+IN ADVANCE -- executed, with nothing eligible and the constant drifted to
+`tidied_up_by_a_refactor`, the suite exited 0, and it exited 0 again with a
+provider then made eligible, because the implication was already satisfied.
+Any earlier commit that renamed or tidied the constant would have retired the
+control silently, and this paragraph would have gone quietly false exactly as
+before. A second, different defect in the same test: with
+`PROVIDER_CONFINEMENT` emptied, `eligible` is `[]` whatever the eligibility
+decision says, the guarded branch never runs, and the node passed BY VACUITY.
+The rows of that table are now pinned by name, and both branches assert. A
+third: the node's only other assertion scanned the module docstring for the
+NAME `MARKER_TRUST_BASIS`, which was present while the VALUE was not, so
+prose and constant could still drift; it now pins the value, and the
+docstring carries the literal.
+
+What that control does and does not do, stated at its true size because the
+surrounding prose twice claimed more. It does not "turn red the day a real
+confinement measurement licenses a provider" on its own: it turns red on a
+promotion made while this constant still reads that literal, and the second
+assertion is what stops the literal being retired in advance to make that
+cheap. It licenses nothing -- no code path consults `MARKER_TRUST_BASIS` to
+permit anything; its only readers are its definition, `__all__` and that
+test. And it RECORDS a human decision as a code change rather than
+establishing anything: editing the constant says a person considered the
+marker, not that the marker holds.
 
 Forge's own recovery path was the cheapest way to remove one of the two.
 `_rebuild` -- the fallback restoration, reachable from the shipped surface
@@ -700,12 +724,34 @@ was still there, and a load whose seal file had also gone returned it as a
 legacy store. Not a window but a permanent state, and it reduced the
 attacker's remaining cost to the single same-user deletion the paragraph
 above already concedes -- with Forge's recovery having paid the other half.
-The rebuild now writes the sealed bytes, then the seal marker
-unconditionally, then the store marker, and wipes afterwards, so no instant
-of it holds forged authority under an absent marker. The marker write is
+The rebuild now writes the seal marker FIRST and unconditionally, then the
+sealed bytes, then the store marker, and wipes afterwards, so no instant of
+it holds forged authority under an absent marker. The marker write is
 unconditional because `protected()` only asks whether a file of that name
 exists: a marker naming another store's seal would otherwise survive the
-recovery that exists to correct it. Nor is the marker a freshness mechanism: a store
+recovery that exists to correct it.
+
+THE MARKER GOES FIRST, and the ordering that first closed the permanent
+fall-open did not put it there -- it wrote the sealed bytes and only then the
+marker, which is a window two statements wide rather than a permanent state,
+but the same fall-open. `snapshot.files` is `capsule.json` then
+`experience.json`, so a death BETWEEN THE TWO left the worker's forged
+`experience.json` -- an authority file by the module's own definition -- on
+disk with the marker still gone. Measured under review at that head:
+`protected()` False and a load whose seal file had also gone returning the
+forged `stage == "READY"` again. Two independent reviewers found it; the
+design brief that specified the order was where it came from, not the build.
+The marker names the STORE and not the bytes, so writing it before them costs
+nothing. Three of the four crash rows in
+`test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy`
+vary the marker state at ONE instant (`git init`), which is after both halves
+of the first repair and therefore could not see this; the fourth varies the
+INSTANT instead, and reverting the hoist alone turns exactly that row red.
+What that row asserts is the property and not the bytes: mid-rebuild the
+second authority file is not yet the sealed content, and what must hold is
+that whatever is on disk sits under a marker naming this store's seal, so a
+sealless load refuses instead of reading it as legacy. Nor is the marker a
+freshness mechanism: a store
 restored wholesale to an earlier state carries its marker back with it. The
 seal establishes what Forge last wrote, not that it is the latest thing
 Forge wrote: an actor who can replace the store, its marker and its seal
@@ -739,12 +785,27 @@ compares a revision, a working tree and file bytes; the refusal said the
 store "was written outside this adapter" and the human restore route wrote
 "modified outside Forge" into permanent lifecycle history. Both are claims
 about an ACTOR, and this specimen is a Forge crash with no external actor
-anywhere in it. Both now state what was measured and name the one actor the
-route establishes: the human who restored. Whoever moved the store is not
-known, and git metadata cannot say -- a writer inside the store commits with
-the store's own identity, which the suite's own attacker uses -- so no trust
-is derived from author, committer or parentage; they may describe and may
-never license a load. The verdict is unchanged: untrusted, restorable, and
+anywhere in it. Both now state what was measured and name the identity
+SUPPLIED with the request that asked for the restoration.
+
+SUPPLIED, NOT ESTABLISHED, and round 2 is why the word changed. This slice
+first wrote that the record names "the one actor this route does establish:
+the human who restored". It establishes nothing of the kind: `actor.ident` is
+taken verbatim from the request body and validated only for shape by
+`_IDENT`, on a surface whose own trust boundary says in as many words that it
+does not authenticate humans and whose page supplies the value from a
+free-text field. Driven: a POST naming `ceo@nornyx.example` returns 200 and
+that string goes into permanent lifecycle history. So a slice whose thesis
+was that it says only what it measured removed two unmeasured actor claims
+and put a third in their place. The record now says who ASKED, as the request
+stated it. Whoever moved the store is still not known, and git metadata
+cannot say -- a writer inside the store commits with the store's own
+identity, which the suite's own attacker uses -- so no trust is derived from
+author, committer or parentage; they may describe and may never license a
+load. Around a BUILD the record does go further and attributes the movement
+to the provider; that attribution has a basis this route lacks (the directory
+was handed to the provider for exactly that interval) and it is still an
+attribution rather than a measurement, recorded below as such. The verdict is unchanged: untrusted, restorable, and
 the cost of failing closed is still the transition, the stage's
 one-failure-per-stage allowance, and a permanent history entry -- now one
 that blames nobody. The revision that entry reports is the one the store
@@ -793,6 +854,100 @@ measurement, and it is named here rather than repaired outside this slice.
 Detection of a wholesale rollback of store, marker and seal to an earlier
 consistent set is unchanged and still deferred; nothing here anchors
 freshness.
+
+WHAT ROUND 2 CHANGED, after three independent read-only reviews of the
+re-proof above. Four repairs and two follow-ups, each mutation-proved in an
+isolated copy outside any repository of the programme, with the imported
+module's `__file__` printed beside every verdict:
+
+- THE REBUILD'S REMAINING WINDOW IS CLOSED. `_write_seal_marker()` is hoisted
+  above the authority-byte loop, and a FOURTH crash instant --
+  between-the-two-authority-writes -- was added to the parametrisation.
+  Reverting the hoist alone reddens exactly that row and leaves the other
+  three green, which is what makes the row the thing that demands the fix.
+  Driven as well as tested: a CHILD PROCESS killed with `os._exit(9)` at that
+  instant, forging a READY that is self-consistent to the digest chain, and
+  the directory read afterwards by a fresh process.
+
+      the reviewed head's rebuild, verbatim
+        on disk  ['.forge-capsule', 'capsule.json', 'experience.json']
+        protected() False   sealless load  RETURNED stage='READY'
+      the hoist reverted, nothing else
+        on disk  ['.forge-capsule', 'capsule.json']
+        protected() False   sealless load  CapsuleStoreError
+      as shipped
+        on disk  ['.forge-capsule', '.forge-seal', 'capsule.json']
+        protected() True    sealless load  CapsuleSealMissing
+
+  The middle row is the honest nuance and is stated rather than rounded off.
+  With the hoist reverted but `_write_fresh` in place, the forged
+  `experience.json` has already been unlinked at that instant, so the store is
+  refused by a DIFFERENT mechanism -- an absent file, not the marker -- and
+  `protected()` is still False. The marker invariant is what is violated
+  there, which is exactly what the test asserts, and it is why the test
+  asserts the marker rather than the outcome. The reachable READY read belongs
+  to the reviewed head's ordering, the top row.
+- THE INTERLOCK IS A BICONDITIONAL AND NO LONGER VACUOUS, and pins the
+  docstring's VALUE rather than the constant's name. Three defects, described
+  in the marker paragraph above.
+- THE RESTORE ROUTE SAYS "SUPPLIED", NOT "ESTABLISHED". Described above.
+- THE AUTHORITY PAYLOAD IS NOT BYTE-IDENTICAL, and the re-proof's own commit
+  message says otherwise. That message reads "The authority payload is
+  untouched and `not_independently_anchored` has not moved." Measured, the
+  second half is true and the first is not: this slice deliberately changed
+  `last_restoration.revision` -- it is the D-5 repair recorded above, and the
+  same commit boasts of it three paragraphs earlier. What is true is narrower
+  and is the claim that stands from here, diffed against 3b25d87: the
+  payload's KEY SETS are unchanged in both shapes it has (`anchor`,
+  `currency`, `last_restoration` at rest; the same three plus `build` while a
+  build runs); `currency` is the same literal in both revisions and has not
+  moved; and `last_restoration.revision` changed on purpose. A commit message
+  cannot be corrected without discarding the reviewed head, so the correction
+  lives here rather than there; where the two disagree, this paragraph is the
+  claim and that sentence is the error it replaces.
+- THE RECOVERY PATH NO LONGER WRITES THROUGH A PLANTED LINK. Measured under
+  review at the reviewed head, and IDENTICAL at its parent, so not a
+  regression of either: the rebuild wrote the authority files with a bare
+  `write_text` while the wipe preserves those names regardless of SHAPE, and
+  a hardlink -- no privilege needed on NTFS -- planted at an authority path
+  made a restoration overwrite a file OUTSIDE the store with the sealed
+  bytes. Every write `_rebuild` makes now goes through `_write_fresh`, which
+  removes the entry first. Pinned at all four preserved names by
+  `test_the_rebuild_writes_no_bytes_outside_the_store_through_a_planted_link`.
+- THE BUILD-PATH ATTRIBUTION IS SCOPED. `onboarding_app`'s module docstring
+  covered both routes in one paragraph and said "a store that moved outside
+  Forge is restored"; that attribution is defensible around a build and has
+  no basis at rest, and the paragraph now says which is which.
+
+WHAT ROUND 2 DID NOT REPAIR, and is not claimed to have:
+
+- `actor.ident` is still an unauthenticated self-assertion. The wording is
+  corrected; the surface still does not authenticate humans, and A-015's
+  local trust boundary is unchanged. What bounds it is shape only:
+  `_IDENT` is `^[A-Za-z0-9][A-Za-z0-9._@ -]{0,119}$`, which admits any
+  plausible identity and forbids `;`, so the value cannot forge an extra
+  problem inside the `"; ".join(problems)` it is interpolated into.
+- `_write_document` and `_write_experience` on the ORDINARY save path still
+  write through a planted link. That is unchanged from the parent and outside
+  this slice; `save` does not call `assert_sealed()` either, so it is not
+  protected by that. Only the recovery path is hardened.
+- The SYMLINK variant of the same planting is unverified on this host
+  (WinError 1314 without the privilege); only the hardlink variant was
+  driven. `_write_fresh` unlinks a symlink rather than following it, but that
+  branch is reasoned, not measured here. CI runs ubuntu-latest, where the
+  symlink is unprivileged.
+- The interlock still LICENSES NOTHING and establishes nothing about the
+  marker. It forces a promotion to state a new basis in the same commit.
+- Everything in the paragraph above this one stands, with one narrowing. The
+  between-authority-writes instant was driven BOTH as a `SystemExit` in the
+  test and as an `os._exit(9)` in a child process, which skips `finally` and
+  every unwind -- so that instant is no longer exception-only, and a fresh
+  process read the directory afterwards. Every OTHER death here is still a
+  Python exception; `os._exit` is not a power loss or an external SIGKILL, so
+  whether `os.replace(tmp, path)` in `seal()` can leave a torn or absent seal
+  on NTFS remains unmeasured. The measurements are still Windows-only,
+  `store_lock` is still in-process, and the build thread's provider
+  attribution is still an attribution.
 
 **Scope.** This wires the existing contract; it changes no stage, edge,
 actor or evidence rule. READY means what the contract establishes and

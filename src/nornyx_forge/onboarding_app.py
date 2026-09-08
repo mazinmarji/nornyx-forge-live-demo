@@ -46,14 +46,21 @@ clean tree and changed nothing. So authority is never taken from disk while a
 build runs -- every read is served from the state Forge itself sealed when
 the build began, and every write is refused until the build ends -- and
 when the flow returns, the store is checked against Forge's seal (revision,
-working tree, exact bytes) BEFORE its result is translated. A store that
-moved outside Forge is restored to the sealed authority and the build is
+working tree, exact bytes) BEFORE its result is translated. A store that no
+longer matches its seal is restored to the sealed authority and the build is
 recorded as a failure that says so; the provider's result is not consulted.
-The same check runs on every load at rest, so a forgery left behind for a
-later process is refused there too -- as the TAMPERED finding, on every
-route, until a person restores the sealed authority through one explicit
-action. The seal is Forge-owned persistence outside the project; its own
-bound is stated in capsule_store.
+Around a build, and only there, the record goes further and attributes the
+movement to the provider: the directory was handed to it as a writable
+workspace for exactly that interval, which is a basis, though still an
+attribution rather than a measurement (A-022 records it as such). The same
+seal check runs on every load AT REST, and there that basis does not exist:
+nothing establishes who wrote, and a Forge process that died between its own
+commit and its own seal produces the identical finding. So a forgery left
+behind for a later process is refused there too -- as the TAMPERED finding,
+reported on every route, naming the revision and byte differences and no
+actor at all -- until a person restores the sealed authority through one
+explicit action. The seal is Forge-owned persistence outside the project;
+its own bound is stated in capsule_store.
 
 DECLARED IS NOT ELIGIBLE. Before a build is allowed to start, the surface
 asks the Provider Contract's `governed_build_eligibility` whether the
@@ -634,10 +641,16 @@ def create_app(
         process that dies between the two produces this exact finding with no
         external actor anywhere in it -- and the history then blamed one.
         What the record names now is what was measured (the revision and byte
-        differences) and the one actor this route does establish: the human
-        who asked for the restoration. Whoever moved the store is not known
-        here, and git metadata could not tell us -- a writer inside the store
-        commits with the store's own identity.
+        differences) and the identity SUPPLIED with the request that asked for
+        the restoration. Supplied, not established: `actor.ident` is taken
+        verbatim from the request body and validated only for shape, on a
+        surface whose trust boundary above says in as many words that it does
+        not authenticate humans. Round 2 caught this paragraph claiming
+        otherwise -- a slice that removed two unmeasured actor claims had put
+        a third in their place. The record therefore says who ASKED, as the
+        request stated it, and nothing about who moved the store: that is not
+        known here, and git metadata could not tell us either, because a
+        writer inside the store commits with the store's own identity.
         """
         actor = _human_act(payload, "restoring the authority store")
         if isinstance(actor, JSONResponse):

@@ -36,6 +36,7 @@ sandbox's reach; within the same operating-system user's reach.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from pathlib import Path
@@ -733,9 +734,21 @@ def test_restoration_survives_a_worker_that_replaced_git_with_a_file(tmp_path: P
 # D  the recovery path's own window, and the claim the refusal used to make
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("marker", ["intact", "deleted", "foreign"])
+_AT_GIT_INIT = "at git init"
+_BETWEEN_AUTHORITY_WRITES = "between the two authority-file writes"
+
+
+@pytest.mark.parametrize(
+    "marker, instant",
+    [("intact", _AT_GIT_INIT),
+     ("deleted", _AT_GIT_INIT),
+     ("foreign", _AT_GIT_INIT),
+     ("deleted", _BETWEEN_AUTHORITY_WRITES)],
+    ids=["intact-at-git-init", "deleted-at-git-init", "foreign-at-git-init",
+         "deleted-between-the-authority-writes"],
+)
 def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str):
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str, instant: str):
     """Forge's own recovery used to be the cheapest way to strip the marker.
 
     MEASURED before the repair, with a `SystemExit` at the `git init` call
@@ -749,12 +762,32 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
     deletion, which is exactly the capability that paragraph concedes an
     unconfined provider holds.
 
-    Three marker states at the moment of the crash, because the repair has two
-    halves and each is invisible to the other. `intact` fails if the wipe is
-    allowed to run before the marker is rewritten; `foreign` fails if the
-    rewrite is made conditional on `protected()`, which only asks whether a
-    file of that name exists and cannot see that it names another store's
+    Three marker states at the `git init` instant, because the first repair
+    had two halves and each is invisible to the other. `intact` fails if the
+    wipe is allowed to run before the marker is rewritten; `foreign` fails if
+    the rewrite is made conditional on `protected()`, which only asks whether
+    a file of that name exists and cannot see that it names another store's
     seal.
+
+    AND A FOURTH ROW, WHICH VARIES THE INSTANT RATHER THAN THE MARKER. Round 2
+    found that the three rows above all crash at exactly one moment, and that
+    moment is after BOTH halves of the repair -- so the parametrisation could
+    not see an ordering the repair itself got wrong. It did: the first fix
+    wrote the sealed bytes and only THEN the marker, and `snapshot.files` is
+    `capsule.json` then `experience.json`, so a death between the two left the
+    worker's forged `experience.json` on disk with the marker still absent,
+    `protected()` False, and a sealless load returning `READY` again. A
+    two-statement window rather than a permanent state, but the same
+    fall-open. `_rebuild` now writes the marker first, and this row is what
+    demands it: reverting the hoist turns this id red and leaves the other
+    three green.
+
+    The bytes are deliberately NOT asserted equal at that instant -- mid-way
+    through a rebuild `experience.json` is whatever it was or nothing at all,
+    and asserting otherwise would pin the implementation rather than the
+    property. What is asserted is the property: whatever is on disk, it is
+    under a marker naming THIS store's seal, so with the seal gone the store
+    refuses instead of reading as legacy.
     """
     store = _sealed_store(tmp_path)
     sealed = store.sealed()
@@ -769,14 +802,31 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
                        sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8", newline="")
 
-    survivor = store_module._run_git
+    if instant == _AT_GIT_INIT:
+        survivor = store_module._run_git
 
-    def dies_at_init(root, *args):
-        if args and args[0] == "init":
-            raise SystemExit("the process died at git init inside _rebuild")
-        return survivor(root, *args)
+        def dies_at_init(root, *args):
+            if args and args[0] == "init":
+                raise SystemExit("the process died at git init inside _rebuild")
+            return survivor(root, *args)
 
-    monkeypatch.setattr(store_module, "_run_git", dies_at_init)
+        monkeypatch.setattr(store_module, "_run_git", dies_at_init)
+    else:
+        # The second authority file, at the moment the rebuild reaches it and
+        # before it has touched it: `capsule.json` is already sealed bytes and
+        # `experience.json` is still whatever the worker left. Patched on the
+        # Path method rather than on the store's write helper so the same
+        # instrument reaches an implementation that writes either way.
+        doomed = capsule / "experience.json"
+        survivor_write_text = Path.write_text
+
+        def dies_between_the_authority_writes(self, *args, **kwargs):
+            if self == doomed:
+                raise SystemExit("the process died between the two authority-file writes")
+            return survivor_write_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", dies_between_the_authority_writes)
+
     with pytest.raises(SystemExit):
         store.restore(sealed)
     monkeypatch.undo()
@@ -792,9 +842,20 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
         "hold the store to an anchor that is not its own"
     )
     assert store.protected()
-    for name in ("capsule.json", "experience.json"):
-        assert (capsule / name).read_text(encoding="utf-8") == sealed.files[name], (
-            f"{name} still holds the worker's bytes after the crash"
+    if instant == _AT_GIT_INIT:
+        for name in ("capsule.json", "experience.json"):
+            assert (capsule / name).read_text(encoding="utf-8") == sealed.files[name], (
+                f"{name} still holds the worker's bytes after the crash"
+            )
+    else:
+        assert (capsule / "capsule.json").read_text(encoding="utf-8") == \
+            sealed.files["capsule.json"]
+        second = capsule / "experience.json"
+        current = second.read_text(encoding="utf-8") if second.exists() else None
+        assert current != sealed.files["experience.json"], (
+            "this row exists to catch the rebuild MID-WAY, with the second "
+            "authority file not yet corrected; if it already matches the seal "
+            "the crash landed somewhere else and the row proves nothing"
         )
 
     # AND THE SECOND HALF. One same-user deletion is what the design concedes
@@ -806,6 +867,54 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
     for call in (later.load_experience, later.load):
         with pytest.raises(CapsuleSealMissing):
             call()
+
+
+@pytest.mark.parametrize("planted", ["capsule.json", "experience.json", ".forge-seal",
+                                     ".forge-capsule"])
+def test_the_rebuild_writes_no_bytes_outside_the_store_through_a_planted_link(
+        tmp_path: Path, planted: str):
+    """A restoration must not write THROUGH what the worker left behind.
+
+    MEASURED under review at the parent: the rebuild wrote the authority files
+    with a bare `write_text`, and the wipe preserves those names regardless of
+    the SHAPE they have. A hardlink -- which needs no privilege on NTFS, and
+    none on POSIX -- planted at an authority path made the restoration
+    overwrite a file OUTSIDE the store with the sealed capsule bytes. The
+    store's recovery from a hostile directory became a write primitive
+    pointing anywhere the same user can reach.
+
+    Identical at the parent and so not a regression of that commit; it is
+    repaired here because the same commit hardened `.forge-seal` by shape two
+    lines away and left these paths inconsistent. Every write `_rebuild` makes
+    now goes through `_write_fresh`, which removes the entry first, so the
+    link count drops and the bytes land in a new file no other name shares.
+
+    NOT hardened, and stated rather than implied: `_write_document` and
+    `_write_experience` on the ordinary save path still write through a
+    planted link. That is unchanged from the parent and outside this slice;
+    A-022 records it.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")     # force the rebuild rather than a reset
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("a file the store has no business touching\n", encoding="utf-8")
+    target = capsule / planted
+    target.unlink(missing_ok=True)
+    os.link(outside, target)           # a hardlink: one inode, two names
+    assert outside.stat().st_nlink == 2
+
+    store.restore(sealed)
+
+    assert outside.read_text(encoding="utf-8") == \
+        "a file the store has no business touching\n", (
+        f"restoring the store through a hardlink at {planted} wrote the "
+        "store's bytes into a file outside it"
+    )
+    assert store.seal_problems(store.sealed()) == []
 
 
 def _commit_landed_before_its_seal(
@@ -915,10 +1024,13 @@ def test_a_seal_breach_reports_what_it_measured_and_no_author(
     assert detail == restored["restoration"]["detail"]
     for problem in problems:
         assert problem in detail, (problem, detail)
-    # The one actor this route establishes is the human who asked for the
-    # restoration. Every word below claims a DIFFERENT actor, and none of them
-    # is measured: whoever moved the store is unknown here, and git metadata
-    # cannot tell us -- `commit_inside` above is the store's own identity.
+    # The only identity the record carries is the one SUPPLIED with the
+    # request that asked for the restoration -- verbatim from the body, on a
+    # surface that does not authenticate humans, so it is an assertion by the
+    # caller and not an establishment by this route. Every word below claims a
+    # DIFFERENT actor, and none of them is measured either: whoever moved the
+    # store is unknown here, and git metadata cannot tell us -- `commit_inside`
+    # above is the store's own identity.
     assert "casey" in detail
     for claimed in ("outside", "modified", "provider", "worker", "written by"):
         assert claimed not in detail, (claimed, detail)
@@ -929,16 +1041,35 @@ def test_the_marker_trust_basis_cannot_survive_an_eligible_provider():
     this before it does so, or it silently reopens R2". A request that a human
     remember is not a control.
 
-    Stated as an implication, the shape of
-    `test_the_table_may_not_claim_more_than_the_evidence`: it objects only
-    once a provider is actually eligible, so the day a real confinement
-    measurement licenses one, this fails and the person who closed it records
-    the marker decision in the same commit -- rather than this having to be
-    rewritten by them, or never read at all.
+    Stated as a BICONDITIONAL over the eligibility decision, and round 2 is
+    why it is one rather than an implication. As an implication guarded by
+    `if eligible:` it could be SPENT IN ADVANCE: measured, with nothing
+    eligible the constant was pinned by nothing, so any earlier commit that
+    renamed or tidied it went unobjected, and the later commit that promoted a
+    provider then found the implication ALREADY SATISFIED. The paragraph would
+    have gone quietly false exactly as before, and the "record of a human
+    decision" would have recorded an unrelated edit. So both directions are
+    asserted: while nothing is eligible the constant must still read the
+    literal, and once anything is eligible it must not.
 
-    It RECORDS a human decision as a code change. Editing the constant
-    establishes nothing about the marker; it only says a human considered it.
+    And the table it reads must not be EMPTY. `eligible` is derived by
+    filtering `PROVIDER_CONFINEMENT`; measured, emptying that table made the
+    guarded branch unreachable and this node green by vacuity. A refactor that
+    moved the eligibility decision to another registry, leaving this table
+    populated but unread, would do the same. So the rows are pinned by name.
+
+    What this DOES NOT do, stated because the surrounding prose twice claimed
+    more: it licenses nothing -- no code path consults `MARKER_TRUST_BASIS` to
+    permit anything -- and editing the constant establishes nothing about the
+    marker. It forces a promotion to state a new basis in the same commit, and
+    that is the whole of it.
     """
+    assert set(PROVIDER_CONFINEMENT) == {"claude", "codex"}, (
+        "the confinement table is the population this interlock filters. "
+        "Emptied, or moved to another registry, `eligible` is [] whatever the "
+        "eligibility decision says and this node passes by vacuity rather "
+        f"than by measurement: {sorted(PROVIDER_CONFINEMENT)}"
+    )
     eligible = sorted(name for name in PROVIDER_CONFINEMENT
                       if governed_build_eligibility(name).eligible)
     if eligible:
@@ -951,9 +1082,18 @@ def test_the_marker_trust_basis_cannot_survive_an_eligible_provider():
             "remove one of them. Revisit that paragraph and this constant "
             "together, in the commit that makes the provider eligible."
         )
-    assert "MARKER_TRUST_BASIS" in (store_module.__doc__ or ""), (
-        "the module docstring states the basis in prose without naming the "
-        "value, so the prose and the constant can drift apart"
+    else:
+        assert MARKER_TRUST_BASIS == "no_provider_executes_on_the_governed_path", (
+            "no provider is eligible for the governed build, and that is "
+            f"precisely the basis the marker is trusted on -- yet it now reads "
+            f"{MARKER_TRUST_BASIS!r}. Changing it here spends the interlock in "
+            "advance: the commit that later promotes a provider would find the "
+            "implication above already satisfied and object to nothing."
+        )
+    assert MARKER_TRUST_BASIS in (store_module.__doc__ or ""), (
+        "the module docstring states the basis in prose without carrying the "
+        f"literal {MARKER_TRUST_BASIS!r}, so the prose and the constant can "
+        "drift apart while a scan for the constant's NAME still passes"
     )
 
 

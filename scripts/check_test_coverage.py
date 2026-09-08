@@ -601,8 +601,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # store permanently readable as legacy; the write-order gap, which had
     # no coverage at all; the refusal and the persisted history reporting
     # what they measured rather than naming an actor; and the marker trust
-    # basis as an implication over the eligibility decision.
-    "tests/test_provider_authority_boundary.py": 37,
+    # basis as an implication over the eligibility decision. Round 2 of that
+    # review made the last of those a BICONDITIONAL -- the implication could be
+    # spent in advance -- and added the fourth crash instant that demands the
+    # marker hoist plus four rows pinning that the recovery path writes no
+    # bytes through a planted link: 41 -> 46, band(41) = 37 -> band(46) = 42.
+    "tests/test_provider_authority_boundary.py": 42,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1263,19 +1267,25 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # regression in this suite.
 #
 # Re-measured for Tranche D, the seal re-proof, which closes a fall-open in
-# the store's own recovery path and stops two refusals naming an actor they
-# never measured: tests/test_provider_authority_boundary.py collects 35 -> 41
-# (floor band(35) = 32 -> band(41) = 37). 113 modules stand -- every new node
-# is in the module that already held the seal boundary -- the module-floor sum
-# rises by five to 3037 and the aggregate follows to 3045, keeping the same 8
-# above it. The suite collects 3308 -> 3314, band(n) 2978 -> 2983, the working
-# room below the floor moves 268 -> 269 (the collection rose by six and the
-# aggregate by five), and the slack the bands grant moves 276 -> 277: this
-# module collects four above its floor at 41 where it collected three at 35,
-# because `ceil(0.9n)` moved by five while the module moved by six. The
+# the store's own recovery path, hoists the seal marker above the rebuild's
+# authority writes, makes the marker-basis interlock a biconditional that an
+# empty confinement table cannot satisfy by vacuity, stops the recovery path
+# writing bytes through a planted link, and stops two refusals naming an actor
+# they never measured. ONE row moves:
+# tests/test_provider_authority_boundary.py collects 35 -> 46 (floor
+# band(35) = 32 -> band(46) = 42). 113 modules stand -- every new node is in
+# the module that already held the seal boundary -- the module-floor sum rises
+# by ten to 3042 and the aggregate follows to 3050, keeping the same 8 above
+# it. The suite collects 3308 -> 3319, band(n) 2978 -> 2988, the working room
+# below the floor moves 268 -> 269 (the collection rose by eleven and the
+# aggregate by ten), and the slack the bands grant moves 276 -> 277: this
+# module collects four above its floor at 46 where it collected three at 35,
+# because `ceil(0.9n)` moved by ten while the module moved by eleven. The
 # windows-runtime job's floor is untouched at 262: none of its six modules is
-# tests/test_provider_authority_boundary.py. No provider row moved and no skip
-# was declared.
+# tests/test_provider_authority_boundary.py, and the six collect
+# 14/15/23/53/73/97 as that job's own sentence states -- measured here from
+# the same collection, not inherited from it. No provider row moved and no
+# skip was declared.
 #
 # Those figures are stated against main AFTER TRANCHE I landed -- the
 # real embedded-interpreter run, which raised
@@ -1283,20 +1293,21 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # from 3303 to 3308 -- and were re-measured from a fresh collection
 # when this slice was rebased onto it. It was measured against Tranche
 # C slice C3 before that, and those totals are gone from here for the
-# same reason the older ones are. This round was first measured against the older base (3253 -> 3259,
-# aggregate 2991 -> 2996), and both totals are false for this tree; they are
-# not kept beside the constant, because a superseded measurement left standing
-# next to the thing it no longer measures is precisely the rot this block
-# exists to stop -- and a rebase is the one moment that manufactures it
-# wholesale. What survives the rebase is the module delta itself, 35 -> 41:
-# a fact about the slice rather than about the base under it:
+# same reason the older ones are. The slice's two review rounds were first measured against the older base
+# (3253 -> 3259 -> 3264, aggregate 2991 -> 2996 -> 3001), and every one of
+# those totals is false for this tree. They are not kept beside the constant,
+# because a superseded measurement left standing next to the thing it no
+# longer measures is precisely the rot this block exists to stop -- and a
+# rebase is the one moment that manufactures it wholesale. What survives the
+# rebase is the module delta itself, 35 -> 46: six nodes in round 1 and five
+# in round 2, a fact about the slice rather than about the base under it:
 #
 # (rows below):
 #
-#     collected across tests/     3314   (113 modules)
-#     sum of the module floors    3037
-#     band(3314) = ceil(0.9*n)    2983
-#     MINIMUM_COLLECTED           3045
+#     collected across tests/     3319   (113 modules)
+#     sum of the module floors    3042
+#     band(3319) = ceil(0.9*n)    2988
+#     MINIMUM_COLLECTED           3050
 #     above the module sum         8
 #     below what collects         269
 #
@@ -1352,7 +1363,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3045
+MINIMUM_COLLECTED = 3050
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
