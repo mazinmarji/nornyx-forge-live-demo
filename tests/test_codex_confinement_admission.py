@@ -86,8 +86,11 @@ property.
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -1230,3 +1233,1002 @@ def test_an_absent_probe_record_is_inconclusive_and_never_a_refusal():
     assert assessment.establishes is False
     assert f"{AUTHORITY}: no competent observation" in assessment.reason
     assert PROVIDER_CONFINEMENT["codex"] != "established"
+
+
+# ---------------------------------------------------------------------------
+# Slice C3: the record -> probe translation, and the measurement it carries.
+#
+# Before this, `control_plane_authority_outcome` had NO production consumer:
+# nothing in `src/` or `scripts/` built a `ConfinementProbe`, so the outcome a
+# probe carried was hand-authored and the criterion's semantics were advisory.
+# A-028 recorded that gap in those words. Everything below holds the closure:
+# the outcome is DERIVED through the mapping, the refusals are named rather
+# than downgraded, and the shipped record is translated and assessed here
+# rather than transcribed into prose.
+# ---------------------------------------------------------------------------
+
+from nornyx_forge.control_plane_session import ALLOWLIST as SURFACE_ALLOWLIST  # noqa: E402
+from nornyx_forge.provider_contract import (  # noqa: E402
+    _V1_DERIVABLE_STATES,
+    _V1_SEPARATION_VALUES,
+    CONTROL_PLANE_ALLOWLISTED_PAIRS,
+    CONTROL_PLANE_MECHANISM,
+    CONTROL_PLANE_PROBE_SCHEMA,
+    CONTROL_PLANE_PROPERTY,
+    CONTROL_PLANE_TRANSPORT,
+    confinement_measurement_from_surface_record,
+    confinement_probe_from_surface_record,
+)
+
+C3_RECORD = ROOT / "docs" / "governance" / "control_plane_authority_measurement.json"
+C3_DOCUMENT = ROOT / "docs" / "governance" / "CONTROL_PLANE_AUTHORITY_MEASUREMENT.md"
+
+#: THE TWO VALUES THE SHIPPED RECORD IS BOUND TO, SPELLED HERE. Both were
+#: asserted only against themselves in round 1 -- `translated.platform` compared
+#: to `translated.platform`, and `measured_at_commit` compared to the field it
+#: was copied from -- so mutating either in the record was silent. A literal is
+#: the whole repair: it is the one thing a value copied out of the record
+#: cannot satisfy.
+C3_PLATFORM = "win32"
+C3_MEASURED_REVISION = "git:7f560094ee74e1111618c4676e4bcb2e90beba63"
+
+#: PA-01's platform word, which is NOT this one. Held apart deliberately.
+PA01_PLATFORM = "windows"
+
+
+def _blob_id(path: Path) -> str:
+    """The git object id of `path`'s bytes, computed rather than asked for.
+
+    `git hash-object` without git: the id is `sha1("blob <len>\\0" + bytes)`,
+    which is a CONTENT ADDRESS and not a security digest -- hence
+    `usedforsecurity=False`. Computed in-process so this holds on a host with
+    no git and in a shallow clone, and so it reads the file that SHIPS rather
+    than whatever the index happens to hold.
+    """
+    data = path.read_bytes()
+    header = b"blob %d\0" % len(data)
+    return hashlib.sha1(header + data, usedforsecurity=False).hexdigest()  # noqa: S324
+
+
+def _is_ancestor_of_head(revision: str) -> bool:
+    """Whether `revision` is a commit this repository has, reachable from HEAD.
+
+    The measured revision resolves NOWHERE by design (a local commit of the
+    working tree, disclosed as such), but the PARENT revision is a commit of
+    this history and can be held to it. git must answer: the suite already
+    requires a working git for the same class of question
+    (`test_the_real_checkout_answers_under_the_neutral_environment`), and CI
+    checks this repository out at full depth for exactly that reason.
+    """
+    exists = subprocess.run(  # noqa: S603
+        ["git", "cat-file", "-e", revision + "^{commit}"],  # noqa: S607
+        cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
+    )
+    if exists.returncode != 0:
+        return False
+    ancestor = subprocess.run(  # noqa: S603
+        ["git", "merge-base", "--is-ancestor", revision, "HEAD"],  # noqa: S607
+        cwd=ROOT, capture_output=True, text=True, timeout=120, check=False,
+    )
+    return ancestor.returncode == 0
+
+#: What the live surface answers an unauthenticated caller on the allowlisted
+#: pairs. Everything else answers the fixed 401.
+_ALLOWLISTED_STATUS = {
+    ("GET", "/"): 200,
+    ("GET", "/api/runtime"): 200,
+    ("POST", "/api/session/redeem"): 404,
+    ("POST", "/api/runtime/reopen"): 200,
+}
+
+
+def _rows(overrides=None):
+    """Every DOCUMENTED_PATHS x PROBED_METHODS cell, answered the way the real
+    surface answers, with `overrides` applied. A COMPLETE matrix, because a
+    state other than `inconclusive` needs one."""
+    overrides = overrides or {}
+    rows = []
+    for path in probe.DOCUMENTED_PATHS:
+        for method in probe.PROBED_METHODS:
+            cell = (method, path)
+            status = overrides.get(cell, _ALLOWLISTED_STATUS.get(cell, 401))
+            allowlisted, authority = probe._membership(method, path)
+            rows.append({"method": method, "path": path, "attempted": status is not None,
+                         "status": status, "allowlisted": allowlisted,
+                         "authority_route": authority,
+                         "mechanism": probe.MECH_SURFACE if status is not None else None})
+    return rows
+
+
+def _surface_record(requests=None, *, separation="unknown", validate=True, **overrides):
+    """A record the PRODUCER would accept, so the translation is measured
+    against real evidence rather than against a shape invented here.
+
+    `validate=False` is for the specimens that are deliberately impossible for
+    the producer to emit -- a forged classification, `separated`, `unreachable`
+    -- which is exactly the class the translation exists to refuse.
+    """
+    requests = _rows() if requests is None else requests
+    try:
+        derivation = probe.derive(requests if isinstance(requests, list) else [])
+    except probe.ProbeRecordError:
+        # The PRODUCER refuses this log -- a row whose stored `allowlisted`
+        # flag disagrees with the constant, say. That IS the specimen: a record
+        # the producer would never have written, handed to the translation to
+        # see whether it refuses on its own account. The bookkeeping fields are
+        # filled from the empty derivation so the shape is complete; the
+        # specimen overrides the classification and nothing reads the rest.
+        assert not validate, "a specimen the producer refuses cannot also be validated"
+        derivation = probe.derive([])
+    record = {
+        "schema": probe.SCHEMA,
+        "generated_at": "2026-01-01T00:00:00Z",
+        "transport": probe.TRANSPORT,
+        "subject": {
+            "probe_pid": 4242,
+            "probe_executable": "~/py/python.exe",
+            "probe_executable_sha256": None,
+            "sys_executable": "~/py/python.exe",
+            "nornyx_forge_file": "~/tree/src/nornyx_forge/__init__.py",
+            "nornyx_forge_origin": "~/tree/src/nornyx_forge/__init__.py",
+            "tree_git_sha": "git:" + "a" * 40,
+            "principal": {"platform": "synthetic", "sid": None, "uid": None},
+            "surface": {"reachable": True, "instance": "0123456789abcdef", "pid": 4243,
+                        "port": 8710, "expected_instance": None,
+                        "expected_instance_matches": None, "detail": None},
+        },
+        "requests": requests,
+        "coverage": derivation.coverage,
+        "deadline_seconds": 300.0,
+        "deadline_exceeded": False,
+        "deadline_note": None,
+        "artefacts_truncated": 0,
+        "reopen_pull_status": None,
+        "positive_control": {"attempted": False, "status": None, "admitted": None},
+        "artefacts": [],
+        "bearer_acquired_through_surface": False,
+        "classification": derivation.state,
+        "classification_reason": derivation.reason,
+        "principal_separated": separation,
+        "not_confinement_reason": (
+            probe.not_confinement_reason(separation)
+            if derivation.state == "admitted_nuisance" else None),
+    }
+    record.update(overrides)
+    if validate:
+        probe.validate_record(record)
+    return record
+
+
+def _consistent(record, state):
+    """`record` with its log made consistent with `state`, so the disagreement
+    rule is not what a specimen about something else ends up measuring."""
+    if state == "authority_reachable":
+        record["requests"] = _rows({("GET", "/api/state"): 200})
+    return record
+
+
+def test_the_contracts_restated_surface_constants_are_the_surfaces_own():
+    """The translation restates three things the producer and the surface own
+    -- the schema, the transport and the allowlisted pairs -- because
+    `layer.domain` may not reach into `scripts/`. Restating is only safe while
+    something holds the copies equal, so this does, in both directions.
+
+    The allowlist matters most. The translation needs it to refuse a record
+    whose classification disagrees with its own log, and it may NOT learn
+    membership from the rows: a record laundering a gated 2xx would simply mark
+    that row allowlisted. A second spelling here would silently widen what
+    counts as admitted, which is the one drift that would let a breach through.
+
+    AND THE TWO VOCABULARY ALLOW-LISTS, which this stopped short of in round 1.
+    `_V1_DERIVABLE_STATES` and `_V1_SEPARATION_VALUES` are now the guards --
+    the translation tests MEMBERSHIP of them rather than comparing the record's
+    word to `"unreachable"` or `"separated"` -- so the copies have to be held
+    to the producer's own tuples exactly as the three above are. The
+    COMPLEMENTS are pinned too, in both directions: what
+    `CONTROL_PLANE_STATES` names and this producer cannot derive must be
+    exactly the producer's own `NOT_DERIVABLE_HERE`, and what
+    `PRINCIPAL_SEPARATION` names and it may not record must be exactly
+    `separated`. Round 2 measured what the old deny-lists admitted: a fifth
+    state added to `CONTROL_PLANE_STATES` and mapped `denied` gave a
+    hand-written record `control_plane_authority: met` with every guard green,
+    because `state in ("unreachable",)` was safe only by a coincidence
+    nothing enforced. These four assertions are that enforcement.
+    """
+    assert CONTROL_PLANE_PROBE_SCHEMA == probe.SCHEMA
+    assert CONTROL_PLANE_TRANSPORT == probe.TRANSPORT
+    assert CONTROL_PLANE_ALLOWLISTED_PAIRS == probe.ALLOWLISTED_PAIRS
+    assert CONTROL_PLANE_ALLOWLISTED_PAIRS == frozenset(SURFACE_ALLOWLIST)
+    assert CONTROL_PLANE_MECHANISM == probe.MECH_SURFACE
+    assert PROPERTY_EVIDENCE_MECHANISMS[CONTROL_PLANE_PROPERTY] == (CONTROL_PLANE_MECHANISM,)
+
+    assert _V1_DERIVABLE_STATES == probe.STATES, (
+        "the translation's allow-list of derivable states is not the producer's "
+        f"own: {_V1_DERIVABLE_STATES} against {probe.STATES}"
+    )
+    assert _V1_SEPARATION_VALUES == probe.SEPARATION_VALUES, (
+        "the translation's allow-list of separation words is not the producer's "
+        f"own: {_V1_SEPARATION_VALUES} against {probe.SEPARATION_VALUES}"
+    )
+    assert (set(CONTROL_PLANE_STATES) - set(_V1_DERIVABLE_STATES)
+            == set(probe.NOT_DERIVABLE_HERE)), (
+        "the states this contract names but the producer cannot derive are "
+        f"{sorted(set(CONTROL_PLANE_STATES) - set(_V1_DERIVABLE_STATES))}; the "
+        f"producer's own list of them is {sorted(probe.NOT_DERIVABLE_HERE)}. A state "
+        "in one and not the other is either an unguarded widening or a guard "
+        "against nothing"
+    )
+    assert (set(PRINCIPAL_SEPARATION) - set(_V1_SEPARATION_VALUES)
+            == {probe.SEPARATION_SEPARATED})
+    assert PRINCIPAL_SEPARATION == probe.SEPARATION_VOCABULARY
+
+
+def _shipped_modules():
+    """Every shipped `.py` under `src/` and `scripts/`, in a stable order."""
+    return sorted((ROOT / "src").rglob("*.py")) + sorted((ROOT / "scripts").rglob("*.py"))
+
+
+def _constructs_confinement_probe(path: Path) -> bool:
+    """Whether `path` CALLS `ConfinementProbe(...)`, asked of the parsed tree.
+
+    Not `"ConfinementProbe(" in text`. That measures "the file contains those
+    characters", which a COMMENT satisfies -- measured in round 2: rewriting
+    the real construction as `globals()['Confinement' 'Probe'](` and leaving
+    the literal in a comment above it kept the gate green with the behaviour
+    unchanged. It is the same substitution
+    `test_the_assessment_never_reads_the_claim_table` diagnosed 800 lines up,
+    where a substring scan matched the function's own docstring: a grep for
+    prose ABOUT the thing standing in for the thing.
+
+    A syntax error is not a silent False -- a shipped module that will not
+    parse is a failure of this gate, not an absence of a construction.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "ConfinementProbe":
+            return True
+        if isinstance(func, ast.Attribute) and func.attr == "ConfinementProbe":
+            return True
+    return False
+
+
+def test_the_criterions_semantics_now_reach_a_real_record():
+    """A-028's recorded gap, closed and held closed.
+
+    It read: nothing in `src/` or `scripts/` constructs a `ConfinementProbe` at
+    all, so nothing converts a validated `control_plane_probe.v1` record into
+    one, and the outcome a probe carries is hand-authored. The assertion here is
+    the same measurement A-028 reported -- a search of the shipped source for a
+    construction -- inverted, and asked of the PARSED module rather than of its
+    characters.
+    """
+    constructions = [
+        path.relative_to(ROOT).as_posix()
+        for path in _shipped_modules()
+        if _constructs_confinement_probe(path)
+    ]
+    assert "src/nornyx_forge/provider_contract.py" in constructions, (
+        "no shipped module constructs a ConfinementProbe, so the criterion's "
+        "semantics are advisory again"
+    )
+    translated = confinement_probe_from_surface_record(_surface_record(), provider="codex")
+    assert translated.property == CONTROL_PLANE_PROPERTY
+    assert translated.mechanism == CONTROL_PLANE_MECHANISM
+    assert translated.authoritative() is True
+
+
+#: THE CROSS PRODUCT, DERIVED. These were eight typed-out cells, and a typed
+#: list is a claim about the vocabulary rather than a sweep of it: round 2
+#: added a fifth producer-derivable state mapped `denied` and NEITHER C3
+#: property test saw the new cell -- only three pre-existing C1 tests reddened,
+#: so the slice's headline claim was protected by tests that do not assert it.
+#: The neighbouring `_MAPPING_EXPECTATIONS` comment records the same hole being
+#: measured in round 1. Derived from the PRODUCER's own tuples (which
+#: `test_the_contracts_restated_surface_constants_are_the_surfaces_own` holds
+#: equal to the contract's), so a sixth state or a third separation word
+#: enters this sweep with no edit here.
+_DERIVABLE_STATES = list(probe.STATES)
+_RECORDABLE_SEPARATIONS = list(probe.SEPARATION_VALUES)
+
+
+@pytest.mark.parametrize("state", _DERIVABLE_STATES)
+@pytest.mark.parametrize("separation", _RECORDABLE_SEPARATIONS)
+def test_the_outcome_is_derived_through_the_mapping_and_never_stated(state, separation):
+    """The whole point of the translation. For every state this producer can
+    derive and every separation word it may record, the emitted outcome is what
+    `control_plane_authority_outcome` answers -- and a record that also STATES
+    an outcome does not move it, because the translation never reads one."""
+    record = _consistent(
+        _surface_record(separation=separation, validate=False, classification=state,
+                        outcome="denied", probe_outcome="denied"),
+        state)
+    translated = confinement_probe_from_surface_record(record, provider="codex")
+    assert translated.outcome == control_plane_authority_outcome(
+        state, principal_separated=separation)
+
+
+def test_an_unanswered_log_emits_an_unobserved_attempt():
+    """`attempt_observed` is DERIVED from the log, and this is the direction
+    that was never exercised.
+
+    The line's own comment said "DERIVED, not declared" and replacing the
+    `any(...)` with a literal `True` left the module's 97 tests green
+    (round-2 test lane, P2-F): the only assertion touching the field read a
+    record whose whole 133-cell matrix had answered, which a hard-coded True
+    satisfies identically. So the module's own central discipline --
+    `test_an_unobserved_attempt_is_not_a_refusal` -- was unenforced on the new
+    path.
+
+    It cannot flip a verdict TODAY only because `unreachable` is refused by
+    membership. The moment a successor slice admits it, a record whose log
+    answered nothing would emit `attempt_observed: True` beside
+    `outcome: denied` -- an unobserved attempt read as a refusal, which is the
+    one thing `assess_confinement` exists to refuse.
+    """
+    silent = [dict(row, attempted=False, status=None, mechanism=None) for row in _rows()]
+    assert all(row["status"] is None for row in silent) and silent
+    record = _surface_record(silent, validate=False, classification="inconclusive")
+    translated = confinement_probe_from_surface_record(record, provider="codex")
+    assert translated.attempt_observed is False, (
+        "a log in which nothing answered emitted an OBSERVED attempt; the field is "
+        "declared rather than derived"
+    )
+    assert translated.authoritative() is False
+    assert translated.outcome == "inconclusive"
+
+    # And the other direction from the same helper, so this is a discrimination
+    # rather than a test that only ever says False.
+    answered = confinement_probe_from_surface_record(_surface_record(), provider="codex")
+    assert answered.attempt_observed is True
+
+    # ONE answered row is enough, and it is the boundary the `any(...)` draws.
+    one = [dict(row) for row in silent]
+    one[0] = dict(one[0], attempted=True, status=401, mechanism=probe.MECH_SURFACE)
+    partial = confinement_probe_from_surface_record(
+        _surface_record(one, validate=False, classification="inconclusive"), provider="codex")
+    assert partial.attempt_observed is True
+
+
+@pytest.mark.parametrize("separation", _RECORDABLE_SEPARATIONS)
+@pytest.mark.parametrize("state", _DERIVABLE_STATES)
+def test_no_record_this_producer_can_write_satisfies_the_property(state, separation):
+    """THE HONEST CONTENT OF C3, asserted rather than left to a reader.
+
+    Every state a `control_plane_probe.v1` producer can derive, crossed with
+    every separation word it may record, maps to `inconclusive` or `allowed`
+    and NEVER to `denied`, which is what `CONFINEMENT_PROPERTIES` requires. So
+    the criterion cannot be satisfied by any record that harness can produce --
+    a property of the PRODUCER, not of the criterion, and the reason C3 moves
+    no row however clean the surface's log is.
+
+    The assessment is asked for the platform SPELLED HERE, not for
+    `translated.platform`. Both come from the record, so passing the
+    translation's own answer back in made the binding check compare a value to
+    itself and the whole chain self-consistent for any platform at all
+    (round-2 test lane, P2-G): hard-coding the emitted platform stayed green.
+    `"synthetic"` is what `_surface_record` puts in the subject block, so a
+    platform that stops coming from the record reddens here.
+    """
+    outcome = control_plane_authority_outcome(state, principal_separated=separation)
+    assert outcome != CONFINEMENT_PROPERTIES[CONTROL_PLANE_PROPERTY]
+    assert outcome in ("inconclusive", "allowed")
+
+    translated = confinement_probe_from_surface_record(
+        _consistent(_surface_record(separation=separation, validate=False,
+                                    classification=state), state),
+        provider="codex")
+    assert translated.platform == "synthetic"
+    assessment = assess_confinement("codex", "synthetic", ConfinementMeasurement(
+        provider="codex", platform="synthetic",
+        measured_at_commit="git:" + "a" * 40, probes=(translated,)))
+    assert assessment.establishes is False
+    assert CONTROL_PLANE_PROPERTY in assessment.unmet
+
+
+def test_a_record_that_is_not_a_socket_measurement_is_refused():
+    """M6 at the translation. `control_plane_authority` is witnessed by an
+    observation of Forge's own gated surface over a real socket; an in-process
+    client result is not one, whatever its rows say."""
+    with pytest.raises(ProviderError, match="transport"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, transport="in_process_testclient"),
+            provider="codex")
+
+
+def test_a_control_plane_fact_labelled_by_inference_is_refused():
+    """`inferred_acl` is the label the producer puts on filesystem and
+    OS-capability facts, and it is competent for no property at all. A record
+    that answered on the socket and labelled the answer an inference is refused
+    rather than translated -- and so is the positive control's own request."""
+    rows = _rows()
+    rows[0]["mechanism"] = probe.MECH_ACL
+    with pytest.raises(ProviderError, match="mechanism"):
+        confinement_probe_from_surface_record(
+            _surface_record(rows, validate=False), provider="codex")
+
+    control = {"attempted": True, "status": 200, "admitted": True,
+               "request": {"method": "GET", "path": "/api/state", "bearer_presented": True,
+                           "mechanism": probe.MECH_ACL}}
+    with pytest.raises(ProviderError, match="positive control"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, positive_control=control), provider="codex")
+
+
+@pytest.mark.parametrize("state", ["admitted_nuisance", "reachable_unadmitted",
+                                   "inconclusive"])
+def test_a_classification_that_disagrees_with_its_own_log_is_refused(state):
+    """A gated 2xx admits exactly one state. A record claiming any other one
+    over a log that carries a breach is refused, and the membership that
+    decides "gated" comes from the CONSTANT: the row is relabelled
+    `allowlisted: true` here, which is precisely how a forged record would
+    launder its own counterexample."""
+    rows = _rows({("GET", "/api/state"): 200})
+    for row in rows:
+        if (row["method"], row["path"]) == ("GET", "/api/state"):
+            row["allowlisted"] = True
+    with pytest.raises(ProviderError, match="gated 2xx"):
+        confinement_probe_from_surface_record(
+            _surface_record(rows, validate=False, classification=state), provider="codex")
+
+
+def test_a_breach_asserted_by_a_label_and_absent_from_the_log_is_refused():
+    """The same rule in the other direction, so "disagrees with its own log"
+    is one rule and not a one-way courtesy. `authority_reachable` maps to
+    `allowed`, the adverse outcome, so accepting it unsupported would be
+    conservative -- and it would still be a label deciding what the evidence
+    says, which is the substitution this module exists to refuse."""
+    with pytest.raises(ProviderError, match="no gated 2xx"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, classification="authority_reachable"),
+            provider="codex")
+
+
+def test_the_states_and_words_this_producer_cannot_record_are_refused_by_name():
+    """`unreachable` answers `denied` at every separation word, and
+    `separated` is the word on which both widened states turn. Neither can be
+    produced by a `control_plane_probe.v1` producer -- its own validator
+    refuses both -- so a v1 record carrying either did not come from it, and
+    accepting either would satisfy the criterion from evidence whose producer
+    cannot support the claim."""
+    with pytest.raises(ProviderError, match="cannot derive"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, classification="unreachable"), provider="codex")
+    with pytest.raises(ProviderError, match="may never record"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, principal_separated="separated"),
+            provider="codex")
+    assert control_plane_authority_outcome("unreachable") == "denied"
+    assert control_plane_authority_outcome(
+        "admitted_nuisance", principal_separated="separated") == "denied"
+
+
+@pytest.mark.parametrize("specimen,pattern", [
+    ("not a mapping", "is a mapping"),
+    ({"schema": "nornyx.forge.something_else.v1"}, "schema"),
+])
+def test_a_malformed_record_is_refused_and_never_downgraded(specimen, pattern):
+    """A record that cannot be read honestly is REFUSED, not translated into an
+    `inconclusive` observation. `inconclusive` is a measurement result -- "the
+    attempt was not observed" -- and putting a measurement's word on a parsing
+    failure is how an unreadable record would come to look like an honest one.
+    """
+    with pytest.raises(ProviderError, match=pattern):
+        confinement_probe_from_surface_record(specimen, provider="codex")
+
+
+def _gated_row(record):
+    """The first row of `record`'s log that is NOT an allowlisted pair."""
+    for row in record["requests"]:
+        if (row["method"], row["path"]) not in CONTROL_PLANE_ALLOWLISTED_PAIRS:
+            return row
+    raise AssertionError("the specimen log has no gated row to launder")
+
+
+@pytest.mark.parametrize("status", ["200", 200.0, True])
+def test_a_status_the_2xx_test_cannot_read_is_refused_not_read_as_a_failure(status):
+    """F-2. `_is_2xx` requires an `int`, so a gated row answering `"200"` or
+    `200.0` is INVISIBLE to `_unadmitted_successes` -- the disagreement refusal
+    never sees the breach and the record passes as `admitted_nuisance`. The
+    producer cannot emit either, so this is defence in depth; but it is the
+    same fail-OPEN-on-an-unreadable-type shape as the vocabulary deny-lists,
+    and a type this module cannot read is refused rather than read as "not a
+    success". `True` is here because `isinstance(True, int)` is True and 2xx
+    arithmetic on a bool is nonsense.
+    """
+    record = _surface_record(validate=False)
+    _gated_row(record)["status"] = status
+    with pytest.raises(ProviderError, match="not an integer"):
+        confinement_probe_from_surface_record(record, provider="codex")
+
+
+@pytest.mark.parametrize("field", ["method", "path"])
+def test_a_route_that_is_not_a_pair_of_strings_is_refused_not_a_typeerror(field):
+    """F-3. Allowlist membership is a frozenset lookup, so an unhashable route
+    raised `TypeError` out of the module instead of the documented
+    `ProviderError` -- every neighbouring malformed shape refuses correctly."""
+    record = _surface_record(validate=False)
+    record["requests"][0][field] = ["not", "hashable"]
+    with pytest.raises(ProviderError, match="not a pair of strings"):
+        confinement_probe_from_surface_record(record, provider="codex")
+
+
+def test_a_record_with_no_log_or_no_platform_is_refused():
+    """Two more shapes the translation depends on and therefore checks."""
+    with pytest.raises(ProviderError, match="request log"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, requests="not a list"), provider="codex")
+    subject = dict(_surface_record()["subject"])
+    subject["principal"] = {"platform": "", "sid": None, "uid": None}
+    with pytest.raises(ProviderError, match="no platform"):
+        confinement_probe_from_surface_record(
+            _surface_record(validate=False, subject=subject), provider="codex")
+
+
+def test_the_measurement_binds_the_revision_the_record_names_and_refuses_none():
+    """A measurement must say what it was taken at, and the revision comes from
+    the RECORD -- never from an argument, because a revision the caller supplies
+    is the caller's claim about someone else's measurement.
+
+    The absent case is the one this slice actually hit: the confined
+    principal's bare `git rev-parse` refused with git's `safe.directory`
+    ownership check and the subject block came back naming no revision at all.
+    """
+    measurement = confinement_measurement_from_surface_record(
+        _surface_record(), provider="codex")
+    assert measurement.measured_at_commit == "git:" + "a" * 40
+    assert measurement.provider == "codex"
+    assert len(measurement.probes) == 1
+
+    subject = dict(_surface_record()["subject"])
+    subject["tree_git_sha"] = None
+    with pytest.raises(ProviderError, match="names no revision"):
+        confinement_measurement_from_surface_record(
+            _surface_record(validate=False, subject=subject), provider="codex")
+
+
+def test_the_recorded_c3_measurement_translates_to_the_verdict_it_states():
+    """The shipped record, through the shipped translation, to the shipped
+    assessment -- so `docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`
+    is re-derived on every commit instead of transcribed once.
+
+    Both records are checked: the confined SUBJECT and the unconfined CONTROL
+    that separates "the sandbox refused this" from "this never worked". They
+    reach the same classification from principals with different SIDs, which is
+    what makes the subject's `admitted_nuisance` a fact about the surface
+    rather than an artefact of the sandbox.
+    """
+    document = json.loads(C3_RECORD.read_text(encoding="utf-8"))
+    assert document["provider"] == "codex"
+    subject = document["records"]["sandboxed_subject"]
+    control = document["records"]["unsandboxed_control"]
+
+    for record in (subject, control):
+        probe.validate_record(record)  # the producer's own validator, re-run
+        assert record["classification"] == "admitted_nuisance"
+        assert record["principal_separated"] == "unknown"
+        assert record["coverage"]["answered_cells"] == record["coverage"]["expected_cells"]
+        assert record["deadline_exceeded"] is False
+        assert record["bearer_acquired_through_surface"] is False
+        assert record["positive_control"]["status"] == 200
+
+    assert (subject["subject"]["principal"]["sid"]
+            != control["subject"]["principal"]["sid"]), (
+        "the subject and its control ran as the same OS principal, so the "
+        "measurement has no confined arm at all"
+    )
+
+    measurement = confinement_measurement_from_surface_record(subject, provider="codex")
+    translated = measurement.probes[0]
+    assert translated.outcome == "inconclusive"
+    assert translated.mechanism == CONTROL_PLANE_MECHANISM
+    assert translated.attempt_observed is True
+
+    # THE PLATFORM AND THE REVISION, AGAINST LITERALS AND AGAINST THE RECORD,
+    # SEPARATELY. Every assertion here used to re-use the translated value --
+    # `assess_confinement("codex", translated.platform, ...)` and
+    # `measurement.measured_at_commit == subject[...]["tree_git_sha"]` -- and
+    # both sides of each comparison came from the same place, so the chain was
+    # self-consistent for ANY value. Measured in round 2: hard-coding the
+    # emitted platform stayed green; so did rewriting the shipped record's
+    # subject platform to `linux`, and its `tree_git_sha` to forty zeros. A
+    # tautology is not an anchor. These four are.
+    assert translated.platform == C3_PLATFORM
+    assert subject["subject"]["principal"]["platform"] == C3_PLATFORM
+    assert measurement.measured_at_commit == C3_MEASURED_REVISION
+    assert subject["subject"]["tree_git_sha"] == C3_MEASURED_REVISION
+
+    # AND THE SAME TWO ON THE CONTROL ARM, which round 2 pinned on the subject
+    # only. The control is the POSITIVE CONTROL the C3-F4 and C3-F5
+    # differentials rest on, and "the query completed for the control and did
+    # not complete for the confined principal" is evidence only if both arms
+    # are the same instrument, on the same host, at the same revision,
+    # differing in the SID. The instance each arm ran against is held by the
+    # producer's own validator re-run above, and the SIDs are asserted to
+    # differ; the control's PLATFORM and REVISION were held by nothing, and
+    # rewriting either -- to `linux`, to forty zeros, and both at once -- was
+    # 106/106 green.
+    assert control["subject"]["principal"]["platform"] == C3_PLATFORM
+    assert control["subject"]["tree_git_sha"] == C3_MEASURED_REVISION
+
+    # THE PROVENANCE ROWS, which nothing outside the two documents read. One
+    # round-2 mutation set `measured_at_commit`, both `tree_git_sha`, both
+    # principal platforms, `probe_module_blob` and `parent_revision` to bogus
+    # values at once and left both owning tests silent. The blob is the row the
+    # document nominates as the reader's substitute check for a measured
+    # revision that deliberately resolves nowhere, so it is the row that most
+    # needs to be a measurement.
+    assert document["platform"] == C3_PLATFORM
+    assert document["measured_at_commit"] == C3_MEASURED_REVISION
+    assert document["probe_module_blob"] == _blob_id(ROOT / "scripts/probe_control_plane.py"), (
+        "the record names a `scripts/probe_control_plane.py` blob that is not the "
+        "shipped module's. Either the row is wrong, or the shipped probe is no longer "
+        "the probe this measurement ran -- and the document's reader-check says the "
+        "second is the thing to worry about. Re-measuring is the repair, not editing "
+        "the row"
+    )
+    parent = document["parent_revision"]
+    assert parent.startswith("git:") and re.fullmatch(r"[0-9a-f]{40}", parent[4:]), parent
+    assert _is_ancestor_of_head(parent[4:]), (
+        f"the record names parent revision {parent}, which is not a commit reachable "
+        "from HEAD in this repository; a provenance row naming a revision this history "
+        "does not contain is a claim with nothing under it"
+    )
+
+    assessment = assess_confinement("codex", C3_PLATFORM, measurement)
+    assert assessment.establishes is False
+    assert CONTROL_PLANE_PROPERTY in assessment.unmet
+    assert "where 'denied' is required" in assessment.reason
+
+    # And nothing moved.
+    assert PROVIDER_CONFINEMENT["codex"] == "declared"
+    assert PROVIDER_CONFINEMENT["claude"] == "none"
+    for name in ("codex", "claude"):
+        assert governed_build_eligibility(name).eligible is False
+
+
+def test_the_confined_arm_of_the_recorded_measurement_says_what_it_found():
+    """The artefact readings the document rests C3-F4 and C3-F5 on, read off
+    the record rather than retyped: the confined caller KEPT the process-memory
+    handle A-027 concedes, and the browser-handler query that COMPLETED for the
+    control did not complete for it.
+
+    `not_applicable` is not a denial and is not read as one here. The producer
+    emits it for four causes indistinguishably -- a denied launch, a missing
+    executable, a timeout and a non-zero exit -- so the assertion below is
+    exactly `capability_acquired(...) is False` plus the outcome WORD, and the
+    difference between the two arms is the finding. Round 2 found the document
+    reading this row back as "was DENIED"; the differential survived the
+    rewording because the differential is real.
+    """
+    document = json.loads(C3_RECORD.read_text(encoding="utf-8"))
+    subject = {a["name"]: a for a in document["records"]["sandboxed_subject"]["artefacts"]}
+    control = {a["name"]: a for a in document["records"]["unsandboxed_control"]["artefacts"]}
+
+    assert probe.capability_acquired(subject["process_vm_read"]) is True
+    assert probe.capability_acquired(control["process_vm_read"]) is True
+    assert subject["browser_handler_cmdline"]["outcome"] == probe.ARTEFACT_NOT_APPLICABLE
+    assert probe.capability_acquired(subject["browser_handler_cmdline"]) is False
+    assert probe.capability_acquired(control["browser_handler_cmdline"]) is True
+    assert subject["browser_history"]["outcome"] == "refused"
+    assert probe.capability_acquired(control["browser_history"]) is True
+    for artefact in list(subject.values()) + list(control.values()):
+        assert artefact["mechanism"] == probe.MECH_ACL, (
+            "an artefact is an INFERENCE and is competent for no property"
+        )
+
+
+def test_the_two_recorded_platform_spellings_do_not_combine():
+    """F-8. Two platform words now exist in this repository's recorded
+    evidence: `windows` in PA-01's authored measurement and `win32` here, read
+    from `sys.platform` inside the probe. The general rule is pinned by
+    `test_a_platform_label_cannot_re_subject_the_probes_beneath_it`; this pins
+    it for the TWO RECORDS THAT SHIP, which is where a reader meets the claim
+    and the only place the document makes it.
+    """
+    c3 = confinement_measurement_from_surface_record(
+        json.loads(C3_RECORD.read_text(encoding="utf-8"))["records"]["sandboxed_subject"],
+        provider="codex")
+    pa01 = _measurement()
+    assert c3.platform == C3_PLATFORM
+    assert pa01.platform == PA01_PLATFORM
+    assert C3_PLATFORM != PA01_PLATFORM
+
+    for measurement, foreign in ((c3, PA01_PLATFORM), (pa01, C3_PLATFORM)):
+        crossed = assess_confinement("codex", foreign, measurement)
+        assert crossed.establishes is False
+        assert "does not transfer" in crossed.reason
+        assert set(crossed.unmet) == set(CONFINEMENT_PROPERTIES), (
+            "a measurement answered an assessment for the other platform word"
+        )
+
+    # And neither establishes anything on its OWN word either, so this is not a
+    # test that only ever says "not established" because of the crossing.
+    assert assess_confinement("codex", C3_PLATFORM, c3).establishes is False
+    assert assess_confinement("codex", PA01_PLATFORM, pa01).establishes is False
+
+
+# ---------------------------------------------------------------------------
+# THE DOCUMENT, HELD TO THE RECORD (round 2, P2-C).
+#
+# `CONTROL_PLANE_AUTHORITY_MEASUREMENT.md` said its rows were "re-derived on
+# every commit rather than transcribed once" and NOTHING READ IT. Measured:
+# five byte-exact, length-preserving falsifications of substantive claims --
+# `129 refused 401` -> `005`, `admitted_nuisance` -> `authority_reachable`,
+# `133 of 133` -> `012 of 133`, `inconclusive` -> `deni3d`, `false` -> `tru3`
+# -- left 291 tests GREEN. The document IS in the document sweep in
+# tests/test_recorded_measurements.py, but that sweep governs `--verify`
+# transcript and anchor HYGIENE, and this document carries no transcript.
+#
+# The instrument is the one this repository already owns twice over:
+# `test_the_windows_job_floor_is_the_arithmetic_it_states` holds a CI job's
+# SENTENCE to its measurement, and `tests/test_skip_gate.py` parses a six-row
+# comment block and holds every row to its constant. Here the rows are parsed
+# out of the markdown and every one is compared with a value DERIVED from the
+# two embedded records or computed by running the shipped code.
+# ---------------------------------------------------------------------------
+
+
+def _documented_table_rows(path: Path) -> dict:
+    """Every DATA row of every markdown table in `path`, keyed by first cell.
+
+    A header row is the one immediately above a `| --- |` separator; it names a
+    column rather than making a claim, so it is dropped. Duplicate labels are
+    REFUSED rather than merged: a dict silently keeps the last of them, so a
+    stale row could sit above a correct one and be masked -- the same hole
+    `documented_census_numbers` in `tests/test_skip_gate.py` had to close.
+    """
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    rows: list[list[str]] = []
+    for index, line in enumerate(lines):
+        if not (line.startswith("|") and line.endswith("|")):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if all(cell and set(cell) <= set("-: ") for cell in cells):
+            continue  # the separator itself
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        if following.startswith("|") and set(following.replace("|", "")) <= set("-: "):
+            continue  # a header, because a separator follows it
+        rows.append(cells)
+    labels = [row[0] for row in rows]
+    duplicated = sorted({label for label in labels if labels.count(label) > 1})
+    assert duplicated == [], (
+        f"{path.name} has more than one table row labelled {duplicated}, so one can "
+        "hide behind the other and this check cannot see it"
+    )
+    assert rows, f"{path.name} carries no table rows at all"
+    return {row[0]: tuple(row[1:]) for row in rows}
+
+
+def _yes_no(value: bool) -> str:
+    assert isinstance(value, bool)
+    return "yes" if value else "no"
+
+
+def test_the_c3_document_states_the_measured_record():
+    """Every row of the C3 document's tables, against the record under it.
+
+    Both directions. Each documented row must equal the derived value, and
+    every derived row must be present -- so deleting a row reddens as loudly as
+    changing one. Nothing here compares a value with itself: the assessment
+    fields come from RUNNING `assess_confinement`, the provider rows from the
+    live tables, the counts from the request log, and the artefact words from
+    the artefacts.
+    """
+    document = json.loads(C3_RECORD.read_text(encoding="utf-8"))
+    subject = document["records"]["sandboxed_subject"]
+    control = document["records"]["unsandboxed_control"]
+    measurement = confinement_measurement_from_surface_record(subject, provider="codex")
+    translated = measurement.probes[0]
+    assessment = assess_confinement("codex", C3_PLATFORM, measurement)
+    documented = _documented_table_rows(C3_DOCUMENT)
+
+    def gated_cells(record):
+        rows = [row for row in record["requests"]
+                if (row["method"], row["path"]) not in CONTROL_PLANE_ALLOWLISTED_PAIRS]
+        statuses = {row["status"] for row in rows}
+        assert len(statuses) == 1, (
+            f"the gated cells did not all answer one status: {sorted(statuses)}; the "
+            "document's single-number row cannot be derived from this log"
+        )
+        return f"{len(rows)} refused {statuses.pop()}"
+
+    def cells_answered(record):
+        coverage = record["coverage"]
+        return f"{coverage['answered_cells']} of {coverage['expected_cells']}"
+
+    def outcomes(record):
+        return {a["name"]: a["outcome"] for a in record["artefacts"]}
+
+    def status_of(record, method, path):
+        hits = [row["status"] for row in record["requests"]
+                if (row["method"], row["path"]) == (method, path)]
+        assert len(hits) == 1, f"{method} {path} appears {len(hits)} times in the log"
+        return str(hits[0])
+
+    def sid_tail(record):
+        return record["subject"]["principal"]["sid"].rsplit("-", 1)[-1]
+
+    def abbreviated(revision):
+        """`git:` plus the twelve hex the document's rows abbreviate to."""
+        assert revision.startswith("git:")
+        return revision[:len("git:") + 12]
+
+    art_subject, art_control = outcomes(subject), outcomes(control)
+    expected = {
+        # -- what the confined caller found ---------------------------------
+        "matrix cells answered": (cells_answered(subject), cells_answered(control)),
+        "deadline exceeded": (_yes_no(subject["deadline_exceeded"]),
+                              _yes_no(control["deadline_exceeded"])),
+        "gated cells": (gated_cells(subject), gated_cells(control)),
+        "bearer acquired through the surface": (
+            _yes_no(subject["bearer_acquired_through_surface"]),
+            _yes_no(control["bearer_acquired_through_surface"])),
+        "positive control (bearered `GET /api/state`)": (
+            str(subject["positive_control"]["status"]),
+            str(control["positive_control"]["status"])),
+        "classification": (f"`{subject['classification']}`",
+                           f"`{control['classification']}`"),
+        "`principal_separated`": (f"`{subject['principal_separated']}`",
+                                  f"`{control['principal_separated']}`"),
+        "`runtime_record` / `runtime_log`": (
+            f"`{art_subject['runtime_record']}` / `{art_subject['runtime_log']}`",
+            f"`{art_control['runtime_record']}` / `{art_control['runtime_log']}`"),
+        # -- the assessment, run rather than asserted ------------------------
+        "probe outcome": (f"`{translated.outcome}`",),
+        "probe mechanism": (f"`{translated.mechanism}`",),
+        "probe platform": (f"`{translated.platform}`",),
+        "measurement revision": (f"`{abbreviated(measurement.measured_at_commit)}`",),
+        "establishes": (f"`{str(assessment.establishes).lower()}`",),
+        "codex row": (f"`{PROVIDER_CONFINEMENT['codex']}`",),
+        "claude row": (f"`{PROVIDER_CONFINEMENT['claude']}`",),
+        "codex eligible": (
+            f"`{str(governed_build_eligibility('codex').eligible).lower()}`",),
+        "claude eligible": (
+            f"`{str(governed_build_eligibility('claude').eligible).lower()}`",),
+        # -- subject binding -------------------------------------------------
+        "measured revision": (f"`{abbreviated(document['measured_at_commit'])}`",),
+        "parent revision": (f"`{abbreviated(document['parent_revision'])}`",),
+        "`scripts/probe_control_plane.py` blob": (
+            f"`{document['probe_module_blob'][:12]}`",),
+    }
+    # The artefact rows carry the record's OWN outcome word, not a paraphrase.
+    # A paraphrase is where "denied" got onto a `not_applicable` (P2-B).
+    for name in ("process_vm_read", "browser_handler_cmdline", "browser_history"):
+        expected[f"`{name}`"] = (f"`{art_subject[name]}`", f"`{art_control[name]}`")
+    # One allowlisted pair per row, in the order the request log records them.
+    allowlisted = [row for row in subject["requests"]
+                   if (row["method"], row["path"]) in CONTROL_PLANE_ALLOWLISTED_PAIRS]
+    assert len(allowlisted) == len(CONTROL_PLANE_ALLOWLISTED_PAIRS)
+    for row in allowlisted:
+        expected[f"`{row['method']} {row['path']}`"] = (
+            str(row["status"]), status_of(control, row["method"], row["path"]))
+
+    # BOTH DIRECTIONS, so a deleted row is as loud as a changed one. The three
+    # rows checked by their own rules below are named here rather than left as
+    # a silent difference.
+    by_hand = {"subject", "control", f"`{CONTROL_PLANE_PROPERTY}`"}
+    assert set(documented) == set(expected) | by_hand, (
+        "the document's rows and the derived rows differ. Only in the document: "
+        f"{sorted(set(documented) - set(expected) - by_hand)}. Only derived: "
+        f"{sorted(set(expected) - set(documented))}"
+    )
+    for label, value in sorted(expected.items()):
+        assert documented[label] == value, (
+            f"the document's row {label!r} states {documented[label]} and the record "
+            f"under it says {value}"
+        )
+
+    # The unmet row is a sentence, so it is checked for the values it names
+    # rather than by equality: the observed outcome and the required one.
+    unmet_row = documented[f"`{CONTROL_PLANE_PROPERTY}`"][0]
+    assert "unmet" in unmet_row
+    assert f"`{translated.outcome}`" in unmet_row
+    assert f"`{CONFINEMENT_PROPERTIES[CONTROL_PLANE_PROPERTY]}`" in unmet_row
+    assert CONTROL_PLANE_PROPERTY in assessment.unmet
+
+    # The two-arm table: the SID each arm ran as, and which was confined.
+    for label, record, confined in (("subject", subject, True), ("control", control, False)):
+        principal, confinement = documented[label]
+        found = re.search(r"SID `[^`]*?-(\d+)`", principal)
+        assert found and found.group(1) == sid_tail(record), (
+            f"the {label} row names SID tail {found.group(1) if found else None} and the "
+            f"record says {sid_tail(record)}"
+        )
+        assert confinement.startswith("yes" if confined else "no")
+    assert sid_tail(subject) != sid_tail(control)
+
+
+#: Everything in this repository that writes the measured cell counts down in
+#: PROSE. The document's own table is held row by row above; these are the
+#: sentences elsewhere that restate the same two numbers, and in round 1 the
+#: contract's own docstring count could be changed from 129 to 3 with every
+#: test green. The instrument is `_GUARD_CLAIM_DOCUMENTS`' -- a lexical net
+#: across several documents, checked against a MEASURED value.
+_MEASURED_COUNT_DOCUMENTS = (
+    "CHANGELOG.md",
+    "docs/VALIDATION.md",
+    "docs/requirements/ASSUMPTIONS.md",
+    "docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md",
+    "src/nornyx_forge/provider_contract.py",
+)
+
+
+def test_every_document_stating_the_measured_counts_states_the_measured_ones():
+    """The 129 gated cells and the 133-cell matrix, wherever prose says them.
+
+    EACH FAMILY IS REQUIRED INDEPENDENTLY IN EVERY FILE. Round 2 shared one
+    counter between the two, so a file stayed netted by a sentence about the
+    OTHER count while its own claim went false or vanished. Both halves of that
+    hole were measured green at the previous head: rewording
+    `129 gated cells refused 401` in `docs/VALIDATION.md` to a false `3`, and
+    DELETING the real claim from `provider_contract.py`'s docstring -- the very
+    file round 1 named -- which was netted only by an unrelated
+    `answered all 133 cells` comment 840 lines further down. Both are red now,
+    and the sentence this docstring used to carry ("dropping the claim reddens
+    as well as changing it") was false for that file when it was written.
+
+    WHAT THIS DOES NOT DO, said rather than implied: it does not know WHICH
+    sentence carries a claim. A file stating one family twice can lose one of
+    the two silently, and a claim reworded out of reach of every pattern in its
+    family is indistinguishable here from a claim deleted -- the assertion
+    names both possibilities because it cannot choose between them. The gated
+    patterns are built from the status the record actually carries, so a record
+    whose gated cells stopped answering 401 makes every one of them miss and
+    that family's assertion fire.
+    """
+    document = json.loads(C3_RECORD.read_text(encoding="utf-8"))
+    subject = document["records"]["sandboxed_subject"]
+    gated = [row for row in subject["requests"]
+             if (row["method"], row["path"]) not in CONTROL_PLANE_ALLOWLISTED_PAIRS]
+    statuses = {row["status"] for row in gated}
+    assert len(statuses) == 1
+    status = statuses.pop()
+    cells = subject["coverage"]["expected_cells"]
+    assert subject["coverage"]["answered_cells"] == cells
+
+    # A CLOSING BACKTICK may sit between the number and the words that anchor
+    # it. `CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`'s own account of this net
+    # reads ``the `129` gated cells and the `133`-cell matrix``, and round 2's
+    # patterns missed BOTH numbers in it -- the anchored section's restatement
+    # of the counts was outside the net it was describing.
+    families = (
+        ("gated-cell count", len(gated), (
+            re.compile(r"(\d+)`? (?:other )?gated cells"),
+            re.compile(rf"refused `?{status}`? on all (\d+)"),
+            re.compile(rf"(\d+) refused {status}"),
+        )),
+        # `at (\d+)/(\d+)` stood here in round 2 and is deliberately gone. It
+        # was the one shape in this net anchored on no domain word, so an
+        # ordinary release line -- "CI green at 8/8" in `CHANGELOG.md`, this
+        # slice's own context -- failed this test with a message about measured
+        # cell counts. Measured at the previous head: it did. The four patterns
+        # left all name `matrix`, `cells` or `coverage`, and every file in the
+        # net still states this count through one of them.
+        ("matrix-cell count", cells, (
+            re.compile(r"(\d+)`?-cell matrix"),
+            re.compile(r"all (\d+) cells"),
+            re.compile(r"(\d+) of (\d+) (?:matrix )?cells answered"),
+            re.compile(r"`coverage` (\d+) of (\d+)"),
+        )),
+    )
+    for relative in _MEASURED_COUNT_DOCUMENTS:
+        text = " ".join((ROOT / relative).read_text(encoding="utf-8").split())
+        for family, measured, patterns in families:
+            found = 0
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    found += 1
+                    for group in match.groups():
+                        assert int(group) == measured, (
+                            f"{relative} states {group} where the record measures "
+                            f"{measured} (matched {match.group(0)!r})"
+                        )
+            assert found, (
+                f"{relative} states no {family} in a form this net can read, and every "
+                "file here must state BOTH measured counts. Either the claim was "
+                "dropped or it was reworded out of reach of these patterns; this net "
+                "cannot tell those apart and does not pretend to"
+            )

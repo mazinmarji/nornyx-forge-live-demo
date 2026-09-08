@@ -1415,10 +1415,23 @@ def test_system_executables_are_resolved_absolutely_and_never_from_the_cwd(
         def refuse(*_args, **_kwargs):
             raise AssertionError("_is_drive_absolute consulted a stdlib path predicate")
 
+        patched = 0
         for module in (ntpath, posixpath):
             for attribute in ("isabs", "splitdrive", "splitroot", "abspath", "normpath"):
                 if hasattr(module, attribute):
                     sealed.setattr(module, attribute, refuse)
+                    patched += 1
+        # THE SEAL HAS TO HAVE CLOSED. The loop is guarded by `hasattr`, and
+        # `splitroot` does not exist on 3.10 or 3.11 -- both in the CI matrix
+        # -- so on an interpreter where every name were absent this block would
+        # patch NOTHING and still pass, asserting that an unsealed table equals
+        # itself. Round-2 test lane, F-9. `isabs` and `abspath` exist on every
+        # supported interpreter in both modules, so eight is the floor here and
+        # the assertion is well below it.
+        assert patched >= 2, (
+            f"only {patched} stdlib path predicates were replaced, so this block did "
+            "not seal anything and the comparison below is vacuous"
+        )
         sealed_windows, sealed_posix = verdicts()
     assert sealed_windows == windows_said, list(zip(windows_rows, sealed_windows))
     assert sealed_posix == posix_said, list(zip(posix_rows, sealed_posix))
@@ -2059,3 +2072,140 @@ def test_the_harness_runs_no_provider_and_starts_no_synchronous_launch():
     imported_here = {alias.name for node in ast.walk(here) if isinstance(node, ast.ImportFrom)
                      for alias in node.names}
     assert "launch" not in imported_here and "Launch" in imported_here
+
+
+# ---------------------------------------------------------------------------
+# C3's finding against C2's harness: a presence check may be DENIED, and an
+# artefact read may not raise.
+#
+# Measured, on a Codex-sandboxed principal running this module's own CLI: the
+# browser-history read raised `PermissionError: [WinError 5]` out of `probe()`,
+# the run ended in a traceback and exit 1, and NO record was produced -- for
+# exactly the kind of caller this harness exists to measure, and against the
+# exit-code enumeration `--help`, the README and A-028 all state. The cause is
+# that `Path.exists()` is not total: it swallows "not found" and RE-RAISES a
+# permission error.
+# ---------------------------------------------------------------------------
+
+
+class _DeniedPath(type(Path())):
+    """A path whose every `stat` is denied to this principal, as the OS does
+    it -- the exception the sandboxed run actually raised, not a sentinel."""
+
+    def exists(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    def stat(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    def open(self, *args, **kwargs):
+        raise PermissionError(13, "Access is denied")
+
+    def iterdir(self):
+        raise PermissionError(13, "Access is denied")
+
+
+def test_a_presence_check_denied_to_this_principal_answers_none():
+    """`_presence` has three answers because there are three facts, and None
+    is NEVER folded into False: a path this caller may not stat is not a path
+    that is absent, and recording it as absent would let a confinement
+    measurement read a denial as "there was nothing to try"."""
+    assert probe._presence(Path(__file__)) is True
+    assert probe._presence(Path(__file__).with_name("no-such-file-here")) is False
+    assert probe._presence(_DeniedPath(__file__)) is None
+
+
+@pytest.mark.parametrize("name,read", [
+    ("runtime_record", lambda p: probe._artefact_path_read("runtime_record", p)),
+    ("seal_dir_listing", lambda p: probe._seal_dir_listing(p)),
+])
+def test_a_denied_presence_check_is_refused_not_not_applicable(name, read):
+    """The word and the fact have to agree. `not_applicable` means there was
+    nothing to try; a caller denied the check itself HAD something to try and
+    was refused, and only one of those two words can never satisfy a
+    capability claim while also recording that a facility said no."""
+    artefact = read(_DeniedPath(__file__))
+    assert artefact["outcome"] == probe.ARTEFACT_REFUSED
+    assert probe.capability_acquired(artefact) is False
+    assert "denied" in artefact["detail"]
+    assert "not determinable" in artefact["detail"], (
+        "a denied presence check must not read as an existence claim"
+    )
+
+
+def test_the_history_read_reports_a_denied_presence_check_rather_than_absence(
+        monkeypatch: pytest.MonkeyPatch):
+    """The exact read that crashed. Both branches are held: every candidate
+    denied is `refused`, and a present-and-readable store beside a denied one
+    is still `observed` -- with the denied path counted as NOT CHECKABLE, never
+    as a refusal, because `observed` is the word for an acquired capability and
+    the validator refuses a record whose detail contradicts it."""
+    monkeypatch.setattr(probe, "_presence", lambda path: None)
+    denied = probe._browser_history(local_appdata=str(Path(__file__).parent),
+                                    platform_name="win32")
+    assert denied["outcome"] == probe.ARTEFACT_REFUSED
+    assert "could not be checked at all" in denied["detail"]
+    assert probe.capability_acquired(denied) is False
+
+    class _Readable:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size):
+            return b"x"[:size]
+
+    seen = iter([True, None])
+    monkeypatch.setattr(probe, "_presence", lambda path: next(seen))
+    monkeypatch.setattr(probe.Path, "open", lambda self, *a, **k: _Readable())
+    mixed = probe._browser_history(local_appdata=str(Path(__file__).parent),
+                                   platform_name="win32")
+    assert mixed["outcome"] == probe.ARTEFACT_OBSERVED
+    assert "not checkable" in mixed["detail"]
+    assert not probe._DENIAL_DETAIL.search(mixed["detail"]), (
+        "an acquired capability may not carry a denial in its own detail; the "
+        "validator refuses exactly that record"
+    )
+
+
+def test_no_artefact_read_can_raise_out_of_the_probe(monkeypatch: pytest.MonkeyPatch):
+    """THE BACKSTOP, and it is not belt-and-braces.
+
+    Each reader handles the denials it can foresee; this catches the one it did
+    not, because an artefact read that RAISES produces no record at all -- and
+    this module's whole contract with an operator is a record and an exit code,
+    never a traceback that prints the host's directories. The two OSError
+    classes are kept apart: a PermissionError is a facility that said no
+    (`refused`); anything else is "the read could not be attempted"
+    (`not_applicable`).
+    """
+    _without_the_cim_query(monkeypatch)
+    # The SOCKET is stubbed away, not pointed at a closed port. Driving the
+    # 133-cell matrix at a dead port cost more than the deadline on this host,
+    # so the run came back `inconclusive` with the artefacts truncated -- and a
+    # pin about the artefact backstop would have been measuring the clock. Here
+    # the surface is simply absent, which is the record's own vocabulary for it.
+    monkeypatch.setattr(probe, "_runtime_identity", lambda *a, **k: None)
+    monkeypatch.setattr(probe, "_exchange", lambda *a, **k: (None, b""))
+    monkeypatch.setattr(probe, "_request_fact", lambda host, port, method, path, timeout:
+                        probe._unattempted_fact(method, path, "not attempted: the socket is stubbed"))
+    for raising, expected in ((PermissionError(13, "Access is denied"), probe.ARTEFACT_REFUSED),
+                              (OSError(22, "Invalid argument"), probe.ARTEFACT_NOT_APPLICABLE)):
+        def boom(*, _raise=raising, **kwargs):
+            raise _raise
+
+        monkeypatch.setattr(probe, "_browser_history", boom)
+        record = probe.probe(8710, expect_instance=None, deadline=120.0, timeout=0.2)
+        probe.validate_record(record)
+        history = [a for a in record["artefacts"] if a["name"] == "browser_history"]
+        assert [a["outcome"] for a in history] == [expected], history
+        assert record["deadline_exceeded"] is False, (
+            "the pin ran out of clock, so what it measured is the deadline rule "
+            "and not the artefact backstop"
+        )
+        assert record["classification"] == probe.STATE_INCONCLUSIVE, (
+            "the surface is absent in this pin; the artefact backstop must not "
+            "change what the request log derives"
+        )
