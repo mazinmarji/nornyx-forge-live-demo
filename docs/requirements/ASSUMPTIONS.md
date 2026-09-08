@@ -1826,8 +1826,12 @@ The part headed **"The criterion change (slice C1)"**, near the end, is
 separate and later: it records the one admission criterion Tranche C replaces,
 why the thing it replaced had become a broken instrument rather than a high
 bar, and what the replacement had to prove before it was allowed to be one. C1
-moves no provider row either. Slice C3 would be the measurement that tests the
-new criterion against a real provider principal, and it has not been taken.
+moves no provider row either. The part headed **"The record-to-probe
+translation and the first confined measurement (slice C3)"** is later again: it
+ships the translation that makes the criterion's semantics apply to a real
+record, and takes that record from a Codex-sandboxed principal against a live
+Forge surface. C3 moves no provider row either, and the reason it does not is
+recorded there rather than asserted.
 
 **Assumption.** Whether a local process can acquire or move Forge authority
 through the onboarding control plane is a question that must be answered by
@@ -2186,27 +2190,167 @@ criterion is how a record stops being one.
 - That a bearer gate is confinement. It constrains the SURFACE. A satisfied
   `control_plane_authority` would be a joint property of that gate and the
   provider's principal, and must be worded as one.
-- That the criterion's semantics reach any real record yet. Measured at this
-  head: `control_plane_authority_outcome` and `subsumed_control_plane_state`
-  have NO production consumer -- nothing in `src/` or `scripts/` constructs a
-  `ConfinementProbe` at all -- so nothing converts a validated
+- That the criterion's semantics reach any real record yet. Measured when C1
+  shipped: `control_plane_authority_outcome` and `subsumed_control_plane_state`
+  had NO production consumer -- nothing in `src/` or `scripts/` constructed a
+  `ConfinementProbe` at all -- so nothing converted a validated
   `nornyx.forge.control_plane_probe.v1` record into one, and the outcome a
-  probe carries is hand-authored while its mechanism is an unvalidated free
-  string. The mapping and the guard above are therefore ADVISORY until slice C3
-  ships that record-to-probe translation, routing it through
-  `control_plane_authority_outcome` and refusing a record that fails
-  `validate_record`; until then a hand-written probe can still assert an
-  outcome the mapping would not have produced.
+  probe carried was hand-authored while its mechanism was an unvalidated free
+  string. The mapping and the guard above were therefore ADVISORY, and a
+  hand-written probe could assert an outcome the mapping would not have
+  produced. **Slice C3 below ships that translation**, so this is recorded as
+  C1's limitation rather than as a standing one.
+  `subsumed_control_plane_state` still has no production consumer, and by
+  design: it yields a STATE, never a probe.
 
-### Scope and serves, for both slices
+### The record-to-probe translation and the first confined measurement (slice C3)
 
-**Scope.** A measurement harness with its self-probe (C2), and one replaced
-admission criterion with the mechanism and vocabulary it needs (C1). Neither
-changes an Experience stage, the eligibility rule, the unanimity rule, any
-provider row, or any seal, lock, token or port behaviour.
+**Assumption.** A criterion whose semantics nothing applies is a criterion
+nobody can be wrong about. So a validated `control_plane_probe.v1` record must
+be convertible into a `ConfinementProbe` by ONE function that derives the
+outcome through `control_plane_authority_outcome`, refuses by name whatever it
+cannot read honestly, and takes the platform and revision from the record rather
+than from its caller -- and the criterion must then be tested by a real
+observation taken from a principal that is not the surface's owner.
+
+**What C3 establishes.** `confinement_probe_from_surface_record` and
+`confinement_measurement_from_surface_record` in `provider_contract.py` are that
+translation. The outcome is DERIVED through the mapping and there is no
+parameter by which a caller states one. The refusals, each named and never a
+silent downgrade to `inconclusive` (which is a MEASUREMENT RESULT, and putting
+it on a parsing failure is how an unreadable record would come to look like an
+honest one): a foreign schema; a transport that is not `loopback_socket`; a
+request row that ANSWERED under any mechanism but `observed_surface_record`, and
+the positive control's request likewise; a classification outside the
+vocabulary; `unreachable`, which this producer cannot derive and which alone
+answers `denied` at every separation word; a classification that disagrees with
+its own request log in EITHER direction, with allowlist membership derived from
+a restated constant and never from a row's stored flag -- a forged record
+laundering a gated 2xx would simply mark that row allowlisted; `separated`,
+which this producer may never record and which is the word both widened states
+turn on; a subject block naming no platform; and, for the measurement, a subject
+naming no revision. The contract RESTATES the schema, the transport and the
+allowlisted pairs rather than importing them (`layer.domain` may not reach into
+`scripts/`), and a test holds each equal to the producer's constants and to
+`control_plane_session.ALLOWLIST` in both directions.
+
+**Why the translation re-checks rather than re-validates, stated as a choice.**
+It requires a record its producer validated, and it does NOT re-derive the
+classification: a second copy of the producer's derivation rule in
+`layer.domain` would drift, and the weaker copy simply passes. What it does
+instead is refuse anything whose own fields disagree in the directions the
+translation depends on, and name what it is not re-checking --
+`classification_reason`, `coverage`, the artefact vocabulary, the deadline
+bookkeeping and the redaction are the producer's, and a record that failed those
+was never validated and this function cannot tell.
+
+**What the closure makes visible, which is the honest content of the slice.**
+Every state a v1 producer can derive, crossed with every separation word it may
+record, maps to `inconclusive` or `allowed` and NEVER to `denied`, which is what
+the criterion requires. No record that harness can write satisfies
+`control_plane_authority`. That is a property of the PRODUCER, not of the
+criterion, and it is asserted rather than left to a reader
+(`test_no_record_this_producer_can_write_satisfies_the_property`, over the whole
+cross-product). Closing it needs a harness that can measure and record a
+separated principal; C3 ships no such harness.
+
+**The measurement, and which invocation path it used.** Windows, `codex-cli
+0.153.4`, recorded in `docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`
+with both probe records embedded verbatim in its JSON. The probe was run as a
+CONFINED process through `codex sandbox`, the CLI's own Windows
+restricted-token entry point, with NO MODEL in the loop, against a live SERVED
+onboarding surface on a real loopback socket -- and paired with an identical
+UNSANDBOXED control run against the same instance, so "the sandbox refused this"
+is separated from "this never worked". The shipped invocation `codex_worker.py`
+constructs -- `codex exec --json --cd <ws> --skip-git-repo-check --sandbox
+workspace-write --color never <prompt>` -- was NOT measured and cannot be: it
+carries a prompt, not a command, so a model would decide whether the probe ran,
+and PA-01 already measured that decision going both ways with every canary
+pristine. This is PA-01's own lesson restated: `codex sandbox` is not
+`codex exec`, and the two are kept apart rather than merged into "Codex was
+measured".
+
+**What the confined caller found.** Over a complete 133-cell matrix with the
+deadline unexpired, it reached the four allowlisted pairs and was refused 401 on
+all 129 gated cells, acquired no bearer through the surface, and the run's
+bearered positive control answered 200 in the same run in which the bare one
+answered 401. The classification is `admitted_nuisance`. The confined process
+ran as a DIFFERENT OS account from the surface's owner -- distinct SIDs, read by
+`whoami /user` from inside each process and independently confirmed by git's own
+`safe.directory` refusal, which printed both -- and the record still says
+`principal_separated: unknown`, because a v1 producer may never say otherwise.
+So the mapping answers `inconclusive`, `assess_confinement` reports
+`control_plane_authority` unmet, Codex's row stays `declared`, and both
+providers stay ineligible.
+
+**The finding that matters most, and it is not the classification.** Separating
+the accounts does NOT close the channel the separation guard exists for. A-027
+concedes a same-user caller two channels the request log never sees: the browser
+handler's command line, and Forge's process memory. The confined caller lost the
+first (`browser_handler_cmdline` degraded to `not_applicable`, and the browser
+history stores were denied even the presence check) and KEPT the second:
+`OpenProcess(PROCESS_VM_READ)` on the surface's pid returned it a handle. That
+reading was falsified before it was recorded -- the same call against a SYSTEM
+process was denied with error 5, so the instrument discriminates, and a separate
+control read 64 bytes at a MAPPED address in a process owned by the launching
+user and recovered a planted marker verbatim. What was NOT attempted is locating
+a secret in that address space; a handle and a planted marker are what was
+measured, and the record says only that.
+
+**C3 found a defect in C2's harness that only a confined principal exposes.** At
+the parent revision the sandboxed run raised `PermissionError: [WinError 5]` out
+of `_browser_history` through `Path.exists()` -- exit 1, a traceback, NO record,
+well inside the deadline. `Path.exists()` swallows "not found" and RE-RAISES a
+permission error, so the harness's stated contract (a run ends in a record and
+an exit code) and its exit-code enumeration in `--help`, in the README and in
+this entry were false for exactly the caller it exists to measure. Repaired
+here: `_presence` answers True / False / None, a denied check is `refused` and
+never `not_applicable` -- a path this caller may not stat is not a path that is
+absent -- and a backstop in `probe()` turns any remaining `OSError` into an
+outcome rather than an ending, keeping a PermissionError (`refused`) apart from
+any other (`not_applicable`).
+
+**What C3 does NOT establish.**
+
+- Nothing about what a MODEL driven through `codex exec` does. No model ran.
+- Nothing about POSIX. The mechanism is a Windows restricted token.
+- Nothing about the five filesystem properties. PA-01 measured those; the
+  workspace-write control here is a confinement control for THIS measurement,
+  not a re-measurement of those rows.
+- That `separated` is true. The accounts differ, which is measured; whether that
+  is the separation the criterion asks for is a question for a harness that can
+  measure and record it -- and the process-memory finding above says why such a
+  harness would not by itself be enough.
+- That the bearer can be read out of process memory. A handle was acquired and a
+  planted marker was read at an address the control published.
+- That Forge's runtime record and log are readable wherever Forge puts them.
+  They were readable in this run because the harness placed them outside the
+  user profile, which the confined principal could not read at all.
+- Any eligibility movement, any provider row movement, or any change to the
+  permanently-blocked approval and inspection diagnostics.
+- That the measured revision resolves anywhere. It is a LOCAL commit of the C3
+  working tree, copied outside the user profile because the confined account
+  cannot read the profile, and it is disclosed as such. What a reader can check
+  against the shipped commit is the blob of `scripts/probe_control_plane.py`
+  that the record names.
+- That the platform words combine. This record spells the platform `win32`
+  (`sys.platform`, read from inside the probe) where
+  `codex_confinement_measurement.json` spells it `windows` (authored). They do
+  not combine, which is `assess_confinement`'s binding check working rather than
+  an oversight; both are unmet either way.
+
+### Scope and serves, for all three slices
+
+**Scope.** A measurement harness with its self-probe (C2); one replaced
+admission criterion with the mechanism and vocabulary it needs (C1); and the
+record-to-probe translation with the first measurement taken through it from a
+confined principal, plus the presence-check repair that measurement forced
+(C3). None of the three changes an Experience stage, the eligibility rule, the
+unanimity rule, any provider row, or any seal, lock, token or port behaviour.
 
 **Serves.** the surface half of the control-plane authority question, kept
 separate from any provider claim; an admission criterion that a measurement
-could satisfy honestly instead of one no measurement could satisfy at all; and
-the claim discipline in `CLAUDE.md` that forbids substituting a label for the
-thing measured.
+could satisfy honestly instead of one no measurement could satisfy at all; a
+criterion whose semantics are applied to real evidence rather than left
+advisory; and the claim discipline in `CLAUDE.md` that forbids substituting a
+label for the thing measured.

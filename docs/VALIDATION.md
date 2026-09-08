@@ -482,6 +482,58 @@ record what was measured in the vocabulary of the criterion then in force, and
 rewriting a measurement to match a later criterion is how a record stops being
 one.
 
+## Record-to-probe translation and the first confined measurement (Tranche C, slice C3)
+
+C1 replaced the criterion and C2 built the harness; neither made the criterion
+apply to anything. Nothing in `src/` or `scripts/` constructed a
+`ConfinementProbe`, so the outcome a probe carried was hand-authored and
+`control_plane_authority_outcome` had no production consumer. C3 ships the
+translation and takes the first record through it from a principal that is not
+the surface's owner. It moves no provider row, and the reason is a measured
+limit of the harness rather than a judgement about the sandbox
+(`docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`, A-028).
+
+| Property | Result | Evidence class |
+| --- | --- | --- |
+| T1 a shipped module now constructs a `ConfinementProbe` from a validated record | established | deterministic (`test_the_criterions_semantics_now_reach_a_real_record` runs A-028's own measurement -- a search of `src/` and `scripts/` for a construction -- inverted, and then translates a record) |
+| T1 the outcome is DERIVED through `control_plane_authority_outcome`, never read from the record | established | deterministic (`test_the_outcome_is_derived_through_the_mapping_and_never_stated`, over every derivable state x every recordable separation word, with a decoy `outcome: denied` in the record that changes nothing; the translation exposes no parameter by which a caller states one) |
+| T2 a record that is not a socket measurement is refused | established | deterministic (`test_a_record_that_is_not_a_socket_measurement_is_refused`: a declared `in_process_testclient` transport is refused by name) |
+| T2 a control-plane fact labelled by inference is refused, and so is the positive control's | established | deterministic (`test_a_control_plane_fact_labelled_by_inference_is_refused`: an answered row carrying `inferred_acl`, and a bearered `GET /api/state` carrying it, each refused; `inferred_acl` is competent for no property) |
+| T3 a classification that disagrees with its own request log is refused, in both directions | established | deterministic (`test_a_classification_that_disagrees_with_its_own_log_is_refused` plants a gated 2xx AND relabels the row `allowlisted: true` -- the forgery a stored flag invites -- and membership is derived from the restated constant; `test_a_breach_asserted_by_a_label_and_absent_from_the_log_is_refused` is the same rule the other way) |
+| T3 the two values this producer can never write are refused by name | established | deterministic (`test_the_states_and_words_this_producer_cannot_record_are_refused_by_name`: `unreachable`, the one state answering `denied` at every separation word, and `separated`, the word both widened states turn on) |
+| T4 a malformed record is refused, never downgraded to `inconclusive` | established | deterministic (`test_a_malformed_record_is_refused_and_never_downgraded`, `test_a_record_with_no_log_or_no_platform_is_refused`: `inconclusive` is a measurement result, and a parsing failure wearing it is how an unreadable record comes to look like an honest one) |
+| T5 the measurement binds the revision the RECORD names, and refuses one that names none | established | deterministic (`test_the_measurement_binds_the_revision_the_record_names_and_refuses_none`; the absent case is the one this slice hit -- the confined caller's bare `git rev-parse` refused with git's `safe.directory` ownership check) |
+| T6 the restated schema, transport and allowlisted pairs are the producer's and the surface's own | established | deterministic (`test_the_contracts_restated_surface_constants_are_the_surfaces_own`, held equal to `probe_control_plane.SCHEMA` / `TRANSPORT` / `ALLOWLISTED_PAIRS` and to `control_plane_session.ALLOWLIST` in both directions; the allowlist matters most, because it is what lets the disagreement rule refuse a row that lies about itself) |
+| C3-F0 NO record this producer can write satisfies `control_plane_authority` | established | deterministic (`test_no_record_this_producer_can_write_satisfies_the_property`, over every derivable state x every recordable separation word: the outcome is `inconclusive` or `allowed` and never the required `denied`, and the assessment is unmet at every cell. A property of the PRODUCER, not of the criterion) |
+| C3-F1 a Codex-sandboxed caller reached Forge's gated surface and moved nothing | measured, once, on one host | operator measurement (`codex sandbox`, no model in the loop, against a live SERVED surface: 133 of 133 cells answered, deadline unexpired, four allowlisted pairs reached, 129 gated cells refused 401, no bearer acquired through the surface; the record is embedded verbatim in `docs/governance/control_plane_authority_measurement.json` and re-translated on every commit by `test_the_recorded_c3_measurement_translates_to_the_verdict_it_states`) |
+| C3-F2 the surface was live, so the confined census is not vacuous | measured | operator measurement (the bearered `GET /api/state` answered 200 in the same run in which the bare one answered 401; the token is not recorded) |
+| C3-F3 the confined process ran as a different OS account, and the record still says `unknown` | measured, and the record may say nothing else | operator measurement (distinct SIDs read by `whoami /user` from inside each process, and independently confirmed by git's own `safe.directory` refusal, which printed both; the v1 producer's vocabulary is `not_separated` / `unknown` and its validator refuses `separated`, so the mapping answers `inconclusive` and the property stays unmet) |
+| C3-F4 separating the accounts does NOT close the process-memory channel A-027 concedes | measured, and falsified twice first | operator measurement (`OpenProcess(PROCESS_VM_READ)` on the surface pid returned the sandboxed caller a handle; the same call against a SYSTEM process was denied with error 5, so the instrument discriminates; a separate control read 64 bytes at a MAPPED address in the launching user's process and recovered a planted marker verbatim. NOT claimed: that a bearer was located or read) |
+| C3-F5 the sandbox does close the browser-handler channel, and the user profile with it | measured | operator measurement (`browser_handler_cmdline` `not_applicable` confined against `observed` unconfined; `browser_history` `refused` -- denied even the presence check -- against `observed`; a write outside the declared workspace refused with `PermissionError` while the write inside it succeeded) |
+| C3-F6 at the parent revision the probe could not produce a record for a confined caller at all | measured, and repaired here | operator measurement plus deterministic pins (`PermissionError: [WinError 5]` raised out of `_browser_history` through `Path.exists()`, exit 1, no record, well inside a 45 s deadline. Repaired by `_presence` and a backstop in `probe()`: `test_a_presence_check_denied_to_this_principal_answers_none`, `test_a_denied_presence_check_is_refused_not_not_applicable`, `test_the_history_read_reports_a_denied_presence_check_rather_than_absence`, `test_no_artefact_read_can_raise_out_of_the_probe`) |
+| the shipped record's own claims are re-derived rather than transcribed | established | deterministic (`test_the_recorded_c3_measurement_translates_to_the_verdict_it_states` re-runs the producer's validator over both embedded records, translates the confined one, asserts the assessment, and asserts that `PROVIDER_CONFINEMENT` and `governed_build_eligibility` did not move; `test_the_confined_arm_of_the_recorded_measurement_says_what_it_found` reads the artefact outcomes off the record) |
+
+Not claimed by any row: anything about what a MODEL driven through `codex exec`
+does. That is the invocation `src/nornyx_forge/codex_worker.py` constructs, and
+it was NOT measured, because it carries a prompt rather than a command -- a
+model would decide whether the probe ran, and PA-01 measured that decision going
+both ways with every canary pristine. `codex sandbox` is not `codex exec`, and
+the two are kept apart here rather than merged into "Codex was measured". Also
+not claimed: anything about POSIX (the mechanism is a Windows restricted
+token); any re-measurement of the five filesystem properties (PA-01's -- the
+workspace-write control here is a confinement control for THIS measurement);
+that `separated` is true (the accounts differ, which is measured; whether that
+is the separation the criterion asks for needs a harness that can record it, and
+C3-F4 says why that alone would not be enough); that the bearer can be read out
+of process memory (a handle and a planted marker are what was measured); that
+Forge's runtime record and log are readable wherever Forge puts them (they were
+readable here because this harness placed them outside the user profile, which
+the confined principal could not read); that the measured revision resolves
+anywhere (a LOCAL commit of the C3 working tree, disclosed as such, with the
+probe module's blob as the line a reader can check against the shipped commit);
+and any movement on eligibility, on any provider row, or on the
+permanently-blocked approval and inspection diagnostics.
+
 ## Requires a normal internet-connected machine or GitHub Actions
 
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:
