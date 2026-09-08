@@ -2,6 +2,126 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Control-plane probe harness (Tranche C, slice C2). A measurement tool and
+  importable module, `scripts/probe_control_plane.py`, that observes a live
+  onboarding surface over a real loopback socket as a local stranger would --
+  it imports no app to enumerate routes -- and writes a
+  `nornyx.forge.control_plane_probe.v1` record. It drives the seven HTTP
+  methods across the composed route census (a documented path list a test
+  holds equal, in process, to the served composition `assemble` plus
+  `attach_runtime_routes`, and whose methods it holds equal to the session
+  census's own), records every request's method, path, status, body length,
+  whether the body echoed the request and which headers the probe
+  synthesised, attempts the artefact reads a same-user caller could make
+  (`OpenProcess(PROCESS_VM_READ)` on the surface pid, the browser handler
+  command line via `Get-CimInstance`, the browser history stores, the runtime
+  record, log and seal directory) -- each degrading to `not_applicable` with a
+  reason off Windows or where the facility is absent, never to a pass -- and
+  derives THREE states plus `inconclusive` (`reachable_unadmitted` /
+  `admitted_nuisance` / `authority_reachable`; `unreachable` is not in its
+  vocabulary, because deriving it needs a positive control from a separated
+  principal that only a later slice can supply, and a record claiming it is
+  refused by name) from the unauthenticated request log alone, under two
+  rules: allowlist membership is derived from the constant and a row whose
+  stored flag disagrees is refused; and a state that would count as
+  confinement requires every cell of the 133-cell matrix answered, while a
+  gated 2xx dominates at any coverage. Each fact carries its mechanism, kept
+  apart: `observed_surface_record` for a socket-observed fact, `inferred_acl`
+  for a filesystem or capability inference. The record is a self-report: its
+  `transport` is a declaration, and the validator refuses a non-socket
+  declaration and a socket fact mislabelled as an inference but cannot tell a
+  `TestClient`-built log with self-declared socket labels from a socket one
+  (measured: such a record is accepted); what holds the label honest is the
+  producer, which has no in-process path, pinned by an AST test. The
+  validator also refuses a stored classification, reason or coverage block
+  that disagrees with the record's own log, a surface-absent record claiming
+  a state, a `principal_separated` outside the three-word vocabulary
+  (`separated` / `not_separated` / `unknown`, read through `is_separated`)
+  and `separated` from C2 by name, an absent or incomplete subject block, a
+  surface that is not the expected instance or an instance match declared
+  rather than computed, a memory-handle artefact claimed `observed` on the
+  probe's own pid, a positive control claiming admission without a recorded
+  request, an artefact reporting a pass, a host identity in the clear, and a
+  bearer or raw nonce (channel nonces are sha256 prefixes only). An artefact
+  carries one of THREE outcomes and a refusal is not an observation:
+  `observed` is a capability this caller acquired, `refused` a facility that
+  exists and denied it, `not_applicable` that there was nothing to try;
+  `capability_acquired()` is the only sanctioned way to read one as evidence
+  of a capability, and the validator refuses a record whose own detail records
+  a denial under the acquired word. Redaction folds every spelling of home --
+  long, resolved, and the Windows long and 8.3 short forms, expanded on the
+  path values first -- to `~` and removes the login and machine name, matching
+  each RAW and JSON-ESCAPED because the whole-record backstop runs over a
+  `json.dumps` blob whose separators are doubled; the principal's Windows SID
+  is retained on purpose and disclosed as what it is (A-028).
+  `powershell.exe` and `whoami.exe` are resolved absolutely under
+  `%SystemRoot%` or from a DRIVE-ABSOLUTE `PATH` entry, never from the working
+  directory and never from an entry the current drive completes; `OpenProcess`
+  is called with `use_last_error` and typed arguments, a pid that names no
+  process is `not_applicable` and ERROR_ACCESS_DENIED is `refused`; `--host`
+  must be loopback (refused by name otherwise, and `localhost` normalised to
+  127.0.0.1 so the resolver cannot choose the destination); an `--out` inside
+  the repository working tree is refused; the whole run is bounded by a
+  `--deadline` that clamps every operation it starts, the subject binding's
+  `git` and `whoami` calls included, and ANY expiry is `inconclusive` with the
+  reason and a count of the reads it cut off, a black-holed surface ending
+  that way; `main()` exits 0 for
+  `admitted_nuisance` or `reachable_unadmitted` (no authority reached by this
+  caller, NOT a confinement verdict), 2 for `authority_reachable`, 3 for
+  `inconclusive`, 4 when refused or invalid. Run in-process against the
+  served composition on a real port, the probe classifies itself
+  `admitted_nuisance` with `principal_separated: not_separated`, records why
+  that is NOT confinement for a caller that is the surface's own OS principal
+  (A-027), answers all 133 cells, and finds its memory-handle artefact
+  `not_applicable` because the surface pid is its own; a separate
+  cross-process witness -- the CLI in a child process against the same live
+  surface -- acquires the handle on Windows and finds the facility absent
+  elsewhere, and exits 0. Running it against a browser-granted surface opens
+  the owner's browser once per run (one reopen mint; the explicit pull
+  answers 429). `tests/test_control_plane_authority.py` pins the in-process
+  route table (C9), the wire census with what it can and cannot distinguish,
+  the self-probe classification (R10), the validator refusals (M6, M8), the
+  classifier's derivation rules, the redaction, the subject binding, the
+  artefact producers, the host rule, the deadline, the exit codes and the
+  no-provider/no-synchronous-launch property; it runs on every CI platform
+  (the off-Windows arm witnessed by the Linux matrix, not the development
+  host), its Windows-only facilities degrading to `not_applicable`, and joins
+  the windows-runtime CI job (floor re-derived 188 -> 256 over six modules
+  carrying 269 tests -- 14/15/23/53/68/96 -- by the arithmetic pin that job's
+  own floor test states: the total, less the SMALLEST module, plus one. 249
+  was a stale draft of this number from when the module collected 61, and it
+  disagreed with the shipped floor for two review rounds).
+  THE THIRD REVIEW ROUND closed eleven findings, each by measurement. A
+  hostile listener answering `/api/runtime` with `pid` as a list reached
+  `int(pid)` and ended the run in a traceback printing the host's paths; the
+  identity body is type-checked where it is recorded, a malformed `pid` or
+  `instance` records the surface unreachable with the reason instead, and
+  every refusal `main()` can reach is exit 4 on ONE stderr line with home
+  folded and any remaining path fragment replaced -- pinned with nine hostile
+  bodies through a real loopback listener. The development host's own 8.3
+  profile spelling, committed in two docstrings as the EXAMPLE of the form
+  redaction removes, is a placeholder now, and a lexical sweep anchored on
+  `probe.__file__` holds both the probe and its test module against this
+  host's login and machine name (as path segments, and in their 8.3 forms).
+  The whole-record redaction backstop missed a JSON-escaped home path, which
+  is the only shape it ever sees; it matches both now. `deadline_exceeded`
+  was set only inside the matrix loop, so a run whose reads were cut short
+  afterwards looked complete; the flag is set wherever the clock expires,
+  `artefacts_truncated` counts what was cut off and the validator recomputes
+  it, and any expiry is `inconclusive` -- the choice between the two candidate
+  repairs, taken as both and written down. `Deadline.budget` is arithmetic a
+  test reads. `OpenProcess` denied with ERROR_ACCESS_DENIED, and a present
+  file this principal could not open, both recorded `observed`, the word for
+  the capability they are the absence of. `--out` was documented against
+  writing into the tree and refused by nobody. The surface-absent rule's test
+  gained a `match=` and the one shape only that rule catches; a dead disjunct
+  and an unasserted `echoed` field are gone.
+  This slice changes NO admission criterion and runs NO provider:
+  `CONFINEMENT_PROPERTIES`, `PROPERTY_EVIDENCE_MECHANISMS`,
+  `governed_build_eligibility`, `control_plane_session.py` and
+  `windows_runtime.py` are untouched, both providers stay ineligible, and the
+  bearer gate remains a constraint on the surface, not a confinement of any
+  caller (A-028 DRAFT).
 - The runtime's session file is visible only when it is complete, and the
   Windows host harness waits for a bearer it can PARSE. The windows-runtime CI
   job failed once at PR #46's head with a `401` on the first bearered

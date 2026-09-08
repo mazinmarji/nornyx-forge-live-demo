@@ -263,9 +263,15 @@ jobs:
       # inherits is a platform property, and asserting it only on Linux left
       # the Windows behaviour asserted by nothing. It is hermetic -- fake
       # executables, no network, no provider CLI -- so it adds no skip.
-      - name: Windows runtime, bundle builder, launch and provider tests, with no skips
+      # tests/test_control_plane_authority.py joins this job for Tranche C: its
+      # wire census and its self-probe are Windows-relevant, and the OpenProcess
+      # VM-read observation only becomes `observed` here -- in the cross-process
+      # witness (the CLI in a child process); the in-process self-probe is
+      # not_applicable on its own pid everywhere, and the whole module degrades
+      # to not_applicable off Windows, so it adds no skip on any host.
+      - name: Windows runtime, bundle builder, launch, provider and control-plane tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -276,9 +282,9 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 188:
-              print("the windows job collected fewer than 188 tests. Its five modules "
-                    "carry 201 here (14/15/23/53/96), so this floor is 201 - 14 + 1, "
+          if len(cases) < 256:
+              print("the windows job collected fewer than 256 tests. Its six modules "
+                    "carry 269 here (14/15/23/53/68/96), so this floor is 269 - 14 + 1, "
                     "one above what is left when the SMALLEST module -- 14 tests, "
                     "tests/test_windows_host_runtime.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
