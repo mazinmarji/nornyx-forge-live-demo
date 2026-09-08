@@ -599,7 +599,27 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # the seam's own eligibility, the protected-store-without-seal refusal
     # and the legacy distinction.
     "tests/test_governed_provider_eligibility.py": 15,
-    "tests/test_codex_confinement_admission.py": 35,
+    # PA-01's admission criterion: 38 collected before Tranche C, 66 after
+    # slice C1 replaced one criterion, floor at band(66) = 60. The 28 new hold
+    # the replacement itself: that `control_plane_authority` is required
+    # `denied` and `control_plane_reachability` is gone from the criterion but
+    # kept as data (historical evidence still spells its probes with it and
+    # must stay loadable); that only a record of Forge's own gated surface is
+    # competent for it, a controlled test listener included; the whole
+    # state-to-outcome mapping including the separation conditional; that both
+    # providers stay ineligible with the refusal naming the missing property
+    # rather than an approval; and the strictly-stronger obligation measured
+    # over the repository's own recorded probes in both directions -- the
+    # retired criterion's required outcome entails the successor's, the
+    # entailment never runs backwards, and it still does not ADMIT anything.
+    # Round 2 added 5 for the criterion review's finding: the mapping table is
+    # parametrised from the contract's state list in both directions, only
+    # `unreachable` may answer the required outcome without a measured
+    # separation, the conditional is asserted over BOTH states it covers, the
+    # documents claiming the widening is guarded are pinned to the guarded set
+    # the mapping is measured to have, and the witness selection is read
+    # structurally for any retired name.
+    "tests/test_codex_confinement_admission.py": 60,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1117,16 +1137,29 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # every CI platform, its Windows-only artefact facilities degrading to
 # not_applicable off Windows
 # (`test_the_documented_paths_equal_the_served_compositions_route_table` and
-# `test_the_self_probe_is_admitted_nuisance_and_not_separated`):
+# `test_the_self_probe_is_admitted_nuisance_and_not_separated`).
+# Re-measured for Tranche C, slice C1, which replaced ONE admission criterion:
+# tests/test_codex_confinement_admission.py 38 -> 66 collected (floor
+# band(38) = 35 -> band(66) = 60), 61 of them at the slice's first head and 5
+# more in round 2, where criterion review found the separation guard covering
+# only half the widening. 113 modules stand -- the rows live in the module that
+# already held the criterion, so the windows-runtime job's six modules and its
+# arithmetic floor are untouched -- the module-floor sum rises by 25 to 2982 and
+# the aggregate follows to 2990, keeping the same 8 above it. The suite collects
+# 3224 -> 3252, band(n) 2902 -> 2927, the working room below the floor stays 262
+# (the aggregate moved with the collection), and the slack the bands grant stays
+# 270: this module collects six above its floor at 66 exactly as it did at 61,
+# because the band moved with it. No provider row moved and no skip was declared
+# (`test_both_providers_are_ineligible_and_the_reason_names_the_missing_property`):
 #
 # (rows below):
 #
-#     collected across tests/     3224   (113 modules)
-#     sum of the module floors    2957
-#     band(3224) = ceil(0.9*n)    2902
-#     MINIMUM_COLLECTED           2965
+#     collected across tests/     3252   (113 modules)
+#     sum of the module floors    2982
+#     band(3252) = ceil(0.9*n)    2927
+#     MINIMUM_COLLECTED           2990
 #     above the module sum         8
-#     below what collects         259
+#     below what collects         262
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1147,7 +1180,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 267 in total, and the aggregate refuses
+# per-module bands already grant 270 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1180,7 +1213,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 2965
+MINIMUM_COLLECTED = 2990
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

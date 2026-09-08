@@ -2,6 +2,60 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The admission criterion `control_plane_reachability` is retired and replaced
+  by `control_plane_authority` (Tranche C, slice C1). The retired property
+  asked whether a provider could open a loopback connection at all -- a PROXY
+  for authority acquisition, sound while Forge's control plane was
+  unauthenticated. A-027 gated that plane, which makes reachability IRRELEVANT
+  rather than ABSENT, and PA-01 found no sandbox setting that removes it; so
+  the criterion demanded the absence of something still present that nothing
+  can remove, and no provider could ever satisfy it -- for a reason about the
+  proxy rather than about any provider. The replacement asks the thing the
+  proxy stood for: whether a process confined as Forge's adapter confines it
+  can acquire or move Forge authority THROUGH the control plane, on the surface
+  Forge actually serves, decided by that surface's own record and never by the
+  caller's exit code. Its competent observer is a new mechanism,
+  `observed_surface_record`; `observed_listener_record` is refused for it by
+  name, because a controlled test listener has no gate, no routes and no
+  authority to move -- it can answer "did anything arrive at me", not "did
+  anything move Forge". `control_plane_authority_outcome` is the one mapping
+  from an observed state to a probe outcome, in the vocabulary
+  `scripts/probe_control_plane.py` already derives. An `unreachable` state
+  answers `denied` and `authority_reachable` answers `allowed`, at every
+  separation word; `reachable_unadmitted` and `admitted_nuisance` answer
+  `denied` ONLY when the record says the principal is SEPARATED from the
+  surface's owner, and `inconclusive` everywhere else, because both are read
+  off a REACHED surface's request log and A-027 concedes a same-user caller two
+  channels that log never sees; an `inconclusive` state, or no record at all,
+  answers `inconclusive` and never `denied`. The
+  states are restated in the contract rather than imported and held equal to
+  the harness's by a test. The retired name is kept as DATA in
+  `RETIRED_PROPERTIES` rather than deleted, because
+  `docs/governance/codex_confinement_measurement.json` is a historical artifact
+  that spells its probes with it: such a probe still validates and votes on
+  nothing. The replacement was held to a strictly-stronger obligation measured
+  over the repository's own recorded probes: the retired criterion's REQUIRED
+  outcome entails the successor's (no connection, no admission); the entailment
+  runs one way, so a reachability that was ALLOWED entails nothing; it yields a
+  STATE and never a probe, so no listener record is re-labelled as an
+  observation of a surface nobody watched; and consequently the retired
+  evidence, even at its most favourable, still does not ADMIT the new property,
+  which asks for strictly more evidence than the old one did. What the
+  replacement genuinely widens is the set of worlds that can satisfy it, and
+  that widening is guarded by the separation conditional, not free --
+  `reachable_unadmitted` and `admitted_nuisance` are BOTH conditional, over
+  both of the states the widening opens. The first head of this slice guarded
+  only `admitted_nuisance`; criterion review measured that the other half
+  established the property at `not_separated` and at `unknown`, from a record
+  C2 can produce, for an unconfined caller running as the surface's own OS
+  principal, so the guard was extended rather than the claim reworded. NO
+  provider moved: `governed_build_eligibility`'s rule, `assess_confinement`'s
+  unanimity rule and `PROVIDER_CONFINEMENT` are untouched, both providers
+  remain ineligible, and each refusal names a missing measurement rather than
+  an approval -- Codex because no record of Forge's own gated surface from a
+  Codex principal exists, Claude because nothing about it was ever measured.
+  `docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md` and its JSON were
+  deliberately not edited (A-028, A-024).
 - Control-plane probe harness (Tranche C, slice C2). A measurement tool and
   importable module, `scripts/probe_control_plane.py`, that observes a live
   onboarding surface over a real loopback socket as a local stranger would --
@@ -119,9 +173,10 @@
   This slice changes NO admission criterion and runs NO provider:
   `CONFINEMENT_PROPERTIES`, `PROPERTY_EVIDENCE_MECHANISMS`,
   `governed_build_eligibility`, `control_plane_session.py` and
-  `windows_runtime.py` are untouched, both providers stay ineligible, and the
-  bearer gate remains a constraint on the surface, not a confinement of any
-  caller (A-028 DRAFT).
+  `windows_runtime.py` were untouched by IT -- the entry above records the
+  criterion and mechanism that slice C1 has since changed -- both providers
+  stay ineligible after both slices, and the bearer gate remains a constraint
+  on the surface, not a confinement of any caller (A-028 DRAFT).
 - The runtime's session file is visible only when it is complete, and the
   Windows host harness waits for a bearer it can PARSE. The windows-runtime CI
   job failed once at PR #46's head with a `401` on the first bearered
