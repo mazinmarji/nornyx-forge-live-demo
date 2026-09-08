@@ -23,8 +23,8 @@
   "findings": [
     {
       "id": "C3-F1",
-      "finding": "The confined principal reaches Forge's control plane and is refused everywhere that moves authority.",
-      "measured": "133 of 133 matrix cells answered, deadline not exceeded: 200 on GET / and GET /api/runtime, 404 on POST /api/session/redeem, 200 on POST /api/runtime/reopen, 401 on all 129 gated cells. classification=admitted_nuisance, bearer_acquired_through_surface=false."
+      "finding": "The confined principal reaches Forge's control plane and is refused everywhere that moves authority. It moved no AUTHORITY state, which is the record's own wording and is weaker than `moved nothing`: the allowlisted POST /api/runtime/reopen answered it 200, and that route mints a session and opens the owner's browser. The allowlist admits those four pairs because they do not move authority, not because they do nothing.",
+      "measured": "133 of 133 matrix cells answered, deadline not exceeded: 200 on GET / and GET /api/runtime, 404 on POST /api/session/redeem, 200 on POST /api/runtime/reopen, 401 on all 129 gated cells. classification=admitted_nuisance, bearer_acquired_through_surface=false. The unconfined control got 429 on POST /api/runtime/reopen -- the nuisance trigger's own rate limit, the confined run having minted first."
     },
     {
       "id": "C3-F2",
@@ -39,12 +39,12 @@
     {
       "id": "C3-F4",
       "finding": "Separation of accounts does NOT close the channel the separation guard exists for. The confined principal read a MAPPED page out of the launching user's process memory.",
-      "measured": "OpenProcess(PROCESS_VM_READ) on the surface's pid returned a handle to the sandboxed caller (artefact process_vm_read: observed). Falsified two ways: the same call on a SYSTEM process (winlogon) was denied with error 5, so the instrument discriminates; and a separate control read 64 bytes at a mapped address in a process owned by the launching user and recovered the planted marker verbatim, sandboxed and unsandboxed alike."
+      "measured": "OpenProcess(PROCESS_VM_READ) on the surface's pid returned a handle to the sandboxed caller (artefact process_vm_read: observed, detail `PROCESS_VM_READ handle acquired`). BOUND OF THIS RECORD: that artefact row is the ONLY machine-readable evidence for this finding. Falsified two ways at measurement time -- the same call on a SYSTEM process (winlogon) was denied with error 5, so the instrument discriminates; and a separate control read 64 bytes at a mapped address in a process owned by the launching user and recovered the planted marker verbatim, sandboxed and unsandboxed alike -- but BOTH falsifications are OPERATOR OBSERVATIONS OUTSIDE THIS RECORD. Neither is an artefact here and no test reads them; a reader who wants them checked must re-run the measurement."
     },
     {
       "id": "C3-F5",
-      "finding": "The sandbox DOES close the other channel A-027 concedes, and the user profile with it.",
-      "measured": "browser_handler_cmdline: not_applicable in the subject run (the Win32_Process query did not succeed) against observed in the control. browser_history: refused in the subject run -- the presence check itself was denied -- against observed in the control. A write outside the declared workspace was refused with PermissionError while the write inside it succeeded."
+      "finding": "The Win32_Process query the browser-handler channel needs COMPLETED for the unconfined control and DID NOT COMPLETE for the confined principal; the MECHANISM of that failure is not measured. The browser history stores are a separate and stronger row: the confined principal was denied even the presence check.",
+      "measured": "browser_handler_cmdline: not_applicable in the subject run against observed (15 browser command lines read) in the control -- same run, same host, same instance, so the differential is real. It is NOT a denial: `not_applicable` means `there was nothing to try` and this producer emits it indistinguishably for a denied launch, a missing executable, a timeout AND a non-zero exit, so `the sandbox closes this channel` is one of four possibilities rather than what was measured. browser_history: refused in the subject run -- 2 of 2 store paths could not be checked at all, the presence check itself denied -- against observed (2 of 2 readable) in the control. A write outside the declared workspace was refused with PermissionError while the write inside it succeeded; that control is an operator observation outside this record."
     },
     {
       "id": "C3-F6",
@@ -59,6 +59,9 @@
     "That `separated` is true. The accounts differ, which is measured; whether that constitutes the separation the criterion asks for is a question for a harness that can measure and record it, and C3 ships no such harness.",
     "That the confined caller could read the BEARER out of process memory. What was measured is a PROCESS_VM_READ handle and a read at an address the control planted. Locating a secret in another process's address space was not attempted.",
     "That the runtime record and log would be readable wherever Forge puts them. They were readable here because this harness placed them outside the user profile; the profile itself was not readable to the confined principal.",
+    "That the sandbox DENIED the browser-handler channel. The query completed for the control and did not complete for the confined principal, which is measured; `not_applicable` covers four causes indistinguishably, so the mechanism is not.",
+    "That the C3-F4 falsifications are IN this record. The winlogon denial with error 5 and the 64-byte planted-marker read are operator observations from the measurement session, held in CONTROL_PLANE_AUTHORITY_MEASUREMENT.md and nowhere else; the same is true of the workspace-write confinement control.",
+    "That `browser_history: refused` distinguishes a permission denial from any other OSError. At the measured revision `_presence` folds every OSError into the denial wording; the failure actually observed was PermissionError [WinError 5] (C3-F6 names it), so the word is supported for THIS row, but the branch is not a discriminator and the shipped module still carries it.",
     "Any movement on the permanently-blocked approval and inspection diagnostics."
   ],
   "records": {

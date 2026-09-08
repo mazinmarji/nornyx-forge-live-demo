@@ -43,6 +43,13 @@ codex exec --json --cd <workspace> --skip-git-repo-check
            --sandbox workspace-write --color never <prompt>
 ```
 
+`--sandbox workspace-write` is quoted as the flag that path carries because it
+is the one it carries for a tool set that can write; it is **not fixed**.
+`codex_worker.py` selects `read-only` instead when the task's tool set is a
+subset of `{Read, Glob, Grep}`, so the invocation as quoted above is one of two
+the shipped code constructs. Immaterial to what follows — neither is measured
+here — but the quotation should not be read as the only form.
+
 That path takes a **prompt**, not a command, so it cannot be handed this probe.
 A model would decide whether the probe ran, and PA-01 already measured that
 decision going both ways with every canary pristine — which is why attempt
@@ -80,31 +87,63 @@ sandbox refused this" and "this never worked" are the same observation.
 
 ## What the confined caller found
 
+Every row below is re-derived from the two embedded records on every commit by
+`test_the_c3_document_states_the_measured_record` — see **What is anchored**
+at the end of this document for exactly which claims that reaches and which it
+does not. The artefact rows carry the record's **own outcome word** rather than
+a paraphrase of it, because the paraphrase is where a denial that was not
+measured got in (round 2, P2-B).
+
 | Fact | Subject (confined) | Control (unconfined) |
 | --- | --- | --- |
 | matrix cells answered | 133 of 133 | 133 of 133 |
 | deadline exceeded | no | no |
-| allowlisted pairs | reached (200, 200, 404, 200) | reached |
+| `GET /` | 200 | 200 |
+| `GET /api/runtime` | 200 | 200 |
+| `POST /api/runtime/reopen` | 200 | 429 |
+| `POST /api/session/redeem` | 404 | 404 |
 | gated cells | 129 refused 401 | 129 refused 401 |
 | bearer acquired through the surface | no | no |
 | positive control (bearered `GET /api/state`) | 200 | 200 |
 | classification | `admitted_nuisance` | `admitted_nuisance` |
 | `principal_separated` | `unknown` | `unknown` |
-| `process_vm_read` | acquired | acquired |
-| `browser_handler_cmdline` | not available to this caller | read |
-| `browser_history` | denied the presence check | read |
-| `runtime_record` / `runtime_log` | readable | readable |
+| `process_vm_read` | `observed` | `observed` |
+| `browser_handler_cmdline` | `not_applicable` | `observed` |
+| `browser_history` | `refused` | `observed` |
+| `runtime_record` / `runtime_log` | `observed` / `observed` | `observed` / `observed` |
 
-The `404` is `POST /api/session/redeem` answering an unauthenticated caller
-without a redeemable nonce; it is an allowlisted pair, so it does not bear on
-the classification either way.
+The first four rows are the allowlisted pairs, in the order the request log
+records them. The `404` is `POST /api/session/redeem` answering an
+unauthenticated caller without a redeemable nonce; it is an allowlisted pair,
+so it does not bear on the classification either way. The control's `429` on
+`POST /api/runtime/reopen` is the nuisance trigger's own rate limit answering
+the second caller inside the interval — the confined run's `200` came first,
+and both are allowlisted, so neither moves the classification.
+
+**The three artefact words, in the producer's own definitions**, because the
+whole of C3-F5 turns on the difference between them. `observed` is a capability
+this caller **acquired**. `refused` is a facility that **existed and denied**
+this caller. `not_applicable` is "**there was nothing to try**" — no path, no
+such facility, no such process, or a read that could not be attempted at all.
+`not_applicable` is emitted for four distinct causes indistinguishably (a
+denied launch, a missing executable, a timeout, and a non-zero exit), so it
+does **not** carry a denial and is never read as one here.
 
 ### Four readings, kept apart
 
-**C3-F1 — the confined caller reaches the control plane and moves nothing.**
-It reached the four allowlisted pairs and was refused `401` on all 129 other
-cells, over a complete matrix with the deadline unexpired. That is
-`admitted_nuisance`, derived from the request log alone.
+**C3-F1 — the confined caller reaches the control plane and moves no
+AUTHORITY state.** It reached the four allowlisted pairs and was refused `401`
+on all 129 other cells, over a complete matrix with the deadline unexpired.
+That is `admitted_nuisance`, derived from the request log alone.
+
+"Moves nothing" would be too strong, and the record does not say it: its own
+`not_confinement_reason` says the caller "moved no **authority** state", which
+is the accurate claim. The allowlisted `POST /api/runtime/reopen` answered the
+confined caller `200`, and that route **mints a session and opens the owner's
+browser** — a real effect, outside the authority surface by design (the control
+run got `429` from the same route's rate limit moments later). The distinction
+is the whole point of the allowlist: those four pairs are admitted precisely
+because they do not move authority, not because they do nothing.
 
 **C3-F3 — the confined process runs as a different OS account, and the record
 still may not say `separated`.** `whoami /user`, read from inside each process,
@@ -120,25 +159,53 @@ about the sandbox.
 **C3-F4 — separation of accounts does not close the channel the separation
 guard exists for.** A-027 concedes a same-user caller two channels the request
 log never sees: the browser handler's command line, and Forge's process memory.
-The confined caller was denied the first and **retains the second**.
-`OpenProcess(PROCESS_VM_READ)` on the surface's pid returned a handle to the
-sandboxed process. That reading was falsified twice before it was written down:
-the same call against a SYSTEM process (`winlogon`) was **denied with error 5**,
-so the instrument discriminates rather than always succeeding; and a separate
-control read 64 bytes at a **mapped** address inside a process owned by the
-launching user and recovered the planted marker byte for byte, sandboxed and
-unsandboxed alike.
+The confined caller **retains the second**: `OpenProcess(PROCESS_VM_READ)` on
+the surface's pid returned a handle to the sandboxed process
+(`process_vm_read: observed`). What it did to the first is C3-F5 below, and it
+is weaker than "denied".
+
+That reading was falsified twice before it was written down: the same call
+against a SYSTEM process (`winlogon`) was **denied with error 5**, so the
+instrument discriminates rather than always succeeding; and a separate control
+read 64 bytes at a **mapped** address inside a process owned by the launching
+user and recovered the planted marker byte for byte, sandboxed and unsandboxed
+alike.
+
+**Both falsifications are OPERATOR OBSERVATIONS OUTSIDE THE RECORD**, and this
+document is the only place they exist. Neither the `winlogon` denial nor the
+planted-marker read is in either embedded record, and no test reads them: the
+only machine-readable evidence for C3-F4 is the single artefact row
+`process_vm_read: observed`, whose detail says a `PROCESS_VM_READ` **handle was
+acquired**. A reader who wants the falsifications checked has to re-run the
+measurement; a reader who reads only the record gets the handle and nothing
+more. Re-running is not in this slice's authority.
 
 What is **not** claimed: that a bearer was located or read. The measurement
 planted its own marker and read that. Locating a secret in another process's
 address space was not attempted.
 
-**C3-F5 — the sandbox does close the other channel, and the profile with it.**
-The `Win32_Process` query the browser-handler read needs did not succeed for the
-confined principal, and the browser history stores could not even be checked
-for presence. A write outside the declared workspace was refused with
-`PermissionError` while the write inside it succeeded, which is the standing
-confinement control.
+**C3-F5 — the query the control completed did not complete under confinement,
+and the mechanism of that failure is not measured.** The `Win32_Process` query
+the browser-handler read needs **succeeded for the unconfined control and did
+not succeed for the confined principal**. That differential is real: both arms
+ran in the same run, on the same host, against the same instance, and the
+control read **15 browser command lines** while the confined arm's query did
+not complete at all.
+
+What the record cannot say is **why**. The confined arm's row is
+`not_applicable`, which the producer emits indistinguishably for a denied
+launch, a missing executable, a timeout **and** a non-zero exit — so it is not
+a denial, and "the sandbox closes this channel" is not what was measured. It is
+one of four possibilities, and the differential says the sandbox is implicated,
+not which mechanism did it. Reading `not_applicable` back as a refusal would be
+the mirror image of the conflation this slice repaired in the probe itself.
+
+The browser history stores are a stronger row and a different word: `refused`,
+whose detail records that the **presence check itself was denied** to this
+principal — 2 of 2 paths, against `observed` (2 of 2 readable) for the control.
+See **What is anchored** for the one caveat on that word. A write outside the
+declared workspace was refused with `PermissionError` while the write inside it
+succeeded, which is the standing confinement control.
 
 ---
 
@@ -210,15 +277,22 @@ Translating the subject record and running `assess_confinement` gives:
 | claude eligible | `false` |
 
 `tests/test_codex_confinement_admission.py` loads the shipped JSON, translates
-it and asserts this table, so the rows above are re-derived on every commit
-rather than transcribed once.
+it and asserts this table cell by cell
+(`test_the_c3_document_states_the_measured_record`), so the rows above are
+re-derived on every commit rather than transcribed once. In round 1 that
+sentence was written of a table nothing read: five byte-exact falsifications of
+this document — including `129 refused 401` → `005` and `establishes: false` →
+`tru3` — left 291 tests green. The sentence is now a description of a gate
+rather than of an intention.
 
 Two spellings of the platform now exist in this repository's recorded evidence:
 `windows` in `codex_confinement_measurement.json` (PA-01, authored) and `win32`
 here (`sys.platform`, read from inside the probe). They do **not** combine, and
 that is `assess_confinement`'s binding check working: a measurement taken on one
 platform string does not answer an assessment for another. Both are unmet
-either way.
+either way. Asserted for these two SHIPPED records rather than only in general
+by `test_the_two_recorded_platform_spellings_do_not_combine`: each record's
+measurement is run against the other's platform word and establishes nothing.
 
 ---
 
@@ -233,11 +307,24 @@ either way.
 The measured revision is a **local** commit: the C3 working tree copied outside
 the user profile (the confined account cannot read the profile at all) and
 committed there, so the record could bind a revision instead of naming none.
-It resolves on no remote and is disclosed as such. What a reader can check
-against the shipped commit is the blob line: `git rev-parse
-HEAD:scripts/probe_control_plane.py` names the exact module this measurement
-ran, and if it differs from the row above, the shipped probe is not the probe
-that was measured.
+It resolves on no remote and is disclosed as such.
+
+The other two rows are checked here rather than left to the reader, which is
+what they were in round 1 — referenced by no test, no gate and nothing outside
+this document and its JSON, so a mutation setting both to bogus values was
+silent:
+
+- the **blob** row is the git object id of the bytes of the shipped
+  `scripts/probe_control_plane.py`, recomputed on every commit by
+  `test_the_recorded_c3_measurement_translates_to_the_verdict_it_states`. It
+  names the exact module this measurement ran, so if that module is edited the
+  test goes **red** and the repair is to re-measure, never to edit the row. That
+  is deliberate: silently changing the instrument after recording a measurement
+  with it is precisely what the row exists to prevent. (One consequence is
+  recorded honestly under **What is anchored** below.)
+- the **parent** revision is checked to be a real commit reachable from `HEAD`
+  in this repository. The measured revision cannot be — it is local, by the
+  paragraph above — but the parent can, and is.
 
 ---
 
@@ -258,3 +345,64 @@ that was measured.
   They were readable here because this harness placed them outside the user
   profile, which the confined principal could not read.
 - Any movement on the permanently-blocked approval and inspection diagnostics.
+
+---
+
+## What is anchored, and what is still prose
+
+Round 1 of this document said its table was "re-derived on every commit" while
+nothing read it. This section says which sentences a test now holds, and — more
+importantly — which it does not, because a section that only listed the
+covered half would repeat the defect it exists to close.
+
+**Anchored, and falsifiable by mutating this file or the record.**
+
+- Every row of the three tables above (`test_the_c3_document_states_the_measured_record`):
+  the cell counts, the four allowlisted statuses, the gated count and its
+  status, the classification, the separation word, every artefact outcome word,
+  the assessment's outcome / mechanism / platform / revision / `establishes`,
+  both provider rows and both eligibility answers, and the three provenance
+  rows. Each is compared with a value derived from the two embedded records or
+  computed by running the shipped code, never with itself.
+- The subject and control SIDs, and that they differ.
+- The emitted platform and the bound revision, against **literals** as well as
+  against the record — a comparison of a translated value with the field it was
+  copied from is a tautology, and three round-2 mutations passed through one.
+- The `129` gated cells and the `133`-cell matrix wherever this repository
+  states them in prose: `CHANGELOG.md`, `docs/VALIDATION.md`,
+  `docs/requirements/ASSUMPTIONS.md` and `provider_contract.py`'s own docstring
+  are held to the record's own arithmetic
+  (`test_every_document_stating_the_measured_counts_states_the_measured_ones`).
+- That the shipped `scripts/probe_control_plane.py` is byte-identical to the
+  module this measurement ran, by its git blob id.
+
+**NOT anchored. Prose, and only prose.**
+
+- **Both C3-F4 falsifications** — the `winlogon` denial with error 5 and the
+  64-byte planted-marker read. They are operator observations from the
+  measurement session; neither is in either record and no test reads them. The
+  machine-readable evidence for C3-F4 is one artefact row.
+- **The confinement control** — the write refused outside the declared
+  workspace and accepted inside it. Same status: observed, recorded here, not
+  in the record.
+- **`codex sandbox`'s own behaviour.** That the confined process ran under a
+  Windows restricted token, and the host's `[windows] sandbox = "elevated"`
+  setting, are the CLI's account of itself and this document's, not
+  measurements this repository takes.
+- **Why the `Win32_Process` query did not complete** under confinement. See
+  C3-F5: the differential is measured, the mechanism is not.
+- **The `refused` word on `browser_history`, at one remove.** The record's
+  detail says the presence check was denied, and that word is only as good as
+  the branch that produced it: `_presence` in the measured module catches a
+  bare `OSError` and answers `None`, which its callers render as the denial
+  sentence — so an `EIO` device failure or a bad network path would have
+  produced the same row, and only a `PermissionError` deserves it. The failure
+  actually observed here **was** a `PermissionError: [WinError 5]` (C3-F6
+  records it by name at the parent revision, through the same call), so the
+  word is supported for THIS row; the branch is still wrong in general.
+  Narrowing it to `except PermissionError` — and letting every other `OSError`
+  fall through to `probe()`'s backstop, which already keeps the two apart — is
+  a three-line repair this slice deliberately does **not** make: it would edit
+  the measured module, break the blob identity above, and require re-measuring
+  under an authorisation this slice does not have. It is carried as an open
+  finding in A-028 rather than silently applied.

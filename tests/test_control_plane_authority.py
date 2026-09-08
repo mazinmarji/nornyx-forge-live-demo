@@ -1415,10 +1415,23 @@ def test_system_executables_are_resolved_absolutely_and_never_from_the_cwd(
         def refuse(*_args, **_kwargs):
             raise AssertionError("_is_drive_absolute consulted a stdlib path predicate")
 
+        patched = 0
         for module in (ntpath, posixpath):
             for attribute in ("isabs", "splitdrive", "splitroot", "abspath", "normpath"):
                 if hasattr(module, attribute):
                     sealed.setattr(module, attribute, refuse)
+                    patched += 1
+        # THE SEAL HAS TO HAVE CLOSED. The loop is guarded by `hasattr`, and
+        # `splitroot` does not exist on 3.10 or 3.11 -- both in the CI matrix
+        # -- so on an interpreter where every name were absent this block would
+        # patch NOTHING and still pass, asserting that an unsealed table equals
+        # itself. Round-2 test lane, F-9. `isabs` and `abspath` exist on every
+        # supported interpreter in both modules, so eight is the floor here and
+        # the assertion is well below it.
+        assert patched >= 2, (
+            f"only {patched} stdlib path predicates were replaced, so this block did "
+            "not seal anything and the comparison below is vacuous"
+        )
         sealed_windows, sealed_posix = verdicts()
     assert sealed_windows == windows_said, list(zip(windows_rows, sealed_windows))
     assert sealed_posix == posix_said, list(zip(posix_rows, sealed_posix))

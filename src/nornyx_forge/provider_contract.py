@@ -676,14 +676,25 @@ CONTROL_PLANE_ALLOWLISTED_PAIRS: frozenset[tuple[str, str]] = frozenset({
 #: it BY NAME rather than mapping it -- because `unreachable` is the one state
 #: that answers `denied` unconditionally, and accepting it here would let a
 #: hand-written record satisfy the criterion outright.
+#:
+#: THIS TUPLE IS THE GUARD, not a note beside one. The translation tests
+#: membership of it; it does not compare the state to `"unreachable"`. It is
+#: held equal to the producer's own `STATES` by
+#: `test_the_contracts_restated_surface_constants_are_the_surfaces_own`, which
+#: also pins the DIFFERENCE from `CONTROL_PLANE_STATES` to the producer's
+#: `NOT_DERIVABLE_HERE` -- so a state added on either side is a red test rather
+#: than a silent widening of what a hand-written record may claim.
 _V1_DERIVABLE_STATES = ("reachable_unadmitted", "admitted_nuisance",
                         "authority_reachable", "inconclusive")
 
-#: What a v1 producer may record for the separation of principals. `separated`
-#: is refused for the same reason and with the same force: that producer may
-#: never record it (its own validator refuses it), and it is the word on which
-#: BOTH widened states turn. A v1 record that claimed it would establish
+#: What a v1 producer may record for the separation of principals, used as an
+#: ALLOW-LIST by the translation for the same reason as the tuple above.
+#: `separated` is refused with the same force: that producer may never record
+#: it (its own validator refuses it), and it is the word on which BOTH widened
+#: states turn. A v1 record that claimed it would establish
 #: `control_plane_authority` from evidence whose producer cannot support it.
+#: Held equal to the producer's `SEPARATION_VALUES`, and its difference from
+#: `PRINCIPAL_SEPARATION` pinned to `{"separated"}`, by the same test.
 _V1_SEPARATION_VALUES = ("not_separated", "unknown")
 
 #: The property a control-plane record can witness, and the only mechanism
@@ -760,16 +771,23 @@ def confinement_probe_from_surface_record(
         which is competent for no property at all;
       * a positive control whose request carries a mechanism that is not the
         socket label;
-      * a classification outside `CONTROL_PLANE_STATES`, and `unreachable`
-        by name (see `_V1_DERIVABLE_STATES`);
+      * a classification outside `CONTROL_PLANE_STATES`, and then anything
+        outside `_V1_DERIVABLE_STATES` -- BY MEMBERSHIP of that allow-list,
+        not by an equality against `unreachable`, which was safe only while
+        the difference between the two tuples happened to be that one word;
+      * a request row whose route is not a pair of strings, or whose status
+        is neither absent nor an integer: both are types the checks below
+        cannot read, and an unreadable type is refused rather than read as
+        "not a breach";
       * a classification that DISAGREES WITH ITS OWN LOG, in both directions:
         a gated 2xx -- membership derived from `CONTROL_PLANE_ALLOWLISTED_PAIRS`,
         never from a row's stored flag -- or a bearer acquired through the
         surface admits exactly one state, `authority_reachable`; and that state
         claimed over a log with neither is a breach asserted by a record rather
         than observed;
-      * a separation word outside `PRINCIPAL_SEPARATION`, and `separated` by
-        name (see `_V1_SEPARATION_VALUES`);
+      * a separation word outside `PRINCIPAL_SEPARATION`, and then anything
+        outside `_V1_SEPARATION_VALUES` -- again by membership, so a fourth
+        word admitted into the vocabulary cannot walk past the guard;
       * a subject block that does not name the platform it was taken on.
 
     WHAT A v1 RECORD CAN AND CANNOT PRODUCE, stated because it is the whole
@@ -814,12 +832,37 @@ def confinement_probe_from_surface_record(
 
     requests = _record_requests(record)
     for entry in requests:
-        if entry.get("status") is None:
+        # THE ROUTE FIRST, and by TYPE rather than by value. Allowlist
+        # membership is a lookup of a string pair in a frozenset, so a row
+        # naming an unhashable method or path raises `TypeError` out of
+        # `_unadmitted_successes` -- leaving this module by a door it does not
+        # document, while every neighbouring shape is refused.
+        method, path = entry.get("method"), entry.get("path")
+        if not isinstance(method, str) or not isinstance(path, str):
+            raise ProviderError(
+                f"a request row names method {method!r} and path {path!r}; a route that "
+                "is not a pair of strings cannot be tested for membership of the "
+                "allowlist, and a record carrying one is refused rather than translated"
+            )
+        status = entry.get("status")
+        if status is None:
             continue  # an unanswered probe witnessed nothing and claims no mechanism
+        # AND THE STATUS BY TYPE, in the same direction and for the same
+        # reason. `_is_2xx` answers False for `"200"` and for `200.0`, so a
+        # gated row carrying either is INVISIBLE to `_unadmitted_successes`
+        # and a laundered breach passes as `admitted_nuisance`. A type this
+        # module cannot read is refused; it is never read as "not a success".
+        if isinstance(status, bool) or not isinstance(status, int):
+            raise ProviderError(
+                f"request {method} {path} carries status {status!r}, which is not an "
+                "integer; a status whose type the 2xx test cannot read would make a "
+                "gated success invisible to the disagreement refusal below, so a record "
+                "carrying one is refused rather than translated"
+            )
         if entry.get("mechanism") != CONTROL_PLANE_MECHANISM:
             raise ProviderError(
-                f"request {entry.get('method')} {entry.get('path')} answered "
-                f"{entry.get('status')!r} but its mechanism is {entry.get('mechanism')!r}, "
+                f"request {method} {path} answered "
+                f"{status!r} but its mechanism is {entry.get('mechanism')!r}, "
                 f"not {CONTROL_PLANE_MECHANISM!r}; a fact labelled as an inference may not "
                 f"witness {CONTROL_PLANE_PROPERTY!r}, whatever it says happened"
             )
@@ -834,18 +877,31 @@ def confinement_probe_from_surface_record(
             )
 
     state = record.get("classification")
-    if state in ("unreachable",):
-        raise ProviderError(
-            f"the record claims classification {state!r}, which a "
-            f"{CONTROL_PLANE_PROBE_SCHEMA} producer cannot derive (its own validator "
-            f"refuses it) -- the derivable states are {_V1_DERIVABLE_STATES}. It is the "
-            "one state that answers 'denied' at every separation word, so a record "
-            "claiming it is refused by name rather than translated"
-        )
     if state not in CONTROL_PLANE_STATES:
         raise ProviderError(
             f"the record claims classification {state!r}, which is not one of "
             f"{CONTROL_PLANE_STATES}"
+        )
+    # BY MEMBERSHIP OF THE ALLOW-LIST, not by a deny-list of one. This read
+    # `state in ("unreachable",)`, which was safe only while
+    # `CONTROL_PLANE_STATES - {"unreachable"}` HAPPENED to equal
+    # `_V1_DERIVABLE_STATES` -- a coincidence nothing enforced. Measured in
+    # round 2: add one producer-derivable-looking state to
+    # `CONTROL_PLANE_STATES` that maps to `denied`, and a hand-written record
+    # claiming it walked straight through this guard to
+    # `control_plane_authority: met`. An allow-list used as documentation is
+    # not a guard; this uses it as one, and
+    # `test_the_contracts_restated_surface_constants_are_the_surfaces_own`
+    # pins the tuple to the producer's own `STATES` in both directions.
+    if state not in _V1_DERIVABLE_STATES:
+        raise ProviderError(
+            f"the record claims classification {state!r}, which a "
+            f"{CONTROL_PLANE_PROBE_SCHEMA} producer cannot derive (its own validator "
+            f"refuses it) -- the derivable states are {_V1_DERIVABLE_STATES}. A state "
+            "outside that set is refused BY NAME rather than mapped, because accepting "
+            "one here would let a hand-written record claim an outcome its own producer "
+            "could never have observed -- `unreachable`, which answers 'denied' at every "
+            "separation word, above all"
         )
 
     breaches = _unadmitted_successes(requests)
@@ -867,18 +923,23 @@ def confinement_probe_from_surface_record(
         )
 
     separation = record.get("principal_separated")
-    if separation == "separated":
-        raise ProviderError(
-            f"the record says principal_separated='separated', which a "
-            f"{CONTROL_PLANE_PROBE_SCHEMA} producer may never record (its own validator "
-            f"refuses it) -- it may record {_V1_SEPARATION_VALUES}. It is the word on "
-            "which both widened states turn, so a record claiming it would establish "
-            f"{CONTROL_PLANE_PROPERTY!r} from a producer that cannot support the claim"
-        )
     if isinstance(separation, bool) or separation not in PRINCIPAL_SEPARATION:
         raise ProviderError(
             f"the record says principal_separated={separation!r}; the vocabulary is "
             f"{PRINCIPAL_SEPARATION}"
+        )
+    # BY MEMBERSHIP, for the reason above. This read `separation ==
+    # "separated"`, an equality against the one word that mattered today; a
+    # fourth separation word admitted into `PRINCIPAL_SEPARATION` would have
+    # walked past it into the mapping.
+    if separation not in _V1_SEPARATION_VALUES:
+        raise ProviderError(
+            f"the record says principal_separated={separation!r}, which a "
+            f"{CONTROL_PLANE_PROBE_SCHEMA} producer may never record (its own validator "
+            f"refuses it) -- it may record {_V1_SEPARATION_VALUES}. `separated` is the "
+            "word on which both widened states turn, so a record claiming a word outside "
+            f"that set would establish {CONTROL_PLANE_PROPERTY!r} from a producer that "
+            "cannot support the claim"
         )
 
     subject = record.get("subject")
@@ -903,6 +964,12 @@ def confinement_probe_from_surface_record(
         # once, or nothing about this caller's dealings with it was observed.
         # How MUCH it answered is the producer's `coverage`, and a short log
         # is already `inconclusive` by its own derivation.
+        #
+        # The claim in the line above is only worth what a test measures, and
+        # for one round nothing did: replacing this with a literal `True` left
+        # every test green, because the only record fed through here had
+        # answered all 133 cells. `test_an_unanswered_log_emits_an_unobserved_attempt`
+        # now feeds a log in which NOTHING answered and asserts False.
         attempt_observed=any(r.get("status") is not None for r in requests),
         # DERIVED THROUGH THE MAPPING, from the record's own state and
         # separation word. There is deliberately no parameter by which a

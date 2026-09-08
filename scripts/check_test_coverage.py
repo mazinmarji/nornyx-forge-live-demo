@@ -624,7 +624,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # documents claiming the widening is guarded are pinned to the guarded set
     # the mapping is measured to have, and the witness selection is read
     # structurally for any retired name.
-    "tests/test_codex_confinement_admission.py": 88,
+    # C3 round 2 added 9 more, all closing the same defect class -- a label
+    # standing where a measurement belonged: the derived cross-product cells
+    # over the producer's own state tuple, the unanswered-log case that makes
+    # `attempt_observed` derived rather than declared, the C3 document's three
+    # tables held row by row to the record under them, the measured counts held
+    # across four documents and the contract's docstring, the two shipped
+    # platform spellings refusing to combine, and five type refusals (a status
+    # that is not an integer, a route that is not a pair of strings) that used
+    # to fail open or raise `TypeError`. Floor at band(106) = 96.
+    "tests/test_codex_confinement_admission.py": 96,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1196,14 +1205,36 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # stays `declared`
 # (`test_the_recorded_c3_measurement_translates_to_the_verdict_it_states`):
 #
+# Re-measured for TRANCHE C, SLICE C3 ROUND 2, which closed eight blocking
+# findings from three independent read-only lanes. ONE module moves:
+# tests/test_codex_confinement_admission.py 97 -> 106 collected (floor
+# band(97) = 88 -> band(106) = 96). Nine new nodes, every one of them a
+# measurement replacing a label -- see the module-floor comment above for the
+# list. NO OTHER MODULE MOVES and 113 modules stand, so the windows-runtime
+# job's own arithmetic floor is untouched at 262 (its six modules still collect
+# 14/15/23/53/73/97, sum 275, floor 275 - 14 + 1). The module-floor sum rises by
+# 8 to 3027 and the aggregate follows to 3035, keeping the same 8 above it. The
+# suite collects 3294 -> 3303, band(n) 2965 -> 2973, the working room below the
+# floor 267 -> 268, and the slack the bands grant 275 -> 276, because the one
+# module that moved now collects one more above its own band. NO PROVIDER ROW
+# MOVED: the round-2 repairs are guards over the same record, and the record
+# still reaches `admitted_nuisance` with `principal_separated: unknown`.
+#
+# One wording note, because it was measured rather than assumed: a first draft
+# of the CHANGELOG entry for this round tripped `_transcript_runs` in
+# tests/test_recorded_measurements.py -- two wrapped prose lines read as a
+# `key value` pair -- which put CHANGELOG.md into that module's document sweep
+# and added five nodes there. The prose was rewrapped rather than the detector
+# widened; the sweep is right to be broad.
+#
 # (rows below):
 #
-#     collected across tests/     3294   (113 modules)
-#     sum of the module floors    3019
-#     band(3294) = ceil(0.9*n)    2965
-#     MINIMUM_COLLECTED           3027
+#     collected across tests/     3303   (113 modules)
+#     sum of the module floors    3027
+#     band(3303) = ceil(0.9*n)    2973
+#     MINIMUM_COLLECTED           3035
 #     above the module sum         8
-#     below what collects         267
+#     below what collects         268
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1224,7 +1255,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 275 in total, and the aggregate refuses
+# per-module bands already grant 276 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1257,7 +1288,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3027
+MINIMUM_COLLECTED = 3035
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

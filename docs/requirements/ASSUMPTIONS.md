@@ -2286,16 +2286,31 @@ providers stay ineligible.
 **The finding that matters most, and it is not the classification.** Separating
 the accounts does NOT close the channel the separation guard exists for. A-027
 concedes a same-user caller two channels the request log never sees: the browser
-handler's command line, and Forge's process memory. The confined caller lost the
-first (`browser_handler_cmdline` degraded to `not_applicable`, and the browser
-history stores were denied even the presence check) and KEPT the second:
-`OpenProcess(PROCESS_VM_READ)` on the surface's pid returned it a handle. That
-reading was falsified before it was recorded -- the same call against a SYSTEM
-process was denied with error 5, so the instrument discriminates, and a separate
-control read 64 bytes at a MAPPED address in a process owned by the launching
-user and recovered a planted marker verbatim. What was NOT attempted is locating
-a secret in that address space; a handle and a planted marker are what was
-measured, and the record says only that.
+handler's command line, and Forge's process memory. The confined caller KEPT the
+second: `OpenProcess(PROCESS_VM_READ)` on the surface's pid returned it a
+handle. What happened to the first is weaker than "lost", and the exact word
+matters because this is the same conflation the slice repaired in the probe:
+the `Win32_Process` query the channel needs COMPLETED for the unconfined
+control -- 15 browser command lines -- and DID NOT COMPLETE for the confined
+principal, in the same run on the same host. That differential is real. The
+MECHANISM of the failure is not measured: `browser_handler_cmdline` is
+`not_applicable`, which this producer emits indistinguishably for a denied
+launch, a missing executable, a timeout and a non-zero exit, so it is not a
+denial and is not read as one. The browser history stores are the stronger and
+separate row -- `refused`, the presence check itself denied on 2 of 2 paths,
+against `observed` for the control.
+
+The process-memory reading was falsified before it was recorded -- the same call
+against a SYSTEM process was denied with error 5, so the instrument
+discriminates, and a separate control read 64 bytes at a MAPPED address in a
+process owned by the launching user and recovered a planted marker verbatim --
+but BOTH falsifications are OPERATOR OBSERVATIONS OUTSIDE THE RECORD. Neither is
+an artefact in either embedded record and no test reads them; the only
+machine-readable evidence for this finding is the single row
+`process_vm_read: observed`. The same is true of the workspace-write confinement
+control. What was NOT attempted is locating a secret in that address space; a
+handle and a planted marker are what was measured, and the record says only
+that.
 
 **C3 found a defect in C2's harness that only a confined principal exposes.** At
 the parent revision the sandboxed run raised `PermissionError: [WinError 5]` out
@@ -2309,6 +2324,14 @@ never `not_applicable` -- a path this caller may not stat is not a path that is
 absent -- and a backstop in `probe()` turns any remaining `OSError` into an
 outcome rather than an ending, keeping a PermissionError (`refused`) apart from
 any other (`not_applicable`).
+
+That last separation is the BACKSTOP's, and only the backstop's. `_presence`
+itself catches a bare `OSError` and answers `None`, which its callers render as
+"the presence check itself was denied to this principal" -- so an `EIO` device
+failure or a `WinError 53` bad network path produces `outcome: refused` with the
+denial wording, which `guarded()` sixty lines below explicitly forbids ("folding
+them would put the denial word on a fact that is not one"). Measured in round 2
+and NOT REPAIRED HERE; see the open findings below.
 
 **What C3 does NOT establish.**
 
@@ -2337,7 +2360,101 @@ any other (`not_applicable`).
   (`sys.platform`, read from inside the probe) where
   `codex_confinement_measurement.json` spells it `windows` (authored). They do
   not combine, which is `assess_confinement`'s binding check working rather than
-  an oversight; both are unmet either way.
+  an oversight; both are unmet either way. Asserted for the two SHIPPED records
+  and not only in general
+  (`test_the_two_recorded_platform_spellings_do_not_combine`).
+
+**ROUND 2: what three read-only lanes found, and what changed.** No lane found a
+P1 and NOTHING SHIPPED WAS FALSE -- every load-bearing value was checked against
+the record and against git and was correct. Every one of the eight blocking
+findings was the same defect, which is the one this repository exists to catch:
+a LABEL standing where a MEASUREMENT belonged. A comment satisfied a gate that
+claimed to find a construction; a document said its table was re-derived when
+nothing read it; a field said "DERIVED, not declared" while a constant satisfied
+every assertion about it; a guard was correct only by a coincidence nothing
+enforced. Each repair uses an instrument this repository already owned.
+
+- **The two vocabulary allow-lists are the guards now.** `_V1_DERIVABLE_STATES`
+  and `_V1_SEPARATION_VALUES` appeared only in docstrings and error text while
+  the real guards were `state in ("unreachable",)` and `separation ==
+  "separated"` -- deny-lists of one, safe only while
+  `CONTROL_PLANE_STATES - {unreachable}` HAPPENED to equal the allow-list.
+  MEASURED, both directions: with a fifth state added to the contract's
+  vocabulary and mapped `denied`, a hand-written record reached
+  `outcome: denied` and `control_plane_authority unmet: False` -- the criterion
+  satisfied -- with every gate green; the same record is now REFUSED by name.
+  The tuples are held equal to the producer's own `STATES` and
+  `SEPARATION_VALUES`, and their COMPLEMENTS are pinned to `NOT_DERIVABLE_HERE`
+  and to `{separated}`, so a state added on either side is a red test.
+- **Both C3 cross-product tests are DERIVED from those tuples** instead of eight
+  typed-out cells. The same mutation used to redden three PRE-EXISTING C1 tests
+  and neither test that asserts the slice's headline claim; it now reddens both.
+- **The A-028 closure gate is an `ast` walk**, not a substring scan. Rewriting
+  the real construction as `globals()['Confinement' 'Probe'](` and leaving the
+  literal in a COMMENT kept the old gate green with behaviour unchanged.
+- **`attempt_observed` is exercised in the False direction.** A literal `True`
+  passed all 97 tests, because the only record ever fed through the translation
+  had answered its whole matrix. A log in which nothing answered now asserts
+  `attempt_observed is False`.
+- **The emitted platform and the bound revision are compared with LITERALS** as
+  well as with the record. Every assertion re-used the translated value, so the
+  chain was self-consistent for any value at all: hard-coding the platform, and
+  rewriting the record's own platform to `linux` and its `tree_git_sha` to forty
+  zeros, were all green.
+- **The provenance rows are gated.** `probe_module_blob` is recomputed from the
+  bytes of the shipped `scripts/probe_control_plane.py`, and `parent_revision`
+  must be a commit reachable from `HEAD`. Both were read by nothing.
+- **The measurement document is held to the record, row by row.** It said its
+  table was "re-derived on every commit rather than transcribed once" and
+  NOTHING read it: five byte-exact, LF-preserving falsifications -- including
+  `129 refused 401` to `005` and `establishes: false` to `tru3` -- left 291
+  tests green. Every row of its three tables is now compared with a value
+  derived from the embedded records or computed by running the shipped code, in
+  BOTH directions, so a deleted row is as loud as a changed one. The measured
+  counts (129 gated cells, a 133-cell matrix) are held wherever this repository
+  states them: `CHANGELOG.md`, `docs/VALIDATION.md`, this file, the document,
+  and the contract's own docstring, where `129` could be changed to `3` with
+  every test green.
+- **`not_applicable` is no longer read back as a denial.** The document said the
+  confined caller "was DENIED" the browser-handler channel and headed the
+  finding "the sandbox DOES CLOSE the other channel". The differential is real
+  and is kept; the mechanism is not measured and is no longer claimed. The
+  artefact rows in the document now carry the record's OWN outcome word rather
+  than a paraphrase, because the paraphrase is where the denial got in.
+- **Smaller repairs in the same family.** A status that is not an integer and a
+  route that is not a pair of strings are refused rather than read as "not a
+  breach" or raised as a `TypeError`; the `_is_drive_absolute` seal asserts that
+  a patch was installed rather than trusting `hasattr` on interpreters where
+  `splitroot` does not exist; the `codex exec` invocation is quoted with the
+  note that `--sandbox read-only` is the other form the shipped code builds.
+
+**What round 2 left as PROSE, stated here rather than implied to be covered.**
+
+- The two C3-F4 falsifications (the `winlogon` denial with error 5, the 64-byte
+  planted-marker read) and the workspace-write confinement control are OPERATOR
+  OBSERVATIONS OUTSIDE THE RECORD. No test reads them. Re-measuring them needs
+  an authorisation this slice does not have.
+- `codex sandbox`'s own account of itself -- the restricted token, the host's
+  `[windows] sandbox = "elevated"` setting -- is the CLI's claim and this
+  document's, not a measurement this repository takes.
+- Why the `Win32_Process` query did not complete under confinement.
+
+**OPEN FINDING, deliberately not repaired here (round 2, F-1).** `_presence` in
+`scripts/probe_control_plane.py` catches a bare `OSError` and answers `None`,
+which its callers render as "the presence check itself was denied to this
+principal". An `EIO` device failure and a `WinError 53` bad network path both
+produce `outcome: refused` with that wording -- the denial word on a fact that
+is not one, which `guarded()` sixty lines below explicitly forbids. The repair
+is three lines (`except PermissionError: return None`, and let every other
+`OSError` fall through to the backstop that already separates them), and this
+slice does not make it, for a stated reason: it would edit the module this
+measurement RAN, breaking the `probe_module_blob` identity the record binds and
+the gate that now enforces it, and re-measuring needs fresh authorisation. The
+shipped record's `browser_history: refused` row is unaffected in substance --
+the failure observed through that call was a `PermissionError: [WinError 5]`,
+which C3-F6 records by name -- but the record cannot itself distinguish the
+cause, and that is stated in its `not_claimed` list. The next slice that
+re-measures should carry the repair with it.
 
 ### Scope and serves, for all three slices
 
