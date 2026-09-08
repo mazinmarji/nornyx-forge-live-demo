@@ -87,6 +87,37 @@ def _staging(path: Path) -> Path:
     return path.with_name(path.name + ".tmp")
 
 
+def _settled(record: dict | None) -> dict:
+    """The record an ASSERTION is about to read a field off, or a legible
+    failure instead of a `TypeError`.
+
+    `Launch.record()` answers None for BOTH of `read_record`'s findings --
+    no record at all, and a record it refuses to parse -- and `write_record`
+    publishes by whole-file replace, staging a file and `os.replace`-ing it
+    onto the name. A reader that lands in that window observes one finding or
+    the other for an instant, while the runtime is perfectly healthy and
+    about to publish.
+
+    Subscripting that read said nothing about what had been observed: it
+    raised `TypeError: 'NoneType' object is not subscriptable`, which is how
+    the windows-runtime job went red on `main` at dabaade, inside the
+    two-channel wait in
+    `test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token`.
+    A WAIT LOOP can wait, so the two loops here treat None as "not settled
+    yet" and take another turn -- that fix is at the loops, not in this
+    helper. An assertion cannot wait, so it says what it saw.
+
+    Pinned by
+    `test_a_read_inside_the_publish_window_does_not_break_the_two_channel_waits`,
+    which widens that window with an adversary rather than hoping to win the
+    real race."""
+    assert record is not None, (
+        "no readable runtime record at this read: the runtime publishes by "
+        "whole-file replace, so a read landing in that window finds either no "
+        "record or one that does not parse, and `record()` answers None for both")
+    return record
+
+
 def _marker(root: Path, mode: str = "developer", **extra) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / BUNDLE_MARKER).write_text(json.dumps({
@@ -601,9 +632,19 @@ def test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token(
     # browser was opened, so it returns the record as it stands, with
     # `browser.opened` possibly still None. The asserts are unchanged, so a
     # record that never settles still fails rather than hangs.
+    #
+    # AND THE READ ITSELF CAN COME BACK EMPTY. The publish is a whole-file
+    # replace, so a read that lands in that window finds no record or one
+    # that does not parse, and `record()` answers None for both. This loop
+    # SUBSCRIPTED that read, so a normal transient raised `TypeError:
+    # 'NoneType' object is not subscriptable` instead of taking another turn
+    # -- the windows-runtime job's failure on `main` at dabaade, on this very
+    # line. None is "not settled yet", which is what a wait loop is for.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and (
-            not run.opened or run.record()["browser"]["opened"] is None):
+    while time.monotonic() < deadline:
+        record = run.record()
+        if run.opened and record is not None and record["browser"]["opened"] is not None:
+            break
         time.sleep(0.05)
     assert run.opened == [ready["url"]]
     assert run.probe_at_open[0] is not None, "the browser was opened before the server answered"
@@ -619,7 +660,7 @@ def test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token(
     assert served["bundle_root"] == str(run.bundle.resolve()) and served["project_dir"] == str(run.project)
     assert run.stop()[0] == 200
     assert run.join() == 0
-    stopped = run.record()
+    stopped = _settled(run.record())
     assert stopped["status"] == "stopped" and stopped["stopped_at"] is not None
     assert RuntimeLock(run.paths.lock).acquire(), "the lock outlived its owner"
 
@@ -628,7 +669,7 @@ def test_w5_readiness_is_bounded_and_a_timeout_is_a_visible_failure(tmp_path: Pa
     run = Launch(tmp_path, _marker(tmp_path / "bundle"), assemble_app=_slow_start(3),
                  readiness=0.5).start()
     assert run.join(60) == 2
-    record = run.record()
+    record = _settled(run.record())
     assert record["status"] == "failed" and "did not answer" in record["reason"]
     assert run.opened == [], "a timeout must not open a browser"
     assert any("did not answer" in text for _, text in run.notices)
@@ -651,18 +692,160 @@ def test_a_browser_failure_does_not_unmake_a_ready_runtime(tmp_path: Path):
     # failure where `opened is False` and the error text both matched and only
     # the notice was missing. The assertion below is unchanged and outlives the
     # bounded poll, so a notice that never arrives is still a red test.
+    # The record read is transient-tolerant for the same reason as the wait in
+    # `test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token`:
+    # the publish is a whole-file replace and `record()` answers None inside
+    # that window, which is "not settled yet", not a failure.
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and (
-            run.record()["browser"]["opened"] is None
-            or not any(ready["url"] in text for _, text in run.notices)):
+    while time.monotonic() < deadline:
+        record = run.record()
+        if (record is not None and record["browser"]["opened"] is not None
+                and any(ready["url"] in text for _, text in run.notices)):
+            break
         time.sleep(0.05)
-    record = run.record()
+    record = _settled(run.record())
     assert record["status"] == "ready"
     assert record["browser"]["opened"] is False and "no browser" in record["browser"]["error"]
     assert any(ready["url"] in text for _, text in run.notices), "the person must be told the URL"
     assert _get(ready["port"], "/api/state")[0] == 200, "the server is still serving"
     run.stop()
     assert run.join() == 0
+
+
+def test_a_read_inside_the_publish_window_does_not_break_the_two_channel_waits(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The harness half of the publish window, and it does not depend on
+    winning the real race.
+
+    `write_record` stages a file and `os.replace`s it onto the record's name.
+    A reader that lands in that window finds no record -- the name is
+    momentarily unused -- or one that does not parse, and `Launch.record()`
+    answers None for both, while the runtime is healthy and about to publish.
+    The two-channel waits above SUBSCRIPTED that read, so an ordinary
+    transient became `TypeError: 'NoneType' object is not subscriptable`
+    rather than another turn of the loop. That is how `main` went red at
+    dabaade, on the first of the two.
+
+    So the WRITER is replaced by an adversary that holds the window open and
+    shows BOTH findings inside it -- 0.15 s with the name unused, then 0.15 s
+    of half a record -- and the two tests that own those waits are run
+    against it, whole, asserting exactly what they always did.
+
+    WHY THIS IS DECIDED, NOT DRAWN. Each wait polls every 0.05 s and the
+    window is 0.3 s wide, six poll intervals, so a wait that is ALREADY
+    POLLING when the window opens is bound to read inside it rather than
+    merely likely to. Being already polling is the whole difficulty, and the
+    first version of this pin did not buy it: at the real 1.3-1.8 ms between
+    the readiness publish and the browser publish, the w5 test's FIRST poll
+    loop -- which breaks on any readable record, and takes another turn on
+    None like every wait here -- was still running when the window opened, so
+    it absorbed the window and broke only after it had closed. The
+    two-channel wait then read a settled record first time and the w5
+    mutation row stayed GREEN. So the browser publish is HELD until those
+    earlier waits are done with it -- and the holding is not taken on trust:
+    every read the harness makes is counted, and each window records how many
+    readable `ready` records had already been read when it opened. The
+    assertion at the end reads that count, so a hold that stops working
+    reports itself instead of going quiet.
+
+    The `not run.opened` short circuit cannot hide the read either: the
+    browser seam fills `run.opened` BEFORE the publish that records the
+    opening, so the window over that publish opens with the short circuit
+    already false.
+
+    Restore either subscript and this is red with that TypeError. Let the
+    publish through unwindowed, or open the window before the harness has
+    settled, and this is red on the window assertion instead -- loudly,
+    rather than passing on having shown nothing."""
+    real_write = windows_runtime.write_record
+    real_record = Launch.record
+    reads: list[dict | None] = []
+    windows: list[dict] = []
+
+    def counting_record(self: Launch) -> dict | None:
+        """Every record read the harness makes, so that "the wait was already
+        polling when the window opened" is MEASURED here rather than assumed
+        from a duration."""
+        record = real_record(self)
+        reads.append(record)
+        return record
+
+    def settled_reads() -> int:
+        return sum(1 for record in reads if record is not None and record["status"] == "ready")
+
+    def _despite_a_reader(action) -> None:
+        """Windows refuses a name a reader holds open at that instant, which
+        is the same reason the real writer retries its replace."""
+        for attempt in range(20):
+            try:
+                action()
+                return
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
+
+    def exposing_write(path: Path, record: dict) -> None:
+        # The publish the two-channel waits are watching for: still `ready`,
+        # now carrying the browser's outcome. Every other publish goes through
+        # untouched, so the window this pin opens is the one it reasons about.
+        if not (record["status"] == "ready" and record["browser"]["opened"] is not None):
+            if record["status"] == "starting":
+                reads.clear()  # a new run; the previous one's reads decide nothing
+            real_write(path, record)
+            if record["status"] == "ready":
+                # THE BROWSER IS HELD until the harness has settled. The
+                # earlier waits tolerate None too, so whichever of them is
+                # still running when the window opens ABSORBS it and only
+                # breaks once it has closed, leaving the wait under test a
+                # settled record on its first read: measured, and the w5
+                # mutation row below stayed green. One second is far more than
+                # the 0.05-0.1 s those waits poll at, and it is not TRUSTED --
+                # `settled` below counts what the harness actually read before
+                # the window opened, and the assertion reads that count.
+                #
+                # A blocking synchronisation was tried here instead and is
+                # wrong: the OLD w5 condition short circuits on `not
+                # run.opened` and so makes no read at all while the browser is
+                # held, which deadlocks the adversary against the very shape
+                # being pinned.
+                time.sleep(1.0)
+            return
+        settled, opened_at = settled_reads(), time.monotonic()
+        _despite_a_reader(path.unlink)                          # read_record: None
+        time.sleep(0.15)
+        _despite_a_reader(lambda: path.write_text("{half a record", encoding="utf-8"))
+        time.sleep(0.15)                                        # read_record: a refusal
+        # Recorded AFTER the window, and how long it was actually held: a note
+        # written before the sleeps would survive their removal and report a
+        # window that was never open.
+        windows.append({"opened": record["browser"]["opened"], "settled": settled,
+                        "held": time.monotonic() - opened_at})
+        real_write(path, record)
+
+    monkeypatch.setattr(windows_runtime, "write_record", exposing_write)
+    monkeypatch.setattr(Launch, "record", counting_record)
+    (tmp_path / "opens").mkdir()
+    (tmp_path / "refuses").mkdir()
+    test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token(
+        tmp_path / "opens")
+    test_a_browser_failure_does_not_unmake_a_ready_runtime(tmp_path / "refuses")
+    # `settled` is the count of readable `ready` records the harness had
+    # ALREADY read when the window opened. A wait polling at 0.05 s through
+    # the hold above spends about twenty of them; a window opened at the real
+    # 1.3-1.8 ms after the readiness publish arrives at one or two, before any
+    # wait under test has started. Five separates those cleanly.
+    assert [(window["opened"], window["settled"] >= 5, window["held"] >= 0.25)
+            for window in windows] == [(True, True, True), (False, True, True)], (
+        "the adversary did not hold a window open over each publish that records the "
+        "browser -- one for the opening, one for the refusal -- for long enough to be "
+        "read, with the harness already polling on a readable `ready` record. The "
+        f"two-channel waits then had nothing to read inside and this proved nothing: "
+        f"{windows}")
+    # The assertion sites cannot wait, so they say what they saw instead of
+    # raising out of a subscript.
+    with pytest.raises(AssertionError, match="no readable runtime record"):
+        _settled(None)
 
 
 # ---------------------------------------------------------------------------
@@ -677,7 +860,7 @@ def test_w6_a_second_launch_joins_the_healthy_instance_and_starts_nothing(tmp_pa
     assert second.opened == [ready["url"]], "the second launch must open the running page"
     assert second.probe_at_open[0]["instance"] == ready["instance"]
     assert [p.name for p in first.runtime_dir.glob("*.json")] == [first.paths.record.name]
-    assert first.record()["instance"] == ready["instance"], "the record was not replaced"
+    assert _settled(first.record())["instance"] == ready["instance"], "the record was not replaced"
     quiet = Launch(tmp_path, first.bundle, browser=False)
     assert _returns(quiet) == 0 and quiet.opened == []
     first.stop()
@@ -802,7 +985,8 @@ def test_a_launch_takes_over_when_the_holder_goes_away(tmp_path: Path):
                                     "port": _free_port(), "pid": 4})
     run.start()
     time.sleep(1.0)
-    assert run.record()["instance"] == "gone" and run.code is None, "still waiting on the holder"
+    assert _settled(run.record())["instance"] == "gone" and run.code is None, (
+        "still waiting on the holder")
     holder.release()
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and (run.record() or {}).get("instance") == "gone":
@@ -964,7 +1148,7 @@ def test_an_assembly_failure_is_recorded_and_told(tmp_path: Path):
 
     run = Launch(tmp_path, _marker(tmp_path / "bundle"), assemble_app=broken).start()
     assert run.join() == 2
-    record = run.record()
+    record = _settled(run.record())
     assert record["status"] == "failed" and "contracts directory unreadable" in record["reason"]
     assert "contracts directory unreadable" in run.notices[-1][1]
     assert RuntimeLock(run.paths.lock).acquire(), "the lock outlived a failed launch"
@@ -1075,7 +1259,7 @@ def test_h5_the_windows_runtime_composition_answers_only_to_a_loopback_host(
             assert _request(port, "GET", path, host, token=run.token) == 400, (host, path)
         assert _request(port, "POST", "/api/runtime/stop", host, {"actor": HUMAN},
                         token=run.token) == 400, host
-    assert run.record()["status"] == "ready", "a foreign Host stopped the runtime"
+    assert _settled(run.record())["status"] == "ready", "a foreign Host stopped the runtime"
     for host in ("127.0.0.1", "localhost", f"127.0.0.1:{port}", f"localhost:{port}"):
         for path in ("/api/runtime", "/api/state", "/"):
             assert _request(port, "GET", path, host, token=run.token) == 200, (host, path)
@@ -1512,7 +1696,7 @@ def test_a_failed_browser_open_records_and_logs_neither_the_nonce_nor_the_token(
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline and (run.record() or {}).get("browser", {}).get("opened") is not False:
         time.sleep(0.05)
-    record = run.record()
+    record = _settled(run.record())
     assert record["browser"]["opened"] is False and record["browser"]["error"], record["browser"]
     assert targets and "#" in targets[0]
     nonce = _nonce_of(targets[0])

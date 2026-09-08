@@ -472,8 +472,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # the move's 20 x 50 ms sharing-violation retry, a staging name taken
     # after a successful move left alone rather than deleted, and every
     # placement failure naming the file it could not use. 96 collected, floor
-    # at band(96) = 87.
-    "tests/test_windows_runtime.py": 87,
+    # at band(96) = 87. The record-read transient repair added ONE: a read that
+    # lands inside the record's whole-file-replace window, widened by an
+    # adversarial writer, must leave both two-channel waits taking another turn
+    # rather than raising `TypeError: 'NoneType' object is not subscriptable`
+    # -- which is what the windows-runtime job did on `main` at dabaade.
+    # 97 collected, floor at band(97) = 88.
+    "tests/test_windows_runtime.py": 88,
     # Tranche B's control-plane session: 43 collected at introduction, 77 after
     # the repair round, 80 after round 3 (the allowlisted routes ignoring
     # cookies, the owner-failure 503 on the composed surface, the page's CSP
@@ -1151,13 +1156,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 270: this module collects six above its floor at 66 exactly as it did at 61,
 # because the band moved with it. No provider row moved and no skip was declared
 # (`test_both_providers_are_ineligible_and_the_reason_names_the_missing_property`):
+# Re-measured for the record-read transient repair, which makes the two
+# two-channel waits in tests/test_windows_runtime.py treat an unreadable
+# publish window as "not settled yet": that module collects 96 -> 97 (floor
+# band(96) = 87 -> band(97) = 88) for the pin that widens the window with an
+# adversarial writer. 113 modules stand; the module-floor sum rises by one to
+# 2983 and the aggregate follows to 2991, keeping the same 8 above it. The
+# suite collects 3252 -> 3253, band(n) 2927 -> 2928, the working room below the
+# floor stays 262 (the aggregate moved with the collection), and the slack the
+# bands grant stays 270: this module collects nine above its floor at 97
+# exactly as it did at 96, because `ceil(0.9n)` moved by one with it. The
+# windows-runtime job's own arithmetic floor DOES move, 256 -> 257, because its
+# six modules now carry 270; that number is derived from a live collection by
+# `test_the_windows_job_floor_is_the_arithmetic_it_states`, which holds the
+# job's sentence to it. No provider row moved and no skip was declared:
 #
 # (rows below):
 #
-#     collected across tests/     3252   (113 modules)
-#     sum of the module floors    2982
-#     band(3252) = ceil(0.9*n)    2927
-#     MINIMUM_COLLECTED           2990
+#     collected across tests/     3253   (113 modules)
+#     sum of the module floors    2983
+#     band(3253) = ceil(0.9*n)    2928
+#     MINIMUM_COLLECTED           2991
 #     above the module sum         8
 #     below what collects         262
 #
@@ -1213,7 +1232,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 2990
+MINIMUM_COLLECTED = 2991
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
