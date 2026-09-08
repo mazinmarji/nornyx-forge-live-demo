@@ -1,5 +1,10 @@
 # Nornyx Forge operating instructions
 
+Before planning or editing any repository-changing development cycle, follow
+`AGENTS.md` and pass `scripts/check_standing_development_obligations.py` with
+any explicitly supplied external overlay. Standing admission does not replace
+the controls below.
+
 Treat `BRD.md` as the business source of truth and `.nornyx/contracts/*.nyx` as the governance source of truth.
 
 ## Required behavior
