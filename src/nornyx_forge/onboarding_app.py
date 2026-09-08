@@ -311,9 +311,15 @@ def create_app(
         return CapsuleStore(root, seal_dir=seals)
 
     def restored(current: CapsuleStore, breach: CapsuleSealError, why: str) -> None:
-        """The store moved outside Forge: put the sealed authority back and
-        record it on the trusted lifecycle when that lifecycle can still take
-        a failure. Nothing from the untrusted disk state is read."""
+        """The store no longer matches its seal: put the sealed authority back
+        and record it on the trusted lifecycle when that lifecycle can still
+        take a failure. Nothing from the untrusted disk state is read.
+
+        `revision` is the revision the store is AT when this returns, not the
+        one it was reset to. Recording the failure is itself a commit, so the
+        two differ whenever a failure is recorded, and the reported value was
+        measured naming a revision the store had already moved past.
+        """
         revision, notes = current.restore(breach.snapshot)
         record = f"{why}: " + "; ".join(breach.problems + notes)
         sealed_lifecycle = breach.snapshot.files.get("experience.json")
@@ -321,7 +327,7 @@ def create_app(
             lifecycle = current.load_experience()
             if lifecycle["status"] == "active":
                 failed = fail_lifecycle(lifecycle, SYSTEM_ACTOR, record[:500], at())
-                current.save_experience(failed, "authority restored from seal")
+                revision = current.save_experience(failed, "authority restored from seal")
         app.state.last_restoration = {"revision": revision, "detail": record[:500]}
 
     def anchor() -> dict[str, Any]:
@@ -615,12 +621,23 @@ def create_app(
 
     @app.post("/api/journey/restore")
     def restore_authority(payload: ResolvePayload):
-        """Put the sealed authority back after the store moved outside Forge.
+        """Put the sealed authority back after the store stopped matching it.
 
         A human act, offered only while the store fails its seal. Nothing on
         the untrusted disk is read: the store is reset to what Forge last
         wrote, the lifecycle -- if it was active -- records the restoration
         as a failure that names what moved, and the store is sealed again.
+
+        WHAT THE RECORD MAY SAY. It used to say the store "was modified
+        outside Forge", and that sentence goes into PERMANENT lifecycle
+        history. It is not measured: `save` commits and then seals, so a Forge
+        process that dies between the two produces this exact finding with no
+        external actor anywhere in it -- and the history then blamed one.
+        What the record names now is what was measured (the revision and byte
+        differences) and the one actor this route does establish: the human
+        who asked for the restoration. Whoever moved the store is not known
+        here, and git metadata could not tell us -- a writer inside the store
+        commits with the store's own identity.
         """
         actor = _human_act(payload, "restoring the authority store")
         if isinstance(actor, JSONResponse):
@@ -640,7 +657,8 @@ def create_app(
                 if not problems:
                     return _refused("the store matches its seal; there is nothing to restore")
                 restored(current, CapsuleSealError(problems, snapshot),
-                         f"the authority store was modified outside Forge; restored by {actor.ident}")
+                         f"the authority store no longer matched Forge's seal; "
+                         f"restored by {actor.ident}")
                 lifecycle = current.load_experience()
             except CapsuleError as error:
                 return _refusal(error)

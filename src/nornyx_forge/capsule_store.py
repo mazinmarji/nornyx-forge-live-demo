@@ -66,7 +66,16 @@ marker sits inside the store and so inside any provider's workspace; it is
 trustworthy because the governed path executes no provider (the Provider
 Contract's eligibility decision), not the other way round, and a wholesale
 rollback of the store carries the marker back with it -- it is not a
-freshness mechanism. The seal establishes what Forge last wrote, not that it
+freshness mechanism. That basis is `MARKER_TRUST_BASIS` below: a value
+rather than a paragraph, so the day any provider becomes eligible a test
+objects instead of a sentence going quietly false. Forge's own RESTORATION
+was itself the cheapest way to remove the marker, and that is now closed:
+`_rebuild` used to wipe the marker BEFORE it corrected the authority bytes,
+so a death in that instant left the worker's forgery on disk with the marker
+gone -- `protected()` False, and a later load reading that forgery as a
+legacy store. The rebuild below writes the sealed bytes and the marker FIRST
+and wipes afterwards, so no instant of it holds forged authority under an
+absent marker. The seal establishes what Forge last wrote, not that it
 is the LATEST thing Forge wrote: an actor who can replace the store, marker
 and seal together with an earlier consistent set is not detected, so the
 surface reports the seal's currency as not independently anchored, and
@@ -117,6 +126,26 @@ DEFAULT_SEAL_DIR = Path.home() / ".nornyx" / "forge" / "seals"
 #: mechanism behind "never adopt a repository we did not initialize".
 _MARKER_FILE = ".forge-capsule"
 
+#: WHY THE SEAL MARKER CAN BE TRUSTED WHERE IT SITS, as a value.
+#:
+#: The marker lives inside the store and so inside any provider's workspace.
+#: A protected store reads as legacy only when the marker AND the seal are
+#: both gone, and the seal is outside every workspace -- so the precondition
+#: for that fall-open is a same-operating-system-user write, exactly what an
+#: unconfined provider holds. What makes the marker trustworthy at this
+#: baseline is therefore not its location: it is that NO PROVIDER EXECUTES ON
+#: THE GOVERNED PATH AT ALL, the Provider Contract's own eligibility decision
+#: (`PROVIDER_CONFINEMENT` establishes nothing, so nothing is eligible).
+#:
+#: A-022 states that basis in prose and says a later slice making any provider
+#: eligible must revisit it or silently reopen R2. A request that a human
+#: remember is not a control, so the basis is written here where a test can
+#: read it: `test_the_marker_trust_basis_cannot_survive_an_eligible_provider`
+#: is an implication -- if any provider is eligible, this value may no longer
+#: be this literal. It RECORDS a human decision as a code change; it does not
+#: make one, and changing it establishes nothing on its own.
+MARKER_TRUST_BASIS = "no_provider_executes_on_the_governed_path"
+
 _GIT_IDENTITY = [
     "-c", "user.name=forge-capsule",
     "-c", "user.email=capsule@forge.invalid",
@@ -155,15 +184,29 @@ class CapsuleSealMissing(CapsuleTamperError):
 
 
 class CapsuleSealError(CapsuleTamperError):
-    """The store does not match Forge's seal: something other than this
-    adapter wrote it, or committed to it, since Forge's last save. Carries the
-    sealed snapshot so a caller may restore the trusted state, and the
-    problems so the finding is legible."""
+    """The store does not match Forge's seal. Carries the sealed snapshot so a
+    caller may restore the trusted state, and the problems so the finding is
+    legible.
+
+    WHAT IT SAYS IS WHAT IT MEASURED. This message used to read "it was
+    written outside this adapter and is not trusted", which is a CLAIM ABOUT
+    AN ACTOR and is not what the seal check observes. The seal compares a
+    revision, a working tree and file bytes; the difference is the finding,
+    and the difference has an innocent cause this adapter can produce
+    ITSELF -- `save` commits and then seals, so a process that dies between
+    the two leaves Forge's own newest commit failing its own seal. Measured:
+    the refusal named an external writer for a Forge crash, and the human
+    restore route wrote that attribution into permanent lifecycle history.
+    Untrusted is correct and the refusal stands; the author is not measured
+    and is no longer named. Nothing here reads git metadata to soften the
+    verdict either -- author, committer and parentage are all forgeable by a
+    writer inside the store, so they may describe and may never license.
+    """
 
     def __init__(self, problems: list[str], snapshot: AuthoritySnapshot) -> None:
         super().__init__(
-            "the authority store does not match Forge's seal; it was written outside "
-            "this adapter and is not trusted: " + "; ".join(problems)
+            "the authority store does not match Forge's seal and is not trusted; "
+            "what Forge measured: " + "; ".join(problems)
         )
         self.problems = problems
         self.snapshot = snapshot
@@ -398,10 +441,40 @@ class CapsuleStore:
 
     def _mark_sealed(self) -> None:
         """Write the seal marker into the store when sealing is in force and
-        the store does not carry one yet. Called before the commit it joins."""
+        the store does not carry one yet. Called before the commit it joins.
+
+        Conditional on `protected()` because a store already carrying a marker
+        needs nothing on the ordinary save path, and rewriting it there would
+        dirty the tree for no reason. The RESTORATION path wants the
+        unconditional form and calls `_write_seal_marker` directly.
+        """
         if self.seal_dir is None or self.protected():
             return
-        (self.root / _SEAL_MARKER_FILE).write_text(
+        self._write_seal_marker()
+
+    def _write_seal_marker(self) -> None:
+        """Put the marker naming THIS store's seal on disk, whatever is there.
+
+        Deliberately not conditioned on `protected()`. `protected()` only asks
+        whether a file of that name exists, so a marker a worker deleted, or
+        replaced with one naming another store's seal, is exactly the state a
+        restoration has to correct -- and the conditional form would leave it
+        standing. No-op only when sealing is not in force at all.
+
+        Removes by shape first, like the rebuild's own wipe: a worker may have
+        left a directory or a link where the marker belongs, and `write_text`
+        would raise on it. Before this method existed the wipe ran first and
+        happened to clear that; the order that closes the fall-open would
+        otherwise have lost the recovery with it.
+        """
+        if self.seal_dir is None:
+            return
+        marker = self.root / _SEAL_MARKER_FILE
+        if marker.is_dir() and not marker.is_symlink():
+            _remove_tree(marker)
+        elif marker.is_symlink():
+            marker.unlink(missing_ok=True)
+        marker.write_text(
             canonical_json({"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}) + "\n",
             encoding="utf-8", newline="",
         )
@@ -574,28 +647,56 @@ class CapsuleStore:
     def _rebuild(self, snapshot: AuthoritySnapshot) -> None:
         """A fresh repository around the sealed bytes. Whatever the worker left
         in the store directory -- a `.git` directory, a `.git` FILE, a junction,
-        stray files -- is removed by shape, not by assumption."""
+        stray files -- is removed by shape, not by assumption.
+
+        THE ORDER IS THE PROPERTY. Every step here can die -- a crash, a kill,
+        a full disk -- and what matters is what a LATER process would then read
+        off the directory. The wipe used to come first, and it kept only the
+        store marker and the two authority files: so it deleted the seal marker
+        while the worker's forged bytes were still on disk, and a death before
+        the rewrite a few lines down left forged authority with `protected()`
+        False -- permanently readable as a legacy store by anyone who also
+        removed the seal, which is one same-user file deletion. Two-of-two had
+        become one-of-one, and Forge's own recovery path is what degraded it.
+        Measured before the repair: a `SystemExit` at the `git init` call left
+        `['.forge-capsule', 'capsule.json', 'experience.json']`, `protected()`
+        False, and a seal-less load returning the forged `stage == "READY"`.
+
+        So: sealed bytes first, then the seal marker unconditionally, then the
+        store marker, and only then the wipe and a fresh repository. Every
+        instant after the first write holds either the pre-existing state or
+        sealed authority under a marker demanding a seal; no instant holds
+        forged authority under an absent marker. The commit is last because a
+        commit is not what makes the bytes trustworthy -- the seal is.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
-        for entry in list(self.root.iterdir()):
-            if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
-                continue
-            if entry.is_dir() and not entry.is_symlink():
-                _remove_tree(entry)
-            else:
-                entry.unlink(missing_ok=True)
-        _run_git(self.root, "init", "--quiet", "--initial-branch=main")
-        (self.root / _MARKER_FILE).write_text(
-            "Forge capsule store. Managed by nornyx_forge.capsule_store; "
-            "not a user-facing repository.\n",
-            encoding="utf-8", newline="",
-        )
         for name, text in snapshot.files.items():
             path = self.root / name
             if text is None:
                 path.unlink(missing_ok=True)
             else:
                 path.write_text(text, encoding="utf-8", newline="")
-        self._mark_sealed()
+        self._write_seal_marker()
+        (self.root / _MARKER_FILE).write_text(
+            "Forge capsule store. Managed by nornyx_forge.capsule_store; "
+            "not a user-facing repository.\n",
+            encoding="utf-8", newline="",
+        )
+        # The seal marker joins the keep set only where sealing is in force.
+        # With no seal directory there is no seal for a marker to name, and one
+        # found on disk is a worker's leftover the wipe should take, exactly as
+        # it did before.
+        keep = {_MARKER_FILE, *_AUTHORITY_FILES}
+        if self.seal_dir is not None:
+            keep.add(_SEAL_MARKER_FILE)
+        for entry in list(self.root.iterdir()):
+            if entry.name in keep:
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                _remove_tree(entry)
+            else:
+                entry.unlink(missing_ok=True)
+        _run_git(self.root, "init", "--quiet", "--initial-branch=main")
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", "capsule: authority restored from seal")
 
@@ -616,6 +717,7 @@ class CapsuleStore:
 
 __all__ = [
     "DEFAULT_SEAL_DIR",
+    "MARKER_TRUST_BASIS",
     "AuthoritySnapshot",
     "CapsuleSealError",
     "CapsuleSealMissing",

@@ -45,12 +45,15 @@ import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
 
+from nornyx_forge import capsule_store as store_module
 from nornyx_forge import onboarding_app as onboarding
 from nornyx_forge import onboarding_serve
 from nornyx_forge.capsule import Actor, _chain_digest, confirm, create_document, propose
 from nornyx_forge.capsule_store import (
+    MARKER_TRUST_BASIS,
     AuthoritySnapshot,
     CapsuleSealError,
+    CapsuleSealMissing,
     CapsuleSealUnreadable,
     CapsuleStore,
     CapsuleStoreError,
@@ -60,7 +63,11 @@ from nornyx_forge.development_flow import DevelopmentFlow
 from nornyx_forge.experience import _link, advance, start_experience
 from nornyx_forge.models import WorkerResult
 from nornyx_forge.onboarding_app import create_app
-from nornyx_forge.provider_contract import GovernedEligibility
+from nornyx_forge.provider_contract import (
+    PROVIDER_CONFINEMENT,
+    GovernedEligibility,
+    governed_build_eligibility,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
@@ -493,7 +500,13 @@ def test_b10_a_forgery_left_for_a_later_process_is_tampered_until_a_person_resto
     assert restored["stage"] == "BUILD" and restored["status"] == "failed"
     persisted = _persisted(tmp_path)
     assert "READY" not in _stages(persisted)
-    assert "modified outside Forge" in persisted["history"][-1]["detail"]
+    # WHAT THE RECORD MAY SAY. This asserted "modified outside Forge" until
+    # D-2 measured that the same finding is produced by a Forge process dying
+    # between its own commit and its own seal, with no external actor in it.
+    # The record names the measurement and the human who restored, and no
+    # other actor -- pinned in full by
+    # `test_a_seal_breach_reports_what_it_measured_and_no_author`.
+    assert "no longer matched Forge's seal" in persisted["history"][-1]["detail"]
     assert "casey" in persisted["history"][-1]["detail"]
     assert _store(tmp_path).load()["authoritative"]["intent"] == "Build a customer support portal."
     assert _ok(client.get("/api/state"))["journey"]["stage"] == "BUILD"
@@ -714,6 +727,234 @@ def test_restoration_survives_a_worker_that_replaced_git_with_a_file(tmp_path: P
     restored = _ok(later.post("/api/journey/restore", json={"actor": HUMAN}))
     assert restored["stage"] == "BUILD" and "rebuilt" in restored["restoration"]["detail"]
     assert _store(tmp_path).load()["authoritative"]["intent"] == "Build a customer support portal."
+
+
+# ---------------------------------------------------------------------------
+# D  the recovery path's own window, and the claim the refusal used to make
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("marker", ["intact", "deleted", "foreign"])
+def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str):
+    """Forge's own recovery used to be the cheapest way to strip the marker.
+
+    MEASURED before the repair, with a `SystemExit` at the `git init` call
+    inside `_rebuild`: the wipe had already removed `.forge-seal` while the
+    worker's forged bytes were still on disk, so the directory held
+    `['.forge-capsule', 'capsule.json', 'experience.json']`, `protected()` was
+    False, and a load with the seal file also gone returned the forged
+    `stage == "READY"`. Not a window -- a PERMANENT state. A-022 leans on
+    "marker AND seal both gone" for the legacy reading; after this crash Forge
+    itself had removed one of the two, leaving the attacker a single same-user
+    deletion, which is exactly the capability that paragraph concedes an
+    unconfined provider holds.
+
+    Three marker states at the moment of the crash, because the repair has two
+    halves and each is invisible to the other. `intact` fails if the wipe is
+    allowed to run before the marker is rewritten; `foreign` fails if the
+    rewrite is made conditional on `protected()`, which only asks whether a
+    file of that name exists and cannot see that it names another store's
+    seal.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")     # the honest reset route is unreachable
+    if marker == "deleted":
+        (capsule / ".forge-seal").unlink()
+    elif marker == "foreign":
+        (capsule / ".forge-seal").write_text(
+            json.dumps({"schema": "nornyx.forge.capsule_seal_marker.v1", "seal": "0" * 24},
+                       sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8", newline="")
+
+    survivor = store_module._run_git
+
+    def dies_at_init(root, *args):
+        if args and args[0] == "init":
+            raise SystemExit("the process died at git init inside _rebuild")
+        return survivor(root, *args)
+
+    monkeypatch.setattr(store_module, "_run_git", dies_at_init)
+    with pytest.raises(SystemExit):
+        store.restore(sealed)
+    monkeypatch.undo()
+
+    seal_marker = capsule / ".forge-seal"
+    assert seal_marker.exists(), (
+        "the crash left the store with no seal marker while bytes were on "
+        f"disk: {sorted(path.name for path in capsule.iterdir())}"
+    )
+    assert json.loads(seal_marker.read_text(encoding="utf-8")) == {
+        "schema": "nornyx.forge.capsule_seal_marker.v1", "seal": store.seal_ident()}, (
+        "the marker on disk does not name this store's seal, so a load would "
+        "hold the store to an anchor that is not its own"
+    )
+    assert store.protected()
+    for name in ("capsule.json", "experience.json"):
+        assert (capsule / name).read_text(encoding="utf-8") == sealed.files[name], (
+            f"{name} still holds the worker's bytes after the crash"
+        )
+
+    # AND THE SECOND HALF. One same-user deletion is what the design concedes
+    # an unconfined provider holds; it must not be enough. With the seal gone
+    # too, the store is protected-but-unsealed -- a refusal -- rather than a
+    # legacy store whose files are read.
+    store.seal_path().unlink()
+    later = CapsuleStore(capsule, seal_dir=tmp_path / "seals")
+    for call in (later.load_experience, later.load):
+        with pytest.raises(CapsuleSealMissing):
+            call()
+
+
+def _commit_landed_before_its_seal(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CapsuleStore, list[str]]:
+    """THE WRITE-ORDER GAP, driven rather than described.
+
+    `save` writes, commits, and THEN seals, so a process that dies between the
+    commit and the seal leaves Forge's own newest commit failing Forge's own
+    seal: a clean tree at an unsealed revision. Returns the store and the
+    problems the seal reports, so the callers assert against a measurement
+    rather than a transcription of one.
+
+    `monkeypatch.undo()` runs before returning because the restore route seals
+    again, and a `seal` that is still raising would kill that instead.
+    """
+    store = _sealed_store(tmp_path)
+    document, _ = propose(store.load(), "intent", "Build a customer support portal.",
+                          Actor("model", "m"), "2026-09-03T10:00:00Z")
+
+    def dies_before_sealing(self):
+        raise SystemExit("the process died before sealing")
+
+    monkeypatch.setattr(CapsuleStore, "seal", dies_before_sealing)
+    with pytest.raises(SystemExit):
+        store.save(document, "propose intent")
+    monkeypatch.undo()
+    return store, store.seal_problems(store.sealed())
+
+
+def test_a_commit_that_landed_before_its_seal_fails_closed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The write-order gap had no coverage at all; only the LEGACY never-sealed
+    case did. It fails CLOSED, and that is the property pinned here.
+
+    (ii) is the one that bites: reordering `save` to seal BEFORE committing
+    would make these loads succeed, because the seal would then name the
+    revision the commit was about to create -- a store sealed against a
+    revision that does not exist yet, failing OPEN for the whole window
+    instead of closed. The cost of failing closed is real and is asserted
+    too: the transition is lost, and the lifecycle spends its
+    one-failure-per-stage allowance on a Forge crash.
+    """
+    store, problems = _commit_landed_before_its_seal(tmp_path, monkeypatch)
+    capsule = tmp_path / "capsule"
+    sealed = store.sealed()
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=capsule, capture_output=True,
+                          text=True, check=True).stdout.strip()
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=capsule,
+                            capture_output=True, text=True, check=True).stdout.strip()
+    assert status == "", "the specimen is a CLEAN tree at an unsealed revision"
+    # (i) the two measured problems, exactly.
+    assert problems == [
+        f"HEAD is {head[:12]}, sealed revision is {sealed.revision[:12]}",
+        "capsule.json differs from the sealed bytes",
+    ], problems
+    # (ii) both authority routes refuse.
+    for call in (store.load, store.load_experience):
+        with pytest.raises(CapsuleSealError):
+            call()
+    # (iii) the surface says TAMPERED and offers the restoration.
+    client = _client(tmp_path)
+    state = client.get("/api/state")
+    assert state.status_code == 409
+    assert state.json()["finding"] == "TAMPERED" and state.json()["restorable"] is True
+    # (iv) restoration costs the transition; the dropped commit is reflog-only.
+    assert "capsule: propose intent" in _git_log(capsule)
+    restored = _ok(client.post("/api/journey/restore", json={"actor": HUMAN}))
+    assert "capsule: propose intent" not in _git_log(capsule)
+    assert _store(tmp_path).load()["proposed"] == []
+    assert restored["stage"] == "DISCOVER" and restored["status"] == "failed"
+    # D-5. The revision reported is the one the store is AT, not the one it was
+    # reset to: recording the lifecycle failure is itself a commit, and the
+    # payload was measured naming a revision the store had already moved past.
+    now_at = subprocess.run(["git", "rev-parse", "HEAD"], cwd=capsule, capture_output=True,
+                            text=True, check=True).stdout.strip()
+    assert restored["restoration"]["revision"] == now_at
+    assert restored["restoration"]["revision"] != sealed.revision
+    assert _store(tmp_path).seal_problems(_store(tmp_path).sealed()) == []
+
+
+def test_a_seal_breach_reports_what_it_measured_and_no_author(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A label may not stand in for the thing measured -- least of all in a
+    record that persists.
+
+    The refusal used to say the store "was written outside this adapter" and
+    the restoration wrote "modified outside Forge" into permanent lifecycle
+    history. Both are claims about an ACTOR. What the seal measures is a
+    revision, a working tree and file bytes; this specimen is a Forge crash
+    with no external actor anywhere in it, and it produced both sentences.
+    """
+    store, problems = _commit_landed_before_its_seal(tmp_path, monkeypatch)
+    with pytest.raises(CapsuleSealError) as breach:
+        store.load()
+    assert "outside" not in str(breach.value), str(breach.value)
+    for problem in problems:
+        assert problem in str(breach.value)
+
+    client = _client(tmp_path)
+    refused = client.get("/api/state").json()["refused"]
+    assert "outside" not in refused, refused
+    for problem in problems:
+        assert problem in refused, (problem, refused)
+
+    restored = _ok(client.post("/api/journey/restore", json={"actor": HUMAN}))
+    detail = _persisted(tmp_path)["history"][-1]["detail"]
+    assert detail == restored["restoration"]["detail"]
+    for problem in problems:
+        assert problem in detail, (problem, detail)
+    # The one actor this route establishes is the human who asked for the
+    # restoration. Every word below claims a DIFFERENT actor, and none of them
+    # is measured: whoever moved the store is unknown here, and git metadata
+    # cannot tell us -- `commit_inside` above is the store's own identity.
+    assert "casey" in detail
+    for claimed in ("outside", "modified", "provider", "worker", "written by"):
+        assert claimed not in detail, (claimed, detail)
+
+
+def test_the_marker_trust_basis_cannot_survive_an_eligible_provider():
+    """A-022 says a later slice making any provider eligible "must revisit
+    this before it does so, or it silently reopens R2". A request that a human
+    remember is not a control.
+
+    Stated as an implication, the shape of
+    `test_the_table_may_not_claim_more_than_the_evidence`: it objects only
+    once a provider is actually eligible, so the day a real confinement
+    measurement licenses one, this fails and the person who closed it records
+    the marker decision in the same commit -- rather than this having to be
+    rewritten by them, or never read at all.
+
+    It RECORDS a human decision as a code change. Editing the constant
+    establishes nothing about the marker; it only says a human considered it.
+    """
+    eligible = sorted(name for name in PROVIDER_CONFINEMENT
+                      if governed_build_eligibility(name).eligible)
+    if eligible:
+        assert MARKER_TRUST_BASIS != "no_provider_executes_on_the_governed_path", (
+            f"{eligible} may now execute on the governed path, and the seal "
+            "marker's stated basis is still that none does. The marker sits "
+            "inside the provider's workspace; A-022's marker paragraph reads "
+            "a protected store as legacy only when the marker AND the seal are "
+            "both gone, and R2 reopens the moment an unconfined provider can "
+            "remove one of them. Revisit that paragraph and this constant "
+            "together, in the commit that makes the provider eligible."
+        )
+    assert "MARKER_TRUST_BASIS" in (store_module.__doc__ or ""), (
+        "the module docstring states the basis in prose without naming the "
+        "value, so the prose and the constant can drift apart"
+    )
 
 
 def test_a_damaged_or_foreign_seal_is_a_tamper_finding_not_an_absent_project(tmp_path: Path):

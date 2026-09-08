@@ -677,7 +677,35 @@ whole design concedes -- exactly what an unconfined provider holds -- and
 the marker is trustworthy at this baseline because no provider executes on
 the governed path at all. A later slice
 that makes any provider eligible must revisit this before it does so, or it
-silently reopens R2. Nor is the marker a freshness mechanism: a store
+silently reopens R2 -- and that is no longer a request that a human
+remember. The basis is `capsule_store.MARKER_TRUST_BASIS`
+(`no_provider_executes_on_the_governed_path`), and
+`test_the_marker_trust_basis_cannot_survive_an_eligible_provider` is an
+implication over the eligibility decision: if any provider is eligible, that
+constant may no longer read that literal. It objects only once a provider
+actually is, so a real confinement measurement turns it red instead of
+relying on the person who took it to recall this paragraph. It RECORDS the
+human decision as a code change and establishes nothing on its own -- editing
+the constant says a person considered the marker, not that the marker holds.
+
+Forge's own recovery path was the cheapest way to remove one of the two.
+`_rebuild` -- the fallback restoration, reachable from the shipped surface
+whenever a worker destroyed or replaced the store's repository -- wiped
+everything but the store marker and the two authority files BEFORE it
+rewrote them, so `.forge-seal` was deleted while the worker's forged bytes
+were still on disk. Measured on this baseline with a `SystemExit` at the
+`git init` call: the directory held `['.forge-capsule', 'capsule.json',
+'experience.json']`, `protected()` was False, the forged `stage == "READY"`
+was still there, and a load whose seal file had also gone returned it as a
+legacy store. Not a window but a permanent state, and it reduced the
+attacker's remaining cost to the single same-user deletion the paragraph
+above already concedes -- with Forge's recovery having paid the other half.
+The rebuild now writes the sealed bytes, then the seal marker
+unconditionally, then the store marker, and wipes afterwards, so no instant
+of it holds forged authority under an absent marker. The marker write is
+unconditional because `protected()` only asks whether a file of that name
+exists: a marker naming another store's seal would otherwise survive the
+recovery that exists to correct it. Nor is the marker a freshness mechanism: a store
 restored wholesale to an earlier state carries its marker back with it. The
 seal establishes what Forge last wrote, not that it is the latest thing
 Forge wrote: an actor who can replace the store, its marker and its seal
@@ -702,7 +730,27 @@ while it writes. The seal is written after the store's commit, so a process
 that dies between the two leaves Forge's own newest commit reading as a
 breach at the next load; that fails closed, and a restoration then returns
 the store to the previous sealed revision, losing that one transition
-rather than trusting anything unsealed. A breach found when the sealed
+rather than trusting anything unsealed. Measured through both authority
+routes and through `/api/state`, and now pinned by
+`test_a_commit_that_landed_before_its_seal_fails_closed` -- it had no
+coverage at all before, only the legacy never-sealed case did. What that
+measurement also found is that the refusal MISDESCRIBED it. The seal
+compares a revision, a working tree and file bytes; the refusal said the
+store "was written outside this adapter" and the human restore route wrote
+"modified outside Forge" into permanent lifecycle history. Both are claims
+about an ACTOR, and this specimen is a Forge crash with no external actor
+anywhere in it. Both now state what was measured and name the one actor the
+route establishes: the human who restored. Whoever moved the store is not
+known, and git metadata cannot say -- a writer inside the store commits with
+the store's own identity, which the suite's own attacker uses -- so no trust
+is derived from author, committer or parentage; they may describe and may
+never license a load. The verdict is unchanged: untrusted, restorable, and
+the cost of failing closed is still the transition, the stage's
+one-failure-per-stage allowance, and a permanent history entry -- now one
+that blames nobody. The revision that entry reports is the one the store
+stands at when the restoration returns, not the one it was reset to;
+recording the failure is itself a commit, and the payload was measured
+naming a revision the store had already moved past. A breach found when the sealed
 lifecycle is already failed is restored and reported for the session but
 cannot be recorded on the lifecycle, which admits one failure per stage.
 The developer CLI's `build --project-dir` reads the capsule under the same
@@ -720,6 +768,31 @@ into the proposal's own commit, and the lifecycle save then found nothing
 left to commit. One in-process store lock now serialises every read and
 write of the store, the build thread's included; it is held around store
 access only, never around the build.
+
+WHAT THE SEAL RE-PROOF DID NOT MEASURE, carried forward rather than closed.
+Every "death" reproduced above was a Python exception, not a SIGKILL or a
+power loss: whether `os.replace(tmp, path)` in `seal()` can leave a torn or
+absent seal on NTFS under a hard kill is unmeasured, and if it can, the
+precondition for the rebuild fall-open gets cheaper rather than harder. All
+of it was measured on Windows 11 only -- `_remove_tree`'s read-only retry and
+`git clean -fdxq` on POSIX are untested here. `store_lock` serialises
+in-process readers only, so whether two Forge processes can hold one store
+concurrently, and therefore whether the rebuild's remaining instants are
+reachable WITHOUT a crash, is unmeasured. `save` does not call
+`assert_sealed()`; only the two loads and the restore route do, and whether
+any reachable sequence reaches `save` or `protect` on an unverified store --
+the developer CLI's `build --project-dir` in particular -- was not traced.
+`git reset --hard` returning non-zero falls through to `_rebuild` silently,
+and whether a file lock from an antivirus or an indexer can produce a PARTIAL
+reset that then passes `seal_problems` was not tested. One claim was left
+standing deliberately: the build thread still records that "the provider
+modified the project's authority store during the build". That attribution
+has a basis the crash case lacks -- the directory was handed to a provider
+for exactly that interval -- but it is still an attribution rather than a
+measurement, and it is named here rather than repaired outside this slice.
+Detection of a wholesale rollback of store, marker and seal to an earlier
+consistent set is unchanged and still deferred; nothing here anchors
+freshness.
 
 **Scope.** This wires the existing contract; it changes no stage, edge,
 actor or evidence rule. READY means what the contract establishes and

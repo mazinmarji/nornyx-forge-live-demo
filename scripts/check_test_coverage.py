@@ -595,8 +595,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # READY dirty and committed, forged capsule authority, the mid-build
     # poll and actions, the restart with and without a detected breach,
     # the real DevelopmentFlow worker seam, the seal's own detections and
-    # rebuild, and the thread-start lock release.
-    "tests/test_provider_authority_boundary.py": 32,
+    # rebuild, and the thread-start lock release. Raised 32 -> 37 for
+    # Tranche D, the seal re-proof -- 6 new collected (41 total): the three
+    # marker states of a crash inside `_rebuild`, which used to leave the
+    # store permanently readable as legacy; the write-order gap, which had
+    # no coverage at all; the refusal and the persisted history reporting
+    # what they measured rather than naming an actor; and the marker trust
+    # basis as an implication over the eligibility decision.
+    "tests/test_provider_authority_boundary.py": 37,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1233,30 +1239,66 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # and added five nodes there. The prose was rewrapped rather than the detector
 # widened; the sweep is right to be broad.
 #
+# TWO SLICES ARE RECORDED BELOW AND ONLY THE SECOND DESCRIBES THIS TREE.
+# Tranche I's paragraph states the totals of the BASE this slice is rebased
+# onto; it is kept because the floor it raised is still live and this is the
+# derivation of why tests/test_recorded_measurements.py sits at 180. The rows
+# at the end of the block are the measured totals of THIS tree, and the
+# Tranche D paragraph is the one that reaches them.
+#
 # Re-measured for TRANCHE I, the real embedded-interpreter run. NO MODULE WAS
 # ADDED and no module gained a test of its own; 113 modules stand. What moved is
 # the DOCUMENT SWEEP: docs/governance/EMBEDDED_INTERPRETER_RUN.md records the
 # operator act A-023 had carried as NOT PERFORMED, and
 # tests/test_recorded_measurements.py parametrises five checks over the
 # governance documents, so it collects 194 -> 199 and its floor follows
-# band(194) = 175 -> band(199) = 180. The module-floor sum rises by 5 to 3032
-# and the aggregate follows to 3040, keeping the same 8 above it. The suite
-# collects 3303 -> 3308, band(n) 2973 -> 2978, and the working room below the
-# floor stays 268. THE SLACK THE BANDS GRANT IS UNCHANGED at 276: the one module
-# that moved gained five collected and five of floor, so it still sits exactly
-# 19 above its own band. NO PROVIDER ROW MOVED -- the run is operator evidence
-# about a bundle folder and decides nothing about admission -- and the recorded
-# smoke result is `fail`, which is the finding rather than a regression in this
-# suite.
+# band(194) = 175 -> band(199) = 180. The module-floor sum rose by 5 to 3032
+# and the aggregate followed to 3040, keeping the same 8 above it. The suite
+# collected 3303 -> 3308, band(n) 2973 -> 2978, and the working room below the
+# floor stayed 268. THE SLACK THE BANDS GRANT WAS UNCHANGED at 276: the one
+# module that moved gained five collected and five of floor, so it still sits
+# exactly 19 above its own band. NO PROVIDER ROW MOVED -- the run is operator
+# evidence about a bundle folder and decides nothing about admission -- and the
+# recorded smoke result is `fail`, which is the finding rather than a
+# regression in this suite.
+#
+# Re-measured for Tranche D, the seal re-proof, which closes a fall-open in
+# the store's own recovery path and stops two refusals naming an actor they
+# never measured: tests/test_provider_authority_boundary.py collects 35 -> 41
+# (floor band(35) = 32 -> band(41) = 37). 113 modules stand -- every new node
+# is in the module that already held the seal boundary -- the module-floor sum
+# rises by five to 3037 and the aggregate follows to 3045, keeping the same 8
+# above it. The suite collects 3308 -> 3314, band(n) 2978 -> 2983, the working
+# room below the floor moves 268 -> 269 (the collection rose by six and the
+# aggregate by five), and the slack the bands grant moves 276 -> 277: this
+# module collects four above its floor at 41 where it collected three at 35,
+# because `ceil(0.9n)` moved by five while the module moved by six. The
+# windows-runtime job's floor is untouched at 262: none of its six modules is
+# tests/test_provider_authority_boundary.py. No provider row moved and no skip
+# was declared.
+#
+# Those figures are stated against main AFTER TRANCHE I landed -- the
+# real embedded-interpreter run, which raised
+# tests/test_recorded_measurements.py from 175 to 180 and the suite
+# from 3303 to 3308 -- and were re-measured from a fresh collection
+# when this slice was rebased onto it. It was measured against Tranche
+# C slice C3 before that, and those totals are gone from here for the
+# same reason the older ones are. This round was first measured against the older base (3253 -> 3259,
+# aggregate 2991 -> 2996), and both totals are false for this tree; they are
+# not kept beside the constant, because a superseded measurement left standing
+# next to the thing it no longer measures is precisely the rot this block
+# exists to stop -- and a rebase is the one moment that manufactures it
+# wholesale. What survives the rebase is the module delta itself, 35 -> 41:
+# a fact about the slice rather than about the base under it:
 #
 # (rows below):
 #
-#     collected across tests/     3308   (113 modules)
-#     sum of the module floors    3032
-#     band(3308) = ceil(0.9*n)    2978
-#     MINIMUM_COLLECTED           3040
+#     collected across tests/     3314   (113 modules)
+#     sum of the module floors    3037
+#     band(3314) = ceil(0.9*n)    2983
+#     MINIMUM_COLLECTED           3045
 #     above the module sum         8
-#     below what collects         268
+#     below what collects         269
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1277,7 +1319,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 276 in total, and the aggregate refuses
+# per-module bands already grant 277 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1310,7 +1352,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3040
+MINIMUM_COLLECTED = 3045
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
