@@ -121,6 +121,31 @@ def _parsed(token: str | None) -> bool:
     return isinstance(token, str) and bool(token)
 
 
+def _settled(record: dict | None) -> dict:
+    """The record an ASSERTION is about to read a field off, or a legible
+    failure instead of a `TypeError`. The same shape as the in-process
+    harness's helper of this name, for the same reason and against a child
+    process rather than a thread.
+
+    `HostRuntime.record()` answers None for BOTH of `read_record`'s findings
+    -- no record at all, and a record it refuses to parse -- and the child
+    publishes by whole-file replace, staging a file and `os.replace`-ing it
+    onto the name. A read that lands in that window observes one finding or
+    the other for an instant, while the child is healthy and about to
+    publish. Subscripting it raised `TypeError: 'NoneType' object is not
+    subscriptable` and named nothing, which is how the windows-runtime job
+    went red on `main` at dabaade, in the sibling module's two-channel wait.
+
+    The waits here already treat None as "not settled yet" (`wait_for`, and
+    the impostor poll's `(record() or {})`); these are the assertions, which
+    cannot wait, so they say what they saw."""
+    assert record is not None, (
+        "no readable runtime record at this read: the runtime publishes by "
+        "whole-file replace, so a read landing in that window finds either no "
+        "record or one that does not parse, and `record()` answers None for both")
+    return record
+
+
 class HostRuntime:
     """The runtime as a real child process, exactly as the developer
     launcher's bootstrap starts it, from an unrelated working directory."""
@@ -270,7 +295,7 @@ def test_the_harness_stops_waiting_the_moment_its_child_is_dead(tmp_path: Path):
     write_record(run.paths.record, {"schema": RUNTIME_SCHEMA, "instance": "dead-child",
                                     "status": "ready", "port": 8710,
                                     "url": "http://127.0.0.1:8710/"})
-    assert run.record()["status"] == "ready", "the record the harness reads says ready"
+    assert _settled(run.record())["status"] == "ready", "the record the harness reads says ready"
     assert not run.session_path.exists(), "the specimen is a child that never wrote the bearer"
     # A REAL dead process: `poll()` answers a real exit code, which is the
     # thing the loop reads.
@@ -610,7 +635,7 @@ def test_w1_w2_w11_w12_the_bundles_own_code_serves_from_an_unrelated_directory(h
     assert status == 200 and b"Nornyx Forge" in page and b"Stop Forge" in page
     assert ready["bundle_mode"] == "developer" and ready["url"] == f"http://127.0.0.1:{ready['port']}/"
     assert runtime.stop() == 0
-    assert runtime.record()["status"] == "stopped"
+    assert _settled(runtime.record())["status"] == "stopped"
     log = runtime.paths.log.read_text(encoding="utf-8", errors="replace")
     assert "answered with its own instance token" in log
 
@@ -643,14 +668,14 @@ def test_an_unbearered_stop_against_the_real_child_is_refused_and_leaves_it_serv
         assert status == 401 and body == NO_SESSION, (token, status, body)
     time.sleep(0.5)
     assert runtime.process.poll() is None, "the child exited on an un-bearered stop"
-    assert runtime.record()["status"] == "ready"
+    assert _settled(runtime.record())["status"] == "ready"
     assert probe_instance(ready["port"])["instance"] == ready["instance"]
     log = runtime.paths.log.read_text(encoding="utf-8", errors="replace")
     assert "Traceback" not in log
     for request_line in ('"POST ', '"GET ', 'HTTP/1.1"', "/api/runtime/stop"):
         assert request_line not in log, f"an access-log line reached the runtime log: {request_line!r}"
     assert runtime.stop() == 0
-    assert runtime.record()["status"] == "stopped"
+    assert _settled(runtime.record())["status"] == "stopped"
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +688,7 @@ def test_w6_a_second_process_joins_the_running_instance_and_starts_nothing(host)
     ready = first.wait_for("ready")
     second = host(label="second").start()
     assert second.process.wait(timeout=120) == 0, second.output.read_text(encoding="utf-8")
-    assert first.record()["instance"] == ready["instance"], "the record was replaced"
+    assert _settled(first.record())["instance"] == ready["instance"], "the record was replaced"
     assert [p.name for p in first.runtime_dir.glob("*.json")] == [first.paths.record.name]
     assert len(_listeners_on(ready["port"])) == 1
     assert probe_instance(ready["port"])["instance"] == ready["instance"]

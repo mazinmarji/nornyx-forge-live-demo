@@ -2,6 +2,44 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The Windows runtime harness no longer turns an ordinary record-publish
+  transient into a `TypeError`. `write_record` publishes by whole-file replace
+  -- stage a file, `os.replace` it onto the record's name -- so a reader that
+  lands in that window finds either no record at that name or one that does not
+  parse; `read_record` answers None for the first and refuses the second, and
+  the harnesses' `record()` collapses both to None. Two wait loops in
+  `tests/test_windows_runtime.py` SUBSCRIPTED that read, so a transient raised
+  `TypeError: 'NoneType' object is not subscriptable` instead of taking another
+  turn. That is what failed the `windows-runtime` job on `main` at `dabaade`, in
+  `test_w5_the_browser_opens_only_after_the_server_answered_with_its_own_token`.
+  Both loops now treat None as "not settled yet", which is what a wait loop is
+  for, and the assertions in that module and in
+  `tests/test_windows_host_runtime.py` that read a field off a fresh record go
+  through `_settled`, which says what it saw rather than raising out of a
+  subscript. What any test ASSERTS is unchanged; only the handling of the
+  transient is. Nothing in `src/` changed: the publish window is inherent to a
+  whole-file replace, and the readers are already told about it. `_read_record`
+  in `scripts/build_windows_bundle.py` does not carry the same shape: it never
+  raises, and both of its pollers are behind an `isinstance` check.
+  Pinned by
+  `test_a_read_inside_the_publish_window_does_not_break_the_two_channel_waits`,
+  which replaces the WRITER with an adversary that holds the window open for
+  0.3 s and shows both findings inside it -- the name unused, then half a
+  record -- and then runs the two tests that own those waits against it, whole.
+  It is decided rather than raced: the browser publish is held until the
+  earlier waits are done with it, because they tolerate None too and so ABSORB
+  the window if they are still running (measured -- the first version of this
+  pin let them, and the mutation row it exists for stayed green); and how many
+  readable `ready` records the harness had actually read before the window
+  opened is counted and asserted, so a hold that stops working reports itself
+  instead of going quiet. Measured under mutation: restoring either subscript
+  is red with that exact `TypeError`; letting the publish through unwindowed,
+  or opening the window before the harness is polling, is red on the window
+  assertion; removing `_settled`'s guard is red on the raises check.
+  `tests/test_windows_runtime.py` collects 96 -> 97, so its floor is
+  `band(97) = 88`, `MINIMUM_COLLECTED` is 2991, and the `windows-runtime` job's
+  derived floor is 257 -- its six modules now carry 270 (14/15/23/53/68/97).
+
 - The admission criterion `control_plane_reachability` is retired and replaced
   by `control_plane_authority` (Tranche C, slice C1). The retired property
   asked whether a provider could open a loopback connection at all -- a PROXY
