@@ -133,6 +133,51 @@ git is refused by name. Runtime state (a record, a lock, a log) lives under
 any project's governance (A-023). The governed build still refuses both
 declared providers on this baseline, exactly as on every other surface.
 
+## Control-plane probe (operator diagnostic)
+
+`scripts/probe_control_plane.py` is an operator diagnostic that measures a live
+onboarding surface over its real loopback socket, as a local process would, and
+writes a `nornyx.forge.control_plane_probe.v1` record. It runs no provider and
+changes no admission criterion; it drives the HTTP methods across the surface's
+route census, records what each answered, attempts the artefact reads a same-user
+process could make, and derives one of three states -- `reachable_unadmitted`,
+`admitted_nuisance`, `authority_reachable` -- or `inconclusive` from the
+unauthenticated request log alone; a state other than `inconclusive` needs every
+documented cell answered, and a gated 2xx dominates at any coverage. Run against
+a live surface it classifies itself `admitted_nuisance` with
+`principal_separated: not_separated` and records why that is not confinement for
+a caller that is the surface's own user (A-027, A-028). It never writes the
+bearer or a raw nonce into the record, and it names no host: home, login and
+machine name are redacted -- the principal's Windows SID is RETAINED on purpose,
+because a subject binding whose principal is redacted binds nothing (A-028).
+
+Each artefact read carries one of three outcomes, kept apart: `observed` is a
+capability this caller acquired, `refused` is a facility that exists and denied
+it, and `not_applicable` is that there was nothing to try. None of them is a
+pass.
+
+What running it does: against a browser-granted surface the run pulls
+`/api/runtime/reopen`, which mints a fresh reopen nonce and opens the owner's
+default browser on it -- one mint per run (the explicit pull that follows
+answers 429 inside the rate-limit interval). Expect a browser tab to open each
+time. `--host` must be loopback (`localhost` is normalised to 127.0.0.1). The
+whole run is bounded by `--deadline` (default 300 s), which clamps every
+operation it starts -- the `git` and `whoami` calls of the subject binding
+included -- and any expiry, at any point, makes the run `inconclusive` with the
+reason and a count of the reads it cut off. Write the record OUTSIDE the
+repository; a `--out` inside the working tree is refused:
+
+```bash
+python scripts/probe_control_plane.py --port <port> --expect-instance <instance> --out "$TEMP/forge-control-plane-probe.json"
+```
+
+Exit codes: 0 `admitted_nuisance` or `reachable_unadmitted` (no authority
+reached by this caller -- NOT a confinement verdict of anything); 2
+`authority_reachable`; 3 `inconclusive`; 4 the probe refused to run (a
+non-loopback host, an `--out` inside the repository) or the record failed its
+own validation. Every refusal is one line on stderr naming no path, and a
+hostile listener cannot turn a bad `/api/runtime` body into a traceback.
+
 ## Full live mode
 
 Prerequisites:

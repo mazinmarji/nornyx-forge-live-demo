@@ -1797,3 +1797,222 @@ admission, and no seal, lock or port behaviour.
 **Serves.** the loopback half of A-024's measured gap, the claim discipline in
 `CLAUDE.md`, and the trust boundary A-015 discloses -- narrowed for
 authority-moving routes, not redrawn.
+
+## A-028 DRAFT A control-plane probe is a measurement, not an admission
+
+**Status: DRAFT (Tranche C, slice C2).** This entry describes a measurement
+HARNESS and the one measurement it makes of the harness against itself. It adds
+no confinement property, moves no provider row, and is not the state-vocabulary
+definition a later slice may write; it is limited to what C2 observes and, more
+importantly, to what C2 does not.
+
+**Assumption.** Whether a local process can acquire or move Forge authority
+through the onboarding control plane is a question that must be answered by
+OBSERVING the surface over a real socket, as a stranger would, and recording the
+result in a record that binds its subject and names the mechanism behind each
+fact -- not by reading a caller's own account of itself, and not from an
+in-process client that authenticates deliberately. `scripts/probe_control_plane.py`
+is that observer. It takes a live surface (a port, an optional expected instance,
+an optional session file for a positive control), drives the seven HTTP methods
+across the composed route census and the four allowlisted pairs from THIS
+process, attempts the artefact reads a same-user caller could make, and writes a
+`nornyx.forge.control_plane_probe.v1` record whose classification is derived from
+the unauthenticated request log alone.
+
+**Why it needs stating.** A-027 makes loopback reachability irrelevant by
+requiring this run's bearer on every authority-moving route, but it does not make
+reachability ABSENT, and A-024 measured that a confined Codex worker still
+reaches loopback. So the honest question is not "can a local process connect"
+(it can) but "what can a local process, running as the surface's own OS
+principal, actually do to the surface" -- and the only witness competent to
+answer is the surface, over a socket. A record that answered from a caller's exit
+code, or from an in-process `TestClient`, would be the substitution A-024's
+verifier was rebuilt to refuse.
+
+**What C2 establishes, and only this.** The probe's documented path list is held
+equal, IN PROCESS, to the route table of the served composition (`assemble` plus
+`attach_runtime_routes`), the same composition the live fixture launches; a
+route the census cannot probe -- a mount, a websocket route -- reddens the check
+rather than hiding in it. Over a real socket, the four allowlisted pairs answer
+and every other documented cell is refused 401 without the bearer; this proves
+the gate's coverage over the documented cells, not the route table, because a
+gated route and an unrouted path both answer the fixed 401 by design and the
+wire cannot tell them apart. Run in-process as the unconfined local caller
+against that live surface, the probe classifies ITSELF `admitted_nuisance`: it
+reaches the four allowlisted pairs, every other cell refuses it, and it moves no
+authority state. The state is derived from the request log alone, under two
+rules: allowlist membership comes from the constant and never from a row's
+stored flag (a row that disagrees is refused); and a state that would count as
+confinement requires every cell of the 133-cell matrix answered, while a gated
+2xx dominates at any coverage -- so a partial log, a surface that stops
+answering or a probe that runs out of deadline is `inconclusive` with the
+reason, never a state. C2 derives THREE states plus `inconclusive`;
+`unreachable` is not in the record's vocabulary, because deriving it needs a
+positive control from a separated principal proving the same instance was up
+while this caller could not connect, which only a later slice can supply, and
+the validator refuses a record that claims it. The record says
+`principal_separated: not_separated` -- a three-word vocabulary (`separated` /
+`not_separated` / `unknown`) read through one helper that answers True / False /
+None and raises on anything else, so the field cannot be truth-tested by
+accident -- and says in one field why `admitted_nuisance` is not confinement
+for such a caller: a same-user process can read the browser handler's command
+line and Forge's process memory (A-027). The record binds its subject: the
+probe's own pid and interpreter, the imported `nornyx_forge` source, the tree's
+git SHA, the principal read from inside the probe, and the surface's instance,
+pid and port; the instance match is computed and recomputed by the validator,
+and a surface that is not the expected instance is refused as not-the-subject.
+Because the in-process self-probe IS the surface's process, its
+`OpenProcess(PROCESS_VM_READ)` artefact is `not_applicable` with the reason
+`self process`; a separate cross-process witness -- the same module through
+its CLI, in a child process, against the same live surface -- acquires that
+handle on Windows (the capability A-027 concedes to a same-user caller) and
+finds the facility absent elsewhere. Each fact carries its mechanism, kept
+apart: a socket-observed fact is `observed_surface_record`; a filesystem or
+process-capability fact is `inferred_acl`. An artefact carries one of THREE
+outcomes, and a refusal is not an observation: `observed` is a capability this
+caller acquired, `refused` is a facility that exists and denied this caller,
+`not_applicable` is that there was nothing to try. One helper,
+`capability_acquired()`, is the only sanctioned way to read an artefact as
+evidence of a capability, and it is True for `observed` alone; the validator
+refuses a record whose own detail records a denial under the acquired word,
+and a `refused` that does not say it was refused. An authenticated positive
+control, reading this run's bearer from an operator-supplied session file,
+makes a real bearered `GET /api/state` that answers 200 in the same run in
+which the bare one answered 401, which proves the surface was live and the
+harness not vacuous; that it was made and what it answered are recorded, the
+token is not, and it never moves the classification.
+
+**The deadline bounds the whole run, and any expiry is `inconclusive`.** It is
+checked between requests, before every artefact read, and it clamps each
+operation's own timeout to what is left of it -- the two subject-binding
+subprocesses (`git rev-parse`, `whoami /user`) included, which is what makes
+"the whole probe" true rather than "the request matrix". Whenever the clock
+expires, at any point, `deadline_exceeded` is true, `artefacts_truncated`
+counts the reads it cut off (recomputed by the validator from the artefacts
+themselves), and the classification is `inconclusive` at whatever coverage was
+reached. That last is a CHOICE between two repairs and is recorded as one: a
+run whose matrix completed and whose artefact reads were then cut short could
+otherwise look exactly like a complete one. Keeping the state and renaming the
+flag would leave a reader to decide which missing evidence mattered, and this
+record exists so that nobody has to.
+
+**What the record retains of the host, stated rather than implied.** It names
+no host in the clear: every spelling of home -- long, resolved, and on Windows
+the long and 8.3 short forms -- folds to `~`, and the login and machine name
+are removed wherever they occur; the validator refuses a record that still
+names any of them, matching each raw AND JSON-escaped, because the check runs
+over a `json.dumps` blob in which every separator is doubled. Two things are
+worth saying exactly. FIRST, the record RETAINS the principal's Windows SID
+(`subject.principal.sid`, `S-1-5-21-...`), deliberately: a subject binding
+whose principal is redacted binds nothing. A SID is a machine-and-account
+identifier -- it names the account the probe ran as, and its `S-1-5-21-<three
+32-bit values>` prefix identifies the machine or domain that issued it. It is
+not a login, not a password and not a credential, and it authenticates nobody
+by itself; it is retained because A-026 asks what principal ran, and a record
+that will not say is not a subject binding. SECOND, on the live run the
+folding of home did NOT do the work the phrase "folds every spelling of home"
+suggests: the fixture RELOCATES the profile, so the paths in the record are not
+under the run's real home at all, and what removed the identity from them was
+the login and machine-name token removal. The folding is exercised on this
+host's real home by its own pin. Both mechanisms are present; neither is being
+credited with the other's work.
+
+**The tool decides its destination, not its spelling.** `--host` must be
+loopback, decided without name resolution -- and `localhost` is NORMALISED to
+127.0.0.1 before a socket is opened. Admitting a NAME and then connecting by it
+would leave the destination to the resolver and to a `hosts` file an
+administrator can write, so a rule whose whole purpose is that this tool cannot
+be turned on another machine would have decided the spelling only. In the same
+spirit, the two system executables it runs are resolved absolutely under
+`%SystemRoot%` or from a DRIVE-ABSOLUTE `PATH` entry: on Windows `\tools` is
+"absolute" and means `tools` from the root of the CURRENT drive, which the
+working directory chooses, so a root-relative entry is skipped like a relative
+one. `--out` is refused when it resolves inside this repository's working tree:
+a record written there is a measurement sitting where the evidence cycle will
+commit it as source.
+
+**The record is a self-report, and the validator's bound is stated.** Its
+`transport: loopback_socket` is a declaration the producer makes about itself.
+The validator refuses a record that declares a non-socket transport and one
+that labels a socket fact as an inference; it CANNOT tell a log built in
+process (a `TestClient`) and labelled as a socket log from one that opened a
+socket, and this is measured rather than implied away: such a record is
+accepted. What holds the label honest is the producer, `probe()`, which has
+exactly one transport and no in-process path -- a property of the module,
+pinned by reading its code, not a property the validator establishes.
+
+**What running it does to the host.** Against a browser-granted surface the
+matrix's `POST /api/runtime/reopen` answers 200: the surface mints a fresh
+reopen nonce and opens the owner's default browser on it -- one mint per run;
+the explicit pull that follows answers 429 inside the rate-limit interval.
+Expect a browser tab to open on every run. The tool refuses a `--host` that is
+not loopback, and its exit code says which state it reached: 0 for
+`admitted_nuisance` or `reachable_unadmitted`, which means "no authority
+reached by this caller" and is NOT a confinement verdict; 2 for
+`authority_reachable`; 3 for `inconclusive`; 4 when the probe refused to run or
+the record failed its own validation. That enumeration is now TRUE of a
+hostile surface too, which it was not: `/api/runtime` is read off a socket
+anything on this host may be serving, and a listener answering `pid` as a list
+reached `int(pid)` in the memory-handle read and ended the run in a traceback
+and exit 1, with the host's own paths printed in the frames. The identity body
+is type-checked where it is recorded -- a `pid` that is not an integer and an
+`instance` that is not a string refuse the identity as malformed and record the
+surface unreachable with the reason -- the run continues, because the
+classification comes from the request log and never from `/api/runtime`, and
+every refusal that does escape is one line on stderr with home folded, the
+login and machine name removed, and any remaining path fragment replaced.
+
+**What C2 does NOT establish, stated rather than implied away.**
+
+- Nothing about a provider principal. No provider ran; the only caller C2
+  classifies is the test process itself (and its own child), which is not
+  confined and is the same OS principal as the surface.
+- Nothing about eligibility. `CONFINEMENT_PROPERTIES`,
+  `PROPERTY_EVIDENCE_MECHANISMS`, `governed_build_eligibility` and
+  `PROVIDER_CONFINEMENT` are untouched; both providers stay ineligible.
+- Nothing about approval. The permanently-blocked approval and inspection
+  diagnostics are unchanged.
+- The bearer gate is not confinement. It constrains the SURFACE; a caller's
+  confinement is a property of that caller's OS principal, which C2 does not
+  establish for anyone.
+- `admitted_nuisance` is confinement only for a principal SEPARATED from the
+  owner (A-027). The self-probe is `not_separated`, and the record says so;
+  `separated` cannot be recorded by C2 at all.
+- `unreachable` is not derivable here. It needs a positive control from a
+  separated principal; C2's vocabulary is three states plus `inconclusive`.
+- That the record's socket label was earned on a socket. The record is a
+  self-report (above); the producer's single transport is what is pinned.
+- An ACL inference is not a measurement. An `inferred_acl` fact -- an OpenProcess
+  handle, an `icacls` reading, a readable history store -- is refused as a
+  property mechanism and recorded as an inference, never a socket measurement.
+- A `TestClient` result is not a socket result; an in-process ASGI scope is not
+  either. The validator refuses the mislabel where a label makes it visible,
+  and cannot where it does not (above).
+- That the off-Windows arm was observed on the development host. Patching
+  `sys.platform` breaks `windows_runtime` at import, so the Linux CI matrix is
+  that witness.
+- One host is not the platform. The Windows-only artefact facilities degrade to
+  `not_applicable` off Windows; other browsers, profiles and hosts are
+  unmeasured (A-027 says so already).
+- That the architecture gate has read this harness. `scripts/` is OUTSIDE
+  `scripts/check_architecture.py`'s scope -- its `SOURCE_ROOT` is `src` -- so
+  no layering, import-direction or side-effect rule in this repository has been
+  applied to `scripts/probe_control_plane.py`, or to any other script. What
+  holds this module instead is its own AST pin (one transport, two named system
+  executables, no provider CLI, no in-process client) and the tests around it.
+  This is a PRE-EXISTING scope boundary, not something C2 introduced or
+  narrowed, and closing it -- deciding whether `scripts/` should be governed and
+  by which rules -- is a Tranche C follow-up that no slice has taken yet. It is
+  written here because a finding whose only home was a review comment is a
+  finding that comes back.
+- That an artefact's `refused` says anything about a provider. It says a
+  facility on THIS host denied THIS caller; the caller is the surface's own
+  principal, so a refusal here is a fact about Windows ACLs, not confinement.
+
+**Scope.** A measurement harness and its self-probe. It changes no Experience
+stage, no confinement vocabulary, declaration or admission, and no seal, lock,
+token or port behaviour.
+
+**Serves.** the surface half of the control-plane authority question, kept
+separate from any provider claim, and the claim discipline in `CLAUDE.md` that
+forbids substituting a label for the thing measured.

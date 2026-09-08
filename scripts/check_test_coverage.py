@@ -509,6 +509,43 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # one they do reach compares. Floor UNCHANGED at band(100) = 90, which
     # band(99) already was.
     "tests/test_control_plane_session.py": 90,
+    # Tranche C, slice C2: the real-surface control-plane probe harness. 48
+    # collected after the second review round (19 at introduction), floor at
+    # band(48) = 44. The route table held equal to the served composition in
+    # process (a Mount or a WebSocketRoute reddens it) and the wire census
+    # over a real port; the in-process self-probe classifying itself
+    # admitted_nuisance with principal_separated not_separated and explaining
+    # why that is not confinement, its memory handle not_applicable on its
+    # own pid, and a cross-process CLI witness against the same surface; the
+    # classifier deriving allowlist membership from the constant, refusing a
+    # partial log a confined state, and letting a gated 2xx dominate; the
+    # record validator refusing a non-socket transport (M6), a socket fact
+    # mislabelled as an inference (M6), a state, reason or coverage that
+    # disagrees with its own log (M8), a surface-absent record claiming a
+    # state (M8), `unreachable` by name, `separated` from C2, an incomplete
+    # subject, a declared instance match, a fabricated positive control, a
+    # host identity in the clear, a bearer, and an artefact reporting a pass
+    # -- and the one bound it cannot refuse (a self-declared transport label)
+    # measured and stated; redaction, the artefact producers, the absolute
+    # system executables, the loopback host rule, the deadline, the exit
+    # codes and the no-provider/no-synchronous-launch property each pinned.
+    # The Windows-only artefact facilities degrade to not_applicable off
+    # Windows, so the module runs on every CI platform with no declared skip.
+    # 68 after the THIRD review round, floor at band(68) = 62. Twenty more:
+    # nine hostile `/api/runtime` bodies through a real loopback listener (a
+    # `pid` of the wrong type used to reach `int(pid)` and end the run in a
+    # traceback), every refusal `main()` can reach held to exit 4 on one
+    # stderr line naming no path, an `--out` inside the working tree refused,
+    # the redaction backstop matching a JSON-ESCAPED home path (the only shape
+    # it ever sees), a lexical sweep of the module source for this host's
+    # login and machine name and their 8.3 forms, `Deadline.budget` as
+    # arithmetic and the subject-binding subprocesses held to it, a deadline
+    # expiring AFTER the matrix recorded and counted and inconclusive, the
+    # `refused` artefact outcome on both branches that used to say `observed`
+    # for a denial, the drive-absolute PATH rule, `localhost` normalised to
+    # the address it names, the surface-absent rule's own shape, and the
+    # `echoed` field asserted for the first time.
+    "tests/test_control_plane_authority.py": 62,
     # PR-18's Windows-hosted evidence: 10 collected after the inspections
     # (the journey once per declared provider, and the one test that runs
     # everywhere and pins the windows-runtime job), 11 after Tranche B
@@ -1069,15 +1106,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # stays 253. The slack the bands grant stays 261, which is arithmetic and not
 # luck: `ceil(0.9n)` moved by four at 96 and by one at 14, exactly the
 # collected gain at each:
+# Re-measured for Tranche C, slice C2, the real-surface control-plane probe
+# harness: a new module tests/test_control_plane_authority.py collects 68
+# after its third review round (floor at band(68) = 62); 112 -> 113 modules,
+# the module-floor sum rises by 62 to 2957 and the aggregate follows to 2965,
+# keeping the same 8 above it. The suite it collects rises 3156 -> 3224,
+# band(n) 2841 -> 2902, the working room below the floor 253 -> 259, and the
+# slack the bands grant 261 -> 267 (the module collects six tests above its
+# floor). No criterion changed and no skip was declared: the module runs on
+# every CI platform, its Windows-only artefact facilities degrading to
+# not_applicable off Windows
+# (`test_the_documented_paths_equal_the_served_compositions_route_table` and
+# `test_the_self_probe_is_admitted_nuisance_and_not_separated`):
 #
 # (rows below):
 #
-#     collected across tests/     3156   (112 modules)
-#     sum of the module floors    2895
-#     band(3156) = ceil(0.9*n)    2841
-#     MINIMUM_COLLECTED           2903
+#     collected across tests/     3224   (113 modules)
+#     sum of the module floors    2957
+#     band(3224) = ceil(0.9*n)    2902
+#     MINIMUM_COLLECTED           2965
 #     above the module sum         8
-#     below what collects         253
+#     below what collects         259
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1098,7 +1147,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 261 in total, and the aggregate refuses
+# per-module bands already grant 267 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1119,7 +1168,19 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # cited nothing either. Every backticked `test_...` in this block is now
 # checked against the suite by that same guard, so a cited name that does not
 # resolve is red rather than reassuring.
-MINIMUM_COLLECTED = 2903
+#
+# A SIXTH rot, and a new shape: a Tranche C rebase spliced the constant below
+# into the MIDDLE of the "working room" sentence twenty-one lines up and left
+# that sentence's second clause standing HERE, where the constant belongs.
+# Every guard stayed green -- the slack figure was still correct and still
+# findable, because the guard that reads it searches the whole file for the
+# phrase and cannot see where the phrase sits. So the numbers did not drift
+# this time; the PROSE AND THE CONSTANT drifted apart from each other, which
+# no guard in this file measures and a reader meets first. Recorded rather
+# than silently repaired, because the file whose subject is that prose beside
+# a constant is not a measurement of it had its own prose cut in half by a
+# merge for two review rounds.
+MINIMUM_COLLECTED = 2965
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -1210,6 +1271,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
     "tests/test_control_plane_session.py",
+    "tests/test_control_plane_authority.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
     "tests/test_basic_user_journey.py",
