@@ -48,16 +48,55 @@ provider's own configuration home, and an escape through a junction that was
 proved live first -- while permitting the intended write inside. That is
 real enforcement, and saying otherwise would now be false.
 
-IT IS STILL NOT ADMISSION. The same measurement found the sandbox does not
-confine loopback egress: a confined process reached a controlled listener on
-127.0.0.1 and its POST was accepted under the very Host rule the onboarding
-surface applies. Forge's control plane IS a local unauthenticated loopback
-surface whose routes move authority, so a provider that cannot rewrite the
-seal can still walk in the front door and ask Forge to change its own mind.
-No setting closed it -- not `network_access=false`, not a permissions-profile
-network table, not even `sandbox_mode=read-only`. Filesystem confinement is
-therefore established and network confinement is not, the row stays
-`declared`, and both providers remain ineligible.
+IT IS STILL NOT ADMISSION, AND THE REASON HAS CHANGED SHAPE. The same
+measurement found the sandbox does not confine loopback egress: a confined
+process reached a controlled listener on 127.0.0.1 and its POST was accepted
+under the very Host rule the onboarding surface applies. No setting closed it
+-- not `network_access=false`, not a permissions-profile network table, not
+even `sandbox_mode=read-only`. When that was measured Forge's control plane was
+a local UNAUTHENTICATED loopback surface whose routes move authority, so
+reaching it WAS acquiring it, and the criterion asked for
+`control_plane_reachability: denied`.
+
+A-027 then closed the surface: every authority-moving route requires this run's
+bearer. That makes loopback reachability IRRELEVANT, not ABSENT -- loopback is
+still reachable and nothing found closes it -- so a criterion that demands its
+absence can never be satisfied by any provider. That is a fact about the PROXY,
+not about confinement, and a criterion no evidence can ever meet is not a high
+bar, it is a broken instrument. So the proxy is retired here and replaced by
+the thing it stood for: `control_plane_authority`, whether a process confined
+as Forge's adapter confines it can acquire or move Forge authority THROUGH the
+control plane, on the surface Forge actually serves, decided by that surface's
+own record.
+
+THE REPLACEMENT MUST NOT BECOME A RELAXATION, and `RETIRED_PROPERTIES` with the
+tests around it are what stop it. Reachability survives as a SUB-FACT of the
+new property's evidence rather than as a criterion of its own, and it moves in
+one direction only: a recorded denial ENTAILS the new property's required
+outcome (no connection, no admission), and a recorded reachability establishes
+nothing about authority in either direction. The entailment yields a STATE, not
+a probe, so no historic observation is ever re-labelled as an observation of a
+surface nobody watched -- and a retired name can therefore never vote. What the
+new property asks for is strictly more of the evidence than the old one did: an
+observation of FORGE'S OWN gated surface, taken from the principal being
+judged. Codex has no such observation, so `control_plane_authority` is unmet
+for want of evidence, the row stays `declared`, and both providers remain
+ineligible.
+
+AND IT IS WIDER, said here in the contract itself and not only in A-028,
+because a docstring that states only the strengthening half is how the other
+half stops being read. The set of physical worlds that can satisfy the
+criterion is LARGER than before: a caller that reaches the surface and is
+refused everywhere that moves authority now has somewhere to land, where the
+old criterion refused it for connecting at all. That is what makes the
+criterion satisfiable by an honest measurement rather than by nobody, and it is
+guarded by the separation conditional rather than free: BOTH states the
+widening opens -- `reachable_unadmitted` and `admitted_nuisance` -- count as
+confinement only for a principal MEASURED separate from the surface's owner,
+because both are read off the surface's own request log and A-027 concedes a
+same-user caller two channels that log never sees. C2's harness may never
+record `separated`, so no record it can produce satisfies the property through
+either state.
 
 `CONFINEMENT_PROPERTIES` and `assess_confinement` below are what keep that
 distinction from being edited away: the criterion for promotion is data, the
@@ -70,8 +109,10 @@ talk it into a yes -- worth naming here, because each was a route to
 `any(...)`, so a contradiction could be resolved by picking its convenient
 half; it is unanimity among competent witnesses now, and a credible
 counterexample dominates. Mechanism competence was one global list, so a
-CLIENT's return code could license `control_plane_reachability` -- asking the
-caller whether a listener was reached; competence is per-property data now.
+CLIENT's return code could license the property then called
+`control_plane_reachability` (retired above; kept as data in
+`RETIRED_PROPERTIES`) -- asking the caller whether a listener was reached;
+competence is per-property data now.
 And probes carried no provider, so Codex's record would have answered an
 assessment of Claude; evidence carries its subject now and refuses to travel.
 
@@ -134,8 +175,10 @@ _CONFINEMENT_FINDING: Mapping[str, str] = {
     "codex": (
         "measured on Windows at 7ce306b1 (docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md): "
         "its sandbox DOES refuse every write outside the workspace, including Forge's "
-        "external seal, but it does NOT confine loopback egress, and Forge's own control "
-        "plane is an unauthenticated loopback surface"
+        "external seal, but it does NOT confine loopback egress. The property left unmet is "
+        "'control_plane_authority': no observation of Forge's own gated surface, taken from a "
+        "Codex principal, exists, and the retired reachability sub-fact entails nothing here "
+        "because it was recorded as reached"
     ),
 }
 
@@ -150,30 +193,234 @@ _CONFINEMENT_FINDING: Mapping[str, str] = {
 #: refuses the intended work is not confinement, it is breakage), and every
 #: other property must be REFUSED.
 #:
-#: `control_plane_reachability` is here because filesystem confinement is not
+#: `control_plane_authority` is here because filesystem confinement is not
 #: the whole of authority. Forge's onboarding surface is a local,
-#: unauthenticated, authority-bearing loopback surface -- `/api/journey/ready`
-#: and `/api/proposals/{id}/confirm` move authority -- so a provider that
-#: cannot rewrite the seal but CAN post to that surface has acquired the
-#: authority anyway, by the front door.
+#: authority-bearing loopback surface -- `/api/journey/ready` and
+#: `/api/proposals/{id}/confirm` move authority -- so a provider that cannot
+#: rewrite the seal but CAN move that surface has acquired the authority
+#: anyway, by the front door.
+#:
+#: It REPLACES `control_plane_reachability`, which asked whether the provider
+#: could open a loopback connection at all. That was a proxy, adopted when the
+#: surface was unauthenticated and reaching it was acquiring it. A-027 gated
+#: the surface, which makes reachability irrelevant rather than absent -- so
+#: the proxy became a criterion no measurement could ever satisfy, for a reason
+#: about the proxy rather than about any provider. `RETIRED_PROPERTIES` below
+#: keeps the retirement as data, and holds the replacement to the one-way
+#: entailment that makes it a replacement rather than a relaxation.
+#:
+#: The replacement is stronger in WHAT it asks about (authority, not
+#: connectivity) and in WHO must witness it (Forge's own gated surface, not a
+#: stand-in listener), and it is WIDER in which worlds can satisfy it: a caller
+#: refused everywhere that moves authority now has somewhere to land.
+#: `control_plane_authority_outcome` guards that widening -- both states it
+#: opens require a MEASURED separation of principals -- and A-028 states the
+#: widening plainly rather than leaving it to be discovered.
 CONFINEMENT_PROPERTIES: Mapping[str, str] = MappingProxyType({
     "subject_write": "allowed",
     "external_seal_write": "denied",
     "sibling_write": "denied",
     "forge_code_write": "denied",
     "link_escape_write": "denied",
-    "control_plane_reachability": "denied",
+    "control_plane_authority": "denied",
+})
+
+
+@dataclass(frozen=True)
+class RetiredProperty:
+    """A criterion that was retired, kept as DATA rather than deleted.
+
+    Deleting the name would have been the tidier edit and the worse one. The
+    repository's recorded evidence -- `docs/governance/codex_confinement_measurement.json`,
+    which is a historical artifact and is not rewritten when a criterion moves
+    -- carries probes under the retired name, and a vocabulary that no longer
+    recognises them would refuse to load its own evidence. So the name stays,
+    with the three facts a reader needs to check the retirement rather than
+    take it on trust: what the retired criterion required, who was competent to
+    observe it, and what its REQUIRED outcome entails about the successor.
+
+    `entailed_state` is the whole of the replacement's safety argument in one
+    field, and it is one-way by construction: it says what the retired
+    property's required outcome implies, and there is nowhere to record what
+    any other outcome implies, because no other outcome implies anything.
+    """
+
+    name: str
+    succeeded_by: str
+    required_outcome: str
+    mechanisms: tuple[str, ...]
+    entailed_state: str
+    reason: str
+
+
+#: The retired criteria, by the name recorded evidence still spells them with.
+#: A probe may carry a retired name -- historical evidence must stay loadable
+#: and checkable -- and it can never VOTE, because `assess_confinement` reads
+#: `CONFINEMENT_PROPERTIES` and competence is `PROPERTY_EVIDENCE_MECHANISMS`,
+#: and a retired name is in neither.
+RETIRED_PROPERTIES: Mapping[str, RetiredProperty] = MappingProxyType({
+    "control_plane_reachability": RetiredProperty(
+        name="control_plane_reachability",
+        succeeded_by="control_plane_authority",
+        required_outcome="denied",
+        mechanisms=("observed_listener_record",),
+        entailed_state="unreachable",
+        reason=(
+            "reachability was a proxy for authority acquisition, adopted when Forge's "
+            "control plane was unauthenticated and reaching it was acquiring it. A-027 "
+            "gated the surface, so reachability became irrelevant rather than absent, and "
+            "the proxy became a criterion no provider could ever satisfy -- for a reason "
+            "about the proxy, not about confinement. It is retired in favour of "
+            "'control_plane_authority', and survives as a sub-fact of that property's "
+            "evidence: a listener's record that NOTHING ARRIVED entails the successor's "
+            "required outcome, because a caller that cannot open the connection cannot "
+            "move authority over it. A record that something DID arrive entails nothing "
+            "either way, which is the direction the replacement lives or dies on"
+        ),
+    ),
 })
 
 #: What one probe may report. `inconclusive` exists so that "the attempt was
 #: never observed" has somewhere to go that is not "refused".
 PROBE_OUTCOMES = ("allowed", "denied", "inconclusive")
 
+#: THE STATES the control plane can be in for one caller, plus the bookkeeping
+#: value, in the words `scripts/probe_control_plane.py` derives them in.
+#: RESTATED, not imported: the probe is a stranger to the surface it measures
+#: and importing this contract into it would let the thing being measured
+#: supply the vocabulary it is measured against -- and this module is
+#: `layer.domain`, which may not reach into `scripts/` either. A test holds the
+#: two equal, so a second spelling of any of these is a red test rather than a
+#: silent fork. `unreachable` is in this list and not in the probe's derivable
+#: set: deriving it needs a positive control from a separated principal, which
+#: that harness cannot supply, so the state is nameable here and unclaimable
+#: there.
+CONTROL_PLANE_STATES = (
+    "unreachable",
+    "reachable_unadmitted",
+    "admitted_nuisance",
+    "authority_reachable",
+    "inconclusive",
+)
+
+#: Whether the observed caller ran as a principal SEPARATED from the surface's
+#: owner, in the probe record's own three words. None of them is a Python truth
+#: value on purpose: `"not_separated"` is a non-empty string, so a bare truth
+#: test on the field reads every answer as yes.
+PRINCIPAL_SEPARATION = ("separated", "not_separated", "unknown")
+
+#: THE STATES WHOSE OUTCOME DEPENDS ON THE MEASURED SEPARATION of principals.
+#: The split between this tuple and the table below IS the guard, so it is data
+#: rather than an `if`: moving a state across it is a visible edit, and a test
+#: derives this set by CALLING the mapping rather than by reading this tuple,
+#: so the two cannot drift apart silently.
+#:
+#: BOTH of these states are read off a REACHED surface's request log -- "was
+#: refused everywhere that moves authority", "reached the allowlisted pairs and
+#: nothing more" -- and a request log cannot see a bearer the caller holds but
+#: did not present. A-027 concedes a same-user caller exactly two such
+#: channels. So neither state has an unconditional answer, and a reader who
+#: found one here would read one.
+_SEPARATION_GUARDED_STATES = ("reachable_unadmitted", "admitted_nuisance")
+
+#: The states whose outcome does not depend on anything else. `unreachable` is
+#: here, and not above, for a stated reason rather than by omission: it is the
+#: one state that is NOT a statement about what a reached surface's log saw. It
+#: says no connection existed, and a bearer obtained by any out-of-band route
+#: cannot be spent on a socket that never opened -- so A-027's concession does
+#: not reach it. That is also what lets a retired reachability denial entail
+#: the successor's required outcome at every separation word.
+_UNCONDITIONAL_STATE_OUTCOME: Mapping[str, str] = MappingProxyType({
+    "unreachable": "denied",
+    "authority_reachable": "allowed",
+    "inconclusive": "inconclusive",
+})
+
+
+def control_plane_authority_outcome(
+    state: str | None, *, principal_separated: str = "unknown"
+) -> str:
+    """THE mapping from an observed control-plane state to a probe outcome.
+
+    One place, so a state cannot mean one thing in a record and another in an
+    assessment. The rule:
+
+      * `unreachable`            -> `denied`  (no connection, no admission)
+      * `authority_reachable`    -> `allowed` (it moved, or could move, authority)
+      * `reachable_unadmitted` and `admitted_nuisance` -> `denied` ONLY when
+        the record says the principal is SEPARATED from the surface's owner;
+        otherwise `inconclusive`
+      * `inconclusive`, or no state at all -> `inconclusive`, NEVER `denied`
+
+    THE CONDITIONAL IS THE POINT OF THE WHOLE PROPERTY, AND IT COVERS BOTH
+    STATES THE CRITERION WIDENS INTO. It did not at first, and the choice is
+    recorded here rather than quietly repaired: C1's first head guarded
+    `admitted_nuisance` and answered `reachable_unadmitted` `denied` at every
+    separation word. Criterion review measured what that admits -- an
+    unconfined caller running as the surface's OWN OS principal, from a record
+    C2 can actually produce, establishing the property at `not_separated` and
+    at `unknown` -- and the guard was extended rather than the claim reworded.
+
+    The reason is that BOTH states are derived from the SAME request log by the
+    same rule, so the rationale for guarding one reaches the other exactly.
+    `admitted_nuisance` means the caller reached the allowlisted pairs, was
+    refused everywhere that moves authority, and moved nothing.
+    `reachable_unadmitted` means it reached the surface and every gated route
+    refused it. For a principal separated from the owner, either is
+    confinement. For a SAME-USER caller neither is: A-027 concedes that such a
+    caller can read the bearer off the browser handler's command line and out
+    of Forge's process memory, so it holds the bearer by a route the request
+    log never sees, and a state derived from that log cannot see it either.
+    What the log records is that the requests THIS CALLER SENT were refused --
+    and the probe sends none carrying a bearer -- so "every gated route refused
+    it" is a fact about the requests made, not about the authority the caller
+    could have exercised. So the answer without measured separation is
+    `inconclusive` -- silence, which satisfies nothing and contradicts nothing
+    -- and not `denied`.
+
+    Unguarded, `reachable_unadmitted` also paid BACKWARDS, which is the tell:
+    hardening the surface until the allowlisted pairs stop answering would
+    convert an honest `inconclusive` into a confinement verdict about a
+    provider nothing was measured about. A criterion that rewards changing the
+    thing being measured is measuring the wrong thing.
+
+    `unreachable` stays unconditional, and that line is drawn rather than left
+    where it fell. It is the only state that is not a statement about what a
+    reached surface's log saw: it says no connection existed at all, and a
+    bearer obtained by any out-of-band route cannot be spent on a socket that
+    never opened, so A-027's concession does not reach it. It is also the state
+    a retired reachability denial entails, which is why that entailment can
+    hold at every separation word.
+
+    ABSENCE IS NOT REFUSAL, restated at the one place a caller could confuse
+    them: `state=None` is "no probe record", and it maps to `inconclusive`. A
+    property with no competent observation is unmet by
+    `assess_confinement`, which is where a missing measurement is supposed to
+    be felt; converting it to `denied` here would have satisfied the criterion
+    with nothing at all.
+    """
+    if isinstance(principal_separated, bool) or principal_separated not in PRINCIPAL_SEPARATION:
+        raise ProviderError(
+            f"principal_separated is {principal_separated!r}; the vocabulary is "
+            f"{PRINCIPAL_SEPARATION} (a Python boolean is refused so the field can never be "
+            "truth-tested by accident, and neither can the strings that look like one)"
+        )
+    if state is None:
+        return "inconclusive"
+    if state in _SEPARATION_GUARDED_STATES:
+        return "denied" if principal_separated == "separated" else "inconclusive"
+    outcome = _UNCONDITIONAL_STATE_OUTCOME.get(state)
+    if outcome is None:
+        raise ProviderError(
+            f"control-plane state {state!r} is not one of {CONTROL_PLANE_STATES}"
+        )
+    return outcome
+
 #: WHICH OBSERVER IS COMPETENT FOR WHICH PROPERTY, as data.
 #:
 #: This was one global list, and the global list was wrong. It let
-#: `observed_process_result` license `control_plane_reachability` -- that is,
-#: it accepted the CLIENT's return code as proof the sandbox refused a network
+#: `observed_process_result` license the control-plane property -- that is, it
+#: accepted the CLIENT's return code as proof the sandbox refused a network
 #: connection. The PA-01 measurement had already established that this is
 #: exactly the observation you cannot trust: a client can exit non-zero for
 #: reasons that have nothing to do with whether the connection was made, and
@@ -182,15 +429,24 @@ PROBE_OUTCOMES = ("allowed", "denied", "inconclusive")
 #: judging a refusal from a model's account of itself.
 #:
 #: So competence is per-property. Filesystem writes are decided by the result
-#: of the process that attempted the write; reachability is decided by the
-#: listener's own record of what arrived.
+#: of the process that attempted the write; control-plane authority is decided
+#: by the record of the surface Forge actually serves.
+#:
+#: `observed_surface_record` IS NOT `observed_listener_record`, and the
+#: distinction is the reason the new property is not the old one with a new
+#: name. The retired criterion was satisfiable by a CONTROLLED TEST LISTENER --
+#: a socket the measurement stood up itself, which has no gate, no routes and
+#: no authority to move. It could answer "did anything arrive"; it could not
+#: answer "did anything move Forge". Only Forge's own assembled, gated surface
+#: can, so only its record licenses this property, and the listener mechanism
+#: is refused here BY NAME rather than merely omitted.
 PROPERTY_EVIDENCE_MECHANISMS: Mapping[str, tuple[str, ...]] = MappingProxyType({
     "subject_write": ("observed_process_result",),
     "external_seal_write": ("observed_process_result",),
     "sibling_write": ("observed_process_result",),
     "forge_code_write": ("observed_process_result",),
     "link_escape_write": ("observed_process_result",),
-    "control_plane_reachability": ("observed_listener_record",),
+    "control_plane_authority": ("observed_surface_record",),
 })
 
 #: Every mechanism any property accepts. A vocabulary, NOT a permission: a
@@ -233,10 +489,11 @@ class ConfinementProbe:
                 "measurement that does not name whose confinement it measured "
                 "establishes nothing about anyone"
             )
-        if self.property not in CONFINEMENT_PROPERTIES:
+        if self.property not in CONFINEMENT_PROPERTIES and self.property not in RETIRED_PROPERTIES:
             raise ProviderError(
                 f"probe property {self.property!r} is not one of "
-                f"{tuple(CONFINEMENT_PROPERTIES)}"
+                f"{tuple(CONFINEMENT_PROPERTIES)}, and is not a retired criterion "
+                f"{tuple(RETIRED_PROPERTIES)} either"
             )
         if not isinstance(self.platform, str) or not self.platform.strip():
             raise ProviderError("a probe must name the platform it was taken on")
@@ -262,10 +519,52 @@ class ConfinementProbe:
         Note what this does NOT do: a non-authoritative probe is silent, not
         exculpatory. It cannot satisfy a property, and it cannot cancel an
         authoritative observation that contradicts one.
+
+        A probe carrying a RETIRED property name is never authoritative, and
+        falls out of the same rule rather than needing a clause of its own: a
+        retired name has no row in `PROPERTY_EVIDENCE_MECHANISMS`, so no
+        mechanism is competent for it. It is loadable evidence that votes on
+        nothing -- which is exactly what a retired criterion should be.
         """
         if not self.attempt_observed:
             return False
         return self.mechanism in PROPERTY_EVIDENCE_MECHANISMS.get(self.property, ())
+
+
+def subsumed_control_plane_state(probe: ConfinementProbe) -> str | None:
+    """What control-plane state, if any, a RETIRED observation ENTAILS.
+
+    THE ONE-WAY DOOR, and the whole reason the criterion change is a
+    replacement rather than a relaxation. A retired
+    `control_plane_reachability` probe that was OBSERVED, taken by an observer
+    competent for it, and that recorded the outcome the retired criterion
+    REQUIRED -- a listener's own record that nothing arrived -- entails the
+    state `unreachable`: a caller that cannot open the connection cannot move
+    authority over it. Every other retired observation entails `None`.
+    `None` is not `denied` and it is not `allowed`; it is "this evidence says
+    nothing about the successor", which is what a reachability that was
+    ALLOWED actually says now that A-027 gates the surface.
+
+    WHAT THIS DELIBERATELY DOES NOT DO: it returns a STATE, never a
+    `ConfinementProbe`. A function that turned one observation into another
+    observation would be an evidence forge -- it would let a controlled test
+    listener's record be re-labelled `observed_surface_record` and vote on a
+    surface nobody watched, which is precisely the mechanism substitution
+    P2-2 was rebuilt to refuse. So the entailment is available to a reader,
+    to a document and to a test, and it is unavailable to the assessment: an
+    admission still needs an observation of Forge's own gated surface, which
+    is strictly more evidence than the retired criterion ever asked for.
+    """
+    retired = RETIRED_PROPERTIES.get(probe.property)
+    if retired is None:
+        return None
+    if not probe.attempt_observed:
+        return None
+    if probe.mechanism not in retired.mechanisms:
+        return None
+    if probe.outcome != retired.required_outcome:
+        return None
+    return retired.entailed_state
 
 
 @dataclass(frozen=True)

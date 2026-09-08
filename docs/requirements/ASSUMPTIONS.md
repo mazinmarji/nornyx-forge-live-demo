@@ -933,6 +933,24 @@ measurement is a recorded artifact, and a test holds the table and the evidence
 to each other in both directions -- so promoting the row without qualifying
 evidence fails, and a measurement that genuinely closed the gap would pass.
 
+**The second property was renamed by A-028's slice C1, and this entry keeps its
+own vocabulary.** The assumption above names two properties, and the second one
+-- "reach Forge's authority-bearing control plane" -- was a PROXY, sound while
+that plane was unauthenticated. A-027 gated it, which makes reachability
+irrelevant rather than absent, so `control_plane_reachability: denied` became a
+criterion nothing could ever satisfy for a reason about the proxy rather than
+about any provider. It is retired in favour of `control_plane_authority` --
+whether the provider's principal can acquire or move Forge authority THROUGH
+that plane, decided by the surface's own record -- under an obligation A-028
+states and tests: the retired criterion's required outcome still entails the
+new one's, the entailment runs one way, and it does not by itself ADMIT the new
+property, which asks for an observation of Forge's own gated surface that no
+measurement in this repository has taken. The consequence above is unchanged in
+every particular: `codex` stays `declared`, both providers stay ineligible, and
+what is unmet is now named `control_plane_authority`. The measurement recorded
+in this entry is neither restated nor re-labelled -- it keeps the words it was
+taken in, and the retired name stays in the vocabulary so it does.
+
 **A second assumption, learned from the verifier rather than the sandbox.** A
 criterion expressed as data is not yet a criterion that cannot be satisfied
 dishonestly. The first verifier admitted three routes to "established" that
@@ -1800,11 +1818,16 @@ authority-moving routes, not redrawn.
 
 ## A-028 DRAFT A control-plane probe is a measurement, not an admission
 
-**Status: DRAFT (Tranche C, slice C2).** This entry describes a measurement
-HARNESS and the one measurement it makes of the harness against itself. It adds
-no confinement property, moves no provider row, and is not the state-vocabulary
-definition a later slice may write; it is limited to what C2 observes and, more
-importantly, to what C2 does not.
+**Status: DRAFT (Tranche C, slices C2 and C1).** The first part of this entry
+describes a measurement HARNESS and the one measurement it makes of the harness
+against itself: slice C2 adds no confinement property, moves no provider row,
+and is limited to what it observes and, more importantly, to what it does not.
+The part headed **"The criterion change (slice C1)"**, near the end, is
+separate and later: it records the one admission criterion Tranche C replaces,
+why the thing it replaced had become a broken instrument rather than a high
+bar, and what the replacement had to prove before it was allowed to be one. C1
+moves no provider row either. Slice C3 would be the measurement that tests the
+new criterion against a real provider principal, and it has not been taken.
 
 **Assumption.** Whether a local process can acquire or move Forge authority
 through the onboarding control plane is a question that must be answered by
@@ -1967,9 +1990,12 @@ login and machine name removed, and any remaining path fragment replaced.
 - Nothing about a provider principal. No provider ran; the only caller C2
   classifies is the test process itself (and its own child), which is not
   confined and is the same OS principal as the surface.
-- Nothing about eligibility. `CONFINEMENT_PROPERTIES`,
+- Nothing about eligibility. C2 left `CONFINEMENT_PROPERTIES`,
   `PROPERTY_EVIDENCE_MECHANISMS`, `governed_build_eligibility` and
-  `PROVIDER_CONFINEMENT` are untouched; both providers stay ineligible.
+  `PROVIDER_CONFINEMENT` untouched. Slice C1 has since changed the first two --
+  one criterion replaced, one evidence mechanism added, recorded below -- and
+  changed neither the eligibility rule nor any provider row. Both providers
+  stay ineligible after both slices.
 - Nothing about approval. The permanently-blocked approval and inspection
   diagnostics are unchanged.
 - The bearer gate is not confinement. It constrains the SURFACE; a caller's
@@ -2009,10 +2035,178 @@ login and machine name removed, and any remaining path fragment replaced.
   facility on THIS host denied THIS caller; the caller is the surface's own
   principal, so a refusal here is a fact about Windows ACLs, not confinement.
 
-**Scope.** A measurement harness and its self-probe. It changes no Experience
-stage, no confinement vocabulary, declaration or admission, and no seal, lock,
-token or port behaviour.
+### The criterion change (slice C1)
+
+**Assumption.** `control_plane_reachability` was a PROXY for authority
+acquisition, and the thing it stood for is `control_plane_authority`: whether a
+process running as the provider's principal, confined as Forge's adapter
+confines it, can acquire or move Forge authority THROUGH the local control
+plane, on the surface Forge actually serves, decided by that surface's own
+record and never by the caller's exit code. The proxy is retired and the
+property replaces it.
+
+**Why the proxy had to go, stated so it can be checked rather than believed.**
+A-024 required `control_plane_reachability: denied`. PA-01 measured it
+`allowed` under four Codex configurations and both CLI versions, and found no
+setting that closes it -- not `network_access=false`, not a
+permissions-profile network table, not `sandbox_mode=read-only`. A-027 then
+gated the surface: every authority-moving route requires this run's bearer.
+That makes loopback reachability IRRELEVANT, not ABSENT. So after A-027 the
+criterion asked for the absence of something that is still present and that
+nothing can remove, which no provider could ever satisfy -- and a criterion no
+evidence can meet is not a high bar, it is a broken instrument. Left standing,
+it would have held every provider ineligible forever for a reason about the
+instrument rather than about any provider, which is a way of never having to
+decide dressed up as strictness.
+
+**The obligation the replacement had to meet.** A repair and a gate-weakening
+look identical from a distance, so the replacement was held to this and the
+holding is a test rather than this paragraph:
+
+- the retired criterion's REQUIRED outcome still entails the successor's. A
+  listener's own record that nothing arrived means no connection, and a caller
+  that cannot open the connection cannot move authority over it, so that
+  observation entails the state `unreachable`, which the mapping answers
+  `denied` -- the new property's required outcome, at every separation word.
+  No world the old criterion admitted is contradicted by the new one.
+- the entailment runs ONE WAY. A reachability that was ALLOWED entails nothing
+  -- not `allowed` and not `denied` -- because with the surface gated, reaching
+  it no longer says whether authority moved. Both are measured over the two
+  reachability probes the repository actually recorded, across every outcome
+  the vocabulary permits, so inverting the direction reddens the row.
+- the entailment yields a STATE, never a probe. A function that turned one
+  observation into another would let a controlled test listener's record be
+  re-labelled as an observation of Forge's gated surface -- the mechanism
+  substitution A-024's verifier was rebuilt to refuse. So the retired evidence
+  is available to a reader and unavailable to the assessment.
+- consequently the retired evidence, even at its most favourable, does not
+  ADMIT the successor. Handed the world the old criterion admitted, the
+  assessment still reports the property unmet for want of a competent
+  observation. The new property asks for strictly MORE evidence than the old
+  one did: a record of Forge's own assembled, gated surface, taken from the
+  principal being judged.
+- and evidence satisfying only the new property retro-admits nothing else. The
+  criterion is a conjunction; evidence for one row is silence on the others.
+
+**Where the replacement is genuinely WIDER, said plainly.** It is not stronger
+in every direction, and claiming so would be the substitution this repository
+keeps finding. The set of physical worlds that can satisfy it is larger: a
+caller that reaches the surface and is refused everywhere that moves authority
+now has somewhere to land, where the old criterion refused it for connecting at
+all. That widening is the point -- it is what makes the criterion satisfiable
+by a real measurement -- and it is guarded by the separation conditional, not
+free. The five states map to outcomes as: `unreachable` to `denied` and
+`authority_reachable` to `allowed`, at every separation word;
+`reachable_unadmitted` and `admitted_nuisance` to `denied` ONLY when the record
+says the principal is SEPARATED from the surface's owner, and to `inconclusive`
+otherwise; and a record that is `inconclusive`, or absent altogether, to
+`inconclusive`, never to `denied`. The conditional carries the guard: A-027
+concedes that a same-user caller can read the bearer off the browser handler's
+command line and out of Forge's process memory, by a route no request log
+records, so for such a caller neither "reached only the allowlisted pairs" nor
+"was refused on every gated route" is confinement. C2's harness may record
+`not_separated` or `unknown` and may never record `separated`, so no record
+that harness can produce satisfies the property through either state.
+
+**The guard covers BOTH widened states, which it did not at first, and the
+choice is recorded rather than quietly repaired.** C1's first head guarded
+`admitted_nuisance` and answered `reachable_unadmitted` `denied` at every
+separation word. Criterion review measured what that admitted: a record C2 can
+produce, from an unconfined caller running as the surface's own OS principal,
+established `control_plane_authority` at both `not_separated` and `unknown`.
+Offered the choice of extending the guard or justifying the exception, this
+slice EXTENDED THE GUARD, for three reasons that survive inspection. First, the
+conditional's own rationale reaches the state: both are derived from the SAME
+request log by the same rule, and what the log records is that the requests
+THIS CALLER SENT were refused -- the probe sends none carrying a bearer -- so
+"every gated route refused it" is a fact about the requests made, not about the
+authority the caller could have exercised. Second, the unguarded mapping paid
+BACKWARDS: hardening the surface until the allowlisted pairs stopped answering
+would convert an honest `inconclusive` into a confinement verdict about a
+provider nothing was measured about, and a criterion that rewards changing the
+thing being measured is measuring the wrong thing. Third, C2's own rows in this
+document and in `docs/VALIDATION.md` -- which C1 does not edit -- say that
+exit 0, meaning `admitted_nuisance` OR `reachable_unadmitted`, is NOT a
+confinement verdict; under the first head one head held both that sentence and
+its contradiction, and it now does not.
+
+`unreachable` stays unconditional, and that line is drawn rather than left
+where it fell. It is the only state that is not a statement about what a
+reached surface's log saw: it says no connection existed at all, and a bearer
+obtained by any out-of-band route cannot be spent on a socket that never
+opened, so A-027's concession does not reach it. It is also the state a retired
+reachability denial entails, which is why that entailment can hold at every
+separation word. The split is data
+(`_SEPARATION_GUARDED_STATES` against `_UNCONDITIONAL_STATE_OUTCOME`), the
+guarded set is derived in the tests by CALLING the mapping rather than by
+reading that tuple, and the sentences in this document, `CHANGELOG.md`,
+`docs/VALIDATION.md`, `provider_contract.py` and the test module's own
+docstring are pinned against it in both directions
+(`test_every_document_calling_the_widening_guarded_names_the_states_the_code_guards`).
+
+**The evidence mechanism is new, and it is not the old one.**
+`observed_surface_record` licenses `control_plane_authority`, and
+`observed_listener_record` is refused for it BY NAME. The retired criterion
+could be satisfied by a controlled test listener -- a socket the measurement
+stood up itself, with no gate, no routes and no authority to move. Such a
+listener can answer "did anything arrive at me"; it cannot answer "did anything
+move Forge", which is the property. `inferred_acl`, the mechanism C2 puts on
+every filesystem and OS-capability fact, is in no property's row at all.
+
+**The retired name is kept as DATA, not deleted.** `RETIRED_PROPERTIES` records
+what the retired criterion required, who was competent to observe it, and what
+its required outcome entails. Deleting the name would have been the tidier edit
+and the worse one: `docs/governance/codex_confinement_measurement.json` is a
+historical artifact, it is not rewritten when a criterion moves, and it spells
+its probes with the retired name -- so a vocabulary that no longer recognised
+them would refuse to load its own evidence. A probe carrying a retired name
+therefore validates and votes on nothing, because a retired name has no row in
+`PROPERTY_EVIDENCE_MECHANISMS` and no mechanism is competent for it. For the
+same reason `docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md` and its JSON
+still name `control_plane_reachability` throughout and were not edited by this
+slice: they record what was measured in 2026-09, in the vocabulary of the
+criterion that was then in force, and rewriting a measurement to match a later
+criterion is how a record stops being one.
+
+**What C1 does NOT establish.**
+
+- Nothing about any provider. C1 ran no provider and took no measurement; it
+  changed a criterion and the tests that hold it.
+- No eligibility moves. `governed_build_eligibility`'s rule is untouched,
+  `assess_confinement`'s unanimity rule is untouched, `PROVIDER_CONFINEMENT` is
+  untouched, and both providers remain ineligible -- Codex because
+  `control_plane_authority` has no competent observation (no record of Forge's
+  own gated surface from a Codex principal exists), Claude because it has no
+  measurement at all and Codex's evidence does not travel. Both refusals name a
+  missing measurement; neither names an approval, and the permanently-blocked
+  approval and inspection diagnostics are unchanged by all of this.
+- That the new property is satisfiable in practice. Whether any provider can
+  ever satisfy it is an open question a measurement must answer. What changed
+  is that the question is now answerable at all.
+- That a bearer gate is confinement. It constrains the SURFACE. A satisfied
+  `control_plane_authority` would be a joint property of that gate and the
+  provider's principal, and must be worded as one.
+- That the criterion's semantics reach any real record yet. Measured at this
+  head: `control_plane_authority_outcome` and `subsumed_control_plane_state`
+  have NO production consumer -- nothing in `src/` or `scripts/` constructs a
+  `ConfinementProbe` at all -- so nothing converts a validated
+  `nornyx.forge.control_plane_probe.v1` record into one, and the outcome a
+  probe carries is hand-authored while its mechanism is an unvalidated free
+  string. The mapping and the guard above are therefore ADVISORY until slice C3
+  ships that record-to-probe translation, routing it through
+  `control_plane_authority_outcome` and refusing a record that fails
+  `validate_record`; until then a hand-written probe can still assert an
+  outcome the mapping would not have produced.
+
+### Scope and serves, for both slices
+
+**Scope.** A measurement harness with its self-probe (C2), and one replaced
+admission criterion with the mechanism and vocabulary it needs (C1). Neither
+changes an Experience stage, the eligibility rule, the unanimity rule, any
+provider row, or any seal, lock, token or port behaviour.
 
 **Serves.** the surface half of the control-plane authority question, kept
-separate from any provider claim, and the claim discipline in `CLAUDE.md` that
-forbids substituting a label for the thing measured.
+separate from any provider claim; an admission criterion that a measurement
+could satisfy honestly instead of one no measurement could satisfy at all; and
+the claim discipline in `CLAUDE.md` that forbids substituting a label for the
+thing measured.

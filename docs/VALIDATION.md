@@ -422,6 +422,66 @@ scope (`SOURCE_ROOT` is `src`), a PRE-EXISTING boundary this slice neither
 introduced nor narrowed, recorded in A-028's "does NOT establish" list as a
 Tranche C follow-up.
 
+## The admission criterion after the proxy was retired (Tranche C, slice C1)
+
+`control_plane_reachability` asked whether a provider could open a loopback
+connection at all. That was a PROXY for authority acquisition, sound while
+Forge's control plane was unauthenticated. A-027 gated it -- every
+authority-moving route now requires this run's bearer -- which makes
+reachability IRRELEVANT rather than ABSENT, and PA-01 found no sandbox setting
+that removes it. So the criterion asked for the absence of something still
+present that nothing can remove, and no provider could ever satisfy it, for a
+reason about the proxy rather than about any provider. C1 retires it and
+requires `control_plane_authority: denied` instead: whether a process confined
+as Forge's adapter confines it can acquire or move Forge authority THROUGH the
+control plane, on the surface Forge actually serves, decided by that surface's
+own record. This slice runs no provider and takes no measurement; it changes
+one criterion, adds one evidence mechanism, and moves no row (A-028).
+
+| Property | Result | Evidence class |
+| --- | --- | --- |
+| U1 the criterion requires `control_plane_authority: denied`, and no longer requires reachability | established | deterministic (`test_the_criterion_requires_control_plane_authority_and_not_reachability` asserts the whole table as a literal, so "one property replaced, nothing else moved" is checkable rather than claimed) |
+| U1 the retired name is kept as DATA and votes on nothing | established | deterministic (`test_the_retired_criterion_is_recorded_as_retired_rather_than_deleted`: `RETIRED_PROPERTIES` records what it required, who was competent for it and what its required outcome entails; a probe under the retired name still validates -- the recorded measurement spells its probes that way and is not rewritten -- and is not authoritative, because a retired name has no row in `PROPERTY_EVIDENCE_MECHANISMS`) |
+| U2 only `observed_surface_record` is competent for the new property | established | deterministic (`test_only_a_surface_record_is_competent_for_control_plane_authority`, over `observed_process_result`, `observed_listener_record` and both non-enforcement mechanisms: each turns the green assessment red on the mechanism field alone. A controlled test listener is not Forge's gated surface -- it can answer "did anything arrive at me", not "did anything move Forge") |
+| U3 the state-to-outcome mapping, including the separation conditional | established | deterministic (`test_the_state_to_outcome_mapping_is_the_four_states_and_the_bookkeeping_value` over every state and every separation word, PARAMETRISED FROM `CONTROL_PLANE_STATES + (None,)` so a state with no expected outcome fails as a missing row, with `test_the_mapping_table_and_the_state_vocabulary_cover_each_other` closing the other direction; `test_a_reached_surface_state_is_confinement_only_for_a_separated_principal` over BOTH guarded states: `denied` only with `separated`, `inconclusive` otherwise and by default, and C2's harness may never record `separated`; `test_the_mapping_refuses_a_state_or_a_separation_word_it_does_not_know` refuses a Python boolean by name) |
+| U3 only `unreachable` yields the required outcome without a measured separation | established | deterministic (`test_only_unreachable_yields_the_required_outcome_without_measured_separation` derives, by CALLING the mapping, the set of states that answer `denied` at `not_separated` and asserts it is exactly `{unreachable}` -- a closed set, so a sixth state mapped `denied` reddens here and so does deleting the guard. The round-1 head failed this row: `reachable_unadmitted` answered `denied` at `not_separated` and `unknown`, establishing the property from a record C2 can produce for an unconfined caller running as the surface's own OS principal. `unreachable` is entitled to it because it is the one state that is not a statement about what a reached surface's log saw -- no connection existed, and a bearer cannot be spent on a socket that never opened) |
+| U3 the documents that call the widening guarded name the states the code guards | established | deterministic (`test_every_document_calling_the_widening_guarded_names_the_states_the_code_guards`, in both directions: the guarded set is MEASURED by calling the mapping and must equal the states the sentence names, and every document making the claim -- `CHANGELOG.md`, this file, `ASSUMPTIONS.md`, `provider_contract.py`, and the test module's own docstring, checked through `__doc__` rather than its source so its own constant cannot satisfy it -- must carry the phrase. Round 1 had five sentences saying the widening was guarded while half of it was not, and nothing noticed) |
+| M5 the witness selection can never name a retired property | established | deterministic (`test_the_witness_selection_can_never_name_a_retired_property` reads the PARSED body of `assess_confinement`: the one assignment to `witnesses` is located and its names checked as a positive control, then every retired property name is refused as a string CONSTANT -- the retired property is a string at every site that could use it -- and `RETIRED_PROPERTIES` and `subsumed_control_plane_state` are refused by name. The laundering route was held by one example before this; the structural assertion closes the line that would reopen it) |
+| U3 the contract's state vocabulary is the probe harness's own | established | deterministic (`test_the_contracts_control_plane_vocabulary_is_the_probe_harnesses_own`: the states are restated in `provider_contract.py` rather than imported -- the probe is a stranger to the surface, and `layer.domain` may not reach into `scripts/` -- and held equal to `probe_control_plane.STATES` plus `NOT_DERIVABLE_HERE`, with the separation vocabulary and the surface mechanism held equal too) |
+| U4 both providers remain ineligible, and each refusal names a missing measurement rather than an approval | established | deterministic (`test_both_providers_are_ineligible_and_the_reason_names_the_missing_property`: Codex unmet on `control_plane_authority` alone -- no record of Forge's own gated surface from a Codex principal exists -- Claude unmet on every property because its evidence does not exist and Codex's does not travel; "approval" appears in neither reason) |
+| M5 the retired criterion's required outcome entails the new property's | established | deterministic (`test_every_recorded_reachability_denial_entails_the_new_property`, measured over the two reachability probes in `docs/governance/codex_confinement_measurement.json`: at the outcome the retired criterion required, each entails the state `unreachable`, which maps to `denied` at every separation word. What PA-01 actually recorded is `allowed`, twice, so the required outcome is a labelled counterfactual over real probes) |
+| M5 the entailment runs one way | established | deterministic (`test_the_entailment_runs_one_way_over_every_recorded_outcome`, over every recorded probe and every outcome the vocabulary allows: it fires for the retired required outcome and for nothing else, and never for an unobserved attempt or an observer the retired criterion did not trust. A reachability that was ALLOWED entails nothing, because with the surface gated, reaching it no longer says whether authority moved) |
+| M5 the retired evidence does not ADMIT the new property | established | deterministic (`test_a_retired_denial_still_does_not_admit_the_new_property`: handed the world the old criterion admitted, the assessment still reports `control_plane_authority` unmet for want of a competent observation. The entailment yields a STATE, never a probe, so no listener record is re-labelled as an observation of a surface nobody watched -- the mechanism substitution A-024's P2-2 closed) |
+| M5 evidence satisfying only the new property retro-admits nothing | established | deterministic (`test_a_measurement_satisfying_only_the_new_property_admits_nothing_else`: the criterion is a conjunction, and the other five properties stay unmet) |
+| M7 an `inconclusive`, unobserved or absent probe cannot satisfy the property | established | deterministic (`test_an_inconclusive_or_unobserved_authority_probe_cannot_satisfy_it`, `test_an_absent_probe_record_is_inconclusive_and_never_a_refusal`: at the mapping, no state at all is `inconclusive` and never the required outcome; at the assessment, a measurement carrying no observation is unmet with the reason naming the property) |
+
+Not claimed by any row: that the replacement is stronger in EVERY direction. It
+is not, and saying so would be the substitution this repository keeps finding.
+It is stronger in what it asks about (authority, not connectivity) and in who
+must witness it (Forge's own gated surface, not a stand-in listener), and it is
+WIDER in which physical worlds can satisfy it -- a caller refused everywhere
+that moves authority now has somewhere to land, where the old criterion refused
+it for connecting at all. That widening is what makes the criterion satisfiable
+by an honest measurement, and it is guarded by the separation conditional
+(A-027's two same-user channels) rather than free: `reachable_unadmitted` and
+`admitted_nuisance` -- both of the states the widening opens, and both read off
+a REACHED surface's request log -- count as confinement only for a principal
+measured SEPARATE from the surface's owner. `unreachable` alone is
+unconditional, and says no connection existed rather than what a log saw. Also
+not claimed: anything
+about a provider (none ran); that the new property is satisfiable in practice
+(an open question a measurement must answer, where the old one was closed by
+construction); that a bearer gate is confinement (it constrains the surface); any
+change to `governed_build_eligibility`'s rule, to `assess_confinement`'s
+unanimity rule or to `PROVIDER_CONFINEMENT` (untouched, both providers still
+ineligible); and any movement on the permanently-blocked approval and
+inspection diagnostics, which are unrelated to confinement and unchanged.
+`docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md` and its JSON still name
+`control_plane_reachability` throughout and were deliberately not edited: they
+record what was measured in the vocabulary of the criterion then in force, and
+rewriting a measurement to match a later criterion is how a record stops being
+one.
+
 ## Requires a normal internet-connected machine or GitHub Actions
 
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:
