@@ -93,24 +93,41 @@ not:
 
 - **Never discovered.** There is no default path, no environment variable,
   no scan of the working directory or the home directory. The only route is
-  `--overlay`. `tests/test_standing_development_obligations.py` pins the
-  source against every such route and plants decoys on each of them.
-- **Outside the repository, both ways.** An overlay path that names anything
-  inside this repository is refused, as given and after symlinks are
-  followed: a link inside the tree pointing out is refused, and a path
-  outside the tree resolving in is refused.
+  `--overlay`, given once: a repeated option is refused rather than last
+  wins. `tests/test_standing_development_obligations.py` plants decoys on
+  every such route and holds that none is read; a structural lint over the
+  checker's source refuses the obvious spellings and is a lint, not a proof.
+- **Outside the repository, at every step.** An overlay path that names
+  anything inside this repository is refused: the path as given after
+  lexical normalisation, every link it passes through judged at the
+  directory where that link really sits, and its final resolution. A link
+  inside the tree pointing out, a path outside the tree resolving in, and a
+  chain that merely hops through the tree are all refused. A hard link is
+  outside what a path rule can see; see the limitations.
 - **Not emitted.** No refusal names a value, a key, a path or a byte from
-  the overlay; refusals name a label and, at most, an item index. Exception
-  chaining from the loaders is severed, invalid UTF-8 and a symlink loop
-  refuse without a traceback, and a stray argument is refused without being
-  echoed. The PASS output states that an overlay was supplied and nothing
+  the overlay; refusals name a label and, at most, an item index. The
+  loaders raise their refusal outside the handler that caught the underlying
+  error, so the refusal carries no `__context__` at all. Invalid UTF-8, a
+  symlink loop, a deeply nested document, a repeated JSON key and an
+  unhashable value where a word belongs all refuse by label, and a stray or
+  repeated argument is refused without being echoed. The PASS output states
+  that an overlay was supplied and how many items it carried, and nothing
   else about it.
+- **Read once, through one descriptor.** The file is opened once without
+  blocking, judged by `fstat` on that descriptor, read within a size bound,
+  and digested from the bytes that were parsed. A FIFO is refused rather
+  than read.
+- **A repeated key is refused.** `json.loads` keeps the last value of a
+  repeated key silently, so a shadowed field would show a reader one thing
+  and the checker another. Every document is parsed with a pairs hook that
+  refuses the repetition.
 - **Not copied.** The local disposition carries, from an overlay, only each
   item's `id`, its `source`, and the SHA-256 of the overlay's bytes. The
   title, rule, reopen condition and semantic key never reach it.
 - **Bounded, not judged.** An item `id` is a short upper-case token
-  (`[A-Z0-9][A-Z0-9-]{2,63}`), so it cannot be a sentence; whether the
-  token an overlay author chooses is itself sensitive is that author's
+  (`[A-Z0-9][A-Z0-9-]{2,63}`, matched in full, so a trailing line break
+  does not satisfy it), so it cannot be a sentence; whether the token an
+  overlay author chooses is itself sensitive is that author's
   responsibility. The free-text `reason` a developer writes beside a
   disposition is not inspected, and must not quote overlay content.
 
@@ -188,3 +205,16 @@ re-reads the disposition and re-derives the verdict, so a row edited back to
 - **A shadowed interpreter environment is out of scope.** The checker is run
   with whatever Python and `scripts/` directory the caller has; a hostile
   module placed beside it is the same trust as the checker itself.
+- **A hard link is invisible to a path rule.** A file outside the tree that
+  is a hard link to a file inside it is accepted, because nothing about its
+  path names the tree. The checker judges paths and links, not inodes; a
+  caller who hard-links an overlay into a checkout has placed it there.
+- **The disposition binds the registry and the overlay, not the checker.** A
+  change to the checker's own bytes does not stale a disposition; a checker
+  cannot meaningfully certify itself. Its change is visible through the
+  governed input digest, as above.
+- **The structural lint proves less than its name.** The test that reads the
+  checker's source for environment and directory access refuses the obvious
+  spellings; an in-session adversarial review walked thirteen of fifteen
+  evasions past it. What holds the discovery property is the behavioural
+  sweep under planted decoys, which sees only the routes it exercises.

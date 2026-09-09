@@ -745,6 +745,248 @@ def test_the_parser_has_no_overlay_default(module):
 
 
 # ---------------------------------------------------------------------------
+# Closures from the in-session adversarial review of the first repaired head
+# ---------------------------------------------------------------------------
+
+
+def _raw_overlay(tmp_path: Path, text: str, *, name: str = "overlay.json") -> Path:
+    """An overlay written as TEXT, for shapes `json.dumps` cannot produce."""
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir(exist_ok=True)
+    path = directory / name
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return path
+
+
+_VALID_ITEM_TEXT = json.dumps(_overlay_document()["items"][0])
+
+
+@pytest.mark.parametrize(
+    "label, text",
+    [
+        ("classification shadowed",
+         '{"schema": "nornyx.forge.private_standing_overlay.v1", "classification": "'
+         + SENTINEL_VALUE + '", "classification": "private", "items": [' + _VALID_ITEM_TEXT + "]}"),
+        ("items shadowed with a smuggled field",
+         '{"schema": "nornyx.forge.private_standing_overlay.v1", "classification": "private", '
+         '"items": [{"' + SENTINEL_FIELD + '": "' + SENTINEL_VALUE + '", "approved_by": "founder"}], '
+         '"items": [' + _VALID_ITEM_TEXT + "]}"),
+        ("item field repeated",
+         '{"schema": "nornyx.forge.private_standing_overlay.v1", "classification": "private", '
+         '"items": [{"id": "PRV-001", "id": "PRV-001", "kind": "deferred_capability", '
+         '"dedupe_key": "' + SENTINEL_KEY + '", "status": "deferred", "title": "' + SENTINEL_TITLE
+         + '", "rule": "' + SENTINEL_RULE + '", "reopen_condition": "' + SENTINEL_CONDITION + '"}]}'),
+    ],
+)
+def test_a_repeated_json_key_is_refused_rather_than_last_wins(module, tmp_path, label, text):
+    """`json.loads` keeps the last value of a repeated key and says nothing.
+
+    Measured on the first repaired head: a shadowed `classification`, a
+    shadowed `items` carrying `approved_by`, and a repeated row field all
+    passed, because the closed field sets only ever saw the survivor.
+    """
+    overlay = _raw_overlay(tmp_path, text)
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert "repeats a key" in message
+    _assert_no_leak(message, overlay)
+    completed = _run("--overlay", str(overlay))
+    assert completed.returncode == 2
+    _assert_no_leak(completed.stdout + completed.stderr, overlay)
+
+
+def test_a_repeated_key_in_a_disposition_row_cannot_hide_a_stop(module):
+    """The row a person reads said `requires_decision`; the survivor said `considered`."""
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        record = _complete(path, module, registries)
+        text = json.dumps(record)
+        first_row = json.dumps(record["items"][0])
+        shadowed = first_row[:-1] + ', "disposition": "requires_decision", "disposition": "considered"}'
+        assert first_row in text
+        path.write_text(text.replace(first_row, shadowed, 1), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert "repeats a key" in message
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("id", "PRV-001\n"),
+        ("id", "FGR-SDO-001\n"),
+        ("dedupe_key", "development-cycle-standing-obligation-admission\n"),
+        ("dedupe_key", SENTINEL_KEY + "\r"),
+    ],
+    ids=["id with newline", "public id plus newline", "public key plus newline", "key with CR"],
+)
+def test_a_trailing_line_break_does_not_satisfy_an_identifier_grammar(module, tmp_path, field, value):
+    """`$` matches before a final newline; `fullmatch` does not.
+
+    Measured on the first repaired head: `PRV-001` plus a newline was
+    accepted and written into the disposition, and a public id plus a
+    newline walked past the cross-registry duplicate check.
+    """
+    overlay = _write_overlay(tmp_path, _overlay_document(items=[_item(**{field: value})]))
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert f"no valid {field}" in message
+    _assert_no_leak(message, overlay)
+
+
+def test_a_cycle_id_with_a_trailing_newline_is_refused(module):
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        message = _refusal(module, lambda: module.initialize_disposition(
+            path, cycle_id="TEST\n", registries=registries))
+        assert "--cycle-id" in message
+        assert not path.exists()
+
+
+@posix_only
+def test_a_symlink_chain_that_passes_through_the_repository_is_refused(module, tmp_path):
+    """Outside at both ends, inside in the middle: the middle hop is committable.
+
+    Measured on the first repaired head: `outside/a -> repo/.nornyx/runtime/b
+    -> outside/c` passed, because only the given path and the final
+    resolution were judged.
+    """
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    final = _write_overlay(tmp_path, name="good.json")
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    middle = RUNTIME / f"hop-{uuid.uuid4().hex}.json"
+    first = directory / "hop1.json"
+    try:
+        _symlink(final, middle)
+        _symlink(middle, first)
+        message = _refusal(module, lambda: module.load_registries(first))
+        assert "outside the Forge repository" in message
+        _assert_no_leak(message, first, middle, final)
+    finally:
+        middle.unlink()
+
+
+@posix_only
+def test_a_link_reached_through_a_directory_symlink_into_the_repository_is_refused(module, tmp_path):
+    """The link's REAL directory is inside the tree, whatever its target."""
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    final = _write_overlay(tmp_path, name="good.json")
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    inside = RUNTIME / f"dir-{uuid.uuid4().hex}"
+    inside.mkdir()
+    try:
+        _symlink(final, inside / "out.json")
+        _symlink(inside, directory / "dirlink")
+        given = directory / "dirlink" / "out.json"
+        message = _refusal(module, lambda: module.load_registries(given))
+        assert "outside the Forge repository" in message
+        _assert_no_leak(message, given, final)
+    finally:
+        (inside / "out.json").unlink()
+        inside.rmdir()
+
+
+@posix_only
+def test_a_fifo_overlay_is_refused_without_blocking(tmp_path):
+    """One open, non-blocking, `fstat` on the descriptor: a FIFO is refused, not read."""
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    fifo = directory / "overlay.json"
+    os.mkfifo(fifo)
+    completed = subprocess.run(  # noqa: S603
+        [sys.executable, str(SCRIPT), "--overlay", str(fifo)],
+        cwd=ROOT, check=False, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=30,
+    )
+    assert completed.returncode == 2
+    assert "not a regular file" in completed.stderr
+    _assert_no_leak(completed.stdout + completed.stderr, fifo)
+
+
+@pytest.mark.parametrize(
+    "label, document",
+    [
+        ("kind is a list", _overlay_document(items=[_item(kind=[SENTINEL_VALUE])])),
+        ("status is an object", _overlay_document(items=[_item(status={SENTINEL_FIELD: 1})])),
+    ],
+)
+def test_an_unhashable_value_is_refused_with_a_label(module, tmp_path, label, document):
+    """`x not in frozenset` raises `TypeError` on a list; that is not a refusal."""
+    overlay = _write_overlay(tmp_path, document)
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert "invalid kind" in message or "invalid status" in message
+    _assert_no_leak(message, overlay)
+
+
+@pytest.mark.parametrize("field", ["source", "disposition"])
+def test_an_unhashable_row_value_is_refused_with_a_label(module, field):
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        record = _complete(path, module, registries)
+        record["items"][0][field] = [SENTINEL_VALUE]
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert "invalid identity" in message or "invalid disposition" in message
+        assert SENTINEL_VALUE not in message
+
+
+def test_a_deeply_nested_document_is_refused_with_a_label(module, tmp_path):
+    """`RecursionError` out of the JSON parser is not a `ValueError`."""
+    overlay = _raw_overlay(tmp_path, "[" * 200_000 + SENTINEL_VALUE)
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert "UTF-8 JSON" in message
+    completed = _run("--overlay", str(overlay))
+    assert completed.returncode == 2
+    assert "unexpected failure" not in completed.stderr
+    _assert_no_leak(completed.stdout + completed.stderr, overlay)
+
+
+def test_a_repeated_option_is_refused_rather_than_last_wins(tmp_path):
+    """`--overlay A --overlay B` read B and never bound A."""
+    good = _write_overlay(tmp_path, name="good.json")
+    bad = _write_overlay(tmp_path, _overlay_document(schema=SENTINEL_VALUE), name="bad.json")
+    for order in ((bad, good), (good, bad)):
+        completed = _run("--overlay", str(order[0]), "--overlay", str(order[1]))
+        assert completed.returncode == 2
+        assert "--overlay may be given once" in completed.stderr
+        _assert_no_leak(completed.stdout + completed.stderr, good, bad)
+    with _runtime_disposition() as path:
+        completed = _run("--init", str(path), "--init", str(path), "--cycle-id", "X")
+        assert completed.returncode == 2 and "--init may be given once" in completed.stderr
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("shape", ["invalid utf-8", "missing file", "symlink loop"])
+def test_a_refusal_carries_no_context_or_cause(module, tmp_path, shape):
+    """`from None` hides `__context__` from a traceback; it does not remove it.
+
+    The original `OSError` or `UnicodeDecodeError` -- filename or byte inside
+    -- would still hang off the refusal for any caller that looked. The
+    loaders raise outside the handler instead, so there is nothing to find.
+    """
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    target = directory / "overlay.json"
+    if shape == "invalid utf-8":
+        target.write_bytes(b"\xff" + SENTINEL_TITLE.encode("ascii"))
+    elif shape == "symlink loop":
+        if os.name != "posix":
+            target.write_bytes(b"\xff")
+        else:
+            other = directory / "other.json"
+            _symlink(other, target)
+            _symlink(target, other)
+    try:
+        module.load_registries(target)
+    except module.AdmissionError as exc:
+        assert exc.__context__ is None and exc.__cause__ is None
+        _assert_no_leak(repr(exc), target)
+    else:
+        raise AssertionError("the overlay was accepted")
+
+
+# ---------------------------------------------------------------------------
 # Structural: what the checker source may and may not do
 # ---------------------------------------------------------------------------
 
@@ -764,7 +1006,17 @@ def _checker_tree() -> ast.Module:
 
 
 def test_the_checker_reads_no_environment_and_scans_no_directory():
-    """No discovery route exists in the source: not env, not cwd, not home."""
+    """A LINT over the obvious spellings, not a proof of absence.
+
+    An in-session adversarial review appended fifteen evasions to a scratch
+    copy -- `getattr(os, "env" + "iron")`, `vars(os)["environ"]`,
+    `open("/proc/self/environ")`, `__import__("sub" + "process")`, a print of
+    the overlay path -- and thirteen passed this test and the two beside it.
+    What holds the property is the behavioural sweep: decoys on every route
+    in `test_no_overlay_is_discovered_from_cwd_home_or_environment` and the
+    sentinel checks over every output on the paths they exercise. This test
+    refuses the spellings a maintainer would reach for first, and no more.
+    """
     offenders = []
     for node in ast.walk(_checker_tree()):
         if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
@@ -785,31 +1037,56 @@ def test_the_checker_imports_only_the_standard_library_allowlist():
     assert "subprocess" not in imported and "importlib" not in imported
 
 
+def _label_only(argument: ast.expr, allowed_names: set) -> bool:
+    """A constant, or an f-string whose every hole is one of the allowed names."""
+    if isinstance(argument, ast.Constant):
+        return True
+    if not isinstance(argument, ast.JoinedStr):
+        return False
+    for value in argument.values:
+        if isinstance(value, ast.FormattedValue):
+            inner = value.value
+            if not (isinstance(inner, ast.Name) and inner.id in allowed_names):
+                return False
+    return True
+
+
 def test_every_refusal_is_composed_from_labels_and_indexes_only():
     """No `AdmissionError` message interpolates a value from an input.
 
-    The one composed message -- the blocker list -- is the exception, and it is
+    Two shapes are admitted: `raise AdmissionError(<label-only string>)`, and
+    `raise AdmissionError(refusal)` where EVERY assignment to `refusal` in the
+    module is itself label-only -- the loaders assign a message inside a
+    handler and raise outside it, so that the refusal carries no context. The
+    one composed message -- the blocker list -- is the exception, and it is
     pinned as exactly one site so a second composed message is a reviewed
     change rather than a quiet one.
     """
-    allowed_names = {"label", "index", "required", "key"}
-    composed = 0
+    allowed_names = {"label", "index", "required", "key", "option"}
+    tree = _checker_tree()
     offenders = []
-    for node in ast.walk(_checker_tree()):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(isinstance(target, ast.Name) and target.id == "refusal" for target in node.targets):
+            if isinstance(node.value, ast.Constant) and node.value.value is None:
+                continue
+            if not _label_only(node.value, allowed_names):
+                offenders.append(f"refusal assigned at line {node.lineno}")
+    composed = 0
+    for node in ast.walk(tree):
         if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
             continue
         callee = node.exc.func
         if not (isinstance(callee, ast.Name) and callee.id == "AdmissionError"):
             continue
         argument = node.exc.args[0]
-        if isinstance(argument, ast.Constant):
+        if isinstance(argument, ast.Name) and argument.id == "refusal":
+            continue
+        if _label_only(argument, allowed_names):
             continue
         if isinstance(argument, ast.JoinedStr):
-            for value in argument.values:
-                if isinstance(value, ast.FormattedValue):
-                    inner = value.value
-                    if not (isinstance(inner, ast.Name) and inner.id in allowed_names):
-                        offenders.append(f"line {node.lineno}")
+            offenders.append(f"line {node.lineno}")
             continue
         composed += 1
     assert offenders == [], f"refusals interpolate something other than a label: {offenders}"

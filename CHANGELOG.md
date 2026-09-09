@@ -51,6 +51,29 @@
   later commit regenerate the evidence in the same commit. Collection
   3308 -> 3395 across 114 modules; the recorded-measurements floor follows
   the new governance document to 184.
+  An in-session read-only adversarial review of the first repaired head --
+  bounded review evidence, not an independent inspection -- found no P1 and
+  three P2s, each contradicting a stated claim, each reproduced and closed:
+  a repeated JSON key let a disposition row read `requires_decision` to a
+  person and `considered` to the checker, and let a shadowed `items` carry
+  `approved_by` past the closed field set (every document is now parsed
+  with a pairs hook that refuses repetition); `$`-anchored identifier
+  grammars admitted a trailing newline, so `PRV-001` plus a line break was
+  written into the disposition and a public id plus a line break walked
+  past the cross-registry duplicate check (matched in full now); and a
+  symlink chain hopping through `.nornyx/runtime/` was accepted because
+  only its two ends were judged (every link is now judged at the directory
+  where it really sits). Also closed from that review: a repeated
+  `--overlay` was last-wins and is refused; an unhashable value where a
+  word belongs, and a deeply nested document, raised `TypeError` and
+  `RecursionError` past the labelled refusals; the read was two opens and a
+  FIFO swapped between them would have hung the caller; and `from None`
+  only hid the loaders' `__context__`, which still carried the filename --
+  refusals are now raised outside the handler and pinned to carry none.
+  Stated rather than fixed: a hard link is invisible to a path rule, the
+  disposition does not bind the checker's own bytes, and the structural
+  lint over the source is a lint that thirteen of fifteen evasions walked
+  past; the discovery property rests on the behavioural sweep.
   Not claimed, and recorded as such in A-029: that anyone runs the check;
   that a free-text `reason` is free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the

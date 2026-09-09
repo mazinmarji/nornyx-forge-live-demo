@@ -2635,15 +2635,23 @@ closed field sets and a closed disposition vocabulary, so a fabricated
 `approved_by` beside a row is refused rather than ignored and relabelling
 `requires_decision` to any other word refuses; digest binding with staleness
 on a one-byte change to either input; exact coverage; `defer` admitted only
-for an item whose registry status is already deferred; no discovery route in
-the checker's source and none in its behaviour under planted decoys; refusal
-of an overlay path inside the repository, lexically and after resolution; and
-no sentinel from an overlay's content, field names, schema string, directory
-name or invalid bytes reaching any output, file or refusal, on the failure
-paths included. Measured while writing them: on CPython 3.11 a symlink-loop
-overlay made `Path.resolve` raise `RuntimeError` with the path in its message,
-a class the first checker did not catch; and `UnicodeDecodeError` quotes the
-offending byte. Both are now refused with a label and nothing else.
+for an item whose registry status is already deferred; no discovery under
+planted decoys, with a structural lint over the checker's source that refuses
+the obvious spellings and is stated to be a lint; refusal of an overlay path
+inside the repository as given, at every link it passes through, and after
+resolution; a repeated JSON key refused rather than last-wins; identifier
+grammars matched in full; and no sentinel from an overlay's content, field
+names, schema string, directory name or invalid bytes reaching any output,
+file, refusal or refusal context, on the failure paths included. Measured
+while writing them: on CPython 3.11 a symlink-loop overlay made
+`Path.resolve` raise `RuntimeError` with the path in its message, a class the
+first checker did not catch; `UnicodeDecodeError` quotes the offending byte.
+An in-session adversarial review of the first repaired head then measured
+three more: a repeated JSON key let a row read `requires_decision` to a person
+and `considered` to the checker; a `$`-anchored identifier grammar admitted a
+trailing newline; and a symlink chain that hopped through the repository was
+accepted because only its two ends were judged. All are now refused with a
+label and nothing else, and each is pinned by the test that reproduced it.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
@@ -2657,7 +2665,12 @@ to it moves no digest; the substantive rules live in the governed procedure
 document and the registry, and widening the subject scope is a change to the
 governed subject that this mechanism does not make. The local disposition can
 be edited after a PASS; every check re-evaluates it, and nothing checks again
-on the developer's behalf.
+on the developer's behalf. The disposition binds the registry and the overlay
+and not the checker's own bytes. A hard link from outside the tree to a file
+inside it is invisible to a path rule and is accepted. The structural lint
+over the checker's source is a lint: the same review walked thirteen of
+fifteen evasions past it, and the discovery property rests on the behavioural
+sweep under planted decoys, which sees only the routes it exercises.
 
 **The recorded evidence-binding violation.** The first head of PR #51 added
 governed inputs without regenerating the evidence set, so `--verify` reported

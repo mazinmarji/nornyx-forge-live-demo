@@ -27,8 +27,10 @@ reaches stdout, stderr, the disposition or any evidence except the opaque
 item identifiers the caller chose, the item count, and a SHA-256 of the
 file's bytes. Every refusal this script can produce names a label and, where
 useful, an item INDEX; none carries a value, a key name, a path or a byte
-from any input, and exception chaining from the loaders is severed so a
-traceback cannot carry one either.
+from any input. The loaders raise their refusals outside the handler that
+caught the underlying error, so the refusal carries no `__context__` at all,
+not merely a suppressed one; and a failure no handler foresaw still exits 2
+with the exception's class name and nothing else.
 
 WHAT THIS DOES NOT ESTABLISH. It cannot make anyone run it: a model or a
 person who edits the repository without invoking it is outside what it
@@ -96,12 +98,17 @@ ROW_SOURCES = frozenset({"public", "private"})
 #: carried into the local disposition, so its shape is bounded to a short
 #: upper-case token: it cannot be a sentence. Its MEANING is the overlay
 #: author's responsibility, and this script does not claim to judge it.
-ITEM_ID = re.compile(r"^[A-Z0-9][A-Z0-9-]{2,63}$")
-DEDUPE_KEY = re.compile(r"^[a-z0-9][a-z0-9-]{2,79}$")
-CYCLE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+#: Matched with `fullmatch`, never `match` against a `$`-anchored pattern:
+#: `$` also matches before a trailing newline, so `PRV-001` followed by a line
+#: break satisfied the anchored form and was written into the disposition as
+#: an identifier a viewer cannot tell from the real one.
+ITEM_ID = re.compile(r"[A-Z0-9][A-Z0-9-]{2,63}")
+DEDUPE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{2,79}")
+CYCLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 TEXT_BOUND = 2000
 DOCUMENT_BYTES_BOUND = 1_048_576
+#: A symlink chain longer than this is refused rather than followed.
+SYMLINK_HOPS_BOUND = 40
 
 #: Printed after every PASS. The sentence is the boundary, stated where a
 #: reader of the output will see it rather than only in a document.
@@ -146,6 +153,74 @@ class Registries(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
+class _DuplicateKey(ValueError):
+    """A JSON object repeats a key; `json.loads` would keep the last silently."""
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """`object_pairs_hook`: an object whose key appears twice is refused.
+
+    `json.loads` keeps the LAST value of a repeated key and drops the first
+    without a word, so a row could read `requires_decision` to a person and
+    `considered` to this script, and a shadowed `items` could carry any field
+    at all past the closed field set. Measured, both.
+    """
+    document: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            raise _DuplicateKey(key)
+        document[key] = value
+    return document
+
+
+def _read_bytes_bounded(path: Path, *, label: str) -> bytes:
+    """The file's bytes, read through ONE descriptor, or a labelled refusal.
+
+    One open, `fstat` on that descriptor, then a bounded read from it: a
+    `stat` followed by a separate `read_bytes` is two opens, and a FIFO swapped
+    in between would hang the caller's own run. `O_NONBLOCK` keeps the open
+    itself from blocking on a FIFO where the platform has it.
+
+    The refusal is raised AFTER the handler has been left. `raise ... from
+    None` only suppresses the display of `__context__`; the original
+    `OSError`, with the filename in it, would still hang off the exception
+    object for any caller that looks. Assigning a message and raising outside
+    the `except` leaves no context at all.
+    """
+    refusal: str | None = None
+    raw = b""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except (OSError, ValueError):
+        refusal = f"{label} cannot be read"
+    else:
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                refusal = f"{label} is not a regular file"
+            elif info.st_size > DOCUMENT_BYTES_BOUND:
+                refusal = f"{label} exceeds the size bound"
+            else:
+                chunks: list[bytes] = []
+                remaining = DOCUMENT_BYTES_BOUND + 1
+                while remaining > 0:
+                    chunk = os.read(descriptor, min(remaining, 65536))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if len(raw) > DOCUMENT_BYTES_BOUND:
+                    refusal = f"{label} exceeds the size bound"
+        except OSError:
+            refusal = f"{label} cannot be read"
+        finally:
+            os.close(descriptor)
+    if refusal is not None:
+        raise AdmissionError(refusal)
+    return raw
+
+
 def _read_document(path: Path, *, label: str) -> tuple[dict[str, Any], str]:
     """The parsed JSON object and the SHA-256 of the bytes it was parsed from.
 
@@ -153,28 +228,22 @@ def _read_document(path: Path, *, label: str) -> tuple[dict[str, Any], str]:
     file replaced between a load and a later digest cannot bind a disposition
     to bytes nobody validated.
 
-    `from None` throughout: `UnicodeDecodeError` quotes the offending byte,
-    `JSONDecodeError` quotes a position, and every `OSError` carries the
-    filename. None of them may travel further than this function.
+    `UnicodeDecodeError` quotes the offending byte, `JSONDecodeError` quotes a
+    position, `RecursionError` comes out of a deeply nested document, and a
+    repeated key is refused by the pairs hook. None of them travels further
+    than this function, and none is left as the refusal's `__context__`.
     """
+    raw = _read_bytes_bounded(path, label=label)
+    refusal: str | None = None
+    value: Any = None
     try:
-        info = os.stat(path)
-    except (OSError, ValueError):
-        raise AdmissionError(f"{label} cannot be read") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise AdmissionError(f"{label} is not a regular file")
-    if info.st_size > DOCUMENT_BYTES_BOUND:
-        raise AdmissionError(f"{label} exceeds the size bound")
-    try:
-        raw = path.read_bytes()
-    except (OSError, ValueError):
-        raise AdmissionError(f"{label} cannot be read") from None
-    if len(raw) > DOCUMENT_BYTES_BOUND:
-        raise AdmissionError(f"{label} exceeds the size bound")
-    try:
-        value = json.loads(raw.decode("utf-8"))
-    except ValueError:
-        raise AdmissionError(f"{label} is not a UTF-8 JSON document") from None
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=_refuse_duplicate_keys)
+    except _DuplicateKey:
+        refusal = f"{label} repeats a key inside one object"
+    except (ValueError, RecursionError):
+        refusal = f"{label} is not a UTF-8 JSON document"
+    if refusal is not None:
+        raise AdmissionError(refusal)
     if not isinstance(value, dict):
         raise AdmissionError(f"{label} must be a JSON object")
     return value, hashlib.sha256(raw).hexdigest()
@@ -193,43 +262,74 @@ def _is_within(path: Path, parent: Path) -> bool:
     return True
 
 
+def _link_locations(path: Path, *, label: str) -> list[Path]:
+    """Where each link in the chain physically sits, the path as given first.
+
+    A chain `outside/a -> repo/.nornyx/runtime/b -> outside/c` is outside at
+    both ends, so a rule that judges only the given path and its final
+    resolution accepts it -- while the middle hop is a file inside the tree
+    that names the overlay and could be committed. Each hop is placed at the
+    real path of its directory, so a link reached through a directory symlink
+    into the tree is judged where it actually lives.
+    """
+    current = _lexical_absolute(path)
+    locations: list[Path] = []
+    for _ in range(SYMLINK_HOPS_BOUND):
+        parent = Path(os.path.realpath(current.parent))
+        locations.append(parent / current.name)
+        if not current.is_symlink():
+            return locations
+        target = os.readlink(current)
+        current = Path(os.path.normpath(os.path.join(str(parent), target)))
+    # The same words as a loop the interpreter detects itself: which step
+    # noticed is not the property.
+    raise AdmissionError(f"{label} path cannot be resolved")
+
+
 def _within_repository(path: Path, *, label: str) -> bool:
     """Whether `path` names anything inside this repository.
 
-    BOTH the given path and its resolution are judged. A symlink inside the
+    The path as given (after lexical normalisation), every link it passes
+    through, and its final resolution are all judged. A symlink inside the
     repository that points outside is still a path inside the repository --
-    and one that could be committed -- so the lexical form is refused too;
-    a path outside the repository that resolves inside it is content inside
-    the repository under another name.
+    and one that could be committed -- so it is refused; a path outside the
+    repository that resolves inside it is content inside the repository under
+    another name; and a chain that merely passes through the tree is refused
+    for the same reason as the first.
 
     `resolve()` raises `RuntimeError` on a symlink loop on some interpreter
     versions and `OSError` on others, and both spell the path in their
-    message. Neither is allowed out.
+    message. Neither is allowed out, and neither is left as context.
     """
+    refusal: str | None = None
+    inside = False
     try:
-        lexical = _lexical_absolute(path)
-        resolved = path.resolve(strict=False)
+        for location in _link_locations(path, label=label):
+            inside = inside or _is_within(location, ROOT)
+        inside = inside or _is_within(path.resolve(strict=False), ROOT)
+    except AdmissionError:
+        raise
     except (OSError, RuntimeError, ValueError):
-        raise AdmissionError(f"{label} path cannot be resolved") from None
-    return _is_within(lexical, ROOT) or _is_within(resolved, ROOT)
+        refusal = f"{label} path cannot be resolved"
+    if refusal is not None:
+        raise AdmissionError(refusal)
+    return inside
 
 
 def _require_runtime_file(path: Path, *, label: str) -> None:
     """The disposition lives under the gitignored runtime root, and only there."""
+    refusal: str | None = None
+    inside = False
     try:
-        lexical = _lexical_absolute(path)
-        resolved = path.resolve(strict=False)
+        inside = _is_within(_lexical_absolute(path), RUNTIME_ROOT) and _is_within(
+            path.resolve(strict=False), RUNTIME_ROOT
+        )
     except (OSError, RuntimeError, ValueError):
-        raise AdmissionError(f"{label} path cannot be resolved") from None
-    if not (_is_within(lexical, RUNTIME_ROOT) and _is_within(resolved, RUNTIME_ROOT)):
+        refusal = f"{label} path cannot be resolved"
+    if refusal is not None:
+        raise AdmissionError(refusal)
+    if not inside:
         raise AdmissionError(f"{label} must be under .nornyx/runtime/")
-
-
-def _digest_of_file(path: Path, *, label: str) -> str:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except (OSError, ValueError):
-        raise AdmissionError(f"{label} cannot be read") from None
 
 
 # ---------------------------------------------------------------------------
@@ -254,15 +354,19 @@ def _validate_item(item: Any, *, label: str, index: int) -> tuple[str, str, str]
         if required not in item:
             raise AdmissionError(f"{label} item {index} lacks the {required} field")
     item_id = item["id"]
-    if not isinstance(item_id, str) or not ITEM_ID.match(item_id):
+    if not isinstance(item_id, str) or not ITEM_ID.fullmatch(item_id):
         raise AdmissionError(f"{label} item {index} has no valid id")
     dedupe_key = item["dedupe_key"]
-    if not isinstance(dedupe_key, str) or not DEDUPE_KEY.match(dedupe_key):
+    if not isinstance(dedupe_key, str) or not DEDUPE_KEY.fullmatch(dedupe_key):
         raise AdmissionError(f"{label} item {index} has no valid dedupe_key")
-    if item["kind"] not in ITEM_KINDS:
+    # `isinstance` before `in`: an unhashable value -- a list where a word
+    # belongs -- raises `TypeError` out of a set membership test, which is a
+    # refusal without a label.
+    kind = item["kind"]
+    if not isinstance(kind, str) or kind not in ITEM_KINDS:
         raise AdmissionError(f"{label} item {index} has an invalid kind")
     status = item["status"]
-    if status not in ITEM_STATUSES:
+    if not isinstance(status, str) or status not in ITEM_STATUSES:
         raise AdmissionError(f"{label} item {index} has an invalid status")
     _bounded_text(item, "title", label=label, index=index)
     _bounded_text(item, "rule", label=label, index=index)
@@ -365,7 +469,7 @@ def initialize_disposition(output: Path, *, cycle_id: str, registries: Registrie
     reach this file, and nothing else from the overlay does either.
     """
     _require_runtime_file(output, label="cycle disposition")
-    if not isinstance(cycle_id, str) or not CYCLE_ID.match(cycle_id):
+    if not isinstance(cycle_id, str) or not CYCLE_ID.fullmatch(cycle_id):
         raise AdmissionError("--cycle-id must be a short identifier")
     if output.exists() or output.is_symlink():
         raise AdmissionError("cycle disposition already exists; remove it to start a new cycle")
@@ -405,7 +509,7 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
     if record.get("schema") != DISPOSITION_SCHEMA:
         raise AdmissionError("cycle disposition has an unsupported schema")
     cycle_id = record.get("cycle_id")
-    if not isinstance(cycle_id, str) or not CYCLE_ID.match(cycle_id):
+    if not isinstance(cycle_id, str) or not CYCLE_ID.fullmatch(cycle_id):
         raise AdmissionError("cycle disposition has no valid cycle_id")
     if record.get("public_registry_sha256") != registries.public_digest:
         raise AdmissionError("cycle disposition is stale against the public registry")
@@ -427,7 +531,12 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
             raise AdmissionError(f"cycle disposition item {index} does not carry exactly the row fields")
         source = row["source"]
         item_id = row["id"]
-        if source not in ROW_SOURCES or not isinstance(item_id, str) or not ITEM_ID.match(item_id):
+        if (
+            not isinstance(source, str)
+            or source not in ROW_SOURCES
+            or not isinstance(item_id, str)
+            or not ITEM_ID.fullmatch(item_id)
+        ):
             raise AdmissionError(f"cycle disposition item {index} has invalid identity")
         identity = (source, item_id)
         if identity in seen:
@@ -439,7 +548,7 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
         seen.add(identity)
 
         disposition = row["disposition"]
-        if disposition not in ALL_DISPOSITIONS:
+        if not isinstance(disposition, str) or disposition not in ALL_DISPOSITIONS:
             raise AdmissionError(f"cycle disposition item {index} has an invalid disposition")
         reason = row["reason"]
         if not isinstance(reason, str) or len(reason) > TEXT_BOUND:
@@ -492,9 +601,13 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=ADMISSION_BOUNDARY,
         add_help=True,
     )
+    # `action="append"` so that a repeated option is SEEN. argparse's default
+    # keeps the last value silently, so `--overlay A --overlay B` read B and
+    # never digest-bound A; `_single` below refuses the repetition by name.
     parser.add_argument(
         "--overlay",
         type=Path,
+        action="append",
         default=None,
         help=(
             "Explicit external overlay. The only way an overlay is ever read: it "
@@ -502,36 +615,54 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--init", type=Path, default=None, help="Initialize a gitignored cycle disposition."
+        "--init",
+        type=Path,
+        action="append",
+        default=None,
+        help="Initialize a gitignored cycle disposition.",
     )
-    parser.add_argument("--cycle-id", default="", help="Cycle identifier used with --init.")
+    parser.add_argument(
+        "--cycle-id", action="append", default=None, help="Cycle identifier used with --init."
+    )
     parser.add_argument(
         "--check-disposition",
         type=Path,
+        action="append",
         default=None,
         help="Validate a completed gitignored cycle disposition.",
     )
     return parser
 
 
+def _single(values: list[Any] | None, option: str) -> Any:
+    """The one value an option was given, or a refusal naming the option."""
+    if values is None:
+        return None
+    if len(values) != 1:
+        raise AdmissionError(f"{option} may be given once")
+    return values[0]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.init is not None and args.check_disposition is not None:
+        overlay = _single(args.overlay, "--overlay")
+        init = _single(args.init, "--init")
+        check = _single(args.check_disposition, "--check-disposition")
+        cycle_id = _single(args.cycle_id, "--cycle-id")
+        if init is not None and check is not None:
             raise AdmissionError("--init and --check-disposition are mutually exclusive")
-        registries = load_registries(args.overlay)
-        if args.init is not None:
+        registries = load_registries(overlay)
+        if init is not None:
             count = initialize_disposition(
-                args.init, cycle_id=args.cycle_id, registries=registries
+                init, cycle_id="" if cycle_id is None else cycle_id, registries=registries
             )
             print(
                 "Standing obligations loaded; local cycle disposition initialized "
                 f"with {count} pending item(s)."
             )
-        elif args.check_disposition is not None:
-            public_rows, private_rows = validate_disposition(
-                args.check_disposition, registries=registries
-            )
+        elif check is not None:
+            public_rows, private_rows = validate_disposition(check, registries=registries)
             print(
                 "Standing-obligation development admission: PASS "
                 f"({public_rows} public, {private_rows} overlay item(s) dispositioned)."
@@ -542,7 +673,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"({len(registries.public_items)} public, "
                 f"{len(registries.private_items)} overlay item(s))."
             )
-        if args.overlay is not None:
+        if overlay is not None:
             print(OVERLAY_NOTICE)
         print(ADMISSION_BOUNDARY)
         return 0
