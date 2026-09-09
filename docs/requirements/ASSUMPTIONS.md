@@ -4050,12 +4050,88 @@ means: "the build's gate results and governance validation licensed it and A
 PERSON CONFIRMED IT." Not a refusal. A settled-fact statement to the reader,
 of exactly the thing the stop route was being repaired for claiming, and worse
 than the refusal because a refusal is at least about a request that was turned
-away. It now reads "this run's session holder confirmed it"; the disclaimer
-that follows it -- not deployment, not production approval, not an independent
-inspection -- is unchanged and still the load-bearing half. Recorded here
-because the lesson is the shape, not the string: a claim does not have to sit
-on a route to be made, so the guard that holds this closed searches what a
-module can SAY.
+away. The disclaimer that follows it -- not deployment, not production
+approval, not an independent inspection -- is unchanged and still the
+load-bearing half. Recorded here because the lesson is the shape, not the
+string: a claim does not have to sit on a route to be made, so the guard that
+holds this closed searches what a module can SAY.
+
+**AND THE FIRST REPLACEMENT AT THAT SITE WAS MORE SPECIFIC AND THEREFORE MORE
+FALSE.** It read "this run's session holder confirmed it". `journey_view`
+renders that line from the PERSISTED lifecycle -- its own docstring says "the
+persisted position" -- and the bearer is PER RUN. Its parameters are
+`(experience, document, brd_present, build_running, provider_blocker)`:
+no request, no session and no bearer reach it, so nothing written there can be
+about the reader's run at all. A READY persisted in one run is served to every
+later reader as something "this run's session holder" did, and for any project
+reopened after a restart -- the ordinary case -- nobody present did it.
+Narrowing an unbacked claim by making it more precise about something the code
+cannot see makes it worse, not better, and it did so at the one site this entry
+had just singled out as the worst kind of claim.
+
+It now defers to the record: "the ident recorded in this project's history
+confirmed it". `experience.advance` writes `by` and `kind` into `entered` and
+appends them to `history` on every transition, READY included, so the sentence
+names an artifact the reader can go and look at, and interprets it no further.
+It says nothing about who that ident belongs to, which is exactly the point --
+it is an unauthenticated self-declaration, and pointing at the record is the
+only claim available here that the record backs. THE REJECTED ALTERNATIVE was
+"a Forge session holder confirmed it": the persisted record does not record
+that a bearer was ever presented, and `mark_ready` is reachable from the
+importable domain with no surface in front of it, so that sentence would assert
+an admission path the projection cannot see -- unbacked in the same way, one
+step less visibly.
+
+**AND THREE LIVE ROUTES WENT ON SPEAKING THE CLAIM, ONE SYNONYM AWAY.**
+`onboarding_app._human_act` returned "<what> is a human act on this surface" on
+`/api/journey/retry`, `/api/journey/restore` and `/api/build` -- driven against
+the real surface with a valid bearer and an honest `kind: model`, all three
+answered 409 carrying that sentence. Its DOCSTRING twin had been repaired and
+the string the surface actually speaks had not, which is the inverse of the
+priority the guard's own docstring argues for. The exemption was considered and
+refused: "a human act" asserts a property of the ACT, which is the thing
+nothing here establishes, and it differs from "a person's act" only in
+vocabulary. So the three refusals were narrowed to what the stop route's says,
+in the same words -- the session holder, this computer, the declared kind that
+was refused, and the limit stated in the body.
+
+That wording is on FIRMER footing here than on the stop route. `create_app`
+installs `SessionGate` itself, as the outermost user middleware, so every route
+it composes is behind the per-run bearer by construction rather than by the
+caller assembling the composition correctly. What is NOT a property of
+`create_app` is "on this computer": the loopback bind and the `Host` rule live
+in `onboarding_serve.assemble`, so on a bare `create_app` under a test client
+that half is the same documentation-level residue recorded below.
+
+**A PHRASE LIST IS DEFEATED BY A THESAURUS, and this one was.** Measured, with
+the person-only list in place: rewriting `_NEXT["READY"]` to "...licensed it
+and A HUMAN CONFIRMED IT" left `tests/test_actor_declaration_boundary.py`
+GREEN, 6 passed, and nothing anywhere pinned that string's wording. The list
+now carries the human family -- `is a human act`, `a human confirmed`, `a human
+approved`, `a human started`, `a human stopped`, `a human's act`, `is a
+human's`, `a human action`, `proves a human`, `establishes that a human`,
+`confirms a human` -- with three positive controls and two negative ones.
+`is a human act` is anchored rather than bare because the bare phrase is a
+prefix of "a human actOR" and flags three literals that are not claims at all
+("a capsule is created by a human actor" and two like it), each of which names
+the DECLARED KIND, which is the one thing this entry says IS established.
+
+But the list is the weaker half and is recorded as such. What closes the class
+is `test_the_ready_line_defers_to_the_record_and_claims_nobody`, which pins the
+wording that line MUST carry, asserts the record it defers to actually holds
+the ident, and asserts that two DIFFERENT marking idents render the identical
+sentence -- so the line is a constant and can be about nobody. A list can only
+enumerate the spellings somebody thought of; a pin states what the sentence
+says.
+
+**One page literal went with it.** The served page rendered "does not match
+Forge's seal; a person may restore it" and now renders "...it can be restored
+from the seal". That sentence was not false -- a person may indeed restore it,
+and so may anything else declaring `human` -- so its defect was an implicature
+of exclusivity sitting beside a refusal that had just been made honest. It is
+recorded here rather than pinned by a phrase, because adding "a person may" to
+the forbidden list would be tuning that list to one edit rather than to the
+defect.
 
 **Why no login is added here, per candidate rather than as a summary.**
 
@@ -4122,6 +4198,25 @@ does, operating-system peer identity would refuse that principal specifically
 only against it. It would still establish nothing about personhood. (3) The
 same-user channels by which a program can acquire the bearer are A-027's,
 bounded by principal separation only, and are untouched here.
+
+(4) DOCUMENTATION-LEVEL, and the reason the sentence above says COMPOSITION
+rather than route. `windows_runtime.stop()` returns "accepted only from the
+holder of this run's session" UNCONDITIONALLY. That is true of every shipped
+path, because the launcher composes `assemble` (loopback bind, `Host` rule)
+plus `attach_runtime_routes` plus the `SessionGate` that `create_app`
+installs. It is NOT true of `attach_runtime_routes` on a bare `FastAPI()`,
+which is the documented stand-in surface and which two tests here compose
+deliberately -- there is no session on that surface, so the refusal names a
+holder of something that does not exist. The same shape applies to "on this
+computer" for the onboarding refusals: `create_app` brings its own session
+gate but not the `Host` rule. Neither is repaired, because the honest repair
+is either to make the sentence depend on what was actually composed -- letting
+a refusal's wording vary with assembly, which is how a claim starts drifting
+from what it describes -- or to stop offering an ungated composition at all,
+which would remove the stand-in the tests use to isolate the kind check from
+the bearer. It is recorded instead: the claim is a property of the shipped
+composition, and a surface assembled some other way inherits the sentence
+without inheriting what backs it.
 
 **Serves.** BRD-005, `CLAUDE.md` ("a gate may claim only what it measures";
 "a label must never stand in for the thing measured"), A-015's trust

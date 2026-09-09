@@ -262,15 +262,42 @@ _NEXT: Mapping[str, str] = {
     # "a person confirmed it" stood here, and it was the stop route's retired
     # sentence in another costume: this is not a refusal but the page's own
     # account of what READY MEANS, so the unbacked claim was being told to the
-    # reader as settled fact. What Forge established is that the holder of this
-    # run's session, declaring kind `human`, confirmed it -- the declaration is
-    # request-body text and nothing checks it against a person (A-030). The
-    # disclaimer that follows is unchanged and still the load-bearing half.
+    # reader as settled fact.
+    #
+    # THE FIRST REPLACEMENT WAS MORE SPECIFIC AND THEREFORE MORE FALSE. It read
+    # "this run's session holder confirmed it". But `journey_view` renders this
+    # from the PERSISTED stage -- its own docstring says so -- and the bearer is
+    # PER RUN. Its whole input is the record plus the document: no request, no
+    # session and no bearer reaches it, so nothing written here can be about the
+    # reader's run at all. A READY persisted in an earlier run is therefore
+    # served to a later reader as something "this run's session holder" did, and
+    # for any project reopened after a restart -- the ordinary case -- nobody
+    # present did it. Making an unbacked claim more precise about something the
+    # code cannot see makes it worse, not better.
+    #
+    # SO IT DEFERS TO THE RECORD, which is the one thing this projection reads.
+    # `experience.advance` writes `by` and `kind` into `entered` and appends
+    # them to `history` on every transition, READY included, so "the ident
+    # recorded in this project's history" names an artifact the reader can go
+    # and look at. It says nothing about WHO that ident belongs to -- it is an
+    # unauthenticated self-declaration, A-030 -- and that is exactly why it is
+    # the honest referent: it points at the record instead of interpreting it.
+    #
+    # "a Forge session holder confirmed it" was the other candidate and was
+    # rejected. The persisted record does not record that a bearer was ever
+    # presented, and `mark_ready` is reachable from the importable domain with
+    # no surface in front of it, so the page would be asserting an admission
+    # path it cannot see -- unbacked in the same way, one step less visibly.
+    #
+    # The disclaimer that follows is unchanged and still the load-bearing half.
+    # Pinned in the affirmative by
+    # `test_the_ready_line_defers_to_the_record_and_claims_nobody`, because a
+    # forbidden-phrase list alone let a synonym back into this exact site.
     "READY": (
         "READY has been recorded: the build's gate results and governance validation "
-        "licensed it and this run's session holder confirmed it. READY is this "
-        "lifecycle's completion claim and nothing more -- not deployment, not "
-        "production approval, not an independent inspection."
+        "licensed it and the ident recorded in this project's history confirmed it. "
+        "READY is this lifecycle's completion claim and nothing more -- not "
+        "deployment, not production approval, not an independent inspection."
     ),
 }
 _NEXT_OUTSIDE_PATH = (
