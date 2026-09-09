@@ -3,6 +3,8 @@
   "subject": "The operator act A-023 recorded as NOT PERFORMED: building the Windows bundle around a real CPython embeddable archive and running its smoke.",
   "measured_at_commit": "5e4148bec90f182f96957fb1bc035e399f5f3b0a",
   "measured_on": "2026-09-09",
+  "round_2_measurements_at_commit": "47c9b6bce45508ba03592a41598a879fba4ed17c",
+  "what_round_2_re_measured": "The launcher-hang arms (Z/A/B/D/E), the publisher digest comparison, and the reconciliation of the 58 untagged .pyd -- all taken with the tree at the commit above, on the same host. They correct the CAUSAL WORDING and the two count/label defects; they change no verdict. The smoke's recorded result is still fail, and the runs themselves were not re-executed.",
   "platform": "windows",
   "host": {
     "name": "LAPTOP-EMF4NEOK",
@@ -19,12 +21,22 @@
     "bytes": 11009825,
     "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
     "supplied_by": "operator, on the command line",
-    "digest_checks": [
+    "digest_checks_how_to_read_this": "Four of the five checks below hash the SAME LOCAL FILE. They are SELF-CONSISTENCY checks: they establish that the bytes did not change between the checks and that two implementations agree on them, and four of them add very little over one. None of them says anything about where the file came from. The fifth is the one that carries provenance, and it was missing from an earlier version of this list while the prose presented 'checked four times' as strength.",
+    "digest_checks_self_consistency": [
       "Checked by the builder-agent with coreutils sha256sum before use.",
       "Checked again by the builder-agent with a second implementation (Python hashlib, streamed over the whole file); both agree, and both agree with the size.",
       "Checked a third time immediately before the stock extraction used as the run-2 builder.",
-      "Checked by scripts/build_windows_bundle.py itself: install_python computes hashlib.sha256(embed_zip.read_bytes()) over the WHOLE archive and compares it before zipfile.ZipFile is opened, so a mismatched archive is never read as a zip. This was confirmed by reading the function, not assumed from its name."
+      "Checked by scripts/build_windows_bundle.py itself: install_python computes hashlib.sha256(embed_zip.read_bytes()) over the WHOLE archive and compares it before zipfile.ZipFile is opened, so a mismatched archive is never read as a zip. This was confirmed by reading the function, not assumed from its name. It is a good property of the script and it is still self-consistency: it holds the build to the digest the OPERATOR typed on the command line, not to the publisher's."
     ],
+    "digest_check_against_the_publisher": {
+      "what_it_establishes": "The only one of the five that ties the local bytes to the publisher, and therefore the epistemically load-bearing one.",
+      "published_at": "https://www.python.org/downloads/release/python-31315/ -- the CPython 3.13.15 release page, row 'Windows embeddable package (64-bit)'.",
+      "published_sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+      "local_sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+      "local_bytes": 11009825,
+      "match": true,
+      "how": "The published page was read and its digest for that file taken from it; the local archive was hashed again with hashlib over the whole file. Character for character equal, for the same URL the archive was taken from."
+    },
     "still_true": "The repository supplies no embeddable archive and the builder fetches none. The archive remained an operator input passed on the command line; nothing was added to the tree and no downloading code was added anywhere."
   },
   "interpreter_as_reported_by_itself": {
@@ -52,10 +64,32 @@
         "installed_extension": "_pydantic_core.cp312-win_amd64.pyd",
         "wheel_tag": "cp312-cp312-win_amd64",
         "closure_extension_tags": {
+          "counted_by": "The ABI tag in the FILENAME, over the dependency closure install_dependencies put into the bundle. NOT over the embeddable archive: the archive's own standard-library extensions live in <bundle>/python and were never in this count.",
           "cp312_tagged": 75,
           "cp313_tagged": 0,
           "abi3_tagged": 0,
-          "total_pyd": 133
+          "total_pyd": 133,
+          "total_pyd_is_the_same_population": "Read as every .pyd in that same closure, tagged filename or not -- 133 minus the 75 leaving 58, which an earlier version of this record printed with no account of them. The run did not state its population, so this is settled by elimination rather than by a note taken at the time: the closure re-counted below holds 134, which is within one of 133, while reading 133 as bundle-wide would require the closure to hold 113."
+        },
+        "the_58_untagged_reconciled": {
+          "why_this_exists": "The 75 and the 133 were reported side by side with 58 unexplained between them, and a plausible-sounding decomposition -- 20 of them from the embeddable archive, ~38 unexplained -- turns out to be wrong. Both were measured rather than argued.",
+          "how_measured": "The same dependency closure was counted again in the builder's own CPython 3.12.10 environment at the revision this document ships at, and each untagged .pyd was traced through its distribution's RECORD to that distribution's declared WHEEL tag. The archive was opened separately and its own members listed.",
+          "not_run_1s_own_numbers": "This re-count gives 134 .pyd and 76 cp312-tagged filenames where run 1 gave 133 and 75 -- within one on both, not identical. It is the same closure in the same builder environment counted again later, and it is offered as the STRUCTURE of the remainder, not as a restatement of run 1's figures.",
+          "closure_pyd_total": 134,
+          "closure_filename_cp312": 76,
+          "closure_filename_untagged": 58,
+          "of_those_58_from_a_wheel_declaring_cp312_cp312_win_amd64": 51,
+          "of_those_58_from_a_wheel_declaring_a_stable_abi_tag": 7,
+          "stable_abi_tags_seen": ["cp39-abi3-win_amd64 (3)", "cp310-abi3-win_amd64 (2)", "cp311-abi3-win_amd64 (1)", "cp38-abi3-win_amd64 (1)"],
+          "unowned": 0,
+          "examples": ["_bcrypt.pyd", "_rust.pyd", "tokenizers.pyd", "onnxruntime_pybind11_state.pyd", "win32ui.pyd", "chromadb_rust_bindings.pyd", "hf_xet.pyd", "_lancedb.pyd"],
+          "the_archive_is_not_the_remainder": {
+            "archive_pyd_count": 20,
+            "archive_pyd_all_untagged": true,
+            "archive_pyd_names": ["_asyncio.pyd", "_bz2.pyd", "_ctypes.pyd", "_decimal.pyd", "_elementtree.pyd", "_hashlib.pyd", "_lzma.pyd", "_multiprocessing.pyd", "_overlapped.pyd", "_queue.pyd", "_socket.pyd", "_sqlite3.pyd", "_ssl.pyd", "_uuid.pyd", "_wmi.pyd", "_zoneinfo.pyd", "pyexpat.pyd", "select.pyd", "unicodedata.pyd", "winsound.pyd"],
+            "intersection_with_the_closure_names": "EMPTY, measured by set intersection of the 20 archive names against all 134 closure names. Reading the 58 as '20 from the archive plus 38 unexplained' would additionally require the closure to hold 113 .pyd, and it holds 134."
+          },
+          "what_this_changes_about_the_diagnosis": "Counting filename tags UNDERSTATES the mismatch. 51 of the 58 are locked to CPython 3.12 exactly as the 76 filename-tagged ones are -- their wheels simply do not put the tag in the filename -- and only 7 carry a stable ABI that 3.13.15 would have loaded. Run 1's diagnosis is weaker than the truth, not stronger."
         },
         "mechanism": "install_dependencies resolves the dependency closure with the BUILDER's interpreter (sys.executable), while install_python extracts an operator-supplied interpreter of any version. Nothing in the script requires the two to agree, and requires-python (>=3.10,<3.14) admits both. CPython 3.13 will not load a cp312-tagged extension."
       },
@@ -71,8 +105,11 @@
       "build_line": "bundle built: <scratch>/forge-windows-313 (self_contained)",
       "verify_bundle": "passed - the bundle's own embedded interpreter imported the package set and resolved the bundle root as its own.",
       "closure_extension_tags": {
+        "counted_by": "The ABI tag in the FILENAME, over the same population run 1 counted -- the dependency closure, not the archive -- so the run-1/run-2 comparison is like for like.",
         "cp313_tagged": 75,
-        "cp312_tagged": 0
+        "cp312_tagged": 0,
+        "total_pyd": null,
+        "why_total_pyd_is_null": "NOT RECORDED for run 2. Run 1 recorded a raw .pyd total and run 2 did not, and the untagged remainder was decomposed for run 1 only. That asymmetry is stated here rather than left as a field printed for one run and silently absent from the other. The untagged remainder must exist here too -- it is the same closure, rebuilt -- but it was not counted on this run, so no number is offered for it."
       },
       "controlled_comparison": "The only variable changed between run 1 and run 2 was the builder's minor version, and all 75 tagged extensions flipped with it. That is the cause, measured in both directions rather than argued.",
       "runtime_actually_started": {
@@ -136,8 +173,20 @@
           "The builder had accumulated 1.28 s of CPU: blocked, not spinning.",
           "It resumed at the instant the detached pythonw.exe was terminated, and then completed in exactly its 60 s stopped-record poll."
         ],
-        "mechanism": "_observe_launch runs subprocess.run([cmd.exe, /c, Forge.cmd, ...], capture_output=True, timeout=120). Forge.cmd ends with `start \"\" \"%~dp0python\\pythonw.exe\" -m nornyx_forge.windows_launch ...`, which detaches WITHOUT redirecting stdio, so the grandchild inherits the captured pipe write handles. cmd.exe exits immediately; the pipes stay open. subprocess.run waits for EOF that cannot come, raises TimeoutExpired at 120 s, kills the already-dead cmd.exe, and then blocks in its post-kill drain, which carries no timeout of its own.",
-        "mechanism_confidence": "The causal observation - it resumed at the kill and at nothing else - is measured. The handle-inheritance explanation is consistent with every observation and with the launcher text, but the handle table itself was not enumerated.",
+        "mechanism": "_observe_launch runs subprocess.run([cmd.exe, /c, Forge.cmd, ...], capture_output=True, timeout=120). Forge.cmd ends with `start \"\" \"%~dp0python\\pythonw.exe\" -m nornyx_forge.windows_launch ...`. `start` creates that grandchild with handle inheritance ON, so the grandchild is handed DUPLICATES of the parent's capture-pipe handles at CreateProcess -- at the instant it is created, and regardless of where its own standard handles are afterwards pointed. cmd.exe exits immediately; those duplicates hold the pipes open. subprocess.run waits for EOF that cannot come, raises TimeoutExpired at 120 s, kills the already-dead cmd.exe, and then blocks in its post-kill drain, which carries no timeout of its own.",
+        "the_wording_this_replaces": "An earlier version of this record said Forge.cmd 'detaches WITHOUT redirecting stdio, so the grandchild inherits the captured pipe write handles'. That names absent redirection as the cause, and it would send the next slice at the wrong repair -- adding redirection to Forge.cmd. Redirection was then tried, and it does not fix it. The cause is inheritable-handle duplication at CreateProcess, which has already happened by the time the grandchild could redirect anything.",
+        "arms": {
+          "how_driven": "Five arms on this host against the same detaching shape, each driven exactly as _observe_launch drives it: subprocess.run([cmd.exe, /c, <arm>.cmd], capture_output=True, timeout=6.0), with an external 20 s bound so no arm could hang the session. The detached grandchild wrote its own pid and a per-arm token, so the only process killed was one proved to be the harness's own.",
+          "Z_control_no_start": "Launcher line: no `start` at all. Driver holds PIPES. Returned rc 0 at t=0.06 s. A known-negative control, so the instrument is not reporting hangs by construction.",
+          "A_start_bare": "Launcher line: `start \"\" ...`, the shipped shape. Driver holds PIPES. HUNG -- still running at the 20 s bound with a 6 s driver timeout. TimeoutExpired surfaced at t=20.8 s, 1.14 s after the grandchild was killed.",
+          "B_start_redirected": "Launcher line: `start \"\" ... >nul 2>&1`. Driver holds PIPES. STILL HUNG. TimeoutExpired surfaced at t=19.4 s, 0.16 s after the kill.",
+          "D_start_b_redirected": "Launcher line: `start \"\" /b ... >nul 2>&1`. Driver holds PIPES. STILL HUNG. TimeoutExpired surfaced at t=20.1 s, 0.22 s after the kill.",
+          "E_parent_holds_files": "Launcher line identical to arm A byte for byte. Driver holds FILES instead of pipes. Returned rc 0 at t=0.08 s -- no hang at all.",
+          "what_the_arms_settle": "Redirecting the GRANDCHILD's own standard handles, with or without /b, changes nothing. Changing what the PARENT holds removes the hang outright on an unchanged launcher line. The locus is the parent's handles, not the grandchild's."
+        },
+        "the_repair_this_implies": "Do NOT hold captured pipes across a detaching launcher. Give subprocess.run files or a null sink for this call, or create the pipes without inheritance, or bound the post-kill drain. Adding stdio redirection to Forge.cmd is the one repair measured NOT to help.",
+        "the_standard_library_half": "Read at source, not inferred: on Windows, subprocess.run's TimeoutExpired branch calls process.kill() and then `exc.stdout, exc.stderr = process.communicate()` with NO timeout argument. That unbounded post-kill communicate() is the drain that blocks.",
+        "mechanism_confidence": "Three strengths, kept apart. (1) MEASURED: the smoke resumed at that termination and at nothing else. (2) MEASURED: the locus is the parent's handles rather than the grandchild's, by arms A/B/D against arm E above. (3) NOT DONE: the grandchild's handle table was never enumerated. Inheritable-handle duplication at CreateProcess is the explanation that fits all five arms, and the duplicated handle itself was not observed directly.",
         "why_nothing_caught_it": "smoke_bundle is exercised only against a scripted runtime: tests/test_windows_bundle.py monkeypatches builder.subprocess.run, builder._get and builder._post_json, so no real process is started and no real socket is opened. CI runs scripts/smoke_http.py, which is a different instrument; no workflow runs build_windows_bundle.py --smoke. The real path had therefore never been executed, which is precisely what NOT PERFORMED was concealing.",
         "scope_of_the_defect": "Both launcher templates use `start \"\"`, so the mechanism is not specific to the self-contained bundle. Only the self-contained launcher was executed here; the developer launcher was not run under the smoke on this host, so its behaviour is inferred rather than measured."
       }

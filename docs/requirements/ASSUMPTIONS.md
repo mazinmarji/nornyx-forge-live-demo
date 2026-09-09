@@ -901,10 +901,20 @@ the 3.13.15 the archive carries. Driven by a 3.13 builder the same
 command passed `verify_bundle`, and the runtime genuinely started on the
 bundle's own `pythonw.exe` and recorded itself ready three seconds in --
 and then the smoke did not terminate. `Forge.cmd` detaches the runtime
-with `start ""` and no stdio redirection, so the grandchild inherits the
-pipes `subprocess.run(capture_output=True)` is draining, and the 120 s
-timeout does not bound it; the smoke resumed only when that detached
-process was killed. Nothing had caught it, because `smoke_bundle` is
+with `start ""`, which creates the grandchild with handle inheritance on,
+so the grandchild is handed duplicates of the pipes
+`subprocess.run(capture_output=True)` is draining at the moment it is
+created -- and the 120 s timeout does not bound the wait for an EOF that
+cannot arrive; the smoke resumed only when that detached process was
+killed. THE REPAIR THAT FOLLOWS IS NOT "REDIRECT THE LAUNCHER'S STDIO":
+redirection was tried on the same host, with and without `/b`, and the
+run still hung, because the duplication has already happened by the time
+the grandchild could redirect anything. Giving the PARENT files instead
+of pipes, on a launcher line otherwise unchanged, removed the hang
+outright. So the repair belongs on the driving side -- do not hold
+captured pipes across a detaching launcher -- and the arms that settle it
+are recorded in `docs/governance/EMBEDDED_INTERPRETER_RUN.md`. Nothing
+had caught it, because `smoke_bundle` is
 exercised only against a scripted runtime with `subprocess.run`, `_get`
 and `_post_json` all replaced, and no workflow runs `--smoke` -- the real
 path had never been executed, which is precisely what NOT PERFORMED was
