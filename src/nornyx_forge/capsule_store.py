@@ -95,7 +95,9 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -219,14 +221,85 @@ class CapsuleSealError(CapsuleTamperError):
         self.snapshot = snapshot
 
 
+def _is_junction(path: Path) -> bool:
+    """A directory-shaped NTFS reparse point that `is_symlink()` reports False.
+
+    `os.path.isjunction` is 3.12+ and `requires-python` allows 3.10, so the
+    older interpreters read the reparse tag directly. Non-Windows has no
+    `st_reparse_tag` and no junctions: False.
+    """
+    checker = getattr(os.path, "isjunction", None)
+    if checker is not None:
+        return bool(checker(path))
+    try:
+        return os.lstat(path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
 def _remove_tree(path: Path) -> None:
     """Remove a directory git owns. Git marks its object files read-only, and
-    on Windows `rmtree` refuses those unless the bit is cleared first."""
-    def _clear_and_retry(function, target, _exc_info):
+    on Windows `rmtree` refuses those unless the bit is cleared first.
+
+    A JUNCTION IS NOT A TREE TO WALK, and this used to remove NOTHING while
+    reporting success. Measured on 3.12.10: `rmtree` refuses a junction with
+    `OSError: Cannot call rmtree on a symbolic link`, and it reports that
+    refusal by calling the handler with its own CHECK, `os.path.islink` --
+    not a removal. `_clear_and_retry` re-ran the check, the check answered
+    False, and `rmtree` returned having deleted nothing and raised nothing.
+    So `_rebuild`'s wipe, whose docstring names a junction among the shapes
+    it removes, silently left one standing; and `_write_fresh` inherited a
+    removal that no-ops. `os.rmdir` removes the LINK and leaves the target
+    untouched -- measured, target contents intact -- which is what removing a
+    junction by shape means. Handled first, before `rmtree` is reached.
+    """
+    if _is_junction(path):
+        os.rmdir(path)
+        return
+
+    def _clear_and_retry(function, target, _exc):
         os.chmod(target, 0o600)
         function(target)
 
-    shutil.rmtree(path, onerror=_clear_and_retry)
+    # `onerror` is deprecated in 3.12 and removed in 3.14; `onexc` arrived in
+    # 3.12 and takes the exception rather than an `exc_info` triple. The
+    # handler ignores that argument, so one body serves both spellings.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_clear_and_retry)
+    else:
+        shutil.rmtree(path, onerror=_clear_and_retry)
+
+
+def _replace_fresh(tmp: Path, path: Path) -> None:
+    """`os.replace(tmp, path)`, retried once with the read-only bit cleared.
+
+    Measured on Windows: a destination carrying `attrib +R` denies the rename
+    with `PermissionError [WinError 5]`, exactly as it denied the unlink this
+    replaced. One `attrib +R` on `.forge-seal` -- a command the same-user
+    writer A-015 concedes can run -- would otherwise disable the product's
+    human recovery route permanently. Clearing the bit is the remedy
+    `_remove_tree` already applies to git's read-only objects.
+
+    GUARDED ON `st_nlink`, because `os.chmod` through one name of a hardlink
+    clears the bit on EVERY name -- measured: a read-only file outside the
+    store became writable through a link planted inside it. A name the store
+    does not solely own is left alone and the refusal stands. A held handle
+    raises the same WinError 5 and no chmod can help it; A-022 records that
+    residue, which lasts only as long as the handle.
+    """
+    try:
+        os.replace(tmp, path)
+        return
+    except PermissionError:
+        try:
+            sole_owner = path.is_file() and not path.is_symlink() \
+                and os.stat(path).st_nlink == 1
+        except OSError:
+            sole_owner = False
+        if not sole_owner:
+            raise
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        os.replace(tmp, path)
 
 
 def _write_fresh(path: Path, text: str) -> None:
@@ -240,19 +313,46 @@ def _write_fresh(path: Path, text: str) -> None:
     with the sealed capsule bytes. The wipe cannot help, because it preserves
     the authority files and the seal marker BY NAME regardless of shape.
 
-    Removing the entry first closes all three: a directory goes by shape, a
-    symlink is unlinked rather than followed, and unlinking a hardlink drops
-    this name from the inode so the write creates a file no other name
-    shares. It is the removal `_write_seal_marker` already did for the first
-    two, applied to every write the recovery path makes. Scope is that path:
-    `_write_document` and `_write_experience` on the ordinary save path still
-    write through, unchanged, and ASSUMPTIONS A-022 records that.
+    WRITTEN WHOLE AND MOVED INTO PLACE, which is `seal`'s idiom eighty lines
+    down and for the same reason. Removing the entry and THEN writing it --
+    what this did first -- left the destination ABSENT for the width of a
+    write, and `_rebuild` calls this on the seal marker before anything else:
+    so a death or an ordinary `OSError` in that instant left the worker's
+    forged authority on disk under no marker, `protected()` False, and a
+    sealless load returning the forged `READY`. Precisely the fall-open the
+    marker-first ordering exists to close, reopened by the removal that
+    closed a different one. The `OSError` form is the worse of the two: it
+    is PERMANENT and the surface reports a clean refusal, whose exception
+    promises in its own docstring that nothing was partially written.
+
+    `os.replace` keeps everything the removal bought. It swaps the directory
+    ENTRY, so a planted hardlink's other name keeps the old inode and the
+    bytes land in the new one (measured: the outside file was untouched); it
+    replaces a symlink rather than following it; and the destination is never
+    absent at any instant. Only a directory still needs removing first,
+    because a rename cannot replace one.
+
+    The temp name carries 64 random bits. It is a name in the STORE, which is
+    the hostile directory -- unlike `seal`'s fixed sibling, which lives in the
+    seal directory outside it -- so a predictable one could be pre-planted as
+    a link and turned back into the write primitive this closes. Scope is
+    this path: `_write_document` and `_write_experience` on the ordinary save
+    path still write through, unchanged, and ASSUMPTIONS A-022 records that.
     """
     if path.is_dir() and not path.is_symlink():
         _remove_tree(path)
-    else:
-        path.unlink(missing_ok=True)
-    path.write_text(text, encoding="utf-8", newline="")
+    tmp = path.with_name(f"{path.name}.{os.urandom(8).hex()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8", newline="")
+        _replace_fresh(tmp, path)
+    except OSError:
+        # Never mask the failure with a cleanup failure; `_rebuild`'s wipe
+        # takes any survivor, since the temp name is in no keep set.
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -494,12 +594,21 @@ class CapsuleStore:
         restoration has to correct -- and the conditional form would leave it
         standing. No-op only when sealing is not in force at all.
 
-        Writes through `_write_fresh`, which removes by shape first, like the
-        rebuild's own wipe: a worker may have left a directory, a link or a
-        hardlink where the marker belongs, and `write_text` would raise on the
-        first and write through the other two. Before this method existed the
-        wipe ran first and happened to clear a directory there; the order that
-        closes the fall-open would otherwise have lost the recovery with it.
+        Writes through `_write_fresh`: a worker may have left a directory, a
+        link or a hardlink where the marker belongs, and `write_text` would
+        raise on the first and write through the other two. Before this method
+        existed the wipe ran first and happened to clear a directory there; the
+        order that closes the fall-open would otherwise have lost the recovery
+        with it.
+
+        THIS METHOD IS ATOMIC AND `_rebuild` LEANS ON IT. It runs first there,
+        so for the width of its write the store holds the worker's forged
+        authority and nothing else: if the marker were absent during it, the
+        fall-open would be open exactly then. `_write_fresh` therefore moves a
+        finished file into place rather than clearing the name and rewriting
+        it, and the marker on disk is the old one or the new one at every
+        instant -- never neither. Pinned by the two `inside-the-marker-write`
+        rows, one crash and one ordinary `OSError`.
         """
         if self.seal_dir is None:
             return
@@ -677,6 +786,13 @@ class CapsuleStore:
         """A fresh repository around the sealed bytes. Whatever the worker left
         in the store directory -- a `.git` directory, a `.git` FILE, a junction,
         stray files -- is removed by shape, not by assumption.
+
+        The junction in that list was a CLAIM rather than a behaviour until
+        this commit: `_remove_tree` walked into `rmtree`, which refuses a
+        junction, and the read-only retry handler swallowed the refusal, so
+        the wipe returned success having left the junction standing. Measured,
+        and now removed by `os.rmdir` with the target untouched. See
+        `_remove_tree`.
 
         THE ORDER IS THE PROPERTY. Every step here can die -- a crash, a kill,
         a full disk -- and what matters is what a LATER process would then read

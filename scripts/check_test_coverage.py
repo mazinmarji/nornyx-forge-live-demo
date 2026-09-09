@@ -606,7 +606,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # spent in advance -- and added the fourth crash instant that demands the
     # marker hoist plus four rows pinning that the recovery path writes no
     # bytes through a planted link: 41 -> 46, band(41) = 37 -> band(46) = 42.
-    "tests/test_provider_authority_boundary.py": 42,
+    # Round 3 added the instant those five rows could not reach -- INSIDE the
+    # seal marker's own write, where round 2's remove-then-write reopened the
+    # fall-open its own hoist had just closed -- in both forms, a crash and a
+    # durable OSError: 46 -> 48, band(46) = 42 -> band(48) = 44.
+    "tests/test_provider_authority_boundary.py": 44,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1271,16 +1275,17 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # authority writes, makes the marker-basis interlock a biconditional that an
 # empty confinement table cannot satisfy by vacuity, stops the recovery path
 # writing bytes through a planted link, and stops two refusals naming an actor
-# they never measured. ONE row moves:
-# tests/test_provider_authority_boundary.py collects 35 -> 46 (floor
-# band(35) = 32 -> band(46) = 42). 113 modules stand -- every new node is in
+# they never measured. Round 3 closes the fall-open that round 2's own
+# link-hardening reopened inside the marker's write. ONE row moves:
+# tests/test_provider_authority_boundary.py collects 35 -> 48 (floor
+# band(35) = 32 -> band(48) = 44). 113 modules stand -- every new node is in
 # the module that already held the seal boundary -- the module-floor sum rises
-# by ten to 3042 and the aggregate follows to 3050, keeping the same 8 above
-# it. The suite collects 3308 -> 3319, band(n) 2978 -> 2988, the working room
-# below the floor moves 268 -> 269 (the collection rose by eleven and the
-# aggregate by ten), and the slack the bands grant moves 276 -> 277: this
-# module collects four above its floor at 46 where it collected three at 35,
-# because `ceil(0.9n)` moved by ten while the module moved by eleven. The
+# by twelve to 3044 and the aggregate follows to 3052, keeping the same 8 above
+# it. The suite collects 3308 -> 3321, band(n) 2978 -> 2989, the working room
+# below the floor stays 269 (the collection and the aggregate each rose by two
+# in round 3), and the slack the bands grant stays 277: this module collects
+# four above its floor at 48 exactly as it did at 46, because `ceil(0.9n)`
+# moved by two with it. The
 # windows-runtime job's floor is untouched at 262: none of its six modules is
 # tests/test_provider_authority_boundary.py, and the six collect
 # 14/15/23/53/73/97 as that job's own sentence states -- measured here from
@@ -1293,21 +1298,22 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # from 3303 to 3308 -- and were re-measured from a fresh collection
 # when this slice was rebased onto it. It was measured against Tranche
 # C slice C3 before that, and those totals are gone from here for the
-# same reason the older ones are. The slice's two review rounds were first measured against the older base
-# (3253 -> 3259 -> 3264, aggregate 2991 -> 2996 -> 3001), and every one of
+# same reason the older ones are. The slice's first two review rounds were first measured against the older
+# base (3253 -> 3259 -> 3264, aggregate 2991 -> 2996 -> 3001), and every one of
 # those totals is false for this tree. They are not kept beside the constant,
 # because a superseded measurement left standing next to the thing it no
 # longer measures is precisely the rot this block exists to stop -- and a
 # rebase is the one moment that manufactures it wholesale. What survives the
-# rebase is the module delta itself, 35 -> 46: six nodes in round 1 and five
-# in round 2, a fact about the slice rather than about the base under it:
+# rebase is the module delta itself, 35 -> 48: six nodes in round 1, five in
+# round 2 and two in round 3, a fact about the slice rather than about the base
+# under it:
 #
 # (rows below):
 #
-#     collected across tests/     3319   (113 modules)
-#     sum of the module floors    3042
-#     band(3319) = ceil(0.9*n)    2988
-#     MINIMUM_COLLECTED           3050
+#     collected across tests/     3321   (113 modules)
+#     sum of the module floors    3044
+#     band(3321) = ceil(0.9*n)    2989
+#     MINIMUM_COLLECTED           3052
 #     above the module sum         8
 #     below what collects         269
 #
@@ -1363,7 +1369,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3050
+MINIMUM_COLLECTED = 3052
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

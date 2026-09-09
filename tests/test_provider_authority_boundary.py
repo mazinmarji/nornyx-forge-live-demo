@@ -736,6 +736,106 @@ def test_restoration_survives_a_worker_that_replaced_git_with_a_file(tmp_path: P
 
 _AT_GIT_INIT = "at git init"
 _BETWEEN_AUTHORITY_WRITES = "between the two authority-file writes"
+_INSIDE_THE_MARKER_WRITE = "inside the seal marker's own write"
+
+
+def _die_inside_the_marker_write(monkeypatch: pytest.MonkeyPatch, failure: BaseException):
+    """Arm `failure` at the first byte-write the seal marker's own write makes.
+
+    DELIMITED BY THE METHOD, NOT BY A FILENAME, and that is the whole point of
+    the row: an implementation that clears the name and rewrites it, and one
+    that writes a finished file and renames it, must be reached at the SAME
+    instant -- otherwise the instrument measures the implementation instead of
+    the property. Naming `.forge-seal` would have missed the second entirely
+    and passed the row for the reason it exists to rule out.
+
+    The kill is still on `Path.write_text`, like the other instants here. If a
+    later implementation stops writing the marker through it the arming never
+    fires, `restore()` does not raise, and the row goes RED at
+    `pytest.raises` -- loud, rather than a silent pass.
+    """
+    survivor_write_text = Path.write_text
+    survivor_marker = store_module.CapsuleStore._write_seal_marker
+    armed: list[bool] = []
+
+    def dies_at_the_first_write(self, *args, **kwargs):
+        if armed:
+            raise failure
+        return survivor_write_text(self, *args, **kwargs)
+
+    def arming_marker_write(self):
+        armed.append(True)
+        try:
+            return survivor_marker(self)
+        finally:
+            armed.clear()
+
+    monkeypatch.setattr(Path, "write_text", dies_at_the_first_write)
+    monkeypatch.setattr(store_module.CapsuleStore, "_write_seal_marker", arming_marker_write)
+
+
+def _assert_marker_stands_over_the_forgery(capsule: Path, store: CapsuleStore) -> None:
+    """The property both marker-write rows assert, once."""
+    seal_marker = capsule / ".forge-seal"
+    assert seal_marker.exists(), (
+        "the marker was absent while the worker's forged bytes were on disk: "
+        f"{sorted(path.name for path in capsule.iterdir())}"
+    )
+    assert json.loads(seal_marker.read_text(encoding="utf-8")) == {
+        "schema": "nornyx.forge.capsule_seal_marker.v1", "seal": store.seal_ident()}
+    assert store.protected()
+    forged = json.loads((capsule / "experience.json").read_text(encoding="utf-8"))
+    assert forged["stage"] == "READY", (
+        "this row exists to catch the rebuild BEFORE it corrects any authority "
+        "byte, with the worker's forgery still on disk; if the forgery is "
+        "already gone the failure landed somewhere else and the row proves nothing"
+    )
+    # One same-user deletion must still not be enough.
+    store.seal_path().unlink()
+    later = CapsuleStore(capsule, seal_dir=store.seal_dir)
+    for call in (later.load_experience, later.load):
+        with pytest.raises(CapsuleSealMissing):
+            call()
+
+
+def test_an_oserror_inside_the_marker_write_does_not_permanently_strip_the_marker(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The same instant as the crash row below, without the crash -- and this
+    is the WORSE of the two, because it is permanent and it is reported clean.
+
+    MEASURED at the parent of this commit. `_write_fresh` removed the entry and
+    then wrote it, and `_rebuild` calls it on the seal marker FIRST, so an
+    ordinary handled `OSError` in that gap -- a full disk, or a real-time
+    scanner holding the create -- left `['.forge-capsule', 'capsule.json',
+    'experience.json']` on disk: `protected()` False, the worker's forged
+    `experience.json` intact, and a sealless `load_experience()` returning
+    `READY`. Not a window. A durable state, reached without killing anything.
+
+    And the surface said the opposite. `restore()` catches `OSError` and raises
+    `CapsuleStoreError`, whose own docstring is asserted below because it is
+    the promise that was false: a caller told "nothing was partially written"
+    had in fact had the store's second authentication factor removed by the
+    call it just made. The crash row could not see this: it kills the process,
+    so it never reaches the handler that makes the claim.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")     # the honest reset route is unreachable
+
+    _die_inside_the_marker_write(
+        monkeypatch, OSError(28, "No space left on device"))
+    with pytest.raises(CapsuleStoreError) as raised:
+        store.restore(sealed)
+    monkeypatch.undo()
+
+    assert "Nothing was partially written." in (CapsuleStoreError.__doc__ or ""), (
+        "the promise this row holds the store to has been edited away rather "
+        "than kept; if the contract changed, this row must change with it"
+    )
+    assert "No space left on device" in str(raised.value)
+    _assert_marker_stands_over_the_forgery(capsule, store)
 
 
 @pytest.mark.parametrize(
@@ -743,9 +843,10 @@ _BETWEEN_AUTHORITY_WRITES = "between the two authority-file writes"
     [("intact", _AT_GIT_INIT),
      ("deleted", _AT_GIT_INIT),
      ("foreign", _AT_GIT_INIT),
-     ("deleted", _BETWEEN_AUTHORITY_WRITES)],
+     ("deleted", _BETWEEN_AUTHORITY_WRITES),
+     ("intact", _INSIDE_THE_MARKER_WRITE)],
     ids=["intact-at-git-init", "deleted-at-git-init", "foreign-at-git-init",
-         "deleted-between-the-authority-writes"],
+         "deleted-between-the-authority-writes", "intact-inside-the-marker-write"],
 )
 def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str, instant: str):
@@ -788,6 +889,21 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
     property. What is asserted is the property: whatever is on disk, it is
     under a marker naming THIS store's seal, so with the seal gone the store
     refuses instead of reading as legacy.
+
+    AND A FIFTH ROW, INSIDE THE MARKER'S OWN WRITE. Round 3 found that the
+    four rows above vary the marker across one instant and the instant across
+    one marker state, and that NONE of them lands inside the write of the
+    marker itself -- so the set could not see a marker write that was not
+    atomic. It was not. The repair that stopped the recovery path writing
+    through a planted link removed the entry and then wrote it, and since the
+    marker goes first, that removal reopened the very fall-open the hoist had
+    just closed: measured, `['.forge-capsule', 'capsule.json',
+    'experience.json']`, `protected()` False, and a sealless load returning
+    the forged `READY`. `intact` is the marker state that shows it, because
+    it is the one where Forge's own recovery is what MAKES the marker absent;
+    with it deleted or foreign beforehand the store was already in that state
+    and the row would prove nothing. Its non-crash twin, which is durable
+    rather than a window, is the `OSError` test above.
     """
     store = _sealed_store(tmp_path)
     sealed = store.sealed()
@@ -811,25 +927,45 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
             return survivor(root, *args)
 
         monkeypatch.setattr(store_module, "_run_git", dies_at_init)
-    else:
+    elif instant == _BETWEEN_AUTHORITY_WRITES:
         # The second authority file, at the moment the rebuild reaches it and
         # before it has touched it: `capsule.json` is already sealed bytes and
         # `experience.json` is still whatever the worker left. Patched on the
         # Path method rather than on the store's write helper so the same
         # instrument reaches an implementation that writes either way.
+        #
+        # MATCHED BY FAMILY, NOT BY EQUALITY. Equality reached only an
+        # implementation that writes the destination IN PLACE, and round 3
+        # made the rebuild write a finished file and rename it -- at which
+        # point the instrument stopped firing and the row failed at
+        # `pytest.raises`, loudly, rather than passing for the wrong reason.
+        # A sibling whose name extends the destination's is that destination's
+        # write; anything further afield still fails the row rather than
+        # quietly passing it.
         doomed = capsule / "experience.json"
         survivor_write_text = Path.write_text
 
         def dies_between_the_authority_writes(self, *args, **kwargs):
-            if self == doomed:
+            if self.parent == doomed.parent and self.name.startswith(doomed.name):
                 raise SystemExit("the process died between the two authority-file writes")
             return survivor_write_text(self, *args, **kwargs)
 
         monkeypatch.setattr(Path, "write_text", dies_between_the_authority_writes)
+    else:
+        _die_inside_the_marker_write(
+            monkeypatch, SystemExit("the process died inside the marker's own write"))
 
     with pytest.raises(SystemExit):
         store.restore(sealed)
     monkeypatch.undo()
+
+    if instant == _INSIDE_THE_MARKER_WRITE:
+        # Nothing has been corrected yet -- the marker is written before any
+        # authority byte -- so the assertions below about corrected files do
+        # not apply, and the stronger one does: the forgery is still on disk
+        # and the marker is standing over it.
+        _assert_marker_stands_over_the_forgery(capsule, store)
+        return
 
     seal_marker = capsule / ".forge-seal"
     assert seal_marker.exists(), (
