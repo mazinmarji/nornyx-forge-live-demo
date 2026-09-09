@@ -259,11 +259,18 @@ _NEXT: Mapping[str, str] = {
         "The build's gate results have been recorded. Marking ready is your act: "
         "it needs the gate results and a Nornyx governance validation from this build."
     ),
+    # "a person confirmed it" stood here, and it was the stop route's retired
+    # sentence in another costume: this is not a refusal but the page's own
+    # account of what READY MEANS, so the unbacked claim was being told to the
+    # reader as settled fact. What Forge established is that the holder of this
+    # run's session, declaring kind `human`, confirmed it -- the declaration is
+    # request-body text and nothing checks it against a person (A-030). The
+    # disclaimer that follows is unchanged and still the load-bearing half.
     "READY": (
         "READY has been recorded: the build's gate results and governance validation "
-        "licensed it and a person confirmed it. READY is this lifecycle's completion "
-        "claim and nothing more -- not deployment, not production approval, not an "
-        "independent inspection."
+        "licensed it and this run's session holder confirmed it. READY is this "
+        "lifecycle's completion claim and nothing more -- not deployment, not "
+        "production approval, not an independent inspection."
     ),
 }
 _NEXT_OUTSIDE_PATH = (

@@ -46,8 +46,12 @@ this runtime never terminates anything: an unrelated occupant of the
 preferred port costs a different port, not a process.
 
 THE TRUST BOUNDARY is the one the onboarding surface already discloses:
-loopback, one person, this machine's logged-in user. The stop route is a
-person's act at that surface, with the same actor rule and no more.
+loopback, one person, this machine's logged-in user. The stop route admits
+the holder of this run's session bearer, arriving over loopback, and applies
+the same actor rule that surface applies and no more. What that rule does is
+DECLINE an actor that declares itself non-human; it establishes nothing about
+one that declares itself human, because the declaration is request-body text
+that nothing here checks against a person. A-030 states the limit.
 
 `layer.application`, by the forge_onboarding precedent: this module
 composes the served surface and runs the server loop in the current
@@ -829,16 +833,38 @@ def attach_runtime_routes(
 
     @application.post(RUNTIME_STOP_ROUTE)
     def stop(payload: StopPayload):
+        # WHAT THE TWO CHECKS BELOW EACH DO, kept apart because the sentence
+        # this route used to return ran them together. The BEARER -- applied
+        # by the session gate before this function is entered, since
+        # `/api/runtime/stop` is not in `ALLOWLIST` -- is the admission: the
+        # caller holds a secret minted this run and reaches a loopback-bound
+        # listener that answers only a loopback Host. That is measured, and it
+        # is the whole of what is measured. The KIND check below is not a
+        # second authentication: `payload.actor.kind` is request-body text, and
+        # `validate()` only asks that it is one of three closed strings. So the
+        # check DECLINES an actor that declares itself non-human and
+        # establishes nothing whatever about one that declares itself human --
+        # measured, a plain script presenting the bearer and declaring
+        # `{"kind": "human"}` is accepted here and stops Forge. It is kept
+        # because it preserves the surface's never-upgrade-an-actor posture at
+        # no cost, not because it authenticates anybody, and the refusal says
+        # exactly that. A-030.
         try:
             payload.actor.to_actor().validate()
         except CapsuleValidationError as error:
             return JSONResponse(status_code=422, content={"refused": str(error)})
         if payload.actor.kind != "human":
             return JSONResponse(status_code=409, content={
-                "refused": "stopping Forge is a person's act at this computer; "
-                           f"a {payload.actor.kind} actor may not do it",
+                "refused": "stopping Forge is accepted only from the holder of "
+                           "this run's session, on this computer; this request "
+                           f"declared a {payload.actor.kind} actor. Forge does "
+                           "not verify that a person, rather than a program "
+                           "running as the same user, sent it",
             })
         request_stop()
+        # The success body carries no claim about who asked: {stopping,
+        # instance} and nothing else. What happened is that the session holder
+        # requested a stop.
         return {"stopping": True, "instance": served["instance"]}
 
     if session is not None and open_browser is not None and url is not None:

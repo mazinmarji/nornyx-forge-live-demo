@@ -282,11 +282,21 @@ remains `fail`.
 
 ## What was not measured, and why
 
-The **stop route and the stopped record were not exercised**. That route refuses
-any actor whose kind is not human, because stopping Forge is a person's act at
-that computer. This agent is not a person and would not assert that it was, so
-the call was not made. The smoke, which does assert that actor, hung before
-reaching it.
+The **stop route and the stopped record were not exercised**. That route declines
+any actor whose declared kind is not human. This agent is not a person and would
+not assert that it was, so the call was not made. The smoke, which does assert
+that actor, hung before reaching it.
+
+*Later correction, kept beside the record rather than folded into it.* The
+sentence this paragraph originally carried — that the route refuses non-human
+actors "because stopping Forge is a person's act at that computer" — restated
+the route's own claim of the day, and that claim was wrong: the kind check reads
+request-body text and establishes nothing about a person. The route's refusal
+now says what is measured (the holder of this run's session, on this computer),
+and A-030 records the limit. Nothing observed on this run changes; only the
+rationale quoted here was corrected. The agent's reason for not calling stands
+on its own — it would not assert a declaration it knew to be false — and is
+independent of what the route claimed.
 
 The developer bundle's smoke was not run on this host. No second host was used.
 

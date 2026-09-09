@@ -24,12 +24,27 @@ THE STAGES, and what each means:
     REVIEW      an independent read of the result
     READY       the completion claim — and therefore the most guarded word here
 
-THE AUTHORITY RULE, one sentence: **a model actor never moves the workflow.**
-Models propose CONTENT (through the capsule's `proposed` region); the workflow
-position is moved by the system when deterministic evidence licenses it, and by
-a human where the stage is a human decision (CONFIRM, READY). This is the
-capsule's authority split applied to time: content authority and progress
-authority are both things a model must not be able to manufacture.
+THE AUTHORITY RULE, one sentence: **an actor DECLARING kind `model` never moves
+the workflow.** Models propose CONTENT (through the capsule's `proposed`
+region); the workflow position is moved by the system when deterministic
+evidence licenses it, and by a human where the stage is a human decision
+(CONFIRM, READY). This is the capsule's authority split applied to time:
+content authority and progress authority are both things a model must not be
+able to manufacture.
+
+AND THE RULE IS ON THE DECLARATION, WHICH IS THE HALF WORTH SAYING PLAINLY.
+`STAGE_ACTORS` compares `actor.kind` — request-body text on the served path —
+against a closed tuple of strings, and `Actor.validate` checks only that the
+kind is one of three and the ident matches a regex. So the rule DECLINES a
+caller that honestly declares itself a model and admits one that declares
+itself human, whatever it is; measured, `start_experience` accepts
+`Actor(kind="human", ident="president-lincoln")` and writes that ident into
+`history`, where `verify_experience` afterwards passes over it. Every `by` in
+`history` is therefore a self-declared, unauthenticated identifier that the
+chain protects from later edits and never vouched for in the first place.
+Nothing in this module claims otherwise, and A-030 states what closing the gap
+would require — an authority outside the same logged-in user, which is external
+authority this repository may not create, adopt, infer or backdate.
 
 EVIDENCE, not assertion. An advancement that requires evidence takes typed
 evidence references — kind, ref, passed — and the guard checks the kinds and
@@ -308,8 +323,11 @@ def _sealed(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def start_experience(started_by: Actor, at: str) -> dict[str, Any]:
-    """A new workflow, at DISCOVER. Starting is a human act, like creating a
-    capsule: a project's lifecycle begins because a person began it."""
+    """A new workflow, at DISCOVER. Starting requires an actor DECLARING kind
+    `human`, like creating a capsule: a project's lifecycle begins because a
+    person began it. The requirement is on the declaration; `entered.by` records
+    the declared ident verbatim and nothing here establishes a person made the
+    call (module docstring, A-030)."""
     started_by.validate()
     _validate_at(at)
     if started_by.kind != "human":

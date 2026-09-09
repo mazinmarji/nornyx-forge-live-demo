@@ -58,7 +58,8 @@
   project directory, holds one runtime per project under an operating-system
   file lock, binds a loopback port before the server exists, composes the
   onboarding surface, opens the browser only after the server has answered
-  with its own instance token, and stops on a person's request. Its record,
+  with its own instance token, and stops when the holder of this run's session
+  bearer asks it to, which is not the same as a person asking (A-030). Its record,
   lock and log are operational state under the person's profile, outside
   every project; nothing in them is read by the onboarding surface or can
   reach a governance answer. `windows_launch` is its standard-library-only

@@ -289,14 +289,27 @@ person at the browser is the project's human.
 
 **Resolution.** The surface binds `127.0.0.1` only (pinned by test against the
 literal), the trust boundary is stated in the module's own docstring and in
-this register, and no route claims authentication anywhere. Authenticating the
-human is a separately-scoped future slice; until it lands, the boundary is the
-same one the CLI beside it has always had — the machine's logged-in user.
+this register, and no route claims authentication anywhere.
 Since the post-PR-18 hardening the served composition also refuses any Host
 header other than `127.0.0.1` or `localhost`, installed once in
 `onboarding_serve.assemble` and inherited by every launch path. That is a
 Host-header check against a page that rebinds a name to loopback; it is not
 authentication of the person, and this boundary is unchanged by it.
+
+**"No route claims authentication anywhere" was literally FALSE when written,
+and A-030 is why it is true now.** The stop route in `windows_runtime` — a
+different module, which is the whole of how this sentence survived — returned
+"stopping Forge is a person's act at this computer", which is exactly such a
+claim. It was measured, narrowed to what the bearer and the loopback bind
+actually establish, and the limit recorded. The clause that followed here,
+"authenticating the human is a separately-scoped future slice", is also
+withdrawn: A-030 measured every non-external candidate and found that each
+either re-derives "the machine's logged-in user" or raises the cost against a
+caller who was already refused. Personhood on this surface needs external
+authority, which this repository may not create, adopt, infer or backdate — so
+it is a stated LIMIT, not scheduled work. The boundary here is unchanged and
+is the same one the CLI beside it has always had: the machine's logged-in
+user.
 
 **Partly superseded by A-027.** For authority-moving routes, "trusts its
 loopback" no longer holds: since Tranche B those routes admit only a request
@@ -2062,6 +2075,18 @@ recorded itself ready, answered all three routes as instance
   the runtime accepts it. Recorded as an open finding rather than repaired
   here, because changing what the smoke claims to be is a change to the smoke
   contract and not to this defect.
+
+  **RESOLVED BY A-030, on the CLAIM and on nothing else.** `SMOKE_ACTOR` is
+  still `{"kind": "human", "ident": "bundle-smoke"}` and the smoke is still a
+  program: that half is unchanged, deliberately, because the smoke's
+  declaration was never the defect. What moved is the route. Its refusal no
+  longer says stopping is a person's act; it names the holder of this run's
+  session and states that Forge does not verify a person rather than a program
+  running as the same user sent the request. A passing `stop` observation
+  therefore means "the session holder asked the runtime to stop" -- true of
+  the smoke, which reads this run's bearer from the session file -- and no
+  wording on this path reads it as a person. A-030 states why no wording
+  could.
 - **The builder-and-archive version gap is untouched and was re-measured.**
   `install_dependencies` still resolves the closure with the builder's own
   interpreter while `install_python` accepts an operator archive of any
@@ -3942,3 +3967,163 @@ not mistake it for something this change introduced.
 
 **Serves.** BRD-005, `CLAUDE.md` ("a gate may claim only what it measures"),
 and A-022's own statement of the seal's bound.
+
+## A-030 The surface admits a session holder, never a person, and the record says so
+
+**Assumption.** No route on the onboarding or Windows-runtime surface
+establishes that a person, rather than a program running as the same
+logged-in user, made the request. What IS established for every
+authority-moving route is narrower and is measured: the caller holds THIS
+RUN's session bearer and reached a loopback-bound listener that answers only
+a loopback `Host` -- a session holder, at this computer, as the logged-in
+user. `actor.kind == "human"` is an unauthenticated SELF-DECLARATION carried
+in the request body. It DECLINES a caller that honestly declares itself
+non-human and establishes nothing about one that declares itself human, so it
+filters exactly the callers that were never the threat.
+
+**Why it needs stating.** The stop route used to return "stopping Forge is a
+person's act at this computer; a {kind} actor may not do it." That sentence
+claimed two things, and they split cleanly: "at this computer" is backed, by
+the loopback bind, the `Host` rule and the per-run bearer; "a person" was
+backed by nothing this repository can measure. A-015 said "no route claims
+authentication anywhere" and was true only because the stop route lived in
+another module. A-023 already recorded the consequence as an open finding --
+the bundle smoke, a program, passes the human gate by declaring itself one.
+
+**Measured, at this slice's parent revision, over a real loopback socket.**
+The gated composition (`create_app` + `attach_runtime_routes`) served by
+uvicorn on a bound `127.0.0.1` socket, driven with `http.client`:
+
+    ('POST', '/api/runtime/stop') in ALLOWLIST                     False
+    GET  /api/runtime          no bearer                            200
+    STOP no bearer,      kind=human                                 401
+    STOP wrong bearer,   kind=human                                 401
+    STOP valid bearer,   kind=model                                 409
+    STOP valid bearer,   no content-type                            422
+    STOP valid bearer,   kind=human ident=''                        422
+    STOP valid bearer,   kind=human ident='attacker-script'         200
+    request_stop actually fired                                     yes
+
+The bearer is the real gate: 401 without it, on a route that is not
+allowlisted. Given the bearer, the only thing the actor field added was the
+409 against an HONEST `kind: model`. A plain script -- demonstrably not a
+person -- declaring `{"kind": "human", "ident": "attacker-script"}` was
+accepted and stopped Forge. The 422s are shape and ident, not authentication.
+
+That first probe composed `create_app` DIRECTLY, so it did not exercise the
+Host rule at all -- the rule is installed in `onboarding_serve.assemble`, and a
+claim about it read out of that module would be read rather than measured. So
+the SHIPPED composition was driven separately, `assemble` +
+`attach_runtime_routes` on its own loopback socket, with the bearer and the
+same declared-human impostor on every row:
+
+    ONBOARDING_HOSTS                            ['127.0.0.1', 'localhost']
+    Host: evil.example.com                      400  Invalid host header
+    Host: forge.attacker.test:<port>            400  Invalid host header
+    Host: localhost:<port>                      200  {stopping: true}  -- and it stopped
+
+Both halves of "at this computer" are therefore measured on the composition
+that ships: a name rebound to loopback is refused before any route runs, and
+what remains is a caller holding this run's bearer on a loopback listener.
+Neither mechanism is the actor field, and neither reaches personhood.
+
+**The record carries the same self-declaration, and that is the wider half.**
+ELEVEN routes read a self-declared actor, not one, and the capsule and
+experience digest chains RECORD the unauthenticated ident as authority
+provenance. Measured on the pure domain: `create_document`, `confirm` and
+`start_experience` each accepted
+`Actor(kind="human", ident="president-lincoln")`; the ident was written
+verbatim into `created.by`, into the confirmed proposal's `resolved.by` and
+into the experience `history`; and `verify_integrity`, `validate_document`
+and `verify_experience` all passed over the result afterwards. A fabricated
+human is stamped into permanent, chain-covered history. What the chain
+establishes is that the recorded provenance has not been edited SINCE it was
+written -- never that it was true WHEN it was written. Reading `resolved.by`
+as "who decided" is the substitution this entry refuses.
+
+**AND ONE COSTUME WAS NOT A ROUTE AT ALL, which is why the guard is not a
+route census.** The eleven above are routes, and a route census finds routes.
+A sweep of every non-docstring string literal in the package -- run because
+that limitation was obvious once stated -- turned up
+`experience_journey._NEXT["READY"]`, the page's own account of what READY
+means: "the build's gate results and governance validation licensed it and A
+PERSON CONFIRMED IT." Not a refusal. A settled-fact statement to the reader,
+of exactly the thing the stop route was being repaired for claiming, and worse
+than the refusal because a refusal is at least about a request that was turned
+away. It now reads "this run's session holder confirmed it"; the disclaimer
+that follows it -- not deployment, not production approval, not an independent
+inspection -- is unchanged and still the load-bearing half. Recorded here
+because the lesson is the shape, not the string: a claim does not have to sit
+on a route to be made, so the guard that holds this closed searches what a
+module can SAY.
+
+**Why no login is added here, per candidate rather than as a summary.**
+
+    mechanism                        personhood?  why not
+    the per-run bearer (A-027)       no           a same-user program can hold it;
+                                                  A-027 concedes the acquisition
+                                                  channels
+    OS identity of the loopback      no           the peer PID's security identifier
+      peer                                        equals Forge's own, so it
+                                                  re-derives "same logged-in user",
+                                                  which A-015 already concedes
+    a console code, or a physical    no           the shipped launcher runs `pythonw`
+      keypress                                    and HAS NO CONSOLE; where a console
+                                                  exists a redirected stdout was
+                                                  already measured carrying the
+                                                  fragment (A-027), and a synthetic
+                                                  keypress from a same-user program
+                                                  is indistinguishable from a hand
+    Windows Hello, a live credential YES          and each is EXTERNAL AUTHORITY,
+      prompt, an identity provider,               which this repository may not
+      a hardware or TPM token                     create, adopt, infer or backdate
+
+The loopback peer's owning process id is obtainable -- measured, via
+`GetExtendedTcpTable`, and it resolved to this very process under the same
+security identifier -- so the mechanism works and buys nothing: the conceded
+adversary runs as the same user. Distinguishing it further would reduce to
+the peer's image name, which a same-user program forges trivially and which
+doctrine forbids anyway ("this codebase does not decide properties by
+spelling"). **PERSONHOOD CANNOT BE ESTABLISHED ON THIS SURFACE WITHOUT
+EXTERNAL AUTHORITY.** That is the result, not a gap awaiting a later slice's
+login screen, and it is the same shape A-024 reached for control-plane
+authority and A-029 for the seal's freshness.
+
+**What changed here, and what deliberately did not.** The stop route's
+refusal now names the session holder and states, in the body, that Forge does
+not verify a person rather than a program running as the same user sent it.
+The kind check is KEPT and RELABELLED: it costs nothing, it preserves the
+never-upgrade-an-actor posture, and the defect was the claim, not the check.
+The 200 body is unchanged and carries no claim about who asked. What did not
+change: `SMOKE_ACTOR` still declares `human` -- the smoke's declaration was
+never the defect -- and no actor kind was added, no ident is authenticated,
+and no route's admission rule moved. This entry closes A-023's open finding
+about the CLAIM only; the smoke is still a program declaring itself a person,
+and now nothing in Forge says that proves one.
+
+**PINNED IN THE AFFIRMATIVE, so it cannot be closed by wording.**
+`tests/test_actor_declaration_boundary.py` enumerates the actor-reading
+routes FROM THE COMPOSED ROUTING TABLE -- resolving each endpoint's type
+hints and keeping every route whose payload model declares an `ActorPayload`
+field -- so a twelfth route added tomorrow is enumerated the day it is added
+rather than the day someone remembers to extend a list. It fails if any of
+them leaves the session gate, and it fails if any served module re-asserts a
+personhood claim. `test_the_personhood_limit_is_the_disclosed_boundary` READS
+THIS ENTRY and asserts its load-bearing phrases are present, so a later slice
+cannot close the case without rewriting the words that admit it.
+
+**Residues, none closed.** (1) `actor.ident` is still unauthenticated
+everywhere it becomes provenance; making it mean "who decided" needs the same
+external authority and is a later, separately-scoped tranche. (2) UNMEASURED:
+whether a provider confined by the Windows restricted-token sandbox runs
+under a DIFFERENT security identifier from Forge on a real install. If it
+does, operating-system peer identity would refuse that principal specifically
+-- turning a dead end into a real cost against the confined provider, and
+only against it. It would still establish nothing about personhood. (3) The
+same-user channels by which a program can acquire the bearer are A-027's,
+bounded by principal separation only, and are untouched here.
+
+**Serves.** BRD-005, `CLAUDE.md` ("a gate may claim only what it measures";
+"a label must never stand in for the thing measured"), A-015's trust
+boundary, A-023's open finding, and A-027's statement of what the bearer does
+and does not defend.

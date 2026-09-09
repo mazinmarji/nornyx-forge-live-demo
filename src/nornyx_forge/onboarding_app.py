@@ -89,9 +89,22 @@ locally for one person, like the CLI it sits beside. The actor on each
 request is taken verbatim from the request and judged by the capsule's
 KIND rule; the surface does not authenticate humans, and it also never
 upgrades an actor — a client that says it is a model is refused exactly
-where a model must be refused. Authenticating the human is a later,
-separately-scoped slice, and until it lands no claim of authentication is
-made anywhere on this surface.
+where a model must be refused. No claim of authenticating a person is made
+anywhere on this surface, nor on the operational routes a launcher attaches to
+it, and that now holds LITERALLY rather than by module boundary: one attached
+route used to return a sentence claiming otherwise, and A-030 records why the
+sentence was wrong and what would be needed to earn it.
+
+WHAT THE KIND RULE ACTUALLY BUYS, said once here so no route has to imply
+more. It DECLINES an actor that honestly declares itself non-human. It
+establishes nothing about one that declares itself human, so it filters
+exactly the callers that were never the threat. The admission to every
+authority-moving route is the per-run bearer (A-027), which bounds the caller
+to this run, this computer and this logged-in user — and to nothing narrower.
+Distinguishing a person from a program running as that same user needs an
+authority outside the same-user domain, which is external authority this
+repository may not create, adopt, infer or backdate. That is the limit, not a
+gap awaiting a later slice's login screen.
 
 `layer.application`, following the forge_cli precedent: this module
 composes the capsule domain, the store adapter, the journey mapping and
@@ -248,10 +261,20 @@ def _refused(reason: str) -> JSONResponse:
 
 
 def _human_act(payload: ResolvePayload, what: str) -> Actor | JSONResponse:
-    """The actions this surface offers are a person's. A request claiming any
-    other kind is refused here by name, before any contract is consulted --
-    and where the contract is stricter still (CONFIRM, READY admit only a
-    human), the contract's refusal is returned as well, in its own words."""
+    """DECLINE an actor that declares itself non-human. That is the whole of
+    what this does, and it is deliberately narrower than the name reads.
+
+    A request claiming any other kind is refused here by name, before any
+    contract is consulted -- and where the contract is stricter still (CONFIRM,
+    READY admit only a human), the contract's refusal is returned as well, in
+    its own words. What this does NOT do is establish that the caller is a
+    person: `payload.actor.kind` is request-body text and `validate()` only
+    asks that it names one of three closed kinds, so a caller that declares
+    `human` passes here whatever it is. The admission to any of these routes is
+    the per-run bearer the session gate applied before this function was
+    reached (A-027); the kind check preserves the never-upgrade-an-actor
+    posture on top of it and authenticates nobody. A-030 states the limit and
+    what closing it would require."""
     actor = payload.actor.to_actor()
     try:
         actor.validate()
