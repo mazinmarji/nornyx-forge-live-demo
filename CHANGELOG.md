@@ -157,6 +157,20 @@
   every alias (reproduced with three bind mounts of `docs/`: twelve scans
   more, the bound never crossed); an identity already seen is not enqueued
   now, one scan per directory.
+  A fifth Codex review, of the head carrying those repairs, found two P1s
+  of the same class in two other places, each reproduced and closed. The
+  overlay walk stepped past a component whose `lstat` failed, so one failed
+  `lstat` of an outside link made the walk treat it as plain, the next
+  `lstat` resolved the whole chain in the kernel, and a chain through the
+  repository was accepted with its in-repository link never judged
+  (reproduced with that chain and one failing `lstat`: accepted). And the
+  identity comparison skipped a candidate whose `lstat` failed -- for an
+  alias of a repository directory, the one candidate whose identity would
+  match -- so an in-repository overlay was accepted through the alias
+  (reproduced: accepted). Neither failure is caught now; each reaches
+  confinement's one refusal, which names no path, and nothing is opened.
+  Every `lstat` the confinement judgment performs -- in the repository
+  traversal, the walk and the comparison -- refuses on failure.
   Not claimed, and recorded as such in A-030: that anyone runs the check;
   that anyone read an item; that a `cycle_id` names a cycle; that a hard
   link, an alias of a single file or a same-identity rewrite is seen; that a

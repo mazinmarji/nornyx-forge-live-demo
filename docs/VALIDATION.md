@@ -679,7 +679,10 @@ link, scans each directory once whatever its aliases -- three bind mounts of
 `docs/` measured to add twelve scans and no identity before -- and refuses
 past its bound and on any entry it cannot `lstat`, measured before to leave a
 directory out of the set and admit an in-repository overlay through a bind
-mount of it); nothing beyond an unfollowed link is
+mount of it; and the walk and the identity comparison refuse a component or
+a candidate they cannot `lstat`, measured before to step past an
+in-repository link whose first `lstat` failed and to skip the one alias
+ancestor whose identity was the repository's); nothing beyond an unfollowed link is
 consulted, not even by resolution, pinned by a spy on `Path.resolve`;
 every component is classified from its `lstat` and every reparse point that
 is not a symlink refuses, a junction, a cloud placeholder and an entry whose
@@ -687,9 +690,12 @@ tag the platform does not expose included, with real directory junctions
 built and refused in the windows-runtime job by
 `tests/test_standing_obligations_windows.py`; the bytes read are the object
 the walk judged -- a directory link or file link retargeted, a file replaced
-by an in-repository link, a file replaced by another of a different identity,
-and a file that appears only after the walk all refuse between the walk and
-the one open, for the disposition as for the overlay; every content refusal
+by an in-repository link, and a file replaced by another of a different
+identity all refuse between the walk and the one open, for the disposition
+as for the overlay; an overlay path with nothing at it is refused by the walk
+itself, so a file that appears only afterwards is never consulted, and a
+disposition that appears between its judgment (which expects absence, for
+`--init`) and the open is refused at the open; every content refusal
 about a private overlay is one sentence, byte-identical on stderr for a
 defect at index 0 or 42, in the seventh of seven items, at position 299 of
 300, nested three deep, oversized, nested past the parser, or invalid UTF-8,

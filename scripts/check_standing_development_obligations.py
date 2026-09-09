@@ -46,7 +46,9 @@ repository. The identities come from the one traversal this script performs,
 of the repository's own directories: no symlink followed, no file opened, no
 name read into any output, nothing selected; each directory scanned once,
 whatever else it is called; and refused whole, never judged from a partial
-set, if any entry of the tree cannot be judged.
+set, if any entry of the tree cannot be judged. The walk and the identity
+comparison hold the same rule: a component or an ancestor that cannot be
+inspected refuses the judgment rather than being stepped past or skipped.
 
 THE BYTES ARE THE OBJECT THAT WAS JUDGED. The walk records the identity of the
 entry it ends at. The file is then opened ONCE, judged by `fstat` on that
@@ -507,6 +509,15 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity, bool]:
     there -- the rule broken first -- and one outside it for not being
     followed. Measured on a Windows runner: the first version raised at the
     junction and named the wrong rule for an in-repository junction.
+
+    FAILS CLOSED. A component the walk cannot `lstat` is not stepped past:
+    the failure propagates to the caller, whose one refusal names no path.
+    Measured by an external review of the repaired head: with the first
+    `lstat` of `outside/a` failing once, the walk treated that link as plain
+    and stepped on, the next `lstat` -- of the file -- resolved the whole
+    chain in the kernel, the descriptor matched that file, and a chain
+    through the repository was accepted with its in-repository link never
+    judged.
     """
     locations: list[Path] = []
     start = _lexical_absolute(path)
@@ -517,14 +528,10 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity, bool]:
     while remaining:
         walked = walked / remaining.pop(0)
         locations.append(walked)
-        try:
-            info = os.lstat(walked)
-        except OSError:
-            # Absent, or not stat-able: nothing to follow here, and nothing
-            # seen. The open that follows the walk refuses on its own terms,
-            # and an entry that appears between the two is not the one seen.
-            final = _NO_IDENTITY
-            continue
+        # Not caught here: a component the walk cannot inspect is not stepped
+        # past. The failure reaches the caller's one refusal, so no link goes
+        # unjudged because its `lstat` failed once.
+        info = os.lstat(walked)
         kind = _link_kind(info)
         if kind == PLAIN:
             final = _identity_of(info)
@@ -625,15 +632,22 @@ def _inside_by_identity(location: Path, identities: frozenset[_Identity], checke
     among the walked locations, and an unfollowed link is not looked through.
     Where the platform exposes no identity for an entry (inode 0) nothing is
     claimed for it and the lexical rule stands alone.
+
+    FAILS CLOSED. A candidate whose `lstat` fails is not skipped: the failure
+    propagates to the caller's one refusal. Measured by an external review
+    of the repaired head: an alias directory whose `lstat` failed once during
+    this comparison was skipped -- and marked checked, so never looked at
+    again -- while the lexical rule passed its external spelling, and an
+    in-repository overlay was accepted through it.
     """
     for candidate in (location, *location.parents):
         if candidate in checked:
             continue
         checked.add(candidate)
-        try:
-            identity = _identity_of(os.lstat(candidate))
-        except (OSError, ValueError):
-            continue
+        # Not caught here: a candidate that cannot be inspected is not
+        # skipped. For an alias of a repository directory it is the ONE
+        # candidate whose identity would match, so a skip is an admission.
+        identity = _identity_of(os.lstat(candidate))
         if identity.inode != 0 and identity in identities:
             return True
     return False

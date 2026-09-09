@@ -1289,8 +1289,14 @@ def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, m
     for directory in (ROOT, ROOT / "docs", ROOT / "docs" / "governance", RUNTIME):
         assert module._identity_of(os.lstat(directory)) in identities, directory
     assert module._identity_of(os.lstat(tmp_path)) not in identities
-    assert module._inside_by_identity(ROOT / "docs" / "governance" / "absent.json", identities, set())
-    assert not module._inside_by_identity(tmp_path / "absent.json", identities, set())
+    present = tmp_path / "present.json"
+    present.write_text("{}", encoding="utf-8", newline="\n")
+    assert module._inside_by_identity(ROOT / "docs" / "governance" / "STANDING_DEVELOPMENT_OBLIGATIONS.json", identities, set())
+    assert not module._inside_by_identity(present, identities, set())
+    # A candidate that cannot be inspected is not skipped: the failure is the
+    # caller's, and the caller refuses (measured by the fifth Codex review).
+    with pytest.raises(OSError):
+        module._inside_by_identity(tmp_path / "absent.json", identities, set())
     decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
     decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
     monkeypatch.setattr(module, "_is_within", lambda path, parent: False)
@@ -1472,6 +1478,100 @@ def test_the_identity_traversal_scans_each_directory_once_whatever_its_aliases(m
 
 
 @posix_only
+def test_a_component_the_walk_cannot_inspect_refuses_the_path(module, monkeypatch, tmp_path):
+    """A component whose `lstat` fails is not stepped past: the judgment refuses.
+
+    Measured by the fifth Codex review on the PR head, and reproduced here
+    before the repair: for `outside/a -> repo/.nornyx/runtime/middle ->
+    outside/final/overlay.json`, one failed `lstat` of `outside/a` made the
+    walk treat the link as plain and step on; the next `lstat`, of the file,
+    resolved the whole chain in the kernel, the descriptor matched that file,
+    and the overlay was accepted with the in-repository link never judged.
+    The failure is the caller's one refusal now, and nothing is opened.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    final = tmp_path / SENTINEL_DIR
+    final.mkdir()
+    (final / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    middle = RUNTIME / f"middle-{uuid.uuid4().hex}"
+    link = tmp_path / "SENTINEL-LINK-a-7c1e"
+    _symlink(final, middle)
+    _symlink(middle, link)
+    overlay = link / "overlay.json"
+    real_lstat = os.lstat
+    failed: list[str] = []
+
+    def once_failing(path, *args, **kwargs):
+        if str(path) == str(link) and not failed:
+            failed.append(str(path))
+            raise OSError(errno.EIO, "input/output error")
+        return real_lstat(path, *args, **kwargs)
+
+    try:
+        assert _refusal(module, lambda: module.load_registries(overlay)) == (
+            "private overlay must remain outside the Forge repository"
+        )
+        monkeypatch.setattr(os, "lstat", once_failing)
+        message = _refusal(module, lambda: module.load_registries(overlay))
+    finally:
+        monkeypatch.setattr(os, "lstat", real_lstat)
+        middle.unlink()
+    assert failed, "the failing lstat was never reached"
+    assert message == "private overlay path cannot be resolved"
+    _assert_no_leak(message, link, middle, final)
+
+
+def test_an_ancestor_whose_identity_cannot_be_read_refuses_the_path(module, monkeypatch, tmp_path):
+    """The identity comparison refuses, never skips, a candidate it cannot `lstat`.
+
+    Measured by the fifth Codex review on the PR head, and reproduced here
+    before the repair: for an alias of a repository directory, the alias is
+    the ONE ancestor whose identity is the repository's; one failed `lstat`
+    of it inside the comparison skipped it -- and marked it checked, so it
+    was not looked at again -- while the lexical rule passed the external
+    spelling, and the overlay was accepted. Simulated as the alias test
+    above simulates a mount: the alias directory's identity placed in the
+    set. The failure is the caller's one refusal now.
+    """
+    overlay = _write_overlay(tmp_path)
+    alias = overlay.parent
+    real = module._repository_directory_identities()
+    with_alias = real | {module._identity_of(os.lstat(alias))}
+    monkeypatch.setattr(module, "_repository_directory_identities", lambda: with_alias)
+    assert _refusal(module, lambda: module.load_registries(overlay)) == (
+        "private overlay must remain outside the Forge repository"
+    )
+    real_lstat = os.lstat
+    comparing: list[int] = []
+    original = module._inside_by_identity
+
+    def spied(location, identities, checked):
+        comparing.append(1)
+        try:
+            return original(location, identities, checked)
+        finally:
+            comparing.pop()
+
+    failed: list[str] = []
+
+    def failing_in_comparison(path, *args, **kwargs):
+        if comparing and str(path) == str(alias):
+            failed.append(str(path))
+            raise OSError(errno.EIO, "input/output error")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_inside_by_identity", spied)
+    monkeypatch.setattr(os, "lstat", failing_in_comparison)
+    try:
+        message = _refusal(module, lambda: module.load_registries(overlay))
+    finally:
+        monkeypatch.setattr(os, "lstat", real_lstat)
+    assert failed, "the failing lstat was never reached"
+    assert message == "private overlay path cannot be resolved"
+    _assert_no_leak(message, overlay)
+
+
+@posix_only
 def test_nothing_beyond_an_unfollowed_link_is_consulted(module, monkeypatch, tmp_path):
     """An unsupported link INTO the repository is refused as unfollowed, unseen.
 
@@ -1623,15 +1723,41 @@ def test_a_file_replaced_by_another_after_the_walk_is_refused(module, tmp_path, 
 
 
 def test_a_file_that_appears_only_after_the_walk_is_refused(module, tmp_path, monkeypatch):
-    """Nothing was seen at the path when it was judged; nothing is bound."""
+    """Nothing was seen at the path when it was judged; nothing is bound.
+
+    For the overlay the walk itself refuses a component it cannot inspect
+    (measured by the fifth Codex review), so a path with nothing at it is
+    refused before anything could appear there, and a file written after the
+    judgment is never consulted. For the disposition, whose absence `--init`
+    expects, the judgment records no identity, and a file that appears
+    between the judgment and the open is refused at the open.
+    """
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
     overlay = directory / "overlay.json"
     _after_the_walk(module, monkeypatch, lambda: overlay.write_text(
         json.dumps(_overlay_document()), encoding="utf-8", newline="\n"))
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert message == "private overlay identity cannot be established"
+    assert message == "private overlay path cannot be resolved"
+    assert not overlay.exists(), "a path with nothing at it was accepted"
     _assert_no_leak(message, overlay)
+
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        original = module._require_runtime_file
+        appeared: list[Path] = []
+
+        def require(candidate, *, label):
+            result = original(candidate, label=label)
+            if not appeared:
+                appeared.append(candidate)
+                module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+                _complete(path, module, registries)
+            return result
+
+        monkeypatch.setattr(module, "_require_runtime_file", require)
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert message == "cycle disposition identity cannot be established"
 
 
 def test_the_disposition_read_is_bound_to_the_judged_object_too(module, tmp_path, monkeypatch):

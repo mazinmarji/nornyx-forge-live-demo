@@ -4029,8 +4029,10 @@ operations, so a link retargeted between them opened a file nobody had
 judged: the walk now records the identity of the entry it ends at and the
 one open is refused unless `fstat` names that entry, pinned by a retargeted
 directory link, a retargeted file link, a file replaced by an in-repository
-link, a file replaced by another and a file that appears only after the
-walk. A malformed private item said `item 42`, a lower bound on the overlay's
+link, a file replaced by another, and a disposition that appears only after
+its judgment (an overlay path with nothing at it is refused by the walk
+itself now, before anything could appear there). A malformed private item
+said `item 42`, a lower bound on the overlay's
 size, and an oversized one said so: every content refusal about private input
 is now one sentence, byte-identical across defects at different indices,
 counts, sizes, nesting depths and duplicate positions, while the public
@@ -4060,7 +4062,19 @@ an alias of a directory inside the tree added nothing to the set but was
 traversed again in full, so the bound counted identities while the work grew
 with every alias: reproduced with three bind mounts of `docs/`, twelve scans
 more with the bound never crossed. An identity already seen is not enqueued
-now, so the traversal is one scan per directory.
+now, so the traversal is one scan per directory. A fifth Codex review, of
+the head carrying those repairs, measured two more of the same class in two
+other places, each reproduced and closed. The overlay walk stepped past a
+component whose `lstat` failed: one failed `lstat` of an outside link made
+the walk treat it as plain, the next `lstat` resolved the whole chain in the
+kernel, the descriptor matched the file, and a chain through the repository
+was accepted with its in-repository link never judged. And the identity
+comparison skipped a candidate whose `lstat` failed -- for an alias of a
+repository directory the one candidate whose identity would match -- so an
+in-repository overlay was accepted through the alias. Neither failure is
+caught now: each reaches confinement's one refusal, which names no path,
+and nothing is opened. Every `lstat` the confinement judgment performs, in
+the repository traversal, the walk and the comparison, refuses on failure.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.

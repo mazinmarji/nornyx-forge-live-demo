@@ -128,7 +128,11 @@ not:
   claim to know where such a link goes, so an uninspectable state fails
   closed, and nothing beyond such a link is consulted, not even by
   resolution -- a chain the walk stops at is judged as far as it was walked
-  and refused for the link. `tests/test_standing_obligations_windows.py` builds real
+  and refused for the link. A component the walk cannot `lstat` is not
+  stepped past, and an ancestor whose identity cannot be read is not
+  skipped: either refuses the judgment, because a link that goes unjudged
+  when one `lstat` fails is a link into the tree that nobody looked at.
+  `tests/test_standing_obligations_windows.py` builds real
   junctions in the windows-runtime CI job and holds the refusal on the
   platform it concerns; a Windows symlink target is judged only behind a
   drive letter, and a share, volume-GUID, device or NT-namespace spelling
