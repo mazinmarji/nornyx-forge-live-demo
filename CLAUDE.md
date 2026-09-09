@@ -3,7 +3,9 @@
 Before planning or editing any repository-changing development cycle, follow
 `AGENTS.md` and pass `scripts/check_standing_development_obligations.py` with
 any explicitly supplied external overlay. Standing admission does not replace
-the controls below.
+the controls below: it records that the standing obligations were
+dispositioned and digest-bound for the cycle, and it confers no authority to
+begin, merge, publish, release or deploy anything.
 
 Treat `BRD.md` as the business source of truth and `.nornyx/contracts/*.nyx` as the governance source of truth.
 

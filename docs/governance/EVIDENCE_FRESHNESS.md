@@ -113,9 +113,10 @@ lasted, and the suite stayed green throughout -- see
 `tests/test_baseline_discrimination.py`.
 
 Recording a violation afterwards is the fallback, not the plan.
-`docs/governance/EVIDENCE_BINDING_BASELINE.json` carries six commits made after
+`docs/governance/EVIDENCE_BINDING_BASELINE.json` carries seven commits made after
 the defect was understood, and a rising count there means this discipline is
-not being followed.
+not being followed. The seventh is the first head of PR #51, whose repair
+cycle recorded it rather than rewriting the branch.
 
 ## What is deliberately not regenerated
 

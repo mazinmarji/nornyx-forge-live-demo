@@ -32,7 +32,15 @@
       "dedupe_key": "existing-authority-boundaries-preserved",
       "status": "active",
       "title": "Existing authority boundaries are preserved",
-      "rule": "Standing-obligation admission is procedural governance. It cannot weaken or replace deterministic Forge or Nornyx checks, evidence requirements, independent-review boundaries, or explicit human or organizational authority."
+      "rule": "Standing-obligation admission is procedure. It cannot weaken or replace a deterministic Forge or Nornyx check, an evidence requirement, an independent-review boundary, or explicit human or organizational authority."
+    },
+    {
+      "id": "FGR-SDO-005",
+      "kind": "invariant",
+      "dedupe_key": "admission-is-not-authority",
+      "status": "active",
+      "title": "Admission is not authority",
+      "rule": "Passing standing-development admission means only that the applicable standing obligations were loaded, each given a deliberate disposition, and bound by content digest to the exact registry and overlay bytes used for that development cycle. It does not authorize the development cycle itself, and it confers no human, organizational, merge, publication, release, deployment or other consequential authority."
     }
   ]
 }

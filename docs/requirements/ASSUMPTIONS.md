@@ -2607,3 +2607,75 @@ could satisfy honestly instead of one no measurement could satisfy at all; a
 criterion whose semantics are applied to real evidence rather than left
 advisory; and the claim discipline in `CLAUDE.md` that forbids substituting a
 label for the thing measured.
+
+## A-029 Standing development admission is procedure, not authority
+
+**Assumption.** A standing obligation that must survive a change of model,
+tool, workstation or developer is carried by a public, machine-readable
+registry and a deterministic checker, not by the memory of whoever last worked
+here. A caller with obligations that are not public carries them in an
+external overlay it supplies by path, and Forge learns nothing about that
+caller: not who it is, not where the file lives, not what it says.
+
+**Why it needs stating.** Two substitutions are easy here and both are the
+class this repository keeps finding. The first reads a passing admission
+check as authority over the cycle: passing means only that the loaded
+obligations were each given a deliberate disposition and bound by content
+digest to the exact registry and overlay bytes for that cycle, and it confers
+no human, organizational, merge, publication, release, deployment or other
+consequential authority. A private overlay governs a cycle whose authority,
+if any, comes separately; it creates none, and neither does the result. The
+second reads "the overlay is confidential" as a property of Forge rather than
+of the caller: Forge refuses an in-repository overlay path and emits nothing
+from the file, and that is the whole of what it establishes.
+
+**What is established, and only this.** `tests/test_standing_development_obligations.py`
+holds: registry validity and duplicate refusal within and across registries;
+closed field sets and a closed disposition vocabulary, so a fabricated
+`approved_by` beside a row is refused rather than ignored and relabelling
+`requires_decision` to any other word refuses; digest binding with staleness
+on a one-byte change to either input; exact coverage; `defer` admitted only
+for an item whose registry status is already deferred; no discovery route in
+the checker's source and none in its behaviour under planted decoys; refusal
+of an overlay path inside the repository, lexically and after resolution; and
+no sentinel from an overlay's content, field names, schema string, directory
+name or invalid bytes reaching any output, file or refusal, on the failure
+paths included. Measured while writing them: on CPython 3.11 a symlink-loop
+overlay made `Path.resolve` raise `RuntimeError` with the path in its message,
+a class the first checker did not catch; and `UnicodeDecodeError` quotes the
+offending byte. Both are now refused with a label and nothing else.
+
+**What is not established.** Nothing makes a person or a model invoke the
+checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
+The free-text `reason` a developer writes is not inspected. An item `id` is
+bounded to a short token and not judged. The checker and the registry are
+repository content, so a commit can change them; both are governed inputs, so
+the change moves the governed input digest and must regenerate the evidence in
+the same commit for the binding to hold, and that is visibility, not
+prevention. The root `AGENTS.md` is outside the governed input set, so an edit
+to it moves no digest; the substantive rules live in the governed procedure
+document and the registry, and widening the subject scope is a change to the
+governed subject that this mechanism does not make. The local disposition can
+be edited after a PASS; every check re-evaluates it, and nothing checks again
+on the developer's behalf.
+
+**The recorded evidence-binding violation.** The first head of PR #51 added
+governed inputs without regenerating the evidence set, so `--verify` reported
+every artifact stale on that head and the evidence-binding check reported the
+commit. The repair cycle was instructed to preserve reviewable history and not
+rebase, so the commit is immutable and is recorded in
+`docs/governance/EVIDENCE_BINDING_BASELINE.json` as the seventh commit made
+after the defect was known, with its recorded and actual digests; the pinned
+count in `tests/test_evidence_binding.py` moved with it, deliberately. The
+merge and every later commit on the branch regenerate the evidence in the
+same commit.
+
+**Scope.** A registry, a checker, a procedure document, entry-point
+instructions and their tests. No Experience stage, provider row, eligibility
+rule, seal, lock, token, port, contract or approval diagnostic moves. No
+evidence is produced from an overlay, and no overlay is committed, cached,
+synchronized or derived from.
+
+**Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
+-- a gate may claim only the exact property it mechanically measures -- applied
+to a mechanism whose easiest misreading is that it grants what it only records.

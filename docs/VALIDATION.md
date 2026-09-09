@@ -637,3 +637,36 @@ nowhere -- the closest test runs `("nornyx", "sequential")`, a different pair.
 Claiming one module covers the table left a reader one grep from believing a
 row was proven that is not. It does still assert that this file
 does not reacquire the claim it used to make.
+
+## Standing development admission
+
+`scripts/check_standing_development_obligations.py` is a procedural admission
+check, held by `tests/test_standing_development_obligations.py` on every
+Linux census job. What it mechanically establishes, and what it does not, is
+recorded in `docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md`; the short
+form is this.
+
+Established by test: the public registry parses, declares itself public and
+carries no duplicate identifier or semantic key, alone or against a supplied
+overlay; every malformed or unsupported registry, overlay or disposition shape
+refuses; a disposition is bound by SHA-256 to the exact registry and overlay
+bytes and goes stale when either moves by one byte; the disposition vocabulary
+and field sets are closed; `pending`, `requires_decision`, an out-of-vocabulary
+word and a `defer` on an active item all refuse; an overlay is read only from
+`--overlay` (decoys planted in the working directory, the home directory and
+four environment variables are never read); an overlay path inside this
+repository is refused as given and after symlinks are followed; and no sentinel
+planted in an overlay's title, rule, condition, semantic key, unknown field
+name, unknown field value, schema string, directory name or invalid byte
+sequence reaches stdout, stderr, the disposition or a refusal -- on the
+symlink-loop, missing-file, directory, invalid-UTF-8, stray-argument and
+duplicate-collision paths included. The PASS output states the admission
+boundary.
+
+Not claimed: that anyone runs the check; that a free-text `reason` is free of
+overlay content; that an identifier an overlay author chose is not itself
+telling; that a commit cannot change the checker or the registry (both are
+governed inputs, so such a change moves the evidence digest, and no more); or
+that the root `AGENTS.md`, which is outside the governed input set, is bound by
+any digest. Passing admission is not approval, not merge or release authority,
+and not evidence about any other gate.

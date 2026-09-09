@@ -813,11 +813,19 @@
       "commit": "fb3a279d03fa473937e3c52c82d06cc2b674ddda",
       "recorded_governed_input_digest": "sha256:d24bdf9318567d0ee4fb0467483e8921f7eff755022440f185210d13ffae5bab",
       "subject": "Make every false-green class trip its own guard"
+    },
+    {
+      "actual_governed_input_digest": "sha256:820a7f70e81e4ac6f53a1c4e01513e8a2a8b152b2fc19ee2c42b8bf4c83ba25c",
+      "category": "committed_after_the_defect_was_known",
+      "commit": "4861f98c500f7f458f25501087009f5d2f690c70",
+      "note": "NOT pre-enforcement history. Third batch, one commit: the first head of PR #51 added docs/, scripts/, tests/ and CLAUDE.md content -- all governed inputs -- without regenerating the evidence set, so the binding it shipped describes the base it was cut from. Found by the demo-contract job on that head (refresh_governance_evidence --verify: every artifact stale) and by check_evidence_binding over the PR range. Recorded rather than rewritten: the repair cycle was instructed to preserve reviewable history and not rebase, so the commit is immutable and the honest options were to record it or to conceal it. The merge and every later commit on the branch regenerate the evidence in the same commit. Grandfathered for gate purposes only; --no-baseline still reports it.",
+      "recorded_governed_input_digest": "sha256:542ea27576a15f41b07eecd040144fb3deaa50246670df4154e18a86a12f6d85",
+      "subject": "governance: add standing development obligations"
     }
   ],
-  "purpose": "An exact record of commits whose shipped evidence does not describe their own governed inputs. MOST predate enforcement; SIX DO NOT -- they carry category 'committed_after_the_defect_was_known' and were made after the check was wired into CI, recorded rather than hidden because the commits are immutable and rewriting history to conceal an evidence defect would be worse than the defect. Calling the whole file 'commits that predate enforcement' was false of those six. Grandfathering is for the gate only: --no-baseline still reports every entry.",
+  "purpose": "An exact record of commits whose shipped evidence does not describe their own governed inputs. MOST predate enforcement; SEVEN DO NOT -- they carry category 'committed_after_the_defect_was_known' and were made after the check was wired into CI, recorded rather than hidden because the commits are immutable and rewriting history to conceal an evidence defect would be worse than the defect. Calling the whole file 'commits that predate enforcement' was false of those seven. Grandfathering is for the gate only: --no-baseline still reports every entry.",
   "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
   "schema": "nornyx.forge.evidence_binding_baseline.v1",
-  "violating_commits": 135,
-  "violations_committed_after_enforcement_was_known": 6
+  "violating_commits": 136,
+  "violations_committed_after_enforcement_was_known": 7
 }

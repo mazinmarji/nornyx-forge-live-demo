@@ -2,6 +2,63 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Standing development obligations (PR #51, reconciled with main and
+  repaired). A public-safe, provider-neutral mechanism for carrying standing
+  development obligations across sessions, models, workstations and
+  developers: a machine-readable registry
+  (`docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.json`), a procedure
+  document, a deterministic checker
+  (`scripts/check_standing_development_obligations.py`), a root `AGENTS.md`,
+  and wiring into `CLAUDE.md` and the `build-app` Skill. A cycle disposition
+  under the gitignored `.nornyx/runtime/` names every loaded item, is bound by
+  SHA-256 to the exact registry and overlay bytes, and refuses while any item
+  is `pending` or `requires_decision`, duplicated, uncovered or stale. An
+  external overlay is read only from `--overlay` -- never discovered -- must
+  resolve outside this repository as given and after symlinks are followed,
+  and contributes to the disposition only its item identifiers and a digest.
+  WHAT PASSING MEANS is now stated in the registry itself (FGR-SDO-005), in
+  every entry point and in the checker's own output: the loaded obligations
+  were dispositioned and digest-bound for the cycle, and nothing else -- no
+  human, organizational, merge, publication, release, deployment or other
+  consequential authority follows from it, and a private overlay governs a
+  cycle whose authority comes separately and creates none.
+  The repair cycle found and closed, on the first head: every refusal now
+  names a label and at most an item index, exception chaining from the
+  loaders is severed, and the two failure paths that DID carry a value are
+  pinned -- a symlink-loop overlay made `Path.resolve` raise `RuntimeError`
+  with the path in its message on CPython 3.11, uncaught, and
+  `UnicodeDecodeError` quotes the offending byte; a stray positional argument
+  was echoed by argparse; unknown fields in a registry, an overlay or a
+  disposition were ignored and are refused, so a fabricated `approved_by`
+  cannot ride along; `defer` was accepted on an ACTIVE invariant, which is
+  ignoring it under a resolved label, and is refused unless the item's
+  registry status is already `deferred`; `--init` overwrote a completed
+  disposition and refuses one that exists; the disposition was written with
+  platform line endings; the procedure document used a participle the
+  overclaim sweep reads as a claim; and the registry put `governance` and
+  `Nornyx` on one line, which the operator-surface sweep reads as a
+  governance-mode claim. Eighty-two tests hold the mechanism, twenty-three of
+  them malformed-overlay shapes with sentinels in the refused field and a
+  sentinel sweep over stdout, stderr, the disposition and every refusal.
+  The first head of PR #51 also shipped stale evidence: it added governed
+  inputs without regenerating the set, so `--verify` reported every artifact
+  stale, seven mutation proofs in `tests/test_subject_completeness.py`
+  became tautologies, and the evidence-binding check reported the commit.
+  History was preserved on instruction, so the commit is recorded in
+  `docs/governance/EVIDENCE_BINDING_BASELINE.json` as the seventh made after
+  the defect was known, with the pinned count in
+  `tests/test_evidence_binding.py` raised deliberately; the merge and every
+  later commit regenerate the evidence in the same commit. Collection
+  3308 -> 3395 across 114 modules; the recorded-measurements floor follows
+  the new governance document to 184.
+  Not claimed, and recorded as such in A-029: that anyone runs the check;
+  that a free-text `reason` is free of overlay content; that an identifier an
+  overlay author chose is not itself telling; that a commit cannot change the
+  checker or the registry (both are governed inputs, so the change moves the
+  evidence digest and no more); or that the root `AGENTS.md`, outside the
+  governed input set, is bound by any digest. Passing admission is not
+  approval and not authority over anything.
+
 - The control-plane admission criterion now applies to a real record, and the
   first such record was taken from a CONFINED Codex principal. Nothing in the
   shipped source constructed a `ConfinementProbe`, so nothing converted a valid

@@ -41,10 +41,14 @@ CHECKER = ROOT / "scripts/check_evidence_binding.py"
 #: Pinned. The counts are a claim about history, so a change to either is a
 #: change to what this repository says happened -- not a config tweak.
 PRE_ENFORCEMENT_VIOLATIONS = 129
-POST_KNOWLEDGE_VIOLATIONS = 6
+#: SEVEN. Raised from six for the first head of PR #51 (4861f98), which added
+#: governed inputs without regenerating the evidence set and whose repair cycle
+#: was instructed to preserve history rather than rebase. Raised deliberately,
+#: with the entry's note saying why, which is the only way this number may move.
+POST_KNOWLEDGE_VIOLATIONS = 7
 
 #: The commit committed AFTER the defect was described, kept separate on purpose.
-#: Six, not one. The second batch is five commits made while remediating
+#: Seven, not one. The second batch is five commits made while remediating
 #: Lens C -- recorded because the alternative is rewriting history to hide an
 #: evidence defect. Pinned so the culpable count cannot grow quietly: a rising
 #: number here means the commit discipline is not being followed, and that is

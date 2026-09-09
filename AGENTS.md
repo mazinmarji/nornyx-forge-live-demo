@@ -2,7 +2,9 @@
 
 These instructions apply to any model, agent, or developer changing Nornyx
 Forge. Provider-specific instructions may add procedure but may not weaken this
-file.
+file. The substantive rules live in the governed procedure document and the
+public registry named below; this file points at them and is not itself a
+governed input.
 
 ## Standing development admission
 
@@ -23,6 +25,17 @@ contracts, governance, executable workflows, or public claims:
 
 A `requires_decision` disposition is a stop, not permission to continue. A
 deferred item or trigger is not development authority.
+
+## What admission means
+
+Passing standing-development admission means only that the applicable
+standing obligations were loaded, each given a deliberate disposition, and
+bound by content digest to the exact registry and overlay bytes used for that
+development cycle. It does not authorize the development cycle itself, and it
+confers no human, organizational, merge, publication, release, deployment or
+other consequential authority. A cycle that carries a private overlay draws
+whatever authority it has from the repository's existing rules and from the
+caller, separately; the overlay governs that cycle and creates none.
 
 ## Existing authority remains controlling
 
