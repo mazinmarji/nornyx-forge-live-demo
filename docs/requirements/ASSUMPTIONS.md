@@ -757,7 +757,14 @@ seal establishes what Forge last wrote, not that it is the latest thing
 Forge wrote: an actor who can replace the store, its marker and its seal
 together with an earlier consistent set is not detected by any of them, so
 the surface reports the seal's currency as `not_independently_anchored`
-and monotonic external anchoring is deferred rather than claimed. Not
+and monotonic external anchoring is deferred rather than claimed. That
+sentence has since been MEASURED rather than deduced, and what it permits --
+including the erasure of a recorded breach by the actor who caused it -- is
+written out in A-029, along with the five durable witnesses that were built
+for it and rolled back with the set they were meant to anchor. A-029 also
+carries the one thing that could be earned without external authority: a
+process-lifetime `continuity` field, reported beside the currency word rather
+than replacing it, because the currency word does not move. Not
 claimed anywhere: sandboxing of any provider, an authenticated human
 identity, cryptographic provenance, A-018, or PR-18.
 
@@ -3701,3 +3708,119 @@ could satisfy honestly instead of one no measurement could satisfy at all; a
 criterion whose semantics are applied to real evidence rather than left
 advisory; and the claim discipline in `CLAUDE.md` that forbids substituting a
 label for the thing measured.
+
+## A-029 The seal's freshness is held by a running process, and by nothing else
+
+**Assumption.** A wholesale rollback of the authority store -- the store
+directory, its committed seal marker and its seal, replaced together with an
+earlier consistent set -- is detected while the Forge process that wrote the
+newer seal is still running, and is not detected in any other circumstance.
+The seal's currency is unchanged: it is still reported as
+`not_independently_anchored`, because nothing here anchors it as the newest
+thing Forge ever wrote.
+
+**Why it needs stating.** A-022 already discloses that the seal establishes
+what Forge LAST WROTE and not that it is the LATEST, and that an actor who
+replaces store, marker and seal together is caught by none of them. That
+sentence was a deduction. It is now a measurement, taken through the shipped
+surface at this slice's parent revision, and the harm it permits is worth
+naming exactly:
+
+- Driven to CONFIRM, sealed, then built to GOVERN, then the store directory
+  and the seal directory copied back from a byte-for-byte snapshot of the
+  CONFIRM state: `GET /api/state` answered `200` with stage `CONFIRM`,
+  `POST /api/journey/restore` answered `409 "the store matches its seal;
+  there is nothing to restore"`, and the GOVERN revision was reachable from
+  nowhere Forge can read. A fresh process over the same two directories
+  answered identically, and a second build then ran the project to GOVERN
+  again at a new revision. The store had held two incompatible GOVERN
+  histories over its life and nothing Forge holds knew it.
+- The same move ERASES A RECORDED BREACH. A provider forgery caught mid-build
+  is recorded as `BUILD / failed` with the detail that names it; the actor who
+  caused it copies the pre-build set back over the two locations, Forge
+  restarts, and the lifecycle reads `CONFIRM / active` with the `failed` event
+  and its detail gone from every place Forge can look.
+
+**What was tried, and why none of it is here.** Four durable witnesses were
+built as throwaway store subclasses and attacked as the same unelevated
+operating-system user, and the results are stated per candidate rather than
+summarised, because "a witness was tried" is not a measurement:
+
+    candidate (all in scratch, never the user's own ~/.nornyx)   result
+    a counter beside the seal, IN the seal directory             UNDETECTED
+    a mirror of the sealed revision in a SECOND Forge directory
+      -- actor forgets the mirror                                DETECTED
+      -- actor copies the mirror back too                        UNDETECTED
+    an append-only log in a THIRD place
+      -- actor forgets the log                                   DETECTED
+      -- `open(log, "w")` truncates its last line                UNDETECTED
+      -- actor copies all three locations back                   UNDETECTED
+    `icacls /deny <user>:(W,D,DC)` on the seal file
+      -- direct write                             REFUSED, PermissionError 13
+      -- `os.replace` of an earlier seal over it              SUCCEEDED
+      -- `os.remove` of it                                    SUCCEEDED
+      -- `icacls /remove:d <user>` afterwards          rc 0, write SUCCEEDED
+
+The counter's own file read `2` after the rollback: it travelled back with the
+directory it was meant to anchor. NTFS offers no append-only attribute, so the
+log's name is aspirational. The DENY ACE does not even prevent REPLACEMENT --
+the seal's content became the earlier one through it -- because the parent
+directory grants the owner `FILE_DELETE_CHILD`, and the owner's implicit
+`WRITE_DAC` then removes the ACE outright. A hash chain over seals was NOT
+built separately: it is the counter's location class, and a location that
+travels with the set anchors nothing whatever it stores. What resists the
+restoration of a whole filesystem set
+is an authority outside the restoration domain -- a second operating-system
+principal, or hardware -- and that is external authority. The Windows Event
+Log and a TPM monotonic counter are both such authorities and both are
+therefore OUT OF SCOPE here: adopting one is a human decision that has not
+been taken, and this repository may not create, adopt, infer or backdate an
+external authority. The ledger reached the same conclusion for the same reason
+(`nornyx_runtime.py`, `tests/test_ledger_atomicity.py`): no local witness
+survives restoration of the whole set.
+
+**What is here instead, stated at its exact width.** `ProcessWitness` in
+`capsule_store` remembers, in memory and nowhere else, the snapshot this
+process last sealed or last found clean for each store. `assert_sealed` asks
+that question LAST, after every check the seal itself can make, and a seal
+that is not the held one is `CapsuleSealReplaced` -- a `CapsuleSealError`
+carrying the WITNESS's snapshot, so the human restore route puts back what
+this process wrote rather than what the actor left. The surface reports it as
+a SEPARATE field beside the unchanged currency: `authority.continuity` is
+`"process"` or absent, and `authority.held_since` names the interval.
+`"process"` means precisely this and no more: since `held_since`, no load in
+this process has found a seal for this store other than the one this process
+last wrote or last found clean.
+
+**A ROLLBACK ACROSS A RESTART OF FORGE IS THE LIMIT.** The witness is process
+memory; terminating and relaunching Forge is a same-operating-system-user act,
+which is exactly the actor A-015 concedes; and a new process adopts whatever
+consistent set it finds on disk. Measured: after the rollback above, the
+running process refuses every authority route, and a new `create_app` over the
+same two directories answers `200 / CONFIRM` with `currency` still
+`not_independently_anchored`, `continuity` `"process"` over its OWN interval,
+and a restore route that says there is nothing to restore. So against the
+A-015 actor the witness **raises the cost** of a silent rollback -- it now
+requires stopping Forge, which is a visible side effect -- and it is NOT a
+guarantee and not an anchor. It is a genuine detection only against an actor
+that cannot terminate the process. That behaviour is pinned in the affirmative
+by `test_a_rollback_across_a_restart_is_the_disclosed_limit`, which also reads
+this paragraph, so the cross-restart case cannot be closed without rewriting
+the disclosure in the same commit.
+
+**Two further residues, neither closed.** (1) A rollback that ALSO leaves the
+store disagreeing with the rolled-back seal is reported as the ordinary seal
+breach and the LOAD path hands back the disk seal's snapshot, because a store
+that fails its own seal has a finding of its own that the witness must not
+displace; the human restore route consults the witness first and so still
+restores to what this process wrote. (2) Same-user writes into the process's
+own memory are outside the defended class, exactly as they are for the
+in-memory hold the build window already relies on. Whether a provider confined
+by the Windows restricted-token sandbox can terminate the parent Forge process
+is UNMEASURED; if it cannot, the witness is a real detection against that
+provider rather than a cost. None of this changes provider eligibility, the
+seal's own bound, `CapsuleSealMissing`'s unrestorable finding, or the
+re-seal-after-reset question A-027 hands to a later slice.
+
+**Serves.** BRD-005, `CLAUDE.md` ("a gate may claim only what it measures"),
+and A-022's own statement of the seal's bound.

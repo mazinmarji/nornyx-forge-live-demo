@@ -36,8 +36,10 @@ sandbox's reach; within the same operating-system user's reach.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -59,9 +61,11 @@ from nornyx_forge.capsule_store import (
     AuthoritySnapshot,
     CapsuleSealError,
     CapsuleSealMissing,
+    CapsuleSealReplaced,
     CapsuleSealUnreadable,
     CapsuleStore,
     CapsuleStoreError,
+    ProcessWitness,
     _remove_tree,
 )
 from nornyx_forge.development_flow import DevelopmentFlow
@@ -276,8 +280,15 @@ def test_b1_a_workers_forged_ready_is_never_trusted(tmp_path: Path, attack: str)
     on_disk = json.loads((tmp_path / "capsule" / "experience.json").read_text(encoding="utf-8"))
     assert on_disk["stage"] == "READY", "the specimen must really be on disk"
     assert mid["journey"]["stage"] == "BUILD" and mid["journey"]["status"] == "active"
-    assert mid["authority"] == {"anchor": "sealed", "build": "running",
-                                "currency": "not_independently_anchored", "last_restoration": None}
+    # EXACT EQUALITY, so a new key or a changed word is a red test. `held_since`
+    # is the one clock-derived value, so it is lifted out and asserted for what
+    # it is rather than pinned to a tick count that every earlier request moves.
+    held = dict(mid["authority"])
+    since = held.pop("held_since")
+    assert since is not None and since.endswith("Z")
+    assert held == {"anchor": "sealed", "build": "running",
+                    "currency": "not_independently_anchored",
+                    "continuity": "process", "last_restoration": None}
 
     HostileFlow.release.set()
     status = _wait_finished(client)
@@ -3182,3 +3193,346 @@ def test_a_seal_error_is_a_tamper_finding_with_its_problems(tmp_path: Path):
     error = CapsuleSealError(["HEAD moved"], snapshot)
     assert isinstance(error, CapsuleStoreError) is False
     assert error.problems == ["HEAD moved"] and error.snapshot is snapshot
+
+
+# ---------------------------------------------------------------------------
+# Tranche E  the process witness: a rollback of the whole set, while Forge runs
+#
+# WHAT THIS SECTION IS AND IS NOT ABOUT. The seal catches a store that moved
+# away from it and a seal that moved away from its store; both are pinned
+# above. What none of it catches is the actor who moves BOTH -- who copies the
+# store, its committed marker and its seal back to an earlier consistent set.
+# Measured at this module's parent commit, through the shipped surface: after
+# such a rollback `GET /api/state` returned `200 / CONFIRM`, the restore route
+# answered "the store matches its seal; there is nothing to restore", and a
+# fresh build ran the project to GOVERN a second time at a new revision, with
+# the previous GOVERN unreachable and unrecorded anywhere Forge can read.
+#
+# EVERY DURABLE WITNESS WAS BUILT AND EVERY ONE WAS ROLLED BACK WITH THE SET:
+# a counter beside the seal, a mirror in a second Forge-owned directory, an
+# append-only log in a third place, and a DENY ACE on the seal file. Two of
+# them detect a FORGETFUL actor and none detects a thorough one; NTFS has no
+# append-only attribute, so `open(log, "w")` truncates the last line; and the
+# DENY ACE does not even prevent replacement, because the parent directory
+# grants the owner FILE_DELETE_CHILD and the owner's implicit WRITE_DAC then
+# removes the ACE. A-029 states each result per candidate. What resists the
+# restoration of a whole filesystem set is a second operating-system principal
+# or hardware, and both are external authority this repository does not
+# synthesize.
+#
+# SO THE WORD DOES NOT MOVE. `currency` is still `not_independently_anchored`,
+# pinned by exact equality above and by the vocabulary test below. What the
+# witness earns is a SEPARATE, SMALLER field -- `continuity == "process"` with
+# `held_since` -- and the fourth test here pins its limit in the affirmative,
+# so the cross-restart case cannot be closed without rewriting the disclosure
+# it names.
+# ---------------------------------------------------------------------------
+
+def _content_manifest(root: Path) -> dict[str, str]:
+    """Every path under `root` with the SHA-256 of its bytes.
+
+    Content, never `git status`: a rollback that also COMMITS reads clean, so
+    a copy verified by the store's own history is a copy verified by something
+    the actor controls.
+    """
+    manifest: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        name = str(path.relative_to(root)).replace("\\", "/")
+        manifest[name] = "<dir>" if path.is_dir() else hashlib.sha256(
+            path.read_bytes()).hexdigest()
+    return manifest
+
+
+def _capture(tmp_path: Path, into: str) -> tuple[Path, dict, dict]:
+    """Copy the store directory AND the seal directory aside: the two
+    user-writable locations an actor must replace, and nothing else. The store
+    holds `.forge-capsule`, `.forge-seal`, `.git`, `capsule.json` and
+    `experience.json`; the seal directory holds one `<ident>.json`, and the
+    ident derives from the resolved store path alone."""
+    held = tmp_path / into
+    shutil.copytree(tmp_path / "capsule", held / "capsule")
+    shutil.copytree(tmp_path / "seals", held / "seals")
+    return held, _content_manifest(tmp_path / "capsule"), _content_manifest(tmp_path / "seals")
+
+
+def _rolled_back_to(tmp_path: Path, held: Path, manifests: tuple[dict, dict]) -> None:
+    """Put both locations back exactly as they were, as the same OS user, and
+    assert byte for byte that the earlier set is what is now on disk."""
+    for name in ("capsule", "seals"):
+        _remove_tree(tmp_path / name)
+        shutil.copytree(held / name, tmp_path / name)
+    assert _content_manifest(tmp_path / "capsule") == manifests[0], (
+        "the rollback did not reproduce the earlier store byte for byte")
+    assert _content_manifest(tmp_path / "seals") == manifests[1], (
+        "the rollback did not reproduce the earlier seal byte for byte")
+
+
+def test_a_rollback_of_store_and_seal_together_is_caught_while_forge_runs(tmp_path: Path):
+    """The adapter, without the surface. A store carrying a witness refuses a
+    seal that is not the one this process last wrote, and hands back the
+    snapshot to restore from; the SAME rolled-back set, opened by a store with
+    no witness, loads and reports the earlier stage -- which is what every
+    process did before this change and what a restart still does."""
+    at = _clock()
+    witness = ProcessWitness(at)
+    store = CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals", witness=witness)
+    casey = Actor("human", "casey")
+    store.initialize(create_document("proj-1", "Portal", casey, AT),
+                     experience=start_experience(casey, AT))
+    held_since = witness.held_since(store.seal_ident())
+    assert held_since is not None and witness.continuity(store.seal_ident()) == "process"
+
+    at_b = advance(store.load_experience(), "CONFIRM", casey, at())
+    revision_b = store.save_experience(at_b, "reached CONFIRM")
+    earlier, *manifests = _capture(tmp_path, "B")
+
+    at_c = advance(store.load_experience(), "ARCHITECT", casey, at())
+    revision_c = store.save_experience(at_c, "reached ARCHITECT")
+    assert store.load_experience()["stage"] == "ARCHITECT"
+    assert witness.held_since(store.seal_ident()) == held_since, (
+        "an ordinary Forge write must not restart the interval it is held over")
+
+    _rolled_back_to(tmp_path, earlier, tuple(manifests))
+    # NOTHING ON DISK CAN TELL THIS APART from an honest state: the store, its
+    # committed marker and its seal all agree, at a revision that really is an
+    # ancestor of the one Forge last wrote. This is the control.
+    assert CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals"
+                        ).load_experience()["stage"] == "CONFIRM"
+    assert store.sealed().revision == revision_b
+
+    with pytest.raises(CapsuleSealReplaced) as caught:
+        store.load_experience()
+    assert caught.value.snapshot.revision == revision_c
+    assert "while Forge was running" in str(caught.value)
+    assert any(revision_b[:12] in problem and revision_c[:12] in problem
+               for problem in caught.value.problems), caught.value.problems
+    assert isinstance(caught.value, CapsuleSealError)
+    with pytest.raises(CapsuleSealReplaced):
+        store.load()          # both authority routes, not one
+    assert witness.continuity(store.seal_ident()) is None, (
+        "nothing may claim continuity across a replacement it has just found")
+
+    revision, notes = store.restore(caught.value.snapshot)
+    assert any("rebuilt" in note for note in notes), notes
+    assert store.load_experience()["stage"] == "ARCHITECT"
+    assert store.revision() == revision
+    assert witness.continuity(store.seal_ident()) == "process"
+    assert witness.held_since(store.seal_ident()) != held_since, (
+        "the interval after a restoration is a NEW one; it did not span the "
+        "replacement")
+
+
+def test_the_authority_store_cannot_be_rolled_back_under_a_running_forge(tmp_path: Path):
+    """The same attack through the shipped surface, end to end: refused on
+    every authority route while the process lives, and restorable by a person
+    to what that process last wrote -- not to what the actor put on disk."""
+    client = _client(tmp_path)
+    _confirmed(client)
+    earlier, *manifests = _capture(tmp_path, "B")
+    before = _ok(client.get("/api/state"))
+    assert before["journey"]["stage"] == "CONFIRM"
+    held_since = before["authority"]["held_since"]
+    assert before["authority"]["continuity"] == "process" and held_since is not None
+
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(client)
+    at_c = _ok(client.get("/api/state"))
+    assert at_c["journey"]["stage"] == "GOVERN"
+    assert at_c["authority"]["held_since"] == held_since
+
+    _rolled_back_to(tmp_path, earlier, tuple(manifests))
+
+    refused = client.get("/api/state")
+    assert refused.status_code == 409, refused.text
+    finding = refused.json()
+    assert finding["finding"] == "TAMPERED" and finding["restorable"] is True
+    assert "while Forge was running" in finding["refused"]
+    assert any("this process last sealed" in problem for problem in finding["problems"]), finding
+    for route in ("/api/build", "/api/journey/ready", "/api/proposals/P-1/confirm"):
+        blocked = client.post(route, json={"actor": HUMAN})
+        assert blocked.status_code == 409 and blocked.json().get("finding") == "TAMPERED", route
+
+    restoration = _ok(client.post("/api/journey/restore", json={"actor": HUMAN}))
+    assert restoration["stage"] == "GOVERN" and restoration["status"] == "failed"
+    detail = restoration["restoration"]["detail"]
+    assert "replaced while Forge was running" in detail and "casey" in detail
+    after = _ok(client.get("/api/state"))
+    assert after["journey"]["stage"] == "GOVERN" and after["journey"]["status"] == "failed"
+    assert after["authority"]["currency"] == "not_independently_anchored"
+    assert after["authority"]["continuity"] == "process"
+    assert after["authority"]["held_since"] != held_since
+    assert "replaced while Forge was running" in after["authority"]["last_restoration"]["detail"]
+
+
+def test_every_forge_write_moves_the_witness_with_it(tmp_path: Path):
+    """No false positive on anything Forge itself does. Every writing route
+    ends in `seal()` and so moves the witness with it, and the interval it is
+    held over does not restart, because an interval that restarted on every
+    save would say nothing at all."""
+    casey = Actor("human", "casey")
+    legacy = CapsuleStore(tmp_path / "capsule")
+    legacy.initialize(create_document("proj-1", "Portal", casey, AT))
+    client = _client(tmp_path)
+    unsealed = _ok(client.get("/api/state"))["authority"]
+    assert unsealed["anchor"] == "unsealed" and unsealed["currency"] is None
+    assert unsealed["continuity"] is None and unsealed["held_since"] is None, (
+        "a store that was never sealed has no interval to hold anything over")
+
+    def writes(path: str, **body: Any) -> dict:
+        return _ok(client.post(path, json=body))
+
+    writes("/api/journey/start", actor=HUMAN)     # the store's first seal
+    first = _ok(client.get("/api/state"))["authority"]
+    assert first["anchor"] == "sealed" and first["continuity"] == "process"
+    held_since = first["held_since"]
+    assert held_since is not None
+
+    intent = writes("/api/proposals", field="intent",
+                    value="Build a customer support portal.", actor=MODEL)["proposal_id"]
+    writes(f"/api/proposals/{intent}/confirm", actor=HUMAN)
+    provider = writes("/api/proposals", field="provider",
+                      value={"name": "codex"}, actor=HUMAN)["proposal_id"]
+    writes(f"/api/proposals/{provider}/confirm", actor=HUMAN)
+    spare = writes("/api/proposals", field="intent", value="Something else.",
+                   actor=MODEL)["proposal_id"]
+    writes(f"/api/proposals/{spare}/reject", actor=HUMAN)
+    _ok(client.post("/api/brd"))
+    writes("/api/journey/confirm-scope", actor=HUMAN)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(client)
+    writes("/api/journey/ready", actor=HUMAN)
+
+    state = _ok(client.get("/api/state"))
+    assert state["journey"]["stage"] == "READY"
+    assert state["authority"]["continuity"] == "process"
+    assert state["authority"]["held_since"] == held_since, (
+        "an ordinary sequence of Forge writes must hold ONE interval")
+
+    # An ordinary breach -- the store moved, the seal did not -- is the finding
+    # it always was, and its restoration does not end the interval: the seal
+    # this process holds is the seal that is still on disk.
+    (tmp_path / "capsule" / "experience.json").write_text("{}", encoding="utf-8")
+    breached = client.get("/api/state")
+    assert breached.status_code == 409 and breached.json()["finding"] == "TAMPERED"
+    assert "while Forge was running" not in breached.json()["refused"]
+    _ok(client.post("/api/journey/restore", json={"actor": HUMAN}))
+    recovered = _ok(client.get("/api/state"))["authority"]
+    assert recovered["continuity"] == "process" and recovered["held_since"] == held_since
+
+
+def test_a_rollback_across_a_restart_is_the_disclosed_limit(tmp_path: Path):
+    """THE LIMIT, PINNED IN THE AFFIRMATIVE. The witness is memory, restarting
+    Forge is a same-user act, and a new process adopts whatever consistent set
+    it finds. This asserts that this is what HAPPENS and that the assumptions
+    record says so, so the cross-restart case cannot be closed -- nor the word
+    moved without the mechanism -- while the disclosure still stands.
+
+    The pattern is the ledger's `test_a_whole_directory_restore_is_the_disclosed_limit`:
+    state the residue as behaviour, not as a comment nobody reads.
+    """
+    client = _client(tmp_path)
+    _confirmed(client)
+    earlier, *manifests = _capture(tmp_path, "B")
+    first_run_held_since = _ok(client.get("/api/state"))["authority"]["held_since"]
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(client)
+    assert _ok(client.get("/api/state"))["journey"]["stage"] == "GOVERN"
+
+    _rolled_back_to(tmp_path, earlier, tuple(manifests))
+    assert client.get("/api/state").status_code == 409, "the running process holds the interval"
+
+    # Forge is restarted over the same two directories. Nothing else changes.
+    restarted = _client(tmp_path)
+    state = _ok(restarted.get("/api/state"))
+    assert state["journey"]["stage"] == "CONFIRM" and state["journey"]["status"] == "active"
+    assert state["experience"]["history"][-1]["to"] == "CONFIRM"
+    assert state["authority"]["currency"] == "not_independently_anchored", (
+        "the currency word does not move: nothing here anchors the seal as the "
+        "newest thing Forge ever wrote")
+    assert state["authority"]["continuity"] == "process"
+    assert state["authority"]["held_since"] != first_run_held_since, (
+        "the new process holds its OWN interval, beginning at its first read")
+    nothing = restarted.post("/api/journey/restore", json={"actor": HUMAN})
+    assert nothing.status_code == 409
+    assert nothing.json()["refused"] == (
+        "the store matches its seal; there is nothing to restore")
+    _ok(restarted.post("/api/build", json={"actor": HUMAN}))
+    assert _wait_finished(restarted)["lifecycle"]["stage"] == "GOVERN", (
+        "the restarted process builds the project a second time and nothing it "
+        "can read knows about the first")
+
+    disclosed = (ROOT / "docs/requirements/ASSUMPTIONS.md").read_text(encoding="utf-8")
+    assert "A ROLLBACK ACROSS A RESTART OF FORGE IS THE LIMIT" in disclosed, (
+        "the behaviour above is the disclosed limit; a slice closing it has to "
+        "rewrite the disclosure in the same commit")
+    assert "raises the cost" in disclosed
+
+
+def test_the_currency_word_and_continuity_vocabulary_are_closed(tmp_path: Path):
+    """The word, and everything beside it. `currency` reads exactly
+    `not_independently_anchored`; `continuity` is `"process"` or absent and
+    nothing else; and no value in the authority payload -- on a legacy store,
+    at rest, during a build, or after a restoration -- claims an anchored,
+    monotonic or latest authority. A builder who renames the word, or promotes
+    it because a witness now exists, turns this red."""
+    forbidden = ("anchored", "monotonic", "latest")
+
+    def values(payload: dict) -> list[str]:
+        found: list[str] = []
+        for value in payload.values():
+            if isinstance(value, str):
+                found.append(value)
+            elif isinstance(value, dict):
+                found.extend(values(value))
+        return found
+
+    def check(payload: dict, sealed: bool) -> None:
+        assert payload["currency"] == (
+            "not_independently_anchored" if sealed else None), payload
+        assert payload["continuity"] in {"process", None}, payload
+        for value in values(payload):
+            if value == "not_independently_anchored":
+                continue
+            for word in forbidden:
+                assert word not in value.lower(), (word, value, payload)
+
+    casey = Actor("human", "casey")
+    CapsuleStore(tmp_path / "capsule").initialize(
+        create_document("proj-1", "Portal", casey, AT),
+        experience=start_experience(casey, AT))
+    check(_ok(_client(tmp_path).get("/api/state"))["authority"], sealed=False)
+
+    HostileFlow.attack = "ready"
+    hostile = _client(tmp_path / "hostile", factory=HostileFlow)
+    _confirmed(hostile)
+    check(_ok(hostile.get("/api/state"))["authority"], sealed=True)
+    _ok(hostile.post("/api/build", json={"actor": HUMAN}))
+    assert HostileFlow.written.wait(timeout=30), "the worker never wrote its forgery"
+    running = _ok(hostile.get("/api/state"))["authority"]
+    assert running["build"] == "running"
+    check(running, sealed=True)
+    HostileFlow.release.set()
+    _wait_finished(hostile)
+    restored_state = _ok(hostile.get("/api/state"))["authority"]
+    assert restored_state["last_restoration"] is not None
+    check(restored_state, sealed=True)
+
+
+def test_the_page_reports_the_interval_and_never_a_latest_authority(tmp_path: Path):
+    """The page is where a basic user meets this, so it is where a promotion
+    would be cheapest and least visible. It names the interval and the
+    unchanged currency, and the words `latest` and `monotonic` appear nowhere
+    in it at all."""
+    page = onboarding._PAGE
+    assert "currency not independently anchored" in page
+    assert 'held.continuity === "process"' in page
+    assert "unchanged since " in page and "in this run" in page
+    for word in ("latest", "monotonic"):
+        assert word not in page.lower(), word
+    # And what the page renders is what the route serves: the two keys it
+    # reads are on a sealed store's payload rather than rendering `undefined`.
+    client = _client(tmp_path)
+    _confirmed(client)
+    authority = _ok(client.get("/api/state"))["authority"]
+    assert set(authority) == {"anchor", "currency", "continuity", "held_since",
+                              "last_restoration"}

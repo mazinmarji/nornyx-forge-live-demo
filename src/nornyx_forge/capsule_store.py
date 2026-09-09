@@ -87,6 +87,27 @@ replace the store, marker and seal together with an earlier consistent set
 is not detected, so the surface reports the seal's currency as not
 independently anchored, and monotonic external anchoring is deferred rather
 than claimed.
+
+THE PROCESS WITNESS, and the exact width of what it buys. `ProcessWitness`
+remembers, in memory and nowhere else, the snapshot this Forge process last
+sealed or last verified clean for each store, so a seal that arrives on disk
+in place of that one is `CapsuleSealReplaced` at the next load rather than a
+clean read. That closes the rollback above ONLY for the interval a single
+process is alive: the witness is not written down, and it may not be, because
+every place it could be written is the same-operating-system-user filesystem
+the rollback already commands (a counter beside the seal, a mirror in a second
+Forge-owned directory, an append-only log in a third place, and a DENY ACE on
+the seal file -- each was built, and each was rolled back with the set it was
+meant to anchor or undone by the same user; A-029 states each result). So the
+currency word does NOT move.
+Restarting Forge is a same-user act and it resets the witness to whatever is
+on disk; that is the disclosed limit, stated in A-029 and pinned in the
+affirmative by `test_a_rollback_across_a_restart_is_the_disclosed_limit`. The
+witness RAISES THE COST of a silent rollback -- it now requires terminating
+Forge -- and is not a guarantee. An anchor that survives a restart needs an
+authority outside the restoration domain (a second operating-system
+principal, or hardware), which is external authority this repository does not
+synthesize.
 """
 
 from __future__ import annotations
@@ -99,9 +120,10 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .capsule import (
     CapsuleError,
@@ -179,6 +201,106 @@ class AuthoritySnapshot:
         return {"revision": self.revision, "files": dict(self.files)}
 
 
+class ProcessWitness:
+    """What THIS Forge process last sealed, or last verified clean, for each
+    store it has touched. In memory, for the life of the process, and NOWHERE
+    ELSE ON PURPOSE.
+
+    WHAT IT ESTABLISHES, in one sentence that is the whole of the claim:
+    since `held_since(ident)`, no load in this process has found a seal for
+    that store other than the one this process last wrote or verified. Not
+    that the store is the newest thing Forge ever wrote; not that a restart
+    would find the same one. The surface reports it as `continuity` beside
+    the unchanged `currency`, as a SEPARATE field, because it is a separate
+    and much smaller fact.
+
+    WHY IT IS NOT PERSISTED, which is a measured result and not an omission.
+    The rollback it detects replaces the store, its committed marker and its
+    seal with an earlier consistent set, and every durable place a witness
+    could live is inside the same one same-operating-system-user filesystem:
+    a counter beside the seal, a mirror in a second Forge-owned directory, an
+    append-only log in a third place (NTFS has no append-only attribute, so
+    `open(log, "w")` truncates its last line) -- each was built as a subclass
+    of this store and each was UNDETECTED once the actor copied its location
+    back too. A DENY ACE on the seal does not even stop replacement:
+    `os.replace` and `os.remove` both succeeded through one, because the parent
+    directory grants the owner `FILE_DELETE_CHILD`, and `icacls /remove:d` then
+    removed the ACE under the owner's implicit `WRITE_DAC`. A-029 states each
+    of those results per candidate.
+    An anchor that survives the restoration of the whole set has to sit outside
+    it -- a second operating-system principal, or hardware -- which is external
+    authority, and this repository neither synthesizes nor adopts one here.
+
+    SO THE BOUND IS A PROCESS LIFETIME, and terminating Forge is a same-user
+    act. Against the A-015 actor this RAISES THE COST -- a silent rollback now
+    needs Forge stopped and restarted, which is a visible side effect -- and it
+    is not a guarantee. It is exactly as strong, and exactly as weak, as the
+    in-memory hold the build window already relies on.
+
+    Held under a lock because the witness is shared between the request
+    threads and the build thread. The shipped composition already serialises
+    every store access under the application's own store lock, so the lock
+    here is redundant there and cheap; a caller that does not serialise still
+    cannot interleave a read of the snapshot with a write of it.
+    """
+
+    def __init__(self, clock: Callable[[], str]) -> None:
+        #: The application's clock, so `held_since` is the same time source
+        #: the lifecycle records and is deterministic under an injected one.
+        self._clock = clock
+        #: ident -> (snapshot, held_since). `held_since` is None for exactly
+        #: one state: a replacement was detected and nothing has re-sealed
+        #: since, so there is no interval to claim continuity over.
+        self._held: dict[str, tuple[AuthoritySnapshot, str | None]] = {}
+        self._lock = threading.Lock()
+
+    def record(self, ident: str, snapshot: AuthoritySnapshot) -> None:
+        """This process just wrote or verified `snapshot` for `ident`.
+
+        `held_since` is stamped on the FIRST record and on the first record
+        after a detected replacement, and is otherwise left alone: an ordinary
+        save moves the snapshot and must not move the interval, or the field
+        would read "held since a moment ago" after every write and would say
+        nothing at all.
+        """
+        with self._lock:
+            held = self._held.get(ident)
+            since = held[1] if held is not None and held[1] is not None else self._clock()
+            self._held[ident] = (snapshot, since)
+
+    def expected(self, ident: str) -> AuthoritySnapshot | None:
+        """The seal this process last wrote or verified for `ident`, or None
+        when this process has never held one. Survives `interrupted`, so a
+        detected replacement goes on being detected until it is restored."""
+        with self._lock:
+            held = self._held.get(ident)
+        return None if held is None else held[0]
+
+    def held_since(self, ident: str) -> str | None:
+        with self._lock:
+            held = self._held.get(ident)
+        return None if held is None else held[1]
+
+    def continuity(self, ident: str) -> str | None:
+        """`"process"` while this process holds an unbroken interval for the
+        store, else None. A closed vocabulary of one value and an absence:
+        there is no third thing this can establish."""
+        return "process" if self.held_since(ident) is not None else None
+
+    def interrupted(self, ident: str) -> None:
+        """A seal other than the held one was found: the interval ends here.
+
+        The snapshot is KEPT -- it is what a restoration puts back and what
+        every later load goes on being measured against -- and only the
+        interval is dropped, so nothing claims continuity across the
+        replacement. The next `record` starts a new interval.
+        """
+        with self._lock:
+            held = self._held.get(ident)
+            if held is not None:
+                self._held[ident] = (held[0], None)
+
+
 class CapsuleSealUnreadable(CapsuleTamperError):
     """The seal file exists and is not a seal this adapter wrote for this
     store: unreadable, another schema, or another store's. The anchor is
@@ -213,13 +335,91 @@ class CapsuleSealError(CapsuleTamperError):
     writer inside the store, so they may describe and may never license.
     """
 
+    #: The headline of the refusal, split out so a subclass whose finding is a
+    #: DIFFERENT measurement can state its own. The body stays the measured
+    #: problems either way, and no subclass may say more than it measured.
+    _HEADLINE = (
+        "the authority store does not match Forge's seal and is not trusted; "
+        "what Forge measured: "
+    )
+
     def __init__(self, problems: list[str], snapshot: AuthoritySnapshot) -> None:
-        super().__init__(
-            "the authority store does not match Forge's seal and is not trusted; "
-            "what Forge measured: " + "; ".join(problems)
-        )
+        super().__init__(self._HEADLINE + "; ".join(problems))
         self.problems = problems
         self.snapshot = snapshot
+
+
+class CapsuleSealReplaced(CapsuleSealError):
+    """The store matches the seal on disk, and that seal is not the one this
+    process last wrote or verified: store and seal were replaced together.
+
+    A DIFFERENT MEASUREMENT FROM ITS PARENT, which is why it has its own
+    headline. `CapsuleSealError` compares the store against the seal; this
+    compares the SEAL against the process witness, and the store may agree
+    with the disk seal perfectly -- that agreement is exactly what a wholesale
+    rollback produces and what nothing on disk can tell apart from an honest
+    state.
+
+    `snapshot` is the WITNESS's snapshot, not the disk seal's, so a caller
+    restoring from it puts back what this process last wrote. It is a
+    `CapsuleSealError`, so every caller that already handles a tamper finding
+    with something to restore handles this one unchanged.
+
+    WHAT IT DOES NOT SAY. Not that the store is stale in any absolute sense --
+    only that it is not what this process last held. A restart makes the same
+    rollback invisible again, and the message says "while Forge was running"
+    for that reason: it names the interval it is true over.
+    """
+
+    _HEADLINE = (
+        "the authority seal is not the one this process last wrote or verified; "
+        "the store and its seal were replaced while Forge was running; "
+        "what Forge measured: "
+    )
+
+    @classmethod
+    def between(
+        cls, found: AuthoritySnapshot, expected: AuthoritySnapshot
+    ) -> "CapsuleSealReplaced":
+        """The finding for a seal `found` on disk where `expected` was held.
+
+        An alternative constructor rather than a second spelling of the
+        comparison at each call site: the load path and the human restore
+        route both raise this, and a difference stated two ways is a
+        difference that can drift.
+        """
+        return cls(_replacement_problems(found, expected), expected)
+
+
+def _replacement_problems(
+    found: AuthoritySnapshot, expected: AuthoritySnapshot
+) -> list[str]:
+    """Every way the seal on disk differs from the one this process holds.
+
+    Shaped like `seal_problems`, and for the same reason: the finding is the
+    DIFFERENCE, stated in the units it was measured in, so a reader can see
+    what moved without being told a story about who moved it. Both the
+    revision and the recorded bytes are compared, because a seal naming the
+    held revision with different bytes is a difference too and is not caught
+    anywhere else -- `seal_problems` would then be comparing the store against
+    the substituted seal and finding them in agreement.
+    """
+    problems: list[str] = []
+    if found.revision != expected.revision:
+        problems.append(
+            f"the seal names {found.revision[:12]} and this process last sealed "
+            f"{expected.revision[:12]}"
+        )
+    differing = sorted(
+        name for name in expected.files
+        if found.files.get(name) != expected.files[name]
+    )
+    for name in differing:
+        problems.append(f"the seal's recorded bytes for {name} are not the ones this "
+                        "process sealed")
+    if not problems:  # pragma: no cover - unequal snapshots always differ somewhere
+        problems.append("the seal is not the one this process last wrote or verified")
+    return problems
 
 
 def _is_junction(path: Path) -> bool:
@@ -652,12 +852,18 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
 class CapsuleStore:
     """One capsule, one directory, one git history, one seal."""
 
-    def __init__(self, root: Path, seal_dir: Path | None = None):
+    def __init__(self, root: Path, seal_dir: Path | None = None,
+                 witness: ProcessWitness | None = None):
         self.root = Path(root)
         #: Where Forge keeps this store's seal: OUTSIDE the project directory,
         #: named by the store's resolved path. `None` means an unsealed store,
         #: which the domain tests use; the application always passes one.
         self.seal_dir = Path(seal_dir) if seal_dir is not None else None
+        #: The running process's memory of what it last sealed here. `None`
+        #: means this store keeps no witness and behaves exactly as it did
+        #: before the witness existed -- which is what every store constructed
+        #: without one gets, so nothing that does not ask for it is changed.
+        self.witness = witness
 
     # -- creation ----------------------------------------------------------
     def initialize(
@@ -1054,7 +1260,16 @@ class CapsuleStore:
 
     def seal(self) -> AuthoritySnapshot | None:
         """Record the store's authority as Forge just wrote it. Called after
-        every commit this adapter makes, and nowhere else."""
+        every commit this adapter makes, and nowhere else.
+
+        THE WITNESS MOVES HERE AND ONLY HERE, which is why the one method
+        every write path ends in is the right place for it: `initialize`,
+        `save`, `save_experience`, `protect` and `restore` all finish by
+        sealing, so a write route that forgot to tell the witness would have
+        had to forget to seal, which the next load would refuse anyway. It is
+        recorded AFTER the seal file has landed -- a witness to a seal that
+        failed to be written would be a claim about a file that is not there.
+        """
         path = self.seal_path()
         snapshot = self.snapshot()
         if path is None:
@@ -1071,6 +1286,8 @@ class CapsuleStore:
                 f"the authority seal could not be written to {path}: {exc}; the store's "
                 "newest commit stands unsealed and will read as a breach until resealed"
             ) from exc
+        if self.witness is not None:
+            self.witness.record(self.seal_ident(), snapshot)
         return snapshot
 
     def sealed(self) -> AuthoritySnapshot | None:
@@ -1162,7 +1379,26 @@ class CapsuleStore:
         `protected()` is False, and the caller reports it unsealed), and
         protected-but-unsealed (the marker is there, the seal is not), which
         is a refusal because a store known to need its anchor cannot be
-        trusted without one, and no authority is inferred from its files."""
+        trusted without one, and no authority is inferred from its files.
+
+        THEN, AND ONLY THEN, THE WITNESS. The three states above are decided
+        exactly as they were; the fourth question -- is this seal the one this
+        process last held? -- is asked last, of a store that has just passed
+        every check the seal itself can make. That ordering is deliberate:
+        a store that fails its own seal has a finding of its own, with its own
+        `problems` and its own snapshot to restore from, and the witness must
+        not take that finding's place. It follows that a rollback which ALSO
+        leaves the store disagreeing with the rolled-back seal is reported as
+        the ordinary breach and restored to the DISK seal rather than to the
+        witness -- a lesser recovery, not a fall-open, and disclosed in A-029.
+        The human restore route consults the witness first for that reason.
+
+        A store the witness has never held ADOPTS the disk seal here, once it
+        has verified clean. A process that only ever reads must be able to
+        establish an interval too, or continuity would begin at the first
+        WRITE and a rollback before that write would pass unnoticed inside a
+        process that had already read the store.
+        """
         snapshot = self.sealed()
         if snapshot is None:
             if self.seal_dir is not None and self.protected():
@@ -1175,6 +1411,16 @@ class CapsuleStore:
         problems = self.seal_problems(snapshot)
         if problems:
             raise CapsuleSealError(problems, snapshot)
+        if self.witness is None:
+            return
+        ident = self.seal_ident()
+        expected = self.witness.expected(ident)
+        if expected is None:
+            self.witness.record(ident, snapshot)
+            return
+        if snapshot != expected:
+            self.witness.interrupted(ident)
+            raise CapsuleSealReplaced.between(snapshot, expected)
 
     def restore(self, snapshot: AuthoritySnapshot) -> tuple[str, list[str]]:
         """Put the store back to the sealed authority. Returns the revision
@@ -1457,9 +1703,11 @@ __all__ = [
     "AuthoritySnapshot",
     "CapsuleSealError",
     "CapsuleSealMissing",
+    "CapsuleSealReplaced",
     "CapsuleSealUnreadable",
     "CapsuleStore",
     "CapsuleStoreError",
     "CapsuleTamperError",
     "CapsuleValidationError",
+    "ProcessWitness",
 ]
