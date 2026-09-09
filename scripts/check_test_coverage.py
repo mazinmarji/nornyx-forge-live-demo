@@ -217,6 +217,12 @@ EXPECTED_SKIPS = {
         "The 32767-character bound is CreateProcess's, and the two real spawns that hold WINDOWS_COMMAND_LINE_LIMIT against it (a 32766-character line accepted, 32767 refused with 206) exist on Windows alone. The property is not weakened: the classifier's boundary semantics are held on every host by synthesised specimens on either side of the constant, and the routed tool-list specimen exceeds the bound on both CI platforms.",
     "tests/test_windows_host_runtime.py::test_an_unbearered_stop_against_the_real_child_is_refused_and_leaves_it_serving":
         "Windows-hosted runtime evidence: an un-bearered stop sent to a real child process from a real bundle folder on a Windows host, refused with the record still ready. The property is not weakened: the windows-runtime CI job runs this module on windows-latest with a skip census of its own, so a skip there fails that job rather than passing quietly.",
+    # The one unscripted smoke test. It drives `smoke_bundle` against a real
+    # `cmd.exe` running a real `start ""` whose grandchild outlives the call --
+    # the shape that hung the first operator embedded-interpreter run, and the
+    # shape every other test in that module replaces away.
+    "tests/test_windows_bundle.py::test_the_smoke_terminates_against_a_launcher_that_detaches":
+        "Inherited-handle duplication at CreateProcess is a Windows property: `start \"\"` hands the grandchild duplicates of the parent's handles, and there is nothing to demonstrate on a platform that has no such call. The property is not weakened: the windows-latest CI job runs this module with a skip census of its own, so a skip THERE fails that job rather than passing quietly, and the scripted tests beside it fail everywhere if the driver goes back to holding pipes -- the double reads the `stdout` handle it is passed, which `capture_output=True` does not provide.",
     # A junction is an NTFS directory-shaped reparse point that `is_symlink()`
     # reports False for. POSIX has no such shape -- a symlink to a directory
     # answers True and takes a different branch of `_write_fresh` entirely --
@@ -487,8 +493,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # 0.3 and failed the module 2 of 9 unmutated runs), gave the "never
     # arrives" case the budget witness its docstring had been claiming
     # without one, and added the guard that the smoke contract counts the
-    # observations it lists: 53 collected, floor at band(53) = 48.
-    "tests/test_windows_bundle.py": 48,
+    # observations it lists: 53 collected, floor at band(53) = 48. Raised
+    # 48 -> 49 for the launcher-pipe repair: ONE new test, and the only one in
+    # this module that replaces nothing -- it drives `smoke_bundle` against a
+    # real detaching launcher, which is the path the scripted 53 had never
+    # executed and where the hang lived. 54 collected, band(54) = 49.
+    "tests/test_windows_bundle.py": 49,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -1563,12 +1573,30 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3530   (115 modules)
-#     sum of the module floors    3232
-#     band(3530) = ceil(0.9*n)    3177
-#     MINIMUM_COLLECTED           3239
-#     above the module sum         7
-#     below what collects         291
+#     collected across tests/     3531   (115 modules)
+#     sum of the module floors    3233
+#     band(3531) = ceil(0.9*n)    3178
+#     MINIMUM_COLLECTED           3241
+#     above the module sum         8
+#     below what collects         290
+#
+# THE FIFTH RECONCILIATION OF PR #51, with main as it stood after the
+# launcher-pipe repair below, moves that repair's one row into this tree and
+# adds no module of its own: tests/test_windows_bundle.py collects 53 -> 54
+# (floor band(53) = 48 -> band(54) = 49) here as it did on main. The rows
+# above were RE-MEASURED from a fresh collection of this merged tree, not
+# summed from either side's rows: 115 modules collect 3531, the module
+# floors sum to 3233, band(n) is 3178. The aggregate follows main's own
+# rule for this tree -- the module sum plus 8 -- and lands at 3241, which is
+# main's 3102 raised by the standing-obligation floors this branch adds and
+# this branch's 3239 raised by two, the same two units main added for the
+# same reason; the room above the module sum is 8 again and the room below
+# what collects is 290. THE SLACK THE BANDS GRANT is 298: band(54) = 49 leaves
+# the bundle module the same 5 that band(53) = 48 did, so nothing moved. The
+# windows-latest job's floor moves with the bundle module's one new test,
+# 276 -> 277 over seven modules, from a collection of those modules rather
+# than from either side's arithmetic. Every generated evidence artifact was
+# regenerated over this merged tree rather than taken from either side.
 #
 # THE FOURTH RECONCILIATION OF PR #51, with main as it stood after the
 # vanished-entry repair below, moves that repair's one row into this tree and
@@ -1592,17 +1620,46 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gives: they described main before this reconciliation and are false of
 # this tree; the paragraph above carries the merged measurement.
 #
-# TRANCHE E MOVED THE SAME ROW AND ADDED NO MODULE. The process witness lives in
-# the module that already holds the seal boundary, so
+# THE LAUNCHER-PIPE REPAIR MOVES ONE ROW AND ADDS NO MODULE. The unscripted
+# smoke test lives in the module that already holds the smoke, so
+# tests/test_windows_bundle.py collects 53 -> 54 (floor band(53) = 48 ->
+# band(54) = 49) and 113 modules still stand. The rows above were re-measured
+# from a fresh collection after this slice was rebased onto the vanished-entry
+# repair below, and they are NOT this slice's old rows plus that repair's: the
+# module-floor sum rises by one to 3094 and the suite collects
+# 3376 -> 3377, so band(n) goes 3039 -> 3040,
+# but the AGGREGATE RISES BY TWO, 3100 -> 3102. That second unit
+# is not this slice's row moving twice. The repair below raised the module sum
+# and left MINIMUM_COLLECTED standing, so the room above the sum had fallen to
+# 7; putting this slice's floor at sum + 8 restores the margin this block has
+# carried since it was written. The working room below what collects therefore
+# FALLS 276 -> 275, because the collection rose by one and the
+# aggregate by two -- the one row a merge of the two slices would have got
+# wrong in both directions at once. The slack the bands grant is unchanged at
+# 283: band(54) = 49 leaves this module the same 5 that band(53) = 48 did. ONE
+# skip is added, declared by identity above -- the test is Windows-only because
+# the defect is a Windows CreateProcess property -- and the windows-latest
+# job's own floor moves with it, 262 -> 263, because that job runs this module.
+#
+# THE VANISHED-ENTRY REPAIR MOVED A DIFFERENT ROW AND ADDED NO MODULE. One test
+# in tests/test_provider_authority_boundary.py, 102 -> 103 (floor
+# band(102) = 92 -> band(103) = 93), for the CI race described at that module's
+# floor above. It never skips -- the vanishing is injected at the listing, not
+# raced, so it needs no threads and no platform -- and no provider row moved.
+# ITS SUITE-WIDE TOTALS ARE NOT KEPT HERE. They described the tree before the
+# slice above and are false of this one, and a superseded measurement left
+# standing beside the thing it no longer measures is precisely the rot this
+# block exists to stop -- and a rebase is the one moment that manufactures it
+# wholesale. What survives a later slice is the module delta.
+#
+# TRANCHE E MOVED THAT SAME ROW AND ADDED NO MODULE. The process witness lives
+# in the module that already holds the seal boundary, so
 # tests/test_provider_authority_boundary.py collected 96 -> 102 (floor
 # band(96) = 87 -> band(102) = 92) and 113 modules still stood. No provider row
 # moved and no skip was added: the six new rows need neither a junction nor a
 # symlink, only a byte-for-byte copy of two directories, so they execute on
-# every platform. ITS SUITE-WIDE TOTALS ARE NOT KEPT HERE. They described the
-# tree before the repair above and are false of this one, and a superseded
-# measurement left standing beside the thing it no longer measures is the rot
-# this block exists to stop -- the same reason the rebased totals two
-# paragraphs up are gone. What survives a later slice is the module delta.
+# every platform. ITS SUITE-WIDE TOTALS ARE NOT KEPT HERE EITHER, for the
+# reason given one paragraph up.
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1656,7 +1713,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3239
+MINIMUM_COLLECTED = 3241
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

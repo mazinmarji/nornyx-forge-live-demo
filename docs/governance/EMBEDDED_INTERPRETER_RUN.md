@@ -229,6 +229,21 @@ driving side: **do not hold captured pipes across a detaching launcher.** Give
 inheritance, or bound the post-kill drain. Editing `Forge.cmd` is the one thing
 measured NOT to help.
 
+> **This has since been repaired, and this section is kept as the record of the
+> run that found it, not as a description of the current driver.** The repair
+> took the first of those options — `_observe_launch` hands the launcher two
+> files under its own scratch and reads its output back from them — because a
+> null sink would have terminated while recording nothing about the launcher,
+> non-inheriting pipes are not reachable through `subprocess`, and bounding the
+> drain treats the symptom while leaving the pipes held. `Forge.cmd` was not
+> touched. The hang was reproduced on the parent through this same command and
+> archive before the change, bounded at 600 s with no report produced; after it,
+> the same command exits 0 in 39.36 s and the recorded verdict is `pass`.
+> `A-023` in `docs/requirements/ASSUMPTIONS.md` carries what that `pass` does
+> and does not establish — in particular that the stop observation succeeds
+> because `SMOKE_ACTOR` DECLARES `kind: "human"`, which the route checks and
+> does not authenticate.
+
 Stated at the strength each part was established. The causal observation — the
 smoke resumed at that termination and at nothing else — is measured. The LOCUS
 is measured too, by A, B and D against E above: it is the parent's handles, not
