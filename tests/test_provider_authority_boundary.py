@@ -37,10 +37,13 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -774,28 +777,63 @@ def _die_inside_the_marker_write(monkeypatch: pytest.MonkeyPatch, failure: BaseE
     monkeypatch.setattr(store_module.CapsuleStore, "_write_seal_marker", arming_marker_write)
 
 
-def _assert_marker_stands_over_the_forgery(capsule: Path, store: CapsuleStore) -> None:
-    """The property both marker-write rows assert, once."""
-    seal_marker = capsule / ".forge-seal"
-    assert seal_marker.exists(), (
-        "the marker was absent while the worker's forged bytes were on disk: "
+def _readable_routes(capsule: Path, store: CapsuleStore) -> frozenset[str]:
+    """Which authority routes a SEALLESS load can actually read.
+
+    The fall-open is a CONJUNCTION -- the marker absent AND forged authority
+    readable -- so what a row should measure is the conjunction itself, not
+    the marker as a proxy for it. One same-user deletion of the seal is the
+    capability A-015 concedes an unconfined provider holds; it is applied here
+    and then PUT BACK, so this may be called before a call as well as after,
+    which is what lets a row measure a DEGRADATION rather than an absence.
+    """
+    seal = store.seal_path()
+    kept = seal.read_bytes() if seal.exists() else None
+    if kept is not None:
+        seal.unlink()
+    try:
+        later = CapsuleStore(capsule, seal_dir=store.seal_dir)
+        readable = set()
+        for name, call in (("capsule", later.load), ("experience", later.load_experience)):
+            try:
+                call()
+            except Exception:                     # noqa: BLE001 -- any refusal will do
+                continue
+            readable.add(name)
+        return frozenset(readable)
+    finally:
+        if kept is not None:
+            seal.write_bytes(kept)
+
+
+def _assert_the_marker_write_cannot_be_read_as_legacy(
+        capsule: Path, store: CapsuleStore) -> None:
+    """The property both marker-write rows assert, once -- restated for the
+    ordering that replaced the one they were written against.
+
+    They used to assert that the marker STOOD OVER the worker's forgery, which
+    presumed the forgery was still on disk when the marker was written. It is
+    not: `_rebuild` neutralises the untrusted authority BEFORE the marker, so
+    at this instant there is nothing left to stand over. That is a stronger
+    state, not a weaker one, and asserting the old sentence would now fail for
+    the very reason the repair exists -- so the assertion moves to the property
+    the old one was a proxy for: with the seal gone, NOTHING is readable.
+
+    The specimen guard moves with it. "The forgery is still on disk, so the
+    failure landed where the row thinks it did" becomes "the authority is
+    already neutralised and the sealed bytes are not back yet", which is the
+    same guarantee that the row is measuring the instant it names.
+    """
+    for name in ("capsule.json", "experience.json"):
+        assert not (capsule / name).exists(), (
+            f"{name} is still on disk at the marker write, so the neutralisation "
+            "did not run before it and this row is measuring a different instant: "
+            f"{sorted(path.name for path in capsule.iterdir())}"
+        )
+    assert _readable_routes(capsule, store) == frozenset(), (
+        "one same-user deletion of the seal read the store as legacy: "
         f"{sorted(path.name for path in capsule.iterdir())}"
     )
-    assert json.loads(seal_marker.read_text(encoding="utf-8")) == {
-        "schema": "nornyx.forge.capsule_seal_marker.v1", "seal": store.seal_ident()}
-    assert store.protected()
-    forged = json.loads((capsule / "experience.json").read_text(encoding="utf-8"))
-    assert forged["stage"] == "READY", (
-        "this row exists to catch the rebuild BEFORE it corrects any authority "
-        "byte, with the worker's forgery still on disk; if the forgery is "
-        "already gone the failure landed somewhere else and the row proves nothing"
-    )
-    # One same-user deletion must still not be enough.
-    store.seal_path().unlink()
-    later = CapsuleStore(capsule, seal_dir=store.seal_dir)
-    for call in (later.load_experience, later.load):
-        with pytest.raises(CapsuleSealMissing):
-            call()
 
 
 def test_an_oserror_inside_the_marker_write_does_not_permanently_strip_the_marker(
@@ -835,7 +873,7 @@ def test_an_oserror_inside_the_marker_write_does_not_permanently_strip_the_marke
         "than kept; if the contract changed, this row must change with it"
     )
     assert "No space left on device" in str(raised.value)
-    _assert_marker_stands_over_the_forgery(capsule, store)
+    _assert_the_marker_write_cannot_be_read_as_legacy(capsule, store)
 
 
 @pytest.mark.parametrize(
@@ -964,7 +1002,7 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
         # authority byte -- so the assertions below about corrected files do
         # not apply, and the stronger one does: the forgery is still on disk
         # and the marker is standing over it.
-        _assert_marker_stands_over_the_forgery(capsule, store)
+        _assert_the_marker_write_cannot_be_read_as_legacy(capsule, store)
         return
 
     seal_marker = capsule / ".forge-seal"
@@ -1031,20 +1069,19 @@ def _plant_at_the_marker(capsule: Path, shape: str, tmp_path: Path) -> None:
 def _a_sealless_load_refuses(capsule: Path, store: CapsuleStore) -> None:
     """One same-user deletion of the seal is not enough to read the store.
 
-    The seal is PUT BACK, so this may be asserted before the call as well as
-    after it -- which is what lets the rows below measure a DEGRADATION rather
-    than an absence.
+    WHICH refusal is no longer pinned, and that is the design change rather
+    than a loosening. This asserted `CapsuleSealMissing`, which is the refusal
+    a store gives when the MARKER is present and the seal is not. `_rebuild`
+    now removes the untrusted authority first, so a store caught mid-repair
+    can refuse the other way -- `CapsuleStoreError`, on an absent authority
+    file -- and both are the store failing closed. Pinning the exception type
+    would have pinned the mechanism and called a stronger state a regression.
+    What is asserted is the property: NEITHER route reads.
     """
-    seal = store.seal_path()
-    kept = seal.read_bytes()
-    seal.unlink()
-    try:
-        later = CapsuleStore(capsule, seal_dir=store.seal_dir)
-        for call in (later.load_experience, later.load):
-            with pytest.raises(CapsuleSealMissing):
-                call()
-    finally:
-        seal.write_bytes(kept)
+    assert _readable_routes(capsule, store) == frozenset(), (
+        "one same-user deletion of the seal read the store as legacy: "
+        f"{sorted(path.name for path in capsule.iterdir())}"
+    )
 
 
 def _the_marker_write_fails_over(
@@ -1078,22 +1115,33 @@ def _the_marker_write_fails_over(
     the finished temp exists; reverting that reorder turns all four red and
     leaves every other row in this module green.
 
-    WHAT IS NOT CLAIMED. A crash-only micro-window survives for these two
-    shapes and is disclosed rather than closed: the removal and the rename are
-    two adjacent syscalls, and a death between them still leaves the name
-    absent. `os.replace` cannot replace a directory, so no ordering of those
-    two calls removes it. These rows kill at the FIRST write the marker's write
-    makes, which is the instant that reaches both implementations; they do not
-    reach that two-syscall gap and do not pretend to. A-022 records it.
+    WHAT THESE ROWS DO NOT REACH, AND WHAT DOES. The kill lands at the FIRST
+    write the marker's write makes, which is before the removal, so these four
+    never see the gap BETWEEN the removal and the rename. Round 4 disclosed
+    that gap as a crash-only micro-window and both halves of that were wrong:
+    an ordinary concurrent reader reaches it with no crash at all (95 of 400
+    writes at a directory destination, durably absent in 95 of 95), and the
+    window is 16.5% of the call at a directory and 29.1% at a junction rather
+    than a micro-anything. `_the_rebuild_survives_every_shape_and_instant`
+    below drives that instant deterministically, and
+    `test_an_ordinary_concurrent_reader_cannot_open_the_store_to_a_legacy_read`
+    drives it with no patching whatever.
+
+    AND THE POST-CONDITION MOVED WITH THE REPAIR. These rows used to assert
+    that the worker's forged `experience.json` was still on disk under the
+    standing marker. It is not: `_rebuild` neutralises the untrusted authority
+    before the marker write, so what they assert now is that it is GONE -- the
+    same guarantee that the kill landed at the instant the row names, over a
+    store that has nothing left to be read as legacy.
 
     FOUR ROWS ACROSS THREE FUNCTIONS, and the split is bookkeeping rather than
-    design: `check_test_coverage.EXPECTED_SKIPS` is keyed by node id and
-    `test_every_declared_exemption_names_a_test_that_exists` resolves that key
-    by looking for `def <name>(` in the module, so a PARAMETRISED row cannot be
-    declared as a skip at all. The two junction rows need declaring, so they
-    are whole functions; the directory rows need nothing and stay a
-    parametrisation. A-022 records the census limitation rather than widening
-    the guard to admit an entry of its author's own shape.
+    design: `check_test_coverage.EXPECTED_SKIPS` is keyed by node id, so a
+    declaration covers a whole identity and `EXPECTED_SKIP_CASES` bounds how
+    many of its cases may skip. That is enough for a parametrised row -- the
+    shape matrix below is declared exactly that way -- but it cannot single
+    out ONE parameter of one, so a row that skips for a reason its siblings do
+    not still has to be its own function. The two junction rows are that; the
+    directory rows need nothing and stay a parametrisation.
     """
     store = _sealed_store(tmp_path)
     sealed = store.sealed()
@@ -1121,12 +1169,12 @@ def _the_marker_write_fails_over(
             "the promise this row holds the store to has been edited away rather "
             "than kept; if the contract changed, this row must change with it"
         )
-    forged = json.loads((capsule / "experience.json").read_text(encoding="utf-8"))
-    assert forged["stage"] == "READY", (
-        "this row exists to catch the rebuild BEFORE it corrects any authority "
-        "byte, with the worker's forgery still on disk; if the forgery is "
-        "already gone the failure landed somewhere else and the row proves nothing"
-    )
+    for name in ("capsule.json", "experience.json"):
+        assert not (capsule / name).exists(), (
+            f"{name} is still on disk, so the neutralisation did not run before "
+            "the marker write and this row is measuring a different instant: "
+            f"{sorted(path.name for path in capsule.iterdir())}"
+        )
     assert (capsule / ".forge-seal").exists(), (
         "the seal-marker name was left empty while the worker's forged bytes "
         f"were on disk: {sorted(path.name for path in capsule.iterdir())}"
@@ -1175,6 +1223,742 @@ def test_an_oserror_inside_the_marker_write_leaves_a_junction_marker_standing(
     _the_marker_write_fails_over(tmp_path, monkeypatch, "junction", "oserror")
 
 
+# ---------------------------------------------------------------------------
+# D5  the shape axis CROSSED with the failure axis, rather than enumerated apart
+# ---------------------------------------------------------------------------
+#
+# THREE ROUNDS CLOSED THE SAME FALL-OPEN AND EACH LEFT A CELL OUT, and the
+# pattern is only visible from here: rounds 3 and 4 enumerated SHAPES on one
+# axis and FAILURE MODES on another, fixed the cells they had listed, and never
+# multiplied the lists together. Round 4's own concurrent-observer measurement
+# had already reached a cell it did not name -- it concluded "it fails CLOSED",
+# which is true for a FILE destination and false for a directory or a junction,
+# where the removal has already happened by the time the rename can fail.
+#
+# So the rows below are a product, and the EXPECTATION for each cell is derived
+# from `_is_directory_entry` rather than written down per shape: a shape nobody
+# anticipated gets an answer without anyone deciding one for it.
+
+_SHAPES = ("non-existent", "regular file", "read-only file", "hardlink",
+           "directory", "live junction", "dangling junction",
+           "symlink-to-file", "symlink-to-dir", "dangling symlink")
+
+_NO_JUNCTIONS = (
+    "A junction is an NTFS directory-shaped reparse point with no POSIX "
+    "equivalent, and `is_symlink()` reports False for it, so this plant cannot "
+    "be built off Windows. The property is not weakened: `_is_directory_entry` "
+    "sends the DIRECTORY rows down the identical branch and those execute on "
+    "every platform, and the junction rows execute on a Windows workstation."
+)
+
+_NO_SYMLINKS = (
+    "Creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege, which "
+    "an unelevated account without Developer Mode does not hold, so the three "
+    "symlink shapes cannot be built on this host at all. They are NOT covered "
+    "by the junction rows -- a junction carries a different reparse tag. What "
+    "IS covered here is `_is_directory_entry`'s answer for them, against "
+    "synthesised attributes, in "
+    "test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build: "
+    "the predicate only, never os.replace's behaviour at such a destination, "
+    "which stays unverified on this host and is declared so rather than assumed. "
+    "Every CI test job runs Linux, where these three build and execute."
+)
+
+
+def _plant_shape(shape: str, path: Path, outside: Path) -> str | None:
+    """Build `shape` at `path`. Returns None, or WHY it is impossible here.
+
+    A shape this host cannot build is never silently dropped: the caller skips
+    with the reason the operating system itself gave, so a row that stops
+    running says which capability it stopped running for.
+    """
+    outside.mkdir(parents=True, exist_ok=True)
+    if shape == "non-existent":
+        return None
+    if shape in ("live junction", "dangling junction"):
+        if os.name != "nt":
+            return _NO_JUNCTIONS
+        target = outside / ("junction-target-" + os.urandom(3).hex())
+        if shape == "live junction":
+            target.mkdir()
+            (target / "kept.txt").write_text("the target\n", encoding="utf-8", newline="")
+        done = subprocess.run(["cmd", "/c", "mklink", "/J", str(path), str(target)],
+                              capture_output=True, text=True, check=False, timeout=60)
+        if done.returncode != 0:
+            return f"mklink /J refused: {(done.stdout + done.stderr).strip()[:120]}"
+        assert store_module._is_junction(path), f"{shape} did not land as a junction"
+        assert os.path.exists(path) is (shape == "live junction"), (
+            f"{shape} landed with the wrong liveness: a dangling junction must "
+            "answer False to os.path.exists and a live one True, and the whole "
+            "point of this shape is the difference between the two"
+        )
+        return None
+    if shape in ("symlink-to-file", "symlink-to-dir", "dangling symlink"):
+        target = outside / ("symlink-target-" + os.urandom(3).hex())
+        if shape == "symlink-to-file":
+            target.write_text("the target\n", encoding="utf-8", newline="")
+        elif shape == "symlink-to-dir":
+            target.mkdir()
+        try:
+            os.symlink(target, path, target_is_directory=(shape == "symlink-to-dir"))
+        except OSError as exc:
+            return f"os.symlink is refused on this host: {exc}. {_NO_SYMLINKS}"
+        assert os.path.islink(path), f"{shape} did not land as a symlink"
+        return None
+    if shape == "regular file":
+        path.write_text("occupant\n", encoding="utf-8", newline="")
+        return None
+    if shape == "read-only file":
+        path.write_text("occupant\n", encoding="utf-8", newline="")
+        os.chmod(path, stat.S_IREAD)
+        return None
+    if shape == "hardlink":
+        other = outside / "hardlink-other.txt"
+        other.write_text("a file the store has no business touching\n",
+                         encoding="utf-8", newline="")
+        os.link(other, path)
+        assert other.stat().st_nlink == 2, "the hardlink did not land"
+        return None
+    if shape == "directory":
+        path.mkdir()
+        (path / "occupant.txt").write_text("x\n", encoding="utf-8", newline="")
+        assert path.is_dir() and not path.is_symlink(), "the directory did not land"
+        return None
+    raise AssertionError(f"unknown shape {shape!r}")
+
+
+def _entry_state(path: Path) -> str:
+    """What is at `path`, read WITHOUT following it.
+
+    That is the whole point of the helper: `Path.is_dir()` stats THROUGH a
+    reparse point and answers False for a dangling one, so an instrument built
+    on it could not see the cell this slice exists to close.
+    """
+    if not os.path.lexists(path):
+        return "absent"
+    if store_module._is_junction(path):
+        return "junction"
+    if os.path.islink(path):
+        return "symlink"
+    if store_module._is_directory_entry(path):
+        return "directory"
+    try:
+        return "file:" + path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"file:unreadable:{type(exc).__name__}"
+
+
+_FRESH = "the marker Forge means to write\n"
+_WRITE_FRESH_INSTANTS = ("clean", "before the temp write", "at the removal", "at the rename")
+_FORMS = ("crash", "oserror")
+
+
+@pytest.mark.parametrize(
+    "shape", [pytest.param(shape, id=shape.replace(" ", "-")) for shape in _SHAPES])
+def test_the_marker_write_is_shape_correct_at_every_interior_instant(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """`_write_fresh` at every shape a destination can have, crossed with every
+    interior instant it can fail at, crossed with both forms of failure.
+
+    THE EXPECTATION IS DERIVED, NOT LISTED. Whether a shape needs removing is
+    `_is_directory_entry(destination)`, measured on the plant rather than read
+    off a list of shape names, and that same answer decides what each instant
+    leaves behind. This is the cell three rounds missed: a DANGLING junction is
+    directory-attributed to `lstat` while `is_dir()` answers False, so the
+    shipped guard skipped its removal and handed `os.replace` a destination
+    Win32 forbids. One unprivileged `mklink /J .forge-seal <nonexistent>` and
+    the marker was durably absent with the worker's forged authority beside it.
+
+    THE FORM AXIS IS CROSSED INSIDE THE ROW rather than in the node id, and
+    deliberately: a crash and a handled `OSError` at the same instant must
+    leave the SAME destination state, and only a row that runs both can assert
+    that. Split across two nodes, one could pass while the other failed
+    somewhere else entirely. What the two forms MAY differ in is the temp
+    sibling -- the `OSError` path runs the cleanup and a crash cannot -- and
+    that is asserted too, because that survivor is what `_tree_changes` exempts.
+
+    THE INSTRUMENT IS DELIMITED BY THE FUNCTION IT PATCHES, so an
+    implementation that inlines `os.replace`, or removes by some third route,
+    never fires the arming; the row then finds no exception where it demanded
+    one and goes RED, rather than passing because nothing happened.
+    """
+    observed: list[str] = []
+    for instant in _WRITE_FRESH_INSTANTS:
+        for form in _FORMS:
+            if instant == "clean" and form == "oserror":
+                continue                      # one clean run, not two
+            cell = tmp_path / f"cell-{len(observed)}"
+            area, outside = cell / "store", cell / "outside"
+            area.mkdir(parents=True)
+            destination = area / ".forge-seal"
+            reason = _plant_shape(shape, destination, outside)
+            if reason is not None:
+                pytest.skip(reason)
+            directory_attributed = store_module._is_directory_entry(destination)
+            before = _entry_state(destination)
+            fired: list[str] = []
+            failure: BaseException = (
+                SystemExit("the process died inside _write_fresh") if form == "crash"
+                else OSError(28, "No space left on device"))
+
+            with monkeypatch.context() as patch:
+                if instant == "before the temp write":
+                    def dies_writing(self, *args, _f=failure, **kwargs):
+                        fired.append("write_text")
+                        raise _f
+
+                    patch.setattr(Path, "write_text", dies_writing)
+                elif instant == "at the removal":
+                    def dies_removing(path, _f=failure):
+                        fired.append("_remove_entry")
+                        raise _f
+
+                    patch.setattr(store_module, "_remove_entry", dies_removing)
+                elif instant == "at the rename":
+                    def dies_renaming(tmp, path, _f=failure):
+                        fired.append("_replace_fresh")
+                        raise _f
+
+                    patch.setattr(store_module, "_replace_fresh", dies_renaming)
+                raised: str | None = None
+                try:
+                    store_module._write_fresh(destination, _FRESH)
+                except BaseException as exc:            # noqa: BLE001
+                    raised = type(exc).__name__
+
+            # WHAT THIS CELL SHOULD HAVE DONE, derived from the destination.
+            # The removal instant is reachable ONLY where a rename cannot do
+            # the job, so for every other shape this cell is a clean write and
+            # the arming must not have fired at all.
+            reached = instant != "clean" and (
+                instant != "at the removal" or directory_attributed)
+            if not reached:
+                expected_state, expected_raised = "file:" + _FRESH, None
+            elif instant == "at the rename" and directory_attributed:
+                expected_state, expected_raised = "absent", type(failure).__name__
+            else:
+                expected_state, expected_raised = before, type(failure).__name__
+            strays = sorted(entry.name for entry in area.iterdir()
+                            if entry.name != destination.name)
+            observed.append(
+                f"{instant:<22} {form:<8} dir-attr={directory_attributed!s:<5} "
+                f"fired={bool(fired)!s:<5} raised={raised!s:<16} "
+                f"state={_entry_state(destination)!r} strays={strays}")
+            assert (raised, _entry_state(destination)) == (expected_raised, expected_state), (
+                f"{shape} / {instant} / {form}: the destination is not what this "
+                f"cell requires.\n" + "\n".join(observed))
+            assert bool(fired) == reached, (
+                f"{shape} / {instant} / {form}: the arming "
+                f"{'never fired' if reached else 'fired when it must not'}. An "
+                "implementation this instrument cannot reach must fail the row "
+                "loudly, not pass it quietly.\n" + "\n".join(observed))
+            # The temp survives exactly when it EXISTED and nothing ran the
+            # cleanup: a crash at an instant after the temp write. `before the
+            # temp write` is the instant at which there is no temp yet, so
+            # neither form leaves one -- which is why this is derived from the
+            # instant as well as the form, and not from the form alone.
+            survives = reached and instant != "before the temp write" and form == "crash"
+            assert (strays != []) is survives, (
+                f"{shape} / {instant} / {form}: the temp survivor is not what the "
+                f"instant and the form together require: {strays}\n"
+                + "\n".join(observed))
+            if shape == "hardlink":
+                assert (outside / "hardlink-other.txt").read_text(encoding="utf-8") == \
+                    "a file the store has no business touching\n", (
+                    f"{shape} / {instant} / {form}: the write reached a file "
+                    "OUTSIDE the store through the planted link")
+
+
+def test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build():
+    """The three symlink shapes could not be planted here, so the predicate is
+    driven against SYNTHESISED attributes instead of an absent specimen.
+
+    WHAT THIS ESTABLISHES AND WHAT IT DOES NOT. It establishes that a Windows
+    DIRECTORY symlink -- which carries `FILE_ATTRIBUTE_DIRECTORY` on the link
+    itself, dangling or not -- lands in `_write_fresh`'s removal branch, and
+    that a FILE symlink does not. It does NOT establish that `os.replace`
+    refuses a directory symlink on Windows; that is documented behaviour this
+    host cannot exercise, and A-022 records it as unverified rather than
+    measured. Saying so is the point: the shipped comment claimed `os.replace`
+    "replaces a symlink rather than following it" flatly, on a machine where no
+    symlink has ever been created.
+
+    On POSIX `lstat` reports `S_IFLNK` for both, `S_ISDIR` is False, nothing is
+    removed, and `os.rename` replaces the link -- which is the POSIX behaviour
+    the flat claim was borrowed from.
+    """
+    directory_attribute = stat.FILE_ATTRIBUTE_DIRECTORY
+    reparse_attribute = stat.FILE_ATTRIBUTE_REPARSE_POINT
+
+    class _WindowsAttributes:
+        def __init__(self, attributes: int) -> None:
+            self.st_file_attributes = attributes
+            self.st_mode = stat.S_IFLNK | 0o777
+
+    answers = {}
+    for label, attributes in (
+        ("directory symlink", directory_attribute | reparse_attribute),
+        ("dangling directory symlink", directory_attribute | reparse_attribute),
+        ("file symlink", reparse_attribute),
+        ("dangling file symlink", reparse_attribute),
+    ):
+        with mock.patch.object(os, "lstat", return_value=_WindowsAttributes(attributes)):
+            answers[label] = store_module._is_directory_entry(Path("unread"))
+    assert answers == {"directory symlink": True, "dangling directory symlink": True,
+                       "file symlink": False, "dangling file symlink": False}, answers
+
+    # The POSIX side of the same predicate, with no Windows attributes at all.
+    class _PosixMode:
+        def __init__(self, mode: int) -> None:
+            self.st_mode = mode
+
+    for mode, expected in ((stat.S_IFLNK | 0o777, False), (stat.S_IFDIR | 0o755, True),
+                           (stat.S_IFREG | 0o644, False)):
+        with mock.patch.object(os, "lstat", return_value=_PosixMode(mode)):
+            assert store_module._is_directory_entry(Path("unread")) is expected, oct(mode)
+
+    # A name that is not there answers False rather than raising, which is what
+    # lets `_write_fresh` reach `os.replace` for a free destination.
+    assert store_module._is_directory_entry(Path("no-such-name-anywhere")) is False
+
+
+_REBUILD_INSTANTS = (
+    "inside the neutralisation",
+    "inside the marker's own write",
+    "at the marker's rename, after the removal",
+    "between the two authority writes",
+    "at git init",
+)
+
+
+def _arm_rebuild(patch, capsule: Path, instant: str, failure: BaseException) -> list[str]:
+    """Arm `failure` at one interior instant of `_rebuild`. Returns the list the
+    arming appends to when it fires, so a row can fail loudly if it never did.
+
+    Every arming is delimited by the METHOD or FUNCTION it patches rather than
+    by a filename, for the reason round 3 recorded: a removal-then-write and a
+    write-then-rename have to be reached at the same instant, or the instrument
+    measures the implementation instead of the property.
+    """
+    fired: list[str] = []
+    armed: list[int] = []
+    if instant == "inside the neutralisation":
+        # The SECOND authority file, so the first is already gone: the instant
+        # at which a half-neutralised store must still be no more readable than
+        # it was. Armed only while the neutralisation runs, so the wipe's own
+        # removals later are not caught by it.
+        survivor_remove = store_module._remove_entry
+        survivor_neutralise = store_module.CapsuleStore._neutralise_untrusted_authority
+
+        def counted_remove(path):
+            if armed:
+                armed.append(1)
+                if len(armed) > 2:
+                    fired.append("_remove_entry")
+                    raise failure
+            return survivor_remove(path)
+
+        def arming_neutralise(self):
+            armed.append(1)
+            try:
+                return survivor_neutralise(self)
+            finally:
+                armed.clear()
+
+        patch.setattr(store_module, "_remove_entry", counted_remove)
+        patch.setattr(store_module.CapsuleStore, "_neutralise_untrusted_authority",
+                      arming_neutralise)
+    elif instant == "inside the marker's own write":
+        survivor_write_text = Path.write_text
+        survivor_marker = store_module.CapsuleStore._write_seal_marker
+
+        def dies_at_the_first_write(self, *args, **kwargs):
+            if armed:
+                fired.append("write_text")
+                raise failure
+            return survivor_write_text(self, *args, **kwargs)
+
+        def arming_marker_write(self):
+            armed.append(1)
+            try:
+                return survivor_marker(self)
+            finally:
+                armed.clear()
+
+        patch.setattr(Path, "write_text", dies_at_the_first_write)
+        patch.setattr(store_module.CapsuleStore, "_write_seal_marker", arming_marker_write)
+    elif instant == "at the marker's rename, after the removal":
+        # THE INSTANT ROUND 4 DISCLOSED AS CRASH-ONLY AND AN ORDINARY READER
+        # REACHES. `_replace_fresh` runs after the removal, so at a
+        # directory-attributed destination the marker name is already empty
+        # when this raises -- the state the concurrent-reader row below reaches
+        # with no patching at all, 95 times in 400.
+        survivor_replace = store_module._replace_fresh
+        survivor_marker = store_module.CapsuleStore._write_seal_marker
+
+        def dies_renaming(tmp, path):
+            if armed:
+                fired.append("_replace_fresh")
+                raise failure
+            return survivor_replace(tmp, path)
+
+        def arming_marker_write(self):
+            armed.append(1)
+            try:
+                return survivor_marker(self)
+            finally:
+                armed.clear()
+
+        patch.setattr(store_module, "_replace_fresh", dies_renaming)
+        patch.setattr(store_module.CapsuleStore, "_write_seal_marker", arming_marker_write)
+    elif instant == "between the two authority writes":
+        doomed = capsule / "experience.json"
+        survivor_write_text = Path.write_text
+
+        def dies_between(self, *args, **kwargs):
+            if self.parent == doomed.parent and self.name.startswith(doomed.name):
+                fired.append("write_text")
+                raise failure
+            return survivor_write_text(self, *args, **kwargs)
+
+        patch.setattr(Path, "write_text", dies_between)
+    else:
+        survivor_git = store_module._run_git
+
+        def dies_at_init(root, *args):
+            if args and args[0] == "init":
+                fired.append("_run_git")
+                raise failure
+            return survivor_git(root, *args)
+
+        patch.setattr(store_module, "_run_git", dies_at_init)
+    return fired
+
+
+def _the_rebuild_survives_every_shape_and_instant(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str) -> None:
+    """THE INVARIANT, ONE SHAPE AT `.forge-seal`, EVERY INTERIOR INSTANT, BOTH
+    FORMS -- stated over what a sealless load can READ rather than over the
+    marker, because the marker was only ever a proxy for that.
+
+    Three rounds patched the marker's write and each left a cell open, because
+    `os.replace` cannot replace a directory and so a remove-then-create window
+    is irreducible for a directory-shaped entry. `_rebuild` therefore breaks the
+    OTHER half of the conjunction: it neutralises the untrusted authority before
+    it touches the marker, so from that point on there is nothing a missing
+    marker can expose. Measured, seal deleted and marker absent:
+
+        authority              load_experience()   load()
+        both gone              REFUSED             REFUSED
+        capsule.json gone      RETURNED 'READY'    REFUSED
+        experience.json gone   REFUSED             RETURNED
+        neither gone           RETURNED 'READY'    RETURNED
+
+    -- which is why BOTH files are neutralised, and why this row asserts the
+    empty set rather than one route.
+
+    TWO CLAUSES, because the honest invariant is not one. At every instant AT
+    OR AFTER the marker write, nothing is readable at all. INSIDE the
+    neutralisation -- one file gone, one still there, the marker untouched --
+    the store is not yet closed, and what is asserted there is that the
+    restoration OPENED NOTHING: the readable set is a subset of what it was
+    when the call began, and the marker on disk is still exactly what the
+    worker left, which is what proves the neutralisation runs first.
+
+    A restoration that fails is a restoration that did not happen; it must
+    never be a degradation Forge itself caused. That is the whole difference
+    between this and the state round 3 measured, where Forge's own recovery
+    removed the store's second authentication factor and then reported a clean
+    refusal whose exception promised nothing had been partially written.
+    """
+    observed: list[str] = []
+    for instant in _REBUILD_INSTANTS:
+        for form in _FORMS:
+            cell = tmp_path / f"cell-{len(observed)}"
+            store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+            store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                             experience=start_experience(Actor("human", "casey"), AT))
+            sealed = store.sealed()
+            capsule = store.root
+            forge_ready(capsule)
+            _remove_tree(capsule / ".git")      # the honest reset route is unreachable
+            (capsule / ".forge-seal").unlink()
+            reason = _plant_shape(shape, capsule / ".forge-seal", cell / "outside")
+            if reason is not None:
+                pytest.skip(reason)
+            planted = _entry_state(capsule / ".forge-seal")
+            before = _readable_routes(capsule, store)
+
+            failure: BaseException = (
+                SystemExit("the process died inside _rebuild") if form == "crash"
+                else OSError(28, "No space left on device"))
+            with monkeypatch.context() as patch:
+                fired = _arm_rebuild(patch, capsule, instant, failure)
+                with pytest.raises(SystemExit if form == "crash" else CapsuleStoreError):
+                    store.restore(sealed)
+
+            after = _readable_routes(capsule, store)
+            observed.append(
+                f"{instant:<42} {form:<8} planted={planted:<12} "
+                f"before={sorted(before)} after={sorted(after)} "
+                f"marker={_entry_state(capsule / '.forge-seal')!r}")
+            assert fired, (
+                f"{shape} / {instant} / {form}: the arming never fired, so the row "
+                "did not reach the instant it names and its verdict means nothing.\n"
+                + "\n".join(observed))
+            if instant == "inside the neutralisation":
+                assert after <= before, (
+                    f"{shape} / {instant} / {form}: the restoration OPENED an "
+                    "authority route it found closed.\n" + "\n".join(observed))
+                assert _entry_state(capsule / ".forge-seal") == planted, (
+                    f"{shape} / {instant} / {form}: the seal marker changed before "
+                    "the neutralisation finished, so the marker write does NOT come "
+                    "after it and the ordering this design rests on is gone.\n"
+                    + "\n".join(observed))
+            else:
+                assert after == frozenset(), (
+                    f"{shape} / {instant} / {form}: one same-user deletion of the "
+                    "seal read the store as legacy. Entries: "
+                    f"{sorted(path.name for path in capsule.iterdir())}\n"
+                    + "\n".join(observed))
+
+
+@pytest.mark.parametrize("shape", [
+    pytest.param(shape, id=shape.replace(" ", "-"))
+    for shape in _SHAPES if "junction" not in shape])
+def test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """Every shape but the two junctions, which need their own skip reason.
+    See `_the_rebuild_survives_every_shape_and_instant`."""
+    _the_rebuild_survives_every_shape_and_instant(tmp_path, monkeypatch, shape)
+
+
+@pytest.mark.skipif(os.name != "nt", reason=_NO_JUNCTIONS)
+def test_the_rebuild_leaves_no_readable_instant_at_a_live_junction(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """See `_the_rebuild_survives_every_shape_and_instant`."""
+    _the_rebuild_survives_every_shape_and_instant(tmp_path, monkeypatch, "live junction")
+
+
+@pytest.mark.skipif(os.name != "nt", reason=_NO_JUNCTIONS)
+def test_the_rebuild_leaves_no_readable_instant_at_a_dangling_junction(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """THE CELL THREE ROUNDS MISSED, driven through the real `restore()`.
+
+    Measured at the parent of this commit, with one unprivileged
+    `mklink /J .forge-seal <nonexistent>` and nothing else patched:
+
+        .git INTACT : restore -> CapsuleStoreError: PermissionError [WinError 5]
+                      protected=False   sealless load: RETURNED stage='READY'
+        .git REMOVED: identical
+        on disk       ['.forge-capsule', 'capsule.json', 'experience.json']
+
+    Worse than either shape round 4 closed. No crash, no patched write, and the
+    honest `git reset --hard` route cannot repair it either, so `_rebuild` runs
+    and fails the same way on every later call: PERMANENT. The cause is one
+    predicate. `Path.is_dir()` stats THROUGH a reparse point, so a junction
+    whose target is gone answers False, the removal branch is skipped, and
+    `os.replace` is handed a directory-attributed entry Win32 forbids it to
+    replace. `_is_junction` was already in the module and was not consulted.
+
+    See `_the_rebuild_survives_every_shape_and_instant`.
+    """
+    _the_rebuild_survives_every_shape_and_instant(tmp_path, monkeypatch, "dangling junction")
+
+
+@pytest.mark.skipif(os.name != "nt", reason=_NO_JUNCTIONS)
+def test_the_wipe_removes_a_dangling_junction_the_worker_left_behind(tmp_path: Path):
+    """A STANDING PROPERTY OF THE WIPE, NOT A REPAIRED DEFECT -- and this row
+    used to claim the second.
+
+    It said `_rebuild`'s wipe read `entry.is_dir() and not entry.is_symlink()`
+    and "sent everything else to `unlink`, which Win32 refuses for a
+    directory-attributed entry", so one dangling junction at a non-kept name
+    "stopped the rebuild before `git init`". THAT DID NOT HAPPEN. Measured at
+    719c744, which carries that predicate, with a dangling AND a live junction
+    planted and `.git` removed: `restore()` RETURNED, `git init` was reached,
+    both entries were gone and the live target kept its bytes. `os.unlink`
+    removes a junction -- CPython's `Py_DeleteFileW` sees a directory reparse
+    point and calls `RemoveDirectoryW` -- and a live junction never reached
+    that branch, because `is_dir()` is True through it. The refusal that is
+    real is `os.replace`'s, at `_write_fresh`, which is P1-A.
+
+    WHAT THIS ROW IS FOR, then: the wipe must take BOTH junction shapes and
+    must take them AS LINKS. That is a property worth pinning whether or not
+    it was ever broken, and it has teeth -- the mutation that removes both
+    reparse-point guards, so a junction is walked rather than taken, reddens
+    this row. The mutation that merely restores the old predicate does not,
+    because on this host it removes every shape too; it is an equivalent
+    mutant and is recorded as one in `_rebuild` and in A-022.
+
+    The junction's TARGET must survive, and is asserted: removing a junction
+    means removing the LINK. `_remove_entry` uses `os.rmdir` for exactly that,
+    and a live junction is planted here beside the dangling one so both
+    branches of the same predicate run in one row.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")          # force the rebuild rather than a reset
+
+    outside = tmp_path / "outside"
+    dangling = _plant_shape("dangling junction", capsule / "stray-dangling", outside)
+    live = _plant_shape("live junction", capsule / "stray-live", outside)
+    assert (dangling, live) == (None, None), (dangling, live)
+    target = next(path for path in outside.iterdir() if path.is_dir())
+    assert (target / "kept.txt").exists(), "the live junction's target did not land"
+
+    revision, notes = store.restore(sealed)
+
+    assert "rebuilt" in notes[0]
+    assert not os.path.lexists(capsule / "stray-dangling"), (
+        "the wipe left the dangling junction standing, so it either raised or "
+        f"skipped it: {sorted(path.name for path in capsule.iterdir())}")
+    assert not os.path.lexists(capsule / "stray-live")
+    assert (target / "kept.txt").read_text(encoding="utf-8") == "the target\n", (
+        "removing the junction reached THROUGH it and destroyed the target's "
+        "contents; a junction is removed as a link, not walked"
+    )
+    assert (capsule / ".git").is_dir(), "the rebuild never reached git init"
+    assert store.seal_problems(store.sealed()) == []
+    assert _store(tmp_path).load_experience()["stage"] == "DISCOVER"
+
+
+def test_the_rebuild_neutralises_the_authority_before_it_touches_the_marker(tmp_path: Path):
+    """THE ORDER IS THE PROPERTY, so the order is what this row reads.
+
+    Every other row here observes a state after a failure, and a state is
+    consistent with more than one ordering. This one records the sequence of
+    calls a CLEAN rebuild makes and asserts it: the untrusted authority is
+    neutralised, THEN the seal marker, THEN the sealed bytes, THEN the store
+    marker. Reordering `_rebuild` to write the marker first -- which is what
+    shipped for two rounds -- reddens this row directly rather than by
+    consequence, and so does dropping the neutralisation altogether.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")
+
+    trace: list[str] = []
+    survivor_neutralise = CapsuleStore._neutralise_untrusted_authority
+    survivor_marker = CapsuleStore._write_seal_marker
+    survivor_write_fresh = store_module._write_fresh
+
+    def traced_neutralise(self):
+        trace.append("neutralise")
+        return survivor_neutralise(self)
+
+    def traced_marker(self):
+        trace.append("seal marker")
+        return survivor_marker(self)
+
+    def traced_write_fresh(path, text):
+        # The marker's own `_write_fresh` is the "seal marker" entry above; it
+        # is not recorded twice.
+        if path.name != ".forge-seal":
+            trace.append(f"write {path.name}")
+        return survivor_write_fresh(path, text)
+
+    with mock.patch.object(CapsuleStore, "_neutralise_untrusted_authority",
+                           traced_neutralise), \
+         mock.patch.object(CapsuleStore, "_write_seal_marker", traced_marker), \
+         mock.patch.object(store_module, "_write_fresh", traced_write_fresh):
+        store.restore(sealed)
+
+    assert trace == ["neutralise", "seal marker", "write capsule.json",
+                     "write experience.json", "write .forge-capsule"], trace
+    assert store.seal_problems(store.sealed()) == []
+
+
+def test_an_ordinary_concurrent_reader_cannot_open_the_store_to_a_legacy_read(tmp_path: Path):
+    """NO PRIVILEGE, NO PATCHING, NO CRASH -- one reader doing what an indexer,
+    a backup agent or Defender does, and the shipped `restore()`.
+
+    A-022 said the durable form of this "disappears entirely (no `OSError`, no
+    full disk, no scanner can reach it)". A scanner is precisely what reached
+    it. `_write_fresh` writes its temp sibling, removes the directory at the
+    destination and then renames; a reader holding the SOURCE denies the rename
+    with a sharing violation, and the removal has already happened. Measured at
+    the parent, one observer thread, 400 rounds per destination shape:
+
+        destination   succeeded   raised            durably ABSENT after
+        regular file  390         10                 0 / 10
+        directory     305         95 (WinError 32)  95 / 95
+        junction      399          1 (WinError 32)   1 / 1
+
+    The file column is why round 4 concluded it fails closed: at a file
+    destination there is no removal, so the old marker is still standing. End to
+    end through `restore()` at the parent, 25 attempts with one reader thread:
+    the marker was left absent once, and that once the store fell open --
+    `['.forge-capsule', 'capsule.json', 'experience.json']`, a sealless load
+    RETURNING the forged `READY`. On this tree, same instrument, same 25
+    attempts: the marker was still left absent once, and NOTHING fell open.
+
+    THIS ROW ASSERTS THE PROPERTY, NOT THE RATE. Whether the denial happens in
+    a given run is timing; that it cannot open the store is not. It is bounded
+    by attempts AND by a wall clock, and it asserts the observer really ran, so
+    a reader thread that died at once cannot make it pass by doing nothing.
+    """
+    attempts, deadline = 6, time.monotonic() + 120
+    opens, denials = 0, 0
+    for attempt in range(attempts):
+        if time.monotonic() > deadline:
+            break
+        cell = tmp_path / f"attempt-{attempt}"
+        store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+        store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                         experience=start_experience(Actor("human", "casey"), AT))
+        sealed = store.sealed()
+        capsule = store.root
+        forge_ready(capsule)
+        _remove_tree(capsule / ".git")
+        marker = capsule / ".forge-seal"
+        marker.unlink()
+        marker.mkdir()
+        (marker / "occupant.txt").write_text("x\n", encoding="utf-8", newline="")
+
+        stop = threading.Event()
+        seen = [0]
+
+        def read_everything(area=capsule, seen=seen):
+            while not stop.is_set():
+                try:
+                    for entry in os.scandir(area):
+                        try:
+                            with open(entry.path, "rb") as handle:
+                                handle.read(1)
+                            seen[0] += 1
+                        except OSError:
+                            pass
+                except OSError:
+                    pass
+
+        reader = threading.Thread(target=read_everything, daemon=True, name="ordinary-reader")
+        reader.start()
+        try:
+            try:
+                store.restore(sealed)
+            except CapsuleStoreError:
+                denials += 1
+        finally:
+            stop.set()
+            reader.join(timeout=30)
+        opens += seen[0]
+
+        assert _readable_routes(capsule, store) == frozenset(), (
+            f"attempt {attempt}: an ordinary reader opened the store to a legacy "
+            f"read. Entries: {sorted(path.name for path in capsule.iterdir())}; "
+            f"marker: {_entry_state(marker)!r}; denials so far: {denials}"
+        )
+    assert opens > 0, (
+        "the observer never opened anything, so this row measured a restoration "
+        "with no concurrent reader at all and proves nothing"
+    )
+
+
 def test_a_stray_temp_from_forges_own_crash_is_not_a_tamper_finding(tmp_path: Path):
     """FORGE'S OWN CRASH MANUFACTURED A TAMPER FINDING AGAINST AN UNTOUCHED STORE.
 
@@ -1186,8 +1970,10 @@ def test_a_stray_temp_from_forges_own_crash_is_not_a_tamper_finding(tmp_path: Pa
         seal_problems  ["the working tree is not clean: ?? .forge-seal.<hex>.tmp"]
         load()         REFUSED CapsuleSealError
 
-    Fail-closed and repairable -- `git clean` on the honest restore route takes
-    it, and `_rebuild`'s wipe takes it, since the temp name is in no keep set.
+    Fail-closed and repairable WHILE IT IS UNTRACKED -- `git clean` on the
+    honest restore route takes it, and `_rebuild`'s wipe takes it, since the
+    temp name is in no keep set. That sentence stood without the qualifier and
+    is not true after the next save; the row below measures what happens then.
     But the product was reporting TAMPERED about a store nobody had touched,
     on account of its own crash, and the human restore it invites costs the
     lifecycle a transition. That is a false finding, and a finding that can be
@@ -1241,6 +2027,82 @@ def test_a_stray_temp_from_forges_own_crash_is_not_a_tamper_finding(tmp_path: Pa
         "the working tree is not clean: ?? sub/"], "the exemption reached below the root"
 
 
+def test_an_exempt_named_stray_that_survives_a_save_becomes_tracked_and_invisible(
+        tmp_path: Path):
+    """THE EXEMPTION'S DISPOSAL ROUTES STOP APPLYING ONCE A SAVE HAS RUN.
+
+    A-022 and the row above say the stray is "fail-closed and repairable --
+    `git clean` on the honest restore route takes it, and `_rebuild`'s wipe
+    takes it". True while it is UNTRACKED. `save` runs `git add -A` and
+    commits, so a stray still on disk at the next save is absorbed into the
+    store's own history. Measured, after one ordinary save:
+
+        git status --porcelain    ''            (nothing at all)
+        git ls-files              ['.forge-seal.<hex>.tmp']
+        seal_problems             []
+        git clean -fdxq           leaves it standing
+        restore()                 leaves it standing -- the honest route is a
+                                  reset and a clean, and neither takes a
+                                  tracked, unmodified file
+        a FORCED _rebuild         takes it, because the wipe enumerates the
+                                  root and the name is in no keep set
+
+    So it stops being EXEMPT and becomes INVISIBLE: not reported because there
+    is nothing to report, and removed only by the route that runs when the
+    honest one has already failed. It still carries no authority, for the
+    reason the row above gives -- nothing reads the store by pattern -- and it
+    is one inert file. What is corrected is the disposal claim, not the
+    authority claim.
+    """
+    store = _sealed_store(tmp_path)
+    capsule = tmp_path / "capsule"
+    stray = store_module._fresh_tmp_path(capsule / ".forge-seal")
+    stray.write_text("a survivor of a death between the temp write and the rename\n",
+                     encoding="utf-8", newline="")
+
+    def porcelain() -> str:
+        return subprocess.run(["git", "status", "--porcelain"], cwd=capsule,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def tracked() -> list[str]:
+        listed = subprocess.run(["git", "ls-files"], cwd=capsule, capture_output=True,
+                                text=True, check=True).stdout.split()
+        return [name for name in listed if name.endswith(".tmp")]
+
+    # (i) untracked: reported by git, exempted by Forge, and `git clean` takes it.
+    assert porcelain() == f"?? {stray.name}" and tracked() == []
+    assert store.seal_problems(store.sealed()) == []
+    subprocess.run(["git", "clean", "-fdxq"], cwd=capsule, check=True, capture_output=True)
+    assert not stray.exists(), "git clean did not take the untracked stray"
+
+    # (ii) survive one ordinary save, and it is TRACKED and CLEAN thereafter.
+    stray.write_text("a survivor of a death between the temp write and the rename\n",
+                     encoding="utf-8", newline="")
+    document, _ = propose(store.load(), "intent", "Build a customer support portal.",
+                          Actor("human", "casey"), "2026-09-03T10:00:00Z")
+    store.save(document, "propose intent")
+    assert porcelain() == "", "the stray must be absorbed, not left untracked"
+    assert tracked() == [stray.name], "the save did not commit the stray"
+    assert store.seal_problems(store.sealed()) == []
+
+    # (iii) neither route the exemption named still takes it.
+    subprocess.run(["git", "clean", "-fdxq"], cwd=capsule, check=True, capture_output=True)
+    assert stray.exists(), "git clean took a tracked file"
+    store.restore(store.sealed())
+    assert stray.exists(), (
+        "the honest restore route took a tracked, unmodified file; if it now "
+        "does, this correction is stale and the sentence above must move back"
+    )
+
+    # (iv) and the one route that does: the wipe, reached only when the honest
+    # route cannot run at all.
+    _remove_tree(capsule / ".git")
+    revision, notes = store.restore(store.sealed())
+    assert "rebuilt" in notes[0]
+    assert not stray.exists(), "the rebuild's wipe left a name outside its keep set"
+    assert store.seal_problems(store.sealed()) == []
+
+
 def test_the_cleanliness_exemption_matches_a_name_the_writer_really_produces(tmp_path: Path):
     """THE MATCHER AND THE NAME-BUILDER MUST NOT DRIFT APART IN SILENCE.
 
@@ -1274,6 +2136,21 @@ def test_the_cleanliness_exemption_matches_a_name_the_writer_really_produces(tmp
     exempt = store_module._fresh_tmp_path(destination).name
     assert store_module._tree_changes(f" M {exempt}") == [f"M {exempt}"]
     assert store_module._tree_changes(f" D {exempt}") == [f"D {exempt}"]
+
+    # AND EVERY LINE IS TRIMMED, NOT ONLY THE FIRST. `"\n".join(kept).strip()`
+    # stripped the leading status padding off the joined BLOCK, which is the
+    # first line and nothing else, so one finding read `M capsule.json` while
+    # the same status one line lower read ` D experience.json`. Two spellings
+    # of one status, decided by where it landed in the list -- and these
+    # strings go verbatim into `seal_problems`, into the refusal a user reads
+    # and into permanent lifecycle history.
+    assert store_module._tree_changes(" M capsule.json\n D experience.json") == [
+        "M capsule.json", "D experience.json"]
+    assert store_module._tree_changes(
+        " M capsule.json\n?? notes.txt\n D experience.json") == [
+        "M capsule.json", "?? notes.txt", "D experience.json"]
+    # An empty line contributes nothing rather than an empty finding.
+    assert store_module._tree_changes(" M capsule.json\n\n") == ["M capsule.json"]
 
 
 @pytest.mark.parametrize("planted", ["capsule.json", "experience.json", ".forge-seal",

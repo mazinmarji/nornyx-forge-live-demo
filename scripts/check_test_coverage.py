@@ -192,6 +192,21 @@ EXPECTED_SKIPS = {
         "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: the directory rows of the same parametrisation take the identical branch of _write_fresh and execute on every platform, and both junction rows execute on a Windows workstation.",
     "tests/test_provider_authority_boundary.py::test_an_oserror_inside_the_marker_write_leaves_a_junction_marker_standing":
         "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: the directory rows of the same parametrisation take the identical branch of _write_fresh and execute on every platform, and both junction rows execute on a Windows workstation.",
+    # Round 5 crossed the shape axis with the failure axis. The three whole-function
+    # junction rows below need declaring for the same reason as the two above; the
+    # two PARAMETRISED identities need declaring too, and round 4 recorded that the
+    # census could not do that. It can: `classify` strips `[param]` before matching
+    # here, and EXPECTED_SKIP_CASES bounds how many cases one identity may skip.
+    "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_a_live_junction":
+        "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: _is_directory_entry sends the DIRECTORY rows down the identical branch and those execute on every platform, and all five junction rows execute on a Windows workstation.",
+    "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_a_dangling_junction":
+        "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: _is_directory_entry sends the DIRECTORY rows down the identical branch and those execute on every platform, and all five junction rows execute on a Windows workstation.",
+    "tests/test_provider_authority_boundary.py::test_the_wipe_removes_a_dangling_junction_the_worker_left_behind":
+        "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: _is_directory_entry sends the DIRECTORY rows down the identical branch and those execute on every platform, and all five junction rows execute on a Windows workstation.",
+    "tests/test_provider_authority_boundary.py::test_the_marker_write_is_shape_correct_at_every_interior_instant":
+        "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
+    "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape":
+        "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
 }
 
 
@@ -631,7 +646,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Four rows, two shapes by two forms, plus two pinning the cleanliness
     # exemption that stops Forge's own crash residue reading as tamper and the
     # matcher that recognises it: 48 -> 54, band(48) = 44 -> band(54) = 49.
-    "tests/test_provider_authority_boundary.py": 49,
+    # Round 5 crossed the two axes rounds 3 and 4 had enumerated apart: ten
+    # destination shapes by four interior instants of `_write_fresh` by two
+    # failure forms, and the same ten shapes by five interior instants of
+    # `_rebuild`. Plus the wipe's own copy of the predicate, the call-order
+    # trace, the ordinary-reader row and the stray that a save makes tracked:
+    # 54 -> 79, band(54) = 49 -> band(79) = 72.
+    "tests/test_provider_authority_boundary.py": 72,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -901,6 +922,15 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # proof runs a real runtime once for each provider PROVIDERS declares; a
     # third provider would be a diff here as well as in the contract.
     "tests/test_windows_host_runtime.py::test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refused": 2,
+    # THREE, and three is the LARGER of the two platform counts rather than a
+    # sum: on Windows the three symlink shapes skip, on Linux the two junction
+    # shapes do. A cap of two would fail the Windows workstation and a cap of
+    # five would let three new parameters start skipping unnoticed.
+    "tests/test_provider_authority_boundary.py::test_the_marker_write_is_shape_correct_at_every_interior_instant": 3,
+    # The rebuild matrix excludes the junction shapes -- they are whole
+    # functions, because a declaration cannot single out one parameter -- so
+    # this identity skips three on Windows and none on Linux.
+    "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape": 3,
 }
 
 # Raised again, from 1340, by round-7 remediation: 1531 collected. Most of the
@@ -1297,27 +1327,53 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # empty confinement table cannot satisfy by vacuity, stops the recovery path
 # writing bytes through a planted link, and stops two refusals naming an actor
 # they never measured. Round 3 closes the fall-open that round 2's own
-# link-hardening reopened inside the marker's write, and round 4 closes the
-# two SHAPES round 3's own repair left it open for. ONE row moves:
-# tests/test_provider_authority_boundary.py collects 35 -> 54 (floor
-# band(35) = 32 -> band(54) = 49). 113 modules stand -- every new node is in
-# the module that already held the seal boundary -- the module-floor sum rises
-# by seventeen to 3049 and the aggregate follows to 3057, keeping the same 8
-# above it. The suite collects 3308 -> 3327, band(n) 2978 -> 2995, the working
-# room below the floor 269 -> 270 (the collection rose by six in round 4 and
-# the aggregate by five), and the slack the bands grant 277 -> 278: this module
-# collects five above its floor at 54 where it collected four at 48, because
-# `ceil(0.9n)` moved by five while the module moved by six. The
-# windows-runtime job's floor is untouched at 262: none of its six modules is
-# tests/test_provider_authority_boundary.py, and the six collect
-# 14/15/23/53/73/97 as that job's own sentence states -- measured here from
-# the same collection, not inherited from it. No provider row moved. TWO SKIPS
-# ARE DECLARED, and round 4 is the first round of this slice to declare any:
-# the two junction rows. A junction is an NTFS shape with no POSIX equivalent
-# that `is_symlink()` reports False for, so the plant cannot be built on the
-# Linux test jobs. The property is not weakened -- the two DIRECTORY rows take
-# the identical branch of `_write_fresh` and run on every platform, and both
-# junction rows execute on a Windows workstation.
+# link-hardening reopened inside the marker's write; round 4 closes the two
+# SHAPES round 3's own repair left it open for; and round 5 stops patching the
+# guard, because a remove-then-create window is irreducible for a
+# directory-shaped entry and each round had closed the cells it enumerated and
+# left one out. The fall-open is a CONJUNCTION -- the marker absent AND forged
+# authority readable -- and `_rebuild` now neutralises the untrusted authority
+# before it touches the marker, so the shape space stops being load-bearing.
+# ONE row moves: tests/test_provider_authority_boundary.py collects 35 -> 79
+# (floor band(35) = 32 -> band(79) = 72). 113 modules stand -- every new node
+# is in the module that already held the seal boundary -- the module-floor sum
+# rises by forty to 3072 and the aggregate follows to 3080, keeping the same 8
+# above it. The suite collects 3308 -> 3352, band(n) 2978 -> 3017, the working
+# room below the floor 269 -> 272 (the collection rose by twenty-five in round
+# 5 and the aggregate by twenty-three), and the slack the bands grant 277 ->
+# 280: this module collects seven above its floor at 79 where it collected
+# four at 48, because `ceil(0.9n)` moved by twenty-three while the module moved
+# by twenty-five. The windows-runtime job's floor is untouched at 262: none of
+# its six modules is tests/test_provider_authority_boundary.py, and the six
+# collect 14/15/23/53/73/97 as that job's own sentence states -- measured here
+# from the same collection, not inherited from it. No provider row moved.
+#
+# SEVEN SKIP IDENTITIES ARE DECLARED, and which of them fire depends on the
+# platform, which is the point of declaring them by identity with a case cap
+# rather than by parameter. Round 5's rows are a CROSS PRODUCT of ten
+# destination shapes with the interior instants of `_write_fresh` and of
+# `_rebuild`, and no host can build all ten. On a Windows workstation
+# `os.symlink` raises `[WinError 1314] A required privilege is not held by the
+# client`, so three cases of each parametrised identity skip -- six on this
+# workstation, and the five junction rows all execute. On the Linux test jobs
+# the symlink shapes build and the junction shapes cannot, so the five
+# whole-function junction rows skip along with two cases of the shape matrix,
+# and the rebuild matrix's exemption is reported unused. Neither platform
+# leaves a property unproven: `_is_directory_entry` sends the DIRECTORY rows
+# down the identical branch on both, and the predicate's answer for the four
+# symlink cases is measured against synthesised attributes by
+# `test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build`,
+# which never skips anywhere.
+#
+# ROUND 4 RECORDED THAT A PARAMETRISED ROW COULD NOT BE DECLARED AT ALL, and
+# that is false: `classify` strips `[param]` before matching against
+# EXPECTED_SKIPS, `test_every_declared_exemption_names_a_test_that_exists`
+# resolves the bare function name, and EXPECTED_SKIP_CASES bounds the count --
+# which is exactly how tests/test_windows_host_runtime.py's parametrised
+# journey row has been declared since PR-18. What cannot be declared is ONE
+# PARAMETER of a parametrised identity, so a row skipping for a reason its
+# siblings do not still has to be its own function. That is why the junction
+# rows are functions and the shape matrix is not.
 #
 # Those figures are stated against main AFTER TRANCHE I landed -- the
 # real embedded-interpreter run, which raised
@@ -1337,12 +1393,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3327   (113 modules)
-#     sum of the module floors    3049
-#     band(3327) = ceil(0.9*n)    2995
-#     MINIMUM_COLLECTED           3057
+#     collected across tests/     3352   (113 modules)
+#     sum of the module floors    3072
+#     band(3352) = ceil(0.9*n)    3017
+#     MINIMUM_COLLECTED           3080
 #     above the module sum         8
-#     below what collects         270
+#     below what collects         272
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1363,7 +1419,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 278 in total, and the aggregate refuses
+# per-module bands already grant 280 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1396,7 +1452,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3057
+MINIMUM_COLLECTED = 3080
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
