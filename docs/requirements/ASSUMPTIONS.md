@@ -2024,12 +2024,68 @@ had caught it, because `smoke_bundle` is
 exercised only against a scripted runtime with `subprocess.run`, `_get`
 and `_post_json` all replaced, and no workflow runs `--smoke` -- the real
 path had never been executed, which is precisely what NOT PERFORMED was
-concealing. The stop route and the stopped record stay unmeasured: that
-route requires a person's act at the computer, and no autonomous run may
-assert one. Windows-hosted automated evidence
+concealing. Windows-hosted automated evidence
 in this repository runs the runtime as a real child process from a real
 bundle folder on the runner's own CPython -- the developer arrangement --
 and is labelled as exactly that.
+
+**THE HANG IS REPAIRED, on the driving side, and the smoke now terminates.**
+`_observe_launch` hands the launcher two FILES under its own scratch instead
+of the capture pipes, and reads the launcher's output back from them on both
+branches. The launcher templates are untouched, deliberately: arms B and D
+above measured that redirecting the grandchild's own stdio does not help,
+because the duplication has already happened by the time the grandchild could
+redirect anything, and one driving-side call covers both templates because
+both detach the same way. The defect was reproduced before it was repaired,
+twice -- minimally, and through the real `--smoke` path on the same host with
+the same operator archive, where it was bounded at 600 s and recorded as a
+hang with no report produced at all. After the repair the same command exits
+0 in 39.36 s and writes its report; the recorded verdict is `result: "pass"`
+with `failed: []` over all eight observations, and the runtime it started
+recorded itself ready, answered all three routes as instance
+`4356aaac26e4465feb6d766a2bd9fd99`, and stopped.
+
+**Four things that paragraph does NOT say, kept apart from it.**
+
+- **The `pass` on the stop observation is a claim, not a person.** The stop
+  route refuses any actor whose `kind` is not `human` (409), and
+  `SMOKE_ACTOR` is `{"kind": "human", "ident": "bundle-smoke"}` -- so the
+  smoke passes that gate by DECLARING itself a person, for an act no person
+  performed. The route checks the claim; it authenticates nobody. This is not
+  new and was not introduced here -- `SMOKE_ACTOR` is unchanged -- but it was
+  unobservable until now, because before the repair no run ever reached the
+  stop route on the real path, and Tranche I's five downstream failures were
+  its own termination rather than any route's judgement. The predecessor of
+  this paragraph said the stop route and the stopped record "stay unmeasured
+  ... no autonomous run may assert one", which was true of the run it
+  described and false of the mechanism: the smoke asserts exactly that, and
+  the runtime accepts it. Recorded as an open finding rather than repaired
+  here, because changing what the smoke claims to be is a change to the smoke
+  contract and not to this defect.
+- **The builder-and-archive version gap is untouched and was re-measured.**
+  `install_dependencies` still resolves the closure with the builder's own
+  interpreter while `install_python` accepts an operator archive of any
+  version, and nothing requires the two to agree. Driven again by the
+  prepared CPython 3.12 environment, `verify_bundle` refused the folder at
+  `pydantic_core._pydantic_core` exactly as in run 1. The repaired smoke was
+  therefore driven, as run 2 was, by the same operator archive extracted stock
+  to a separate directory.
+- **The scratch's removal now has one exception, and it is stated where it
+  happens.** The detached runtime inherits duplicates of the two launcher log
+  handles, and Windows will not unlink a file another process holds open, so a
+  runtime that OUTLIVES the smoke leaves those two logs and their directory
+  behind. That is the case which used not to terminate at all. Measured on the
+  passing run: the runtime stops, the handles go, and the scratch is removed
+  whole.
+- **Still no workflow runs `--smoke`.** What now guards the real path is one
+  unscripted test,
+  `test_the_smoke_terminates_against_a_launcher_that_detaches`, which drives
+  `smoke_bundle` with nothing replaced against a launcher folder that detaches
+  a grandchild outliving the call. It is Windows-only, because inherited-handle
+  duplication at `CreateProcess` is a Windows property, and the
+  `windows-latest` job runs the module that holds it. It was falsified against
+  this defect before being kept: on the parent tree it fails at its 60 s bound,
+  and on the repair it passes in 2.6 s.
 
 **Scope.** Not an installer, not signing, not release publication, not
 auto-update, not a Windows service, not provider confinement or admission,

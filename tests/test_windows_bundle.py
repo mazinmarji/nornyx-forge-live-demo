@@ -15,10 +15,21 @@ the self-contained launcher runs the carried interpreter and nothing else,
 the developer launcher runs an installed Python with the bundle's own code
 first, and neither passes the launch directory as anything.
 
-Everything here is cross-platform deterministic evidence: synthetic zips
-stand in for the operator's embeddable archive, and a synthetic
+Almost everything here is cross-platform deterministic evidence: synthetic
+zips stand in for the operator's embeddable archive, and a synthetic
 `python.exe` is a file, not an interpreter. The real embedded-interpreter
 run is the operator's act (A-017), measured by `--smoke` when they run it.
+
+ONE TEST IS NOT SCRIPTED, and it is here because the scripting is what let
+a defect through. `test_the_smoke_terminates_against_a_launcher_that_detaches`
+drives `smoke_bundle` with NOTHING replaced -- a real `cmd.exe`, a real
+`start ""`, a real detached grandchild that outlives the call -- against a
+launcher folder built for the purpose. It runs only on Windows, because
+inherited-handle duplication at `CreateProcess` is a Windows property and
+there is nothing to demonstrate elsewhere; the `windows-latest` CI job runs
+this module, and the skip is declared by identity in the census. It fails on
+the code it was written against, by not terminating, which is the only reason
+it is worth having.
 
 THE SMOKE VERDICT (N1 of the independent PR-18 review): `--smoke` said
 `pass` whenever a stopped record existed, while the statuses it read, the
@@ -28,7 +39,10 @@ recorded observations -- launcher, ready record, the three routes with the
 token compared against the record's, the stop, the stopped record -- and
 they need no interpreter: the verdict is judged over scripted observations,
 and the smoke's own recording is driven over a scripted launcher and
-listener, so the real operator run stays exactly what it was, unperformed.
+listener. That scripting bounds what they can say. The operator run has
+since been performed once, on one host, and is recorded in
+`docs/governance/EMBEDDED_INTERPRETER_RUN.md`; what it found is the subject
+of the unscripted test named above.
 """
 
 from __future__ import annotations
@@ -584,6 +598,20 @@ def _scripted_runtime(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
     def run(argv, **kwargs):
         assert argv[:2] == ["cmd.exe", "/c"] and argv[2].endswith("Forge.cmd")
         assert "--no-browser" in argv and argv[argv.index("--port") + 1] == "0"
+        # THE DRIVING-SIDE CONTRACT, checked on every scripted run: the
+        # launcher is handed FILES. `capture_output=True` would put no
+        # `stdout` in kwargs at all and this raises KeyError, so a revert to
+        # pipes reddens every test below -- on Linux too, where the real
+        # detaching launcher cannot be run and the hang cannot be shown.
+        # It is not a substitute for that demonstration; it is the seam where
+        # the argument is actually passed.
+        state["launcher_logs"] = (Path(kwargs["stdout"].name), Path(kwargs["stderr"].name))
+        assert all(path.is_file() for path in state["launcher_logs"])
+        # What a launcher writes, it writes to those files -- the only place
+        # the report now reads its output from. Written BEFORE any raise,
+        # exactly as a launcher that then hangs would have written it.
+        kwargs["stdout"].write(launcher_output.encode("utf-8"))
+        kwargs["stdout"].flush()
         state["argv"] = list(argv)
         runtime_dir = Path(argv[argv.index("--runtime-dir") + 1])
         runtime_dir.mkdir(parents=True)
@@ -625,7 +653,9 @@ def _scripted_runtime(monkeypatch: pytest.MonkeyPatch, *, returncode: int = 0,
         state["cwd"] = kwargs["cwd"]
         if run_raises is not None:
             raise run_raises
-        return subprocess.CompletedProcess(argv, returncode, launcher_output, "")
+        # `stdout`/`stderr` are None on a real run that redirects to files;
+        # the report reads the files, never these fields.
+        return subprocess.CompletedProcess(argv, returncode, None, None)
 
     def get(port, path, timeout=5.0, token=None):
         state.setdefault("gets", []).append((port, path))
@@ -685,17 +715,168 @@ def test_the_smoke_records_every_observation_and_derives_its_result_from_them(
 
 def test_a_launcher_that_never_returns_is_recorded_as_timed_out(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    # The fields a real `TimeoutExpired` cannot carry when no pipe was held:
+    # both are None there. They are given recognisable values here so the
+    # assertion below can prove the report ignores them and reads the FILE --
+    # otherwise the timed-out branch would record an empty launcher and look
+    # exactly as correct.
     late = subprocess.TimeoutExpired(cmd=["cmd.exe"], timeout=120,
-                                     output="late " * 200, stderr="")
+                                     output="NOT-FROM-THE-EXCEPTION " * 40,
+                                     stderr="NOR-THIS")
     _scripted_runtime(monkeypatch, run_raises=late)
     report = smoke_bundle(tmp_path / "dist", timeout=5, stop_timeout=5)
     launcher = report["steps"][0]
     assert launcher["returncode"] is None and launcher["timed_out"] is True
     assert len(launcher["stdout"]) == builder.OUTPUT_LIMIT and launcher["stderr"] == ""
+    assert launcher["stdout"] == "x" * builder.OUTPUT_LIMIT, (
+        "the launcher's output is read from the file it was written to")
+    assert "NOT-FROM-THE-EXCEPTION" not in launcher["stdout"]
+    assert "NOR-THIS" not in launcher["stderr"]
     assert report["result"] == "fail"
     assert report["verdict"]["failed"] == ["launcher: the launcher did not return within its timeout"]
     assert len(report["steps"]) == len(SMOKE_REQUIRED) == 8, (
         "the runtime the launcher started is still observed")
+
+
+#: How long the unscripted smoke below is given. The fixed driver returns in
+#: about three seconds: the launcher call ends when `cmd.exe` exits, and the
+#: rest is the two-second wait for a runtime record that never comes. The
+#: defective driver cannot finish inside it at all -- `_observe_launch` gives
+#: the launcher call a HARDCODED 120 s, and the hang is in the post-kill drain
+#: AFTER that. So this bound separates the two by more than a factor of twenty
+#: in one direction and is unreachable in the other; it is not a race.
+DETACH_BOUND = 60.0
+
+#: The grandchild's own ceiling. It waits for the stop flag the test writes,
+#: and gives up on its own after this long, so a test killed between creating
+#: it and reaping it cannot leave a process behind for longer than this.
+#: Longer than the 120 s the defective path needs, or the grandchild would
+#: release the pipes by exiting and the defect would not show.
+DETACH_HOLD_SECONDS = 300
+
+_HOLDER = """
+import os, sys, time
+from pathlib import Path
+
+pid_file, stop_flag = Path(sys.argv[1]), Path(sys.argv[2])
+# Its own pid, written by itself: the ONLY process this test may kill, proved
+# rather than matched on a program name.
+pid_file.write_text(str(os.getpid()), encoding="utf-8")
+deadline = time.monotonic() + {hold}
+while time.monotonic() < deadline and not stop_flag.exists():
+    time.sleep(0.05)
+"""
+
+_SMOKE_RUNNER = """
+import json, os, sys
+from pathlib import Path
+
+sys.path.insert(0, os.environ["SMOKE_SCRIPTS"])
+import build_windows_bundle as builder
+
+report = builder.smoke_bundle(Path(os.environ["SMOKE_DIST"]), timeout=2.0, stop_timeout=1.0)
+Path(os.environ["SMOKE_REPORT"]).write_text(json.dumps(report), encoding="utf-8")
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Inherited-handle duplication at CreateProcess is a Windows property: "
+           "a real cmd.exe, a real `start \"\"` and a real detached grandchild. "
+           "Runs in the windows-latest CI job, which executes this module.",
+)
+def test_the_smoke_terminates_against_a_launcher_that_detaches(tmp_path: Path):
+    """The real path, with nothing replaced -- and it used not to come back.
+
+    Every other smoke test above replaces `subprocess.run`, `_get` and
+    `_post_json`, so none of them ever drove a real detaching launcher, and no
+    workflow runs `--smoke`. The first time the real path executed, on the
+    first operator embedded-interpreter run, it did not terminate: `Forge.cmd`
+    detaches the runtime with `start ""`, the grandchild is created holding
+    DUPLICATES of the capture pipes `capture_output=True` was draining, and
+    `subprocess.run` blocks forever in a post-kill drain that carries no
+    timeout. Recorded in `docs/governance/EMBEDDED_INTERPRETER_RUN.md`.
+
+    So this test builds the smallest folder that has that shape -- a
+    `Forge.cmd` that writes to both streams and then detaches a grandchild
+    which outlives the call -- and asks only that the smoke COMES BACK, and
+    that it still carries what the launcher wrote. It fails against the
+    driver it was written for by exceeding its bound, not by an assertion.
+
+    The harness holds FILES for the same reason the fix does: were this test to
+    give its own child a pipe, the great-grandchild would inherit that too and
+    the bound would hang instead of failing.
+    """
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    pid_file = tmp_path / "holder.pid"
+    stop_flag = tmp_path / "holder.stop"
+    holder = tmp_path / "holder.py"
+    holder.write_text(_HOLDER.format(hold=DETACH_HOLD_SECONDS), encoding="utf-8")
+    runner = tmp_path / "runner.py"
+    runner.write_text(_SMOKE_RUNNER, encoding="utf-8")
+    report_path = tmp_path / "report.json"
+    # `start ""` -- the shipped detach form, which both launcher templates use
+    # and which this repair deliberately does not touch.
+    (dist / "Forge.cmd").write_text(
+        "@echo off\r\n"
+        "echo LAUNCHER-WROTE-STDOUT\r\n"
+        "echo LAUNCHER-WROTE-STDERR 1>&2\r\n"
+        f'start "" "{sys.executable}" "{holder}" "{pid_file}" "{stop_flag}"\r\n',
+        encoding="utf-8", newline="")
+
+    environment = {**os.environ,
+                   "SMOKE_SCRIPTS": str(ROOT / "scripts"),
+                   "SMOKE_DIST": str(dist),
+                   "SMOKE_REPORT": str(report_path),
+                   # The smoke's own scratch is a mkdtemp; keep it inside the
+                   # test's tmp so a killed child leaks nothing outside it.
+                   "TEMP": str(tmp_path), "TMP": str(tmp_path)}
+    console = tmp_path / "runner-console.log"
+    started = time.monotonic()
+    with console.open("wb") as sink:
+        child = subprocess.Popen(  # noqa: S603
+            [sys.executable, str(runner)], stdin=subprocess.DEVNULL,
+            stdout=sink, stderr=subprocess.STDOUT, cwd=str(tmp_path), env=environment)
+        try:
+            try:
+                child.wait(timeout=DETACH_BOUND)
+                returned = True
+            except subprocess.TimeoutExpired:
+                returned = False
+                child.kill()
+                child.wait(timeout=30)
+        finally:
+            # Reaped two ways, and only ever this test's own grandchild: the
+            # flag it polls, and failing that the pid IT wrote for itself.
+            stop_flag.write_text("stop", encoding="utf-8")
+            if pid_file.exists() and (pid := pid_file.read_text(encoding="utf-8").strip()):
+                subprocess.run(["taskkill", "/PID", pid, "/T", "/F"],  # noqa: S603, S607
+                               capture_output=True, timeout=60, check=False)
+    elapsed = time.monotonic() - started
+
+    assert returned, (
+        f"the smoke did not return within {DETACH_BOUND} s against a launcher that "
+        "detaches a grandchild: the driver is holding capture pipes across it, and "
+        "the grandchild inherited duplicates that keep them open. Console tail:\n"
+        + console.read_text(encoding="utf-8", errors="replace")[-800:])
+    assert elapsed < DETACH_BOUND
+    assert child.returncode == 0, console.read_text(encoding="utf-8", errors="replace")[-800:]
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    launcher = report["steps"][0]
+    assert launcher["step"] == "launcher"
+    assert launcher["timed_out"] is False and launcher["returncode"] == 0
+    # Not just termination: the launcher's own output survives the repair. A
+    # null sink would terminate too, and record nothing about the launcher.
+    assert "LAUNCHER-WROTE-STDOUT" in launcher["stdout"]
+    assert "LAUNCHER-WROTE-STDERR" in launcher["stderr"]
+    # The launcher observation SUCCEEDED; this folder starts no runtime, so the
+    # verdict fails at the record and says so. That is the contract working.
+    assert report["result"] == "fail"
+    assert not [failure for failure in report["verdict"]["failed"]
+                if failure.startswith("launcher:")]
+    assert report["verdict"]["failed"][0].startswith("runtime_record:")
 
 
 def test_an_unreachable_route_is_recorded_and_the_remaining_routes_are_still_read(
