@@ -31,15 +31,29 @@
   owner's implicit `WRITE_DAC` then removed the ACE. A-029 states each result
   per candidate. What the witness earns is a SEPARATE,
   smaller field: `authority.continuity` is `"process"` or absent, with
-  `authority.held_since` naming the interval, meaning only that no load in this
-  process has found a seal other than the one it last wrote or found clean.
-  Restarting Forge is a same-user act and resets it, so this RAISES THE COST of
+  `authority.held_since` naming the interval, meaning only that no load
+  THROUGH THIS APPLICATION INSTANCE has found a seal other than the one that
+  instance last wrote or found clean.
+  THE VALUE WORD IS `"process"` AND THE BOUND IS THE APPLICATION INSTANCE,
+  which is narrower and is the claim: `create_app` builds one witness, and a
+  second `create_app` in the same operating-system process holds nothing and
+  begins its own interval. Measured in one pid: the first instance refused the
+  rolled-back store `409` while a second answered `200` at the earlier stage.
+  The shipped composition makes one instance per process, so the two coincide
+  there. A fresh instance resets it -- on the shipped path that means
+  restarting Forge, a same-user act -- so this RAISES THE COST of
   a silent rollback and is not a guarantee; an anchor that survives a restart
   needs authority outside the restoration domain, which is not synthesized
   here. A-029 states the limit and
   `test_a_rollback_across_a_restart_is_the_disclosed_limit` pins it in the
   affirmative, reading that disclosure, so the cross-restart case cannot be
   closed without rewriting it in the same commit.
+  ONLY THE SURFACE CARRIES THE WITNESS. `nornyx-forge build --project-dir`
+  builds its store with the seal and no witness, so a build launched through
+  the developer CLI reads a wholesale rolled-back store as honest while the
+  surface refuses the same store; that is measured, unchanged, and now stated
+  as A-029 residue (3), because a short-lived process that performs one
+  `load()` holds no interval worth reporting.
 - The control-plane admission criterion now applies to a real record, and the
   first such record was taken from a CONFINED Codex principal. Nothing in the
   shipped source constructed a `ConfinementProbe`, so nothing converted a valid

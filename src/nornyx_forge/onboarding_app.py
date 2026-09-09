@@ -62,11 +62,14 @@ actor at all -- until a person restores the sealed authority through one
 explicit action. The seal is Forge-owned persistence outside the project;
 its own bound is stated in capsule_store. Beside the seal's currency -- which
 is unchanged, and still `not_independently_anchored` -- the surface reports a
-separate `continuity` field: `"process"` means only that no load in this run
-has found a seal other than the one this run last wrote or verified, and
-`held_since` names the interval. A restart resets it, and restarting Forge is
-a same-user act, so it raises the cost of a wholesale rollback rather than
-closing it. A-029 states the limit; nothing here claims the store is the
+separate `continuity` field: `"process"` means only that no load through THIS
+APPLICATION INSTANCE has found a seal other than the one this instance last
+wrote or verified, and
+`held_since` names the interval. A fresh `create_app` resets it -- on the
+shipped path that means a restart, which is
+a same-user act -- so it raises the cost of a wholesale rollback rather than
+closing it. A-029 states the limit and the instance boundary; nothing here
+claims the store is the
 latest thing Forge ever wrote.
 
 DECLARED IS NOT ELIGIBLE. Before a build is allowed to start, the surface
@@ -323,11 +326,14 @@ def create_app(
     #: when no build runs. Read and written under `store_lock` only.
     app.state.sealed = None
 
-    #: ONE WITNESS PER APPLICATION, for the life of this process. Every store
+    #: ONE WITNESS PER APPLICATION INSTANCE, and that instance IS the bound.
+    #: Every store
     #: handle below is constructed fresh per request and would remember
-    #: nothing on its own; the witness is what makes "this process last
+    #: nothing on its own; the witness is what makes "this instance last
     #: sealed" a fact rather than a request-scoped one. It is memory only,
-    #: never written anywhere, and a restart begins again from disk -- see
+    #: never written anywhere, and each `create_app` begins again from disk --
+    #: a second one in the SAME operating-system process holds nothing, which
+    #: is why the disclosure says instance and not process. See
     #: `ProcessWitness` for why that bound cannot be lifted locally.
     witness = ProcessWitness(at)
 
@@ -363,11 +369,21 @@ def create_app(
         `continuity` IS A SECOND FIELD AND NOT A BETTER VALUE OF THE FIRST.
         `currency` answers "is this seal anchored as the latest Forge ever
         wrote?" and the answer is still no, in the same word, because every
-        local anchor was measured being rolled back with the set it anchored.
+        local anchor was measured being rolled back with the set it anchored
+        or undone by the same user.
         `continuity` answers a smaller question -- has the seal changed under
-        this running process? -- and `"process"` is the whole of its
-        vocabulary, with `held_since` naming the interval it is true over. A
-        restart resets it, so it raises the cost of a silent rollback rather
+        THIS RUNNING APPLICATION INSTANCE? -- and `"process"` is the whole of
+        its
+        vocabulary, with `held_since` naming the interval it is true over.
+
+        THE VALUE WORD IS WIDER THAN THE BOUND, and the bound is the claim.
+        The `witness` closed over here belongs to one `create_app`: a second
+        `create_app` in the same operating-system process holds nothing and
+        answers over its own `held_since`, so `"process"` may not be read as a
+        statement about the process. The shipped composition makes exactly one
+        instance per process, so the two coincide on the shipped path. A fresh
+        instance resets it -- on that path, a restart -- so it raises the cost
+        of a silent rollback rather
         than closing it, and A-029 says so in those words.
         """
         current = store()

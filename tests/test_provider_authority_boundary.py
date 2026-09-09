@@ -3477,14 +3477,34 @@ def test_the_currency_word_and_continuity_vocabulary_are_closed(tmp_path: Path):
     it because a witness now exists, turns this red."""
     forbidden = ("anchored", "monotonic", "latest")
 
-    def values(payload: dict) -> list[str]:
+    def values(payload: Any) -> list[str]:
+        """EVERY string anywhere under the payload, sequences included.
+
+        This walker handled `str` and `dict` only, so a forbidden phrase
+        inside a LIST was invisible to the gate this slice's central risk
+        rests on. Demonstrated on this baseline with no edit to this test: a
+        phrase placed in a list under `last_restoration` -- a free-shaped dict
+        a later slice may well grow notes in -- left this test and both claim
+        pins green. No list is in the payload today; descending into one costs
+        nothing and closes the gap before it opens.
+        """
+        if isinstance(payload, str):
+            return [payload]
         found: list[str] = []
-        for value in payload.values():
-            if isinstance(value, str):
-                found.append(value)
-            elif isinstance(value, dict):
+        if isinstance(payload, dict):
+            for value in payload.values():
                 found.extend(values(value))
+        elif isinstance(payload, (list, tuple)):
+            for item in payload:
+                found.extend(values(item))
         return found
+
+    # The walker itself, against the shape it used to miss: a list value, and
+    # a dict and a tuple nested inside it, all yield their strings. The
+    # pre-fix walker returned `[]` for this payload.
+    nested = {"last_restoration": {"notes": ["a monotonic anchor",
+                                             {"why": ("the latest write",)}]}}
+    assert values(nested) == ["a monotonic anchor", "the latest write"], values(nested)
 
     def check(payload: dict, sealed: bool) -> None:
         assert payload["currency"] == (

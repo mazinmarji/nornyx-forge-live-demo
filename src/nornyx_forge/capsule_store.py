@@ -89,18 +89,22 @@ independently anchored, and monotonic external anchoring is deferred rather
 than claimed.
 
 THE PROCESS WITNESS, and the exact width of what it buys. `ProcessWitness`
-remembers, in memory and nowhere else, the snapshot this Forge process last
-sealed or last verified clean for each store, so a seal that arrives on disk
-in place of that one is `CapsuleSealReplaced` at the next load rather than a
-clean read. That closes the rollback above ONLY for the interval a single
-process is alive: the witness is not written down, and it may not be, because
+remembers, in memory and nowhere else, the snapshot ONE FORGE APPLICATION
+INSTANCE last sealed or last verified clean for each store, so a seal that
+arrives on disk in place of that one is `CapsuleSealReplaced` at the next load
+rather than a clean read. That closes the rollback above ONLY for the interval
+a single instance is alive: the witness is not written down, and it may not be,
+because
 every place it could be written is the same-operating-system-user filesystem
 the rollback already commands (a counter beside the seal, a mirror in a second
 Forge-owned directory, an append-only log in a third place, and a DENY ACE on
-the seal file -- each was built, and each was rolled back with the set it was
+the seal file -- four candidates, each built, and each rolled back with the set
+it was
 meant to anchor or undone by the same user; A-029 states each result). So the
 currency word does NOT move.
-Restarting Forge is a same-user act and it resets the witness to whatever is
+What resets the witness is a fresh `create_app`, which on the shipped path
+means restarting Forge, itself a same-user act; the new instance holds
+whatever is
 on disk; that is the disclosed limit, stated in A-029 and pinned in the
 affirmative by `test_a_rollback_across_a_restart_is_the_disclosed_limit`. The
 witness RAISES THE COST of a silent rollback -- it now requires terminating
@@ -202,17 +206,32 @@ class AuthoritySnapshot:
 
 
 class ProcessWitness:
-    """What THIS Forge process last sealed, or last verified clean, for each
-    store it has touched. In memory, for the life of the process, and NOWHERE
-    ELSE ON PURPOSE.
+    """What ONE FORGE APPLICATION INSTANCE last sealed, or last verified clean,
+    for each store it has touched. In memory, for the life of that instance,
+    and NOWHERE ELSE ON PURPOSE.
 
     WHAT IT ESTABLISHES, in one sentence that is the whole of the claim:
-    since `held_since(ident)`, no load in this process has found a seal for
-    that store other than the one this process last wrote or verified. Not
+    since `held_since(ident)`, no load THROUGH THE INSTANCE HOLDING THIS
+    WITNESS has found a seal for that store other than the one that instance
+    last wrote or verified. Not
     that the store is the newest thing Forge ever wrote; not that a restart
     would find the same one. The surface reports it as `continuity` beside
     the unchanged `currency`, as a SEPARATE field, because it is a separate
     and much smaller fact.
+
+    THE NAME SAYS PROCESS AND THE BOUND IS THE INSTANCE, which is narrower,
+    and the narrower one is the claim. `create_app` builds one of these and
+    hands it to every store handle it makes, so a SECOND `create_app` in the
+    same operating-system process holds nothing and begins its own interval
+    from disk -- measured in one pid, with the first instance refusing a
+    rolled-back store `409` while the second answered `200` at the earlier
+    stage under `continuity` `"process"`. The shipped composition makes one
+    instance per process, so the two coincide there; the guarantee is still
+    the instance's, and A-029 discloses it in those terms. The reported word
+    is left as `"process"` deliberately: widening the witness to the process
+    is a BEHAVIOUR change that reddens
+    `test_a_rollback_across_a_restart_is_the_disclosed_limit`, and no wording
+    is worth buying with one.
 
     WHY IT IS NOT PERSISTED, which is a measured result and not an omission.
     The rollback it detects replaces the store, its committed marker and its
@@ -231,11 +250,20 @@ class ProcessWitness:
     it -- a second operating-system principal, or hardware -- which is external
     authority, and this repository neither synthesizes nor adopts one here.
 
-    SO THE BOUND IS A PROCESS LIFETIME, and terminating Forge is a same-user
+    SO THE BOUND IS AN APPLICATION-INSTANCE LIFETIME, and on the shipped path
+    reaching a fresh instance means terminating Forge, a same-user
     act. Against the A-015 actor this RAISES THE COST -- a silent rollback now
     needs Forge stopped and restarted, which is a visible side effect -- and it
     is not a guarantee. It is exactly as strong, and exactly as weak, as the
     in-memory hold the build window already relies on.
+
+    NO CALLER OUTSIDE `create_app` PASSES A WITNESS. `cli.py`'s
+    `build --project-dir` builds its store with a `seal_dir` and no witness, so
+    it gets the seal's checks and not this one, and reads a wholesale
+    rolled-back store as honest while the surface refuses the same store.
+    A short-lived process that does one `load()` establishes no interval, so a
+    witness there would report a fact about nothing; A-029 residue (3) states
+    the gap and that the decision is unchanged.
 
     Held under a lock because the witness is shared between the request
     threads and the build thread. The shipped composition already serialises
