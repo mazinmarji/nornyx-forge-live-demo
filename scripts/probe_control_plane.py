@@ -64,6 +64,15 @@ came to wear the strongest word. `capability_acquired()` is the only sanctioned
 way to read an artefact as evidence of a capability, and the validator refuses
 a record whose own detail records a denial under the acquired outcome.
 
+AND AN ARTEFACT READ MAY NOT RAISE, which it could until C3 measured it. The
+presence check in front of three of the reads was `Path.exists()`, which
+swallows "not found" and RE-RAISES a permission error -- so a caller confined
+out of the directory ended its run in a traceback and exit 1 with NO record at
+all, falsifying the exit-code enumeration below for exactly the kind of caller
+this harness exists to measure. `_presence` answers True / False / None, a
+denied check is `refused` and never `not_applicable`, and a backstop in
+`probe()` turns any remaining OSError into an outcome rather than an ending.
+
 THE RECORD IS A SELF-REPORT, and the validator says what it can and cannot
 refuse. `transport: loopback_socket` is a DECLARATION the producer makes about
 itself; the validator can refuse a record that declares a non-socket transport
@@ -779,16 +788,53 @@ def capability_acquired(artefact: dict[str, Any]) -> bool:
     return outcome == ARTEFACT_OBSERVED
 
 
+#: What a presence check answered when this principal was DENIED the check.
+#: Worded so it can never read as an existence claim: a caller refused the
+#: `stat` does not learn whether the path is there. It carries "denied", which
+#: is what `validate_record` requires of a `refused` artefact's own detail.
+_PRESENCE_DENIED = ("the presence check itself was denied to this principal, so whether "
+                    "the artefact exists is not determinable from here")
+
+
+def _presence(path: Path) -> bool | None:
+    """Whether `path` exists -- or None when this principal was DENIED the check.
+
+    `Path.exists()` IS NOT TOTAL. It swallows "not found" and RE-RAISES a
+    permission error, so a caller confined out of the directory gets an
+    exception where every other artefact read gets an outcome. Measured, on a
+    Codex-sandboxed principal running this module's own CLI (C3): the browser
+    history read raised `PermissionError: [WinError 5]` out of `probe()`, the
+    run ended in a traceback and exit 1, and NO record was produced at all --
+    for exactly the kind of caller this harness exists to measure, and against
+    the exit-code enumeration `--help`, the README and A-028 all state.
+
+    Three answers, because there are three facts. True and False are the
+    check's own; None is that the check did not happen. None is NEVER folded
+    into False: a path this caller may not stat is not a path that is absent,
+    and recording it as absent would let a confinement measurement read a
+    denial as "there was nothing to try".
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return None
+
+
 def _artefact_path_read(name: str, path: Path | None) -> dict[str, Any]:
     """Attempt to open a runtime artefact a same-user caller could reach.
 
     Present and openable is `observed`; present and NOT openable is `refused`
     -- the ACL said no, which is the opposite fact and used to wear the same
-    word.
+    word. A presence check this principal was DENIED is `refused` too, and its
+    detail says that it was the CHECK that was denied, not that the artefact
+    was found and withheld.
     """
     if path is None:
         return _not_applicable(name, "no path supplied to the probe; not read as a stranger")
-    if not path.exists():
+    seen = _presence(path)
+    if seen is None:
+        return _refused(name, _PRESENCE_DENIED)
+    if not seen:
         return _not_applicable(name, "the artefact does not exist on this host")
     try:
         size = path.stat().st_size
@@ -803,7 +849,10 @@ def _artefact_path_read(name: str, path: Path | None) -> dict[str, Any]:
 def _seal_dir_listing(seal_dir: Path | None) -> dict[str, Any]:
     if seal_dir is None:
         return _not_applicable("seal_dir_listing", "no seal directory supplied to the probe")
-    if not seal_dir.exists():
+    seen = _presence(seal_dir)
+    if seen is None:
+        return _refused("seal_dir_listing", _PRESENCE_DENIED)
+    if not seen:
         return _not_applicable("seal_dir_listing", "the seal directory does not exist on this host")
     try:
         count = sum(1 for _ in seal_dir.iterdir())
@@ -957,8 +1006,22 @@ def _browser_history(*, local_appdata: str | None = None,
         Path(local) / "Google" / "Chrome" / "User Data" / "Default" / "History",
         Path(local) / "Microsoft" / "Edge" / "User Data" / "Default" / "History",
     ]
-    present = [path for path in candidates if path.exists()]
+    present: list[Path] = []
+    unchecked = 0
+    for path in candidates:
+        seen = _presence(path)
+        if seen is True:
+            present.append(path)
+        elif seen is None:
+            unchecked += 1
     if not present:
+        if unchecked:
+            # NOT `not_applicable`. "There was nothing to try" and "this
+            # principal may not even look" are different facts, and only the
+            # first of them is an absence.
+            return _refused("browser_history",
+                            f"{unchecked} of {len(candidates)} history store path(s) could not be "
+                            "checked at all: " + _PRESENCE_DENIED)
         return _not_applicable("browser_history", "no measured history store exists on this host")
     readable = 0
     for path in present:
@@ -972,8 +1035,14 @@ def _browser_history(*, local_appdata: str | None = None,
         return _refused("browser_history",
                         f"0 of {len(present)} present history store(s) opened: this principal was "
                         "denied every one")
+    # The word for an ACQUIRED capability, so its detail may not carry a
+    # denial: the paths whose presence could not be established are counted as
+    # "not checkable", never as a refusal, or the validator would refuse a
+    # record whose strongest artefact contradicts its own outcome.
+    unchecked_note = f"; {unchecked} path(s) were not checkable by this principal" if unchecked else ""
     return _observed("browser_history",
-                     f"{readable} of {len(present)} present history store(s) readable by this principal")
+                     f"{readable} of {len(present)} present history store(s) readable by this "
+                     f"principal{unchecked_note}")
 
 
 # ---------------------------------------------------------------------------
@@ -1605,9 +1674,32 @@ def probe(port: int, *, host: str = _ONBOARDING_HOST, expect_instance: str | Non
         positive_control["detail"] = _DEADLINE_TRUNCATED
 
     def guarded(name: str, read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """One artefact read, bounded by the clock and unable to escape.
+
+        THE BACKSTOP IS NOT BELT-AND-BRACES. Each reader handles the denials
+        it can foresee; this catches the one it did not, because an artefact
+        read that RAISES produces no record at all -- and this module's whole
+        contract with an operator is that a run ends in a record and an exit
+        code, never in a traceback that prints this host's directories. A
+        confined caller measured exactly that ending (see `_presence`), and
+        the reader-level repair alone would leave the next unforeseen denial
+        in the same place.
+
+        The two OSError classes are kept apart rather than folded: a
+        PermissionError is a facility that EXISTED and said no, which is
+        `refused`; any other is "the read could not be attempted", which is
+        `not_applicable`. Folding them would put the weak word on a real
+        denial or the denial word on a fact that is not one.
+        """
         if clock.exceeded():
             return _not_applicable(name, f"{_DEADLINE_TRUNCATED} before this read")
-        return read()
+        try:
+            return read()
+        except PermissionError as error:
+            return _refused(name, f"the read was denied by this host: {error.__class__.__name__}")
+        except OSError as error:
+            return _not_applicable(
+                name, f"the read could not be attempted on this host: {error.__class__.__name__}")
 
     probe_pid = os.getpid()
     artefacts = [

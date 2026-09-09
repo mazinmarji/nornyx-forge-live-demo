@@ -550,7 +550,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # for a denial, the drive-absolute PATH rule, `localhost` normalised to
     # the address it names, the surface-absent rule's own shape, and the
     # `echoed` field asserted for the first time.
-    "tests/test_control_plane_authority.py": 62,
+    "tests/test_control_plane_authority.py": 66,
     # PR-18's Windows-hosted evidence: 10 collected after the inspections
     # (the journey once per declared provider, and the one test that runs
     # everywhere and pins the windows-runtime job), 11 after Tranche B
@@ -624,7 +624,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # documents claiming the widening is guarded are pinned to the guarded set
     # the mapping is measured to have, and the witness selection is read
     # structurally for any retired name.
-    "tests/test_codex_confinement_admission.py": 60,
+    # C3 round 2 added 9 more, all closing the same defect class -- a label
+    # standing where a measurement belonged: the derived cross-product cells
+    # over the producer's own state tuple, the unanswered-log case that makes
+    # `attempt_observed` derived rather than declared, the C3 document's three
+    # tables held row by row to the record under them, the measured counts held
+    # across four documents and the contract's docstring, the two shipped
+    # platform spellings refusing to combine, and five type refusals (a status
+    # that is not an integer, a route that is not a pair of strings) that used
+    # to fail open or raise `TypeError`. Floor at band(106) = 96.
+    "tests/test_codex_confinement_admission.py": 96,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -658,7 +667,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # section of docs/VALIDATION.md and the README bundle section entered
     # the document sweep (184 collected, band(184) = 166) -- the sweep
     # growing when governed prose lands is the sweep working.
-    "tests/test_recorded_measurements.py": 171,
+    # Raised 175 -> 180 for TRANCHE I, the real embedded-interpreter run:
+    # docs/governance/EMBEDDED_INTERPRETER_RUN.md entered the document sweep
+    # (199 collected, band(199) = 180). This module PARAMETRISES over the
+    # governance documents, so it gained nothing of its own -- a doc is a test
+    # here, and a tranche that adds one owes the census the same update a new
+    # module does.
+    "tests/test_recorded_measurements.py": 180,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -1169,16 +1184,79 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # windows-runtime job's own arithmetic floor DOES move, 256 -> 257, because its
 # six modules now carry 270; that number is derived from a live collection by
 # `test_the_windows_job_floor_is_the_arithmetic_it_states`, which holds the
-# job's sentence to it. No provider row moved and no skip was declared:
+# job's sentence to it. No provider row moved and no skip was declared.
+# Re-measured for Tranche C slice C3 -- the record-to-probe translation, the
+# first control-plane record taken from a CONFINED principal, and the
+# presence-check repair that measurement forced. THREE rows move, and one of
+# them is not a module anybody edited:
+# tests/test_codex_confinement_admission.py 66 -> 97 collected (floor
+# band(66) = 60 -> band(97) = 88) for the translation's refusals, its derivation
+# over the whole state x separation cross-product, and the shipped record
+# translated and assessed rather than transcribed;
+# tests/test_control_plane_authority.py 68 -> 73 (floor 62 -> 66) for the
+# presence-check pins; and tests/test_recorded_measurements.py 189 -> 194
+# (floor 171 -> 175), because docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md
+# joins its parametrised document sweep -- the sweep growing when governed prose
+# lands is the sweep working, and this row is stated because a census counting
+# only the modules the author typed in would have been wrong by five.
+# 113 modules stand; the module-floor sum rises by 36 to 3019 and the aggregate
+# follows to 3027, keeping the same 8 above it. The suite collects 3253 -> 3294,
+# band(n) 2928 -> 2965, the working room below the floor 262 -> 267, and the
+# slack the bands grant 270 -> 275: each of the three modules now collects one
+# more above its own band than it did. The windows-runtime job's own arithmetic
+# floor moves 257 -> 262, because its six modules now carry 275. NO PROVIDER ROW
+# MOVED and no skip was declared: the confined measurement reached
+# `admitted_nuisance` with `principal_separated: unknown`, which the mapping
+# answers `inconclusive`, so `control_plane_authority` stays unmet and Codex
+# stays `declared`
+# (`test_the_recorded_c3_measurement_translates_to_the_verdict_it_states`):
+#
+# Re-measured for TRANCHE C, SLICE C3 ROUND 2, which closed eight blocking
+# findings from three independent read-only lanes. ONE module moves:
+# tests/test_codex_confinement_admission.py 97 -> 106 collected (floor
+# band(97) = 88 -> band(106) = 96). Nine new nodes, every one of them a
+# measurement replacing a label -- see the module-floor comment above for the
+# list. NO OTHER MODULE MOVES and 113 modules stand, so the windows-runtime
+# job's own arithmetic floor is untouched at 262 (its six modules still collect
+# 14/15/23/53/73/97, sum 275, floor 275 - 14 + 1). The module-floor sum rises by
+# 8 to 3027 and the aggregate follows to 3035, keeping the same 8 above it. The
+# suite collects 3294 -> 3303, band(n) 2965 -> 2973, the working room below the
+# floor 267 -> 268, and the slack the bands grant 275 -> 276, because the one
+# module that moved now collects one more above its own band. NO PROVIDER ROW
+# MOVED: the round-2 repairs are guards over the same record, and the record
+# still reaches `admitted_nuisance` with `principal_separated: unknown`.
+#
+# One wording note, because it was measured rather than assumed: a first draft
+# of the CHANGELOG entry for this round tripped `_transcript_runs` in
+# tests/test_recorded_measurements.py -- two wrapped prose lines read as a
+# `key value` pair -- which put CHANGELOG.md into that module's document sweep
+# and added five nodes there. The prose was rewrapped rather than the detector
+# widened; the sweep is right to be broad.
+#
+# Re-measured for TRANCHE I, the real embedded-interpreter run. NO MODULE WAS
+# ADDED and no module gained a test of its own; 113 modules stand. What moved is
+# the DOCUMENT SWEEP: docs/governance/EMBEDDED_INTERPRETER_RUN.md records the
+# operator act A-023 had carried as NOT PERFORMED, and
+# tests/test_recorded_measurements.py parametrises five checks over the
+# governance documents, so it collects 194 -> 199 and its floor follows
+# band(194) = 175 -> band(199) = 180. The module-floor sum rises by 5 to 3032
+# and the aggregate follows to 3040, keeping the same 8 above it. The suite
+# collects 3303 -> 3308, band(n) 2973 -> 2978, and the working room below the
+# floor stays 268. THE SLACK THE BANDS GRANT IS UNCHANGED at 276: the one module
+# that moved gained five collected and five of floor, so it still sits exactly
+# 19 above its own band. NO PROVIDER ROW MOVED -- the run is operator evidence
+# about a bundle folder and decides nothing about admission -- and the recorded
+# smoke result is `fail`, which is the finding rather than a regression in this
+# suite.
 #
 # (rows below):
 #
-#     collected across tests/     3253   (113 modules)
-#     sum of the module floors    2983
-#     band(3253) = ceil(0.9*n)    2928
-#     MINIMUM_COLLECTED           2991
+#     collected across tests/     3308   (113 modules)
+#     sum of the module floors    3032
+#     band(3308) = ceil(0.9*n)    2978
+#     MINIMUM_COLLECTED           3040
 #     above the module sum         8
-#     below what collects         262
+#     below what collects         268
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1199,7 +1277,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 270 in total, and the aggregate refuses
+# per-module bands already grant 276 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1232,7 +1310,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 2991
+MINIMUM_COLLECTED = 3040
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

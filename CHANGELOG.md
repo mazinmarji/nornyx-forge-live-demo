@@ -2,6 +2,140 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The control-plane admission criterion now applies to a real record, and the
+  first such record was taken from a CONFINED Codex principal. Nothing in the
+  shipped source constructed a `ConfinementProbe`, so nothing converted a valid
+  `nornyx.forge.control_plane_probe.v1` record into one, and the outcome a
+  probe carried was hand-authored, its mechanism an unvalidated free string,
+  and `control_plane_authority_outcome` -- the mapping and its separation guard
+  -- had no production consumer and was ADVISORY. A-028 said so in those words.
+  `confinement_probe_from_surface_record` and
+  `confinement_measurement_from_surface_record` in `provider_contract.py` close
+  it. The outcome is DERIVED through that mapping and there is no parameter by
+  which a caller states one; the platform comes from the record's subject and
+  the revision from `subject.tree_git_sha`, never from an argument. The
+  refusals are named and never a silent downgrade to `inconclusive` -- which is
+  a measurement result, and putting it on a parsing failure is how an
+  unreadable record comes to look like an honest one: a foreign schema; a
+  transport that is not `loopback_socket`; a request row that ANSWERED under any
+  mechanism but `observed_surface_record`, and the positive control's request
+  likewise; a classification that disagrees with its own request log in EITHER
+  direction, with allowlist membership derived from a restated constant and
+  never from a row's stored flag, because a forged record laundering a gated 2xx
+  would simply mark that row allowlisted; any classification outside
+  `_V1_DERIVABLE_STATES` and any separation word outside
+  `_V1_SEPARATION_VALUES` -- BY MEMBERSHIP of those allow-lists, which is what
+  catches `unreachable` and `separated`, the two values that producer can never
+  write and which are exactly the ones that would answer `denied`; a request row
+  whose route is not a pair of strings or whose status is neither absent nor an
+  integer; a subject naming no platform; and a measurement whose subject names
+  no revision. It does NOT re-derive the classification: a second copy of
+  the producer's rule in `layer.domain` would drift, and the weaker copy simply
+  passes -- so the boundary is stated instead, and what the producer owns is
+  named rather than assumed.
+  What the closure makes visible is the honest content of the slice: every
+  state a v1 producer can derive, crossed with every separation word it may
+  record, maps to `inconclusive` or `allowed` and NEVER to `denied`, so no
+  record that harness can write satisfies `control_plane_authority`. That is a
+  property of the PRODUCER, not of the criterion, and it is asserted over the
+  whole cross-product by
+  `test_no_record_this_producer_can_write_satisfies_the_property`.
+  The measurement (`docs/governance/CONTROL_PLANE_AUTHORITY_MEASUREMENT.md`,
+  Windows, codex-cli 0.153.4, both probe records embedded verbatim in its JSON)
+  ran the probe as a confined process through `codex sandbox` -- the CLI's own
+  restricted-token entry point, no model in the loop -- against a live SERVED
+  onboarding surface on a real loopback socket, paired with an identical
+  UNSANDBOXED control run against the same instance. The shipped invocation
+  `codex_worker.py` constructs was NOT measured and cannot be: `codex exec`
+  carries a prompt, not a command, so a model would decide whether the probe
+  ran, and PA-01 measured that decision going both ways with every canary
+  pristine. Over a complete 133-cell matrix with the deadline unexpired the
+  confined caller reached the four allowlisted pairs, was refused 401 on all 129
+  gated cells, acquired no bearer through the surface, and its bearered positive
+  control answered 200 in the same run in which the bare one answered 401 --
+  `admitted_nuisance`. It ran as a DIFFERENT OS account from the surface's owner
+  (distinct SIDs, read by `whoami /user` inside each process and confirmed
+  independently by git's own `safe.directory` refusal, which printed both), and
+  the record still says `principal_separated: unknown`, because a v1 producer
+  may never say otherwise. So the mapping answers `inconclusive`,
+  `control_plane_authority` stays unmet, Codex's row stays `declared`, and both
+  providers stay ineligible. NOTHING MOVED, and the reason is a measured limit
+  of the harness rather than a judgement about the sandbox.
+  The finding that matters most is not the classification: separating the
+  accounts does NOT close the channel the separation guard exists for. Of the
+  two channels A-027 concedes a same-user caller, the confined process KEPT
+  Forge's process memory -- `OpenProcess(PROCESS_VM_READ)` on the surface's pid
+  returned it a handle -- while the `Win32_Process` query the browser-handler
+  channel needs COMPLETED for the unconfined control (15 command lines) and did
+  NOT COMPLETE for it. That differential is real and was taken in the same run
+  on the same host; the MECHANISM of the failure is not measured, because the
+  producer's `not_applicable` covers a denied launch, a missing executable, a
+  timeout and a non-zero exit indistinguishably, so it is not a denial and is
+  not read as one. The memory reading was falsified before it was recorded --
+  the same call against a SYSTEM process was denied with error 5, so the
+  instrument discriminates, and a separate control read 64 bytes at a MAPPED
+  address in the launching user's process and recovered a planted marker
+  verbatim -- but BOTH falsifications are operator observations OUTSIDE the
+  record, stated as such rather than implied to be evidence. Locating a secret
+  in that address space was not attempted and is not claimed.
+  Taking the measurement also found a defect in the C2 harness that only a
+  confined principal exposes: at the parent revision the sandboxed run raised
+  `PermissionError: [WinError 5]` out of `_browser_history` through
+  `Path.exists()` -- exit 1, a traceback, NO record, well inside the deadline --
+  because `Path.exists()` swallows "not found" and RE-RAISES a permission
+  error. The harness's stated contract is a record and an exit code, so its
+  exit-code enumeration in `--help`, in the README and in A-028 was false for
+  exactly the caller it exists to measure. `_presence` now answers True / False
+  / None, a denied check is `refused` and never `not_applicable` (a path this
+  caller may not stat is not a path that is absent), and a backstop in `probe()`
+  turns any remaining `OSError` into an outcome rather than an ending, keeping a
+  PermissionError (`refused`) apart from any other (`not_applicable`). That
+  separation is the BACKSTOP's; `_presence` itself still folds every `OSError`
+  into the denial wording, which round 2 measured and did not repair, because
+  repairing it would edit the module this measurement ran and break the blob
+  identity the record binds. Carried as an open finding in A-028.
+  Measured under mutation: accepting a non-socket transport, accepting a
+  control-plane fact labelled by inference, taking a stated outcome instead of
+  deriving one, accepting a classification that disagrees with its own log, and
+  flipping the recorded verdict to eligible are each red; restoring each is
+  green.
+  Three census rows move -- `tests/test_codex_confinement_admission.py` 66 ->
+  106 (floor 60 -> 96), `tests/test_control_plane_authority.py` 68 -> 73 (62 ->
+  66), and `tests/test_recorded_measurements.py` 189 -> 194 (171 -> 175),
+  because the new governance document joins its parametrised sweep -- so
+  `MINIMUM_COLLECTED` is 3035 and the windows-runtime job's arithmetic floor is
+  262. A-028, `docs/VALIDATION.md` and the contract's own docstring record what
+  C3 establishes and what it does not.
+
+  ROUND 2 closed eight findings from three independent read-only lanes, and
+  every one of them was the same defect: a LABEL standing where a MEASUREMENT
+  belonged. Nothing shipped was false; the guards claimed over those values were
+  not there. `_V1_DERIVABLE_STATES` and `_V1_SEPARATION_VALUES` existed only in
+  docstrings while the real guards were deny-lists of one, safe by a coincidence
+  nothing enforced -- measured: a fifth state added to the contract's vocabulary
+  and mapped `denied` let a hand-written record reach
+  `control_plane_authority` MET with every gate green. They are membership
+  guards now, held to the producer's own tuples with their COMPLEMENTS pinned,
+  and both C3 cross-product tests are DERIVED from those tuples instead of eight
+  typed-out cells, so the same mutation now reddens the tests that assert the
+  claim rather than only three neighbours. The A-028 closure gate was a
+  substring scan a COMMENT satisfied; it is now an `ast` walk that looks for a
+  real call to `ConfinementProbe`. The comment on `attempt_observed` claimed it
+  was derived and not declared, yet replacing it with a literal `True` passed
+  all 97 tests; a record whose log answered nothing now asserts False. The emitted platform and the bound revision were compared only
+  with values copied from the same field; they are compared with literals as
+  well. `probe_module_blob` and `parent_revision` were read by nothing; the blob
+  is recomputed from the shipped module's bytes and the parent must be a commit
+  reachable from HEAD. And the measurement document said its table was
+  "re-derived on every commit" while NOTHING read it -- five byte-exact
+  falsifications left 291 tests green -- so every row of its three tables is now
+  held to a value derived from the record or computed by running the code, and
+  the measured counts are held across four documents and the contract's own
+  docstring. The document also stopped reading `not_applicable` back as a
+  denial: the differential between the arms is real and stated, the mechanism is
+  not measured and is no longer claimed. What remains prose is listed as prose,
+  in the document's own "What is anchored" section and in A-028.
+
 - The Windows runtime harness no longer turns an ordinary record-publish
   transient into a `TypeError`. `write_record` publishes by whole-file replace
   -- stage a file, `os.replace` it onto the record's name -- so a reader that
