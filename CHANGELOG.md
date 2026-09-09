@@ -74,6 +74,22 @@
   disposition does not bind the checker's own bytes, and the structural
   lint over the source is a lint that thirteen of fifteen evasions walked
   past; the discovery property rests on the behavioural sweep.
+  A Codex review of the merged head (bounded automated review evidence)
+  found one P1 and three P2s, each reproduced and closed: a DIRECTORY link
+  chain -- `outside/a` to an in-repository directory link to
+  `outside/final` -- passed, because the walk placed each hop at the
+  realpath of its parent and `realpath` follows a directory link straight
+  through; the walk is now component by component, every link judged where
+  it sits and then followed, pinned by that shape. The PASS line printed the
+  overlay's item count, which is a summary of the overlay: no successful
+  output now carries an overlay-derived count, refusals say overlay items
+  are unresolved without saying how many, and two overlays of different
+  sizes are pinned to byte-identical output. Two document claims were wider
+  than their tests and are narrowed: "nothing rides along" is now "no
+  FIELD rides along", with the uninspected `reason` named as the place an
+  approval sentence can sit unread; and "Forge learns nothing about where
+  the file lives" is now "neither retains nor emits", since the path
+  necessarily enters through the argument.
   Not claimed, and recorded as such in A-029: that anyone runs the check;
   that a free-text `reason` is free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the

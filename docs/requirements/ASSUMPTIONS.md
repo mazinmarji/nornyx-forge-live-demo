@@ -3708,8 +3708,12 @@ label for the thing measured.
 tool, workstation or developer is carried by a public, machine-readable
 registry and a deterministic checker, not by the memory of whoever last worked
 here. A caller with obligations that are not public carries them in an
-external overlay it supplies by path, and Forge learns nothing about that
-caller: not who it is, not where the file lives, not what it says.
+external overlay it supplies by path, and Forge neither retains nor emits
+anything about that caller: not who it is, not where the file lives, not
+what it says. The path itself necessarily enters the process through the
+argument and is walked before the file is opened; what is established is
+that it is never discovered and never emitted, not that the checker does not
+learn it for the run.
 
 **Why it needs stating.** Two substitutions are easy here and both are the
 class this repository keeps finding. The first reads a passing admission
@@ -3726,14 +3730,18 @@ from the file, and that is the whole of what it establishes.
 **What is established, and only this.** `tests/test_standing_development_obligations.py`
 holds: registry validity and duplicate refusal within and across registries;
 closed field sets and a closed disposition vocabulary, so a fabricated
-`approved_by` beside a row is refused rather than ignored and relabelling
-`requires_decision` to any other word refuses; digest binding with staleness
+`approved_by` FIELD beside a row is refused rather than ignored and relabelling
+`requires_decision` to any other word refuses -- while the free-text `reason`
+is not inspected, so a sentence asserting an approval passes inside it, and
+the documents say so rather than claiming that nothing misleading can be
+accepted; digest binding with staleness
 on a one-byte change to either input; exact coverage; `defer` admitted only
 for an item whose registry status is already deferred; no discovery under
 planted decoys, with a structural lint over the checker's source that refuses
 the obvious spellings and is stated to be a lint; refusal of an overlay path
-inside the repository as given, at every link it passes through, and after
-resolution; a repeated JSON key refused rather than last-wins; identifier
+inside the repository as given, at every component and link the walk passes
+through, and after resolution; a repeated JSON key refused rather than
+last-wins; identifier
 grammars matched in full; and no sentinel from an overlay's content, field
 names, schema string, directory name or invalid bytes reaching any output,
 file, refusal or refusal context, on the failure paths included. Measured
@@ -3746,6 +3754,16 @@ and `considered` to the checker; a `$`-anchored identifier grammar admitted a
 trailing newline; and a symlink chain that hopped through the repository was
 accepted because only its two ends were judged. All are now refused with a
 label and nothing else, and each is pinned by the test that reproduced it.
+A Codex review of the merged head then measured one more of the same shape
+-- a DIRECTORY link chain, `outside/a` to an in-repository directory link to
+`outside/final`, which the parent-collapsing walk passed straight through --
+and three claims wider than their tests: the PASS line printed the overlay's
+item count, a summary of the overlay; the procedure document said nothing
+misleading rides along when the uninspected reason can carry an approval
+sentence; and this entry said Forge learns nothing about where the file
+lives. The walk is now component by component and pinned by the shape that
+escaped; no output carries an overlay-derived count; and both claims are
+narrowed here and in the procedure document to what the tests measure.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.

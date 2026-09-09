@@ -24,8 +24,9 @@ directory or the home directory: the only way an overlay reaches this script
 is the `--overlay` argument. An overlay must resolve OUTSIDE this repository,
 both as the path given and after symlinks are followed, and nothing from it
 reaches stdout, stderr, the disposition or any evidence except the opaque
-item identifiers the caller chose, the item count, and a SHA-256 of the
-file's bytes. Every refusal this script can produce names a label and, where
+item identifiers the caller chose and a SHA-256 of the file's bytes, both of
+which go to the gitignored disposition and nowhere else; not even the
+overlay's item count is printed. Every refusal this script can produce names a label and, where
 useful, an item INDEX; none carries a value, a key name, a path or a byte
 from any input. The loaders raise their refusals outside the handler that
 caught the underlying error, so the refusal carries no `__context__` at all,
@@ -119,8 +120,8 @@ ADMISSION_BOUNDARY = (
     "authority."
 )
 OVERLAY_NOTICE = (
-    "External overlay: supplied explicitly, validated and digest-bound; its path "
-    "and contents are not emitted."
+    "External overlay: supplied explicitly, validated and digest-bound; its path, "
+    "contents and item count are not emitted."
 )
 
 
@@ -263,27 +264,42 @@ def _is_within(path: Path, parent: Path) -> bool:
 
 
 def _link_locations(path: Path, *, label: str) -> list[Path]:
-    """Where each link in the chain physically sits, the path as given first.
+    """Every path the walk touches: each component as reached, each link's target.
 
-    A chain `outside/a -> repo/.nornyx/runtime/b -> outside/c` is outside at
-    both ends, so a rule that judges only the given path and its final
-    resolution accepts it -- while the middle hop is a file inside the tree
-    that names the overlay and could be committed. Each hop is placed at the
-    real path of its directory, so a link reached through a directory symlink
-    into the tree is judged where it actually lives.
+    COMPONENT BY COMPONENT, never collapsed. The first version placed each hop
+    at `realpath(parent)`, and `realpath` follows a directory symlink all the
+    way through: for `outside/a -> repo/.nornyx/runtime/dir -> outside/final`
+    the parent of `outside/a/overlay.json` collapsed straight to
+    `outside/final`, and the in-repository directory link in the middle was
+    never seen. Measured by an external review on the merged head: PASS.
+
+    So the walk is its own: it takes the given path one component at a time;
+    when a component is a symlink it records where that link sits, reads the
+    target, and continues the walk from the target's components followed by
+    the rest of the original path. Every prefix reached this way is recorded,
+    so a link inside the tree is judged wherever it sits in the chain --
+    directory or file, first hop or third -- and a real directory inside the
+    tree that the chain passes through is recorded too.
     """
-    current = _lexical_absolute(path)
     locations: list[Path] = []
-    for _ in range(SYMLINK_HOPS_BOUND):
-        parent = Path(os.path.realpath(current.parent))
-        locations.append(parent / current.name)
-        if not current.is_symlink():
-            return locations
-        target = os.readlink(current)
-        current = Path(os.path.normpath(os.path.join(str(parent), target)))
-    # The same words as a loop the interpreter detects itself: which step
-    # noticed is not the property.
-    raise AdmissionError(f"{label} path cannot be resolved")
+    start = _lexical_absolute(path)
+    remaining = list(start.parts[1:])
+    walked = Path(start.parts[0])
+    hops = 0
+    while remaining:
+        walked = walked / remaining.pop(0)
+        locations.append(walked)
+        if not walked.is_symlink():
+            continue
+        hops += 1
+        if hops > SYMLINK_HOPS_BOUND:
+            # The same words as a loop the interpreter detects itself: which
+            # step noticed is not the property.
+            raise AdmissionError(f"{label} path cannot be resolved")
+        target = Path(os.path.normpath(os.path.join(str(walked.parent), os.readlink(walked))))
+        remaining = list(target.parts[1:]) + remaining
+        walked = Path(target.parts[0])
+    return locations
 
 
 def _within_repository(path: Path, *, label: str) -> bool:
@@ -500,7 +516,8 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
     """Refuse unless every loaded item is deliberately dispositioned.
 
     Returns (public rows, private rows) on admission. Refusals name public
-    item ids, which are public; for private rows only a count is named.
+    item ids, which are public; for private rows they say only that at least
+    one is unresolved -- not how many, which is a fact about the overlay.
     """
     _require_runtime_file(path, label="cycle disposition")
     record, _digest = _read_document(path, label="cycle disposition")
@@ -570,7 +587,7 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
     if public_blockers or private_blockers:
         parts = list(public_blockers)
         if private_blockers:
-            parts.append(f"{private_blockers} overlay item(s) unresolved")
+            parts.append("overlay items unresolved")
         raise AdmissionError("development admission refused: " + ", ".join(parts))
     public_rows = sum(1 for source, _ in seen if source == "public")
     return public_rows, len(seen) - public_rows
@@ -654,24 +671,26 @@ def main(argv: list[str] | None = None) -> int:
             raise AdmissionError("--init and --check-disposition are mutually exclusive")
         registries = load_registries(overlay)
         if init is not None:
-            count = initialize_disposition(
+            initialize_disposition(
                 init, cycle_id="" if cycle_id is None else cycle_id, registries=registries
             )
             print(
                 "Standing obligations loaded; local cycle disposition initialized "
-                f"with {count} pending item(s)."
+                f"with {len(registries.public_items)} public item(s) pending"
+                + (", plus the overlay's." if overlay is not None else ".")
             )
         elif check is not None:
-            public_rows, private_rows = validate_disposition(check, registries=registries)
+            public_rows, _private_rows = validate_disposition(check, registries=registries)
             print(
                 "Standing-obligation development admission: PASS "
-                f"({public_rows} public, {private_rows} overlay item(s) dispositioned)."
+                f"({public_rows} public item(s) dispositioned"
+                + (", plus the overlay's)." if overlay is not None else ").")
             )
         else:
             print(
                 "Standing-obligation registries: PASS "
-                f"({len(registries.public_items)} public, "
-                f"{len(registries.private_items)} overlay item(s))."
+                f"({len(registries.public_items)} public item(s)"
+                + (", plus an overlay)." if overlay is not None else ").")
             )
         if overlay is not None:
             print(OVERLAY_NOTICE)

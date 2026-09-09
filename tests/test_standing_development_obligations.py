@@ -633,15 +633,17 @@ def test_admission_is_re_evaluated_on_every_check(module):
         assert "pending" in message
 
 
-def test_refusals_name_public_ids_and_only_a_count_for_private_rows(module, tmp_path):
-    overlay = _write_overlay(tmp_path)
+def test_refusals_name_public_ids_and_no_count_for_private_rows(module, tmp_path):
+    """A refusal says an overlay item is unresolved, not how many there are."""
+    two = _overlay_document(items=[_item(), _item(id="PRV-002", dedupe_key="another-private-key")])
+    overlay = _write_overlay(tmp_path, two)
     registries = module.load_registries(overlay)
     with _runtime_disposition() as path:
         module.initialize_disposition(path, cycle_id="TEST", registries=registries)
         message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
         assert "FGR-SDO-001: pending" in message
-        assert "1 overlay item(s) unresolved" in message
-        assert "PRV-001" not in message
+        assert "overlay items unresolved" in message
+        assert "2 overlay" not in message and "PRV-001" not in message and "PRV-002" not in message
         _assert_no_leak(message, overlay)
 
 
@@ -723,8 +725,7 @@ def test_no_overlay_is_discovered_from_cwd_home_or_environment(module, tmp_path)
         record = json.loads(path.read_text(encoding="utf-8"))
         assert record["private_overlay_sha256"] is None
         assert all(row["source"] == "public" for row in record["items"])
-        assert "0 overlay" not in completed.stdout or "overlay item(s)" in completed.stdout
-        assert module.OVERLAY_NOTICE not in completed.stdout
+        assert "overlay" not in completed.stdout.lower()
         _assert_no_leak(completed.stdout + completed.stderr)
 
 
@@ -984,6 +985,100 @@ def test_a_refusal_carries_no_context_or_cause(module, tmp_path, shape):
         _assert_no_leak(repr(exc), target)
     else:
         raise AssertionError("the overlay was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Closures from the Codex review of the merged head
+# ---------------------------------------------------------------------------
+
+
+@posix_only
+def test_a_directory_symlink_chain_through_the_repository_is_refused(module, tmp_path):
+    """`outside/a -> repo/.nornyx/runtime/dir -> outside/final`, given `outside/a/overlay.json`.
+
+    Measured by the Codex review on the merged head: PASS. `realpath` of the
+    parent followed the directory link all the way to `outside/final`, so the
+    in-repository directory link in the middle was never judged. The walk is
+    now component by component, so it is.
+    """
+    final = tmp_path / "final"
+    final.mkdir()
+    (final / "overlay.json").write_text(
+        json.dumps(_overlay_document()), encoding="utf-8", newline="\n"
+    )
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    middle = RUNTIME / f"dirlink-{uuid.uuid4().hex}"
+    outside = tmp_path / SENTINEL_DIR
+    outside.mkdir()
+    try:
+        _symlink(final, middle)
+        _symlink(middle, outside / "a")
+        given = outside / "a" / "overlay.json"
+        message = _refusal(module, lambda: module.load_registries(given))
+        assert "outside the Forge repository" in message
+        _assert_no_leak(message, given, middle, final)
+        completed = _run("--overlay", str(given))
+        assert completed.returncode == 2
+        _assert_no_leak(completed.stdout + completed.stderr, given, middle, final)
+    finally:
+        middle.unlink()
+
+
+def test_no_successful_output_carries_an_overlay_derived_count(module, tmp_path):
+    """The overlay's item count is a fact about the overlay, and is not printed.
+
+    Two overlays of different sizes must produce byte-identical PASS output on
+    every successful path, so nothing about the size survives into a log.
+    """
+    one = _write_overlay(tmp_path, name="one.json")
+    three = _write_overlay(
+        tmp_path,
+        _overlay_document(items=[
+            _item(),
+            _item(id="PRV-002", dedupe_key="second-private-key"),
+            _item(id="PRV-003", dedupe_key="third-private-key"),
+        ]),
+        name="three.json",
+    )
+    outputs = []
+    for overlay in (one, three):
+        transcript = []
+        completed = _run("--overlay", str(overlay))
+        assert completed.returncode == 0, completed.stderr
+        transcript.append(completed.stdout)
+        with _runtime_disposition() as path:
+            completed = _run("--overlay", str(overlay), "--init", str(path), "--cycle-id", "N")
+            assert completed.returncode == 0, completed.stderr
+            transcript.append(completed.stdout)
+            _complete(path, module, module.load_registries(overlay))
+            completed = _run("--overlay", str(overlay), "--check-disposition", str(path))
+            assert completed.returncode == 0, completed.stderr
+            transcript.append(completed.stdout)
+        outputs.append(transcript)
+    assert outputs[0] == outputs[1], "the output differs with the overlay's size"
+    for text in outputs[0]:
+        assert "plus" in text and module.OVERLAY_NOTICE in text
+        assert "3" not in text.replace("SHA-256", "")
+
+
+def test_a_reason_is_not_inspected_and_the_document_says_so(module):
+    """A `reason` can carry any sentence; the checker neither reads nor endorses it.
+
+    Measured by the Codex review on the merged head: a reason reading
+    `Approved by the founder; release is authorized` passed. That is the
+    stated limitation, and the wording that used to say nothing potentially
+    misleading rides along is narrowed to the closed field sets it measures.
+    """
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        record = _complete(path, module, registries)
+        for row in record["items"]:
+            row["reason"] = "Approved by the founder; release is authorized."
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        module.validate_disposition(path, registries=registries)
+    text = " ".join(PROCEDURE.read_text(encoding="utf-8").split())
+    assert "neither reads nor endorses" in text
 
 
 # ---------------------------------------------------------------------------

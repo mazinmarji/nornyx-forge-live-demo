@@ -655,13 +655,20 @@ and field sets are closed; `pending`, `requires_decision`, an out-of-vocabulary
 word and a `defer` on an active item all refuse; an overlay is read only from
 `--overlay` (decoys planted in the working directory, the home directory and
 four environment variables are never read); an overlay path inside this
-repository is refused as given and after symlinks are followed; and no sentinel
+repository is refused as given, at every component and link the walk passes
+through, and after resolution; no successful output carries an overlay-derived
+count, pinned by two overlays of different sizes producing identical output;
+and no sentinel
 planted in an overlay's title, rule, condition, semantic key, unknown field
 name, unknown field value, schema string, directory name or invalid byte
 sequence reaches stdout, stderr, the disposition or a refusal -- on the
 symlink-loop, missing-file, directory, invalid-UTF-8, stray-argument and
 duplicate-collision paths included. The PASS output states the admission
 boundary.
+
+Not claimed, and pinned as a limitation: the free-text `reason` is not
+inspected, so a sentence asserting an approval passes inside it, and the
+checker neither reads nor endorses it.
 
 Not claimed: that anyone runs the check; that a free-text `reason` is free of
 overlay content; that an identifier an overlay author chose is not itself

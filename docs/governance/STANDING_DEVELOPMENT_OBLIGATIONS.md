@@ -79,8 +79,10 @@ with a different one, is refused.
 
 ## The external overlay
 
-Forge does not know who owns an overlay, where it comes from, or what
-organization it serves. The overlay is a JSON object with exactly three
+Forge does not know who owns an overlay or what organization it serves. The
+path it is given is used for the run and is neither retained nor emitted;
+the checker necessarily learns it for as long as the run lasts, and no
+longer. The overlay is a JSON object with exactly three
 fields: `schema`, which must be `nornyx.forge.private_standing_overlay.v1`;
 `classification`, which must be `private`; and `items`, a list of standing
 items in the same shape as the public registry's. Each item carries exactly
@@ -99,11 +101,13 @@ not:
   checker's source refuses the obvious spellings and is a lint, not a proof.
 - **Outside the repository, at every step.** An overlay path that names
   anything inside this repository is refused: the path as given after
-  lexical normalisation, every link it passes through judged at the
-  directory where that link really sits, and its final resolution. A link
-  inside the tree pointing out, a path outside the tree resolving in, and a
-  chain that merely hops through the tree are all refused. A hard link is
-  outside what a path rule can see; see the limitations.
+  lexical normalisation, every component the walk reaches, every link it
+  passes through -- file or directory, judged where that link sits and then
+  followed component by component -- and its final resolution. A link
+  inside the tree pointing out, a path outside the tree resolving in, a
+  chain that merely hops through the tree, and a directory link that hops
+  through the tree are all refused. A hard link is outside what a path rule
+  can see; see the limitations.
 - **Not emitted.** No refusal names a value, a key, a path or a byte from
   the overlay; refusals name a label and, at most, an item index. The
   loaders raise their refusal outside the handler that caught the underlying
@@ -111,8 +115,9 @@ not:
   symlink loop, a deeply nested document, a repeated JSON key and an
   unhashable value where a word belongs all refuse by label, and a stray or
   repeated argument is refused without being echoed. The PASS output states
-  that an overlay was supplied and how many items it carried, and nothing
-  else about it.
+  that an overlay was supplied, and nothing else about it -- not even its
+  item count, which is a fact about the overlay; a refusal says that overlay
+  items are unresolved, not how many.
 - **Read once, through one descriptor.** The file is opened once without
   blocking, judged by `fstat` on that descriptor, read within a size bound,
   and digested from the bytes that were parsed. A FIFO is refused rather
@@ -157,8 +162,12 @@ mechanism, and no edit to the disposition file stands in for it.
 Every resolved disposition needs a non-empty reason. A row carries exactly
 `id`, `source`, `disposition` and `reason`; a row or document carrying any
 other field -- an `approved_by`, a `human_approval` -- is refused rather than
-ignored, so nothing rides along that a later reader could mistake for
-something the checker accepted.
+ignored, so no FIELD rides along that a later reader could mistake for
+something the checker accepted. The `reason` is the one place free text
+lives, and it is not inspected: it can carry any sentence, including one
+asserting an approval or an authorization, and the checker neither reads nor
+endorses it. A reason is the developer's note to the next reader, never a
+claim the checker accepted, and a reader must not take it for one.
 
 ## Duplicate prevention
 
