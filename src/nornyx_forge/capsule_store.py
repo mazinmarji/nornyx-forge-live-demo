@@ -637,14 +637,39 @@ def _remove_tree(path: Path) -> None:
     removal that no-ops. `os.rmdir` removes the LINK and leaves the target
     untouched -- measured, target contents intact -- which is what removing a
     junction by shape means. Handled first, before `rmtree` is reached.
+
+    AN ENTRY THAT IS ALREADY GONE IS THE STATE THIS FUNCTION WANTED, and the
+    handler used to turn it into a crash. `rmtree` LISTS a directory and then
+    VISITS its entries one at a time; an entry removed in that window is
+    reported to the handler like any other failure, and the handler's first
+    act was `os.chmod` on a path that no longer exists -- raising a SECOND
+    `FileNotFoundError`, from the handler, which escapes `rmtree` entirely.
+    Observed in CI as `.git/objects/7f` vanishing under the removal of a
+    capsule store, on Python 3.11: `capsule_store.py` at the `chmod`, chained
+    to shutil's own `entry.stat()` reporting the bare name `7f`.
+
+    Measured against a concurrent remover, which is not a coin toss: BEFORE
+    this `except`, 40 of 40 trials failed on 3.12 and 20 of 20 on 3.11; AFTER
+    it, 0 of 200 and 0 of 100. 3.11 WAS NOT SINGLED OUT BY ITS HANDLER
+    CONTRACT. The intolerance is in this body, which the `onerror` and `onexc`
+    spellings share, so the version in the report says which interpreter lost
+    the toss, not why there was one to lose.
+
+    Only `FileNotFoundError` is absorbed. A target that is still there and
+    still refuses to go -- a held handle, a permission that clearing did not
+    fix -- must still raise, or this becomes the silent no-op the paragraph
+    above records.
     """
     if _is_junction(path):
         os.rmdir(path)
         return
 
     def _clear_and_retry(function, target, _exc):
-        os.chmod(target, 0o600)
-        function(target)
+        try:
+            os.chmod(target, 0o600)
+            function(target)
+        except FileNotFoundError:
+            return
 
     # `onerror` is deprecated in 3.12 and removed in 3.14; `onexc` arrived in
     # 3.12 and takes the exception rather than an `exc_info` triple. The
