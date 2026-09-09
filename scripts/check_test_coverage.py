@@ -693,7 +693,17 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # rises by one (9 at 96, 10 at 102), because `ceil(0.9n)` moved by five
     # where the module moved by six. The two are different quantities and the
     # comment beside `MINIMUM_COLLECTED` states each of them separately.
-    "tests/test_provider_authority_boundary.py": 92,
+    #
+    # ONE MAINTENANCE ROW after Tranche E, for a race this module's own rollback
+    # helper hit in CI on 3.11: `_remove_tree` died with `FileNotFoundError` on
+    # `.git/objects/7f`, a fanout directory that was there when `rmtree` listed
+    # the store and gone when it visited it. The handler chmod'd the vanished
+    # path and raised out of `rmtree`. It never skips -- the vanishing is
+    # injected at the listing, not raced, so it needs no threads and no
+    # platform. 102 -> 103, band(102) = 92 -> band(103) = 93: the module-floor
+    # sum rises by one and so does the module, so the slack it contributes is 10
+    # either way and the total the bands grant does not move.
+    "tests/test_provider_authority_boundary.py": 93,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1451,23 +1461,33 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3375   (113 modules)
-#     sum of the module floors    3092
-#     band(3375) = ceil(0.9*n)    3038
+#     collected across tests/     3376   (113 modules)
+#     sum of the module floors    3093
+#     band(3376) = ceil(0.9*n)    3039
 #     MINIMUM_COLLECTED           3100
-#     above the module sum         8
-#     below what collects         275
+#     above the module sum         7
+#     below what collects         276
 #
-# TRANCHE E MOVES ONE ROW AND ADDS NO MODULE. The process witness lives in the
-# module that already holds the seal boundary, so
-# tests/test_provider_authority_boundary.py collects 96 -> 102 (floor
-# band(96) = 87 -> band(102) = 92) and 113 modules still stand. The module-floor
-# sum rises by five to 3092 and the aggregate follows to 3100, keeping the same
-# 8 above it; the suite collects 3369 -> 3375, band(n) 3033 -> 3038, and the
-# working room below the floor 274 -> 275, because the collection rose by six
-# and the aggregate by five. No provider row moved and no skip was added: the
-# six new rows need neither a junction nor a symlink, only a byte-for-byte copy
-# of two directories, so they execute on every platform.
+# THE VANISHED-ENTRY REPAIR MOVES THE SAME ROW AND ADDS NO MODULE. One test in
+# tests/test_provider_authority_boundary.py, 102 -> 103 (floor band(102) = 92 ->
+# band(103) = 93), for the CI race described at that module's floor above. The
+# module-floor sum rises by one to 3093 and the suite collects 3375 -> 3376, so
+# band(n) goes 3038 -> 3039; MINIMUM_COLLECTED does not move, which is why the
+# room above the module sum falls 8 -> 7 while the room below what collects
+# rises 275 -> 276. The slack the per-module bands grant is unchanged: the
+# module and its floor each moved by one.
+#
+# TRANCHE E MOVED THE SAME ROW AND ADDED NO MODULE. The process witness lives in
+# the module that already holds the seal boundary, so
+# tests/test_provider_authority_boundary.py collected 96 -> 102 (floor
+# band(96) = 87 -> band(102) = 92) and 113 modules still stood. No provider row
+# moved and no skip was added: the six new rows need neither a junction nor a
+# symlink, only a byte-for-byte copy of two directories, so they execute on
+# every platform. ITS SUITE-WIDE TOTALS ARE NOT KEPT HERE. They described the
+# tree before the repair above and are false of this one, and a superseded
+# measurement left standing beside the thing it no longer measures is the rot
+# this block exists to stop -- the same reason the rebased totals two
+# paragraphs up are gone. What survives a later slice is the module delta.
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
