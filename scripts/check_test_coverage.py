@@ -697,7 +697,21 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # watching. It never skips, on any platform. 95 -> 96, band(95) = 86 ->
     # band(96) = 87, so the module's own slack is 9 either way and the total
     # the bands grant does not move.
-    "tests/test_provider_authority_boundary.py": 87,
+    #
+    # Tranche E adds SIX rows and no shapes, in the module that already holds
+    # the seal boundary because the process witness is that boundary's freshness
+    # question: the adapter-level rollback of store and seal together, the same
+    # attack through the shipped surface with its human restoration, the
+    # no-false-positive sweep over every writing route, the cross-restart limit
+    # pinned in the affirmative against the disclosure it names, the closed
+    # currency/continuity vocabulary, and the page's own words. None of them
+    # skips on any platform -- a byte-for-byte copy of two directories needs no
+    # junction and no symlink. 96 -> 102, band(96) = 87 -> band(102) = 92: the
+    # module-floor SUM rises by five, while the slack this module contributes
+    # rises by one (9 at 96, 10 at 102), because `ceil(0.9n)` moved by five
+    # where the module moved by six. The two are different quantities and the
+    # comment beside `MINIMUM_COLLECTED` states each of them separately.
+    "tests/test_provider_authority_boundary.py": 92,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -787,12 +801,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # vocabulary and field sets; digest binding and staleness; exact
     # coverage; `defer` only for a deferred item; no discovery under planted
     # decoys, with the structural lint stated as a lint; the in-repository
-    # overlay refusal as given, at every link and after resolution; and the
-    # sentinel sweep over every output, file, refusal and refusal context on
-    # the failure paths -- a symlink loop, a chain through the tree, a FIFO,
-    # invalid UTF-8, a repeated JSON key, a trailing line break in an
-    # identifier, an unhashable value, a deeply nested document, a repeated
-    # option, a stray argument, twenty-three malformed shapes.
+    # overlay refusal as given, at every component and link and after
+    # resolution; and the sentinel sweep over every output, file, refusal and
+    # refusal context on the failure paths -- a symlink loop, a chain through
+    # the tree, a directory-link chain, a FIFO, invalid UTF-8, a repeated JSON
+    # key, a trailing line break in an identifier, an unhashable value, a
+    # deeply nested document, a repeated option, a stray argument,
+    # twenty-three malformed shapes.
     "tests/test_standing_development_obligations.py": 96,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
@@ -1473,31 +1488,43 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than about the base under it:
 #
 # Re-measured for the STANDING-OBLIGATION ADMISSION mechanism (PR #51), after
-# its reconciliation with main as it stood AFTER TRANCHE D, the seal re-proof,
-# and one in-session adversarial review round. ONE MODULE WAS ADDED:
+# its reconciliation with main as it stood AFTER TRANCHE E, the monotonic
+# freshness slice, one in-session adversarial review round and one Codex
+# review round. ONE MODULE WAS ADDED:
 # tests/test_standing_development_obligations.py collects 106 with a floor at
 # band(106) = 96, so 114 modules stand. The DOCUMENT SWEEP moved as well:
 # docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md is a governance
 # document, so tests/test_recorded_measurements.py collects 199 -> 204 and its
 # floor follows band(199) = 180 -> band(204) = 184. The module-floor sum rises
-# by 100 to 3187 and the aggregate follows to 3195, keeping the same 8 above
-# it. The suite collects 3369 -> 3480, band(n) 3033 -> 3132, and the working
-# room below the floor moves 274 -> 285. THE SLACK THE BANDS GRANT moves
-# 282 -> 293: the new module sits 10 above its band and the sweep module now
-# sits 20 above its own, one more than before. An earlier reconciliation of
-# this same slice, against main before Tranche D, measured 3416 across 114
-# modules with the aggregate at 3137; those totals are gone from here for the
+# by 100 to 3192 and the aggregate follows to 3200, keeping the same 8 above
+# it. The suite collects 3375 -> 3486, band(n) 3038 -> 3138, and the working
+# room below the floor moves 275 -> 286. THE SLACK THE BANDS GRANT moves
+# 283 -> 294: the new module sits 10 above its band and the sweep module now
+# sits 20 above its own, one more than before. Earlier reconciliations of this
+# same slice, against main before Tranche D and before Tranche E, measured
+# 3416 and 3480 across 114 modules; those totals are gone from here for the
 # reason the paragraph above gives. NO PROVIDER ROW MOVED -- admission is
 # procedure and decides nothing about eligibility, approval or release.
 #
 # (rows below):
 #
-#     collected across tests/     3480   (114 modules)
-#     sum of the module floors    3187
-#     band(3480) = ceil(0.9*n)    3132
-#     MINIMUM_COLLECTED           3195
+#     collected across tests/     3486   (114 modules)
+#     sum of the module floors    3192
+#     band(3486) = ceil(0.9*n)    3138
+#     MINIMUM_COLLECTED           3200
 #     above the module sum         8
-#     below what collects         285
+#     below what collects         286
+#
+# TRANCHE E MOVES ONE ROW AND ADDS NO MODULE. The process witness lives in the
+# module that already holds the seal boundary, so
+# tests/test_provider_authority_boundary.py collects 96 -> 102 (floor
+# band(96) = 87 -> band(102) = 92) and 113 modules still stand. The module-floor
+# sum rises by five to 3092 and the aggregate follows to 3100, keeping the same
+# 8 above it; the suite collects 3369 -> 3375, band(n) 3033 -> 3038, and the
+# working room below the floor 274 -> 275, because the collection rose by six
+# and the aggregate by five. No provider row moved and no skip was added: the
+# six new rows need neither a junction nor a symlink, only a byte-for-byte copy
+# of two directories, so they execute on every platform.
 #
 # The two margins are ROWS now, not prose. A review moved the constant and its
 # row together to 1650 and left the sentences saying "15 above the sum" and
@@ -1518,7 +1545,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 293 in total, and the aggregate refuses
+# per-module bands already grant 294 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1551,7 +1578,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3195
+MINIMUM_COLLECTED = 3200
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

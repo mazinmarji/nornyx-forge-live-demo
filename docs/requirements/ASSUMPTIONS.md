@@ -757,7 +757,19 @@ seal establishes what Forge last wrote, not that it is the latest thing
 Forge wrote: an actor who can replace the store, its marker and its seal
 together with an earlier consistent set is not detected by any of them, so
 the surface reports the seal's currency as `not_independently_anchored`
-and monotonic external anchoring is deferred rather than claimed. Not
+and monotonic external anchoring is deferred rather than claimed. That
+sentence has since been MEASURED rather than deduced, and what it permits --
+including the erasure of a recorded breach by the actor who caused it -- is
+written out in A-029, along with the four durable witnesses that were built
+for it, each of which was rolled back with the set it was meant to anchor OR
+undone by the same user -- the DENY ACE on the seal file was never rolled
+back at all: `os.replace` went straight through it, and the owner's implicit
+`WRITE_DAC` then stripped it. A-029 states each result per candidate and
+counts the same four. A-029 also
+carries the one thing that could be earned without external authority: a
+`continuity` field held for the life of one running application instance,
+reported beside the currency word rather
+than replacing it, because the currency word does not move. Not
 claimed anywhere: sandboxing of any provider, an authenticated human
 identity, cryptographic provenance, A-018, or PR-18.
 
@@ -3702,7 +3714,180 @@ criterion whose semantics are applied to real evidence rather than left
 advisory; and the claim discipline in `CLAUDE.md` that forbids substituting a
 label for the thing measured.
 
-## A-029 Standing development admission is procedure, not authority
+## A-029 The seal's freshness is held by one running application instance, and by nothing else
+
+**Assumption.** A wholesale rollback of the authority store -- the store
+directory, its committed seal marker and its seal, replaced together with an
+earlier consistent set -- is detected by the Forge application instance that
+wrote the newer seal, for as long as that instance is alive, and is not
+detected in any other circumstance.
+The seal's currency is unchanged: it is still reported as
+`not_independently_anchored`, because nothing here anchors it as the newest
+thing Forge ever wrote.
+
+**Why it needs stating.** A-022 already discloses that the seal establishes
+what Forge LAST WROTE and not that it is the LATEST, and that an actor who
+replaces store, marker and seal together is caught by none of them. That
+sentence was a deduction. It is now a measurement, taken through the shipped
+surface at this slice's parent revision, and the harm it permits is worth
+naming exactly:
+
+- Driven to CONFIRM, sealed, then built to GOVERN, then the store directory
+  and the seal directory copied back from a byte-for-byte snapshot of the
+  CONFIRM state: `GET /api/state` answered `200` with stage `CONFIRM`,
+  `POST /api/journey/restore` answered `409 "the store matches its seal;
+  there is nothing to restore"`, and the GOVERN revision was reachable from
+  nowhere Forge can read. A fresh process over the same two directories
+  answered identically, and a second build then ran the project to GOVERN
+  again at a new revision. The store had held two incompatible GOVERN
+  histories over its life and nothing Forge holds knew it.
+- The same move ERASES A RECORDED BREACH. A provider forgery caught mid-build
+  is recorded as `BUILD / failed` with the detail that names it; the actor who
+  caused it copies the pre-build set back over the two locations, Forge
+  restarts, and the lifecycle reads `CONFIRM / active` with the `failed` event
+  and its detail gone from every place Forge can look.
+
+**What was tried, and why none of it is here.** Four durable witnesses were
+built as throwaway store subclasses and attacked as the same unelevated
+operating-system user, and the results are stated per candidate rather than
+summarised, because "a witness was tried" is not a measurement:
+
+    candidate (all in scratch, never the user's own ~/.nornyx)   result
+    a counter beside the seal, IN the seal directory             UNDETECTED
+    a mirror of the sealed revision in a SECOND Forge directory
+      -- actor forgets the mirror                                DETECTED
+      -- actor copies the mirror back too                        UNDETECTED
+    an append-only log in a THIRD place
+      -- actor forgets the log                                   DETECTED
+      -- `open(log, "w")` truncates its last line                UNDETECTED
+      -- actor copies all three locations back                   UNDETECTED
+    `icacls /deny <user>:(W,D,DC)` on the seal file
+      -- direct write                             REFUSED, PermissionError 13
+      -- `os.replace` of an earlier seal over it              SUCCEEDED
+      -- `os.remove` of it                                    SUCCEEDED
+      -- `icacls /remove:d <user>` afterwards          rc 0, write SUCCEEDED
+
+The counter's own file read `2` after the rollback: it travelled back with the
+directory it was meant to anchor. NTFS offers no append-only attribute, so the
+log's name is aspirational. The DENY ACE does not even prevent REPLACEMENT --
+the seal's content became the earlier one through it -- because the parent
+directory grants the owner `FILE_DELETE_CHILD`, and the owner's implicit
+`WRITE_DAC` then removes the ACE outright. A hash chain over seals was NOT
+built separately: it is the counter's location class, and a location that
+travels with the set anchors nothing whatever it stores. What resists the
+restoration of a whole filesystem set
+is an authority outside the restoration domain -- a second operating-system
+principal, or hardware -- and that is external authority. The Windows Event
+Log and a TPM monotonic counter are both such authorities and both are
+therefore OUT OF SCOPE here: adopting one is a human decision that has not
+been taken, and this repository may not create, adopt, infer or backdate an
+external authority. The ledger reached the same conclusion for the same reason
+(`nornyx_runtime.py`, `tests/test_ledger_atomicity.py`): no local witness
+survives restoration of the whole set.
+
+**What is here instead, stated at its exact width.** `ProcessWitness` in
+`capsule_store` remembers, in memory and nowhere else, the snapshot this
+application instance last sealed or last found clean for each store.
+`assert_sealed` asks
+that question LAST, after every check the seal itself can make, and a seal
+that is not the held one is `CapsuleSealReplaced` -- a `CapsuleSealError`
+carrying the WITNESS's snapshot, so the human restore route puts back what
+this instance wrote rather than what the actor left. The surface reports it as
+a SEPARATE field beside the unchanged currency: `authority.continuity` is
+`"process"` or absent, and `authority.held_since` names the interval.
+
+**THE WORD IS `"process"`; THE BOUNDARY IS THE APPLICATION INSTANCE**, which
+is the narrower of the two, and the disclosure is the boundary rather than the
+word. `create_app` constructs exactly one `ProcessWitness` and hands it to
+every store handle it makes, so nothing here is scoped to the operating-system
+process. `"process"` means precisely this and no more: since `held_since`, no
+load THROUGH THIS APPLICATION INSTANCE has found a seal for this store other
+than the one this instance last wrote or last found clean. Measured inside a
+single pid (5244): with the rolled-back set on disk, the first instance
+refused `GET /api/state` with `409`, and a second `create_app` over the same
+two directories -- built in the SAME process, at that same instant -- answered
+`200 / CONFIRM` with `continuity` `"process"` over its own `held_since`. The
+shipped composition builds one instance per process (`main` calls `assemble`
+once; `windows_runtime` imports without re-calling it; the reopen route
+reopens a browser rather than the application), so instance lifetime and
+process lifetime coincide on the shipped path and the word is not wrong there.
+The guarantee is still the instance's, and a composition that made a second
+instance would widen this without touching a line of the mechanism. The value
+word is left alone deliberately: making the witness process-wide is a
+BEHAVIOUR change, it reddens the limit test below, and no sentence is worth
+that.
+
+**A ROLLBACK ACROSS A RESTART OF FORGE IS THE LIMIT.** What actually resets
+the witness is a NEW `create_app`; on the shipped path the only way to get one
+is to terminate and relaunch Forge, which is a same-operating-system-user act
+and exactly the actor A-015 concedes, and the new instance adopts whatever
+consistent set it finds on disk. Measured: after the rollback above, the
+running instance refuses every authority route, and a new `create_app` over
+the same two directories answers `200 / CONFIRM` with `currency` still
+`not_independently_anchored`, `continuity` `"process"` over its OWN interval,
+and a restore route that says there is nothing to restore. So against the
+A-015 actor the witness **raises the cost** of a silent rollback -- it now
+requires stopping Forge, which is a visible side effect -- and it is NOT a
+guarantee and not an anchor. It is a genuine detection only against an actor
+that cannot reach a fresh instance. That behaviour is pinned in the
+affirmative
+by `test_a_rollback_across_a_restart_is_the_disclosed_limit`, which also reads
+this paragraph, so the cross-restart case cannot be closed without rewriting
+the disclosure in the same commit. That test's proxy for a restart IS a second
+`create_app` in the test process, which is the boundary named above; it is a
+faithful proxy for the restart precisely because the witness is the
+instance's, and it is stated here so nobody reads the test as evidence about
+operating-system processes.
+
+**Three further residues, none closed.** (1) A rollback that ALSO leaves the
+store disagreeing with the rolled-back seal is reported as the ordinary seal
+breach and the LOAD path hands back the disk seal's snapshot, because a store
+that fails its own seal has a finding of its own that the witness must not
+displace; the human restore route consults the witness first and so still
+restores to what this instance wrote. (2) Same-user writes into the instance's
+own memory are outside the defended class, exactly as they are for the
+in-memory hold the build window already relies on. Whether a provider confined
+by the Windows restricted-token sandbox can terminate the parent Forge process
+is UNMEASURED; if it cannot, the witness is a real detection against that
+provider rather than a cost.
+
+(3) **THE DEVELOPER CLI CARRIES NO WITNESS, AND THAT HAS A LIVE CONSEQUENCE.**
+`build --project-dir` in `cli.py` constructs its `CapsuleStore` with
+`seal_dir` and no `witness`, and `assert_sealed` returns before the fourth
+question when there is none -- so a build launched through the CLI reads a
+wholesale-rolled-back store as an honest one and takes its CONFIRMED provider
+from it. Measured in the same single pid (5244) as the boundary above: with
+the surface refusing that store `409` on every authority route, a CLI-shaped
+`CapsuleStore(root, seal_dir=...)` answered `load()` with the rolled-back
+capsule and `load_experience()` with the rolled-back `CONFIRM / active`. The
+adapter half of that is already pinned by
+`test_a_rollback_of_store_and_seal_together_is_caught_while_forge_runs`, whose
+control is a witnessless store; what was missing was the disclosure that the
+shipped CLI IS that shape. No witness is added here: a short-lived process
+that performs one `load()` and exits establishes no interval to hold, so
+`continuity` from it would be a field that says nothing, and inventing one to
+close a sentence is the substitution this record exists to refuse. The defect
+corrected here is the silence, not the decision; giving the CLI a durable
+freshness check needs the external authority named above, which is a human
+decision that has not been taken.
+
+None of this changes provider eligibility, the
+seal's own bound, `CapsuleSealMissing`'s unrestorable finding, or the
+re-seal-after-reset question A-027 hands to a later slice.
+
+**One neighbouring inaccuracy, observed and NOT this slice's.** Around a
+build, a restoration is recorded with a detail that attributes the movement of
+the store to the provider, which is more than the seal check measures -- the
+seal compares a revision, a working tree and file bytes, and names no actor.
+A-022 already carries that qualification in its own words ("an attribution
+rather than a measurement"). It predates this slice, its history has NOT been
+measured here, and it is recorded in this place only so the next reader does
+not mistake it for something this change introduced.
+
+**Serves.** BRD-005, `CLAUDE.md` ("a gate may claim only what it measures"),
+and A-022's own statement of the seal's bound.
+
+## A-030 Standing development admission is procedure, not authority
 
 **Assumption.** A standing obligation that must survive a change of model,
 tool, workstation or developer is carried by a public, machine-readable
