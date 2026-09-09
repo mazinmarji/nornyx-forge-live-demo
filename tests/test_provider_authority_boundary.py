@@ -35,6 +35,7 @@ sandbox's reach; within the same operating-system user's reach.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import stat
@@ -1319,12 +1320,55 @@ def _plant_shape(shape: str, path: Path, outside: Path) -> str | None:
         os.link(other, path)
         assert other.stat().st_nlink == 2, "the hardlink did not land"
         return None
+    if shape == "read-only hardlink":
+        # THE SHAPE THAT SEPARATES A REMEDY FROM A LEAK. Both names reach one
+        # file, so a chmod through the inside name clears the bit on the
+        # OUTSIDE one; the plant is asserted through the outside name for
+        # exactly that reason, and the rows read it back there afterwards.
+        other = outside / "hardlink-other-readonly.txt"
+        other.write_text("a file the store has no business touching\n",
+                         encoding="utf-8", newline="")
+        os.link(other, path)
+        os.chmod(path, stat.S_IREAD)
+        assert other.stat().st_nlink == 2, "the hardlink did not land"
+        assert not (os.stat(other).st_mode & stat.S_IWRITE), (
+            "the read-only bit did not reach the file through the link, so this "
+            "plant cannot show a guard refusing to clear it")
+        return None
     if shape == "directory":
         path.mkdir()
         (path / "occupant.txt").write_text("x\n", encoding="utf-8", newline="")
         assert path.is_dir() and not path.is_symlink(), "the directory did not land"
         return None
     raise AssertionError(f"unknown shape {shape!r}")
+
+
+def _plant_at_authority(shape: str, path: Path, outside: Path,
+                        stack: contextlib.ExitStack) -> str | None:
+    """`_plant_shape`, at a name that ALREADY holds the store's authority file.
+
+    TWO SHAPES ACT ON WHAT IS THERE RATHER THAN REPLACING IT, because that is
+    what makes them the specimens they are: a read-only bit and a held handle
+    are things done TO the worker's authority, not instead of it, and both are
+    reached by a same-operating-system-user command A-015 concedes. Every
+    other shape needs the name free first, and freeing it here is one plain
+    unlink -- the entry is always a regular file the store itself just wrote,
+    so the instrument never needs the shape dispatch it exists to falsify.
+
+    The handle is entered on the caller's stack, so it closes when the row
+    ends and no cell leaks a lock into the next one.
+    """
+    if shape == "read-only file":
+        os.chmod(path, stat.S_IREAD)
+        assert not (os.stat(path).st_mode & stat.S_IWRITE), "the +R did not land"
+        return None
+    if shape == "held handle":
+        stack.enter_context(open(path, "rb"))
+        return None
+    if os.path.lexists(path):
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        os.unlink(path)
+    return _plant_shape(shape, path, outside)
 
 
 def _entry_state(path: Path) -> str:
@@ -1657,13 +1701,35 @@ def _the_rebuild_survives_every_shape_and_instant(
     -- which is why BOTH files are neutralised, and why this row asserts the
     empty set rather than one route.
 
-    TWO CLAUSES, because the honest invariant is not one. At every instant AT
-    OR AFTER the marker write, nothing is readable at all. INSIDE the
-    neutralisation -- one file gone, one still there, the marker untouched --
-    the store is not yet closed, and what is asserted there is that the
-    restoration OPENED NOTHING: the readable set is a subset of what it was
-    when the call began, and the marker on disk is still exactly what the
-    worker left, which is what proves the neutralisation runs first.
+    ONE CLAUSE NOW, AND IT USED TO BE TWO. The instant INSIDE the
+    neutralisation -- one file gone, one still there -- was the weak cell: the
+    marker had not been written yet, so all this row could ask of it was that
+    the restoration OPENED NOTHING, the readable set a subset of what the call
+    found. That was honest and it was not enough, because the set it was a
+    subset of could be everything: at that instant a store whose worker had
+    deleted the marker was still readable, and one unprivileged `attrib +R` on
+    an authority file made the failure PERMANENT there rather than transient.
+    `_rebuild` now writes the marker best-effort on ANY failure of the
+    neutralisation, so that instant closes like every other and this row
+    asserts the same empty set at all five.
+
+    THE STRENGTHENING IS A MEASUREMENT AND NOT A REWORDING, and the campaign
+    says exactly how far it reaches: reverting the best-effort write reddens
+    the `non-existent` and `dangling junction` rows of this parametrisation and
+    NO OTHER. That is not a gap. They are the two plants for which
+    `protected()` answers False -- every other shape leaves an entry at
+    `.forge-seal` that `protected()` counts, so those rows never rested on that
+    write at all. A first draft of this paragraph said "every shape here",
+    which the campaign falsified; the narrower sentence is the true one.
+
+    THE ORDER IS NOT PROVEN HERE ANY MORE, and it never was proven WELL here.
+    This row used to assert that the marker on disk still matched the plant at
+    that instant, and read that as the neutralisation running first. It is a
+    state, and a state is consistent with more than one ordering; it is also
+    now false by design, since the failure path writes the marker on purpose.
+    `test_the_rebuild_neutralises_the_authority_before_it_touches_the_marker`
+    records the sequence of calls a clean rebuild makes and asserts it
+    directly, which is the row that carries the ordering.
 
     A restoration that fails is a restoration that did not happen; it must
     never be a degradation Forge itself caused. That is the whole difference
@@ -1706,21 +1772,14 @@ def _the_rebuild_survives_every_shape_and_instant(
                 f"{shape} / {instant} / {form}: the arming never fired, so the row "
                 "did not reach the instant it names and its verdict means nothing.\n"
                 + "\n".join(observed))
-            if instant == "inside the neutralisation":
-                assert after <= before, (
-                    f"{shape} / {instant} / {form}: the restoration OPENED an "
-                    "authority route it found closed.\n" + "\n".join(observed))
-                assert _entry_state(capsule / ".forge-seal") == planted, (
-                    f"{shape} / {instant} / {form}: the seal marker changed before "
-                    "the neutralisation finished, so the marker write does NOT come "
-                    "after it and the ordering this design rests on is gone.\n"
-                    + "\n".join(observed))
-            else:
-                assert after == frozenset(), (
-                    f"{shape} / {instant} / {form}: one same-user deletion of the "
-                    "seal read the store as legacy. Entries: "
-                    f"{sorted(path.name for path in capsule.iterdir())}\n"
-                    + "\n".join(observed))
+            assert after <= before, (
+                f"{shape} / {instant} / {form}: the restoration OPENED an "
+                "authority route it found closed.\n" + "\n".join(observed))
+            assert after == frozenset(), (
+                f"{shape} / {instant} / {form}: one same-user deletion of the "
+                "seal read the store as legacy. Entries: "
+                f"{sorted(path.name for path in capsule.iterdir())}\n"
+                + "\n".join(observed))
 
 
 @pytest.mark.parametrize("shape", [
@@ -1957,6 +2016,502 @@ def test_an_ordinary_concurrent_reader_cannot_open_the_store_to_a_legacy_read(tm
         "the observer never opened anything, so this row measured a restoration "
         "with no concurrent reader at all and proves nothing"
     )
+
+
+# ---------------------------------------------------------------------------
+# D6  the cross product FOLLOWS THE REMOVAL to the site round 5 created
+# ---------------------------------------------------------------------------
+#
+# ROUND 5 MADE THE AUTHORITY PATHS A REMOVAL SITE FOR THE FIRST TIME and the
+# shape axis did not follow it there. Every plant in D5 goes to `.forge-seal`;
+# `os.chmod(..., S_IREAD)` appeared exactly once in this file, inside
+# `_plant_shape`, and nothing planted anything at `capsule.json` or
+# `experience.json` as a SHAPE. So `_remove_entry`'s plain-file branch -- a
+# bare `os.unlink`, the one primitive in the module that did not clear the
+# read-only bit while both its siblings did -- became the first removal that
+# runs while `protected()` is still False, and its refusal became a fall-open.
+# Measured through the shipped `restore()`, `.git` destroyed and the marker
+# deleted, one `attrib +R experience.json` and nothing else:
+#
+#     BEFORE   ['.forge-capsule', 'capsule.json', 'experience.json']
+#     restore  CapsuleStoreError: PermissionError [WinError 5]
+#     AFTER    ['.forge-capsule', 'experience.json']
+#     marker absent   protected() False   sealless load RETURNED 'READY'
+#     attempts 2 and 3: identical. PERMANENT.
+#
+# TWO PROPERTIES, AND THEY ARE NOT THE SAME PROPERTY. Clearing the bit makes
+# the remedy WORK again -- recoverability. But a held handle raises WinError 32
+# and no chmod reaches it, so no list of shapes can be the whole answer, and
+# four rounds of extending such a list is what this one stops. `_rebuild`
+# therefore writes the seal marker, best effort, on ANY failure of the
+# neutralisation: whatever defeated the removal, the store ends PROTECTED and
+# the residue is a refusal instead of a legacy read -- fail-closed. The rows
+# below assert the second for every cell and the first where it is reachable,
+# and the two are killed by different mutations: reverting the read-only retry
+# reddens the recoverability rows only, and removing the best-effort write
+# reddens the fail-closed rows only. Measured both ways.
+
+_AUTHORITY_SHAPES = _SHAPES + ("read-only hardlink", "held handle")
+_AUTHORITY_FORMS = ("clean", "oserror", "crash")
+
+
+def _arm_the_removal_of(target: str, failure: BaseException,
+                        fired: list[str]):
+    """Make `_remove_entry` raise `failure` at ONE authority name and pass
+    every other path through to the real one.
+
+    Keyed on the NAME rather than on a call count, so the row reaches the
+    instant it names whichever position that file holds in `_AUTHORITY_FILES`:
+    at `capsule.json` the FIRST removal fails and nothing has been touched, at
+    `experience.json` the SECOND fails with the first already gone. That
+    second cell is the one a shipped sentence denied could exist.
+    """
+    survivor = store_module._remove_entry
+
+    def armed(path: Path):
+        if path.name == target:
+            fired.append(path.name)
+            raise failure
+        return survivor(path)
+
+    return armed
+
+
+def _the_neutralisation_fails_closed_at_every_shape(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str) -> None:
+    """One shape at BOTH authority names, crossed with a clean run, a handled
+    `OSError` and a process death, driven through the shipped `restore()`.
+
+    THE INVARIANT IS ONE SENTENCE AND IT DOES NOT NAME A SHAPE: however the
+    neutralisation ends, the store is left PROTECTED and a sealless load can
+    read nothing. `protected()` True with the seal gone is `CapsuleSealMissing`
+    on both routes, so the two halves of the assertion are the conjunction the
+    fall-open needs, measured rather than proxied.
+
+    EVERY CELL ASSERTS ITS PRECONDITION IS REALLY A FALL-OPEN before the call.
+    A row whose plant destroyed both authority routes would pass by having
+    nothing left to open, which proves nothing at all; `before` is asserted
+    non-empty, and an armed cell asserts its arming fired.
+
+    WHAT THE `clean` FORM IS FOR. It runs the real removal against the real
+    shape with nothing patched, so the row measures what the operating system
+    does rather than what the test supposes it does -- which is how the
+    read-only cell was found in the first place. Its extra assertion is
+    two-sided and DERIVED rather than listed per shape: a restoration that
+    RETURNED must leave the store matching its seal, and one that was REFUSED
+    must leave the plant exactly as it stood. The second half is what stops a
+    partial removal being reported as a clean refusal. Neither half decides
+    which shapes may refuse -- that is read off the disk, and the two that do
+    reach it here are disclosed in A-022 rather than encoded in a list.
+
+    RECOVERABILITY IS A DIFFERENT PROPERTY AND HAS ITS OWN ROW. A permanent
+    refusal is a defeated remedy even while it is fail-closed, and `restore()`
+    is the only remedy this surface has, so the read-only shape is asserted to
+    RECOVER by
+    `test_a_read_only_authority_file_no_longer_permanently_defeats_the_restoration`.
+    Keeping the two apart is deliberate, and the campaign measured the split:
+    reverting the read-only retry reddens that ONE row and leaves every row
+    here green, which is what tells a later reader that this matrix proves
+    fail-closed and not repair.
+
+    A HARDLINK IS NEVER REACHED THROUGH, and the two link rows read the
+    outside file back: its bytes, and for the read-only one its bit. An
+    unguarded chmod through the inside name clears the bit on the file
+    outside -- measured directly, `True` before and `False` after, which is
+    why `_solely_owned_file` exists and why this row would catch its removal.
+    """
+    observed: list[str] = []
+    for target in store_module._AUTHORITY_FILES:
+        for form in _AUTHORITY_FORMS:
+            cell = tmp_path / f"cell-{len(observed)}"
+            store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+            store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                             experience=start_experience(Actor("human", "casey"), AT))
+            sealed = store.sealed()
+            capsule, outside = store.root, cell / "outside"
+            forge_ready(capsule)
+            _remove_tree(capsule / ".git")     # the honest reset route is unreachable
+            (capsule / ".forge-seal").unlink()  # one same-user deletion; A-015 concedes it
+
+            with contextlib.ExitStack() as stack:
+                reason = _plant_at_authority(shape, capsule / target, outside, stack)
+                if reason is not None:
+                    pytest.skip(reason)
+                planted = _entry_state(capsule / target)
+                before = _readable_routes(capsule, store)
+                assert before, (
+                    f"{shape} / {target} / {form}: the plant left NO authority route "
+                    "readable, so this cell has no fall-open to close and would pass "
+                    "for the wrong reason.\n" + "\n".join(observed))
+
+                fired: list[str] = []
+                failure: BaseException = (
+                    SystemExit("the process died inside the neutralisation")
+                    if form == "crash" else OSError(28, "No space left on device"))
+                with monkeypatch.context() as patch:
+                    if form != "clean":
+                        patch.setattr(store_module, "_remove_entry",
+                                      _arm_the_removal_of(target, failure, fired))
+                    outcome = "returned"
+                    try:
+                        store.restore(sealed)
+                    except (CapsuleStoreError, SystemExit) as exc:
+                        outcome = type(exc).__name__
+
+                after = _readable_routes(capsule, store)
+                protected = store.protected()
+                observed.append(
+                    f"{target:<16} {form:<8} planted={planted[:24]:<24} "
+                    f"{outcome:<18} protected={protected!s:<5} "
+                    f"before={sorted(before)} after={sorted(after)}")
+
+                assert (form == "clean") or fired, (
+                    f"{shape} / {target} / {form}: the arming never fired, so the row "
+                    "did not reach the removal it names and its verdict means "
+                    "nothing.\n" + "\n".join(observed))
+                assert protected, (
+                    f"{shape} / {target} / {form}: the neutralisation ended with the "
+                    "store NOT protected, so a residue Forge could not clean is a "
+                    "legacy read rather than a refusal. Entries: "
+                    f"{sorted(path.name for path in capsule.iterdir())}\n"
+                    + "\n".join(observed))
+                assert after == frozenset(), (
+                    f"{shape} / {target} / {form}: one same-user deletion of the seal "
+                    "read the store as legacy. Entries: "
+                    f"{sorted(path.name for path in capsule.iterdir())}\n"
+                    + "\n".join(observed))
+
+                if form == "clean" and outcome == "returned":
+                    assert store.seal_problems(store.sealed()) == [], (
+                        f"{shape} / {target} / clean: the restoration RETURNED but "
+                        "the store does not match its seal, so it reported a repair "
+                        "it did not make.\n" + "\n".join(observed))
+                elif form == "clean":
+                    # A REFUSAL MUST BE THE OPERATING SYSTEM'S, NOT FORGE'S. The
+                    # plant is still exactly what it was, so the removal really
+                    # could not take it -- rather than Forge dropping the file and
+                    # giving up. Which shapes reach here is not listed: it is read
+                    # off the disk, and A-022 discloses the two that do.
+                    assert _entry_state(capsule / target) == planted, (
+                        f"{shape} / {target} / clean: the restoration was refused "
+                        "and the plant is GONE, so the refusal is not the shape "
+                        "standing its ground -- it is a partial removal reported "
+                        "as a failure.\n" + "\n".join(observed))
+
+                if shape in ("hardlink", "read-only hardlink"):
+                    victim = outside / ("hardlink-other-readonly.txt"
+                                        if shape == "read-only hardlink"
+                                        else "hardlink-other.txt")
+                    assert victim.read_text(encoding="utf-8") == \
+                        "a file the store has no business touching\n", (
+                        f"{shape} / {target} / {form}: the removal reached a file "
+                        "OUTSIDE the store through the planted link.\n"
+                        + "\n".join(observed))
+                    if shape == "read-only hardlink":
+                        assert not (os.stat(victim).st_mode & stat.S_IWRITE), (
+                            f"{shape} / {target} / {form}: the read-only bit was "
+                            "cleared on a file OUTSIDE the store. `os.chmod` acts on "
+                            "the file and not the name, so a retry that does not "
+                            "check `st_nlink` frees whatever the worker linked in.\n"
+                            + "\n".join(observed))
+
+
+@pytest.mark.parametrize("shape", [
+    pytest.param(shape, id=shape.replace(" ", "-"))
+    for shape in _AUTHORITY_SHAPES if "junction" not in shape])
+def test_the_neutralisation_fails_closed_at_every_authority_shape(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """Every shape but the two junctions, which need their own skip reason.
+    See `_the_neutralisation_fails_closed_at_every_shape`."""
+    _the_neutralisation_fails_closed_at_every_shape(tmp_path, monkeypatch, shape)
+
+
+@pytest.mark.skipif(os.name != "nt", reason=_NO_JUNCTIONS)
+def test_the_neutralisation_fails_closed_at_a_live_junction_authority(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """See `_the_neutralisation_fails_closed_at_every_shape`."""
+    _the_neutralisation_fails_closed_at_every_shape(tmp_path, monkeypatch, "live junction")
+
+
+@pytest.mark.skipif(os.name != "nt", reason=_NO_JUNCTIONS)
+def test_the_neutralisation_fails_closed_at_a_dangling_junction_authority(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """See `_the_neutralisation_fails_closed_at_every_shape`."""
+    _the_neutralisation_fails_closed_at_every_shape(tmp_path, monkeypatch, "dangling junction")
+
+
+def test_a_read_only_authority_file_no_longer_permanently_defeats_the_restoration(
+        tmp_path: Path):
+    """THE P1 OF ROUND 6, DRIVEN THROUGH THE SHIPPED `restore()` WITH NOTHING
+    PATCHED -- and driven three times, because permanence is the finding.
+
+    One `attrib +R experience.json` is a same-operating-system-user command
+    A-015 concedes, and `_replace_fresh`'s own docstring names it as the
+    capability that "would otherwise disable the product's human recovery
+    route permanently". It named it for the RENAME. The removal had no such
+    retry, and round 5 put the removal in front of the marker write. Measured
+    at the parent of this commit:
+
+        BEFORE   ['.forge-capsule', 'capsule.json', 'experience.json']
+        restore  CapsuleStoreError: PermissionError [WinError 5]
+        AFTER    ['.forge-capsule', 'experience.json']
+        marker absent   protected() False   sealless load RETURNED 'READY'
+        restore #2, #3: raised identically; the forged stage stayed readable
+
+    So a shipped sentence -- "re-running `restore()` with the same seal repairs
+    it. That is fail-closed and recoverable, not unrecoverable" -- was false
+    for this shape: the bit does not clear itself, so every later call fails
+    the same way. THIS ROW IS THE RECOVERABILITY HALF and it is the one the
+    read-only retry kills; the fail-closed half is asserted by the matrix
+    above and survives this mutation, which is why the two are separate rows.
+
+    The precondition is pinned to the state `_rebuild` exists for. `.git` is
+    destroyed, so the honest `git reset --hard` route cannot run; with `.git`
+    intact the honest route repairs the store and the defect is unreachable,
+    and that is asserted here too rather than left as a claim.
+    """
+    for git_intact in (True, False):
+        cell = tmp_path / ("git-intact" if git_intact else "git-destroyed")
+        store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+        store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                         experience=start_experience(Actor("human", "casey"), AT))
+        sealed = store.sealed()
+        capsule = store.root
+        forge_ready(capsule)
+        if not git_intact:
+            _remove_tree(capsule / ".git")
+        (capsule / ".forge-seal").unlink()
+        os.chmod(capsule / "experience.json", stat.S_IREAD)
+        assert not (os.stat(capsule / "experience.json").st_mode & stat.S_IWRITE), (
+            "the read-only plant did not land, so this row proves nothing")
+        assert _readable_routes(capsule, store) == frozenset({"capsule", "experience"}), (
+            "the precondition is not the fall-open this row exists to close")
+
+        for attempt in (1, 2, 3):
+            revision, notes = store.restore(sealed)
+            assert revision, f"{cell.name} attempt {attempt}: no revision"
+            assert store.protected(), f"{cell.name} attempt {attempt}: not protected"
+            assert store.seal_problems(store.sealed()) == [], (
+                f"{cell.name} attempt {attempt}: the store does not match its seal")
+            assert _readable_routes(capsule, store) == frozenset(), (
+                f"{cell.name} attempt {attempt}: a sealless load can still read "
+                f"{sorted(path.name for path in capsule.iterdir())}")
+            assert _store_experience_stage(capsule, store) == "DISCOVER", (
+                f"{cell.name} attempt {attempt}: the forged stage survived")
+            if not git_intact:
+                assert any("rebuilt" in note for note in notes), (
+                    f"{cell.name} attempt {attempt}: the rebuild route was not the "
+                    f"one taken, so this row did not reach `_rebuild`: {notes}")
+            # The next attempt must find the same specimen, not a repaired store.
+            forge_ready(capsule)
+            if not git_intact:
+                _remove_tree(capsule / ".git")
+            (capsule / ".forge-seal").unlink()
+            os.chmod(capsule / "experience.json", stat.S_IREAD)
+
+
+def _store_experience_stage(capsule: Path, store: CapsuleStore) -> str:
+    """The stage a FRESH, SEAL-CHECKING load reads off the store as it stands,
+    or the refusal it raises instead.
+
+    Deliberately NOT the sealless read `_readable_routes` makes. That one asks
+    whether a store falls open when its seal is deleted; this one asks whether
+    the restoration actually put the sealed authority back, which is the
+    question a permanent refusal hides. An earlier spelling of this helper
+    deleted the seal first and then asserted `DISCOVER`, which a correctly
+    protected store answers `CapsuleSealMissing` to -- the assertion was
+    unsatisfiable and the instrument, not the store, was wrong.
+    """
+    try:
+        return CapsuleStore(capsule, seal_dir=store.seal_dir).load_experience()["stage"]
+    except Exception as exc:                       # noqa: BLE001 -- any refusal will do
+        return f"REFUSED {type(exc).__name__}"
+
+
+def test_the_second_authority_removal_can_raise_with_the_first_already_gone(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A SHIPPED SENTENCE SAID THIS STATE COULD NOT EXIST, and it can.
+
+    `_rebuild` read: "If the neutralisation itself raises, it raises BEFORE
+    anything else has been touched -- so the store is left exactly as the
+    worker left it, which is a restoration that did not happen rather than a
+    degradation Forge caused." `_AUTHORITY_FILES` is ordered `(capsule.json,
+    experience.json)`, so a failure at the SECOND name happens with the first
+    already removed. The sentence counted the function as one statement.
+
+    THE STATE IS REAL AND IT IS SURVIVABLE, and this row asserts both halves
+    rather than only the comfortable one: `capsule.json` really is gone, the
+    seal marker really was written on the way out, and the store therefore
+    refuses on BOTH routes rather than answering the worker's forged
+    `experience.json` -- which is exactly what it did before the best-effort
+    write existed. Reached with nothing patched but the removal itself, so the
+    row cannot pass because the neutralisation never ran.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")
+    (capsule / ".forge-seal").unlink()
+    assert _readable_routes(capsule, store) == frozenset({"capsule", "experience"})
+
+    fired: list[str] = []
+    monkeypatch.setattr(store_module, "_remove_entry", _arm_the_removal_of(
+        "experience.json", OSError(28, "No space left on device"), fired))
+    with pytest.raises(CapsuleStoreError):
+        store.restore(sealed)
+
+    assert fired == ["experience.json"], f"the arming never reached the second name: {fired}"
+    assert not os.path.lexists(capsule / "capsule.json"), (
+        "the first removal did not land, so this row did not reach the state it "
+        f"names: {sorted(path.name for path in capsule.iterdir())}")
+    assert os.path.lexists(capsule / "experience.json"), (
+        "the second name was removed after all, so the arming did not stop it")
+    assert store.protected(), (
+        "the neutralisation raised part-done and the store was left with NO seal "
+        "marker, so the worker's forged experience.json is readable as legacy")
+    assert _readable_routes(capsule, store) == frozenset(), (
+        f"{sorted(path.name for path in capsule.iterdir())} still reads as legacy")
+
+
+_MARKER_OCCUPANTS = ("absent", "regular file", "directory",
+                     "live junction", "dangling junction")
+
+
+def test_the_best_effort_marker_write_never_spends_the_protection_it_defends(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """THE FAIL-CLOSED STEP MUST NOT ITSELF OPEN THE STORE, and the first
+    version of it did -- which an ordinary concurrent reader found before any
+    row here did.
+
+    `_write_seal_marker` writes THROUGH whatever occupies the name: at a
+    directory-attributed occupant it removes first and renames second, and a
+    denied rename leaves the name EMPTY. Run on the FAILURE path that was
+    exactly backwards -- a store that already demanded a seal stopped
+    demanding one because Forge tried to improve the marker it already had.
+    Measured, the neutralisation failing and the marker's rename denied by an
+    ordinary sharing violation, before the repair:
+
+        occupant            rename denied   marker after   protected()
+        absent              YES             absent         False
+        directory           YES             absent         False  <-- was True
+        live junction       YES             absent         False  <-- was True
+        dangling junction   YES             absent         False
+
+    Not a theoretical cell. The ordinary-reader row --
+    `test_an_ordinary_concurrent_reader_cannot_open_the_store_to_a_legacy_read`
+    -- plants a directory at the marker and runs one reader thread; it failed
+    once in eight observations against the first version, and the assertion it
+    failed was the store reading as legacy.
+
+    THE REPAIR IS TWO RULES AND THIS ROW HOLDS BOTH. Do nothing when the store
+    is already protected -- on this path the marker's CONTENT buys nothing,
+    since one naming another store's seal is a refusal too -- and where the
+    name really is free, fall back to a single `O_CREAT | O_EXCL` write with
+    no removal and no rename, so the last resort has no window of its own.
+    Every occupant is crossed with a denied rename and an allowed one, and the
+    row asserts the occupant SURVIVED as well as that the store is closed:
+    protection preserved is not the same fact as protection restored.
+    """
+    observed: list[str] = []
+    for occupant in _MARKER_OCCUPANTS:
+        for denied in (False, True):
+            if "junction" in occupant and os.name != "nt":
+                continue                                    # see _NO_JUNCTIONS
+            cell = tmp_path / f"cell-{len(observed)}"
+            store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+            store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                             experience=start_experience(Actor("human", "casey"), AT))
+            sealed = store.sealed()
+            capsule, marker = store.root, store.root / ".forge-seal"
+            forge_ready(capsule)
+            _remove_tree(capsule / ".git")
+            marker.unlink()
+            if occupant != "absent":
+                reason = _plant_shape(occupant, marker, cell / "outside")
+                assert reason is None, reason
+            planted = _entry_state(marker)
+            was_protected = store.protected()
+
+            survivor_replace = store_module._replace_fresh
+
+            def denies_the_marker_rename(tmp, path, _s=survivor_replace, _d=denied):
+                if _d and path.name == ".forge-seal":
+                    raise PermissionError(13, "the marker's rename is denied", None, 32)
+                return _s(tmp, path)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(store_module, "_remove_entry", _arm_the_removal_of(
+                    "capsule.json", OSError(28, "No space left on device"), []))
+                patch.setattr(store_module, "_replace_fresh", denies_the_marker_rename)
+                with pytest.raises(CapsuleStoreError):
+                    store.restore(sealed)
+
+            after, now = _readable_routes(capsule, store), _entry_state(marker)
+            observed.append(
+                f"{occupant:<20} denied={denied!s:<6} before={planted[:20]:<20} "
+                f"after={now[:20]:<20} was_protected={was_protected!s:<5} "
+                f"protected={store.protected()!s:<5} readable={sorted(after)}")
+
+            assert store.protected(), (
+                f"{occupant} / denied={denied}: the fail-closed step left the store "
+                "NOT protected, so Forge spent the very property it was defending.\n"
+                + "\n".join(observed))
+            assert after == frozenset(), (
+                f"{occupant} / denied={denied}: the store reads as legacy. Entries: "
+                f"{sorted(path.name for path in capsule.iterdir())}\n"
+                + "\n".join(observed))
+            if was_protected:
+                assert now == planted, (
+                    f"{occupant} / denied={denied}: an occupant the store was ALREADY "
+                    "protected by was replaced on a path that had nothing to gain by "
+                    f"replacing it -- {planted!r} became {now!r}.\n"
+                    + "\n".join(observed))
+
+
+def test_the_best_effort_marker_write_never_becomes_the_error_the_caller_sees(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A SECONDARY FAILURE MUST NOT REPLACE THE DIAGNOSIS.
+
+    The best-effort write runs on a path that is already failing, so it must
+    neither raise nor mask. This row makes BOTH fail -- the neutralisation with
+    one error and the marker write with a different one -- and asserts the
+    caller is told about the first. `_write_fresh`'s own temp cleanup already
+    holds this property; the marker write is the second place in the module
+    that needed it, and a `raise` inside a handler is exactly how it would be
+    lost.
+
+    IT ALSO PINS THAT THE ATTEMPT IS MADE AT ALL. The marker write is asserted
+    to have fired, so a future `_rebuild` that simply drops the call reddens
+    here rather than passing quietly on a store that happened to be protected.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")
+    (capsule / ".forge-seal").unlink()
+
+    attempted: list[str] = []
+
+    def refuses(self):
+        attempted.append("marker")
+        raise OSError(13, "the marker's own destination is denied too")
+
+    monkeypatch.setattr(store_module, "_remove_entry", _arm_the_removal_of(
+        "capsule.json", OSError(28, "No space left on device"), []))
+    monkeypatch.setattr(store_module.CapsuleStore, "_write_seal_marker", refuses)
+
+    with pytest.raises(CapsuleStoreError) as raised:
+        store.restore(sealed)
+
+    assert attempted == ["marker"], (
+        "the best-effort marker write was never attempted, so a failing "
+        "neutralisation leaves the store exactly as open as it found it")
+    assert "No space left on device" in str(raised.value), (
+        f"the caller was told about the CLEANUP failure instead of the real one: "
+        f"{raised.value}")
+    assert "denied too" not in str(raised.value)
 
 
 def test_a_stray_temp_from_forges_own_crash_is_not_a_tamper_finding(tmp_path: Path):
