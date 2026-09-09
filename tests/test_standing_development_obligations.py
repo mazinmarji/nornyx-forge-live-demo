@@ -1188,20 +1188,34 @@ def test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link(module
 
 
 def test_a_component_the_walk_cannot_follow_refuses_the_path(module, tmp_path, monkeypatch):
-    """Wherever an unsupported link sits in the chain, the path is refused."""
+    """Wherever an unsupported link sits in the chain, the path is refused.
+
+    Outside the repository it is refused for not being followed; inside it,
+    for sitting there -- the rule broken first. Measured on a Windows runner
+    with a real junction under `.nornyx/runtime/`: the first version raised
+    at the junction and named the wrong rule.
+    """
     overlay = _write_overlay(tmp_path)
-    marked = os.lstat(overlay.parent).st_ino
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
+    decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    marked = {os.lstat(overlay.parent).st_ino, os.lstat(RUNTIME).st_ino}
     original = module._link_kind
 
     def classify(info):
-        if info.st_ino == marked:
+        if info.st_ino in marked:
             return module.UNSUPPORTED_LINK
         return original(info)
 
     monkeypatch.setattr(module, "_link_kind", classify)
-    message = _refusal(module, lambda: module.load_registries(overlay))
-    assert message == "private overlay path crosses a link that is not followed"
-    _assert_no_leak(message, overlay)
+    try:
+        message = _refusal(module, lambda: module.load_registries(overlay))
+        assert message == "private overlay path crosses a link that is not followed"
+        _assert_no_leak(message, overlay)
+        message = _refusal(module, lambda: module.load_registries(decoy))
+        assert message == "private overlay must remain outside the Forge repository"
+    finally:
+        decoy.unlink()
 
 
 @pytest.mark.parametrize(

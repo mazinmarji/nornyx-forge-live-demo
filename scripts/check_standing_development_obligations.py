@@ -470,8 +470,8 @@ def _link_target(link: Path) -> Path | None:
     return _lexical_absolute(Path(os.path.join(str(link.parent), raw)))
 
 
-def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity]:
-    """Every location the walk touches, and the identity of the entry it ends at.
+def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity, bool]:
+    """Every location the walk touches, what it ends at, and whether it got there.
 
     COMPONENT BY COMPONENT, never collapsed. The first version placed each hop
     at `realpath(parent)`, and `realpath` follows a directory symlink all the
@@ -491,6 +491,14 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity]:
     recorded too. The entry the walk ends at -- the last plain component --
     is returned by identity, so the read that follows can be held to the very
     object that was judged.
+
+    A reparse point that is not a symlink stops the walk: the locations
+    reached so far and a `False` third value are returned rather than a
+    refusal raised here, so that the caller judges those locations FIRST. An
+    unsupported link that sits inside the repository is refused for sitting
+    there -- the rule broken first -- and one outside it for not being
+    followed. Measured on a Windows runner: the first version raised at the
+    junction and named the wrong rule for an in-repository junction.
     """
     locations: list[Path] = []
     start = _lexical_absolute(path)
@@ -514,7 +522,7 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity]:
             final = _identity_of(info)
             continue
         if kind == UNSUPPORTED_LINK:
-            raise AdmissionError(f"{label} path crosses a link that is not followed")
+            return locations, _NO_IDENTITY, False
         hops += 1
         if hops > SYMLINK_HOPS_BOUND:
             # The same words as a loop the interpreter detects itself: which
@@ -526,7 +534,7 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity]:
         remaining = list(target.parts[1:]) + remaining
         walked = Path(target.parts[0])
         final = _NO_IDENTITY
-    return locations, final
+    return locations, final, True
 
 
 def _root_identity() -> _Identity:
@@ -579,9 +587,10 @@ def _confine_outside(path: Path, *, label: str) -> _Identity:
     """
     refusal: AdmissionError | None = None
     inside = False
+    followed = False
     final = _NO_IDENTITY
     try:
-        locations, final = _walk(path, label=label)
+        locations, final, followed = _walk(path, label=label)
         root = _root_identity()
         checked: set[Path] = set()
         for location in [*locations, path.resolve(strict=False)]:
@@ -594,6 +603,8 @@ def _confine_outside(path: Path, *, label: str) -> _Identity:
         raise refusal
     if inside:
         raise AdmissionError(f"{label} must remain outside the Forge repository")
+    if not followed:
+        raise AdmissionError(f"{label} path crosses a link that is not followed")
     return final
 
 
