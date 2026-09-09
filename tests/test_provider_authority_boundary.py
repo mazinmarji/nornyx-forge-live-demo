@@ -1716,11 +1716,21 @@ def _the_rebuild_survives_every_shape_and_instant(
     THE STRENGTHENING IS A MEASUREMENT AND NOT A REWORDING, and the campaign
     says exactly how far it reaches: reverting the best-effort write reddens
     the `non-existent` and `dangling junction` rows of this parametrisation and
-    NO OTHER. That is not a gap. They are the two plants for which
-    `protected()` answers False -- every other shape leaves an entry at
-    `.forge-seal` that `protected()` counts, so those rows never rested on that
-    write at all. A first draft of this paragraph said "every shape here",
-    which the campaign falsified; the narrower sentence is the true one.
+    no other row THAT RUNS HERE. That is not a gap. The plants it reddens are
+    the ones `protected()` answers False for -- every other shape leaves an
+    entry at `.forge-seal` that `protected()` counts, so those rows never
+    rested on that write at all. A first draft said "every shape here", which
+    the campaign falsified.
+
+    THE HOST IS PART OF THAT SENTENCE, and leaving it out would restate a
+    HOST-SCOPED observation as a property. `dangling symlink` is a THIRD plant
+    `protected()` answers False for -- `Path.exists()` resolves the link and
+    finds nothing, exactly as it does through a dangling junction -- and it
+    merely SKIPS on this workstation, where `os.symlink` raises `[WinError
+    1314]`. On a host that can build it the same mutation reddens three rows,
+    so "and no other" would read as falsified on every Linux CI job. Two is
+    what was counted where the count was taken; three is what the property
+    predicts where all the plants build.
 
     THE ORDER IS NOT PROVEN HERE ANY MORE, and it never was proven WELL here.
     This row used to assert that the marker on disk still matched the plant at
@@ -2467,6 +2477,139 @@ def test_the_best_effort_marker_write_never_spends_the_protection_it_defends(
                     "protected by was replaced on a path that had nothing to gain by "
                     f"replacing it -- {planted!r} became {now!r}.\n"
                     + "\n".join(observed))
+
+
+def test_the_exclusive_create_fallback_writes_the_markers_exact_bytes(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """THE ONE WRITE IN THIS MODULE NO ROW WAS WATCHING.
+
+    Every other write here is byte-exact on purpose -- `_write_fresh` and
+    `seal` both pass `newline=""` to stop the text layer translating, and
+    `canonical_json` fixes the ordering and the separators -- and the reason
+    is that the seal compares BYTES. The exclusive-create fallback was written
+    with `os.open` + `os.write` instead, and `os.open` defaults to TEXT mode on
+    Windows, so it silently translated the trailing newline. Measured on this
+    host before the repair, the flags exactly as they shipped:
+
+        os.write(fd, b'{"a": 1}\\n')  ->  on disk b'{"a": 1}\\r\\n'   CR 1
+        the same with os.O_BINARY    ->  on disk b'{"a": 1}\\n'     CR 0
+
+    NOTHING WAS BROKEN BY IT, and saying otherwise would be the overclaim this
+    module keeps correcting: `json.loads` tolerates the extra byte, and the
+    marker's job is to exist rather than to parse -- `seal_problems` refuses a
+    marker of any content that does not name this store's seal. What was wrong
+    is narrower and worth a row anyway: the module's idiom is byte-exactness,
+    one write escaped it, and no assertion would have noticed if it had
+    escaped further.
+
+    THE REFERENCE IS THE SHIPPED WRITE, NOT A LITERAL. The row drives the
+    fallback, keeps its bytes, then removes the marker and calls
+    `_write_seal_marker` on the SAME store with nothing patched. Same root, so
+    `seal_ident()` is the same string, so the two writes have no licence to
+    differ. A literal here would pin the schema instead of the property, and
+    would go stale the next time the marker's content changes.
+
+    THE FALLBACK REALLY IS WHAT RAN. `_replace_fresh` is denied at the
+    marker's name, so `_write_fresh` raises with its temp cleaned up and never
+    puts a file at `.forge-seal`; the denial is asserted to have fired, so a
+    marker standing afterwards can only be the exclusive create's. Without
+    that assertion this row would pass on the careful write and prove nothing
+    about the fallback at all.
+
+    THE LOOP IS THE SECOND CELL, AND IT NEEDED AN INSTRUMENT TO BE REACHABLE.
+    `os.write` is permitted to write fewer bytes than it is handed, and a
+    single unlooped call would then leave a TORN marker where a whole one was
+    available. Sixty bytes to a local file never write short here, so a normal
+    run cannot tell a looped write from an unlooped one and the second cell
+    supplies the case: `store_module.os` -- the module's OWN reference, not the
+    global module, so nothing else in the session is affected -- is replaced by
+    a proxy that delegates everything and truncates `write` to one byte per
+    call. That is `os` behaving legally at its worst. The bytes must still come
+    out whole, and the proxy is asserted to have been called more than once, so
+    the cell cannot pass by never reaching the write it names.
+    """
+    class _WritesShort:
+        """`os`, delegating everything, with `write` truncated to one byte."""
+
+        def __init__(self, real, short: bool):
+            self._real, self._short, self.calls = real, short, 0
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def write(self, fd, data):
+            self.calls += 1
+            return self._real.write(fd, data[:1] if self._short else data)
+
+    observed: list[str] = []
+    for short in (False, True):
+        cell = tmp_path / ("short-write" if short else "whole-write")
+        store = CapsuleStore(cell / "capsule", seal_dir=cell / "seals")
+        store.initialize(create_document("proj-1", "Portal", Actor("human", "casey"), AT),
+                         experience=start_experience(Actor("human", "casey"), AT))
+        sealed = store.sealed()
+        capsule = store.root
+        marker = capsule / store_module._SEAL_MARKER_FILE
+        forge_ready(capsule)
+        _remove_tree(capsule / ".git")
+        marker.unlink()
+
+        survivor = store_module._replace_fresh
+        denied: list[str] = []
+
+        def denies_the_marker_rename(tmp, path, _s=survivor, _d=denied):
+            if path.name == store_module._SEAL_MARKER_FILE:
+                _d.append(path.name)
+                raise PermissionError(13, "the marker's rename is denied", None, 32)
+            return _s(tmp, path)
+
+        writer = _WritesShort(os, short)
+        with monkeypatch.context() as patch:
+            patch.setattr(store_module, "_remove_entry", _arm_the_removal_of(
+                "capsule.json", OSError(28, "No space left on device"), []))
+            patch.setattr(store_module, "_replace_fresh", denies_the_marker_rename)
+            patch.setattr(store_module, "os", writer)
+            with pytest.raises(CapsuleStoreError):
+                store.restore(sealed)
+
+        assert denied, (
+            f"short={short}: the careful write was never denied, so the fallback "
+            "did not run and this cell would be measuring `_write_fresh`.\n"
+            + "\n".join(observed))
+        assert marker.is_file(), (
+            f"short={short}: the fallback left no marker, so there are no bytes "
+            "to check and the fail-closed step did not happen. Entries: "
+            f"{sorted(path.name for path in capsule.iterdir())}\n"
+            + "\n".join(observed))
+        fallback = marker.read_bytes()
+
+        # The REFERENCE, taken from the shipped success-path write on the same
+        # store, with nothing patched: same root, so the same `seal_ident()`.
+        marker.unlink()
+        store._write_seal_marker()
+        careful = marker.read_bytes()
+        observed.append(f"short={short!s:<6} os.write calls={writer.calls:<3} "
+                        f"fallback={fallback!r} careful={careful!r}")
+
+        assert writer.calls >= 1, (
+            f"short={short}: the fallback's `os.write` was never reached.\n"
+            + "\n".join(observed))
+        if short:
+            assert writer.calls > 1, (
+                "short=True: one call wrote the whole payload, so the truncating "
+                "proxy did not take effect and the loop is not what was measured.\n"
+                + "\n".join(observed))
+        assert fallback == careful, (
+            f"short={short}: the exclusive-create fallback and "
+            "`_write_seal_marker` disagree about the marker's bytes.\n"
+            + "\n".join(observed))
+        assert b"\r" not in fallback, (
+            f"short={short}: the fallback's bytes carry a carriage return the "
+            "careful write does not put there -- `os.open` translated them.\n"
+            + "\n".join(observed))
+        assert fallback.endswith(b"}\n"), (
+            f"short={short}: the fallback wrote a torn or padded marker.\n"
+            + "\n".join(observed))
 
 
 def test_the_best_effort_marker_write_never_becomes_the_error_the_caller_sees(

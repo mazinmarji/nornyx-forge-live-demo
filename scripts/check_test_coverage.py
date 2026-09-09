@@ -671,7 +671,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # second-removal-raises row, and two rows on the best-effort marker write
     # -- that it never masks the real error, and that it never spends the
     # protection it defends. 79 -> 95, band(79) = 72 -> band(95) = 86.
-    "tests/test_provider_authority_boundary.py": 86,
+    #
+    # Round 7 adds ONE row and no shapes:
+    # `test_the_exclusive_create_fallback_writes_the_markers_exact_bytes`,
+    # which asserts the bytes of the exclusive-create fallback -- the one write
+    # in that module outside the byte-exact idiom, and the one no row was
+    # watching. It never skips, on any platform. 95 -> 96, band(95) = 86 ->
+    # band(96) = 87, so the module's own slack is 9 either way and the total
+    # the bands grant does not move.
+    "tests/test_provider_authority_boundary.py": 87,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1406,8 +1414,8 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # and the rebase shifted them by the five Tranche I added, which keeps
 # them describing round 5 against this base rather than making them
 # true of this commit. What IS true of this commit is the rows at the
-# end of this block: module-floor sum 3086, aggregate 3094, suite 3368
-# collected, band(n) 3032. Those are measured, and they are what every
+# end of this block: module-floor sum 3087, aggregate 3095, suite 3369
+# collected, band(n) 3033. Those are measured, and they are what every
 # guard reads. Nothing compares this paragraph to them, which is how a
 # round-5 sentence survived two rounds and a rebase intact.
 #
@@ -1429,10 +1437,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3368   (113 modules)
-#     sum of the module floors    3086
-#     band(3368) = ceil(0.9*n)    3032
-#     MINIMUM_COLLECTED           3094
+#     collected across tests/     3369   (113 modules)
+#     sum of the module floors    3087
+#     band(3369) = ceil(0.9*n)    3033
+#     MINIMUM_COLLECTED           3095
 #     above the module sum         8
 #     below what collects         274
 #
@@ -1488,7 +1496,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3094
+MINIMUM_COLLECTED = 3095
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

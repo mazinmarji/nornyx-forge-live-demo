@@ -1073,8 +1073,31 @@ all along:
   So the sentence above is not withdrawn -- it is bounded. What it asserts of
   its own rows is exactly right, and reading it as a statement about the
   shapes was what left five cells unmeasured for two rounds. Round 6 closes
-  every one of them: on this tree all thirteen cells of the table above are
-  refusals, and the three read-only rows RESTORE.
+  every one of them: on this tree all TWELVE cells of the table above -- six
+  rows, two preconditions -- are refusals. Twelve, not thirteen; a wrong count
+  inside the paragraph whose job is correcting an over-read is the same defect
+  in miniature, so it is corrected by re-driving the table rather than by
+  re-reading it.
+
+  AND TWO OF THE THREE READ-ONLY ROWS RESTORE, NOT THREE. The third cannot,
+  and that is a DESIGN and not a residue: `read-only HARDLINK capsule.json` is
+  the shape `_solely_owned_file` exists to refuse, since the chmod that would
+  free it clears the bit on the file OUTSIDE the store -- measured, `True`
+  before and `False` after, without the guard. `_unlink_clearing_read_only`'s
+  own table already records that row as "REFUSED, bit intact", and the shape
+  matrix asserts the outside victim keeps its bit. Re-driven at this head,
+  both preconditions, `restore()` returning AND the store matching its seal
+  afterwards:
+
+      read-only capsule.json           RESTORED
+      read-only experience.json        RESTORED
+      read-only HARDLINK capsule.json  REFUSED, by design, at both
+
+  The refusal is still fail-closed -- the store ends PROTECTED and a sealless
+  load reads nothing -- so what the third row loses is the remedy, not the
+  boundary. Recoverability and fail-closure are two properties here and the
+  rows keep them apart; a sentence that says "the three read-only rows
+  RESTORE" merges them back.
 
 - `shutil.rmtree(onerror=...)` is deprecated in 3.12 and removed in 3.14, and
   round 2 made it newly reachable from every write the recovery path makes.
@@ -1613,7 +1636,17 @@ site, and the cross product did not follow it there.
   death}: 54 cells built on this host, 0 open; 18 declared unbuildable with
   the operating system's own reason (`os.symlink` raises `[WinError 1314]`).
   With the best-effort write removed and nothing else changed, 40 of the same
-  54 fall open.
+  54 are left UNPROTECTED -- and only 25 of those FALL OPEN. The two numbers
+  are both true and they are not the same fact. A fall-open is the CONJUNCTION
+  round 5 named this section for -- the marker absent AND forged authority
+  still readable -- and `_readable_routes` is the instrument that measures it.
+  The other 15 are unprotected residues where the plant or the removal already
+  destroyed both authority routes, so there is nothing left to read; that is a
+  weaker failure than a fall-open, and calling it one uses a single word for
+  two things this document elsewhere insists on separating. Re-driven cell by
+  cell at this head against the same mutant: 54 built, 18 unbuildable, 40
+  unprotected, 25 readable, 25 both, 15 unprotected with nothing left to read.
+  On the shipped tree all four counts are zero.
 
 - THE FAIL-CLOSED STEP OPENED THE STORE ITSELF, AND AN ORDINARY READER FOUND
   IT BEFORE ANY ROW DID. The first version called `_write_seal_marker`
@@ -1672,10 +1705,13 @@ site, and the cross product did not follow it there.
   best-effort write are load-bearing and the row written for them kills both.
 
   ONE GREEN CELL INSIDE A RED ROW, EXPLAINED BY MEASUREMENT RATHER THAN
-  PATCHED. Under MF six of the eight authority-shape rows go red on the
-  arming-never-fired assertion, and the three DIRECTORY-ATTRIBUTED shapes --
-  `directory` and the two junctions -- pass. Measured against the MF mutant
-  with the call sites recorded:
+  PATCHED. Under MF six of the NINE authority-shape rows this host can build
+  go red on the arming-never-fired assertion, and the three
+  DIRECTORY-ATTRIBUTED shapes -- `directory` and the two junctions -- pass.
+  Nine, because six and three are nine: the parametrisation is twelve shapes
+  and the three symlink ones cannot be planted here, and the run observed is
+  `FFFF.sssFF..` -- six red, three skipped, three green. Measured against
+  the MF mutant with the call sites recorded:
 
       shape at experience.json   _remove_entry reached from        verdict
       regular file               _neutralise_untrusted_authority   arming never
@@ -1702,6 +1738,82 @@ site, and the cross product did not follow it there.
   which is the attacker this boundary is drawn against; both are disclosed
   here rather than claimed shut. The removal-and-rename gap of round 5,
   `_replace_fresh`'s check-then-act and the absent `fsync` are all unchanged.
+
+- ROUND 7 IS THREE MISCOUNTS AND ONE WRITE THAT ESCAPED THE IDIOM, and the
+  miscounts are the more interesting half because all three sat INSIDE
+  paragraphs whose job was correcting an over-read. "All thirteen cells" over
+  a six-by-two table; "the three read-only rows RESTORE" over a set whose
+  third member is a designed permanent refusal; "six of the eight" beside a
+  three that makes nine. Each is corrected above against a re-driven
+  measurement rather than a re-reading, because re-reading is what produced
+  them.
+
+  THE WRITE IS `_write_seal_marker_best_effort`'s EXCLUSIVE-CREATE FALLBACK.
+  It used `os.open` + `os.write` without `os.O_BINARY`, and `os.open` defaults
+  to TEXT mode on Windows: measured, `b'{"a": 1}\n'` in and `b'{"a": 1}\r\n'`
+  on disk, one CR without the flag and none with it. Functionally nothing
+  broke -- `json.loads` tolerates it and a marker of any content still refuses
+  -- but this is the module whose whole idiom (`_write_fresh`, `newline=""`,
+  `canonical_json`) exists to put exact bytes on disk, and NO ROW ASSERTED
+  THAT WRITE'S BYTES, which is why the one write outside the idiom is the one
+  that drifted. The flag is added under `getattr` (POSIX does not define it)
+  and the `os.write` is LOOPED, since a short write from a single unlooped
+  call would leave a torn marker where a whole one was available.
+  `test_the_exclusive_create_fallback_writes_the_markers_exact_bytes` compares
+  the fallback's bytes with `_write_seal_marker`'s on the SAME store -- a
+  reference rather than a literal -- and crosses that with an `os` proxy that
+  truncates every write to one byte.
+
+  FALSIFIED, AND THE ISOLATION IS THE POINT. Five rows, same harness as round
+  6 -- an isolated copy of `src/` outside the worktree, diffed against the
+  donor, run with the mutant ahead of the editable install under a plugin that
+  ABORTS if the imported `nornyx_forge` is not the mutant, over
+  `tests/test_provider_authority_boundary.py` and
+  `tests/test_project_capsule.py`. Control arm green first:
+
+      row                                            verdict
+      CONTROL                                        GREEN -- 113 passed
+      MA  the removal loses the read-only retry       RED   1
+      MB  no marker write when the neutralisation
+          fails                                       RED  15
+      MH  the fallback loses os.O_BINARY               RED   1
+      MI  the fallback's write stops looping           RED   1
+
+  MH and MI each redden EXACTLY the new row and nothing else, which is what
+  makes it a byte-exactness proof rather than a second copy of the fail-closed
+  one. MA still reddens exactly the recoverability row, so round 6's split
+  survives this round unchanged. MB is 14 in round 6 and 15 here for one
+  reason: with no best-effort write the fallback never runs, so the new row's
+  own precondition -- that a marker exists to read bytes from -- is not met,
+  and it fails there rather than on the bytes. That is the row refusing to
+  pass for the wrong reason, and it is why the flag and the loop needed MH and
+  MI to be proven at all.
+
+  THE `O_EXCL` CLAIM IS NOW QUALIFIED THE WAY `_write_fresh` QUALIFIES ITS
+  OWN. That it cannot follow a planted SYMLINK is POSIX semantics and
+  documented Win32 `CREATE_NEW` behaviour, and it is unverified here, because
+  `os.symlink` raises `[WinError 1314]` on this host. What is measured here is
+  the junction: a live one refuses with `FileExistsError` (errno 17) and a
+  dangling one with `PermissionError` (errno 13) -- neither followed, and
+  neither carrying a `winerror`, since CPython reaches this through the CRT.
+  A row phrased on `.winerror` would assert `None`.
+
+- WHAT ROUND 7 LEAVES OPEN, LISTED RATHER THAN CLOSED. There is still no
+  `fsync` on any marker write, so a power loss can lose a marker the process
+  believed it had written. The PART-DONE state -- the first authority file
+  already removed when the second removal fails -- is asserted by exactly one
+  row, `test_the_second_authority_removal_can_raise_with_the_first_already_gone`,
+  which checks `capsule.json` absent and `experience.json` still standing.
+  Every armed `experience.json` cell of the fail-closed matrix REACHES that
+  state and asserts only the outcome, so an implementation that stopped
+  reaching it would redden that single row rather than every cell that was
+  supposed to be measuring it. And `pytest.skip()` is called from inside the
+  cell loop of the
+  shape rows, so an unbuildable shape skips the row at whichever cell reaches
+  it rather than before any cell runs -- harmless today because the plant is
+  the first statement of each cell, and fragile if that order ever changes.
+  All three are tracked follow-ups, disclosed here rather than fixed under a
+  round whose scope was three counts and one write.
 
 **Scope.** This wires the existing contract; it changes no stage, edge,
 actor or evidence rule. READY means what the contract establishes and

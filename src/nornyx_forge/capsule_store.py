@@ -976,10 +976,44 @@ class CapsuleStore:
         denied and left the name free, a single `O_CREAT | O_EXCL` write puts
         the marker there with no removal and no rename, so it has no window of
         its own. `O_EXCL` is what makes it safe rather than merely simple: it
-        REFUSES an existing name, so it can never follow a link a worker plants
+        REFUSES an existing name, so it does not follow a link a worker plants
         in the gap after `protected()` answered False -- the write-through this
-        module built `_write_fresh` to prevent. A torn or truncated marker is
-        still a refusal, so even a partial one fails closed.
+        module built `_write_fresh` to prevent.
+
+        THAT REFUSAL IS QUALIFIED, exactly as `_write_fresh` qualifies its own
+        `os.replace` claim. Against a SYMLINK it is POSIX `open` semantics and
+        the documented Win32 `CREATE_NEW` behaviour, and it is UNVERIFIED HERE,
+        because `os.symlink` on this host raises `[WinError 1314] A required
+        privilege is not held by the client`. What IS measured here is the
+        shape this host can build -- and it is closed by construction rather
+        than by `O_EXCL` alone, so the two are not one fact:
+
+            occupant at the marker name    os.open(O_CREAT|O_EXCL|O_WRONLY)
+            live junction                  FileExistsError  errno 17
+            dangling junction              PermissionError  errno 13
+            ordinary existing file         FileExistsError  errno 17
+
+        Neither junction is followed. Note the errno rather than a `winerror`:
+        CPython reaches this through the CRT, so the Win32 code never surfaces
+        and a row phrased on `.winerror` would assert `None`. The symlink claim
+        used to stand unqualified.
+
+        A torn or truncated marker is still a refusal, so even a partial one
+        fails closed.
+
+        BYTE-EXACT, AND IT WAS NOT. `os.open` defaults to TEXT mode on Windows,
+        so `os.write` of bytes ending `}\\n` landed on disk as `}\\r\\n` --
+        measured on this host, `b'{"a": 1}\\n'` in and `b'{"a": 1}\\r\\n'` out,
+        one CR without `os.O_BINARY` and none with it. Nothing broke:
+        `json.loads` tolerates the extra byte and a marker of any content still
+        refuses. But this is the module whose entire idiom -- `_write_fresh`,
+        `newline=""`, `canonical_json` -- exists to put exact bytes on disk,
+        and NO ROW ASSERTED THIS WRITE'S BYTES, so the one write that escaped
+        the idiom was the one nothing was watching. `O_BINARY` under `getattr`
+        because POSIX does not define it, and the write is LOOPED because
+        `os.write` may write short and a single unlooped call would leave a
+        torn marker where a whole one was available. Pinned by
+        `test_the_exclusive_create_fallback_writes_the_markers_exact_bytes`.
 
         IT IS BEST EFFORT AND THE NAME SAYS SO. Both writes can be denied, so
         this is not a guarantee the marker exists afterwards -- only that
@@ -996,11 +1030,15 @@ class CapsuleStore:
             return
         try:
             marker = os.open(self.root / _SEAL_MARKER_FILE,
-                             os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                             os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                             | getattr(os, "O_BINARY", 0), 0o600)
             try:
-                os.write(marker, (canonical_json(
+                payload = (canonical_json(
                     {"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}
-                ) + "\n").encode("utf-8"))
+                ) + "\n").encode("utf-8")
+                written = 0
+                while written < len(payload):
+                    written += os.write(marker, payload[written:])
             finally:
                 os.close(marker)
         except BaseException:
