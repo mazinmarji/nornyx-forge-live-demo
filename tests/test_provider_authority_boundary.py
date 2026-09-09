@@ -3267,6 +3267,95 @@ def _rolled_back_to(tmp_path: Path, held: Path, manifests: tuple[dict, dict]) ->
         "the rollback did not reproduce the earlier seal byte for byte")
 
 
+def test_a_removal_survives_an_entry_that_vanishes_between_listing_and_visiting(
+    tmp_path: Path,
+):
+    """THE REMOVAL ABOVE ONCE DIED ON A DIRECTORY THAT WAS ALREADY GONE.
+
+    CI, Python 3.11, this module's rollback helper:
+    `FileNotFoundError: .../capsule/.git/objects/7f` raised at the `os.chmod`
+    in `_remove_tree`'s handler, chained to shutil's own `entry.stat()`
+    reporting the bare name `7f`. `rmtree` LISTS a directory and then VISITS
+    its entries one at a time; an entry that disappears in that window is
+    handed to the handler, which chmod'd a path that no longer existed and
+    raised a second `FileNotFoundError` -- from the handler, so it escaped
+    `rmtree` and failed the test. Intermittent because the window is small,
+    not because the code was ever safe: measured with a concurrent remover,
+    40 of 40 trials failed on 3.12 and 20 of 20 on 3.11, and after the repair
+    0 of 200 and 0 of 100. Run against the unrepaired handler this pin fails at
+    that `os.chmod`, on `.git/objects/7f`, with the same exception -- the CI
+    report's own file, statement and path, which is what makes it this failure
+    rather than one that merely resembles it.
+
+    The condition is injected rather than raced, so this pin is deterministic:
+    a real second thread would make the suite depend on scheduling. The
+    injection is asserted to have HAPPENED -- an instrument that quietly stops
+    firing proves nothing -- and the read-only bit git puts on loose objects is
+    present throughout, so the case the handler exists for is live at the same
+    time.
+    """
+    capsule = tmp_path / "capsule"
+    objects = capsule / ".git" / "objects"
+    objects.mkdir(parents=True)
+    for name in ("7e", "7f", "80"):
+        fanout = objects / name
+        fanout.mkdir()
+        blob = fanout / ("a" * 38)
+        blob.write_bytes(b"an object")
+        os.chmod(blob, stat.S_IRUSR)  # exactly how git leaves a loose object
+
+    real_scandir = os.scandir
+    vanished: list[str] = []
+
+    class _Listed:
+        """What `os.scandir` hands back: a closeable ITERATOR of the entries as
+        they were AT THE LISTING. Real `os.DirEntry` objects, so every later
+        `stat` or `open` still goes to the filesystem.
+
+        A plain iterable is not enough: 3.12's `rmtree` walks Windows trees
+        through `os.walk`, which calls `next()` on this directly."""
+
+        def __init__(self, entries):
+            self._entries = iter(entries)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.close()
+            return False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._entries)
+
+        def close(self):
+            self._entries = iter(())
+
+    def scandir_then_vanish(target):
+        # `target` is a path on Windows and a DIRECTORY FD on the POSIX
+        # `rmtree`, so the fanout is recognised by what was listed rather than
+        # by the argument.
+        entries = list(real_scandir(target))
+        if not vanished and any(entry.name == "7f" for entry in entries):
+            vanished.append("7f")
+            doomed = objects / "7f"
+            for path in doomed.iterdir():
+                os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            shutil.rmtree(doomed)
+        return _Listed(entries)
+
+    with mock.patch("os.scandir", scandir_then_vanish):
+        _remove_tree(capsule)
+
+    assert vanished == ["7f"], (
+        "the entry was never made to vanish, so this pins nothing")
+    assert not capsule.exists(), (
+        "the removal must finish the tree it was given, not stop at the hole")
+
+
 def test_a_rollback_of_store_and_seal_together_is_caught_while_forge_runs(tmp_path: Path):
     """The adapter, without the surface. A store carrying a witness refuses a
     seal that is not the one this process last wrote, and hands back the
