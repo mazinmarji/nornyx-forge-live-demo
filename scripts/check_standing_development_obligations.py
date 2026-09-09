@@ -44,7 +44,9 @@ mapped or substituted drive letter, an administrative share, a double leading
 slash, a bind mount of the root OR OF ANY DIRECTORY BELOW IT -- is still the
 repository. The identities come from the one traversal this script performs,
 of the repository's own directories: no symlink followed, no file opened, no
-name read into any output, nothing selected.
+name read into any output, nothing selected; each directory scanned once,
+whatever else it is called; and refused whole, never judged from a partial
+set, if any entry of the tree cannot be judged.
 
 THE BYTES ARE THE OBJECT THAT WAS JUDGED. The walk records the identity of the
 entry it ends at. The file is then opened ONCE, judged by `fstat` on that
@@ -565,6 +567,19 @@ def _repository_directory_identities() -> frozenset[_Identity]:
     at `/tmp/alias`: an in-repository overlay was read through the alias.
     Bounded, and refused rather than judged when the bound is passed; cached
     for the process, so a run pays for it once.
+
+    FAILS CLOSED, AND SCANS EACH DIRECTORY ONCE. An entry this traversal
+    cannot `lstat` -- a transient filesystem error, an entry renamed under
+    it, a name too long to reach -- is not left out: the whole judgment is
+    refused, because a directory missing from the set is one an alias could
+    reach unjudged (measured by an external review of the PR head, and
+    reproduced with a directory too long to `lstat` and a bind mount of it).
+    And an identity already in the set is not enqueued again, so an alias of
+    a repository directory inside the tree -- a bind mount of `docs/` beside
+    it -- adds no scan: the bound limits the directories traversed, not only
+    the identities collected (measured by the same review, and reproduced
+    with three bind mounts of `docs/`: twelve scans more, the bound never
+    crossed).
     """
     global _DIRECTORY_IDENTITIES
     if _DIRECTORY_IDENTITIES is not None:
@@ -578,13 +593,13 @@ def _repository_directory_identities() -> frozenset[_Identity]:
             directory = pending.pop()
             with os.scandir(directory) as entries:
                 for entry in entries:
-                    try:
-                        info = entry.stat(follow_symlinks=False)
-                    except OSError:
-                        continue
+                    info = entry.stat(follow_symlinks=False)
                     if not stat.S_ISDIR(info.st_mode) or _link_kind(info) != PLAIN:
                         continue
-                    identities.add(_identity_of(info))
+                    identity = _identity_of(info)
+                    if identity in identities:
+                        continue
+                    identities.add(identity)
                     if len(identities) > DIRECTORY_SCAN_BOUND:
                         raise _ScanBound()
                     pending.append(Path(entry.path))

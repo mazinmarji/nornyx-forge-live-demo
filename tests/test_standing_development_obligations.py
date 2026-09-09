@@ -32,6 +32,7 @@ below pins that they are.
 from __future__ import annotations
 
 import ast
+import errno
 import hashlib
 import importlib.util
 import json
@@ -1353,6 +1354,121 @@ def test_the_identity_traversal_follows_no_link_and_is_bounded(module, monkeypat
     finally:
         outward.unlink()
         upward.unlink()
+
+
+def _entry_like(path: Path, info):
+    """A directory entry as the traversal sees one: a path, and an `lstat` result or its failure."""
+
+    class Entry:
+        def __init__(self) -> None:
+            self.path = str(path)
+            self.name = path.name
+
+        def stat(self, *, follow_symlinks: bool = True):
+            if isinstance(info, BaseException):
+                raise info
+            return info
+
+    return Entry()
+
+
+def test_a_stat_failure_during_the_identity_traversal_refuses(module, monkeypatch, tmp_path):
+    """An entry the traversal cannot `lstat` refuses the whole judgment, not that entry alone.
+
+    Measured by the fourth Codex review on the PR head: a failed `lstat` of a
+    repository entry was skipped, so that directory and everything below it
+    were missing from the identity set, and an alias of it -- a bind mount, a
+    mapped drive -- carried an in-repository overlay past the identity
+    comparison. Reproduced with a directory whose full name is too long to
+    `lstat` (ENAMETOOLONG on Linux) and a bind mount of it: the traversal
+    completed with one identity fewer, and the overlay was read through the
+    alias and accepted. A failure is a refusal now, the same one a failed
+    scan gives: nothing is judged against a partial set, and none is cached.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    marked = RUNTIME / f"unstat-{uuid.uuid4().hex}"
+    marked.mkdir()
+    overlay = _write_overlay(tmp_path)
+    real_scandir = os.scandir
+
+    @contextmanager
+    def failing_view(directory):
+        with real_scandir(directory) as entries:
+            yield (
+                _entry_like(Path(entry.path), OSError(errno.EIO, "input/output error"))
+                if entry.path == str(marked) else entry
+                for entry in entries
+            )
+
+    module._DIRECTORY_IDENTITIES = None
+    monkeypatch.setattr(os, "scandir", failing_view)
+    try:
+        message = _refusal(module, lambda: module.load_registries(overlay))
+        assert message == "repository directories cannot be judged by identity"
+        assert module._DIRECTORY_IDENTITIES is None, "a partial identity set was cached"
+        _assert_no_leak(message, marked, overlay)
+    finally:
+        monkeypatch.setattr(os, "scandir", real_scandir)
+        module._DIRECTORY_IDENTITIES = None
+        marked.rmdir()
+
+
+def test_the_identity_traversal_scans_each_directory_once_whatever_its_aliases(module, monkeypatch):
+    """One scan per directory identity, so the bound limits the work and not only the set.
+
+    Measured by the fourth Codex review on the PR head: an alias of a
+    directory inside the tree added nothing to the identity set but was
+    traversed again in full, so the scan bound counted identities while the
+    work grew with every alias. Reproduced with three bind mounts of `docs/`
+    under `.nornyx/runtime/`: twelve more scans, the bound -- set to exactly
+    the unique count -- never crossed. An identity already seen is not
+    enqueued now, so the traversal performs exactly one scan per identity,
+    the root included, whatever else the directory is called. Simulated here
+    without a mount by listing one directory under three more names that
+    carry its `lstat` result.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    aliased = RUNTIME / f"aliased-{uuid.uuid4().hex}"
+    (aliased / "below").mkdir(parents=True)
+    aliases = [RUNTIME / f"alias-{index}-{uuid.uuid4().hex}" for index in range(3)]
+    real_scandir = os.scandir
+    scanned: list[str] = []
+
+    @contextmanager
+    def aliased_view(directory):
+        directory = Path(directory)
+        scanned.append(str(directory))
+        with real_scandir(aliased if directory in aliases else directory) as entries:
+
+            def view():
+                for entry in entries:
+                    yield entry
+                    if entry.path == str(aliased):
+                        info = entry.stat(follow_symlinks=False)
+                        for alias in aliases:
+                            yield _entry_like(alias, info)
+
+            yield view()
+
+    module._DIRECTORY_IDENTITIES = None
+    monkeypatch.setattr(os, "scandir", aliased_view)
+    try:
+        identities = module._repository_directory_identities()
+        assert module._identity_of(os.lstat(aliased)) in identities
+        assert module._identity_of(os.lstat(aliased / "below")) in identities
+        assert scanned.count(str(aliased)) == 1
+        assert not any(str(alias) in scanned for alias in aliases), "an alias was traversed"
+        assert len(scanned) == len(identities), "a directory was scanned more than once"
+        monkeypatch.setattr(module, "DIRECTORY_SCAN_BOUND", len(identities))
+        module._DIRECTORY_IDENTITIES = None
+        scanned.clear()
+        assert module._repository_directory_identities() == identities
+        assert len(scanned) == len(identities)
+    finally:
+        monkeypatch.setattr(os, "scandir", real_scandir)
+        module._DIRECTORY_IDENTITIES = None
+        (aliased / "below").rmdir()
+        aliased.rmdir()
 
 
 @posix_only

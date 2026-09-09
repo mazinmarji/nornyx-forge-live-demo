@@ -145,6 +145,18 @@
   for an unfollowed reparse point was still resolved through it before the
   refusal; nothing beyond such a link is consulted now, pinned by a spy on
   `Path.resolve`.
+  A fourth Codex review, of the head carrying those repairs, found one P1
+  and one P2 against the new traversal, each reproduced and closed. An entry
+  the traversal could not `lstat` was skipped, so a directory and everything
+  below it could be missing from the identity set and an alias of it would
+  admit an in-repository overlay (reproduced with a directory too long to
+  `lstat` and a bind mount of it: read through the alias, PASS); the
+  traversal refuses whole now and caches no partial set. And an alias of a
+  directory inside the tree was deduplicated in the set but traversed again
+  in full, so the scan bound counted identities while the work grew with
+  every alias (reproduced with three bind mounts of `docs/`: twelve scans
+  more, the bound never crossed); an identity already seen is not enqueued
+  now, one scan per directory.
   Not claimed, and recorded as such in A-030: that anyone runs the check;
   that anyone read an item; that a `cycle_id` names a cycle; that a hard
   link, an alias of a single file or a same-identity rewrite is seen; that a

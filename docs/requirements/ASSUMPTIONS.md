@@ -4048,7 +4048,19 @@ now, from the one traversal the checker performs, of its own tree, following
 no link and opening nothing, bounded and refusing past the bound. And a
 chain the walk stopped at, for a reparse point it does not follow, was still
 resolved through that link before the refusal: nothing beyond an unfollowed
-link is consulted now, pinned by a spy on resolution.
+link is consulted now, pinned by a spy on resolution. A fourth Codex review,
+of the head carrying those repairs, measured two more against the new
+traversal, each reproduced and closed. An entry the traversal could not
+`lstat` was skipped rather than refused, so a directory and everything below
+it could be missing from the identity set and an alias of it would carry an
+in-repository overlay past the comparison: reproduced with a directory whose
+name is too long to `lstat` and a bind mount of it, read through the alias
+and passed. The traversal refuses whole now and caches no partial set. And
+an alias of a directory inside the tree added nothing to the set but was
+traversed again in full, so the bound counted identities while the work grew
+with every alias: reproduced with three bind mounts of `docs/`, twelve scans
+more with the bound never crossed. An identity already seen is not enqueued
+now, so the traversal is one scan per directory.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.

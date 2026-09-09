@@ -852,7 +852,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # key, a trailing line break in an identifier, an unhashable value, a
     # deeply nested document, a repeated option, a stray argument,
     # twenty-three malformed shapes.
-    "tests/test_standing_development_obligations.py": 131,
+    "tests/test_standing_development_obligations.py": 133,
     "tests/test_standing_obligations_windows.py": 7,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
@@ -1577,10 +1577,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3534   (115 modules)
-#     sum of the module floors    3236
-#     band(3534) = ceil(0.9*n)    3181
-#     MINIMUM_COLLECTED           3244
+#     collected across tests/     3536   (115 modules)
+#     sum of the module floors    3238
+#     band(3536) = ceil(0.9*n)    3183
+#     MINIMUM_COLLECTED           3246
 #     above the module sum         8
 #     below what collects         290
 #
@@ -1595,6 +1595,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 298: the module and its floor each moved by three. Twelve declared symlink
 # skips in the standing module now rather than ten: the two new link shapes.
 # NO PROVIDER ROW MOVED.
+#
+# THE FOURTH CODEX ROUND ADDS TWO TESTS AND NO MODULE.
+# tests/test_standing_development_obligations.py collects 145 -> 147 (floor
+# band(145) = 131 -> band(147) = 133): the stat failure that refuses the
+# identity traversal whole rather than leaving a directory out, and the
+# traversal that scans each directory once whatever its aliases. Both run
+# everywhere -- the entries are supplied to the traversal, not built on disk
+# -- so no skip is declared. The module-floor sum rises by two to 3238 and
+# the aggregate follows to 3246, keeping the same 8 above it; the suite
+# collects 3534 -> 3536, band(n) 3181 -> 3183, and the working room below
+# the floor stays 290. THE SLACK THE BANDS GRANT stays 298: the module and
+# its floor each moved by two. NO PROVIDER ROW MOVED.
 #
 # THE FIFTH RECONCILIATION OF PR #51, with main as it stood after the
 # launcher-pipe repair below, moves that repair's one row into this tree and
@@ -1729,7 +1741,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3244
+MINIMUM_COLLECTED = 3246
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

@@ -106,7 +106,9 @@ not:
   `--overlay`, given once: a repeated option is refused rather than last
   wins. The one traversal the checker performs is of the repository's own
   directories, for their identities (below): it follows no link, opens no
-  file, reads no name into any output and selects nothing.
+  file, reads no name into any output and selects nothing; it scans each
+  directory once, whatever else the directory is called; and when any entry
+  cannot be judged it refuses the run rather than judging from a partial set.
   `tests/test_standing_development_obligations.py` plants decoys on
   every such route and holds that none is read; a structural lint over the
   checker's source refuses the obvious spellings, allows that one traversal
@@ -283,9 +285,15 @@ developer's obligation, not a measurement.
   ancestors. The checker judges paths, links and the identity of
   directories, not the other names a file may have; a caller who hard-links
   or mounts an overlay into a checkout has placed it there.
-- **The identity traversal is bounded.** A repository with more than the
-  bound's number of directories is refused rather than judged partially, so
-  a very large checkout needs the bound raised, visibly, in the checker.
+- **The identity traversal is bounded, and fails closed.** A repository with
+  more than the bound's number of directories is refused rather than judged
+  partially, so a very large checkout needs the bound raised, visibly, in
+  the checker. The bound counts directories traversed, each identity once,
+  so an alias of a directory inside the tree adds no work. An entry the
+  traversal cannot `lstat` -- a transient filesystem error, an entry renamed
+  under it, a name too long to reach -- refuses the run for the same reason:
+  a directory left out of the set is one an alias could reach unjudged, so
+  the run is repeated rather than judged from a partial set.
 - **The identity bound sees a different object, not a different content.**
   A replacement that keeps the same device and inode -- a file rewritten in
   place between the walk and the open -- is the same object to every

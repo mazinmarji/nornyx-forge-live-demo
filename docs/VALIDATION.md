@@ -675,7 +675,11 @@ alias whose directory identity is a repository directory's -- the shape of a
 bind mount or mapped drive rooted below the root, measured to admit an
 in-repository overlay through a real bind mount before every directory was
 compared -- refuses; the traversal that learns those identities follows no
-link and refuses past its bound); nothing beyond an unfollowed link is
+link, scans each directory once whatever its aliases -- three bind mounts of
+`docs/` measured to add twelve scans and no identity before -- and refuses
+past its bound and on any entry it cannot `lstat`, measured before to leave a
+directory out of the set and admit an in-repository overlay through a bind
+mount of it); nothing beyond an unfollowed link is
 consulted, not even by resolution, pinned by a spy on `Path.resolve`;
 every component is classified from its `lstat` and every reparse point that
 is not a symlink refuses, a junction, a cloud placeholder and an entry whose
