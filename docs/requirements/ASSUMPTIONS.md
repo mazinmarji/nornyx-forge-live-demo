@@ -885,7 +885,42 @@ N1 of the independent PR-18 review, non-blocking at merge because no
 operator smoke evidence had been recorded. Since the post-PR-18 hardening
 `result` is derived from the recorded observations by one verdict
 function and a failure names the observation; the instrument is stronger,
-and the run it measures remains NOT PERFORMED. Windows-hosted automated evidence
+and the run it measures HAS NOW BEEN PERFORMED ONCE, at the founder's
+request, on one host, and is recorded in
+`docs/governance/EMBEDDED_INTERPRETER_RUN.md`. Both properties above are
+still true: the repository supplies no embeddable archive, and the
+builder fetches none -- the archive stayed an operator input passed on
+the command line, and nothing was added to the tree. The recorded smoke
+result is `fail`, and the run failed twice over for two different
+reasons. Driven by a CPython 3.12 builder it never reached the smoke at
+all: `verify_bundle` refused the folder, because `install_dependencies`
+resolves the closure with the builder's own interpreter while
+`install_python` accepts an operator archive of any version and nothing
+requires the two to agree -- 75 `cp312`-tagged extensions cannot load on
+the 3.13.15 the archive carries. Driven by a 3.13 builder the same
+command passed `verify_bundle`, and the runtime genuinely started on the
+bundle's own `pythonw.exe` and recorded itself ready three seconds in --
+and then the smoke did not terminate. `Forge.cmd` detaches the runtime
+with `start ""`, which creates the grandchild with handle inheritance on,
+so the grandchild is handed duplicates of the pipes
+`subprocess.run(capture_output=True)` is draining at the moment it is
+created -- and the 120 s timeout does not bound the wait for an EOF that
+cannot arrive; the smoke resumed only when that detached process was
+killed. THE REPAIR THAT FOLLOWS IS NOT "REDIRECT THE LAUNCHER'S STDIO":
+redirection was tried on the same host, with and without `/b`, and the
+run still hung, because the duplication has already happened by the time
+the grandchild could redirect anything. Giving the PARENT files instead
+of pipes, on a launcher line otherwise unchanged, removed the hang
+outright. So the repair belongs on the driving side -- do not hold
+captured pipes across a detaching launcher -- and the arms that settle it
+are recorded in `docs/governance/EMBEDDED_INTERPRETER_RUN.md`. Nothing
+had caught it, because `smoke_bundle` is
+exercised only against a scripted runtime with `subprocess.run`, `_get`
+and `_post_json` all replaced, and no workflow runs `--smoke` -- the real
+path had never been executed, which is precisely what NOT PERFORMED was
+concealing. The stop route and the stopped record stay unmeasured: that
+route requires a person's act at the computer, and no autonomous run may
+assert one. Windows-hosted automated evidence
 in this repository runs the runtime as a real child process from a real
 bundle folder on the runner's own CPython -- the developer arrangement --
 and is labelled as exactly that.

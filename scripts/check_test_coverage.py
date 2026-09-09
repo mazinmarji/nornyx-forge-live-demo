@@ -667,7 +667,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # section of docs/VALIDATION.md and the README bundle section entered
     # the document sweep (184 collected, band(184) = 166) -- the sweep
     # growing when governed prose lands is the sweep working.
-    "tests/test_recorded_measurements.py": 175,
+    # Raised 175 -> 180 for TRANCHE I, the real embedded-interpreter run:
+    # docs/governance/EMBEDDED_INTERPRETER_RUN.md entered the document sweep
+    # (199 collected, band(199) = 180). This module PARAMETRISES over the
+    # governance documents, so it gained nothing of its own -- a doc is a test
+    # here, and a tranche that adds one owes the census the same update a new
+    # module does.
+    "tests/test_recorded_measurements.py": 180,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -1227,12 +1233,28 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # and added five nodes there. The prose was rewrapped rather than the detector
 # widened; the sweep is right to be broad.
 #
+# Re-measured for TRANCHE I, the real embedded-interpreter run. NO MODULE WAS
+# ADDED and no module gained a test of its own; 113 modules stand. What moved is
+# the DOCUMENT SWEEP: docs/governance/EMBEDDED_INTERPRETER_RUN.md records the
+# operator act A-023 had carried as NOT PERFORMED, and
+# tests/test_recorded_measurements.py parametrises five checks over the
+# governance documents, so it collects 194 -> 199 and its floor follows
+# band(194) = 175 -> band(199) = 180. The module-floor sum rises by 5 to 3032
+# and the aggregate follows to 3040, keeping the same 8 above it. The suite
+# collects 3303 -> 3308, band(n) 2973 -> 2978, and the working room below the
+# floor stays 268. THE SLACK THE BANDS GRANT IS UNCHANGED at 276: the one module
+# that moved gained five collected and five of floor, so it still sits exactly
+# 19 above its own band. NO PROVIDER ROW MOVED -- the run is operator evidence
+# about a bundle folder and decides nothing about admission -- and the recorded
+# smoke result is `fail`, which is the finding rather than a regression in this
+# suite.
+#
 # (rows below):
 #
-#     collected across tests/     3303   (113 modules)
-#     sum of the module floors    3027
-#     band(3303) = ceil(0.9*n)    2973
-#     MINIMUM_COLLECTED           3035
+#     collected across tests/     3308   (113 modules)
+#     sum of the module floors    3032
+#     band(3308) = ceil(0.9*n)    2978
+#     MINIMUM_COLLECTED           3040
 #     above the module sum         8
 #     below what collects         268
 #
@@ -1288,7 +1310,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3035
+MINIMUM_COLLECTED = 3040
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
