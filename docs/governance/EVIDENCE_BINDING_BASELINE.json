@@ -821,11 +821,19 @@
       "note": "NOT pre-enforcement history. Third batch, one commit: the first head of PR #51 added docs/, scripts/, tests/ and CLAUDE.md content -- all governed inputs -- without regenerating the evidence set, so the binding it shipped describes the base it was cut from. Found by the demo-contract job on that head (refresh_governance_evidence --verify: every artifact stale) and by check_evidence_binding over the PR range. Recorded rather than rewritten: the repair cycle was instructed to preserve reviewable history and not rebase, so the commit is immutable and the honest options were to record it or to conceal it. The merge and every later commit on the branch regenerate the evidence in the same commit. Grandfathered for gate purposes only; --no-baseline still reports it.",
       "recorded_governed_input_digest": "sha256:542ea27576a15f41b07eecd040144fb3deaa50246670df4154e18a86a12f6d85",
       "subject": "governance: add standing development obligations"
+    },
+    {
+      "actual_governed_input_digest": "sha256:658d3334a30590dc8c06c897a12dbbaac043ad0b52446ba355d41853cfacffde",
+      "category": "committed_after_the_defect_was_known",
+      "commit": "a1f99954dbf214fd7802dd5d9bc229e9bc49edf0",
+      "note": "NOT pre-enforcement history. Fourth batch, one commit: the fifth reconciliation merge of PR #51 (main e340217, PR #55). The twelve generated artifacts were taken from main to be regenerated over the merged tree, and the regeneration REFUSED TO RUN: git reported dubious ownership of the checkout (a non-root user had been given the tree for a local census run) and the tooling deliberately does not consult the reader's safe.directory allowance, so it modified nothing and exited 1 -- and the commit step did not fail closed on that exit, so the merge was committed and pushed shipping main's evidence, which describes main's tree. Found by check_evidence_binding over the PR range immediately after the push, and by the pull_request run on that head. Recorded rather than rewritten: the reconciliation was instructed to be a merge commit with no history rewriting, so the commit is immutable. The next commit regenerates the evidence over this tree with ownership restored. Grandfathered for gate purposes only; --no-baseline still reports it.",
+      "recorded_governed_input_digest": "sha256:0754ce238a252690049014581a2b16dd4fc66087bda6b7507eb1c79340da8f3e",
+      "subject": "Merge main (PR #55, the launcher-pipe smoke) into governance/standing-development-obligations"
     }
   ],
-  "purpose": "An exact record of commits whose shipped evidence does not describe their own governed inputs. MOST predate enforcement; SEVEN DO NOT -- they carry category 'committed_after_the_defect_was_known' and were made after the check was wired into CI, recorded rather than hidden because the commits are immutable and rewriting history to conceal an evidence defect would be worse than the defect. Calling the whole file 'commits that predate enforcement' was false of those seven. Grandfathering is for the gate only: --no-baseline still reports every entry.",
+  "purpose": "An exact record of commits whose shipped evidence does not describe their own governed inputs. MOST predate enforcement; EIGHT DO NOT -- they carry category 'committed_after_the_defect_was_known' and were made after the check was wired into CI, recorded rather than hidden because the commits are immutable and rewriting history to conceal an evidence defect would be worse than the defect. Calling the whole file 'commits that predate enforcement' was false of those eight. Grandfathering is for the gate only: --no-baseline still reports every entry.",
   "range_measured": "056e63903f6f71b506a7f9d15862d906fb72f7d0..062ed8be1402a5b252f8545011544516fde55848",
   "schema": "nornyx.forge.evidence_binding_baseline.v1",
-  "violating_commits": 136,
-  "violations_committed_after_enforcement_was_known": 7
+  "violating_commits": 137,
+  "violations_committed_after_enforcement_was_known": 8
 }

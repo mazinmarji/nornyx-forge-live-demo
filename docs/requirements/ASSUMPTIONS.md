@@ -4071,7 +4071,12 @@ rebase, so the commit is immutable and is recorded in
 after the defect was known, with its recorded and actual digests; the pinned
 count in `tests/test_evidence_binding.py` moved with it, deliberately. The
 merge and every later commit on the branch regenerate the evidence in the
-same commit.
+same commit, with one exception recorded the same way: the fifth
+reconciliation merge (a1f9995) shipped main's evidence, because the
+regeneration refused to run under a checkout git reported as dubiously owned
+and the commit step did not fail closed on that refusal; it is the eighth
+entry, the count moved to eight, and the commit after it regenerated the
+evidence over that tree.
 
 **Scope.** A registry, a checker, a procedure document, entry-point
 instructions and their tests. No Experience stage, provider row, eligibility

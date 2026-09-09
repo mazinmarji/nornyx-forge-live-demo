@@ -50,7 +50,11 @@
   `docs/governance/EVIDENCE_BINDING_BASELINE.json` as the seventh made after
   the defect was known, with the pinned count in
   `tests/test_evidence_binding.py` raised deliberately; the merge and every
-  later commit regenerate the evidence in the same commit. Collection
+  later commit regenerate the evidence in the same commit, except the fifth
+  reconciliation merge (a1f9995), recorded as the eighth: its regeneration
+  refused to run under a checkout git reported as dubiously owned and the
+  commit step did not fail closed, so it shipped main's evidence and the
+  commit after it regenerated the set over that tree. Collection
   3308 -> 3395 across 114 modules; the recorded-measurements floor follows
   the new governance document to 184.
   An in-session read-only adversarial review of the first repaired head --

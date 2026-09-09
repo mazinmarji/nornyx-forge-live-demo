@@ -41,11 +41,15 @@ CHECKER = ROOT / "scripts/check_evidence_binding.py"
 #: Pinned. The counts are a claim about history, so a change to either is a
 #: change to what this repository says happened -- not a config tweak.
 PRE_ENFORCEMENT_VIOLATIONS = 129
-#: SEVEN. Raised from six for the first head of PR #51 (4861f98), which added
+#: EIGHT. Raised from six for the first head of PR #51 (4861f98), which added
 #: governed inputs without regenerating the evidence set and whose repair cycle
-#: was instructed to preserve history rather than rebase. Raised deliberately,
-#: with the entry's note saying why, which is the only way this number may move.
-POST_KNOWLEDGE_VIOLATIONS = 7
+#: was instructed to preserve history rather than rebase; raised from seven
+#: for that PR's fifth reconciliation merge (a1f9995), whose evidence
+#: regeneration refused to run under a checkout git called dubiously owned
+#: and whose commit step did not fail closed on that refusal. Raised
+#: deliberately, with each entry's note saying why, which is the only way this
+#: number may move.
+POST_KNOWLEDGE_VIOLATIONS = 8
 
 #: The commit committed AFTER the defect was described, kept separate on purpose.
 #: Seven, not one. The second batch is five commits made while remediating
