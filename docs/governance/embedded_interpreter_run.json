@@ -1,0 +1,193 @@
+{
+  "schema": "nornyx.forge.embedded_interpreter_run.v1",
+  "subject": "The operator act A-023 recorded as NOT PERFORMED: building the Windows bundle around a real CPython embeddable archive and running its smoke.",
+  "measured_at_commit": "5e4148bec90f182f96957fb1bc035e399f5f3b0a",
+  "measured_on": "2026-09-09",
+  "platform": "windows",
+  "host": {
+    "name": "LAPTOP-EMF4NEOK",
+    "os": "Microsoft Windows 11 Home",
+    "os_version": "10.0.22000",
+    "os_build": "22000",
+    "os_ubr": 2538,
+    "display_version": "21H2",
+    "architecture": "64-bit",
+    "one_host_only": "This is a single host. Nothing here is a matrix, and nothing here generalises to another Windows build, another account type, or another CPU architecture."
+  },
+  "archive": {
+    "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+    "bytes": 11009825,
+    "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf",
+    "supplied_by": "operator, on the command line",
+    "digest_checks": [
+      "Checked by the builder-agent with coreutils sha256sum before use.",
+      "Checked again by the builder-agent with a second implementation (Python hashlib, streamed over the whole file); both agree, and both agree with the size.",
+      "Checked a third time immediately before the stock extraction used as the run-2 builder.",
+      "Checked by scripts/build_windows_bundle.py itself: install_python computes hashlib.sha256(embed_zip.read_bytes()) over the WHOLE archive and compares it before zipfile.ZipFile is opened, so a mismatched archive is never read as a zip. This was confirmed by reading the function, not assumed from its name."
+    ],
+    "still_true": "The repository supplies no embeddable archive and the builder fetches none. The archive remained an operator input passed on the command line; nothing was added to the tree and no downloading code was added anywhere."
+  },
+  "interpreter_as_reported_by_itself": {
+    "how_obtained": "Executed the extracted python.exe and printed sys.version; not read from the filename.",
+    "sys_version": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "version_info": [3, 13, 15, "final", 0],
+    "cache_tag": "cpython-313"
+  },
+  "runs": [
+    {
+      "run": 1,
+      "builder_interpreter": "CPython 3.12.10 (the prepared virtual environment)",
+      "command": "python scripts/build_windows_bundle.py --dist <scratch>/forge-windows --python-embed <archive> --python-embed-sha256 <digest> --smoke",
+      "outcome": "BUILD FAILED at verify_bundle. Exit 1.",
+      "reached": [
+        "copy_tree",
+        "install_dependencies",
+        "install_python (digest matched; archive extracted)",
+        "write_bundle_marker (mode self_contained)",
+        "write_launcher"
+      ],
+      "failed_at": "verify_bundle",
+      "error": "ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'",
+      "cause_measured": {
+        "installed_extension": "_pydantic_core.cp312-win_amd64.pyd",
+        "wheel_tag": "cp312-cp312-win_amd64",
+        "closure_extension_tags": {
+          "cp312_tagged": 75,
+          "cp313_tagged": 0,
+          "abi3_tagged": 0,
+          "total_pyd": 133
+        },
+        "mechanism": "install_dependencies resolves the dependency closure with the BUILDER's interpreter (sys.executable), while install_python extracts an operator-supplied interpreter of any version. Nothing in the script requires the two to agree, and requires-python (>=3.10,<3.14) admits both. CPython 3.13 will not load a cp312-tagged extension."
+      },
+      "smoke": "NEVER RAN. main() raises at verify_bundle before the --smoke branch, and no smoke report file was produced.",
+      "reading": "verify_bundle did its job. The bundle refused to claim it could run, rather than shipping a folder that fails later in front of a person."
+    },
+    {
+      "run": 2,
+      "purpose": "Isolate one named variable: the builder's minor version. Recording only run 1 would let a reader conclude the bundle design cannot work, when what run 1 measured is that this builder/embed pairing cannot.",
+      "builder_interpreter": "CPython 3.13.15 - the SAME operator-supplied archive, extracted stock (unmodified ._pth) to a separate directory, so no new third-party artifact was introduced.",
+      "command": "<stock 3.13.15 python.exe> scripts/build_windows_bundle.py --dist <scratch>/forge-windows-313 --python-embed <archive> --python-embed-sha256 <digest> --smoke",
+      "outcome": "BUILD SUCCEEDED; SMOKE ran and returned result: fail. Exit 1.",
+      "build_line": "bundle built: <scratch>/forge-windows-313 (self_contained)",
+      "verify_bundle": "passed - the bundle's own embedded interpreter imported the package set and resolved the bundle root as its own.",
+      "closure_extension_tags": {
+        "cp313_tagged": 75,
+        "cp312_tagged": 0
+      },
+      "controlled_comparison": "The only variable changed between run 1 and run 2 was the builder's minor version, and all 75 tagged extensions flipped with it. That is the cause, measured in both directions rather than argued.",
+      "runtime_actually_started": {
+        "note": "These facts were written by the real embedded interpreter running the real bundle, not by a test double.",
+        "bundle_mode": "self_contained",
+        "interpreter_path": "<bundle>/python/pythonw.exe",
+        "runtime_schema": "nornyx.forge.windows_runtime.v1",
+        "instance": "2c26fb79119ba24d3f1c9ef6edb4d9f2",
+        "pid": 1424,
+        "port": 56189,
+        "started_at": "2026-09-09T06:28:12Z",
+        "ready_at": "2026-09-09T06:28:15Z",
+        "time_to_ready_seconds": 3,
+        "recorded_state": "ready"
+      },
+      "smoke_verdict": {
+        "schema": "nornyx.forge.windows_bundle_smoke.v2",
+        "rule": "pass only when every required observation was made once and succeeded",
+        "result": "fail",
+        "required_observations": [
+          "launcher",
+          "runtime_record",
+          "session_file",
+          "get /api/runtime",
+          "get /api/state",
+          "get /",
+          "stop",
+          "stopped"
+        ],
+        "failed": [
+          "launcher: the launcher did not return within its timeout",
+          "get /api/runtime: HTTP None, not 200 (ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it)",
+          "get /api/state: HTTP None, not 200 (ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it)",
+          "get /: HTTP None, not 200 (ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it)",
+          "stop: HTTP None, not 200 (ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it)",
+          "stopped: no stopped record within the wait"
+        ]
+      },
+      "attribution_of_those_six": {
+        "why_this_section_exists": "Five of the six failures are consequences of the builder-agent terminating the runtime to end an unbounded hang. Reporting the verdict without separating them would overstate what the run measured about the routes.",
+        "genuine": [
+          "launcher: the launcher did not return within its timeout - this is the real finding, described under launcher_hang below."
+        ],
+        "caused_by_the_agent_terminating_the_runtime": [
+          "get /api/runtime",
+          "get /api/state",
+          "get /",
+          "stop",
+          "stopped"
+        ],
+        "passed_genuinely": [
+          "runtime_record - the real embedded runtime recorded itself ready, with the right schema and a well-formed instance token.",
+          "session_file - the bearer the runtime writes after readiness was present and readable."
+        ]
+      },
+      "launcher_hang": {
+        "what_happened": "The smoke did not terminate. It sat in its launcher step for about four and a half minutes beyond its own 120 s timeout, and resumed only when the builder-agent terminated the detached runtime process.",
+        "observations": [
+          "No cmd.exe child of the builder survived.",
+          "The runtime port was in LISTEN only, with no established connection, so no exchange was in flight.",
+          "The builder had accumulated 1.28 s of CPU: blocked, not spinning.",
+          "It resumed at the instant the detached pythonw.exe was terminated, and then completed in exactly its 60 s stopped-record poll."
+        ],
+        "mechanism": "_observe_launch runs subprocess.run([cmd.exe, /c, Forge.cmd, ...], capture_output=True, timeout=120). Forge.cmd ends with `start \"\" \"%~dp0python\\pythonw.exe\" -m nornyx_forge.windows_launch ...`, which detaches WITHOUT redirecting stdio, so the grandchild inherits the captured pipe write handles. cmd.exe exits immediately; the pipes stay open. subprocess.run waits for EOF that cannot come, raises TimeoutExpired at 120 s, kills the already-dead cmd.exe, and then blocks in its post-kill drain, which carries no timeout of its own.",
+        "mechanism_confidence": "The causal observation - it resumed at the kill and at nothing else - is measured. The handle-inheritance explanation is consistent with every observation and with the launcher text, but the handle table itself was not enumerated.",
+        "why_nothing_caught_it": "smoke_bundle is exercised only against a scripted runtime: tests/test_windows_bundle.py monkeypatches builder.subprocess.run, builder._get and builder._post_json, so no real process is started and no real socket is opened. CI runs scripts/smoke_http.py, which is a different instrument; no workflow runs build_windows_bundle.py --smoke. The real path had therefore never been executed, which is precisely what NOT PERFORMED was concealing.",
+        "scope_of_the_defect": "Both launcher templates use `start \"\"`, so the mechanism is not specific to the self-contained bundle. Only the self-contained launcher was executed here; the developer launcher was not run under the smoke on this host, so its behaviour is inferred rather than measured."
+      }
+    }
+  ],
+  "separate_route_probe": {
+    "what_it_is": "A probe by the builder-agent against the live embedded runtime, made BEFORE terminating it, over the same three read routes the smoke names. It is recorded because the smoke hung before reaching them, so without it the run would say nothing about whether the real embedded runtime serves.",
+    "what_it_is_not": "It is NOT the smoke's verdict, and it does not substitute for one. The smoke's result stands at fail.",
+    "routes": [
+      {
+        "path": "/api/runtime",
+        "http_code": 200,
+        "content_type": "application/json",
+        "bytes": 542,
+        "schema": "nornyx.forge.windows_runtime.v1",
+        "instance_matches_the_recorded_runtime": true
+      },
+      {
+        "path": "/api/state",
+        "http_code": 200,
+        "content_type": "application/json",
+        "bytes": 52,
+        "initialized": false
+      },
+      {
+        "path": "/",
+        "http_code": 200,
+        "content_type": "text/html; charset=utf-8",
+        "bytes": 13793
+      }
+    ]
+  },
+  "not_measured": {
+    "stop_route_and_stopped_record": "The stop route refuses any actor whose kind is not human: windows_runtime.py answers a non-human actor with a refusal, because stopping Forge is a person's act at that computer. The builder-agent is not a person and declined to assert that it was, so the stop route and the stopped record were not exercised on this run. The smoke, which does assert that actor, hung before reaching them.",
+    "developer_bundle_smoke": "Not run on this host.",
+    "second_host": "None. One host, one archive, one architecture."
+  },
+  "does_not_establish": [
+    "an installer",
+    "code signing",
+    "release publication",
+    "auto-update",
+    "a Windows service",
+    "provider confinement or admission",
+    "A-018",
+    "R3 monotonic anchoring",
+    "any approval, READY state, or production-approval readiness",
+    "any Experience stage advance, contract validation, or inspection",
+    "a passing bundle smoke - the smoke's recorded result on this run is fail",
+    "a host matrix - this is one host, one Windows build, one CPU architecture"
+  ],
+  "classification_note": "Operator evidence about a folder on one machine. It is not governance evidence, it decides nothing about any project, and it creates no approval."
+}
