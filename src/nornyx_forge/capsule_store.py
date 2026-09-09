@@ -94,6 +94,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -302,6 +303,59 @@ def _replace_fresh(tmp: Path, path: Path) -> None:
         os.replace(tmp, path)
 
 
+#: How many random bytes `_write_fresh` puts in the temp name it writes before
+#: moving it onto its destination. ONE constant, because `_tree_changes` below
+#: has to recognise the names this writer actually produces and the two must
+#: not drift apart in silence. Pinned in both directions by
+#: `test_the_cleanliness_exemption_matches_a_name_the_writer_really_produces`,
+#: which builds a name with `_fresh_tmp_path` and asserts the matcher takes it.
+_FRESH_TMP_RANDOM_BYTES = 8
+_FRESH_TMP_NAME = re.compile(
+    r"\.[0-9a-f]{" + str(_FRESH_TMP_RANDOM_BYTES * 2) + r"}\.tmp\Z"
+)
+
+
+def _fresh_tmp_path(path: Path) -> Path:
+    """The sibling `_write_fresh` writes whole before moving it onto `path`."""
+    return path.with_name(f"{path.name}.{os.urandom(_FRESH_TMP_RANDOM_BYTES).hex()}.tmp")
+
+
+def _tree_changes(porcelain: str) -> list[str]:
+    """The `git status --porcelain` lines that are a finding about the store.
+
+    ONE NAME SHAPE IS EXEMPT, and only when UNTRACKED: a sibling in the store
+    root whose name ends in Forge's own temp suffix. `_write_fresh` writes a
+    finished file to that name and renames it, and a death between those two
+    statements leaves the name behind -- a survivor no `finally` can take,
+    exactly as `seal()`'s `.json.tmp` cannot be taken. Measured: one such
+    stray made EVERY later load fail, `seal_problems` reporting "the working
+    tree is not clean: ?? .forge-seal.<hex>.tmp" and the surface reporting
+    TAMPERED, against a store nobody had touched, because of Forge's own
+    crash. Fail-closed and repairable, but a tamper finding manufactured by
+    the product about itself, and the human restore it invites costs the
+    lifecycle a transition.
+
+    THE EXEMPTION IS NOT A CLAIM THAT THE FILE IS FORGE'S. The name is the
+    only evidence and any writer in the store can forge a name, so what this
+    says is narrower and is all that is needed: an UNTRACKED file bearing that
+    suffix is not BY ITSELF a tamper finding. It can smuggle no authority,
+    because nothing in this module ever reads the store by pattern -- the
+    authority files, the store marker and the seal marker are each read by
+    exact name, and their bytes are compared to the seal regardless of what
+    else is in the directory. A tracked file of that name that was modified or
+    deleted is still a finding; so is an untracked file of any other name, and
+    so is one in a subdirectory. A-022 records the widening.
+    """
+    kept: list[str] = []
+    for line in porcelain.splitlines():
+        if line.startswith("?? "):
+            name = line[3:]
+            if "/" not in name and "\\" not in name and _FRESH_TMP_NAME.search(name):
+                continue
+        kept.append(line)
+    return "\n".join(kept).strip().splitlines()
+
+
 def _write_fresh(path: Path, text: str) -> None:
     """Put these bytes at `path` as a NEW file, whatever shape is there now.
 
@@ -328,9 +382,39 @@ def _write_fresh(path: Path, text: str) -> None:
     `os.replace` keeps everything the removal bought. It swaps the directory
     ENTRY, so a planted hardlink's other name keeps the old inode and the
     bytes land in the new one (measured: the outside file was untouched); it
-    replaces a symlink rather than following it; and the destination is never
-    absent at any instant. Only a directory still needs removing first,
-    because a rename cannot replace one.
+    replaces a symlink rather than following it; and for a FILE destination
+    it is never absent at any instant.
+
+    A DIRECTORY AND A JUNCTION STILL NEED REMOVING, because a rename cannot
+    replace either -- and the first version of this repair removed them where
+    the old code did, BEFORE the temp existed, which left for those two shapes
+    exactly the fall-open it had just closed for a file. Measured at that
+    commit with nothing patched but `Path.write_text`: with a directory or a
+    junction at `.forge-seal`, a handled `OSError` AND a crash inside the
+    marker's own write each left `['.forge-capsule', 'capsule.json',
+    'experience.json']` -- `protected()` False, and a sealless load returning
+    the worker's forged `READY`. The `OSError` form is durable and needs no
+    crash, and it is reported behind a refusal whose own docstring promises
+    nothing was partially written. It is also a DEGRADATION Forge itself
+    causes: before the call the directory made `protected()` True and a
+    sealless load refuse. A concurrent observer counting absence strictly
+    inside this function measured file 0/2518, directory 1706/4204, junction
+    1475/2544.
+
+    THE REMOVAL THEREFORE HAPPENS INSIDE THE `try`, AFTER THE FINISHED TEMP
+    EXISTS. Every way the write itself can fail -- the full disk, the scanner
+    holding the create, a death during the bytes -- now fails with the old
+    entry still standing, and the durable `OSError` form disappears entirely
+    for both shapes (measured after the reorder: `protected()` True and a
+    sealless load `REFUSED CapsuleSealMissing`, in both shapes and both forms).
+
+    WHAT REMAINS IS A CRASH-ONLY MICRO-WINDOW, INHERENT RATHER THAN CLOSED.
+    For a directory or a junction the removal and the rename are two adjacent
+    syscalls with no I/O between them, and a death in that gap still leaves
+    the name absent. `os.replace` cannot replace a directory, so no ordering
+    of those two calls removes the gap; only a shape the destination does not
+    have would. It is narrowed, not eliminated, and A-022 records it as
+    residue rather than as a closed hole.
 
     The temp name carries 64 random bits. It is a name in the STORE, which is
     the hostile directory -- unlike `seal`'s fixed sibling, which lives in the
@@ -339,11 +423,11 @@ def _write_fresh(path: Path, text: str) -> None:
     this path: `_write_document` and `_write_experience` on the ordinary save
     path still write through, unchanged, and ASSUMPTIONS A-022 records that.
     """
-    if path.is_dir() and not path.is_symlink():
-        _remove_tree(path)
-    tmp = path.with_name(f"{path.name}.{os.urandom(8).hex()}.tmp")
+    tmp = _fresh_tmp_path(path)
     try:
         tmp.write_text(text, encoding="utf-8", newline="")
+        if path.is_dir() and not path.is_symlink():
+            _remove_tree(path)
         _replace_fresh(tmp, path)
     except OSError:
         # Never mask the failure with a cleanup failure; `_rebuild`'s wipe
@@ -601,14 +685,28 @@ class CapsuleStore:
         order that closes the fall-open would otherwise have lost the recovery
         with it.
 
-        THIS METHOD IS ATOMIC AND `_rebuild` LEANS ON IT. It runs first there,
-        so for the width of its write the store holds the worker's forged
-        authority and nothing else: if the marker were absent during it, the
-        fall-open would be open exactly then. `_write_fresh` therefore moves a
-        finished file into place rather than clearing the name and rewriting
-        it, and the marker on disk is the old one or the new one at every
-        instant -- never neither. Pinned by the two `inside-the-marker-write`
-        rows, one crash and one ordinary `OSError`.
+        `_rebuild` LEANS ON HOW LITTLE OF THIS WRITE THE MARKER IS ABSENT FOR.
+        It runs first there, so for the width of its write the store holds the
+        worker's forged authority and nothing else: if the marker were absent
+        during it, the fall-open would be open exactly then. `_write_fresh`
+        therefore writes a finished file to a sibling and moves it onto the
+        name, and removes a directory or a junction standing there only AFTER
+        that sibling exists.
+
+        WHAT THAT BUYS, STATED EXACTLY, because a stronger sentence stood here
+        and was false. Against a FILE destination, or none, the marker on disk
+        is the old one or the new one at every instant -- never neither; the
+        rename is the only mutation. Against a DIRECTORY or a JUNCTION it is
+        weaker: no ordinary failure of the write can strip the marker, since
+        everything that can raise has already happened when the removal runs,
+        but a process death BETWEEN the removal and the rename -- two adjacent
+        syscalls, no I/O between them -- still leaves the name absent. That
+        residue is inherent to `os.replace`, which cannot replace a directory,
+        and A-022 records it as residue rather than as a closed hole.
+
+        Pinned by the `inside-the-marker-write` rows: one crash and one
+        ordinary `OSError` at a file destination, and the same two forms again
+        at a directory and at a junction.
         """
         if self.seal_dir is None:
             return
@@ -702,8 +800,13 @@ class CapsuleStore:
             )
             if status.returncode != 0:
                 problems.append("the store's working tree cannot be read")
-            elif status.stdout.strip():
-                problems.append("the working tree is not clean: " + status.stdout.strip()[:120])
+            else:
+                # Everything except a stray of Forge's own temp shape; see
+                # `_tree_changes` for why that one name is not a finding.
+                changes = _tree_changes(status.stdout)
+                if changes:
+                    problems.append(
+                        "the working tree is not clean: " + "\n".join(changes)[:120])
         if not (self.root / _MARKER_FILE).exists():
             problems.append("the store marker is missing")
         marker = self.root / _SEAL_MARKER_FILE

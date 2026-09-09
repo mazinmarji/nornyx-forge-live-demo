@@ -1005,6 +1005,277 @@ def test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy(
             call()
 
 
+def _plant_at_the_marker(capsule: Path, shape: str, tmp_path: Path) -> None:
+    """Put a directory or a junction at `.forge-seal`, and ASSERT it landed.
+
+    Round 3 recorded an unasserted plant that never happened reading as a clean
+    success and proving nothing; the assertions here are that finding applied.
+    """
+    marker = capsule / ".forge-seal"
+    marker.unlink()
+    if shape == "directory":
+        marker.mkdir()
+        (marker / "occupant.txt").write_text("x\n", encoding="utf-8", newline="")
+        assert marker.is_dir() and not marker.is_symlink(), "the directory did not land"
+    else:
+        target = tmp_path / "junction-target"
+        target.mkdir()
+        (target / "outside.txt").write_text("the junction's target\n",
+                                            encoding="utf-8", newline="")
+        done = subprocess.run(["cmd", "/c", "mklink", "/J", str(marker), str(target)],
+                              capture_output=True, text=True, check=False, timeout=60)
+        assert done.returncode == 0, f"mklink: {done.stdout}{done.stderr}"
+        assert store_module._is_junction(marker), "the plant is not a junction"
+
+
+def _a_sealless_load_refuses(capsule: Path, store: CapsuleStore) -> None:
+    """One same-user deletion of the seal is not enough to read the store.
+
+    The seal is PUT BACK, so this may be asserted before the call as well as
+    after it -- which is what lets the rows below measure a DEGRADATION rather
+    than an absence.
+    """
+    seal = store.seal_path()
+    kept = seal.read_bytes()
+    seal.unlink()
+    try:
+        later = CapsuleStore(capsule, seal_dir=store.seal_dir)
+        for call in (later.load_experience, later.load):
+            with pytest.raises(CapsuleSealMissing):
+                call()
+    finally:
+        seal.write_bytes(kept)
+
+
+def _the_marker_write_fails_over(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str, form: str) -> None:
+    """ROUND 3 CLOSED ONE SHAPE AND LEFT TWO OPEN, and nothing demanded them.
+
+    The two rows above reach inside the marker's own write with an ordinary
+    FILE at the destination, where `os.replace` does the whole job. When a
+    DIRECTORY or a JUNCTION stands there instead, `_write_fresh` must remove it
+    first -- a rename cannot replace either -- and round 3 removed it where the
+    old code did: BEFORE the temp existed. So for those two shapes the marker
+    was absent for the width of the write again, and `_write_seal_marker` is
+    `_rebuild`'s first statement. Measured at that commit with nothing patched
+    but `Path.write_text`, in both forms and both shapes:
+
+        on disk  ['.forge-capsule', 'capsule.json', 'experience.json']
+        protected() False   sealless load  RETURNED stage='READY'
+
+    Durable in the `OSError` form -- no crash needed, a full disk is enough --
+    and reported behind a refusal whose own docstring promises that nothing was
+    partially written. And a DEGRADATION Forge itself causes, which is why the
+    pre-call state is asserted below: the planted shape already made the store
+    protected and already made a sealless load refuse, and the restoration is
+    what took that away. A concurrent observer counting the marker's absence
+    strictly inside `_write_fresh` measured file 0/2518, directory 1706/4204,
+    junction 1475/2544.
+
+    NO TEST ANYWHERE PLANTED EITHER SHAPE AT `.forge-seal` -- which is exactly
+    why round 3's repair could reopen for two shapes what it closed for one.
+    These four rows are what demand the removal happen INSIDE the `try`, after
+    the finished temp exists; reverting that reorder turns all four red and
+    leaves every other row in this module green.
+
+    WHAT IS NOT CLAIMED. A crash-only micro-window survives for these two
+    shapes and is disclosed rather than closed: the removal and the rename are
+    two adjacent syscalls, and a death between them still leaves the name
+    absent. `os.replace` cannot replace a directory, so no ordering of those
+    two calls removes it. These rows kill at the FIRST write the marker's write
+    makes, which is the instant that reaches both implementations; they do not
+    reach that two-syscall gap and do not pretend to. A-022 records it.
+
+    FOUR ROWS ACROSS THREE FUNCTIONS, and the split is bookkeeping rather than
+    design: `check_test_coverage.EXPECTED_SKIPS` is keyed by node id and
+    `test_every_declared_exemption_names_a_test_that_exists` resolves that key
+    by looking for `def <name>(` in the module, so a PARAMETRISED row cannot be
+    declared as a skip at all. The two junction rows need declaring, so they
+    are whole functions; the directory rows need nothing and stay a
+    parametrisation. A-022 records the census limitation rather than widening
+    the guard to admit an entry of its author's own shape.
+    """
+    store = _sealed_store(tmp_path)
+    sealed = store.sealed()
+    capsule = tmp_path / "capsule"
+    forge_ready(capsule)
+    _remove_tree(capsule / ".git")     # the honest reset route is unreachable
+    _plant_at_the_marker(capsule, shape, tmp_path)
+
+    # BEFORE the call: the name is occupied, so the store is already protected
+    # and a sealless load already refuses. Anything less afterwards is Forge
+    # removing a factor it found in place.
+    assert store.protected()
+    _a_sealless_load_refuses(capsule, store)
+
+    _die_inside_the_marker_write(
+        monkeypatch,
+        SystemExit("the process died inside the marker's own write") if form == "crash"
+        else OSError(28, "No space left on device"))
+    with pytest.raises(SystemExit if form == "crash" else CapsuleStoreError):
+        store.restore(sealed)
+    monkeypatch.undo()
+
+    if form == "oserror":
+        assert "Nothing was partially written." in (CapsuleStoreError.__doc__ or ""), (
+            "the promise this row holds the store to has been edited away rather "
+            "than kept; if the contract changed, this row must change with it"
+        )
+    forged = json.loads((capsule / "experience.json").read_text(encoding="utf-8"))
+    assert forged["stage"] == "READY", (
+        "this row exists to catch the rebuild BEFORE it corrects any authority "
+        "byte, with the worker's forgery still on disk; if the forgery is "
+        "already gone the failure landed somewhere else and the row proves nothing"
+    )
+    assert (capsule / ".forge-seal").exists(), (
+        "the seal-marker name was left empty while the worker's forged bytes "
+        f"were on disk: {sorted(path.name for path in capsule.iterdir())}"
+    )
+    assert store.protected(), (
+        "the restoration removed the protection it found in place, leaving the "
+        "forgery one same-user seal deletion away from reading as a legacy store"
+    )
+    _a_sealless_load_refuses(capsule, store)
+
+
+@pytest.mark.parametrize("form", ["crash", "oserror"])
+def test_a_failure_inside_the_marker_write_leaves_a_directory_marker_standing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str):
+    """The directory shape, on every platform. See `_the_marker_write_fails_over`."""
+    _the_marker_write_fails_over(tmp_path, monkeypatch, "directory", form)
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="A junction is an NTFS directory-shaped reparse point that is_symlink() "
+           "reports False for, and POSIX has no equivalent, so this row's plant "
+           "cannot be built on a Linux job. The property is not weakened: the "
+           "directory rows take the identical branch of _write_fresh and execute "
+           "on every platform, and both junction rows execute on a Windows "
+           "workstation.",
+)
+def test_a_crash_inside_the_marker_write_leaves_a_junction_marker_standing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The junction shape, crashing. See `_the_marker_write_fails_over`."""
+    _the_marker_write_fails_over(tmp_path, monkeypatch, "junction", "crash")
+
+
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="A junction is an NTFS directory-shaped reparse point that is_symlink() "
+           "reports False for, and POSIX has no equivalent, so this row's plant "
+           "cannot be built on a Linux job. The property is not weakened: the "
+           "directory rows take the identical branch of _write_fresh and execute "
+           "on every platform, and both junction rows execute on a Windows "
+           "workstation.",
+)
+def test_an_oserror_inside_the_marker_write_leaves_a_junction_marker_standing(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The junction shape, durable. See `_the_marker_write_fails_over`."""
+    _the_marker_write_fails_over(tmp_path, monkeypatch, "junction", "oserror")
+
+
+def test_a_stray_temp_from_forges_own_crash_is_not_a_tamper_finding(tmp_path: Path):
+    """FORGE'S OWN CRASH MANUFACTURED A TAMPER FINDING AGAINST AN UNTOUCHED STORE.
+
+    `_write_fresh` writes `<name>.<16 hex>.tmp` and renames it. A death between
+    those two statements leaves the name behind -- no `finally` can take it,
+    exactly as `seal()`'s own `.json.tmp` cannot be taken. The cleanliness
+    check then saw an extra untracked file and every later load failed:
+
+        seal_problems  ["the working tree is not clean: ?? .forge-seal.<hex>.tmp"]
+        load()         REFUSED CapsuleSealError
+
+    Fail-closed and repairable -- `git clean` on the honest restore route takes
+    it, and `_rebuild`'s wipe takes it, since the temp name is in no keep set.
+    But the product was reporting TAMPERED about a store nobody had touched,
+    on account of its own crash, and the human restore it invites costs the
+    lifecycle a transition. That is a false finding, and a finding that can be
+    false for an innocent reason is worth less when it is true.
+
+    THE EXEMPTION IS NARROW AND IS NOT A CLAIM OF OWNERSHIP. The name is the
+    only evidence there is and any writer in the store can forge a name, so
+    what the check now says is only that an UNTRACKED file bearing Forge's own
+    temp suffix, in the store root, is not BY ITSELF a tamper finding. It can
+    carry no authority: nothing in the module reads the store by pattern, and
+    the authority files, the store marker and the seal marker are each read by
+    exact name with their bytes compared to the seal regardless of what else
+    is in the directory. The second half of this row is the load-bearing one:
+    any OTHER untracked file is still a finding, so this is an exemption
+    rather than the cleanliness check being switched off.
+    """
+    store = _sealed_store(tmp_path)
+    capsule = tmp_path / "capsule"
+    assert store.seal_problems(store.sealed()) == []
+
+    stray = store_module._fresh_tmp_path(capsule / ".forge-seal")
+    stray.write_text("a survivor of a death between the temp write and the rename\n",
+                     encoding="utf-8", newline="")
+    porcelain = subprocess.run(["git", "status", "--porcelain"], cwd=capsule,
+                               capture_output=True, text=True, check=True).stdout
+    assert porcelain.strip() == f"?? {stray.name}", (
+        "the specimen must be an untracked file git actually reports"
+    )
+
+    # (i) Forge's own residue is not a finding, and both authority routes work.
+    assert store.seal_problems(store.sealed()) == []
+    assert store.load_experience()["stage"] == "DISCOVER"
+    assert store.load()["project_id"] == "proj-1"
+
+    # (ii) ANY other untracked file still is one, including one that only
+    # resembles the temp name, and including one below the store root.
+    for other, reported in ((capsule / "notes.txt", "?? notes.txt"),
+                            (capsule / ".forge-seal.tmp", "?? .forge-seal.tmp"),
+                            (capsule / ".forge-seal.00112233445566.tmp",
+                             "?? .forge-seal.00112233445566.tmp")):
+        other.write_text("x\n", encoding="utf-8", newline="")
+        assert store.seal_problems(store.sealed()) == [
+            "the working tree is not clean: " + reported], other.name
+        with pytest.raises(CapsuleSealError):
+            store.load()
+        other.unlink()
+    (capsule / "sub").mkdir()
+    store_module._fresh_tmp_path(capsule / "sub" / ".forge-seal").write_text(
+        "x\n", encoding="utf-8", newline="")
+    assert store.seal_problems(store.sealed()) == [
+        "the working tree is not clean: ?? sub/"], "the exemption reached below the root"
+
+
+def test_the_cleanliness_exemption_matches_a_name_the_writer_really_produces(tmp_path: Path):
+    """THE MATCHER AND THE NAME-BUILDER MUST NOT DRIFT APART IN SILENCE.
+
+    `_tree_changes` recognises the names `_write_fresh` produces by a regular
+    expression derived from `_FRESH_TMP_RANDOM_BYTES`, and two descriptions of
+    one rule is the shape this repository keeps finding rot in. So the names
+    are generated by the real builder and fed to the real matcher, rather than
+    a literal being typed into both places.
+
+    Drift would fail SAFE -- an unrecognised stray goes back to being a tamper
+    finding, not to being ignored -- and it is pinned anyway, because a control
+    that quietly stops applying is how the finding it prevents comes back.
+
+    The near-misses are the other half: sixteen hex digits exactly, lower case,
+    that suffix and nothing after it.
+    """
+    destination = tmp_path / ".forge-seal"
+    produced = {store_module._fresh_tmp_path(destination).name for _ in range(64)}
+    assert len(produced) == 64, "the temp name is not unpredictable"
+    for name in produced:
+        assert store_module._tree_changes(f"?? {name}") == [], name
+    for near in (".forge-seal.tmp",
+                 ".forge-seal.0011223344556677.TMP",
+                 ".forge-seal.0011223344556677.tmp.bak",
+                 ".forge-seal.001122334455667.tmp",      # fifteen
+                 ".forge-seal.00112233445566778.tmp",    # seventeen
+                 ".forge-seal.001122334455667g.tmp"):    # not hex
+        assert store_module._tree_changes(f"?? {near}") == [f"?? {near}"], near
+    # A TRACKED file of the exempt name that moved is still a finding: only the
+    # untracked marker `??` is exempt.
+    exempt = store_module._fresh_tmp_path(destination).name
+    assert store_module._tree_changes(f" M {exempt}") == [f"M {exempt}"]
+    assert store_module._tree_changes(f" D {exempt}") == [f"D {exempt}"]
+
+
 @pytest.mark.parametrize("planted", ["capsule.json", "experience.json", ".forge-seal",
                                      ".forge-capsule"])
 def test_the_rebuild_writes_no_bytes_outside_the_store_through_a_planted_link(

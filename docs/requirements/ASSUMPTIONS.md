@@ -970,8 +970,13 @@ all along:
         "The store cannot satisfy the request. Nothing was partially written."
         on disk  ['.forge-capsule', 'capsule.json', 'experience.json']
         protected() False   sealless load  RETURNED stage='READY'
-      as shipped, both forms
+      as shipped by round 3, both forms, WITH A FILE AT THE DESTINATION
         the marker on disk is the OLD one or the NEW one, never neither
+
+  THAT LINE READ "as shipped, both forms" AND WAS FALSE AS WRITTEN. It is true
+  only of a FILE destination. Round 4 measured a directory and a junction at
+  the same name reproducing the whole defect above, and the qualification --
+  not the claim -- is what survives; see ROUND 4 below.
 
   That entry list is verbatim the one `_rebuild`'s docstring quotes as the
   PRE-REPAIR defect. The second row is the worse of the two and is why it is
@@ -1137,6 +1142,171 @@ WHAT ROUND 3 DID NOT REPAIR, and is not claimed to have:
   is assumed atomic on NTFS on the strength of the platform's contract, not
   measured against a power loss or an external SIGKILL -- the same limit round
   2 recorded for `seal()`, now load-bearing in one more place.
+
+ROUND 4 found that round 3 closed ONE SHAPE of the invariant and left TWO
+open, which is the second consecutive round in which a repair to this function
+left a shape out:
+
+- A DIRECTORY OR A JUNCTION AT `.forge-seal` REPRODUCED THE WHOLE ROUND-3
+  DEFECT. `os.replace` cannot replace either, so `_write_fresh` removes them
+  first -- and round 3 removed them where the old code did, BEFORE the temp
+  existed. `_write_seal_marker` is `_rebuild`'s first statement, so the marker
+  was absent again while the worker's forged authority sat on disk. Measured at
+  889542a with nothing patched but `Path.write_text` -- the fault model of
+  round 3's own `OSError` row -- with the honest reset route made unreachable
+  and the plant asserted to have landed:
+
+      shape at .forge-seal   form      protected()   sealless load
+      directory              OSError   False         RETURNED stage='READY'
+      directory              crash     False         RETURNED stage='READY'
+      junction               OSError   False         RETURNED stage='READY'
+      junction               crash     False         RETURNED stage='READY'
+      file                   both      True          REFUSED CapsuleSealMissing
+
+  On disk in every red row: `['.forge-capsule', 'capsule.json',
+  'experience.json']` -- verbatim the entry list `_rebuild`'s docstring quotes
+  as the PRE-REPAIR defect. The `OSError` form is durable, needs no crash, and
+  is reported behind a refusal whose own docstring promises that nothing was
+  partially written. And it is a DEGRADATION FORGE ITSELF CAUSES: before the
+  call the planted shape already made `protected()` True and already made a
+  sealless load refuse, so the restoration removed a factor it found in place.
+  That before-state is now asserted in the rows, which is what makes them
+  measure a degradation rather than an absence.
+
+  THE REPAIR IS A TWO-LINE REORDER: the removal moves INSIDE the `try`, after
+  the finished temp exists. Everything that can raise has then already
+  happened. Re-measured on the shipped tree, same instrument:
+
+      directory  OSError  protected() True   REFUSED CapsuleSealMissing
+      directory  crash    protected() True   REFUSED CapsuleSealMissing
+      junction   OSError  protected() True   REFUSED CapsuleSealMissing
+      junction   crash    protected() True   REFUSED CapsuleSealMissing
+
+  A concurrent observer counting the marker's absence STRICTLY INSIDE
+  `_write_fresh`, over 300 writes per shape:
+
+      shape        889542a         as shipped
+      file         0 / 2518        0 / 2556
+      directory    1706 / 4204     663 / 4032
+      junction     1475 / 2544     581 / 2087
+
+- WHAT IS NOT CLOSED, AND IS NOT CLAIMED CLOSED. A CRASH-ONLY MICRO-WINDOW
+  SURVIVES for a directory and a junction: the removal and the rename are two
+  adjacent syscalls with no I/O between them, and a death in that gap leaves
+  the marker name absent with the forgery on disk. It is INHERENT, not
+  deferred: `os.replace` cannot replace a directory, so no ordering of those
+  two calls removes it -- only giving the destination a different shape would,
+  and the destination's shape is the attacker's choice. What the reorder buys
+  is that the DURABLE form disappears entirely (no `OSError`, no full disk, no
+  scanner can reach it) and the window narrows to roughly a third. The rows
+  added here kill at the first write the marker's write makes, which is the
+  instant that reaches both implementations; they do NOT reach that
+  two-syscall gap and do not pretend to. The residue is stated in
+  `_write_fresh`, in `_write_seal_marker`, and here.
+
+- TWO SHIPPED CLAIMS WERE FALSE AS WRITTEN AND ARE NOW QUALIFIED.
+  `_write_seal_marker` said "the marker on disk is the old one or the new one
+  at every instant -- never neither", and the round-3 block above said "as
+  shipped, both forms" of the same. Both are true of a FILE destination and
+  false of the other two, which is exactly the shape the repair had missed.
+  The claim now states which destination it holds for, and names the residue
+  for the other two in the same paragraph. A false claim about a security
+  property is the blocking category under the founder's split merge bar, and
+  it is recorded here rather than quietly edited, because the sentence had
+  been strengthened past its measurement in the same commit that measured it.
+
+- NOTHING DEMANDED EITHER SHAPE. Before this round, `forge-seal` intersected
+  with `mkdir|mklink|junction` across the whole repository returned nothing:
+  no test anywhere planted a directory or a junction at the marker. That is
+  why round 3's repair could reopen for two shapes what it closed for one, and
+  it is the same absence round 3 recorded about its own instant. Four rows now
+  demand it -- two shapes by two forms -- and reverting the reorder turns all
+  FOUR red, with every other row in the module green:
+
+      test_a_failure_inside_the_marker_write_leaves_a_directory_marker_standing[crash]
+      test_a_failure_inside_the_marker_write_leaves_a_directory_marker_standing[oserror]
+      test_a_crash_inside_the_marker_write_leaves_a_junction_marker_standing
+      test_an_oserror_inside_the_marker_write_leaves_a_junction_marker_standing
+
+  The substituted body is round 3's ordering verbatim; the diff against the
+  shipped one is the two-line reorder and nothing else. The instrument is
+  self-checking in the way round 3 established: it is delimited by
+  `_write_seal_marker` rather than by a filename, so an implementation that
+  writes the marker some third way never arms it, `restore()` does not raise,
+  and the rows go red at `pytest.raises` instead of passing over the absence.
+
+- FORGE'S OWN CRASH MANUFACTURED A TAMPER FINDING AGAINST AN UNTOUCHED STORE,
+  and that is repaired rather than only disclosed. A stray `<name>.<hex>.tmp`
+  left by a death between the temp write and the rename -- the survivor the
+  round-3 list above already conceded -- made the cleanliness check report
+  `["the working tree is not clean: ?? .forge-seal.<hex>.tmp"]`, and every
+  later load refused with `CapsuleSealError`. Fail-closed and repairable, but
+  the product was reporting TAMPERED about a store nobody had touched, on
+  account of its own crash, and the human restore it invites costs the
+  lifecycle a transition. `_tree_changes` now drops one line shape: an
+  UNTRACKED file, in the store root, whose name carries Forge's own temp
+  suffix.
+
+  THE WIDENING THAT COSTS, STATED. The exemption is NOT a claim that the file
+  is Forge's -- the name is the only evidence and any writer in the store can
+  forge a name. What it says is only that such a file is not BY ITSELF a
+  tamper finding, and an attacker can therefore keep one inert file in the
+  store root out of the cleanliness report. It can carry no authority: nothing
+  in the module reads the store by pattern, and the authority files, the store
+  marker and the seal marker are each read by exact name with their bytes
+  compared to the seal regardless of what else is present. A tracked file of
+  that name that was modified or deleted is still a finding, an untracked file
+  of any other name is still a finding, and one below the store root is still
+  a finding -- all three measured. The matcher and the name-builder are one
+  constant apart and are pinned against each other in both directions, because
+  two descriptions of one rule is where this repository keeps finding rot;
+  drift would fail SAFE (an unrecognised stray goes back to being a finding)
+  and is pinned anyway.
+
+WHAT ROUND 4 DID NOT REPAIR, and is not claimed to have:
+
+- `_replace_fresh`'s `st_nlink == 1` GUARD IS CHECK-THEN-ACT. Between the
+  `os.stat` and the `os.chmod` a same-user worker can create a hardlink to the
+  destination, and the read-only attribute is then cleared on a file outside
+  the store. Attribute only -- no write reaches the outside file, because the
+  rename that follows swaps the directory entry -- and the guard still blocks
+  the case it was built for. REASONED, NOT MEASURED: the window was not driven
+  on this tree, and it is recorded as reasoning rather than as a measurement.
+- THERE IS NO `fsync`, on the temp file or on the containing directory.
+  `os.replace` orders the directory ENTRY, not the data behind it, so a POWER
+  LOSS -- not a process death, which the rows above do drive -- can leave a
+  truncated or empty `.forge-seal`. The resulting state is fail-closed: the
+  marker is present and does not name this store's seal, so `seal_problems`
+  reports it and the load refuses. Unmeasured, like every other power-loss
+  claim in this section.
+- `os.replace` OVER A CONCURRENTLY-OPEN DESTINATION STILL RAISES
+  `PermissionError [WinError 5]`, and the single chmod retry cannot help,
+  because it is not a permission. Round 3 recorded this for a held handle and
+  called it an attacker-shaped case; it is not. MEASURED HERE WITH NO ATTACKER
+  AT ALL: an ordinary observer thread doing nothing but `Path.exists()` on the
+  destination denied 5, 9 and 11 of 300 marker writes across three runs. Any
+  indexer, scanner or editor touching the file is enough. It fails CLOSED and
+  lasts only as long as the handle, and the next `restore()` succeeds -- but
+  it is reachable in normal operation, not only under attack.
+- THE JUNCTION ROWS DO NOT RUN ON CI. A junction is an NTFS directory-shaped
+  reparse point that `is_symlink()` reports False for; POSIX has no equivalent
+  (a symlink to a directory answers True and takes a different branch), so the
+  plant cannot be built on the Linux test jobs. Both are declared skips, the
+  first this slice has declared. The property is not weakened: the two
+  DIRECTORY rows take the identical branch of `_write_fresh` and execute on
+  every platform, so deleting the reorder cannot hide behind the exemption.
+- THE SKIP CENSUS CANNOT DECLARE A PARAMETRISED ROW.
+  `check_test_coverage.EXPECTED_SKIPS` is keyed by node id, and
+  `test_every_declared_exemption_names_a_test_that_exists` resolves that key
+  by looking for `def <name>(` in the module source -- which no `[...]` id
+  satisfies. So a platform-dependent parametrised row must be restructured
+  into whole functions to be declarable, which is what the junction rows here
+  did. Recorded rather than repaired: widening a guard so that it admits an
+  entry of its author's own shape is the move this file exists to police, and
+  the restructuring cost nothing.
+- SYMLINKS REMAIN UNVERIFIED ON THIS HOST, unchanged from round 3, and every
+  measurement in this round is Windows-only and exception-driven for the same
+  reasons stated there.
 
 **Scope.** This wires the existing contract; it changes no stage, edge,
 actor or evidence rule. READY means what the contract establishes and
