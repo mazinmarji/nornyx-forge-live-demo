@@ -360,6 +360,8 @@ def test_a_symlink_loop_overlay_is_refused_without_a_traceback(tmp_path):
 
     Measured on CPython 3.11: `RuntimeError: Symlink loop from '<path>'`, a
     class the first checker did not catch, so the traceback printed the path.
+    Measured on CPython 3.13: `resolve(strict=False)` no longer raises on a
+    loop, and the `OSError` from the read that follows names the path too.
     """
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
@@ -368,7 +370,12 @@ def test_a_symlink_loop_overlay_is_refused_without_a_traceback(tmp_path):
     _symlink(first, second)
     completed = _run("--overlay", str(first))
     assert completed.returncode == 2, completed.stderr
-    assert "cannot be resolved" in completed.stderr
+    # WHICH step refuses is interpreter-dependent and not the property. On
+    # 3.11 `resolve(strict=False)` raises on the loop, so resolution refuses;
+    # on 3.13 it returns the unresolved path and the read refuses with ELOOP.
+    # Either way the refusal is one label and the path is in neither.
+    assert completed.stderr.startswith("REFUSE: private overlay")
+    assert "cannot be resolved" in completed.stderr or "cannot be read" in completed.stderr
     _assert_no_leak(completed.stdout + completed.stderr, first, second)
 
 
