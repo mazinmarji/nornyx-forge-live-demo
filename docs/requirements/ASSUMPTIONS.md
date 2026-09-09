@@ -4036,14 +4036,26 @@ is now one sentence, byte-identical across defects at different indices,
 counts, sizes, nesting depths and duplicate positions, while the public
 registry keeps its specific diagnostics. And every surface said each item
 was "given a deliberate disposition", which nothing measures; the measured
-wording replaces it everywhere and is held there by test.
+wording replaces it everywhere and is held there by test. A third Codex
+review, of the reconciled head, measured two more against those repairs.
+The identity comparison was against the repository root alone, so an alias
+rooted at a subdirectory -- a bind mount, a mapped or substituted drive of
+`docs/` or `.nornyx/runtime/` -- had that directory's identity at its mount
+point and external identities above it, and never the root's: reproduced
+with a real bind mount of `.nornyx/runtime`, through which an in-repository
+overlay was read and passed. Every directory of the repository is compared
+now, from the one traversal the checker performs, of its own tree, following
+no link and opening nothing, bounded and refusing past the bound. And a
+chain the walk stopped at, for a reparse point it does not follow, was still
+resolved through that link before the refusal: nothing beyond an unfollowed
+link is consulted now, pinned by a spy on resolution.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
 Nothing measures reading: a mechanically written or reused disposition
-passes, and the `cycle_id` binds nothing. A hard link, and a rewrite that
-keeps a file's identity, are not seen by the path rule, the identity rule or
-the identity bound. A junction is refused, not judged, so a legitimate overlay
+passes, and the `cycle_id` binds nothing. A hard link, an alias of a single
+file, and a rewrite that keeps a file's identity, are not seen by the path
+rule, the identity rule or the identity bound. A junction is refused, not judged, so a legitimate overlay
 behind one is refused too. The free-text `reason` a developer writes is not
 inspected. An item `id` is
 bounded to a short token and not judged. The checker and the registry are

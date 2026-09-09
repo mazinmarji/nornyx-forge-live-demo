@@ -40,7 +40,6 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
 import types
 import uuid
 from contextlib import contextmanager
@@ -1275,20 +1274,22 @@ def test_a_double_slash_spelling_of_a_symlink_target_is_judged(module, tmp_path)
         middle.unlink()
 
 
-def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, monkeypatch):
+def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, monkeypatch, tmp_path):
     r"""The lexical rule compares spellings; identity names the directory.
 
     Measured against the pure name comparison: with it switched off, an
     in-repository overlay is still refused, because an ancestor of its path
-    IS the repository root by device and inode. Off the repository nothing
+    IS a repository directory by device and inode. Off the repository nothing
     matches. This is the backstop for `\\?\C:\...`, a mapped drive or an
     administrative share on Windows and a bind mount on POSIX.
     """
-    root = module._root_identity()
-    assert root.inode != 0, "this platform exposes no identity; the test cannot measure"
-    assert module._names_the_root(ROOT / "docs" / "governance" / "absent.json", root, set())
-    assert not module._names_the_root(Path(tempfile.gettempdir()) / "absent.json", root, set())
     RUNTIME.mkdir(parents=True, exist_ok=True)
+    identities = module._repository_directory_identities()
+    for directory in (ROOT, ROOT / "docs", ROOT / "docs" / "governance", RUNTIME):
+        assert module._identity_of(os.lstat(directory)) in identities, directory
+    assert module._identity_of(os.lstat(tmp_path)) not in identities
+    assert module._inside_by_identity(ROOT / "docs" / "governance" / "absent.json", identities, set())
+    assert not module._inside_by_identity(tmp_path / "absent.json", identities, set())
     decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
     decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
     monkeypatch.setattr(module, "_is_within", lambda path, parent: False)
@@ -1297,6 +1298,101 @@ def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, m
         assert "outside the Forge repository" in message
     finally:
         decoy.unlink()
+
+
+def test_an_alias_rooted_below_the_repository_root_is_inside(module, monkeypatch, tmp_path):
+    """A bind mount or mapped drive of a SUBDIRECTORY has no root among its ancestors.
+
+    Measured by the Codex review on the PR head, and reproduced with a real
+    bind mount of `.nornyx/runtime` at `/tmp/alias`: the checker read an
+    in-repository overlay through the alias and printed PASS, because the
+    identity comparison was against the root alone and the alias's ancestors
+    are the mounted child and external directories. Every repository
+    directory's identity is compared now. Simulated here without a mount --
+    a mount needs a privilege the census must not depend on -- by placing the
+    alias directory's identity in the repository's identity set, exactly as a
+    mount point's would be there.
+    """
+    overlay = _write_overlay(tmp_path)
+    alias = module._identity_of(os.lstat(overlay.parent))
+    real = module._repository_directory_identities()
+    assert alias not in real
+    monkeypatch.setattr(module, "_repository_directory_identities", lambda: real | {alias})
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == "private overlay must remain outside the Forge repository"
+    _assert_no_leak(message, overlay)
+    completed_identity = module._inside_by_identity(overlay, real | {alias}, set())
+    assert completed_identity and not module._inside_by_identity(overlay, real, set())
+
+
+@posix_only
+def test_the_identity_traversal_follows_no_link_and_is_bounded(module, monkeypatch, tmp_path):
+    """The one traversal is of the repository's own directories, and no further.
+
+    A link inside the tree to a directory outside it is not followed, so the
+    outside directory's identity never enters the set and an overlay beside
+    it stays admissible; a link to the root is not followed either, so the
+    traversal cannot loop. Past its bound the traversal refuses rather than
+    judging partially.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    outward = RUNTIME / f"outward-{uuid.uuid4().hex}"
+    upward = RUNTIME / f"upward-{uuid.uuid4().hex}"
+    try:
+        _symlink(tmp_path, outward)
+        _symlink(ROOT, upward)
+        module._DIRECTORY_IDENTITIES = None
+        identities = module._repository_directory_identities()
+        assert module._identity_of(os.lstat(tmp_path)) not in identities
+        overlay = _write_overlay(tmp_path)
+        assert module.load_registries(overlay).private_digest is not None
+        module._DIRECTORY_IDENTITIES = None
+        monkeypatch.setattr(module, "DIRECTORY_SCAN_BOUND", 1)
+        message = _refusal(module, lambda: module.load_registries(overlay))
+        assert message == "repository is too large to judge by identity"
+    finally:
+        outward.unlink()
+        upward.unlink()
+
+
+@posix_only
+def test_nothing_beyond_an_unfollowed_link_is_consulted(module, monkeypatch, tmp_path):
+    """An unsupported link INTO the repository is refused as unfollowed, unseen.
+
+    Measured by the Codex review on the PR head: the walk stopped at the
+    unsupported link, and confinement then resolved the path THROUGH it and
+    refused it as inside -- so the link had been followed after all, by
+    resolution. Now nothing beyond the link is consulted: `Path.resolve` is
+    not called, and the refusal names the link, not what lies behind it.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    inside = RUNTIME / f"behind-{uuid.uuid4().hex}"
+    inside.mkdir()
+    (inside / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    link = tmp_path / SENTINEL_DIR / "j"
+    link.parent.mkdir()
+    _symlink(inside, link)
+    marked = os.lstat(link).st_ino
+    original = module._link_kind
+    monkeypatch.setattr(module, "_link_kind",
+                        lambda info: module.UNSUPPORTED_LINK if info.st_ino == marked else original(info))
+    resolved = []
+    real_resolve = Path.resolve
+
+    def spy(self, *args, **kwargs):
+        resolved.append(str(self))
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", spy)
+    try:
+        message = _refusal(module, lambda: module.load_registries(link / "overlay.json"))
+    finally:
+        monkeypatch.setattr(Path, "resolve", real_resolve)
+        (inside / "overlay.json").unlink()
+        inside.rmdir()
+    assert message == "private overlay path crosses a link that is not followed"
+    assert resolved == [], "resolution looked through the unfollowed link"
+    _assert_no_leak(message, link, inside)
 
 
 def _after_the_walk(module, monkeypatch, action) -> None:
@@ -1645,13 +1741,26 @@ def test_the_checker_reads_no_environment_and_scans_no_directory():
     sentinel checks over every output on the paths they exercise. This test
     refuses the spellings a maintainer would reach for first, and no more.
     """
+    tree = _checker_tree()
+    traversal = next(node for node in ast.walk(tree)
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == "_repository_directory_identities")
+    inside_traversal = {id(node) for node in ast.walk(traversal)}
     offenders = []
-    for node in ast.walk(_checker_tree()):
+    allowed_scans = 0
+    for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
+            # The ONE directory traversal, of the repository's own tree for
+            # its directories' identities, lives in that one function and
+            # nowhere else; it opens no file and selects nothing.
+            if node.attr == "scandir" and id(node) in inside_traversal:
+                allowed_scans += 1
+                continue
             offenders.append(f"{node.attr} at line {node.lineno}")
         if isinstance(node, ast.Name) and node.id in FORBIDDEN_ATTRIBUTES:
             offenders.append(f"{node.id} at line {node.lineno}")
     assert offenders == [], f"the checker can discover an overlay through: {offenders}"
+    assert allowed_scans == 1, "the identity traversal is one scandir in one function"
 
 
 def test_the_checker_imports_only_the_standard_library_allowlist():
@@ -1756,9 +1865,9 @@ def test_every_refusal_is_composed_from_labels_and_indexes_only():
                 if exc.func.id in REFUSAL_BUILDERS or exc.func.id == "AdmissionError":
                     continue  # judged above as a Call
             if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name) and exc.func.id in (
-                "SystemExit", "_DuplicateKey"
+                "SystemExit", "_DuplicateKey", "_ScanBound"
             ):
-                continue
+                continue  # internal signals, caught inside the module; none carries input
             offenders.append(f"raise of an unreviewed shape at line {node.lineno}")
     assert offenders == [], f"refusals interpolate something other than a label: {offenders}"
     assert composed == 1, "exactly one composed refusal (the blocker list) is expected"

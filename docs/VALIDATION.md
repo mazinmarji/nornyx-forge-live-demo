@@ -668,9 +668,15 @@ word and a `defer` on an active item all refuse; an overlay is read only from
 four environment variables are never read); an overlay path inside this
 repository is refused as given, at every component and link the walk passes
 through, and after resolution, judged lexically and by file identity against
-the repository root (an in-repository path is refused with the name
-comparison switched off, and a symlink target spelled with a double leading
-slash -- outside to every walked component on the merged head -- refuses);
+every directory of the repository (an in-repository path is refused with the
+name comparison switched off; a symlink target spelled with a double leading
+slash -- outside to every walked component on the merged head -- refuses; an
+alias whose directory identity is a repository directory's -- the shape of a
+bind mount or mapped drive rooted below the root, measured to admit an
+in-repository overlay through a real bind mount before every directory was
+compared -- refuses; the traversal that learns those identities follows no
+link and refuses past its bound); nothing beyond an unfollowed link is
+consulted, not even by resolution, pinned by a spy on `Path.resolve`;
 every component is classified from its `lstat` and every reparse point that
 is not a symlink refuses, a junction, a cloud placeholder and an entry whose
 tag the platform does not expose included, with real directory junctions
@@ -703,8 +709,8 @@ Not claimed: that anyone runs the check; that anyone read an item; that the
 overlay content; that an identifier an overlay author chose is not itself
 telling; that a commit cannot change the checker or the registry (both are
 governed inputs, so such a change moves the evidence digest, and no more);
-that a hard link or a same-identity rewrite is seen; that a junction is
-followed rather than refused; or
+that a hard link, a same-identity rewrite or an alias of a single file is
+seen; that a junction is followed rather than refused; or
 that the root `AGENTS.md`, which is outside the governed input set, is bound by
 any digest. Passing admission is not approval, not merge or release authority,
 and not evidence about any other gate.

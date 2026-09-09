@@ -104,9 +104,13 @@ not:
 - **Never discovered.** There is no default path, no environment variable,
   no scan of the working directory or the home directory. The only route is
   `--overlay`, given once: a repeated option is refused rather than last
-  wins. `tests/test_standing_development_obligations.py` plants decoys on
+  wins. The one traversal the checker performs is of the repository's own
+  directories, for their identities (below): it follows no link, opens no
+  file, reads no name into any output and selects nothing.
+  `tests/test_standing_development_obligations.py` plants decoys on
   every such route and holds that none is read; a structural lint over the
-  checker's source refuses the obvious spellings and is a lint, not a proof.
+  checker's source refuses the obvious spellings, allows that one traversal
+  in that one function and nowhere else, and is a lint, not a proof.
 - **Outside the repository, at every step.** An overlay path that names
   anything inside this repository is refused: the path as given after
   lexical normalisation, every component the walk reaches, every link it
@@ -120,7 +124,9 @@ not:
   reparse tag the platform does not expose -- is refused rather than
   followed, wherever it sits and wherever it leads: the checker does not
   claim to know where such a link goes, so an uninspectable state fails
-  closed. `tests/test_standing_obligations_windows.py` builds real
+  closed, and nothing beyond such a link is consulted, not even by
+  resolution -- a chain the walk stops at is judged as far as it was walked
+  and refused for the link. `tests/test_standing_obligations_windows.py` builds real
   junctions in the windows-runtime CI job and holds the refusal on the
   platform it concerns; a Windows symlink target is judged only behind a
   drive letter, and a share, volume-GUID, device or NT-namespace spelling
@@ -130,11 +136,17 @@ not:
   administrative share on Windows, a bind mount or a double leading slash on
   POSIX. Beside the lexical comparison, every walked location and the final
   resolution are compared by file identity -- device and inode, volume
-  serial and file index on Windows -- against the repository root, so an
-  alternate spelling of the repository is still the repository. Where the
-  platform exposes no identity, nothing is claimed and the lexical rule
-  stands alone. A hard link is outside what either rule can see; see the
-  limitations.
+  serial and file index on Windows -- against every directory of the
+  repository, so an alternate spelling of the repository, or of any
+  directory below its root, is still the repository. Comparing against the
+  root alone was not enough: an alias rooted at a subdirectory has that
+  directory's identity at its mount point and external identities above it,
+  and a real bind mount of `.nornyx/runtime` was measured to admit an
+  in-repository overlay before every directory was compared. The identities
+  are judged by `lstat`, so no link is followed for them. Where the platform
+  exposes no identity, nothing is claimed and the lexical rule stands alone.
+  A hard link, and an alias of a single file, are outside what either rule
+  can see; see the limitations.
 - **The bytes read are the object that was judged.** The walk records the
   identity of the entry it ends at; the file is then opened once, judged by
   `fstat` on that descriptor, read within a size bound, and digested from
@@ -264,12 +276,16 @@ developer's obligation, not a measurement.
 - **A shadowed interpreter environment is out of scope.** The checker is run
   with whatever Python and `scripts/` directory the caller has; a hostile
   module placed beside it is the same trust as the checker itself.
-- **A hard link is invisible to a path rule and to identity.** A file
-  outside the tree that is a hard link to a file inside it is accepted,
-  because nothing about its path names the tree and its identity is its
-  own. The checker judges paths, links and the identity of directories, not
-  the other names a file may have; a caller who hard-links an overlay into a
-  checkout has placed it there.
+- **A hard link, or an alias of a single file, is invisible to a path rule
+  and to identity.** A file outside the tree that is a hard link to a file
+  inside it, or a bind mount of that one file, is accepted, because nothing
+  about its path names the tree and no directory of the tree is among its
+  ancestors. The checker judges paths, links and the identity of
+  directories, not the other names a file may have; a caller who hard-links
+  or mounts an overlay into a checkout has placed it there.
+- **The identity traversal is bounded.** A repository with more than the
+  bound's number of directories is refused rather than judged partially, so
+  a very large checkout needs the bound raised, visibly, in the checker.
 - **The identity bound sees a different object, not a different content.**
   A replacement that keeps the same device and inode -- a file rewritten in
   place between the walk and the open -- is the same object to every

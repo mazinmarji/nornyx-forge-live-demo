@@ -35,12 +35,16 @@ symlink is followed one hop at a time and judged at its own location; any
 other reparse point -- a Windows directory junction, a mount point, a cloud
 placeholder, anything the platform flags as a reparse point that is not a
 symlink -- is refused rather than followed, because this script does not
-claim to know where such a link leads. Beside the lexical comparison, every
+claim to know where such a link leads; nothing beyond such a link is
+consulted, not even by resolution. Beside the lexical comparison, every
 walked location and the final resolution are compared BY IDENTITY (device and
-inode; volume serial and file index on Windows) against the repository root,
-so another spelling of the same directory -- `\\?\C:\...`, a mapped or
-substituted drive letter, an administrative share, a double leading slash --
-is still the repository.
+inode; volume serial and file index on Windows) against EVERY directory of
+the repository, so another spelling of the same directory -- `\\?\C:\...`, a
+mapped or substituted drive letter, an administrative share, a double leading
+slash, a bind mount of the root OR OF ANY DIRECTORY BELOW IT -- is still the
+repository. The identities come from the one traversal this script performs,
+of the repository's own directories: no symlink followed, no file opened, no
+name read into any output, nothing selected.
 
 THE BYTES ARE THE OBJECT THAT WAS JUDGED. The walk records the identity of the
 entry it ends at. The file is then opened ONCE, judged by `fstat` on that
@@ -145,6 +149,8 @@ TEXT_BOUND = 2000
 DOCUMENT_BYTES_BOUND = 1_048_576
 #: A symlink chain longer than this is refused rather than followed.
 SYMLINK_HOPS_BOUND = 40
+#: Directories the identity traversal will record before refusing to judge.
+DIRECTORY_SCAN_BOUND = 250_000
 
 #: What the walk concludes about one path component from its `lstat`.
 SYMLINK = "symlink"
@@ -537,34 +543,83 @@ def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity, bool]:
     return locations, final, True
 
 
-def _root_identity() -> _Identity:
+_DIRECTORY_IDENTITIES: frozenset[_Identity] | None = None
+
+
+class _ScanBound(Exception):
+    """The identity traversal passed its bound; refused rather than judged partially."""
+
+
+def _repository_directory_identities() -> frozenset[_Identity]:
+    r"""The identity of every directory in the repository, the root included.
+
+    THE ONE TRAVERSAL THIS SCRIPT PERFORMS, and it is of the repository's own
+    tree: directory entries only, judged by `lstat`; no symlink or other
+    reparse point followed; no file opened; no name read into any output;
+    nothing selected. Comparing against the root's identity alone was not
+    enough: an alias of a directory BELOW the root -- a bind mount, a mapped
+    or substituted drive rooted at a subdirectory -- has that directory's
+    identity at its mount point and external identities above it, so the
+    root was never among the candidates. Measured by an external review of
+    the PR head and reproduced with a real bind mount of `.nornyx/runtime`
+    at `/tmp/alias`: an in-repository overlay was read through the alias.
+    Bounded, and refused rather than judged when the bound is passed; cached
+    for the process, so a run pays for it once.
+    """
+    global _DIRECTORY_IDENTITIES
+    if _DIRECTORY_IDENTITIES is not None:
+        return _DIRECTORY_IDENTITIES
+    identities: set[_Identity] = set()
+    pending: list[Path] = [ROOT]
+    refusal: AdmissionError | None = None
     try:
-        return _identity_of(os.stat(ROOT))
+        identities.add(_identity_of(os.lstat(ROOT)))
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if not stat.S_ISDIR(info.st_mode) or _link_kind(info) != PLAIN:
+                        continue
+                    identities.add(_identity_of(info))
+                    if len(identities) > DIRECTORY_SCAN_BOUND:
+                        raise _ScanBound()
+                    pending.append(Path(entry.path))
+    except _ScanBound:
+        refusal = AdmissionError("repository is too large to judge by identity")
     except OSError:
-        return _NO_IDENTITY
+        refusal = AdmissionError("repository directories cannot be judged by identity")
+    if refusal is not None:
+        raise refusal
+    _DIRECTORY_IDENTITIES = frozenset(identities)
+    return _DIRECTORY_IDENTITIES
 
 
-def _names_the_root(location: Path, root: _Identity, checked: set[Path]) -> bool:
-    r"""Whether `location` or an ancestor of it IS the repository root, by identity.
+def _inside_by_identity(location: Path, identities: frozenset[_Identity], checked: set[Path]) -> bool:
+    r"""Whether `location` or an ancestor of it IS a repository directory, by identity.
 
     The lexical rule compares spellings, and one directory has several: on
     Windows `\\?\C:\...`, a mapped or substituted drive letter, an
     administrative share; on POSIX a bind mount or a double leading slash.
     Identity -- device and inode, volume serial and file index -- names the
-    directory itself. Where the platform exposes no identity for the root
-    (inode 0) nothing is claimed here and the lexical rule stands alone.
+    directory itself, wherever it is spelled from. Judged by `lstat`, so no
+    link is followed here: a followed symlink's target components are already
+    among the walked locations, and an unfollowed link is not looked through.
+    Where the platform exposes no identity for an entry (inode 0) nothing is
+    claimed for it and the lexical rule stands alone.
     """
-    if root.inode == 0:
-        return False
     for candidate in (location, *location.parents):
         if candidate in checked:
             continue
         checked.add(candidate)
         try:
-            info = os.stat(candidate)
+            identity = _identity_of(os.lstat(candidate))
         except (OSError, ValueError):
             continue
-        if _identity_of(info) == root:
+        if identity.inode != 0 and identity in identities:
             return True
     return False
 
@@ -573,8 +628,11 @@ def _confine_outside(path: Path, *, label: str) -> _Identity:
     """Refuse a path naming anything inside this repository; return what the walk ended at.
 
     The path as given (after lexical normalisation), every link it passes
-    through, every directory the chain crosses, and its final resolution are
-    all judged, lexically and by identity. A symlink inside the repository
+    through, every directory the chain crosses, and -- for a chain the walk
+    followed to its end -- its final resolution are all judged, lexically and
+    by identity against every directory of the repository. A chain the walk
+    stopped at (a reparse point it does not follow) is judged as far as it was
+    walked and no further: nothing beyond the unfollowed link is consulted. A symlink inside the repository
     that points outside is still a path inside the repository -- and one
     that could be committed -- so it is refused; a path outside the
     repository that resolves inside it is content inside the repository
@@ -591,10 +649,17 @@ def _confine_outside(path: Path, *, label: str) -> _Identity:
     final = _NO_IDENTITY
     try:
         locations, final, followed = _walk(path, label=label)
-        root = _root_identity()
+        identities = _repository_directory_identities()
         checked: set[Path] = set()
-        for location in [*locations, path.resolve(strict=False)]:
-            inside = inside or _is_within(location, ROOT) or _names_the_root(location, root, checked)
+        candidates = list(locations)
+        if followed:
+            # Only a chain the walk followed to its end is resolved; an
+            # unfollowed link is not looked through, not even by resolution.
+            candidates.append(path.resolve(strict=False))
+        for location in candidates:
+            inside = inside or _is_within(location, ROOT) or _inside_by_identity(
+                location, identities, checked
+            )
     except AdmissionError:
         raise
     except (OSError, RuntimeError, ValueError):

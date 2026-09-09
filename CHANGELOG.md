@@ -134,10 +134,22 @@
   collects 106 -> 142, the Windows module adds 7 (six junction proofs and
   the one test that holds the job to running them), and the suite 3486 ->
   3529 across 115 modules.
+  A third Codex review, of the reconciled head, found one P1 and one P2
+  against those repairs, each reproduced and closed. The identity backstop
+  compared against the repository root alone, so an alias rooted at a
+  subdirectory -- a bind mount or mapped drive of `.nornyx/runtime/` --
+  admitted an in-repository overlay (reproduced with a real bind mount:
+  PASS); every directory of the repository is compared now, from the one
+  traversal the checker performs, of its own tree, following no link,
+  opening nothing and refusing past a bound. And a chain the walk stopped at
+  for an unfollowed reparse point was still resolved through it before the
+  refusal; nothing beyond such a link is consulted now, pinned by a spy on
+  `Path.resolve`.
   Not claimed, and recorded as such in A-030: that anyone runs the check;
   that anyone read an item; that a `cycle_id` names a cycle; that a hard
-  link or a same-identity rewrite is seen; that a junction is followed
-  rather than refused; that a free-text `reason` is free of overlay content; that an identifier an
+  link, an alias of a single file or a same-identity rewrite is seen; that a
+  junction is followed rather than refused; that a free-text `reason` is
+  free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the
   checker or the registry (both are governed inputs, so the change moves the
   evidence digest and no more); or that the root `AGENTS.md`, outside the
