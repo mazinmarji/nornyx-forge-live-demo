@@ -66,11 +66,27 @@ marker sits inside the store and so inside any provider's workspace; it is
 trustworthy because the governed path executes no provider (the Provider
 Contract's eligibility decision), not the other way round, and a wholesale
 rollback of the store carries the marker back with it -- it is not a
-freshness mechanism. The seal establishes what Forge last wrote, not that it
-is the LATEST thing Forge wrote: an actor who can replace the store, marker
-and seal together with an earlier consistent set is not detected, so the
-surface reports the seal's currency as not independently anchored, and
-monotonic external anchoring is deferred rather than claimed.
+freshness mechanism. That basis is `MARKER_TRUST_BASIS` below, whose exact
+value is `no_provider_executes_on_the_governed_path`: a value rather than a
+paragraph, so a promotion has something to collide with. What the interlock
+in `test_the_marker_trust_basis_cannot_survive_an_eligible_provider` does is
+narrower than "a test objects the day any provider becomes eligible", and
+round 2 measured the difference: it objects to a promotion made while this
+value still reads that literal, and the value is separately pinned so it
+cannot be quietly retired in advance. It licenses nothing, and it records a
+human decision rather than establishing anything about the marker. Forge's
+own RESTORATION was itself the cheapest way to remove the marker, and that
+is now closed: `_rebuild` used to wipe the marker BEFORE it corrected the
+authority bytes, so a death in that instant left the worker's forgery on
+disk with the marker gone -- `protected()` False, and a later load reading
+that forgery as a legacy store. The rebuild below writes the marker FIRST,
+then the sealed bytes, and wipes afterwards, so no instant of it holds
+forged authority under an absent marker. The seal establishes what Forge
+last wrote, not that it is the LATEST thing Forge wrote: an actor who can
+replace the store, marker and seal together with an earlier consistent set
+is not detected, so the surface reports the seal's currency as not
+independently anchored, and monotonic external anchoring is deferred rather
+than claimed.
 """
 
 from __future__ import annotations
@@ -78,8 +94,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -116,6 +135,26 @@ DEFAULT_SEAL_DIR = Path.home() / ".nornyx" / "forge" / "seals"
 #: store THIS adapter created. Loading without it is refused, which is the
 #: mechanism behind "never adopt a repository we did not initialize".
 _MARKER_FILE = ".forge-capsule"
+
+#: WHY THE SEAL MARKER CAN BE TRUSTED WHERE IT SITS, as a value.
+#:
+#: The marker lives inside the store and so inside any provider's workspace.
+#: A protected store reads as legacy only when the marker AND the seal are
+#: both gone, and the seal is outside every workspace -- so the precondition
+#: for that fall-open is a same-operating-system-user write, exactly what an
+#: unconfined provider holds. What makes the marker trustworthy at this
+#: baseline is therefore not its location: it is that NO PROVIDER EXECUTES ON
+#: THE GOVERNED PATH AT ALL, the Provider Contract's own eligibility decision
+#: (`PROVIDER_CONFINEMENT` establishes nothing, so nothing is eligible).
+#:
+#: A-022 states that basis in prose and says a later slice making any provider
+#: eligible must revisit it or silently reopen R2. A request that a human
+#: remember is not a control, so the basis is written here where a test can
+#: read it: `test_the_marker_trust_basis_cannot_survive_an_eligible_provider`
+#: is an implication -- if any provider is eligible, this value may no longer
+#: be this literal. It RECORDS a human decision as a code change; it does not
+#: make one, and changing it establishes nothing on its own.
+MARKER_TRUST_BASIS = "no_provider_executes_on_the_governed_path"
 
 _GIT_IDENTITY = [
     "-c", "user.name=forge-capsule",
@@ -155,28 +194,444 @@ class CapsuleSealMissing(CapsuleTamperError):
 
 
 class CapsuleSealError(CapsuleTamperError):
-    """The store does not match Forge's seal: something other than this
-    adapter wrote it, or committed to it, since Forge's last save. Carries the
-    sealed snapshot so a caller may restore the trusted state, and the
-    problems so the finding is legible."""
+    """The store does not match Forge's seal. Carries the sealed snapshot so a
+    caller may restore the trusted state, and the problems so the finding is
+    legible.
+
+    WHAT IT SAYS IS WHAT IT MEASURED. This message used to read "it was
+    written outside this adapter and is not trusted", which is a CLAIM ABOUT
+    AN ACTOR and is not what the seal check observes. The seal compares a
+    revision, a working tree and file bytes; the difference is the finding,
+    and the difference has an innocent cause this adapter can produce
+    ITSELF -- `save` commits and then seals, so a process that dies between
+    the two leaves Forge's own newest commit failing its own seal. Measured:
+    the refusal named an external writer for a Forge crash, and the human
+    restore route wrote that attribution into permanent lifecycle history.
+    Untrusted is correct and the refusal stands; the author is not measured
+    and is no longer named. Nothing here reads git metadata to soften the
+    verdict either -- author, committer and parentage are all forgeable by a
+    writer inside the store, so they may describe and may never license.
+    """
 
     def __init__(self, problems: list[str], snapshot: AuthoritySnapshot) -> None:
         super().__init__(
-            "the authority store does not match Forge's seal; it was written outside "
-            "this adapter and is not trusted: " + "; ".join(problems)
+            "the authority store does not match Forge's seal and is not trusted; "
+            "what Forge measured: " + "; ".join(problems)
         )
         self.problems = problems
         self.snapshot = snapshot
 
 
+def _is_junction(path: Path) -> bool:
+    """A directory-shaped NTFS reparse point that `is_symlink()` reports False.
+
+    `os.path.isjunction` is 3.12+ and `requires-python` allows 3.10, so the
+    older interpreters read the reparse tag directly. Non-Windows has no
+    `st_reparse_tag` and no junctions: False.
+    """
+    checker = getattr(os.path, "isjunction", None)
+    if checker is not None:
+        return bool(checker(path))
+    try:
+        return os.lstat(path).st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _is_directory_entry(path: Path) -> bool:
+    """Is the ENTRY at `path` directory-shaped, judged WITHOUT following it?
+
+    THE PREDICATE THAT WAS WRONG THREE ROUNDS RUNNING was `path.is_dir() and
+    not path.is_symlink()`, and it was wrong because `is_dir()` STATS THROUGH
+    a reparse point. A junction whose target is gone therefore answers False
+    while the entry on disk is still a directory to Win32 -- so the removal
+    branch was skipped and `os.replace` was handed a destination it can never
+    replace. One unprivileged `mklink /J .forge-seal <nonexistent>` reached it.
+
+    `os.lstat` reads the LINK, so a broken target changes nothing. Measured on
+    this host, and the last column is why this is a predicate rather than a
+    list of shapes -- it is exactly the set `os.replace` refuses:
+
+        shape              is_dir&!islink   lstat dir-attr   os.replace
+        non-existent       False            (ENOENT)         SUCCEEDED
+        regular file       False            False            SUCCEEDED
+        read-only file     False            False            WinError 5 *
+        hardlink           False            False            SUCCEEDED
+        directory          True             True             WinError 5
+        live junction      True             True             WinError 5
+        DANGLING junction  False  <-- bug   True             WinError 5
+
+    (* the read-only file is the one refusal that is not about shape;
+    `_replace_fresh` clears the bit and retries, and must go on being the
+    thing that handles it, which is why this predicate answers False there.)
+
+    Symlinks could not be built on this host at all -- `os.symlink` raises
+    `[WinError 1314] A required privilege is not held by the client` -- so the
+    three symlink rows are UNMEASURED here and are declared as such rather
+    than assumed. What is measured for them is this predicate alone, against
+    synthesised attributes: a Windows directory symlink carries
+    `FILE_ATTRIBUTE_DIRECTORY` on the link itself, so it lands in the removal
+    branch, and a file symlink does not, so `os.replace` swaps the link. On
+    POSIX `lstat` reports `S_IFLNK` for both, so neither is removed and
+    `os.rename` replaces the link, which is the POSIX behaviour anyway.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    attributes = getattr(info, "st_file_attributes", None)
+    if attributes is not None:
+        return bool(attributes & stat.FILE_ATTRIBUTE_DIRECTORY)
+    return stat.S_ISDIR(info.st_mode)
+
+
+def _remove_entry(path: Path) -> None:
+    """Remove whatever is at `path` BY THE SHAPE OF THE ENTRY, following
+    nothing. A no-op when the name is already free.
+
+    ONE REMOVAL FOR EVERY SITE THAT REMOVES. `_write_fresh` and `_rebuild`'s
+    wipe each carried their own spelling of "is this a directory", and both
+    were the stat-following one. THE DEFECT HAD ONE HOME, NOT TWO, and the
+    sentence that said two counted the sites rather than the failures: at
+    `_write_fresh` the predicate handed `os.replace` a destination Win32
+    forbids it to replace, which is P1-A and permanent; at the wipe the
+    else-branch was `unlink`, which removes a junction rather than refusing
+    it, so every shape still went. Measured both ways -- see the wipe.
+
+    Sharing is worth having on its own terms: the NEXT shape is answered once
+    instead of in each site separately. It does not need a defect it did not
+    prevent, and claiming one made a green mutation row look like a hole.
+
+    A reparse point is taken by its own shape and is NEVER walked: `rmdir`
+    removes a directory-attributed link (a junction, a Windows directory
+    symlink) and `unlink` a file-attributed one, and in both cases the TARGET
+    is untouched -- measured for a junction, whose target kept its contents.
+    A real directory goes to `_remove_tree`, which clears git's read-only
+    bits. Everything else goes to `_unlink_clearing_read_only`.
+
+    THE PLAIN-FILE BRANCH WAS THE ONE PRIMITIVE HERE THAT DID NOT CLEAR THE
+    READ-ONLY BIT, and it was a bare `os.unlink` for as long as it has
+    existed. Both its siblings do clear it: `_replace_fresh` chmods and
+    retries, `_remove_tree` clears git's read-only objects. The asymmetry cost
+    nothing while this function only removed a destination something was about
+    to be written over -- the WRITE's failure was then the refusal, and the
+    entry it could not take was still standing. `_neutralise_untrusted_
+    authority` made it a removal in its own right, and the FIRST one that runs
+    while `protected()` is still False, so its refusal became a fall-open:
+    measured through the shipped `restore()`, one `attrib +R experience.json`
+    left `capsule.json` removed, the seal marker never written and the
+    worker's forged `experience.json` readable -- on the third call as on the
+    first. See `_rebuild` and A-022.
+    """
+    if not os.path.lexists(path):
+        return
+    try:
+        if _is_junction(path) or os.path.islink(path):
+            (os.rmdir if _is_directory_entry(path) else os.unlink)(path)
+        elif _is_directory_entry(path):
+            _remove_tree(path)
+        else:
+            _unlink_clearing_read_only(path)
+    except FileNotFoundError:
+        return
+
+
+def _unlink_clearing_read_only(path: Path) -> None:
+    """`os.unlink(path)`, retried once with the read-only bit cleared.
+
+    The removal half of what `_replace_fresh` does for a rename, under the
+    same guard and for the same measured reason: `attrib +R` is a command
+    A-015 concedes the same-operating-system-user writer can run, and Win32
+    denies BOTH the rename and the unlink with `PermissionError [WinError 5]`.
+
+    NOT EVERY DENIAL IS A READ-ONLY BIT, and this deliberately does not try to
+    tell them apart before retrying. A held handle raises `PermissionError
+    [WinError 32]`, no chmod can help it, and the retry fails exactly as the
+    first attempt did. That is correct here and is precisely why `_rebuild`
+    does not rely on this succeeding: no list of shapes closes the invariant,
+    so `_rebuild` closes it on the FAILURE instead. Measured on this host at
+    an authority path, the plant asserted to have landed in every row:
+
+        shape               os.unlink        st_nlink   this function
+        regular file        SUCCEEDED        1          removed
+        read-only file      WinError 5       1          removed after chmod
+        hardlink            SUCCEEDED        2          removed (one name)
+        read-only hardlink  WinError 5       2          REFUSED, bit intact
+        held handle         WinError 32      1          REFUSED, retry fails
+    """
+    try:
+        os.unlink(path)
+    except PermissionError:
+        if not _solely_owned_file(path):
+            raise
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        os.unlink(path)
+
+
+def _solely_owned_file(path: Path) -> bool:
+    """Is `path` a plain file the store holds the ONLY name for?
+
+    THE GUARD ON EVERY `os.chmod` THIS MODULE MAKES AT A HOSTILE PATH.
+    `os.chmod` acts on the FILE and not on the name, so clearing the read-only
+    bit through one name of a hardlink clears it on EVERY name -- measured
+    directly against this predicate's absence: a read-only file outside the
+    store, planted as a link inside it, came back writable after one unguarded
+    chmod through the inside name. A name the store does not solely own is
+    left alone and the refusal stands.
+
+    ONE SPELLING, TWO SITES, AND THE HOIST IS THE POINT. It lived inside
+    `_replace_fresh` as an inline expression, so when the removal grew a chmod
+    of its own there was nothing to reuse -- and the removal had shipped with
+    no read-only handling at all, which is the defect above. Answered once,
+    the next site that clears a bit cannot ship without it either.
+
+    False rather than an exception when the path cannot be stat'ed: a name
+    that vanished under the retry is not a name this may chmod.
+    """
+    try:
+        return path.is_file() and not path.is_symlink() and os.stat(path).st_nlink == 1
+    except OSError:
+        return False
+
+
 def _remove_tree(path: Path) -> None:
     """Remove a directory git owns. Git marks its object files read-only, and
-    on Windows `rmtree` refuses those unless the bit is cleared first."""
-    def _clear_and_retry(function, target, _exc_info):
+    on Windows `rmtree` refuses those unless the bit is cleared first.
+
+    A JUNCTION IS NOT A TREE TO WALK, and this used to remove NOTHING while
+    reporting success. Measured on 3.12.10: `rmtree` refuses a junction with
+    `OSError: Cannot call rmtree on a symbolic link`, and it reports that
+    refusal by calling the handler with its own CHECK, `os.path.islink` --
+    not a removal. `_clear_and_retry` re-ran the check, the check answered
+    False, and `rmtree` returned having deleted nothing and raised nothing.
+    So `_rebuild`'s wipe, whose docstring names a junction among the shapes
+    it removes, silently left one standing; and `_write_fresh` inherited a
+    removal that no-ops. `os.rmdir` removes the LINK and leaves the target
+    untouched -- measured, target contents intact -- which is what removing a
+    junction by shape means. Handled first, before `rmtree` is reached.
+    """
+    if _is_junction(path):
+        os.rmdir(path)
+        return
+
+    def _clear_and_retry(function, target, _exc):
         os.chmod(target, 0o600)
         function(target)
 
-    shutil.rmtree(path, onerror=_clear_and_retry)
+    # `onerror` is deprecated in 3.12 and removed in 3.14; `onexc` arrived in
+    # 3.12 and takes the exception rather than an `exc_info` triple. The
+    # handler ignores that argument, so one body serves both spellings.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_clear_and_retry)
+    else:
+        shutil.rmtree(path, onerror=_clear_and_retry)
+
+
+def _replace_fresh(tmp: Path, path: Path) -> None:
+    """`os.replace(tmp, path)`, retried once with the read-only bit cleared.
+
+    Measured on Windows: a destination carrying `attrib +R` denies the rename
+    with `PermissionError [WinError 5]`, exactly as it denied the unlink this
+    replaced. One `attrib +R` on `.forge-seal` -- a command the same-user
+    writer A-015 concedes can run -- would otherwise disable the product's
+    human recovery route permanently. Clearing the bit is the remedy
+    `_remove_tree` already applies to git's read-only objects.
+
+    GUARDED BY `_solely_owned_file`, because `os.chmod` through one name of a
+    hardlink clears the bit on EVERY name -- measured: a read-only file
+    outside the store became writable through a link planted inside it. A name
+    the store does not solely own is left alone and the refusal stands. That
+    guard was an inline expression here until `_unlink_clearing_read_only`
+    needed the same one; it is now a named predicate both sites call, so
+    neither can drift. A held handle raises the same WinError 5 and no chmod
+    can help it; A-022 records that residue, which lasts only as long as the
+    handle.
+    """
+    try:
+        os.replace(tmp, path)
+        return
+    except PermissionError:
+        if not _solely_owned_file(path):
+            raise
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        os.replace(tmp, path)
+
+
+#: How many random bytes `_write_fresh` puts in the temp name it writes before
+#: moving it onto its destination. ONE constant, because `_tree_changes` below
+#: has to recognise the names this writer actually produces and the two must
+#: not drift apart in silence. Pinned in both directions by
+#: `test_the_cleanliness_exemption_matches_a_name_the_writer_really_produces`,
+#: which builds a name with `_fresh_tmp_path` and asserts the matcher takes it.
+_FRESH_TMP_RANDOM_BYTES = 8
+_FRESH_TMP_NAME = re.compile(
+    r"\.[0-9a-f]{" + str(_FRESH_TMP_RANDOM_BYTES * 2) + r"}\.tmp\Z"
+)
+
+
+def _fresh_tmp_path(path: Path) -> Path:
+    """The sibling `_write_fresh` writes whole before moving it onto `path`."""
+    return path.with_name(f"{path.name}.{os.urandom(_FRESH_TMP_RANDOM_BYTES).hex()}.tmp")
+
+
+def _tree_changes(porcelain: str) -> list[str]:
+    """The `git status --porcelain` lines that are a finding about the store.
+
+    ONE NAME SHAPE IS EXEMPT, and only when UNTRACKED: a sibling in the store
+    root whose name ends in Forge's own temp suffix. `_write_fresh` writes a
+    finished file to that name and renames it, and a death between those two
+    statements leaves the name behind -- a survivor no `finally` can take,
+    exactly as `seal()`'s `.json.tmp` cannot be taken. Measured: one such
+    stray made EVERY later load fail, `seal_problems` reporting "the working
+    tree is not clean: ?? .forge-seal.<hex>.tmp" and the surface reporting
+    TAMPERED, against a store nobody had touched, because of Forge's own
+    crash. Fail-closed and repairable, but a tamper finding manufactured by
+    the product about itself, and the human restore it invites costs the
+    lifecycle a transition.
+
+    THE EXEMPTION IS NOT A CLAIM THAT THE FILE IS FORGE'S. The name is the
+    only evidence and any writer in the store can forge a name, so what this
+    says is narrower and is all that is needed: an UNTRACKED file bearing that
+    suffix is not BY ITSELF a tamper finding. It can smuggle no authority,
+    because nothing in this module ever reads the store by pattern -- the
+    authority files, the store marker and the seal marker are each read by
+    exact name, and their bytes are compared to the seal regardless of what
+    else is in the directory. A tracked file of that name that was modified or
+    deleted is still a finding; so is an untracked file of any other name, and
+    so is one in a subdirectory. A-022 records the widening.
+
+    WHAT HAPPENS TO A STRAY THAT IS NOT SWEPT UP, corrected: `git clean` on
+    the honest restore route takes it, and `_rebuild`'s wipe takes it, but
+    only until the NEXT SAVE. `save` runs `git add -A` and commits, so a
+    stray still present then is absorbed into the store's own history and
+    becomes TRACKED AND CLEAN -- measured: after one save the porcelain
+    reports nothing at all about it, `git clean -fdx` leaves it standing,
+    `seal_problems` is empty, and it is in `git ls-files`. From then on it is
+    permanent and invisible rather than exempt, and only the wipe removes it.
+    It still carries no authority, for the reason above; what changes is that
+    the two routes named as taking it no longer do.
+
+    EACH LINE IS TRIMMED, NOT THE JOINED BLOCK. `"\\n".join(kept).strip()`
+    stripped the leading status padding off the FIRST line only, so one
+    finding read `M capsule.json` and two read `M capsule.json` and
+    ` D experience.json` -- the same status in two spellings depending on
+    where it landed in the list.
+    """
+    kept: list[str] = []
+    for line in porcelain.splitlines():
+        if line.startswith("?? "):
+            name = line[3:]
+            if "/" not in name and "\\" not in name and _FRESH_TMP_NAME.search(name):
+                continue
+        trimmed = line.lstrip()
+        if trimmed:
+            kept.append(trimmed)
+    return kept
+
+
+def _write_fresh(path: Path, text: str) -> None:
+    """Put these bytes at `path` as a NEW file, whatever shape is there now.
+
+    `write_text` alone writes THROUGH what it finds. A directory raises; a
+    symlink follows to its target; and a HARDLINK -- which needs no privilege
+    on NTFS -- writes the bytes into every other name for the same inode.
+    Measured under review at the parent of this commit: a hardlink planted at
+    an authority path made a restoration overwrite a file OUTSIDE the store
+    with the sealed capsule bytes. The wipe cannot help, because it preserves
+    the authority files and the seal marker BY NAME regardless of shape.
+
+    WRITTEN WHOLE AND MOVED INTO PLACE, which is `seal`'s idiom eighty lines
+    down and for the same reason. Removing the entry and THEN writing it --
+    what this did first -- left the destination ABSENT for the width of a
+    write, and `_rebuild` calls this on the seal marker before anything else:
+    so a death or an ordinary `OSError` in that instant left the worker's
+    forged authority on disk under no marker, `protected()` False, and a
+    sealless load returning the forged `READY`. Precisely the fall-open the
+    marker-first ordering exists to close, reopened by the removal that
+    closed a different one. The `OSError` form is the worse of the two: it
+    is PERMANENT and the surface reports a clean refusal, whose exception
+    promises in its own docstring that nothing was partially written.
+
+    `os.replace` keeps everything the removal bought. It swaps the directory
+    ENTRY, so a planted hardlink's other name keeps the old inode and the
+    bytes land in the new one (measured: the outside file was untouched), and
+    for a FILE destination it is never absent at any instant. It is also
+    stated to replace a symlink rather than following it; that is POSIX
+    `rename` semantics and the documented Windows behaviour for a file
+    symlink, and it is UNVERIFIED HERE, because `os.symlink` on this host
+    raises `[WinError 1314] A required privilege is not held by the client`.
+    The claim used to stand unqualified.
+
+    A DIRECTORY-ATTRIBUTED DESTINATION STILL NEEDS REMOVING, because a rename
+    cannot replace one. "Only a directory and a junction" was the old wording
+    and it was a LIST rather than a property, so it missed the shape that is
+    neither: a DANGLING junction, which `is_dir()` answers False for while
+    Win32 still refuses the rename. `_is_directory_entry` is the property, and
+    the removal is keyed on it.
+
+    THE REMOVAL HAPPENS INSIDE THE `try`, AFTER THE FINISHED TEMP EXISTS.
+    Round 3 removed the entry where the old code did, before the temp existed,
+    which left for those shapes exactly the fall-open it had just closed for a
+    file; the reorder means every way the WRITE can fail -- the full disk, the
+    scanner holding the create, a death during the bytes -- fails with the old
+    entry still standing.
+
+    WHAT IT DOES NOT BUY, and one round said it did. "The durable `OSError`
+    form disappears entirely for both shapes" was FALSE: `_replace_fresh` runs
+    AFTER the removal and can raise on its own. An ordinary concurrent reader
+    -- an indexer, a backup agent, Defender: no privilege, no patching, no
+    crash -- opens the finished temp, and a handle on the SOURCE denies the
+    rename with a sharing violation. Measured on this host, one observer thread
+    doing nothing but enumerate the directory and read what it finds, 400
+    rounds per shape:
+
+        destination   succeeded   raised          durably ABSENT after
+        regular file  390         10 (32 x8, 5 x2)   0 / 10
+        directory     305         95 (WinError 32)  95 / 95
+        junction      399          1 (WinError 32)   1 / 1
+
+    The file column is why the claim survived a round: at a file destination
+    there is no removal, so the failure leaves the old marker standing and it
+    really does fail closed. At a directory-attributed one the removal has
+    already happened, and the failure is durable. A-022's "no OSError, no full
+    disk, no scanner can reach it" is corrected there; a scanner is precisely
+    what reached it. "Crash-only micro-window" was wrong for the same reason,
+    and it was wrong about the width too: the marker's absence occupies 16.5%
+    of the call at a directory and 29.1% at a junction (662/4023 and 640/2202,
+    measured by a concurrent observer inside this function).
+
+    THAT RESIDUE IS NOT CLOSED HERE AND IS NO LONGER A FALL-OPEN. `os.replace`
+    cannot replace a directory, so no ordering of these two calls removes the
+    gap and no guard patch will; three rounds tried. `_rebuild` instead
+    neutralises the untrusted authority BEFORE it reaches this function, so a
+    destination this leaves absent -- durably or in the gap -- is absent over
+    a store that has no readable authority to fall open with. See `_rebuild`.
+
+    The temp name carries 64 random bits. It is a name in the STORE, which is
+    the hostile directory -- unlike `seal`'s fixed sibling, which lives in the
+    seal directory outside it -- so a predictable one could be pre-planted as
+    a link and turned back into the write primitive this closes. Scope is
+    this path: `_write_document` and `_write_experience` on the ordinary save
+    path still write through, unchanged, and ASSUMPTIONS A-022 records that.
+    """
+    tmp = _fresh_tmp_path(path)
+    try:
+        tmp.write_text(text, encoding="utf-8", newline="")
+        if _is_directory_entry(path):
+            _remove_entry(path)
+        # AND THIS STATEMENT CAN RAISE. It is the one after the removal, so at
+        # a directory-attributed destination its failure is what leaves the
+        # name absent; it is written on its own line and named in the docstring
+        # rather than read as the tail of an operation that already succeeded.
+        _replace_fresh(tmp, path)
+    except OSError:
+        # Never mask the failure with a cleanup failure; `_rebuild`'s wipe
+        # takes any survivor, since the temp name is in no keep set.
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -398,13 +853,196 @@ class CapsuleStore:
 
     def _mark_sealed(self) -> None:
         """Write the seal marker into the store when sealing is in force and
-        the store does not carry one yet. Called before the commit it joins."""
+        the store does not carry one yet. Called before the commit it joins.
+
+        Conditional on `protected()` because a store already carrying a marker
+        needs nothing on the ordinary save path, and rewriting it there would
+        dirty the tree for no reason. The RESTORATION path wants the
+        unconditional form and calls `_write_seal_marker` directly.
+        """
         if self.seal_dir is None or self.protected():
             return
-        (self.root / _SEAL_MARKER_FILE).write_text(
+        self._write_seal_marker()
+
+    def _write_seal_marker(self) -> None:
+        """Put the marker naming THIS store's seal on disk, whatever is there.
+
+        Deliberately not conditioned on `protected()`. `protected()` only asks
+        whether a file of that name exists, so a marker a worker deleted, or
+        replaced with one naming another store's seal, is exactly the state a
+        restoration has to correct -- and the conditional form would leave it
+        standing. No-op only when sealing is not in force at all.
+
+        Writes through `_write_fresh`: a worker may have left a directory, a
+        link or a hardlink where the marker belongs, and `write_text` would
+        raise on the first and write through the other two. Before this method
+        existed the wipe ran first and happened to clear a directory there; the
+        order that closes the fall-open would otherwise have lost the recovery
+        with it.
+
+        `_rebuild` NO LONGER LEANS ON HOW LITTLE OF THIS WRITE THE MARKER IS
+        ABSENT FOR, and three rounds of trying to make it lean less is why.
+        It used to run first there, so the width of this write was the width
+        of a fall-open; each round narrowed that width for the shapes it had
+        enumerated and left another shape holding it. `_rebuild` now removes
+        the untrusted authority BEFORE calling this, so an absent marker here
+        stands over a store with nothing readable to fall open with.
+
+        WHAT THIS WRITE BUYS, STATED EXACTLY, because two successively weaker
+        sentences have stood here and both were false. Against a FILE
+        destination, or none, the marker on disk is the old one or the new one
+        at every instant -- never neither; the rename is the only mutation.
+        Against a DIRECTORY-ATTRIBUTED one it is weaker in BOTH the ways the
+        previous sentence denied. "No ordinary failure of the write can strip
+        the marker, since everything that can raise has already happened when
+        the removal runs" was wrong: `_replace_fresh` runs after the removal,
+        and an ordinary concurrent reader holding the finished temp denied it
+        95 times in 400 -- durably, no crash. A process death in the same gap
+        does it too. `os.replace` cannot replace a directory, so neither is
+        closed here; what closes the FALL-OPEN is the ordering in `_rebuild`,
+        which does not depend on this write being atomic for any shape.
+
+        THIS IS THE SUCCESS-PATH WRITE AND IT STAYS UNCONDITIONAL. There is a
+        second caller now -- `_write_seal_marker_best_effort`, on the path
+        where the neutralisation failed -- and it is conditional on
+        `protected()` for a reason that does NOT apply here: it is not
+        restoring anything, so the marker's content buys it nothing, while
+        writing through an occupant can leave the name empty and cost the
+        store its protection. Here the restoration IS happening, a marker
+        naming another store's seal is exactly the state to correct, and the
+        untrusted authority is already gone by the time this runs.
+
+        Pinned by the `inside-the-marker-write` rows, by the shape matrix in
+        `test_the_marker_write_is_shape_correct_at_every_interior_instant`,
+        and by the ordinary-reader row, which asserts the fail-closed property
+        rather than a rate.
+        """
+        if self.seal_dir is None:
+            return
+        _write_fresh(
+            self.root / _SEAL_MARKER_FILE,
             canonical_json({"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}) + "\n",
-            encoding="utf-8", newline="",
         )
+
+    def _write_seal_marker_best_effort(self) -> None:
+        """`_write_seal_marker`, on a path that is already failing. NEVER
+        raises, and never becomes the error the caller sees.
+
+        THE POINT OF ROUND 6, AND WHY IT IS NOT A SIXTH SHAPE. Four rounds
+        enumerated shapes at the marker's destination, and each closed the
+        cells it had listed. This one runs where the RECOVERY is already lost,
+        and its only job is to make sure the store is left demanding a seal.
+        `protected()` True over a store whose seal is gone is
+        `CapsuleSealMissing` on both authority routes, so a residue Forge
+        cannot clean becomes a refusal instead of a legacy read. It is
+        therefore attempted even when the untrusted authority is still there.
+
+        `BaseException`, deliberately, on both sides. `SystemExit` is how a
+        supervised death arrives in-process and is exactly the case that most
+        needs the marker; and a failure of THIS write must not replace the
+        real diagnosis with a secondary one, which is the mistake
+        `_write_fresh`'s own cleanup already avoids. Swallowing costs the
+        caller nothing: the original exception is re-raised by `_rebuild`, and
+        `restore()` turns an `OSError` into `CapsuleStoreError` as before. A
+        `KeyboardInterrupt` that lands inside this write is lost in favour of
+        the error that brought us here -- accepted, and stated rather than
+        hidden, because the alternative is leaving the store open.
+
+        IT DOES NOTHING AT ALL WHEN THE STORE IS ALREADY PROTECTED, AND THE
+        FIRST VERSION OF THIS METHOD DID NOT -- WHICH MADE THINGS WORSE.
+        `_write_seal_marker` writes THROUGH whatever is at the name, so at a
+        directory-attributed occupant it removes first and renames second, and
+        a denied rename leaves the name EMPTY. Measured, neutralisation failed
+        and the marker's rename denied by an ordinary sharing violation:
+
+            marker occupant   rename denied   marker after   protected()
+            absent            no              file           True
+            absent            YES             absent         False
+            directory         no              file           True
+            directory         YES             absent         False   <-- was True
+            live junction     YES             absent         False   <-- was True
+            dangling junction YES             absent         False
+
+        The two marked rows are a store that DEMANDED A SEAL before the call
+        and did not after: Forge's own fail-closed step spending the very
+        property it exists to protect. On this path the marker's CONTENT does
+        not matter -- one naming another store's seal is `seal_problems`'
+        "does not name this store's seal", a refusal either way -- so there is
+        nothing to buy by rewriting an occupant and a fall-open to lose. The
+        unconditional form stays where restoration really is happening, in
+        `_write_seal_marker` on the success path, and its docstring says why.
+
+        THE LAST RESORT IS ONE EXCLUSIVE CREATE. Where `_write_fresh` has been
+        denied and left the name free, a single `O_CREAT | O_EXCL` write puts
+        the marker there with no removal and no rename, so it has no window of
+        its own. `O_EXCL` is what makes it safe rather than merely simple: it
+        REFUSES an existing name, so it does not follow a link a worker plants
+        in the gap after `protected()` answered False -- the write-through this
+        module built `_write_fresh` to prevent.
+
+        THAT REFUSAL IS QUALIFIED, exactly as `_write_fresh` qualifies its own
+        `os.replace` claim. Against a SYMLINK it is POSIX `open` semantics and
+        the documented Win32 `CREATE_NEW` behaviour, and it is UNVERIFIED HERE,
+        because `os.symlink` on this host raises `[WinError 1314] A required
+        privilege is not held by the client`. What IS measured here is the
+        shape this host can build -- and it is closed by construction rather
+        than by `O_EXCL` alone, so the two are not one fact:
+
+            occupant at the marker name    os.open(O_CREAT|O_EXCL|O_WRONLY)
+            live junction                  FileExistsError  errno 17
+            dangling junction              PermissionError  errno 13
+            ordinary existing file         FileExistsError  errno 17
+
+        Neither junction is followed. Note the errno rather than a `winerror`:
+        CPython reaches this through the CRT, so the Win32 code never surfaces
+        and a row phrased on `.winerror` would assert `None`. The symlink claim
+        used to stand unqualified.
+
+        A torn or truncated marker is still a refusal, so even a partial one
+        fails closed.
+
+        BYTE-EXACT, AND IT WAS NOT. `os.open` defaults to TEXT mode on Windows,
+        so `os.write` of bytes ending `}\\n` landed on disk as `}\\r\\n` --
+        measured on this host, `b'{"a": 1}\\n'` in and `b'{"a": 1}\\r\\n'` out,
+        one CR without `os.O_BINARY` and none with it. Nothing broke:
+        `json.loads` tolerates the extra byte and a marker of any content still
+        refuses. But this is the module whose entire idiom -- `_write_fresh`,
+        `newline=""`, `canonical_json` -- exists to put exact bytes on disk,
+        and NO ROW ASSERTED THIS WRITE'S BYTES, so the one write that escaped
+        the idiom was the one nothing was watching. `O_BINARY` under `getattr`
+        because POSIX does not define it, and the write is LOOPED because
+        `os.write` may write short and a single unlooped call would leave a
+        torn marker where a whole one was available. Pinned by
+        `test_the_exclusive_create_fallback_writes_the_markers_exact_bytes`.
+
+        IT IS BEST EFFORT AND THE NAME SAYS SO. Both writes can be denied, so
+        this is not a guarantee the marker exists afterwards -- only that
+        nothing was left unattempted and that nothing was made worse. The
+        residue that remains is disclosed in A-022 rather than claimed closed.
+        """
+        if self.seal_dir is None or self.protected():
+            return
+        try:
+            self._write_seal_marker()
+        except BaseException:
+            pass
+        if self.protected():
+            return
+        try:
+            marker = os.open(self.root / _SEAL_MARKER_FILE,
+                             os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                             | getattr(os, "O_BINARY", 0), 0o600)
+            try:
+                payload = (canonical_json(
+                    {"schema": _SEAL_MARKER_SCHEMA, "seal": self.seal_ident()}
+                ) + "\n").encode("utf-8")
+                written = 0
+                while written < len(payload):
+                    written += os.write(marker, payload[written:])
+            finally:
+                os.close(marker)
+        except BaseException:
+            return
 
     def snapshot(self) -> AuthoritySnapshot:
         """The authority as it stands on disk right now: HEAD and file bytes."""
@@ -491,8 +1129,13 @@ class CapsuleStore:
             )
             if status.returncode != 0:
                 problems.append("the store's working tree cannot be read")
-            elif status.stdout.strip():
-                problems.append("the working tree is not clean: " + status.stdout.strip()[:120])
+            else:
+                # Everything except a stray of Forge's own temp shape; see
+                # `_tree_changes` for why that one name is not a finding.
+                changes = _tree_changes(status.stdout)
+                if changes:
+                    problems.append(
+                        "the working tree is not clean: " + "\n".join(changes)[:120])
         if not (self.root / _MARKER_FILE).exists():
             problems.append("the store marker is missing")
         marker = self.root / _SEAL_MARKER_FILE
@@ -574,30 +1217,224 @@ class CapsuleStore:
     def _rebuild(self, snapshot: AuthoritySnapshot) -> None:
         """A fresh repository around the sealed bytes. Whatever the worker left
         in the store directory -- a `.git` directory, a `.git` FILE, a junction,
-        stray files -- is removed by shape, not by assumption."""
+        stray files -- is removed by shape, not by assumption.
+
+        The junction in that list was a CLAIM rather than a behaviour until
+        this commit: `_remove_tree` walked into `rmtree`, which refuses a
+        junction, and the read-only retry handler swallowed the refusal, so
+        the wipe returned success having left the junction standing. Measured,
+        and now removed by `os.rmdir` with the target untouched. See
+        `_remove_tree`.
+
+        THE ORDER IS THE PROPERTY. Every step here can die -- a crash, a kill,
+        a full disk -- and what matters is what a LATER process would then read
+        off the directory. The wipe used to come first, and it kept only the
+        store marker and the two authority files: so it deleted the seal marker
+        while the worker's forged bytes were still on disk, and a death before
+        the rewrite a few lines down left forged authority with `protected()`
+        False -- permanently readable as a legacy store by anyone who also
+        removed the seal, which is one same-user file deletion. Two-of-two had
+        become one-of-one, and Forge's own recovery path is what degraded it.
+        Measured before the repair: a `SystemExit` at the `git init` call left
+        `['.forge-capsule', 'capsule.json', 'experience.json']`, `protected()`
+        False, and a seal-less load returning the forged `stage == "READY"`.
+
+        THE FALL-OPEN IS A CONJUNCTION, AND THIS BREAKS THE OTHER HALF OF IT.
+        Reading a store as legacy needs TWO things at once: the marker absent
+        AND the worker's forged authority readable on disk. Three rounds
+        attacked the first half -- write the marker before the bytes, make its
+        write atomic, remove a directory before renaming onto it -- and each
+        one closed the shapes it had enumerated and left a cell out, because
+        `os.replace` CANNOT replace a directory and so a remove-then-create
+        window is irreducible for a directory-shaped entry. There is no fourth
+        guard patch that closes it.
+
+        So the untrusted authority is NEUTRALISED FIRST, and the marker's
+        write stops being load-bearing. `_neutralise_untrusted_authority`
+        removes the authority files by shape; only then the seal marker,
+        then the sealed bytes, then the store marker, then the wipe and a
+        fresh repository. At every instant the store therefore holds either
+        NO READABLE AUTHORITY -- both routes fail closed on the absent file --
+        or authority under a marker that demands a seal. Neither leg needs an
+        atomic directory replacement, so the shape space stops being
+        load-bearing for this invariant.
+
+        BOTH FILES, AND THAT IS MEASURED RATHER THAN ASSUMED. With the seal
+        deleted and the marker absent, removing only one of them leaves the
+        other route open:
+
+            marker    authority              load_experience()   load()
+            absent    both gone              REFUSED             REFUSED
+            absent    capsule.json gone      RETURNED 'READY'    REFUSED
+            absent    experience.json gone   REFUSED             RETURNED
+            absent    neither gone           RETURNED 'READY'    RETURNED
+
+        REMOVED, NOT TRUNCATED. Truncation follows what it finds: measured, a
+        hardlink planted at `capsule.json` and truncated left a file OUTSIDE
+        the store holding `''` with its link count still 2 -- the same write
+        primitive `_write_fresh` exists to close, pointed at destruction
+        instead. `_remove_entry` takes the NAME by shape; on the same specimen
+        the outside file kept its bytes and its count dropped to 1.
+
+        THIS CANNOT STRAND THE STORE WORSE THAN NOT CALLING IT. The files it
+        removes are exactly the ones the next few statements overwrite from
+        the seal, and `_rebuild` is reached only from `restore()`, only after
+        the honest `git reset --hard` route has failed, and only with the
+        sealed snapshot already in the caller's hands -- so nothing removed
+        here was going to survive the call anyway, and the trusted copy is
+        outside the store. A death or an `OSError` between the neutralisation
+        and the sealed write leaves the authority absent: both routes refuse,
+        and re-running `restore()` with the same seal repairs it.
+
+        AND THE NEUTRALISATION ITSELF CAN RAISE PART-DONE, which two shipped
+        sentences denied. "If the neutralisation itself raises, it raises
+        BEFORE anything else has been touched" is FALSE the moment the SECOND
+        removal is the one that fails: `_AUTHORITY_FILES` is ordered
+        `(capsule.json, experience.json)`, so `capsule.json` is already gone.
+        Measured through the shipped `restore()` with `.git` destroyed, the
+        marker deleted and one `attrib +R experience.json` -- no crash, no
+        patching, no privilege:
+
+            BEFORE   ['.forge-capsule', 'capsule.json', 'experience.json']
+            restore  CapsuleStoreError: PermissionError [WinError 5]
+            AFTER    ['.forge-capsule', 'experience.json']
+            marker absent   protected() False   forged READY readable
+
+        And "re-running `restore()` with the same seal repairs it" was FALSE
+        for that shape in particular: attempts two and three raised the same
+        way and the forged stage stayed readable. The bit is still set, so the
+        remedy is defeated for as long as it is -- permanently, by one
+        unprivileged command. `_unlink_clearing_read_only` now clears it, and
+        that closes THIS shape.
+
+        BUT NO LIST OF SHAPES CLOSES THE INVARIANT, which is the lesson four
+        rounds paid for. A held handle raises `WinError 32` and no chmod
+        reaches it; the next shape will be some third thing. So the ordering
+        is backed by a STRUCTURAL fail-closed step rather than by enumeration:
+        ANY failure of the neutralisation writes the seal marker, best effort,
+        BEFORE the error propagates. The marker turns every residue from a
+        FALL-OPEN into a REFUSAL -- `protected()` True with no seal on disk is
+        `CapsuleSealMissing` on both routes -- and it is written even where the
+        untrusted authority could not be removed at all, because the marker is
+        the half of the conjunction Forge can always reach for. What survives
+        is a restoration that did not happen, not a store Forge opened.
+
+        The best-effort write cannot itself raise past the original error, and
+        the ORIGINAL error is the one the caller sees; see
+        `_write_seal_marker_best_effort`. What it does NOT cover is a real
+        process death inside the neutralisation, where no Python runs at all:
+        there the guarantee is the weaker one this design already carried --
+        the restoration OPENED nothing, the readable set is a subset of what
+        the call found. Both are pinned, and the residue is disclosed in
+        A-022 rather than claimed closed.
+
+        THE MARKER GOES BEFORE THE BYTES, and the first ordering that closed the
+        permanent fall-open did not. It wrote the sealed bytes and only then
+        the marker, which leaves a window two statements wide: `snapshot.files`
+        is `capsule.json` then `experience.json`, so a death BETWEEN THE TWO
+        left the worker's forged `experience.json` -- an authority file by this
+        module's own definition -- on disk with the marker still gone.
+        Measured under review at the parent: `protected()` False, and a load
+        whose seal file had also gone returned the forged `stage == "READY"`.
+        A window rather than a permanent state, but the same fall-open, and
+        the marker names the STORE rather than the bytes, so writing it before
+        them costs nothing and is true at every instant after it. Pinned by
+        the fourth crash instant in
+        `test_a_crash_inside_the_rebuild_never_leaves_the_store_readable_as_legacy`.
+
+        Between the marker and the last byte write the store therefore holds
+        forged authority under a marker that DEMANDS a seal -- refused, not
+        read: that is the property, not that the bytes are correct at every
+        instant. The commit is last because a commit is not what makes the
+        bytes trustworthy -- the seal is.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
-        for entry in list(self.root.iterdir()):
-            if entry.name in (_MARKER_FILE, *_AUTHORITY_FILES):
-                continue
-            if entry.is_dir() and not entry.is_symlink():
-                _remove_tree(entry)
-            else:
-                entry.unlink(missing_ok=True)
-        _run_git(self.root, "init", "--quiet", "--initial-branch=main")
-        (self.root / _MARKER_FILE).write_text(
-            "Forge capsule store. Managed by nornyx_forge.capsule_store; "
-            "not a user-facing repository.\n",
-            encoding="utf-8", newline="",
-        )
+        try:
+            self._neutralise_untrusted_authority()
+        except BaseException:
+            # THE STRUCTURAL HALF. Whatever defeated the removal -- a
+            # read-only bit, a held handle, a shape nobody has met -- the
+            # store still ends PROTECTED, so the residue is a refusal and not
+            # a fall-open. The original failure is re-raised below, unchanged.
+            self._write_seal_marker_best_effort()
+            raise
+        self._write_seal_marker()
         for name, text in snapshot.files.items():
             path = self.root / name
             if text is None:
-                path.unlink(missing_ok=True)
+                _remove_entry(path)
             else:
-                path.write_text(text, encoding="utf-8", newline="")
-        self._mark_sealed()
+                _write_fresh(path, text)
+        _write_fresh(
+            self.root / _MARKER_FILE,
+            "Forge capsule store. Managed by nornyx_forge.capsule_store; "
+            "not a user-facing repository.\n",
+        )
+        # The seal marker joins the keep set only where sealing is in force.
+        # With no seal directory there is no seal for a marker to name, and one
+        # found on disk is a worker's leftover the wipe should take, exactly as
+        # it did before.
+        keep = {_MARKER_FILE, *_AUTHORITY_FILES}
+        if self.seal_dir is not None:
+            keep.add(_SEAL_MARKER_FILE)
+        for entry in list(self.root.iterdir()):
+            if entry.name in keep:
+                continue
+            # `entry.is_dir() and not entry.is_symlink()` stood here, the same
+            # stat-following predicate that let a dangling junction past
+            # `_write_fresh`. AT THIS SITE IT WAS NOT A DEFECT, and the claim
+            # that it was is withdrawn. It read: "here it sent one to `unlink`,
+            # which Win32 denies for a directory-attributed entry, so the wipe
+            # raised and the rebuild stopped before `git init`". Measured at
+            # 719c744, which carries the old predicate, with a dangling AND a
+            # live junction planted at non-kept names and `.git` removed:
+            # `restore()` RETURNED, `git init` was reached, both entries were
+            # gone, the live target kept its bytes. `os.unlink` does not refuse
+            # a junction -- CPython's `Py_DeleteFileW` sees a directory reparse
+            # point and calls `RemoveDirectoryW` -- and a live junction never
+            # reached that branch anyway, since `is_dir()` is True through it
+            # and `_remove_tree` has taken junctions by link since 889542a.
+            # The refusal that is real belongs to `os.replace`, at the OTHER
+            # site. Two call sites shared one predicate; ONE was a defect.
+            #
+            # `_remove_entry` stands here as UNIFICATION, not repair: the next
+            # shape gets answered once instead of per site. A faithful mutation
+            # back to the old predicate is therefore an EQUIVALENT MUTANT and
+            # nothing can kill it -- round 5's row M6 restored it exactly and
+            # the module stayed green over a full run. Recorded so a later
+            # round does not read that green as a missing assertion. Walking a
+            # reparse point instead of taking it IS caught: row M9 removed both
+            # guards and reddened five rows, including the wipe's own.
+            _remove_entry(entry)
+        _run_git(self.root, "init", "--quiet", "--initial-branch=main")
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", "capsule: authority restored from seal")
+
+    def _neutralise_untrusted_authority(self) -> None:
+        """Remove the store's authority files, by shape, before the rebuild
+        touches anything else. The FIRST statement of `_rebuild` that can
+        change the store, and deliberately so; see `_rebuild` for why.
+
+        BY SHAPE AND NEVER THROUGH: `_remove_entry` takes the NAME, so a
+        hardlink the worker planted loses one of its names and the file
+        outside the store keeps its bytes. Truncating instead would zero that
+        outside file -- measured.
+
+        Both names, because either one left readable answers one of the two
+        authority routes; the table is in `_rebuild`. `_AUTHORITY_FILES` is
+        the module's own definition of what authority is, so a file promoted
+        into it is neutralised here without a second edit.
+
+        IT CAN RAISE PART-DONE, AND THE CALLER IS BUILT FOR THAT. The names
+        are removed IN ORDER, so a failure at `experience.json` leaves
+        `capsule.json` already gone -- a state `_rebuild`'s own docstring once
+        denied could exist. Nothing is attempted here to make the removals
+        atomic, because they cannot be; `_rebuild` catches the failure and
+        writes the seal marker before propagating it, which turns whatever is
+        left into a refusal rather than a fall-open.
+        """
+        for name in _AUTHORITY_FILES:
+            _remove_entry(self.root / name)
 
     # -- internals ---------------------------------------------------------
     def _write_document(self, document: Mapping[str, Any]) -> None:
@@ -616,6 +1453,7 @@ class CapsuleStore:
 
 __all__ = [
     "DEFAULT_SEAL_DIR",
+    "MARKER_TRUST_BASIS",
     "AuthoritySnapshot",
     "CapsuleSealError",
     "CapsuleSealMissing",
