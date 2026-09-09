@@ -3900,17 +3900,25 @@ argument and is walked before the file is opened; what is established is
 that it is never discovered and never emitted, not that the checker does not
 learn it for the run.
 
-**Why it needs stating.** Two substitutions are easy here and both are the
+**Why it needs stating.** Three substitutions are easy here and all are the
 class this repository keeps finding. The first reads a passing admission
-check as authority over the cycle: passing means only that the loaded
-obligations were each given a deliberate disposition and bound by content
-digest to the exact registry and overlay bytes for that cycle, and it confers
-no human, organizational, merge, publication, release, deployment or other
-consequential authority. A private overlay governs a cycle whose authority,
-if any, comes separately; it creates none, and neither does the result. The
-second reads "the overlay is confidential" as a property of Forge rather than
-of the caller: Forge refuses an in-repository overlay path and emits nothing
-from the file, and that is the whole of what it establishes.
+check as authority over the cycle: passing means only that a local
+disposition covers exactly the loaded registry and overlay items, gives each
+a disposition from the resolved vocabulary, carries a non-empty reason
+beside each, and binds the SHA-256 of the exact registry and overlay bytes
+checked, and it confers no human, organizational, merge, publication,
+release, deployment or other consequential authority. A private overlay
+governs a cycle whose authority, if any, comes separately; it creates none,
+and neither does the result. The second reads the PASS as a statement about
+the person or model: it establishes nothing about whether anyone read,
+understood or weighed an obligation -- a disposition of `considered` and `x`
+throughout passes, and the same file passes again under another `cycle_id`,
+which is a label bound to nothing. Five surfaces said each item was "given a
+deliberate disposition"; a Codex review of the PR head measured that nothing
+measures deliberation, and every surface now states the measured result.
+The third reads "the overlay is confidential" as a property of Forge rather
+than of the caller: Forge refuses an in-repository overlay path and emits
+nothing from the file, and that is the whole of what it establishes.
 
 **What is established, and only this.** `tests/test_standing_development_obligations.py`
 holds: registry validity and duplicate refusal within and across registries;
@@ -3949,10 +3957,39 @@ sentence; and this entry said Forge learns nothing about where the file
 lives. The walk is now component by component and pinned by the shape that
 escaped; no output carries an overlay-derived count; and both claims are
 narrowed here and in the procedure document to what the tests measure.
+A second Codex review, of the PR head, measured four more. On Windows a
+directory junction is a plain directory to `Path.is_symlink()`, so
+`outside/junction -> repo/junction -> outside` was accepted at both hops:
+every component is now classified from its `lstat`, every reparse point that
+is not a symlink is refused rather than followed -- a junction, a cloud
+placeholder, an entry whose tag the platform does not expose -- and real
+junctions are built and refused in the windows-runtime job by
+`tests/test_standing_obligations_windows.py`; alongside the name comparison,
+every walked location is compared by file identity against the repository
+root, which also closes a POSIX shape measured while repairing it: a symlink
+target spelled with a double leading slash hopped through the repository
+outside to every walked component. The path was checked and then opened, two
+operations, so a link retargeted between them opened a file nobody had
+judged: the walk now records the identity of the entry it ends at and the
+one open is refused unless `fstat` names that entry, pinned by a retargeted
+directory link, a retargeted file link, a file replaced by an in-repository
+link, a file replaced by another and a file that appears only after the
+walk. A malformed private item said `item 42`, a lower bound on the overlay's
+size, and an oversized one said so: every content refusal about private input
+is now one sentence, byte-identical across defects at different indices,
+counts, sizes, nesting depths and duplicate positions, while the public
+registry keeps its specific diagnostics. And every surface said each item
+was "given a deliberate disposition", which nothing measures; the measured
+wording replaces it everywhere and is held there by test.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
-The free-text `reason` a developer writes is not inspected. An item `id` is
+Nothing measures reading: a mechanically written or reused disposition
+passes, and the `cycle_id` binds nothing. A hard link, and a rewrite that
+keeps a file's identity, are not seen by the path rule, the identity rule or
+the identity bound. A junction is refused, not judged, so a legitimate overlay
+behind one is refused too. The free-text `reason` a developer writes is not
+inspected. An item `id` is
 bounded to a short token and not judged. The checker and the registry are
 repository content, so a commit can change them; both are governed inputs, so
 the change moves the governed input digest and must regenerate the evidence in

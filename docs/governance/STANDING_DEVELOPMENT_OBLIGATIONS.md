@@ -18,12 +18,19 @@ deferred capability has been implemented.
 
 ## What passing means, and what it does not
 
-Passing standing-development admission means only that the applicable
-standing obligations were loaded, each given a deliberate disposition, and
-bound by content digest to the exact registry and overlay bytes used for that
-development cycle. It does not authorize the development cycle itself, and it
-confers no human, organizational, merge, publication, release, deployment or
-other consequential authority.
+Passing standing-development admission means only that a local cycle
+disposition covers exactly the loaded public-registry and overlay items,
+gives every one of them a disposition from the resolved vocabulary, carries a
+non-empty reason beside each, and is bound by SHA-256 to the exact registry
+and overlay bytes it was checked against. That is the whole of what the
+checker measures. It establishes nothing about whether anyone read,
+understood or weighed an obligation: a disposition written mechanically
+passes, and so does one reused from an earlier cycle under a new `cycle_id`,
+because the `cycle_id` is a label the developer chose and nothing binds it to
+a cycle. Reading every loaded item is the obligation the procedure below
+states; it is not measured. It does not authorize the development cycle
+itself, and it confers no human, organizational, merge, publication, release,
+deployment or other consequential authority.
 
 The distinction is load-bearing for a private caller. An external overlay
 governs a development cycle whose authority, if any, comes separately from
@@ -44,7 +51,8 @@ tests, contracts, governance, executable workflows, or public claims:
    Forge must not search for, infer, or discover an overlay.
 3. Initialize a cycle disposition under `.nornyx/runtime/`.
 4. Read every loaded item and replace each `pending` disposition with a
-   deliberate disposition and reason.
+   resolved disposition and a reason. The reading is the developer's
+   obligation; the checker sees only the file that results.
 5. Run the checker again. Development admission is refused while an item is
    unresolved, requests a decision, is duplicated, or is bound to stale input.
 
@@ -102,26 +110,59 @@ not:
 - **Outside the repository, at every step.** An overlay path that names
   anything inside this repository is refused: the path as given after
   lexical normalisation, every component the walk reaches, every link it
-  passes through -- file or directory, judged where that link sits and then
-  followed component by component -- and its final resolution. A link
+  follows, and its final resolution. The walk judges each component by
+  `lstat` where it sits. A symlink -- file or directory, first hop or third
+  -- is judged at its own location and then followed one hop, so a link
   inside the tree pointing out, a path outside the tree resolving in, a
   chain that merely hops through the tree, and a directory link that hops
-  through the tree are all refused. A hard link is outside what a path rule
-  can see; see the limitations.
-- **Not emitted.** No refusal names a value, a key, a path or a byte from
-  the overlay; refusals name a label and, at most, an item index. The
-  loaders raise their refusal outside the handler that caught the underlying
-  error, so the refusal carries no `__context__` at all. Invalid UTF-8, a
-  symlink loop, a deeply nested document, a repeated JSON key and an
-  unhashable value where a word belongs all refuse by label, and a stray or
-  repeated argument is refused without being echoed. The PASS output states
-  that an overlay was supplied, and nothing else about it -- not even its
-  item count, which is a fact about the overlay; a refusal says that overlay
-  items are unresolved, not how many.
-- **Read once, through one descriptor.** The file is opened once without
-  blocking, judged by `fstat` on that descriptor, read within a size bound,
-  and digested from the bytes that were parsed. A FIFO is refused rather
-  than read.
+  through the tree are all refused. Any other reparse point -- a Windows
+  directory junction, a mount point, a cloud placeholder, an entry whose
+  reparse tag the platform does not expose -- is refused rather than
+  followed, wherever it sits and wherever it leads: the checker does not
+  claim to know where such a link goes, so an uninspectable state fails
+  closed. `tests/test_standing_obligations_windows.py` builds real
+  junctions in the windows-runtime CI job and holds the refusal on the
+  platform it concerns; a Windows symlink target is judged only behind a
+  drive letter, and a share, volume-GUID, device or NT-namespace spelling
+  of a target is refused rather than judged.
+- **Judged by identity as well as by name.** One directory has several
+  spellings: `\\?\C:\...`, a mapped or substituted drive letter or an
+  administrative share on Windows, a bind mount or a double leading slash on
+  POSIX. Beside the lexical comparison, every walked location and the final
+  resolution are compared by file identity -- device and inode, volume
+  serial and file index on Windows -- against the repository root, so an
+  alternate spelling of the repository is still the repository. Where the
+  platform exposes no identity, nothing is claimed and the lexical rule
+  stands alone. A hard link is outside what either rule can see; see the
+  limitations.
+- **The bytes read are the object that was judged.** The walk records the
+  identity of the entry it ends at; the file is then opened once, judged by
+  `fstat` on that descriptor, read within a size bound, and digested from
+  the bytes that were parsed. Unless the opened object is the very entry the
+  walk ended at, the read is refused as changed during admission: a link
+  retargeted, a file replaced or a path swapped between the walk and the
+  open reaches a different object, and is not read. A FIFO is refused
+  rather than read.
+- **Not emitted, and refused without detail.** No refusal names a value, a
+  key, a path or a byte from the overlay. A refusal about the overlay's
+  CONTENT is one sentence -- the overlay is not valid, and no detail is
+  reported for private input -- whatever the defect: a malformed item at
+  index 0 or at index 42, an unknown field, a duplicate at the end of three
+  hundred items, an oversized file, a document nested past the parser's
+  depth, invalid UTF-8 all leave byte-identical stderr, so no index, count,
+  size class, field, value or position of the private document is
+  summarised. A refusal about the overlay's PATH says where the rule was
+  broken -- inside the repository, unreadable, unresolvable, a link not
+  followed, changed during admission -- and never what the path is. The
+  loaders raise their refusal outside the handler that caught the
+  underlying error, so the refusal carries no `__context__` at all. The
+  PASS output states that an overlay was supplied, and nothing else about
+  it -- not even its item count, which is a fact about the overlay; a
+  refusal about the disposition says that overlay items are unresolved, not
+  how many, and names a malformed row by its public id or, while an overlay
+  is loaded, not at all. The public registry keeps its specific
+  diagnostics, because the public registry is public; a developer whose
+  private overlay is refused diagnoses it against the schema above.
 - **A repeated key is refused.** `json.loads` keeps the last value of a
   repeated key silently, so a shadowed field would show a reader one thing
   and the checker another. Every document is parsed with a pairs hook that
@@ -146,18 +187,20 @@ Every loaded item receives one of these explicit cycle dispositions:
 
 - `considered` — relevant and accounted for in the proposed cycle.
 - `unchanged` — read; the cycle does not change its standing state.
-- `defer` — deliberately remains deferred under its existing authority.
-  Admitted only for an item whose registry `status` is already `deferred`:
-  deferring an active obligation would be ignoring it under a resolved
-  label.
+- `defer` — remains deferred under its existing authority. Admitted only for
+  an item whose registry `status` is already `deferred`: deferring an active
+  obligation would be ignoring it under a resolved label.
 - `not_applicable` — read; not applicable to this cycle.
 - `requires_decision` — the cycle must stop until the required authority acts.
 
-`pending` is generated only by `--init` and always refuses admission.
-`requires_decision` also refuses admission. The vocabulary is closed: any
-other string is refused as not a disposition, and changing the word is not
-the decision -- the authority an item is waiting for acts outside this
-mechanism, and no edit to the disposition file stands in for it.
+Each word is the developer's assertion about the cycle. The checker verifies
+that the word is in the vocabulary and that a reason sits beside it; it does
+not, and cannot, verify the assertion. `pending` is generated only by
+`--init` and always refuses admission. `requires_decision` also refuses
+admission. The vocabulary is closed: any other string is refused as not a
+disposition, and changing the word is not the decision -- the authority an
+item is waiting for acts outside this mechanism, and no edit to the
+disposition file stands in for it.
 
 Every resolved disposition needs a non-empty reason. A row carries exactly
 `id`, `source`, `disposition` and `reason`; a row or document carrying any
@@ -184,7 +227,10 @@ overlay bytes it was initialized against. A registry or overlay that changes
 by one byte afterwards makes the disposition stale, and the check refuses
 until a new cycle is initialized. There is no stored admission: every check
 re-reads the disposition and re-derives the verdict, so a row edited back to
-`pending` after a PASS refuses on the next check.
+`pending` after a PASS refuses on the next check. The `cycle_id` is bound to
+nothing: it is the developer's label for the file, and a disposition that
+passed for one cycle passes again under another label. Freshness is the
+developer's obligation, not a measurement.
 
 ## Limitations, stated rather than implied
 
@@ -192,6 +238,10 @@ re-reads the disposition and re-derives the verdict, so a row edited back to
   repository without invoking the checker is outside what it measures. The
   entry points (`AGENTS.md`, `CLAUDE.md`, the `build-app` Skill) instruct;
   they do not enforce. This is admission procedure, not a sandbox.
+- **Nothing measures reading.** A disposition written mechanically -- every
+  row `considered`, every reason `x` -- passes, and so does one reused from
+  an earlier cycle. The checker measures the file's state and claims no
+  more; "read every loaded item" is an instruction to the developer.
 - **Repository content can change the checker or the registry.** Both are
   governed inputs, so the change moves the governed input digest and the
   evidence set has to be regenerated in the same commit for the evidence
@@ -214,10 +264,20 @@ re-reads the disposition and re-derives the verdict, so a row edited back to
 - **A shadowed interpreter environment is out of scope.** The checker is run
   with whatever Python and `scripts/` directory the caller has; a hostile
   module placed beside it is the same trust as the checker itself.
-- **A hard link is invisible to a path rule.** A file outside the tree that
-  is a hard link to a file inside it is accepted, because nothing about its
-  path names the tree. The checker judges paths and links, not inodes; a
-  caller who hard-links an overlay into a checkout has placed it there.
+- **A hard link is invisible to a path rule and to identity.** A file
+  outside the tree that is a hard link to a file inside it is accepted,
+  because nothing about its path names the tree and its identity is its
+  own. The checker judges paths, links and the identity of directories, not
+  the other names a file may have; a caller who hard-links an overlay into a
+  checkout has placed it there.
+- **The identity bound sees a different object, not a different content.**
+  A replacement that keeps the same device and inode -- a file rewritten in
+  place between the walk and the open -- is the same object to every
+  platform and is read. The digest still binds the bytes that were read.
+- **A junction is refused, not judged.** A legitimate overlay reached
+  through a Windows junction, a mount point or a cloud-placeholder file is
+  refused with the same sentence as a hostile one; the caller places the
+  file where no such link is on its path.
 - **The disposition binds the registry and the overlay, not the checker.** A
   change to the checker's own bytes does not stale a disposition; a checker
   cannot meaningfully certify itself. Its change is visible through the
@@ -226,4 +286,6 @@ re-reads the disposition and re-derives the verdict, so a row edited back to
   checker's source for environment and directory access refuses the obvious
   spellings; an in-session adversarial review walked thirteen of fifteen
   evasions past it. What holds the discovery property is the behavioural
-  sweep under planted decoys, which sees only the routes it exercises.
+  sweep under planted decoys, which sees only the routes it exercises. The
+  lint over refusal construction is the same kind of thing: it holds the
+  shapes it names.

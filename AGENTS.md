@@ -28,10 +28,15 @@ deferred item or trigger is not development authority.
 
 ## What admission means
 
-Passing standing-development admission means only that the applicable
-standing obligations were loaded, each given a deliberate disposition, and
-bound by content digest to the exact registry and overlay bytes used for that
-development cycle. It does not authorize the development cycle itself, and it
+Passing standing-development admission means only that a local cycle
+disposition covers exactly the loaded public-registry and overlay items, gives
+every one of them a disposition from the resolved vocabulary, carries a
+non-empty reason beside each, and is bound by SHA-256 to the exact registry
+and overlay bytes it was checked against. It establishes nothing about whether
+anyone read, understood or weighed an obligation: a disposition written
+mechanically passes, and so does one reused from an earlier cycle under a new
+`cycle_id`. Reading every loaded item is the obligation step 4 states; it is
+not measured. It does not authorize the development cycle itself, and it
 confers no human, organizational, merge, publication, release, deployment or
 other consequential authority. A cycle that carries a private overlay draws
 whatever authority it has from the repository's existing rules and from the

@@ -17,10 +17,12 @@
   resolve outside this repository as given and after symlinks are followed,
   and contributes to the disposition only its item identifiers and a digest.
   WHAT PASSING MEANS is now stated in the registry itself (FGR-SDO-005), in
-  every entry point and in the checker's own output: the loaded obligations
-  were dispositioned and digest-bound for the cycle, and nothing else -- no
-  human, organizational, merge, publication, release, deployment or other
-  consequential authority follows from it, and a private overlay governs a
+  every entry point and in the checker's own output: a local disposition
+  covers exactly the loaded obligations, gives each a resolved disposition
+  and a non-empty reason, and is digest-bound for the cycle, and nothing
+  else -- nothing about whether anyone read an item, and no human,
+  organizational, merge, publication, release, deployment or other
+  consequential authority follows from it; a private overlay governs a
   cycle whose authority comes separately and creates none.
   The repair cycle found and closed, on the first head: every refusal now
   names a label and at most an item index, exception chaining from the
@@ -90,8 +92,48 @@
   approval sentence can sit unread; and "Forge learns nothing about where
   the file lives" is now "neither retains nor emits", since the path
   necessarily enters through the argument.
+  A second Codex review, of the PR head after the third merge of main
+  (bounded automated review evidence), found one P1 and three P2s, each
+  reproduced and closed. On Windows a directory junction is a plain
+  directory to `Path.is_symlink()`, so an overlay path shaped
+  `outside/junction -> repo/junction -> outside` was accepted at both hops:
+  the walk now classifies every component from its `lstat`, follows a
+  symlink one hop and refuses every other reparse point -- a junction, a
+  mount point, a cloud placeholder, an entry whose tag the platform does
+  not expose -- rather than following it, judges a Windows symlink target
+  only behind a drive letter, and compares every walked location by file
+  identity against the repository root as well as by name. Real junctions
+  are built and refused in the windows-runtime job by the new
+  `tests/test_standing_obligations_windows.py`, and the identity comparison
+  also closed a POSIX shape measured while repairing it: a symlink target
+  spelled with a double leading slash hopped through the repository outside
+  to every walked component. The path was checked and then opened, two
+  operations, so a link retargeted between them opened a file nobody had
+  judged: the walk now records the identity of the entry it ends at and the
+  one open is refused unless `fstat` names that entry, pinned by a
+  retargeted directory link, a retargeted file link, a file replaced by an
+  in-repository link, a file replaced by another and a file that appears
+  only after the walk, for the disposition as for the overlay. A malformed
+  private item said `item 42`, a lower bound on the overlay's size, and an
+  oversized one said so: every content refusal about private input is now
+  one sentence, byte-identical across defects at different indices, counts,
+  sizes, nesting depths and duplicate positions; a malformed disposition
+  row is named by its public id or, while an overlay is loaded, not at all;
+  the public registry keeps its specific diagnostics. And every surface
+  said each item was "given a deliberate disposition", which nothing
+  measures: PASS now states the measured result -- exact coverage, a
+  resolved vocabulary word and a non-empty reason per row, matching digests
+  -- and that nothing is established about whether anyone read an item or
+  whether the `cycle_id` names a cycle, in the checker's output, the
+  registry, `AGENTS.md`, `CLAUDE.md`, the Skill, the procedure document,
+  `docs/VALIDATION.md` and A-030, held there by test. The standing module
+  collects 106 -> 142, the Windows module adds 7 (six junction proofs and
+  the one test that holds the job to running them), and the suite 3486 ->
+  3529 across 115 modules.
   Not claimed, and recorded as such in A-030: that anyone runs the check;
-  that a free-text `reason` is free of overlay content; that an identifier an
+  that anyone read an item; that a `cycle_id` names a cycle; that a hard
+  link or a same-identity rewrite is seen; that a junction is followed
+  rather than refused; that a free-text `reason` is free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the
   checker or the registry (both are governed inputs, so the change moves the
   evidence digest and no more); or that the root `AGENTS.md`, outside the

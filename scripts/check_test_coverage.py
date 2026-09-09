@@ -54,21 +54,41 @@ EXPECTED_SKIPS = {
     # The standing-obligation checker's symlink refusals, the same fixture
     # limit as the four above.
     "tests/test_standing_development_obligations.py::test_an_overlay_symlink_that_resolves_into_the_repository_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_an_overlay_symlink_inside_the_repository_pointing_outside_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_symlink_loop_overlay_is_refused_without_a_traceback":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_disposition_symlink_under_the_runtime_root_pointing_outside_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_symlink_chain_that_passes_through_the_repository_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_link_reached_through_a_directory_symlink_into_the_repository_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_fifo_overlay_is_refused_without_blocking":
         "A FIFO fixture needs os.mkfifo, which a Windows workstation does not have. The property is not weakened: every CI test job runs Linux and executes it, and the single-descriptor read it exercises is the same code path every other overlay test runs.",
     "tests/test_standing_development_obligations.py::test_a_directory_symlink_chain_through_the_repository_is_refused":
-        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these eight, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_double_slash_spelling_of_a_symlink_target_is_judged":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_link_retargeted_between_the_walk_and_the_open_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_file_replaced_by_an_in_repository_link_after_the_walk_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these ten, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    # The standing-obligation checker's junction refusals: real junctions,
+    # Windows only, run where they exist.
+    "tests/test_standing_obligations_windows.py::test_a_real_junction_is_an_unsupported_link_and_a_plain_directory_is_not":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_chain_through_the_repository_is_refused":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_inside_the_repository_pointing_outside_is_refused":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_that_never_touches_the_repository_is_still_refused":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
+    "tests/test_standing_obligations_windows.py::test_a_namespace_spelling_of_an_in_repository_path_is_refused":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
+    "tests/test_standing_obligations_windows.py::test_a_plain_external_overlay_is_admitted_through_the_whole_cycle":
+        "Directory junctions exist only on Windows, so these six build nothing here. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the classifier they exercise is also held on every platform by test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link over fake lstat results.",
     "tests/test_special_files.py::test_a_fifo_under_a_governed_root_is_refused":
         "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
     "tests/test_special_files.py::test_a_device_node_is_refused_if_one_can_be_referenced":
@@ -808,7 +828,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # key, a trailing line break in an identifier, an unhashable value, a
     # deeply nested document, a repeated option, a stray argument,
     # twenty-three malformed shapes.
-    "tests/test_standing_development_obligations.py": 96,
+    "tests/test_standing_development_obligations.py": 128,
+    "tests/test_standing_obligations_windows.py": 7,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -1001,6 +1022,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # proof runs a real runtime once for each provider PROVIDERS declares; a
     # third provider would be a diff here as well as in the contract.
     "tests/test_windows_host_runtime.py::test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refused": 2,
+    # TWO, on a Windows workstation: the two link shapes -- a directory link
+    # and a file link retargeted between the walk and the open -- are one
+    # parametrised identity, and both need a symlink. On Linux neither skips.
+    "tests/test_standing_development_obligations.py::test_a_link_retargeted_between_the_walk_and_the_open_is_refused": 2,
     # THREE, and three is the LARGER of the two platform counts rather than a
     # sum: on Windows the three symlink shapes skip, on Linux the two junction
     # shapes do. A cap of two would fail the Windows workstation and a cap of
@@ -1506,14 +1531,34 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # reason the paragraph above gives. NO PROVIDER ROW MOVED -- admission is
 # procedure and decides nothing about eligibility, approval or release.
 #
+# THE SECOND CODEX ROUND ADDS ONE MODULE AND FORTY-THREE TESTS.
+# tests/test_standing_development_obligations.py collects 106 -> 142 (floor
+# band(106) = 96 -> band(142) = 128): the reparse-point classifier, the
+# Windows link-target rule, the identity backstop, the double-slash chain,
+# five swap-between-walk-and-open shapes, the one-sentence private refusals
+# and the measured-claim sweep. tests/test_standing_obligations_windows.py is
+# new and collects 7 (floor band(7) = 7; the band is no smaller for a module
+# this size): six real directory junctions, buildable only on Windows, so
+# each is a declared skip here and executes in the windows-runtime job, which
+# refuses a skip -- plus the one test that runs everywhere and holds that the
+# job names the module, without which the module would be present and
+# executing nothing. 115 modules stand. The module-floor sum rises by 39 to
+# 3231 and the aggregate follows to 3239, keeping the same 8 above it; the
+# suite collects 3486 -> 3529, band(n) 3138 -> 3177, and the working room
+# below the floor 286 -> 290. THE SLACK THE BANDS GRANT moves 294 -> 298: the
+# standing module now sits 14 above its band rather than 10, and the Windows
+# module sits on its own. Ten declared symlink skips in the standing module
+# now rather than seven, beside the FIFO: the three new link shapes, one of
+# them two cases. NO PROVIDER ROW MOVED.
+#
 # (rows below):
 #
-#     collected across tests/     3486   (114 modules)
-#     sum of the module floors    3192
-#     band(3486) = ceil(0.9*n)    3138
-#     MINIMUM_COLLECTED           3200
+#     collected across tests/     3529   (115 modules)
+#     sum of the module floors    3231
+#     band(3529) = ceil(0.9*n)    3177
+#     MINIMUM_COLLECTED           3239
 #     above the module sum         8
-#     below what collects         286
+#     below what collects         290
 #
 # TRANCHE E MOVES ONE ROW AND ADDS NO MODULE. The process witness lives in the
 # module that already holds the seal boundary, so
@@ -1545,7 +1590,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 294 in total, and the aggregate refuses
+# per-module bands already grant 298 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1578,7 +1623,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3200
+MINIMUM_COLLECTED = 3239
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -1681,6 +1726,7 @@ REQUIRED_MODULES = (
     # with no measurement objecting.
     "tests/test_codex_confinement_admission.py",
     "tests/test_standing_development_obligations.py",
+    "tests/test_standing_obligations_windows.py",
     "tests/test_trusted_greenfield_acceptance.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",

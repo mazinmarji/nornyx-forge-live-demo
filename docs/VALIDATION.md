@@ -646,6 +646,17 @@ Linux census job. What it mechanically establishes, and what it does not, is
 recorded in `docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md`; the short
 form is this.
 
+What PASS means, measured and only this: a local disposition covers exactly
+the loaded registry and overlay items, gives each a disposition from the
+resolved vocabulary, carries a non-empty reason beside each, and binds the
+SHA-256 of the exact registry and overlay bytes checked. It establishes
+nothing about whether anyone read, understood or weighed an obligation:
+`test_a_mechanically_written_or_reused_disposition_passes_and_the_documents_say_so`
+passes a disposition of `considered` and `x` throughout, and the same file
+again under another `cycle_id`; every surface that describes PASS is held to
+the measured wording by
+`test_the_admission_claim_is_the_measured_one_everywhere`.
+
 Established by test: the public registry parses, declares itself public and
 carries no duplicate identifier or semantic key, alone or against a supplied
 overlay; every malformed or unsupported registry, overlay or disposition shape
@@ -656,7 +667,24 @@ word and a `defer` on an active item all refuse; an overlay is read only from
 `--overlay` (decoys planted in the working directory, the home directory and
 four environment variables are never read); an overlay path inside this
 repository is refused as given, at every component and link the walk passes
-through, and after resolution; no successful output carries an overlay-derived
+through, and after resolution, judged lexically and by file identity against
+the repository root (an in-repository path is refused with the name
+comparison switched off, and a symlink target spelled with a double leading
+slash -- outside to every walked component on the merged head -- refuses);
+every component is classified from its `lstat` and every reparse point that
+is not a symlink refuses, a junction, a cloud placeholder and an entry whose
+tag the platform does not expose included, with real directory junctions
+built and refused in the windows-runtime job by
+`tests/test_standing_obligations_windows.py`; the bytes read are the object
+the walk judged -- a directory link or file link retargeted, a file replaced
+by an in-repository link, a file replaced by another of a different identity,
+and a file that appears only after the walk all refuse between the walk and
+the one open, for the disposition as for the overlay; every content refusal
+about a private overlay is one sentence, byte-identical on stderr for a
+defect at index 0 or 42, in the seventh of seven items, at position 299 of
+300, nested three deep, oversized, nested past the parser, or invalid UTF-8,
+and a malformed disposition row is named by its public id or, while an
+overlay is loaded, not at all; no successful output carries an overlay-derived
 count, pinned by two overlays of different sizes producing identical output;
 and no sentinel
 planted in an overlay's title, rule, condition, semantic key, unknown field
@@ -664,16 +692,19 @@ name, unknown field value, schema string, directory name or invalid byte
 sequence reaches stdout, stderr, the disposition or a refusal -- on the
 symlink-loop, missing-file, directory, invalid-UTF-8, stray-argument and
 duplicate-collision paths included. The PASS output states the admission
-boundary.
+boundary in the measured wording.
 
 Not claimed, and pinned as a limitation: the free-text `reason` is not
 inspected, so a sentence asserting an approval passes inside it, and the
 checker neither reads nor endorses it.
 
-Not claimed: that anyone runs the check; that a free-text `reason` is free of
+Not claimed: that anyone runs the check; that anyone read an item; that the
+`cycle_id` names a cycle; that a free-text `reason` is free of
 overlay content; that an identifier an overlay author chose is not itself
 telling; that a commit cannot change the checker or the registry (both are
-governed inputs, so such a change moves the evidence digest, and no more); or
+governed inputs, so such a change moves the evidence digest, and no more);
+that a hard link or a same-identity rewrite is seen; that a junction is
+followed rather than refused; or
 that the root `AGENTS.md`, which is outside the governed input set, is bound by
 any digest. Passing admission is not approval, not merge or release authority,
 and not evidence about any other gate.

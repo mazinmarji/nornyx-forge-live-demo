@@ -36,8 +36,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
+import tempfile
+import types
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -66,6 +70,11 @@ SENTINELS = (
 
 #: The sentence the mechanism must state wherever it is invoked from.
 BOUNDARY_PHRASE = "does not authorize the development cycle"
+#: The measured claim, stated wherever PASS is described: nothing about the
+#: reader is established, only the disposition file's state.
+MEASURED_PHRASE = "establishes nothing about whether anyone read"
+#: The ONE sentence a refusal about a private overlay's content may carry.
+GENERIC = "private overlay is not valid; no detail is reported for private input"
 
 
 def _load_module():
@@ -199,28 +208,45 @@ def test_the_public_registry_states_that_admission_is_not_authority(module):
     assert "does not authorize" in rule and "authority" in rule
 
 
+def _as_public(module, document, label="public registry"):
+    """The same document validated as a PUBLIC one: specific diagnostics."""
+    return module._validate_registry(
+        document, schema=module.OVERLAY_SCHEMA, label=label,
+        document_fields=module.OVERLAY_DOCUMENT_FIELDS,
+    )
+
+
 def test_duplicate_semantic_key_within_a_registry_is_refused_without_naming_it(module, tmp_path):
     second = dict(_overlay_document()["items"][0], id="PRV-002")
-    overlay = _write_overlay(tmp_path, _overlay_document(items=[_overlay_document()["items"][0], second]))
+    document = _overlay_document(items=[_overlay_document()["items"][0], second])
+    overlay = _write_overlay(tmp_path, document)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "duplicate semantic key" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    # The public registry keeps the specific diagnostic; the overlay does not.
+    assert _refusal(module, lambda: _as_public(module, document)) == (
+        "public registry contains a duplicate semantic key")
 
 
 def test_duplicate_item_id_within_a_registry_is_refused(module, tmp_path):
     second = dict(_overlay_document()["items"][0], dedupe_key="another-private-key")
-    overlay = _write_overlay(tmp_path, _overlay_document(items=[_overlay_document()["items"][0], second]))
+    document = _overlay_document(items=[_overlay_document()["items"][0], second])
+    overlay = _write_overlay(tmp_path, document)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "duplicate item id" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    assert _refusal(module, lambda: _as_public(module, document)) == (
+        "public registry contains a duplicate item id")
 
 
 def test_private_overlay_cannot_duplicate_public_semantics(module, tmp_path):
+    """A collision with the public registry names WHICH public key the overlay
+    repeats, which is a fact about the overlay: the same one sentence."""
     public = json.loads(PUBLIC.read_text(encoding="utf-8"))
     item = dict(_overlay_document()["items"][0], dedupe_key=public["items"][0]["dedupe_key"])
     overlay = _write_overlay(tmp_path, _overlay_document(items=[item]))
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "duplicate semantic keys" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
 
 
@@ -229,7 +255,7 @@ def test_private_overlay_cannot_reuse_a_public_id(module, tmp_path):
     item = dict(_overlay_document()["items"][0], id=public["items"][0]["id"])
     overlay = _write_overlay(tmp_path, _overlay_document(items=[item]))
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "duplicate item ids" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
 
 
@@ -280,21 +306,26 @@ def test_a_malformed_overlay_is_refused_without_echoing_anything(module, tmp_pat
     """
     overlay = _write_overlay(tmp_path, document)
     message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == GENERIC, "a content refusal about private input carries no detail"
     _assert_no_leak(message, overlay)
     completed = _run("--overlay", str(overlay))
     assert completed.returncode == 2, completed.stderr
     assert completed.stdout == "", "a refused overlay must not reach a PASS line"
+    assert completed.stderr == f"REFUSE: {GENERIC}\n"
     _assert_no_leak(completed.stdout + completed.stderr, overlay)
 
 
 def test_an_oversized_overlay_is_refused(module, tmp_path):
+    """Over the bound is a size class; for private input it is not said."""
     padding = {"schema": "nornyx.forge.private_standing_overlay.v1", "classification": "private",
                "items": [dict(_item(), rule="x" * 1500)] * 800}
     overlay = _write_overlay(tmp_path, padding)
     assert overlay.stat().st_size > module.DOCUMENT_BYTES_BOUND
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "size bound" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    assert _refusal(module, lambda: module._read_bytes_bounded(
+        overlay, label="public registry")) == "public registry exceeds the size bound"
 
 
 # ---------------------------------------------------------------------------
@@ -400,10 +431,14 @@ def test_invalid_utf8_overlay_bytes_are_refused_without_echoing_a_byte(tmp_path)
     target.write_bytes(b"\xff\xfe" + SENTINEL_TITLE.encode("ascii") + b"\x80")
     completed = _run("--overlay", str(target))
     assert completed.returncode == 2, completed.stderr
-    assert "UTF-8 JSON" in completed.stderr
+    assert completed.stderr == f"REFUSE: {GENERIC}\n"
     output = completed.stdout + completed.stderr
     _assert_no_leak(output, target)
     assert "0xff" not in output.lower() and "position" not in output
+    # The specific diagnostic still exists, for a document that is public.
+    module = _load_module()
+    assert _refusal(module, lambda: module._read_document(
+        target, label="public registry")) == "public registry is not a UTF-8 JSON document"
 
 
 def test_a_path_with_an_embedded_nul_is_refused(module):
@@ -701,7 +736,8 @@ def test_the_pass_output_states_the_admission_boundary(module):
         assert "authorizes nothing" in completed.stdout
     completed = _run("--help")
     assert completed.returncode == 0
-    assert "authorizes nothing" in completed.stdout
+    # argparse re-wraps the epilog at the terminal width.
+    assert "authorizes nothing" in " ".join(completed.stdout.split())
 
 
 def test_no_overlay_is_discovered_from_cwd_home_or_environment(module, tmp_path):
@@ -788,8 +824,11 @@ def test_a_repeated_json_key_is_refused_rather_than_last_wins(module, tmp_path, 
     """
     overlay = _raw_overlay(tmp_path, text)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "repeats a key" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    # The pairs hook is what refuses; pinned by name on the public path.
+    assert _refusal(module, lambda: module._read_document(
+        overlay, label="public registry")) == "public registry repeats a key inside one object"
     completed = _run("--overlay", str(overlay))
     assert completed.returncode == 2
     _assert_no_leak(completed.stdout + completed.stderr, overlay)
@@ -827,10 +866,13 @@ def test_a_trailing_line_break_does_not_satisfy_an_identifier_grammar(module, tm
     accepted and written into the disposition, and a public id plus a
     newline walked past the cross-registry duplicate check.
     """
-    overlay = _write_overlay(tmp_path, _overlay_document(items=[_item(**{field: value})]))
+    document = _overlay_document(items=[_item(**{field: value})])
+    overlay = _write_overlay(tmp_path, document)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert f"no valid {field}" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    assert _refusal(module, lambda: _as_public(module, document)) == (
+        f"public registry item 0 has no valid {field}")
 
 
 def test_a_cycle_id_with_a_trailing_newline_is_refused(module):
@@ -900,8 +942,13 @@ def test_a_fifo_overlay_is_refused_without_blocking(tmp_path):
         errors="replace", timeout=30,
     )
     assert completed.returncode == 2
-    assert "not a regular file" in completed.stderr
+    # What the object IS -- a FIFO, a directory -- stays with the caller when
+    # the input is private; a public document is told.
+    assert completed.stderr == "REFUSE: private overlay cannot be read\n"
     _assert_no_leak(completed.stdout + completed.stderr, fifo)
+    module = _load_module()
+    assert _refusal(module, lambda: module._read_bytes_bounded(
+        fifo, label="cycle disposition")) == "cycle disposition is not a regular file"
 
 
 @pytest.mark.parametrize(
@@ -915,8 +962,11 @@ def test_an_unhashable_value_is_refused_with_a_label(module, tmp_path, label, do
     """`x not in frozenset` raises `TypeError` on a list; that is not a refusal."""
     overlay = _write_overlay(tmp_path, document)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "invalid kind" in message or "invalid status" in message
+    assert message == GENERIC
     _assert_no_leak(message, overlay)
+    public = _refusal(module, lambda: _as_public(module, document))
+    assert public in ("public registry item 0 has an invalid kind",
+                      "public registry item 0 has an invalid status")
 
 
 @pytest.mark.parametrize("field", ["source", "disposition"])
@@ -936,7 +986,9 @@ def test_a_deeply_nested_document_is_refused_with_a_label(module, tmp_path):
     """`RecursionError` out of the JSON parser is not a `ValueError`."""
     overlay = _raw_overlay(tmp_path, "[" * 200_000 + SENTINEL_VALUE)
     message = _refusal(module, lambda: module.load_registries(overlay))
-    assert "UTF-8 JSON" in message
+    assert message == GENERIC
+    assert _refusal(module, lambda: module._read_document(
+        overlay, label="public registry")) == "public registry is not a UTF-8 JSON document"
     completed = _run("--overlay", str(overlay))
     assert completed.returncode == 2
     assert "unexpected failure" not in completed.stderr
@@ -1082,6 +1134,473 @@ def test_a_reason_is_not_inspected_and_the_document_says_so(module):
 
 
 # ---------------------------------------------------------------------------
+# Closures from the second Codex review, on the PR head
+# ---------------------------------------------------------------------------
+
+
+#: Windows reparse tags, as literals: the `stat` module defines them only on
+#: Windows, and these tests classify fake `lstat` results on every platform.
+#: FILE_ATTRIBUTE_REPARSE_POINT (0x400) is defined everywhere.
+IO_REPARSE_TAG_SYMLINK = 0xA000000C
+IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+IO_REPARSE_TAG_APPEXECLINK = 0x8000001B
+
+
+def _stat_like(mode: int, *, reparse: bool = False, tag: int | None = None):
+    """An `lstat` result as a platform would hand it over, without the platform."""
+    info = types.SimpleNamespace(st_mode=mode, st_ino=1, st_dev=1)
+    if reparse:
+        info.st_file_attributes = stat.FILE_ATTRIBUTE_REPARSE_POINT
+        if tag is not None:
+            info.st_reparse_tag = tag
+    return info
+
+
+@pytest.mark.parametrize(
+    "shape, info, kind",
+    [
+        ("plain file", _stat_like(stat.S_IFREG), "plain"),
+        ("plain directory", _stat_like(stat.S_IFDIR), "plain"),
+        ("posix symlink", _stat_like(stat.S_IFLNK), "symlink"),
+        ("windows symlink",
+         _stat_like(stat.S_IFLNK, reparse=True, tag=IO_REPARSE_TAG_SYMLINK), "symlink"),
+        ("directory junction",
+         _stat_like(stat.S_IFDIR, reparse=True, tag=IO_REPARSE_TAG_MOUNT_POINT), "unsupported"),
+        ("app execution alias",
+         _stat_like(stat.S_IFREG, reparse=True, tag=IO_REPARSE_TAG_APPEXECLINK), "unsupported"),
+        ("cloud placeholder", _stat_like(stat.S_IFREG, reparse=True, tag=0x9000001A), "unsupported"),
+        ("reparse point whose tag the platform does not expose",
+         _stat_like(stat.S_IFDIR, reparse=True), "unsupported"),
+    ],
+)
+def test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link(module, shape, info, kind):
+    """`Path.is_symlink()` is `S_ISLNK`; a junction is a directory to it.
+
+    Measured by the Codex review on the PR head: on Windows a path shaped
+    `outside/junction -> repo/junction -> outside` was accepted, because
+    neither hop was a symlink to the walk and the final resolution was
+    outside. The walk now classifies every component from its `lstat`, and
+    everything with the reparse attribute that is not a symlink is refused
+    rather than followed -- including an entry whose tag the platform does
+    not expose, so an uninspectable state fails closed.
+    """
+    assert module._link_kind(info) == kind
+
+
+def test_a_component_the_walk_cannot_follow_refuses_the_path(module, tmp_path, monkeypatch):
+    """Wherever an unsupported link sits in the chain, the path is refused."""
+    overlay = _write_overlay(tmp_path)
+    marked = os.lstat(overlay.parent).st_ino
+    original = module._link_kind
+
+    def classify(info):
+        if info.st_ino == marked:
+            return module.UNSUPPORTED_LINK
+        return original(info)
+
+    monkeypatch.setattr(module, "_link_kind", classify)
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == "private overlay path crosses a link that is not followed"
+    _assert_no_leak(message, overlay)
+
+
+@pytest.mark.parametrize(
+    "raw, judged",
+    [
+        ("\\\\?\\C:\\outside\\overlay.json", "C:\\outside\\overlay.json"),
+        ("C:\\outside\\overlay.json", "C:\\outside\\overlay.json"),
+        ("D:/outside/overlay.json", "D:/outside/overlay.json"),
+        ("..\\outside\\overlay.json", "..\\outside\\overlay.json"),
+        ("overlay.json", "overlay.json"),
+        ("\\\\?\\UNC\\server\\share\\overlay.json", None),
+        ("\\\\?\\Volume{0f3a1c2d-0000-0000-0000-100000000000}\\overlay.json", None),
+        ("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\overlay.json", None),
+        ("\\\\server\\share\\overlay.json", None),
+        ("\\\\.\\C:\\outside\\overlay.json", None),
+        ("\\??\\C:\\outside\\overlay.json", None),
+        ("C:overlay.json", None),
+        ("\\outside\\overlay.json", None),
+        ("/outside/overlay.json", None),
+        ("", None),
+    ],
+)
+def test_a_windows_link_target_is_judged_only_behind_a_drive_letter(module, raw, judged):
+    r"""`os.readlink` on Windows returns `\\?\`-prefixed substitute names.
+
+    Behind the prefix only a drive path can be compared with the repository
+    root; a share, a volume GUID, a device or an NT namespace spelling is
+    refused rather than judged. Pure, so it runs on every platform; the
+    junction fixtures themselves run in the windows-runtime job.
+    """
+    assert module._windows_link_target(raw) == judged
+
+
+@posix_only
+def test_a_double_slash_spelling_of_a_symlink_target_is_judged(module, tmp_path):
+    """`outside/a -> //repo/.nornyx/runtime/b -> outside/good`, target spelled `//...`.
+
+    Measured on the merged head: ACCEPTED. POSIX keeps two leading slashes
+    as a root of their own, so every walked location under `//home/...` was
+    outside the repository to the lexical rule and only the final
+    resolution, which was outside anyway, was judged. The walk collapses the
+    spelling now and compares by identity as well, and the same shape refuses.
+    """
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    final = _write_overlay(tmp_path, name="good.json")
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    middle = RUNTIME / f"dslash-{uuid.uuid4().hex}.json"
+    first = directory / "a.json"
+    try:
+        _symlink(final, middle)
+        os.symlink("//" + str(middle).lstrip("/"), first)
+        message = _refusal(module, lambda: module.load_registries(first))
+        assert "outside the Forge repository" in message
+        _assert_no_leak(message, first, middle, final)
+    finally:
+        middle.unlink()
+
+
+def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, monkeypatch):
+    r"""The lexical rule compares spellings; identity names the directory.
+
+    Measured against the pure name comparison: with it switched off, an
+    in-repository overlay is still refused, because an ancestor of its path
+    IS the repository root by device and inode. Off the repository nothing
+    matches. This is the backstop for `\\?\C:\...`, a mapped drive or an
+    administrative share on Windows and a bind mount on POSIX.
+    """
+    root = module._root_identity()
+    assert root.inode != 0, "this platform exposes no identity; the test cannot measure"
+    assert module._names_the_root(ROOT / "docs" / "governance" / "absent.json", root, set())
+    assert not module._names_the_root(Path(tempfile.gettempdir()) / "absent.json", root, set())
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
+    decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    monkeypatch.setattr(module, "_is_within", lambda path, parent: False)
+    try:
+        message = _refusal(module, lambda: module.load_registries(decoy))
+        assert "outside the Forge repository" in message
+    finally:
+        decoy.unlink()
+
+
+def _after_the_walk(module, monkeypatch, action) -> None:
+    """Run `action` once confinement has accepted the path and before the open.
+
+    After `_confine_outside` returns, the walk, the final resolution and the
+    identity comparison have all passed; the only thing left between the
+    verdict and the bytes is the identity bound on the opened descriptor.
+    """
+    original = module._confine_outside
+
+    def confine(path, *, label):
+        result = original(path, label=label)
+        action()
+        return result
+
+    monkeypatch.setattr(module, "_confine_outside", confine)
+
+
+def _in_repository_decoy() -> Path:
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
+    decoy.write_text(json.dumps(_overlay_document(items=[_item(id="PRV-EVIL")])),
+                     encoding="utf-8", newline="\n")
+    return decoy
+
+
+@posix_only
+@pytest.mark.parametrize("shape", ["directory link retargeted", "file link retargeted"])
+def test_a_link_retargeted_between_the_walk_and_the_open_is_refused(module, tmp_path, monkeypatch, shape):
+    """The bytes read are held to the object the walk judged.
+
+    Measured by the Codex review on the PR head: the path was checked, then
+    opened, and a link retargeted between the two opened a file whose
+    location nobody had judged, digest-bound faithfully. The walk now
+    records the identity of the entry it ends at, the one open is judged by
+    `fstat`, and a different object refuses.
+    """
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    evil_dir = RUNTIME / f"evil-{uuid.uuid4().hex}"
+    evil_dir.mkdir()
+    decoy = evil_dir / "overlay.json"
+    decoy.write_text(json.dumps(_overlay_document(items=[_item(id="PRV-EVIL")])),
+                     encoding="utf-8", newline="\n")
+    good_dir = tmp_path / "good"
+    good_dir.mkdir()
+    good = good_dir / "overlay.json"
+    good.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    if shape == "directory link retargeted":
+        link = directory / "dirlink"
+        _symlink(good_dir, link)
+        given = link / "overlay.json"
+
+        def swap():
+            link.unlink()
+            _symlink(evil_dir, link)
+    else:
+        link = directory / "link.json"
+        _symlink(good, link)
+        given = link
+
+        def swap():
+            link.unlink()
+            _symlink(decoy, link)
+    try:
+        _after_the_walk(module, monkeypatch, swap)
+        assert given.is_file(), "the swapped chain resolves for an ordinary open"
+        try:
+            module.load_registries(given)
+        except module.AdmissionError as exc:
+            assert str(exc) == "private overlay changed during admission"
+            assert exc.__context__ is None and exc.__cause__ is None
+            _assert_no_leak(str(exc), given, decoy, good)
+        else:
+            raise AssertionError("bytes from an unjudged location were digest-bound")
+    finally:
+        decoy.unlink()
+        evil_dir.rmdir()
+
+
+@posix_only
+def test_a_file_replaced_by_an_in_repository_link_after_the_walk_is_refused(module, tmp_path, monkeypatch):
+    overlay = _write_overlay(tmp_path)
+    decoy = _in_repository_decoy()
+
+    def swap():
+        overlay.unlink()
+        _symlink(decoy, overlay)
+
+    try:
+        _after_the_walk(module, monkeypatch, swap)
+        message = _refusal(module, lambda: module.load_registries(overlay))
+        assert message == "private overlay changed during admission"
+        _assert_no_leak(message, overlay, decoy)
+    finally:
+        decoy.unlink()
+
+
+def test_a_file_replaced_by_another_after_the_walk_is_refused(module, tmp_path, monkeypatch):
+    """Same name, different object: the identity the walk saw is not the one opened.
+
+    Needs no link, so it runs on every platform where identity is exposed.
+    """
+    overlay = _write_overlay(tmp_path)
+    other = _write_overlay(tmp_path, _overlay_document(items=[_item(id="PRV-OTHER")]), name="other.json")
+    _after_the_walk(module, monkeypatch, lambda: os.replace(other, overlay))
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == "private overlay changed during admission"
+    _assert_no_leak(message, overlay, other)
+
+
+def test_a_file_that_appears_only_after_the_walk_is_refused(module, tmp_path, monkeypatch):
+    """Nothing was seen at the path when it was judged; nothing is bound."""
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    overlay = directory / "overlay.json"
+    _after_the_walk(module, monkeypatch, lambda: overlay.write_text(
+        json.dumps(_overlay_document()), encoding="utf-8", newline="\n"))
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == "private overlay identity cannot be established"
+    _assert_no_leak(message, overlay)
+
+
+def test_the_disposition_read_is_bound_to_the_judged_object_too(module, tmp_path, monkeypatch):
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        _complete(path, module, registries)
+        replacement = tmp_path / "replacement.json"
+        replacement.write_bytes(path.read_bytes())
+        original = module._require_runtime_file
+
+        def require(candidate, *, label):
+            result = original(candidate, label=label)
+            os.replace(replacement, path)
+            return result
+
+        monkeypatch.setattr(module, "_require_runtime_file", require)
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert message == "cycle disposition changed during admission"
+
+
+def _many(count: int, **last) -> list[dict]:
+    items = [_item(id=f"PRV-{index:03d}", dedupe_key=f"private-key-{index:03d}") for index in range(count)]
+    if last:
+        items[-1] = _item(id=f"PRV-{count - 1:03d}", dedupe_key=f"private-key-{count - 1:03d}", **last)
+    return items
+
+
+def _private_content_defects(tmp_path: Path) -> list[tuple[str, Path]]:
+    """Materially different defects: index, count, size, nesting, duplicate position."""
+    nested = dict(_item(), title={SENTINEL_FIELD: {SENTINEL_FIELD: [SENTINEL_VALUE]}})
+    duplicate_late = _many(300)
+    duplicate_late[299] = dict(duplicate_late[299], id="PRV-000")
+    shapes = [
+        ("invalid kind at index 0 of 1", json.dumps(_overlay_document(items=[_item(kind=SENTINEL_VALUE)]))),
+        ("invalid kind at index 42 of 43", json.dumps(_overlay_document(items=_many(43, kind=SENTINEL_VALUE)))),
+        ("unknown field in the 7th of 7 items",
+         json.dumps(_overlay_document(items=_many(7, **{SENTINEL_FIELD: SENTINEL_VALUE})))),
+        ("duplicate id at position 299 of 300", json.dumps(_overlay_document(items=duplicate_late))),
+        ("value nested three deep where a title belongs", json.dumps(_overlay_document(items=[nested]))),
+        ("oversized", json.dumps(_overlay_document(items=[dict(_item(), rule="x" * 1500)] * 800))),
+        ("nested past the parser's depth", "[" * 200_000 + SENTINEL_VALUE),
+        ("document is a list", json.dumps([_overlay_document()])),
+    ]
+    written = []
+    for index, (label, text) in enumerate(shapes):
+        path = _raw_overlay(tmp_path, text, name=f"shape-{index}.json")
+        written.append((label, path))
+    raw = tmp_path / SENTINEL_DIR / "shape-utf8.json"
+    raw.write_bytes(b"\xff\xfe" + SENTINEL_TITLE.encode("ascii") + b"\x80")
+    written.append(("invalid UTF-8", raw))
+    return written
+
+
+def test_private_content_refusals_are_one_sentence_whatever_the_defect(module, tmp_path):
+    """Index, count, size class, field, nesting, duplicate position: none is said.
+
+    Measured by the Codex review on the PR head: `private overlay item 42 has
+    an invalid kind` put a lower bound of forty-three on the overlay's item
+    count, and the size-bound refusal put its byte size above a megabyte.
+    Every content refusal about private input is now the same sentence, on
+    the module and the command line alike, so two overlays that fail for
+    materially different reasons leave byte-identical stderr.
+    """
+    transcripts = {}
+    for label, path in _private_content_defects(tmp_path):
+        message = _refusal(module, lambda: module.load_registries(path))
+        assert message == GENERIC, label
+        completed = _run("--overlay", str(path))
+        assert completed.returncode == 2 and completed.stdout == "", label
+        _assert_no_leak(completed.stderr, path)
+        transcripts[label] = completed.stderr
+    assert len(set(transcripts.values())) == 1, transcripts
+    assert transcripts["invalid kind at index 0 of 1"] == f"REFUSE: {GENERIC}\n"
+    assert not re.search(r"\d", GENERIC)
+
+
+def test_disposition_row_refusals_carry_no_index_while_an_overlay_is_loaded(module, tmp_path):
+    """A row index is a lower bound on the overlay's item count.
+
+    With an overlay loaded a malformed PRIVATE row refuses generically, a
+    malformed PUBLIC row is named by its public id, and neither carries an
+    index; with no overlay loaded the index is a fact about the public rows
+    only and is still said.
+    """
+    overlay = _write_overlay(tmp_path, _overlay_document(items=_many(3)))
+    registries = module.load_registries(overlay)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        record = _complete(path, module, registries)
+        rows = record["items"]
+        private_rows = [row for row in rows if row["source"] == "private"]
+        assert len(private_rows) == 3
+        private_rows[-1]["disposition"] = SENTINEL_VALUE
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert message == "cycle disposition is not valid; no detail is reported for private input"
+        _assert_no_leak(message, overlay)
+        private_rows[-1]["disposition"] = "considered"
+        rows[0]["reason"] = ""
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert message == f"cycle disposition item {rows[0]['id']} needs a reason"
+        assert not re.search(r"\d+ ", message.replace(rows[0]["id"], ""))
+        rows[0]["reason"] = "Read."
+        del rows[-1]["reason"]
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert message == "cycle disposition is not valid; no detail is reported for private input"
+    public_only = module.load_registries(None)
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=public_only)
+        record = _complete(path, module, public_only)
+        del record["items"][3]["reason"]
+        path.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        message = _refusal(module, lambda: module.validate_disposition(path, registries=public_only))
+        assert message == "cycle disposition item 3 does not carry exactly the row fields"
+
+
+def _section(text: str, heading: str, next_heading_prefix: str) -> str:
+    start = text.index(heading)
+    end = text.find(next_heading_prefix, start + len(heading))
+    return text[start:] if end == -1 else text[start:end]
+
+
+def test_the_admission_claim_is_the_measured_one_everywhere(module):
+    """PASS claims exactly what `validate_disposition` measures, and no deliberation.
+
+    Measured by the Codex review on the PR head: the checker cannot tell
+    whether a disposition was deliberate, read or prepared for this cycle --
+    a reused one passes, a relabelled one passes, and `considered` beside a
+    reason of `x` passes -- while five surfaces said each item was "given a
+    deliberate disposition". Every surface now states the measured result
+    and says what is not established, and none claims deliberation.
+    """
+    surfaces = {
+        "checker": SCRIPT.read_text(encoding="utf-8"),
+        "registry": PUBLIC.read_text(encoding="utf-8"),
+        "AGENTS.md": (ROOT / "AGENTS.md").read_text(encoding="utf-8"),
+        "procedure": PROCEDURE.read_text(encoding="utf-8"),
+        "skill": (ROOT / "skills" / "build-app" / "SKILL.md").read_text(encoding="utf-8"),
+        "CLAUDE.md": _section((ROOT / "CLAUDE.md").read_text(encoding="utf-8"),
+                              "# Nornyx Forge operating instructions", "\n## "),
+        "VALIDATION.md": _section((ROOT / "docs" / "VALIDATION.md").read_text(encoding="utf-8"),
+                                  "## Standing development admission", "\n## "),
+        "A-030": _section((ROOT / "docs" / "requirements" / "ASSUMPTIONS.md").read_text(encoding="utf-8"),
+                          "## A-030 ", "\n## A-"),
+    }
+    for name, text in surfaces.items():
+        flat = " ".join(text.split())
+        if name == "A-030":
+            # The assumption records the history: it may QUOTE the old
+            # wording as the thing that was measured away, and may not make
+            # the claim.
+            assert "each given a deliberate disposition" not in flat
+            assert "deliberate disposition and bound" not in flat
+        else:
+            assert not re.search(r"deliberat", flat, re.IGNORECASE), f"{name} claims deliberation"
+        assert not re.search(r"(each|every)[^.]{0,40}(read and|read,) (understood|weighed)", flat), name
+    for name in ("checker", "registry", "AGENTS.md", "procedure", "CLAUDE.md", "VALIDATION.md", "A-030"):
+        assert MEASURED_PHRASE in " ".join(surfaces[name].split()), f"{name} lacks the measured claim"
+    assert MEASURED_PHRASE in " ".join(module.ADMISSION_BOUNDARY.split())
+    rule = next(item for item in module.load_registries(None).public_items
+                if item["dedupe_key"] == "admission-is-not-authority")["rule"]
+    assert MEASURED_PHRASE in rule and "covers exactly" in rule and BOUNDARY_PHRASE in rule
+    with _runtime_disposition() as path:
+        completed = _run("--init", str(path), "--cycle-id", "CLI-4")
+        assert completed.returncode == 0, completed.stderr
+        assert MEASURED_PHRASE in " ".join(completed.stdout.split())
+
+
+def test_a_mechanically_written_or_reused_disposition_passes_and_the_documents_say_so(module):
+    """What is NOT measured, demonstrated: no reading, no fresh cycle.
+
+    Every row set to `considered` with a reason of `x` passes; the same file
+    copied under another `cycle_id` passes. Both are stated as limitations
+    rather than left for a reader to discover.
+    """
+    registries = module.load_registries(None)
+    with _runtime_disposition() as first, _runtime_disposition() as second:
+        module.initialize_disposition(first, cycle_id="FIRST", registries=registries)
+        record = json.loads(first.read_text(encoding="utf-8"))
+        for row in record["items"]:
+            row["disposition"], row["reason"] = "considered", "x"
+        first.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        assert module.validate_disposition(first, registries=registries) == (len(record["items"]), 0)
+        record["cycle_id"] = "SECOND"
+        second.write_text(json.dumps(record), encoding="utf-8", newline="\n")
+        assert module.validate_disposition(second, registries=registries) == (len(record["items"]), 0)
+    procedure = " ".join(PROCEDURE.read_text(encoding="utf-8").split())
+    assert "nothing binds it to a cycle" in procedure
+    assert "written mechanically passes" in procedure
+
+
+# ---------------------------------------------------------------------------
 # Structural: what the checker source may and may not do
 # ---------------------------------------------------------------------------
 
@@ -1132,10 +1651,27 @@ def test_the_checker_imports_only_the_standard_library_allowlist():
     assert "subprocess" not in imported and "importlib" not in imported
 
 
-def _label_only(argument: ast.expr, allowed_names: set) -> bool:
-    """A constant, or an f-string whose every hole is one of the allowed names."""
+#: Names an f-string hole may carry inside a refusal: the label, an index, a
+#: constant detail or a required-field name passed in from a literal, the
+#: option name, or a PUBLIC item id. Nothing read from an input.
+REFUSAL_NAMES = frozenset({
+    "label", "index", "required", "key", "option", "subject", "detail", "public_id",
+})
+#: The two helpers every refusal may be built through, and the position of
+#: the DETAIL argument each takes, which must be a literal or label-only.
+REFUSAL_BUILDERS = {"_refuse": 1, "_row_refusal": 0}
+
+
+def _label_only(argument: ast.expr, allowed_names: frozenset = REFUSAL_NAMES) -> bool:
+    """A constant, an allowed name, or an f-string whose every hole is an allowed name.
+
+    A bare allowed name is how `_row_refusal` forwards the literal detail it
+    was given; the call sites that give it are judged by the same rule.
+    """
     if isinstance(argument, ast.Constant):
         return True
+    if isinstance(argument, ast.Name):
+        return argument.id in allowed_names
     if not isinstance(argument, ast.JoinedStr):
         return False
     for value in argument.values:
@@ -1146,44 +1682,70 @@ def _label_only(argument: ast.expr, allowed_names: set) -> bool:
     return True
 
 
+def _acceptable_refusal_call(call: ast.Call) -> bool:
+    """`AdmissionError(<label-only>)`, or a builder whose detail is label-only."""
+    callee = call.func
+    if not isinstance(callee, ast.Name):
+        return False
+    if callee.id == "AdmissionError":
+        return bool(call.args) and _label_only(call.args[0])
+    position = REFUSAL_BUILDERS.get(callee.id)
+    if position is None:
+        return False
+    if len(call.args) <= position or not _label_only(call.args[position]):
+        return False
+    return all(isinstance(keyword.value, (ast.Name, ast.Constant)) for keyword in call.keywords)
+
+
 def test_every_refusal_is_composed_from_labels_and_indexes_only():
     """No `AdmissionError` message interpolates a value from an input.
 
-    Two shapes are admitted: `raise AdmissionError(<label-only string>)`, and
-    `raise AdmissionError(refusal)` where EVERY assignment to `refusal` in the
-    module is itself label-only -- the loaders assign a message inside a
-    handler and raise outside it, so that the refusal carries no context. The
-    one composed message -- the blocker list -- is the exception, and it is
-    pinned as exactly one site so a second composed message is a reviewed
-    change rather than a quiet one.
+    Every construction of an `AdmissionError` anywhere in the module must be
+    label-only; every call to a refusal builder must pass a literal or
+    label-only detail; every assignment to `refusal` must be `None` or such a
+    call -- the loaders build a refusal inside a handler and raise outside
+    it, so that the refusal carries no context -- and every `raise` must be
+    `raise refusal`, an acceptable call, or the ONE composed message, the
+    blocker list, pinned as exactly one site so a second composed message is
+    a reviewed change rather than a quiet one. A lint over shapes, not a
+    proof: a value smuggled through a name in REFUSAL_NAMES would pass it.
     """
-    allowed_names = {"label", "index", "required", "key", "option"}
     tree = _checker_tree()
     offenders = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if any(isinstance(target, ast.Name) and target.id == "refusal" for target in node.targets):
-            if isinstance(node.value, ast.Constant) and node.value.value is None:
-                continue
-            if not _label_only(node.value, allowed_names):
-                offenders.append(f"refusal assigned at line {node.lineno}")
     composed = 0
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
-            continue
-        callee = node.exc.func
-        if not (isinstance(callee, ast.Name) and callee.id == "AdmissionError"):
-            continue
-        argument = node.exc.args[0]
-        if isinstance(argument, ast.Name) and argument.id == "refusal":
-            continue
-        if _label_only(argument, allowed_names):
-            continue
-        if isinstance(argument, ast.JoinedStr):
-            offenders.append(f"line {node.lineno}")
-            continue
-        composed += 1
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "AdmissionError":
+                argument = node.args[0] if node.args else None
+                if argument is None or _label_only(argument):
+                    continue
+                if isinstance(argument, ast.JoinedStr):
+                    offenders.append(f"AdmissionError at line {node.lineno}")
+                else:
+                    composed += 1
+            elif node.func.id in REFUSAL_BUILDERS and not _acceptable_refusal_call(node):
+                offenders.append(f"{node.func.id} with a non-literal detail at line {node.lineno}")
+        elif isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "refusal" for target in node.targets
+        ):
+            value = node.value
+            if isinstance(value, ast.Constant) and value.value is None:
+                continue
+            if isinstance(value, ast.Call) and _acceptable_refusal_call(value):
+                continue
+            offenders.append(f"refusal assigned at line {node.lineno}")
+        elif isinstance(node, ast.Raise) and node.exc is not None:
+            exc = node.exc
+            if isinstance(exc, ast.Name) and exc.id == "refusal":
+                continue
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name):
+                if exc.func.id in REFUSAL_BUILDERS or exc.func.id == "AdmissionError":
+                    continue  # judged above as a Call
+            if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name) and exc.func.id in (
+                "SystemExit", "_DuplicateKey"
+            ):
+                continue
+            offenders.append(f"raise of an unreviewed shape at line {node.lineno}")
     assert offenders == [], f"refusals interpolate something other than a label: {offenders}"
     assert composed == 1, "exactly one composed refusal (the blocker list) is expected"
 
