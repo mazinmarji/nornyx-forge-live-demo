@@ -323,6 +323,10 @@ def test_e10_a_legacy_store_stays_distinguishable_from_a_protected_one(tmp_path:
     client = _client(tmp_path, RecordingFactory())
     state = _ok(client.get("/api/state"))
     assert state["authority"]["anchor"] == "unsealed" and state["authority"]["currency"] is None
+    # A store that was never sealed holds no interval either: the process
+    # witness reports continuity only over a seal it wrote or verified.
+    assert state["authority"]["continuity"] is None
+    assert state["authority"]["held_since"] is None
 
     _ok(client.post("/api/proposals", json={"field": "intent", "value": "x", "actor": HUMAN}))
     protected = CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals")
@@ -330,7 +334,12 @@ def test_e10_a_legacy_store_stays_distinguishable_from_a_protected_one(tmp_path:
     assert protected.seal_problems(protected.sealed()) == []
     state = _ok(client.get("/api/state"))
     assert state["authority"]["anchor"] == "sealed"
+    # THE WORD IS UNCHANGED. Tranche E's witness detects a wholesale rollback
+    # only while this process lives, which is a separate and smaller fact and
+    # is reported in a separate field; nothing anchors this seal as the latest.
     assert state["authority"]["currency"] == "not_independently_anchored"
+    assert state["authority"]["continuity"] == "process"
+    assert state["authority"]["held_since"] is not None
 
     protected.seal_path().unlink()
     refused = client.get("/api/state")

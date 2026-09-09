@@ -60,7 +60,17 @@ behind for a later process is refused there too -- as the TAMPERED finding,
 reported on every route, naming the revision and byte differences and no
 actor at all -- until a person restores the sealed authority through one
 explicit action. The seal is Forge-owned persistence outside the project;
-its own bound is stated in capsule_store.
+its own bound is stated in capsule_store. Beside the seal's currency -- which
+is unchanged, and still `not_independently_anchored` -- the surface reports a
+separate `continuity` field: `"process"` means only that no load through THIS
+APPLICATION INSTANCE has found a seal other than the one this instance last
+wrote or verified, and
+`held_since` names the interval. A fresh `create_app` resets it -- on the
+shipped path that means a restart, which is
+a same-user act -- so it raises the cost of a wholesale rollback rather than
+closing it. A-029 states the limit and the instance boundary; nothing here
+claims the store is the
+latest thing Forge ever wrote.
 
 DECLARED IS NOT ELIGIBLE. Before a build is allowed to start, the surface
 asks the Provider Contract's `governed_build_eligibility` whether the
@@ -118,8 +128,10 @@ from .capsule_store import (
     AuthoritySnapshot,
     CapsuleSealError,
     CapsuleSealMissing,
+    CapsuleSealReplaced,
     CapsuleStore,
     CapsuleStoreError,
+    ProcessWitness,
 )
 from .control_plane_session import (
     BAD_SHAPE,
@@ -314,8 +326,19 @@ def create_app(
     #: when no build runs. Read and written under `store_lock` only.
     app.state.sealed = None
 
+    #: ONE WITNESS PER APPLICATION INSTANCE, and that instance IS the bound.
+    #: Every store
+    #: handle below is constructed fresh per request and would remember
+    #: nothing on its own; the witness is what makes "this instance last
+    #: sealed" a fact rather than a request-scoped one. It is memory only,
+    #: never written anywhere, and each `create_app` begins again from disk --
+    #: a second one in the SAME operating-system process holds nothing, which
+    #: is why the disclosure says instance and not process. See
+    #: `ProcessWitness` for why that bound cannot be lifted locally.
+    witness = ProcessWitness(at)
+
     def store() -> CapsuleStore:
-        return CapsuleStore(root, seal_dir=seals)
+        return CapsuleStore(root, seal_dir=seals, witness=witness)
 
     def restored(current: CapsuleStore, breach: CapsuleSealError, why: str) -> None:
         """The store no longer matches its seal: put the sealed authority back
@@ -341,11 +364,36 @@ def create_app(
         """How the authority on disk is held: sealed by Forge, or never sealed.
         A protected store whose seal is missing never reaches here -- its load
         refused. The seal's currency is reported for what it is: Forge's last
-        write, not independently anchored as the latest."""
-        sealed = store().sealed() is not None
+        write, not independently anchored as the latest.
+
+        `continuity` IS A SECOND FIELD AND NOT A BETTER VALUE OF THE FIRST.
+        `currency` answers "is this seal anchored as the latest Forge ever
+        wrote?" and the answer is still no, in the same word, because every
+        local anchor was measured being rolled back with the set it anchored
+        or undone by the same user.
+        `continuity` answers a smaller question -- has the seal changed under
+        THIS RUNNING APPLICATION INSTANCE? -- and `"process"` is the whole of
+        its
+        vocabulary, with `held_since` naming the interval it is true over.
+
+        THE VALUE WORD IS WIDER THAN THE BOUND, and the bound is the claim.
+        The `witness` closed over here belongs to one `create_app`: a second
+        `create_app` in the same operating-system process holds nothing and
+        answers over its own `held_since`, so `"process"` may not be read as a
+        statement about the process. The shipped composition makes exactly one
+        instance per process, so the two coincide on the shipped path. A fresh
+        instance resets it -- on that path, a restart -- so it raises the cost
+        of a silent rollback rather
+        than closing it, and A-029 says so in those words.
+        """
+        current = store()
+        sealed = current.sealed() is not None
+        ident = current.seal_ident()
         return {
             "anchor": "sealed" if sealed else "unsealed",
             "currency": "not_independently_anchored" if sealed else None,
+            "continuity": witness.continuity(ident) if sealed else None,
+            "held_since": witness.held_since(ident) if sealed else None,
             "last_restoration": getattr(app.state, "last_restoration", None),
         }
 
@@ -422,8 +470,15 @@ def create_app(
                 document = sealed["document"]
                 lifecycle = sealed["lifecycle"]
                 revision = sealed["snapshot"].revision
+                # The same two witness fields as `anchor()`, from the same
+                # witness: the build's own seal was recorded when it began, so
+                # the interval a build runs inside is part of the one this
+                # process holds and is not a separate claim.
+                ident = current.seal_ident()
                 held = {"anchor": "sealed", "build": "running",
                         "currency": "not_independently_anchored",
+                        "continuity": witness.continuity(ident),
+                        "held_since": witness.held_since(ident),
                         "last_restoration": getattr(app.state, "last_restoration", None)}
             else:
                 try:
@@ -664,14 +719,37 @@ def create_app(
                 if snapshot is None:
                     # A protected store with no seal is the missing-anchor
                     # finding, not "nothing to restore"; a legacy store is.
+                    # The witness is deliberately not consulted here: a seal
+                    # that is GONE is E9's unrestorable finding, and making it
+                    # restorable from memory is a separate decision (A-029).
                     current.assert_sealed()
                     return _refused("this store has no seal to restore from")
-                problems = current.seal_problems(snapshot)
-                if not problems:
-                    return _refused("the store matches its seal; there is nothing to restore")
-                restored(current, CapsuleSealError(problems, snapshot),
-                         f"the authority store no longer matched Forge's seal; "
-                         f"restored by {actor.ident}")
+                # THE WITNESS IS ASKED FIRST, and that ordering is the opposite
+                # of `assert_sealed`'s on purpose. There the question is which
+                # finding to report, and the seal's own is the one with a
+                # measured store-versus-seal difference in it. Here the question
+                # is what to put BACK, and the snapshot this process wrote is
+                # better provenance than a seal that arrived on disk from
+                # somewhere else -- including when the store fails that seal
+                # too, which is the case the load path hands to the disk seal.
+                expected = witness.expected(current.seal_ident())
+                if expected is not None and snapshot != expected:
+                    # The interval ends here even when no load reached the
+                    # finding first, so `continuity` never spans a replacement
+                    # this route restored: `assert_sealed` marks it on the read
+                    # path, and a person may reach this route without one.
+                    witness.interrupted(current.seal_ident())
+                    restored(current, CapsuleSealReplaced.between(snapshot, expected),
+                             "the authority store and its seal were replaced while "
+                             f"Forge was running; restored by {actor.ident}")
+                else:
+                    problems = current.seal_problems(snapshot)
+                    if not problems:
+                        return _refused(
+                            "the store matches its seal; there is nothing to restore")
+                    restored(current, CapsuleSealError(problems, snapshot),
+                             f"the authority store no longer matched Forge's seal; "
+                             f"restored by {actor.ident}")
                 lifecycle = current.load_experience()
             except CapsuleError as error:
                 return _refusal(error)
@@ -1063,7 +1141,9 @@ function renderJourney(s){
   text("authority", s.finding ? (s.restorable ? "does not match Forge's seal; a person may restore it" : "—")
     : !s.initialized ? "—"
     : (held.build === "running" ? "sealed while the build runs; the store on disk is not consulted"
-    : (held.anchor === "sealed" ? "sealed by Forge (currency not independently anchored)" : "never sealed by Forge (legacy store)"))
+    : (held.anchor === "sealed" ? "sealed by Forge (currency not independently anchored"
+        + (held.continuity === "process" ? "; unchanged since " + held.held_since + " in this run" : "")
+        + ")" : "never sealed by Forge (legacy store)"))
     + (held.last_restoration ? " · restored from the seal: " + held.last_restoration.detail : ""));
   const actions = new Set((j && j.actions) || []);
   for(const [id, action] of Object.entries(BUTTONS)){ document.getElementById(id).disabled = !actions.has(action); }
