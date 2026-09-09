@@ -498,6 +498,24 @@ def _fact(value: Any) -> Any:
     return type(value).__name__
 
 
+def _launcher_log(path: Path) -> str:
+    """The tail of one launcher log, as text the report can carry.
+
+    The launcher writes BYTES in the console's own code page, so the bytes are
+    decoded here with replacement rather than by a `text=True` that would raise
+    on the first character the page does not share with UTF-8. The cut is the
+    LAST `OUTPUT_LIMIT` characters, exactly what the captured string was cut to
+    before: an error the launcher prints last is the one worth keeping. A log
+    that cannot be read at all is recorded as empty rather than raised -- the
+    smoke's business is recording what happened to the launcher, not failing
+    over its own scratch.
+    """
+    try:
+        return path.read_bytes().decode("utf-8", "replace")[-OUTPUT_LIMIT:]
+    except OSError:
+        return ""
+
+
 #: The runtime record as the report keeps it: the four fields the verdict
 #: reads, plus `reason` so a failed record explains itself, each bounded by
 #: `_fact`. The record is the child's own file, not a listener's body, but
@@ -741,16 +759,46 @@ def _observe_launch(dist: Path, scratch: Path, step: Callable[..., None], *,
     command = ["cmd.exe", "/c", str(dist / "Forge.cmd"), "--project-dir", str(project),
                "--runtime-dir", str(runtime_dir), "--port", "0", "--no-browser",
                "--session-file", str(session_file)]
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=120,
-                                   cwd=str(scratch), env=environment)
-    except subprocess.TimeoutExpired as expired:
-        step("launcher", returncode=None, timed_out=True,
-             stdout=str(expired.stdout or "")[-OUTPUT_LIMIT:],
-             stderr=str(expired.stderr or "")[-OUTPUT_LIMIT:])
-    else:
-        step("launcher", returncode=completed.returncode, timed_out=False,
-             stdout=completed.stdout[-OUTPUT_LIMIT:], stderr=completed.stderr[-OUTPUT_LIMIT:])
+    # FILES, NOT PIPES, AND THE MEASUREMENT THAT SETTLES IT. `Forge.cmd` ends
+    # by detaching the runtime with `start ""`, which creates that grandchild
+    # with handle inheritance ON: it is handed DUPLICATES of whatever standard
+    # handles this call passes, at the instant it is created, and regardless of
+    # where its own standard handles are afterwards pointed. Held as PIPES --
+    # which is exactly what `capture_output=True` holds -- those duplicates
+    # keep the read waiting for an EOF that cannot arrive while the runtime
+    # lives. `subprocess.run` then times out, kills the long-since-exited
+    # `cmd.exe`, and blocks in a post-kill `communicate()` that carries NO
+    # timeout of its own, so the 120 s bound below did not bound this call at
+    # all. Measured on the first real embedded-interpreter run: the smoke sat
+    # there four and a half minutes past its own timeout and resumed only when
+    # the detached runtime was killed.
+    #
+    # A file handle held open by the grandchild blocks nobody, so the wait ends
+    # when `cmd.exe` exits -- and the launcher's output is still CAPTURED, read
+    # back from those files below, which a null sink would have thrown away.
+    # Adding redirection to `Forge.cmd` is the one repair measured NOT to work
+    # (arms B and D of `docs/governance/EMBEDDED_INTERPRETER_RUN.md`): the
+    # duplication has already happened by the time the grandchild could
+    # redirect anything. Arm E changed only what the PARENT holds, on a
+    # byte-for-byte identical launcher line, and the hang vanished outright. So
+    # the repair is on the driving side, and it covers BOTH launcher templates
+    # because both detach the same way and neither is touched.
+    launcher_out = scratch / "launcher-stdout.log"
+    launcher_err = scratch / "launcher-stderr.log"
+    with launcher_out.open("wb") as out_handle, launcher_err.open("wb") as err_handle:
+        try:
+            completed = subprocess.run(command, stdout=out_handle, stderr=err_handle,
+                                       timeout=120, cwd=str(scratch), env=environment)
+        except subprocess.TimeoutExpired:
+            returncode, timed_out = None, True
+        else:
+            returncode, timed_out = completed.returncode, False
+    # Read on BOTH branches. `TimeoutExpired.stdout` is None when no pipe was
+    # held, so the timed-out branch would otherwise record the launcher's
+    # output as empty -- the facts it carries come from the files or from
+    # nowhere.
+    step("launcher", returncode=returncode, timed_out=timed_out,
+         stdout=_launcher_log(launcher_out), stderr=_launcher_log(launcher_err))
     record: Any = None
     record_path: Path | None = None
     deadline = time.monotonic() + timeout
@@ -849,6 +897,17 @@ def smoke_bundle(dist: Path, *, timeout: float = 180.0, stop_timeout: float = 60
         # Whatever happened -- every observation made, an early end, or a
         # raise -- the scratch does not outlive the smoke (measured under
         # review: a raise mid-observation had left it behind).
+        #
+        # ONE EXCEPTION, stated because it is a consequence of the repair
+        # above rather than something to discover later. The detached runtime
+        # inherits duplicates of the two launcher log handles, and Windows
+        # will not unlink a file another process holds open. So when the
+        # runtime OUTLIVES the smoke -- which is precisely the case that used
+        # not to terminate at all -- those two logs, and the directory holding
+        # them, survive `rmtree`; everything else under the scratch is still
+        # removed, and `ignore_errors` already tolerates it. When the stop
+        # route does its work the runtime is gone by now and the removal is
+        # complete.
         shutil.rmtree(scratch, ignore_errors=True)
     report["verdict"] = evaluate_smoke_observations(report["steps"])
     report["result"] = report["verdict"]["result"]
