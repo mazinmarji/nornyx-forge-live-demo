@@ -171,10 +171,38 @@
   confinement's one refusal, which names no path, and nothing is opened.
   Every `lstat` the confinement judgment performs -- in the repository
   traversal, the walk and the comparison -- refuses on failure.
+  A sixth Codex review, of the head carrying those repairs, found three
+  findings of one class the earlier rounds had not covered: a pathname
+  inspected and then used again. A plain directory swapped for a link chain
+  between being looked at and the next lookup was followed by that lookup
+  (reproduced: accepted, the in-repository hop unjudged); disposition
+  creation was check-then-write, so a parent swapped to a symlink after the
+  runtime judgment put the file outside the runtime root and two
+  initializers overwrote each other (reproduced, both); and a queued
+  repository directory swapped for a link before its scan was listed
+  through the link (reproduced: an external tree's identities entered the
+  set and a legitimate overlay was refused as inside). Re-checking a
+  pathname cannot close that class, so the confinement was REDESIGNED
+  around held descriptors on POSIX: every component is inspected and opened
+  relative to the directory already held, without following a link, and
+  refused unless it is the entry just looked at; no link of any kind is
+  followed, and nothing a link points at is consulted; the descriptor so
+  opened is the only object read, and a file with more than one name is
+  refused; the identity traversal opens each directory relative to its
+  parent the same way and its snapshot is taken for every judgment; the
+  disposition is created exclusively relative to a parent reached from the
+  root handle, and the root handle is refused unless it contains the
+  running checker; `Path.resolve` takes part in no security decision. Where
+  no handle backend exists -- Windows -- a private overlay is refused
+  outright with one sentence, and public-registry admission stays, with an
+  exclusive create by pathname and the parent race stated as that
+  platform's limitation. The standing module collects 149 -> 131, its
+  subject having changed; the Windows module stays at 7.
   Not claimed, and recorded as such in A-030: that anyone runs the check;
   that anyone read an item; that a `cycle_id` names a cycle; that a hard
   link, an alias of a single file or a same-identity rewrite is seen; that a
-  junction is followed rather than refused; that a free-text `reason` is
+  link of any kind is followed rather than refused; that a private overlay
+  is judged at all where no handle backend exists; that a free-text `reason` is
   free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the
   checker or the registry (both are governed inputs, so the change moves the

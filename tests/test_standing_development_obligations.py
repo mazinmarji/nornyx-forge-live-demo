@@ -38,10 +38,8 @@ import importlib.util
 import json
 import os
 import re
-import stat
 import subprocess
 import sys
-import types
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -165,6 +163,43 @@ def _refusal(module, call) -> str:
     except module.AdmissionError as exc:
         return str(exc)
     raise AssertionError("the input was accepted")
+
+
+def _descriptor(path: Path, *, flags: int = 0) -> int:
+    """A read descriptor for a test's own file, for the readers that take one."""
+    return os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | flags)
+
+
+@contextmanager
+def _root(module):
+    """The repository root handle, closed after."""
+    handle = module._open_repository_root()
+    try:
+        yield handle
+    finally:
+        os.close(handle)
+
+
+def _between_inspection_and_open(module, monkeypatch, name: str, action) -> list[str]:
+    """Run `action` once, after the entry called `name` is inspected and before it is opened.
+
+    Inspection and open are both relative to the held directory. What the
+    action changes under that name is what the open then meets, and the open
+    refuses unless it meets the very entry that was inspected. Returns the
+    list the hook appends to when it fires, so a test can hold that it did.
+    """
+    original = module._inspect
+    fired: list[str] = []
+
+    def inspect(handle, entry, *, label):
+        info = original(handle, entry, label=label)
+        if entry == name and not fired:
+            fired.append(entry)
+            action()
+        return info
+
+    monkeypatch.setattr(module, "_inspect", inspect)
+    return fired
 
 
 #: Symlink fixtures cannot be built on a Windows workstation without elevation,
@@ -325,7 +360,7 @@ def test_an_oversized_overlay_is_refused(module, tmp_path):
     assert message == GENERIC
     _assert_no_leak(message, overlay)
     assert _refusal(module, lambda: module._read_bytes_bounded(
-        overlay, label="public registry")) == "public registry exceeds the size bound"
+        _descriptor(overlay), label="public registry")) == "public registry exceeds the size bound"
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +386,7 @@ def test_an_overlay_inside_the_repository_is_refused(module):
 
 @posix_only
 def test_an_overlay_symlink_that_resolves_into_the_repository_is_refused(module, tmp_path):
+    """A link outside the tree pointing into it is refused for being a link; its target is never consulted."""
     RUNTIME.mkdir(parents=True, exist_ok=True)
     inside = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
     inside.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
@@ -359,7 +395,7 @@ def test_an_overlay_symlink_that_resolves_into_the_repository_is_refused(module,
     try:
         _symlink(inside, link)
         message = _refusal(module, lambda: module.load_registries(link))
-        assert "outside the Forge repository" in message
+        assert message == "private overlay path crosses a link that is not followed"
         _assert_no_leak(message, link, inside)
     finally:
         inside.unlink()
@@ -387,12 +423,13 @@ def test_an_overlay_symlink_inside_the_repository_pointing_outside_is_refused(mo
 
 @posix_only
 def test_a_symlink_loop_overlay_is_refused_without_a_traceback(tmp_path):
-    """`Path.resolve` raises with the path in its message; none of it may escape.
+    """No loop is ever entered: the first link is refused for being a link, on every interpreter.
 
-    Measured on CPython 3.11: `RuntimeError: Symlink loop from '<path>'`, a
-    class the first checker did not catch, so the traceback printed the path.
-    Measured on CPython 3.13: `resolve(strict=False)` no longer raises on a
-    loop, and the `OSError` from the read that follows names the path too.
+    Measured on the pathname walk: `Path.resolve` raised `RuntimeError` with
+    the path in its message on CPython 3.11 and returned the unresolved path
+    on 3.13, so which step refused was interpreter-dependent. Nothing
+    resolves a path now; the refusal is one sentence and the path is in
+    neither it nor a traceback.
     """
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
@@ -401,12 +438,7 @@ def test_a_symlink_loop_overlay_is_refused_without_a_traceback(tmp_path):
     _symlink(first, second)
     completed = _run("--overlay", str(first))
     assert completed.returncode == 2, completed.stderr
-    # WHICH step refuses is interpreter-dependent and not the property. On
-    # 3.11 `resolve(strict=False)` raises on the loop, so resolution refuses;
-    # on 3.13 it returns the unresolved path and the read refuses with ELOOP.
-    # Either way the refusal is one label and the path is in neither.
-    assert completed.stderr.startswith("REFUSE: private overlay")
-    assert "cannot be resolved" in completed.stderr or "cannot be read" in completed.stderr
+    assert completed.stderr == "REFUSE: private overlay path crosses a link that is not followed\n"
     _assert_no_leak(completed.stdout + completed.stderr, first, second)
 
 
@@ -438,7 +470,7 @@ def test_invalid_utf8_overlay_bytes_are_refused_without_echoing_a_byte(tmp_path)
     # The specific diagnostic still exists, for a document that is public.
     module = _load_module()
     assert _refusal(module, lambda: module._read_document(
-        target, label="public registry")) == "public registry is not a UTF-8 JSON document"
+        _descriptor(target), label="public registry")) == "public registry is not a UTF-8 JSON document"
 
 
 def test_a_path_with_an_embedded_nul_is_refused(module):
@@ -473,8 +505,10 @@ def test_a_disposition_symlink_under_the_runtime_root_pointing_outside_is_refuse
         _symlink(outside, link)
         message = _refusal(module, lambda: module.initialize_disposition(
             link, cycle_id="TEST", registries=registries))
-        assert ".nornyx/runtime/" in message
+        assert message == "cycle disposition path crosses a link that is not followed"
         assert not outside.exists()
+        message = _refusal(module, lambda: module.validate_disposition(link, registries=registries))
+        assert message == "cycle disposition path crosses a link that is not followed"
     finally:
         link.unlink()
 
@@ -577,9 +611,13 @@ def test_defer_is_refused_for_an_obligation_that_is_not_deferred(module, tmp_pat
 
 
 def test_a_disposition_goes_stale_when_the_registry_or_overlay_changes(module, tmp_path, monkeypatch):
-    registry_copy = tmp_path / "registry.json"
+    # The registry is read below the root handle, so the copy that will move
+    # lives under the gitignored runtime root and is named by its components.
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    registry_copy = RUNTIME / f"registry-{uuid.uuid4().hex}.json"
     registry_copy.write_bytes(PUBLIC.read_bytes())
     monkeypatch.setattr(module, "PUBLIC_REGISTRY", registry_copy)
+    monkeypatch.setattr(module, "_PUBLIC_REGISTRY_NAMES", (".nornyx", "runtime", registry_copy.name))
     overlay = _write_overlay(tmp_path)
     registries = module.load_registries(overlay)
     with _runtime_disposition() as path:
@@ -599,6 +637,7 @@ def test_a_disposition_goes_stale_when_the_registry_or_overlay_changes(module, t
             path, registries=module.load_registries(overlay)))
         assert "does not bind the supplied overlay set" in message
         _assert_no_leak(message, overlay)
+    registry_copy.unlink()
 
 
 def test_the_overlay_set_must_match_between_init_and_check(module, tmp_path):
@@ -828,7 +867,7 @@ def test_a_repeated_json_key_is_refused_rather_than_last_wins(module, tmp_path, 
     _assert_no_leak(message, overlay)
     # The pairs hook is what refuses; pinned by name on the public path.
     assert _refusal(module, lambda: module._read_document(
-        overlay, label="public registry")) == "public registry repeats a key inside one object"
+        _descriptor(overlay), label="public registry")) == "public registry repeats a key inside one object"
     completed = _run("--overlay", str(overlay))
     assert completed.returncode == 2
     _assert_no_leak(completed.stdout + completed.stderr, overlay)
@@ -890,7 +929,8 @@ def test_a_symlink_chain_that_passes_through_the_repository_is_refused(module, t
 
     Measured on the first repaired head: `outside/a -> repo/.nornyx/runtime/b
     -> outside/c` passed, because only the given path and the final
-    resolution were judged.
+    resolution were judged. No link is followed now: the chain is refused at
+    its first link, and the middle hop is never consulted.
     """
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
@@ -902,7 +942,7 @@ def test_a_symlink_chain_that_passes_through_the_repository_is_refused(module, t
         _symlink(final, middle)
         _symlink(middle, first)
         message = _refusal(module, lambda: module.load_registries(first))
-        assert "outside the Forge repository" in message
+        assert message == "private overlay path crosses a link that is not followed"
         _assert_no_leak(message, first, middle, final)
     finally:
         middle.unlink()
@@ -910,7 +950,7 @@ def test_a_symlink_chain_that_passes_through_the_repository_is_refused(module, t
 
 @posix_only
 def test_a_link_reached_through_a_directory_symlink_into_the_repository_is_refused(module, tmp_path):
-    """The link's REAL directory is inside the tree, whatever its target."""
+    """A directory link on the way is refused as a link before anything below it is consulted."""
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
     final = _write_overlay(tmp_path, name="good.json")
@@ -922,7 +962,7 @@ def test_a_link_reached_through_a_directory_symlink_into_the_repository_is_refus
         _symlink(inside, directory / "dirlink")
         given = directory / "dirlink" / "out.json"
         message = _refusal(module, lambda: module.load_registries(given))
-        assert "outside the Forge repository" in message
+        assert message == "private overlay path crosses a link that is not followed"
         _assert_no_leak(message, given, final)
     finally:
         (inside / "out.json").unlink()
@@ -948,7 +988,8 @@ def test_a_fifo_overlay_is_refused_without_blocking(tmp_path):
     _assert_no_leak(completed.stdout + completed.stderr, fifo)
     module = _load_module()
     assert _refusal(module, lambda: module._read_bytes_bounded(
-        fifo, label="cycle disposition")) == "cycle disposition is not a regular file"
+        _descriptor(fifo, flags=os.O_NONBLOCK), label="cycle disposition")) == (
+        "cycle disposition is not a regular file")
 
 
 @pytest.mark.parametrize(
@@ -988,7 +1029,7 @@ def test_a_deeply_nested_document_is_refused_with_a_label(module, tmp_path):
     message = _refusal(module, lambda: module.load_registries(overlay))
     assert message == GENERIC
     assert _refusal(module, lambda: module._read_document(
-        overlay, label="public registry")) == "public registry is not a UTF-8 JSON document"
+        _descriptor(overlay), label="public registry")) == "public registry is not a UTF-8 JSON document"
     completed = _run("--overlay", str(overlay))
     assert completed.returncode == 2
     assert "unexpected failure" not in completed.stderr
@@ -1050,8 +1091,9 @@ def test_a_directory_symlink_chain_through_the_repository_is_refused(module, tmp
 
     Measured by the Codex review on the merged head: PASS. `realpath` of the
     parent followed the directory link all the way to `outside/final`, so the
-    in-repository directory link in the middle was never judged. The walk is
-    now component by component, so it is.
+    in-repository directory link in the middle was never judged. No link is
+    followed now: `outside/a` is refused for being one, and the middle hop
+    is never consulted.
     """
     final = tmp_path / "final"
     final.mkdir()
@@ -1067,7 +1109,7 @@ def test_a_directory_symlink_chain_through_the_repository_is_refused(module, tmp
         _symlink(middle, outside / "a")
         given = outside / "a" / "overlay.json"
         message = _refusal(module, lambda: module.load_registries(given))
-        assert "outside the Forge repository" in message
+        assert message == "private overlay path crosses a link that is not followed"
         _assert_no_leak(message, given, middle, final)
         completed = _run("--overlay", str(given))
         assert completed.returncode == 2
@@ -1138,171 +1180,49 @@ def test_a_reason_is_not_inspected_and_the_document_says_so(module):
 # ---------------------------------------------------------------------------
 
 
-#: Windows reparse tags, as literals: the `stat` module defines them only on
-#: Windows, and these tests classify fake `lstat` results on every platform.
-#: FILE_ATTRIBUTE_REPARSE_POINT (0x400) is defined everywhere.
-IO_REPARSE_TAG_SYMLINK = 0xA000000C
-IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
-IO_REPARSE_TAG_APPEXECLINK = 0x8000001B
+@posix_only
+def test_a_double_slash_spelling_of_an_in_repository_path_is_refused(module):
+    """`//home/.../repo/...` is the repository to the kernel and a different anchor to a lexical rule.
 
-
-def _stat_like(mode: int, *, reparse: bool = False, tag: int | None = None):
-    """An `lstat` result as a platform would hand it over, without the platform."""
-    info = types.SimpleNamespace(st_mode=mode, st_ino=1, st_dev=1)
-    if reparse:
-        info.st_file_attributes = stat.FILE_ATTRIBUTE_REPARSE_POINT
-        if tag is not None:
-            info.st_reparse_tag = tag
-    return info
-
-
-@pytest.mark.parametrize(
-    "shape, info, kind",
-    [
-        ("plain file", _stat_like(stat.S_IFREG), "plain"),
-        ("plain directory", _stat_like(stat.S_IFDIR), "plain"),
-        ("posix symlink", _stat_like(stat.S_IFLNK), "symlink"),
-        ("windows symlink",
-         _stat_like(stat.S_IFLNK, reparse=True, tag=IO_REPARSE_TAG_SYMLINK), "symlink"),
-        ("directory junction",
-         _stat_like(stat.S_IFDIR, reparse=True, tag=IO_REPARSE_TAG_MOUNT_POINT), "unsupported"),
-        ("app execution alias",
-         _stat_like(stat.S_IFREG, reparse=True, tag=IO_REPARSE_TAG_APPEXECLINK), "unsupported"),
-        ("cloud placeholder", _stat_like(stat.S_IFREG, reparse=True, tag=0x9000001A), "unsupported"),
-        ("reparse point whose tag the platform does not expose",
-         _stat_like(stat.S_IFDIR, reparse=True), "unsupported"),
-    ],
-)
-def test_every_reparse_point_that_is_not_a_symlink_is_an_unsupported_link(module, shape, info, kind):
-    """`Path.is_symlink()` is `S_ISLNK`; a junction is a directory to it.
-
-    Measured by the Codex review on the PR head: on Windows a path shaped
-    `outside/junction -> repo/junction -> outside` was accepted, because
-    neither hop was a symlink to the walk and the final resolution was
-    outside. The walk now classifies every component from its `lstat`, and
-    everything with the reparse attribute that is not a symlink is refused
-    rather than followed -- including an entry whose tag the platform does
-    not expose, so an uninspectable state fails closed.
+    Measured on the merged head: an in-repository path spelled with two
+    leading slashes was outside to every walked component. The spelling is
+    collapsed before the walk, and every directory held is compared by
+    identity as well, so the shape refuses under either rule.
     """
-    assert module._link_kind(info) == kind
-
-
-def test_a_component_the_walk_cannot_follow_refuses_the_path(module, tmp_path, monkeypatch):
-    """Wherever an unsupported link sits in the chain, the path is refused.
-
-    Outside the repository it is refused for not being followed; inside it,
-    for sitting there -- the rule broken first. Measured on a Windows runner
-    with a real junction under `.nornyx/runtime/`: the first version raised
-    at the junction and named the wrong rule.
-    """
-    overlay = _write_overlay(tmp_path)
-    RUNTIME.mkdir(parents=True, exist_ok=True)
-    decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
-    decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
-    marked = {os.lstat(overlay.parent).st_ino, os.lstat(RUNTIME).st_ino}
-    original = module._link_kind
-
-    def classify(info):
-        if info.st_ino in marked:
-            return module.UNSUPPORTED_LINK
-        return original(info)
-
-    monkeypatch.setattr(module, "_link_kind", classify)
+    decoy = _in_repository_decoy()
     try:
-        message = _refusal(module, lambda: module.load_registries(overlay))
-        assert message == "private overlay path crosses a link that is not followed"
-        _assert_no_leak(message, overlay)
-        message = _refusal(module, lambda: module.load_registries(decoy))
+        spelled = Path("//" + str(decoy).lstrip("/"))
+        message = _refusal(module, lambda: module.load_registries(spelled))
         assert message == "private overlay must remain outside the Forge repository"
+        _assert_no_leak(message, decoy)
     finally:
         decoy.unlink()
-
-
-@pytest.mark.parametrize(
-    "raw, judged",
-    [
-        ("\\\\?\\C:\\outside\\overlay.json", "C:\\outside\\overlay.json"),
-        ("C:\\outside\\overlay.json", "C:\\outside\\overlay.json"),
-        ("D:/outside/overlay.json", "D:/outside/overlay.json"),
-        ("..\\outside\\overlay.json", "..\\outside\\overlay.json"),
-        ("overlay.json", "overlay.json"),
-        ("\\\\?\\UNC\\server\\share\\overlay.json", None),
-        ("\\\\?\\Volume{0f3a1c2d-0000-0000-0000-100000000000}\\overlay.json", None),
-        ("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\overlay.json", None),
-        ("\\\\server\\share\\overlay.json", None),
-        ("\\\\.\\C:\\outside\\overlay.json", None),
-        ("\\??\\C:\\outside\\overlay.json", None),
-        ("C:overlay.json", None),
-        ("\\outside\\overlay.json", None),
-        ("/outside/overlay.json", None),
-        ("", None),
-    ],
-)
-def test_a_windows_link_target_is_judged_only_behind_a_drive_letter(module, raw, judged):
-    r"""`os.readlink` on Windows returns `\\?\`-prefixed substitute names.
-
-    Behind the prefix only a drive path can be compared with the repository
-    root; a share, a volume GUID, a device or an NT namespace spelling is
-    refused rather than judged. Pure, so it runs on every platform; the
-    junction fixtures themselves run in the windows-runtime job.
-    """
-    assert module._windows_link_target(raw) == judged
-
-
-@posix_only
-def test_a_double_slash_spelling_of_a_symlink_target_is_judged(module, tmp_path):
-    """`outside/a -> //repo/.nornyx/runtime/b -> outside/good`, target spelled `//...`.
-
-    Measured on the merged head: ACCEPTED. POSIX keeps two leading slashes
-    as a root of their own, so every walked location under `//home/...` was
-    outside the repository to the lexical rule and only the final
-    resolution, which was outside anyway, was judged. The walk collapses the
-    spelling now and compares by identity as well, and the same shape refuses.
-    """
-    directory = tmp_path / SENTINEL_DIR
-    directory.mkdir()
-    final = _write_overlay(tmp_path, name="good.json")
-    RUNTIME.mkdir(parents=True, exist_ok=True)
-    middle = RUNTIME / f"dslash-{uuid.uuid4().hex}.json"
-    first = directory / "a.json"
-    try:
-        _symlink(final, middle)
-        os.symlink("//" + str(middle).lstrip("/"), first)
-        message = _refusal(module, lambda: module.load_registries(first))
-        assert "outside the Forge repository" in message
-        _assert_no_leak(message, first, middle, final)
-    finally:
-        middle.unlink()
 
 
 def test_an_alternate_spelling_of_the_repository_is_caught_by_identity(module, monkeypatch, tmp_path):
     r"""The lexical rule compares spellings; identity names the directory.
 
     Measured against the pure name comparison: with it switched off, an
-    in-repository overlay is still refused, because an ancestor of its path
-    IS a repository directory by device and inode. Off the repository nothing
-    matches. This is the backstop for `\\?\C:\...`, a mapped drive or an
-    administrative share on Windows and a bind mount on POSIX.
+    in-repository overlay is still refused, because a directory the walk
+    holds on the way to it IS a repository directory by device and inode.
+    Off the repository nothing matches. This is the backstop for a bind
+    mount on POSIX, and for `\\?\C:\...`, a mapped drive or an
+    administrative share on a platform that gains a handle backend.
     """
     RUNTIME.mkdir(parents=True, exist_ok=True)
-    identities = module._repository_directory_identities()
+    with _root(module) as root:
+        identities = module._repository_directory_identities(root)
     for directory in (ROOT, ROOT / "docs", ROOT / "docs" / "governance", RUNTIME):
         assert module._identity_of(os.lstat(directory)) in identities, directory
     assert module._identity_of(os.lstat(tmp_path)) not in identities
-    present = tmp_path / "present.json"
-    present.write_text("{}", encoding="utf-8", newline="\n")
-    assert module._inside_by_identity(ROOT / "docs" / "governance" / "STANDING_DEVELOPMENT_OBLIGATIONS.json", identities, set())
-    assert not module._inside_by_identity(present, identities, set())
-    # A candidate that cannot be inspected is not skipped: the failure is the
-    # caller's, and the caller refuses (measured by the fifth Codex review).
-    with pytest.raises(OSError):
-        module._inside_by_identity(tmp_path / "absent.json", identities, set())
     decoy = RUNTIME / f"decoy-{uuid.uuid4().hex}.json"
     decoy.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
     monkeypatch.setattr(module, "_is_within", lambda path, parent: False)
     try:
         message = _refusal(module, lambda: module.load_registries(decoy))
-        assert "outside the Forge repository" in message
+        assert message == "private overlay must remain outside the Forge repository"
+        _assert_no_leak(message, decoy)
+        assert module.load_registries(_write_overlay(tmp_path)).private_digest is not None
     finally:
         decoy.unlink()
 
@@ -1315,21 +1235,21 @@ def test_an_alias_rooted_below_the_repository_root_is_inside(module, monkeypatch
     in-repository overlay through the alias and printed PASS, because the
     identity comparison was against the root alone and the alias's ancestors
     are the mounted child and external directories. Every repository
-    directory's identity is compared now. Simulated here without a mount --
-    a mount needs a privilege the census must not depend on -- by placing the
-    alias directory's identity in the repository's identity set, exactly as a
-    mount point's would be there.
+    directory's identity is compared now, for every directory the walk
+    holds. Simulated here without a mount -- a mount needs a privilege the
+    census must not depend on -- by placing the alias directory's identity
+    in the repository's identity set, exactly as a mount point's would be
+    there.
     """
     overlay = _write_overlay(tmp_path)
     alias = module._identity_of(os.lstat(overlay.parent))
-    real = module._repository_directory_identities()
+    with _root(module) as root:
+        real = module._repository_directory_identities(root)
     assert alias not in real
-    monkeypatch.setattr(module, "_repository_directory_identities", lambda: real | {alias})
+    monkeypatch.setattr(module, "_repository_directory_identities", lambda root: real | {alias})
     message = _refusal(module, lambda: module.load_registries(overlay))
     assert message == "private overlay must remain outside the Forge repository"
     _assert_no_leak(message, overlay)
-    completed_identity = module._inside_by_identity(overlay, real | {alias}, set())
-    assert completed_identity and not module._inside_by_identity(overlay, real, set())
 
 
 @posix_only
@@ -1348,12 +1268,11 @@ def test_the_identity_traversal_follows_no_link_and_is_bounded(module, monkeypat
     try:
         _symlink(tmp_path, outward)
         _symlink(ROOT, upward)
-        module._DIRECTORY_IDENTITIES = None
-        identities = module._repository_directory_identities()
+        with _root(module) as root:
+            identities = module._repository_directory_identities(root)
         assert module._identity_of(os.lstat(tmp_path)) not in identities
         overlay = _write_overlay(tmp_path)
         assert module.load_registries(overlay).private_digest is not None
-        module._DIRECTORY_IDENTITIES = None
         monkeypatch.setattr(module, "DIRECTORY_SCAN_BOUND", 1)
         message = _refusal(module, lambda: module.load_registries(overlay))
         assert message == "repository is too large to judge by identity"
@@ -1362,13 +1281,13 @@ def test_the_identity_traversal_follows_no_link_and_is_bounded(module, monkeypat
         upward.unlink()
 
 
-def _entry_like(path: Path, info):
-    """A directory entry as the traversal sees one: a path, and an `lstat` result or its failure."""
+def _entry_like(name: str, info):
+    """A directory entry as the traversal sees one: a name, and an `lstat` result or its failure."""
 
     class Entry:
         def __init__(self) -> None:
-            self.path = str(path)
-            self.name = path.name
+            self.path = name
+            self.name = name
 
         def stat(self, *, follow_symlinks: bool = True):
             if isinstance(info, BaseException):
@@ -1379,43 +1298,41 @@ def _entry_like(path: Path, info):
 
 
 def test_a_stat_failure_during_the_identity_traversal_refuses(module, monkeypatch, tmp_path):
-    """An entry the traversal cannot `lstat` refuses the whole judgment, not that entry alone.
+    """An entry the traversal cannot inspect refuses the whole judgment, not that entry alone.
 
     Measured by the fourth Codex review on the PR head: a failed `lstat` of a
     repository entry was skipped, so that directory and everything below it
     were missing from the identity set, and an alias of it -- a bind mount, a
     mapped drive -- carried an in-repository overlay past the identity
     comparison. Reproduced with a directory whose full name is too long to
-    `lstat` (ENAMETOOLONG on Linux) and a bind mount of it: the traversal
-    completed with one identity fewer, and the overlay was read through the
-    alias and accepted. A failure is a refusal now, the same one a failed
-    scan gives: nothing is judged against a partial set, and none is cached.
+    `lstat` and a bind mount of it: the traversal completed with one identity
+    fewer, and the overlay was read through the alias and accepted. A failure
+    is a refusal now, the same one a failed scan gives; the traversal lists
+    from a descriptor, so the failing entry is supplied to it by name.
     """
     RUNTIME.mkdir(parents=True, exist_ok=True)
     marked = RUNTIME / f"unstat-{uuid.uuid4().hex}"
     marked.mkdir()
     overlay = _write_overlay(tmp_path)
+    runtime_identity = module._identity_of(os.lstat(RUNTIME))
     real_scandir = os.scandir
 
-    @contextmanager
-    def failing_view(directory):
-        with real_scandir(directory) as entries:
-            yield (
-                _entry_like(Path(entry.path), OSError(errno.EIO, "input/output error"))
-                if entry.path == str(marked) else entry
-                for entry in entries
-            )
+    def failing_view(handle):
+        listing_runtime = module._identity_of(os.fstat(handle)) == runtime_identity
+        with real_scandir(handle) as entries:
+            for entry in entries:
+                if listing_runtime and entry.name == marked.name:
+                    yield _entry_like(entry.name, OSError(errno.EIO, "input/output error"))
+                else:
+                    yield entry
 
-    module._DIRECTORY_IDENTITIES = None
     monkeypatch.setattr(os, "scandir", failing_view)
     try:
         message = _refusal(module, lambda: module.load_registries(overlay))
         assert message == "repository directories cannot be judged by identity"
-        assert module._DIRECTORY_IDENTITIES is None, "a partial identity set was cached"
         _assert_no_leak(message, marked, overlay)
     finally:
         monkeypatch.setattr(os, "scandir", real_scandir)
-        module._DIRECTORY_IDENTITIES = None
         marked.rmdir()
 
 
@@ -1428,204 +1345,46 @@ def test_the_identity_traversal_scans_each_directory_once_whatever_its_aliases(m
     work grew with every alias. Reproduced with three bind mounts of `docs/`
     under `.nornyx/runtime/`: twelve more scans, the bound -- set to exactly
     the unique count -- never crossed. An identity already seen is not
-    enqueued now, so the traversal performs exactly one scan per identity,
-    the root included, whatever else the directory is called. Simulated here
-    without a mount by listing one directory under three more names that
-    carry its `lstat` result.
+    opened again, so the traversal performs exactly one scan per identity,
+    the root included. Simulated here without a mount by listing one
+    directory under three more names that carry its `lstat` result: the
+    names do not exist, so had the traversal tried to open one, the judgment
+    would have refused rather than passed.
     """
     RUNTIME.mkdir(parents=True, exist_ok=True)
     aliased = RUNTIME / f"aliased-{uuid.uuid4().hex}"
     (aliased / "below").mkdir(parents=True)
-    aliases = [RUNTIME / f"alias-{index}-{uuid.uuid4().hex}" for index in range(3)]
+    alias_names = [f"alias-{index}-{uuid.uuid4().hex}" for index in range(3)]
+    runtime_identity = module._identity_of(os.lstat(RUNTIME))
     real_scandir = os.scandir
-    scanned: list[str] = []
+    scans: list[int] = []
 
-    @contextmanager
-    def aliased_view(directory):
-        directory = Path(directory)
-        scanned.append(str(directory))
-        with real_scandir(aliased if directory in aliases else directory) as entries:
+    def aliased_view(handle):
+        scans.append(handle)
+        listing_runtime = module._identity_of(os.fstat(handle)) == runtime_identity
+        with real_scandir(handle) as entries:
+            for entry in entries:
+                yield entry
+                if listing_runtime and entry.name == aliased.name:
+                    info = entry.stat(follow_symlinks=False)
+                    for alias in alias_names:
+                        yield _entry_like(alias, info)
 
-            def view():
-                for entry in entries:
-                    yield entry
-                    if entry.path == str(aliased):
-                        info = entry.stat(follow_symlinks=False)
-                        for alias in aliases:
-                            yield _entry_like(alias, info)
-
-            yield view()
-
-    module._DIRECTORY_IDENTITIES = None
     monkeypatch.setattr(os, "scandir", aliased_view)
     try:
-        identities = module._repository_directory_identities()
-        assert module._identity_of(os.lstat(aliased)) in identities
-        assert module._identity_of(os.lstat(aliased / "below")) in identities
-        assert scanned.count(str(aliased)) == 1
-        assert not any(str(alias) in scanned for alias in aliases), "an alias was traversed"
-        assert len(scanned) == len(identities), "a directory was scanned more than once"
-        monkeypatch.setattr(module, "DIRECTORY_SCAN_BOUND", len(identities))
-        module._DIRECTORY_IDENTITIES = None
-        scanned.clear()
-        assert module._repository_directory_identities() == identities
-        assert len(scanned) == len(identities)
+        with _root(module) as root:
+            identities = module._repository_directory_identities(root)
+            assert module._identity_of(os.lstat(aliased)) in identities
+            assert module._identity_of(os.lstat(aliased / "below")) in identities
+            assert len(scans) == len(identities), "a directory was scanned more than once"
+            monkeypatch.setattr(module, "DIRECTORY_SCAN_BOUND", len(identities))
+            scans.clear()
+            assert module._repository_directory_identities(root) == identities
+            assert len(scans) == len(identities)
     finally:
         monkeypatch.setattr(os, "scandir", real_scandir)
-        module._DIRECTORY_IDENTITIES = None
         (aliased / "below").rmdir()
         aliased.rmdir()
-
-
-@posix_only
-def test_a_component_the_walk_cannot_inspect_refuses_the_path(module, monkeypatch, tmp_path):
-    """A component whose `lstat` fails is not stepped past: the judgment refuses.
-
-    Measured by the fifth Codex review on the PR head, and reproduced here
-    before the repair: for `outside/a -> repo/.nornyx/runtime/middle ->
-    outside/final/overlay.json`, one failed `lstat` of `outside/a` made the
-    walk treat the link as plain and step on; the next `lstat`, of the file,
-    resolved the whole chain in the kernel, the descriptor matched that file,
-    and the overlay was accepted with the in-repository link never judged.
-    The failure is the caller's one refusal now, and nothing is opened.
-    """
-    RUNTIME.mkdir(parents=True, exist_ok=True)
-    final = tmp_path / SENTINEL_DIR
-    final.mkdir()
-    (final / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
-    middle = RUNTIME / f"middle-{uuid.uuid4().hex}"
-    link = tmp_path / "SENTINEL-LINK-a-7c1e"
-    _symlink(final, middle)
-    _symlink(middle, link)
-    overlay = link / "overlay.json"
-    real_lstat = os.lstat
-    failed: list[str] = []
-
-    def once_failing(path, *args, **kwargs):
-        if str(path) == str(link) and not failed:
-            failed.append(str(path))
-            raise OSError(errno.EIO, "input/output error")
-        return real_lstat(path, *args, **kwargs)
-
-    try:
-        assert _refusal(module, lambda: module.load_registries(overlay)) == (
-            "private overlay must remain outside the Forge repository"
-        )
-        monkeypatch.setattr(os, "lstat", once_failing)
-        message = _refusal(module, lambda: module.load_registries(overlay))
-    finally:
-        monkeypatch.setattr(os, "lstat", real_lstat)
-        middle.unlink()
-    assert failed, "the failing lstat was never reached"
-    assert message == "private overlay path cannot be resolved"
-    _assert_no_leak(message, link, middle, final)
-
-
-def test_an_ancestor_whose_identity_cannot_be_read_refuses_the_path(module, monkeypatch, tmp_path):
-    """The identity comparison refuses, never skips, a candidate it cannot `lstat`.
-
-    Measured by the fifth Codex review on the PR head, and reproduced here
-    before the repair: for an alias of a repository directory, the alias is
-    the ONE ancestor whose identity is the repository's; one failed `lstat`
-    of it inside the comparison skipped it -- and marked it checked, so it
-    was not looked at again -- while the lexical rule passed the external
-    spelling, and the overlay was accepted. Simulated as the alias test
-    above simulates a mount: the alias directory's identity placed in the
-    set. The failure is the caller's one refusal now.
-    """
-    overlay = _write_overlay(tmp_path)
-    alias = overlay.parent
-    real = module._repository_directory_identities()
-    with_alias = real | {module._identity_of(os.lstat(alias))}
-    monkeypatch.setattr(module, "_repository_directory_identities", lambda: with_alias)
-    assert _refusal(module, lambda: module.load_registries(overlay)) == (
-        "private overlay must remain outside the Forge repository"
-    )
-    real_lstat = os.lstat
-    comparing: list[int] = []
-    original = module._inside_by_identity
-
-    def spied(location, identities, checked):
-        comparing.append(1)
-        try:
-            return original(location, identities, checked)
-        finally:
-            comparing.pop()
-
-    failed: list[str] = []
-
-    def failing_in_comparison(path, *args, **kwargs):
-        if comparing and str(path) == str(alias):
-            failed.append(str(path))
-            raise OSError(errno.EIO, "input/output error")
-        return real_lstat(path, *args, **kwargs)
-
-    monkeypatch.setattr(module, "_inside_by_identity", spied)
-    monkeypatch.setattr(os, "lstat", failing_in_comparison)
-    try:
-        message = _refusal(module, lambda: module.load_registries(overlay))
-    finally:
-        monkeypatch.setattr(os, "lstat", real_lstat)
-    assert failed, "the failing lstat was never reached"
-    assert message == "private overlay path cannot be resolved"
-    _assert_no_leak(message, overlay)
-
-
-@posix_only
-def test_nothing_beyond_an_unfollowed_link_is_consulted(module, monkeypatch, tmp_path):
-    """An unsupported link INTO the repository is refused as unfollowed, unseen.
-
-    Measured by the Codex review on the PR head: the walk stopped at the
-    unsupported link, and confinement then resolved the path THROUGH it and
-    refused it as inside -- so the link had been followed after all, by
-    resolution. Now nothing beyond the link is consulted: `Path.resolve` is
-    not called, and the refusal names the link, not what lies behind it.
-    """
-    RUNTIME.mkdir(parents=True, exist_ok=True)
-    inside = RUNTIME / f"behind-{uuid.uuid4().hex}"
-    inside.mkdir()
-    (inside / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
-    link = tmp_path / SENTINEL_DIR / "j"
-    link.parent.mkdir()
-    _symlink(inside, link)
-    marked = os.lstat(link).st_ino
-    original = module._link_kind
-    monkeypatch.setattr(module, "_link_kind",
-                        lambda info: module.UNSUPPORTED_LINK if info.st_ino == marked else original(info))
-    resolved = []
-    real_resolve = Path.resolve
-
-    def spy(self, *args, **kwargs):
-        resolved.append(str(self))
-        return real_resolve(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "resolve", spy)
-    try:
-        message = _refusal(module, lambda: module.load_registries(link / "overlay.json"))
-    finally:
-        monkeypatch.setattr(Path, "resolve", real_resolve)
-        (inside / "overlay.json").unlink()
-        inside.rmdir()
-    assert message == "private overlay path crosses a link that is not followed"
-    assert resolved == [], "resolution looked through the unfollowed link"
-    _assert_no_leak(message, link, inside)
-
-
-def _after_the_walk(module, monkeypatch, action) -> None:
-    """Run `action` once confinement has accepted the path and before the open.
-
-    After `_confine_outside` returns, the walk, the final resolution and the
-    identity comparison have all passed; the only thing left between the
-    verdict and the bytes is the identity bound on the opened descriptor.
-    """
-    original = module._confine_outside
-
-    def confine(path, *, label):
-        result = original(path, label=label)
-        action()
-        return result
-
-    monkeypatch.setattr(module, "_confine_outside", confine)
 
 
 def _in_repository_decoy() -> Path:
@@ -1637,62 +1396,8 @@ def _in_repository_decoy() -> Path:
 
 
 @posix_only
-@pytest.mark.parametrize("shape", ["directory link retargeted", "file link retargeted"])
-def test_a_link_retargeted_between_the_walk_and_the_open_is_refused(module, tmp_path, monkeypatch, shape):
-    """The bytes read are held to the object the walk judged.
-
-    Measured by the Codex review on the PR head: the path was checked, then
-    opened, and a link retargeted between the two opened a file whose
-    location nobody had judged, digest-bound faithfully. The walk now
-    records the identity of the entry it ends at, the one open is judged by
-    `fstat`, and a different object refuses.
-    """
-    directory = tmp_path / SENTINEL_DIR
-    directory.mkdir()
-    RUNTIME.mkdir(parents=True, exist_ok=True)
-    evil_dir = RUNTIME / f"evil-{uuid.uuid4().hex}"
-    evil_dir.mkdir()
-    decoy = evil_dir / "overlay.json"
-    decoy.write_text(json.dumps(_overlay_document(items=[_item(id="PRV-EVIL")])),
-                     encoding="utf-8", newline="\n")
-    good_dir = tmp_path / "good"
-    good_dir.mkdir()
-    good = good_dir / "overlay.json"
-    good.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
-    if shape == "directory link retargeted":
-        link = directory / "dirlink"
-        _symlink(good_dir, link)
-        given = link / "overlay.json"
-
-        def swap():
-            link.unlink()
-            _symlink(evil_dir, link)
-    else:
-        link = directory / "link.json"
-        _symlink(good, link)
-        given = link
-
-        def swap():
-            link.unlink()
-            _symlink(decoy, link)
-    try:
-        _after_the_walk(module, monkeypatch, swap)
-        assert given.is_file(), "the swapped chain resolves for an ordinary open"
-        try:
-            module.load_registries(given)
-        except module.AdmissionError as exc:
-            assert str(exc) == "private overlay changed during admission"
-            assert exc.__context__ is None and exc.__cause__ is None
-            _assert_no_leak(str(exc), given, decoy, good)
-        else:
-            raise AssertionError("bytes from an unjudged location were digest-bound")
-    finally:
-        decoy.unlink()
-        evil_dir.rmdir()
-
-
-@posix_only
 def test_a_file_replaced_by_an_in_repository_link_after_the_walk_is_refused(module, tmp_path, monkeypatch):
+    """A link put at the name between inspection and open is met by `O_NOFOLLOW`, not followed."""
     overlay = _write_overlay(tmp_path)
     decoy = _in_repository_decoy()
 
@@ -1701,63 +1406,57 @@ def test_a_file_replaced_by_an_in_repository_link_after_the_walk_is_refused(modu
         _symlink(decoy, overlay)
 
     try:
-        _after_the_walk(module, monkeypatch, swap)
+        fired = _between_inspection_and_open(module, monkeypatch, overlay.name, swap)
         message = _refusal(module, lambda: module.load_registries(overlay))
-        assert message == "private overlay changed during admission"
+        assert fired, "the swap never ran"
+        assert message == "private overlay path cannot be resolved"
         _assert_no_leak(message, overlay, decoy)
     finally:
         decoy.unlink()
 
 
 def test_a_file_replaced_by_another_after_the_walk_is_refused(module, tmp_path, monkeypatch):
-    """Same name, different object: the identity the walk saw is not the one opened.
+    """Same name, different object: the open relative to the held directory meets the other and refuses.
 
-    Needs no link, so it runs on every platform where identity is exposed.
+    Needs no link, so it runs on every platform with the handle backend.
     """
     overlay = _write_overlay(tmp_path)
     other = _write_overlay(tmp_path, _overlay_document(items=[_item(id="PRV-OTHER")]), name="other.json")
-    _after_the_walk(module, monkeypatch, lambda: os.replace(other, overlay))
+    fired = _between_inspection_and_open(module, monkeypatch, overlay.name, lambda: os.replace(other, overlay))
     message = _refusal(module, lambda: module.load_registries(overlay))
+    assert fired, "the swap never ran"
     assert message == "private overlay changed during admission"
     _assert_no_leak(message, overlay, other)
 
 
 def test_a_file_that_appears_only_after_the_walk_is_refused(module, tmp_path, monkeypatch):
-    """Nothing was seen at the path when it was judged; nothing is bound.
+    """Nothing at the name when it was inspected: refused there, and nothing that appears later is consulted.
 
-    For the overlay the walk itself refuses a component it cannot inspect
-    (measured by the fifth Codex review), so a path with nothing at it is
-    refused before anything could appear there, and a file written after the
-    judgment is never consulted. For the disposition, whose absence `--init`
-    expects, the judgment records no identity, and a file that appears
-    between the judgment and the open is refused at the open.
+    The same holds for the disposition: an absent one is refused at its
+    inspection, before any open, so a file written after that inspection is
+    never read.
     """
     directory = tmp_path / SENTINEL_DIR
     directory.mkdir()
     overlay = directory / "overlay.json"
-    _after_the_walk(module, monkeypatch, lambda: overlay.write_text(
+    fired = _between_inspection_and_open(module, monkeypatch, overlay.name, lambda: overlay.write_text(
         json.dumps(_overlay_document()), encoding="utf-8", newline="\n"))
     message = _refusal(module, lambda: module.load_registries(overlay))
     assert message == "private overlay path cannot be resolved"
-    assert not overlay.exists(), "a path with nothing at it was accepted"
+    assert not fired and not overlay.exists(), "an absent entry was stepped past"
     _assert_no_leak(message, overlay)
 
     registries = module.load_registries(None)
     with _runtime_disposition() as path:
-        original = module._require_runtime_file
-        appeared: list[Path] = []
 
-        def require(candidate, *, label):
-            result = original(candidate, label=label)
-            if not appeared:
-                appeared.append(candidate)
-                module.initialize_disposition(path, cycle_id="TEST", registries=registries)
-                _complete(path, module, registries)
-            return result
+        def appear():
+            module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+            _complete(path, module, registries)
 
-        monkeypatch.setattr(module, "_require_runtime_file", require)
+        fired = _between_inspection_and_open(module, monkeypatch, path.name, appear)
         message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
-        assert message == "cycle disposition identity cannot be established"
+        assert message == "cycle disposition cannot be read"
+        assert not fired and not path.exists()
 
 
 def test_the_disposition_read_is_bound_to_the_judged_object_too(module, tmp_path, monkeypatch):
@@ -1767,15 +1466,9 @@ def test_the_disposition_read_is_bound_to_the_judged_object_too(module, tmp_path
         _complete(path, module, registries)
         replacement = tmp_path / "replacement.json"
         replacement.write_bytes(path.read_bytes())
-        original = module._require_runtime_file
-
-        def require(candidate, *, label):
-            result = original(candidate, label=label)
-            os.replace(replacement, path)
-            return result
-
-        monkeypatch.setattr(module, "_require_runtime_file", require)
+        fired = _between_inspection_and_open(module, monkeypatch, path.name, lambda: os.replace(replacement, path))
         message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        assert fired, "the swap never ran"
         assert message == "cycle disposition changed during admission"
 
 
@@ -1953,6 +1646,399 @@ def test_a_mechanically_written_or_reused_disposition_passes_and_the_documents_s
 
 
 # ---------------------------------------------------------------------------
+# Closures from the sixth Codex review: held descriptors, and no second lookup
+# ---------------------------------------------------------------------------
+
+
+@posix_only
+def test_every_lookup_in_a_judgment_is_relative_to_a_held_directory(module, monkeypatch, tmp_path):
+    """No pathname is looked up twice: after the anchors, every `stat` and `open` is relative to a held directory.
+
+    The property the sixth Codex review measured as absent from the pathname
+    walk. The only absolute lookups a judgment makes are its anchors -- the
+    filesystem root, the repository root (bound to the running checker by
+    identity) and the checker's own file; everything else is relative to a
+    descriptor already held, so a swap under a name already inspected
+    changes nothing the judgment will look at.
+    """
+    overlay = _write_overlay(tmp_path)
+    anchors = {os.sep, str(module.ROOT), str(module.__file__)}
+    absolute: list[tuple[str, str]] = []
+    watching: list[int] = []
+    real_stat, real_open = os.stat, os.open
+
+    def stat(path, *args, **kwargs):
+        if watching and kwargs.get("dir_fd") is None and str(path) not in anchors:
+            absolute.append(("stat", str(path)))
+        return real_stat(path, *args, **kwargs)
+
+    def open_(path, flags, *args, **kwargs):
+        if watching and kwargs.get("dir_fd") is None and str(path) not in anchors:
+            absolute.append(("open", str(path)))
+        return real_open(path, flags, *args, **kwargs)
+
+    def judged(call):
+        watching.append(1)
+        try:
+            return call()
+        finally:
+            watching.pop()
+
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(os, "open", open_)
+    try:
+        registries = judged(lambda: module.load_registries(overlay))
+        with _runtime_disposition() as path:
+            judged(lambda: module.initialize_disposition(path, cycle_id="TEST", registries=registries))
+            _complete(path, module, registries)
+            judged(lambda: module.validate_disposition(path, registries=registries))
+    finally:
+        monkeypatch.setattr(os, "stat", real_stat)
+        monkeypatch.setattr(os, "open", real_open)
+    assert absolute == [], absolute
+
+
+@posix_only
+@pytest.mark.parametrize("shape", ["directory component", "final file"])
+def test_a_plain_entry_swapped_for_a_link_between_inspection_and_open_is_refused(
+    module, tmp_path, monkeypatch, shape
+):
+    """The open is relative to the held directory and never follows: a link swapped in is met as a link.
+
+    Measured by the sixth Codex review on the PR head, against the pathname
+    walk: a plain directory inspected, then swapped for `outside/a ->
+    repo/.nornyx/runtime/middle -> outside/final` before the next lookup,
+    was followed by that lookup, and the overlay was accepted with the
+    in-repository hop never judged. Here the same swap meets `O_NOFOLLOW` on
+    the open that follows the inspection, relative to the directory already
+    held, and the judgment refuses without consulting the link.
+    """
+    directory = tmp_path / SENTINEL_DIR
+    directory.mkdir()
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    final = tmp_path / "final"
+    final.mkdir()
+    (final / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+    middle = RUNTIME / f"middle-{uuid.uuid4().hex}"
+    _symlink(final, middle)
+    if shape == "directory component":
+        plain = directory / "a"
+        plain.mkdir()
+        (plain / "overlay.json").write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+        given = plain / "overlay.json"
+
+        def swap():
+            os.rename(plain, directory / "a-moved")
+            _symlink(middle, plain)
+    else:
+        plain = directory / "overlay.json"
+        plain.write_text(json.dumps(_overlay_document()), encoding="utf-8", newline="\n")
+        given = plain
+
+        def swap():
+            plain.unlink()
+            _symlink(middle / "overlay.json", plain)
+    try:
+        fired = _between_inspection_and_open(module, monkeypatch, plain.name, swap)
+        try:
+            module.load_registries(given)
+        except module.AdmissionError as exc:
+            assert fired, "the swap never ran"
+            assert str(exc) == "private overlay path cannot be resolved"
+            assert exc.__context__ is None and exc.__cause__ is None
+            _assert_no_leak(str(exc), given, middle, final)
+        else:
+            raise AssertionError("a chain through the repository was followed")
+    finally:
+        middle.unlink()
+
+
+@posix_only
+def test_a_component_that_cannot_be_inspected_refuses_the_path(module, monkeypatch, tmp_path):
+    """A failed inspection is a refusal, not a component stepped past.
+
+    Measured by the fifth Codex review against the pathname walk, and held
+    over the descriptor walk too: one failed `stat` of a component, relative
+    to the held directory, refuses the whole judgment with the one sentence,
+    and nothing after it is looked at.
+    """
+    overlay = _write_overlay(tmp_path)
+    real_stat = os.stat
+    failed: list[str] = []
+
+    def once_failing(path, *args, **kwargs):
+        if kwargs.get("dir_fd") is not None and path == SENTINEL_DIR and not failed:
+            failed.append(path)
+            raise OSError(errno.EIO, "input/output error")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", once_failing)
+    try:
+        message = _refusal(module, lambda: module.load_registries(overlay))
+    finally:
+        monkeypatch.setattr(os, "stat", real_stat)
+    assert failed, "the failing inspection was never reached"
+    assert message == "private overlay path cannot be resolved"
+    _assert_no_leak(message, overlay)
+
+
+@posix_only
+def test_a_queued_directory_swapped_for_a_link_before_its_scan_is_refused(module, monkeypatch, tmp_path):
+    """The traversal opens each directory relative to its parent, without following, before it lists it.
+
+    Measured by the sixth Codex review on the PR head: a repository directory
+    swapped for a symlink to an external tree after it was queued and before
+    it was scanned was followed by `scandir`; the external tree's identities
+    entered the repository set, and a legitimate external overlay beneath it
+    was refused as inside. Here the open that precedes the scan meets the
+    link, and the whole judgment refuses.
+    """
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    marked = RUNTIME / f"marked-{uuid.uuid4().hex}"
+    marked.mkdir()
+    external = tmp_path / "external"
+    (external / "child").mkdir(parents=True)
+    real_open = os.open
+    swapped: list[str] = []
+
+    def racing_open(path, flags, *args, **kwargs):
+        if path == marked.name and kwargs.get("dir_fd") is not None and not swapped:
+            swapped.append(path)
+            marked.rmdir()
+            _symlink(external, marked)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", racing_open)
+    try:
+        with _root(module) as root:
+            message = _refusal(module, lambda: module._repository_directory_identities(root))
+    finally:
+        monkeypatch.setattr(os, "open", real_open)
+        if marked.is_symlink():
+            marked.unlink()
+        else:
+            marked.rmdir()
+    assert swapped, "the swap never ran"
+    assert message == "repository directories cannot be judged by identity"
+    _assert_no_leak(message, marked, external)
+
+
+def test_the_disposition_is_created_exclusively_and_never_through_a_link(module, monkeypatch, tmp_path):
+    """Exclusive create relative to a held parent: no truncation, no write through a link.
+
+    Measured by the sixth Codex review on the PR head: a check followed by a
+    truncating write let a second initializer overwrite the first cycle's
+    disposition, and a parent swapped to a symlink after the runtime
+    judgment put the disposition outside the runtime root. Here the create
+    is `O_CREAT | O_EXCL | O_NOFOLLOW`: the second initializer refuses and
+    the first file survives; and a parent swapped for a link after it was
+    held is not written through -- the file goes into the directory that was
+    held, wherever that directory is now named, never through the link.
+    """
+    registries = module.load_registries(None)
+    with _runtime_disposition() as path:
+        original = module._refuse_existing
+        raced: list[str] = []
+
+        def racing(handle, name, *, label):
+            original(handle, name, label=label)
+            if not raced:
+                raced.append(name)
+                path.write_text('{"first": "cycle"}\n', encoding="utf-8", newline="\n")
+
+        monkeypatch.setattr(module, "_refuse_existing", racing)
+        message = _refusal(module, lambda: module.initialize_disposition(
+            path, cycle_id="TEST", registries=registries))
+        monkeypatch.setattr(module, "_refuse_existing", original)
+        assert raced, "the race never ran"
+        assert message == "cycle disposition already exists; remove it to start a new cycle"
+        assert path.read_text(encoding="utf-8") == '{"first": "cycle"}\n', "the first cycle was truncated"
+    if os.name != "posix":
+        return
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    parent = RUNTIME / f"parent-{uuid.uuid4().hex}"
+    elsewhere = RUNTIME / f"elsewhere-{uuid.uuid4().hex}"
+    elsewhere.mkdir()
+    output = parent / "disposition.json"
+    held = module._hold_below
+    swapped: list[str] = []
+
+    def swapping(handle, names, *, label, create=False):
+        descriptor = held(handle, names, label=label, create=create)
+        if names and names[-1] == parent.name and not swapped:
+            swapped.append(parent.name)
+            os.rename(parent, elsewhere / "moved")
+            _symlink(elsewhere, parent)
+        return descriptor
+
+    monkeypatch.setattr(module, "_hold_below", swapping)
+    try:
+        module.initialize_disposition(output, cycle_id="TEST", registries=registries)
+        assert swapped, "the swap never ran"
+        assert not (elsewhere / "disposition.json").exists(), "the write went through the link"
+        assert (elsewhere / "moved" / "disposition.json").exists(), "the file is not in the directory held"
+    finally:
+        monkeypatch.setattr(module, "_hold_below", held)
+        if parent.is_symlink():
+            parent.unlink()
+        elif parent.exists():
+            parent.rmdir()
+        for entry in sorted(elsewhere.rglob("*"), reverse=True):
+            entry.unlink() if entry.is_file() else entry.rmdir()
+        elsewhere.rmdir()
+
+
+@posix_only
+def test_a_hard_linked_overlay_is_refused(module, tmp_path):
+    """A regular file with more than one name is refused: the object is judged, not the name it was handed by.
+
+    A hard link gives one object a name outside the tree and, possibly, one
+    inside it; no path rule and no directory identity can see the other
+    name, so the object is refused for having one. The in-repository shape
+    can be built only where the temporary directory shares a filesystem
+    with the checkout; where it does not, the outside shape holds the rule.
+    """
+    overlay = _write_overlay(tmp_path)
+    other = overlay.parent / "other-name.json"
+    os.link(overlay, other)
+    try:
+        message = _refusal(module, lambda: module.load_registries(overlay))
+        assert message == "private overlay has more than one name"
+        _assert_no_leak(message, overlay, other)
+    finally:
+        other.unlink()
+    assert module.load_registries(overlay).private_digest is not None
+    decoy = _in_repository_decoy()
+    alias = overlay.parent / "alias.json"
+    try:
+        try:
+            os.link(decoy, alias)
+        except OSError:
+            return
+        message = _refusal(module, lambda: module.load_registries(alias))
+        assert message == "private overlay has more than one name"
+        _assert_no_leak(message, alias, decoy)
+    finally:
+        decoy.unlink()
+        if alias.exists():
+            alias.unlink()
+
+
+@posix_only
+def test_a_link_is_refused_where_it_sits_and_nothing_beyond_it_is_consulted(module, monkeypatch, tmp_path):
+    """Inside the tree a link is refused for sitting there; outside it, for being a link; its target is never read.
+
+    Nothing is followed: `os.readlink` and `Path.resolve` are never called
+    during a judgment, so what a link points at is not consulted, not even
+    to refuse it.
+    """
+    outside = _write_overlay(tmp_path)
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    inside_link = RUNTIME / f"link-{uuid.uuid4().hex}.json"
+    _symlink(outside, inside_link)
+    decoy = _in_repository_decoy()
+    outside_link = tmp_path / SENTINEL_DIR / "link.json"
+    _symlink(decoy, outside_link)
+    consulted: list[tuple[str, str]] = []
+    real_resolve, real_readlink = Path.resolve, os.readlink
+
+    def resolve(self, *args, **kwargs):
+        consulted.append(("resolve", str(self)))
+        return real_resolve(self, *args, **kwargs)
+
+    def readlink(path, *args, **kwargs):
+        consulted.append(("readlink", str(path)))
+        return real_readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    monkeypatch.setattr(os, "readlink", readlink)
+    try:
+        first = _refusal(module, lambda: module.load_registries(inside_link))
+        second = _refusal(module, lambda: module.load_registries(outside_link))
+        assert module.load_registries(outside).private_digest is not None
+    finally:
+        monkeypatch.setattr(Path, "resolve", real_resolve)
+        monkeypatch.setattr(os, "readlink", real_readlink)
+        inside_link.unlink()
+        decoy.unlink()
+    assert first == "private overlay must remain outside the Forge repository"
+    assert second == "private overlay path crosses a link that is not followed"
+    assert consulted == [], consulted
+    _assert_no_leak(first + second, inside_link, outside_link, decoy)
+
+
+def test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands(
+    module, monkeypatch, tmp_path
+):
+    """Where no handle-based judgment exists, the overlay is refused outright; the public cycle still runs.
+
+    A pathname inspected and then used again is a race the sixth Codex review
+    measured. Rather than admit an overlay over it, a platform without
+    `openat`, `O_NOFOLLOW` and `scandir` on a handle refuses the overlay with
+    a sentence that names the platform and nothing else -- whatever the
+    path's shape -- until a separately reviewed HANDLE-based backend exists.
+    Public-registry admission stays: init, complete, check, with the
+    disposition created exclusively by pathname.
+    """
+    monkeypatch.setattr(module, "HANDLE_BACKEND", False)
+    overlay = _write_overlay(tmp_path)
+    message = _refusal(module, lambda: module.load_registries(overlay))
+    assert message == "private overlay is not admitted on this platform without a handle-based backend"
+    _assert_no_leak(message, overlay)
+    assert _refusal(module, lambda: module.load_registries(tmp_path / "SENTINEL-ABSENT.json")) == message
+    registries = module.load_registries(None)
+    assert registries.private_digest is None
+    with _runtime_disposition() as path:
+        module.initialize_disposition(path, cycle_id="TEST", registries=registries)
+        again = _refusal(module, lambda: module.initialize_disposition(
+            path, cycle_id="TEST", registries=registries))
+        assert again == "cycle disposition already exists; remove it to start a new cycle"
+        _complete(path, module, registries)
+        assert module.validate_disposition(path, registries=registries) == (len(registries.public_items), 0)
+    if os.name != "posix":
+        return
+    RUNTIME.mkdir(parents=True, exist_ok=True)
+    link = RUNTIME / f"link-{uuid.uuid4().hex}.json"
+    _symlink(tmp_path / "elsewhere.json", link)
+    try:
+        refused = _refusal(module, lambda: module.initialize_disposition(
+            link, cycle_id="TEST", registries=registries))
+        assert refused == "cycle disposition path crosses a link that is not followed"
+        assert not (tmp_path / "elsewhere.json").exists()
+    finally:
+        link.unlink()
+
+
+def test_the_identity_snapshot_is_taken_for_every_judgment(module, monkeypatch, tmp_path):
+    """No identity set outlives the judgment it was taken for: two judgments, two traversals."""
+    overlay = _write_overlay(tmp_path)
+    taken: list[int] = []
+    real = module._repository_directory_identities
+
+    def counting(root):
+        taken.append(root)
+        return real(root)
+
+    monkeypatch.setattr(module, "_repository_directory_identities", counting)
+    module.load_registries(overlay)
+    module.load_registries(overlay)
+    assert len(taken) == 2
+
+
+@posix_only
+def test_the_repository_root_handle_is_bound_to_the_running_checker(module, monkeypatch, tmp_path):
+    """The root handle is refused unless the directory it holds contains the checker that is running."""
+    with _root(module) as root:
+        assert module._identity_of(os.fstat(root)) == module._identity_of(os.lstat(ROOT))
+    elsewhere = tmp_path / "elsewhere.py"
+    elsewhere.write_text("# not the checker\n", encoding="utf-8")
+    monkeypatch.setattr(module, "__file__", str(elsewhere))
+    assert _refusal(module, module._open_repository_root) == "repository root cannot be established"
+    monkeypatch.setattr(module, "_OWN_SCRIPT", ("scripts", "SENTINEL-ABSENT-CHECKER.py"))
+    assert _refusal(module, module._open_repository_root) == "repository root cannot be established"
+
+
+# ---------------------------------------------------------------------------
 # Structural: what the checker source may and may not do
 # ---------------------------------------------------------------------------
 
@@ -1988,21 +2074,33 @@ def test_the_checker_reads_no_environment_and_scans_no_directory():
                      if isinstance(node, ast.FunctionDef)
                      and node.name == "_repository_directory_identities")
     inside_traversal = {id(node) for node in ast.walk(traversal)}
+    capability = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == "HANDLE_BACKEND"
+                              for target in node.targets))
+    inside_capability = {id(node) for node in ast.walk(capability)}
     offenders = []
     allowed_scans = 0
+    named_capabilities = 0
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRIBUTES:
             # The ONE directory traversal, of the repository's own tree for
             # its directories' identities, lives in that one function and
-            # nowhere else; it opens no file and selects nothing.
+            # nowhere else; it opens no file and selects nothing. The only
+            # other spelling of `scandir` is the platform capability check,
+            # which asks whether it works on a descriptor and calls nothing.
             if node.attr == "scandir" and id(node) in inside_traversal:
                 allowed_scans += 1
+                continue
+            if node.attr == "scandir" and id(node) in inside_capability:
+                named_capabilities += 1
                 continue
             offenders.append(f"{node.attr} at line {node.lineno}")
         if isinstance(node, ast.Name) and node.id in FORBIDDEN_ATTRIBUTES:
             offenders.append(f"{node.id} at line {node.lineno}")
     assert offenders == [], f"the checker can discover an overlay through: {offenders}"
     assert allowed_scans == 1, "the identity traversal is one scandir in one function"
+    assert named_capabilities == 1, "the capability check names scandir once and calls it never"
 
 
 def test_the_checker_imports_only_the_standard_library_allowlist():
@@ -2107,7 +2205,7 @@ def test_every_refusal_is_composed_from_labels_and_indexes_only():
                 if exc.func.id in REFUSAL_BUILDERS or exc.func.id == "AdmissionError":
                     continue  # judged above as a Call
             if isinstance(exc, ast.Call) and isinstance(exc.func, ast.Name) and exc.func.id in (
-                "SystemExit", "_DuplicateKey", "_ScanBound"
+                "SystemExit", "_DuplicateKey", "_ScanBound", "_Swapped"
             ):
                 continue  # internal signals, caught inside the module; none carries input
             offenders.append(f"raise of an unreviewed shape at line {node.lineno}")

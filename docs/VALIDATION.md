@@ -666,36 +666,46 @@ and field sets are closed; `pending`, `requires_decision`, an out-of-vocabulary
 word and a `defer` on an active item all refuse; an overlay is read only from
 `--overlay` (decoys planted in the working directory, the home directory and
 four environment variables are never read); an overlay path inside this
-repository is refused as given, at every component and link the walk passes
-through, and after resolution, judged lexically and by file identity against
+repository is refused as given and at every component of it, judged
+lexically and, for every directory the walk holds, by file identity against
 every directory of the repository (an in-repository path is refused with the
-name comparison switched off; a symlink target spelled with a double leading
-slash -- outside to every walked component on the merged head -- refuses; an
-alias whose directory identity is a repository directory's -- the shape of a
-bind mount or mapped drive rooted below the root, measured to admit an
-in-repository overlay through a real bind mount before every directory was
-compared -- refuses; the traversal that learns those identities follows no
-link, scans each directory once whatever its aliases -- three bind mounts of
-`docs/` measured to add twelve scans and no identity before -- and refuses
-past its bound and on any entry it cannot `lstat`, measured before to leave a
-directory out of the set and admit an in-repository overlay through a bind
-mount of it; and the walk and the identity comparison refuse a component or
-a candidate they cannot `lstat`, measured before to step past an
-in-repository link whose first `lstat` failed and to skip the one alias
-ancestor whose identity was the repository's); nothing beyond an unfollowed link is
-consulted, not even by resolution, pinned by a spy on `Path.resolve`;
-every component is classified from its `lstat` and every reparse point that
-is not a symlink refuses, a junction, a cloud placeholder and an entry whose
-tag the platform does not expose included, with real directory junctions
-built and refused in the windows-runtime job by
-`tests/test_standing_obligations_windows.py`; the bytes read are the object
-the walk judged -- a directory link or file link retargeted, a file replaced
-by an in-repository link, and a file replaced by another of a different
-identity all refuse between the walk and the one open, for the disposition
-as for the overlay; an overlay path with nothing at it is refused by the walk
-itself, so a file that appears only afterwards is never consulted, and a
-disposition that appears between its judgment (which expects absence, for
-`--init`) and the open is refused at the open; every content refusal
+name comparison switched off; an in-repository path spelled with a double
+leading slash refuses; an alias whose directory identity is a repository
+directory's -- the shape of a bind mount or mapped drive rooted below the
+root, measured to admit an in-repository overlay through a real bind mount
+before every directory was compared -- refuses); the walk is made through
+held descriptors and never by a second pathname lookup -- after the two
+anchors, every `stat` and `open` a judgment makes is relative to a
+descriptor it holds, pinned by a spy over a whole init-and-check cycle --
+so a plain entry swapped for a link between being looked at and being opened,
+the shape the sixth external review measured as followed by the pathname
+walk, refuses at the open, and a component that cannot be looked at refuses
+the whole judgment; no link of any kind is followed: a link outside the
+tree pointing in, a link inside pointing out, a chain that hops through the
+tree, a directory link on the way and a loop are all refused for the first
+link met, with `os.readlink` and `Path.resolve` never called during a
+judgment, pinned by spies; the identity traversal lists each repository
+directory from its handle and opens each child relative to it without
+following, so a queued directory swapped for a link before its scan refuses
+the run rather than listing through the link, it scans each directory once
+whatever its aliases -- three bind mounts of `docs/` measured to add twelve
+scans and no identity before -- and refuses past its bound and on any entry
+it cannot look at, and its snapshot is taken for every judgment and cached
+for none; the bytes read are the descriptor the walk opened -- a file
+replaced by an in-repository link, a file replaced by another of a different
+identity, and a disposition replaced between being looked at and being opened all
+refuse, an overlay or disposition absent when looked at is refused there
+so nothing that appears afterwards is consulted, and a regular file with
+more than one name is refused; the disposition is created exclusively,
+relative to a parent reached from the root handle without following a link,
+so a second initializer refuses with the first cycle's file intact and a
+parent swapped for a link after it was held is never written through; the
+root handle is refused unless the directory it holds contains the checker
+that is running; and where no handle backend exists a private overlay is
+refused outright with one sentence, whatever the path's shape, while the
+public cycle still runs -- switched into on every platform by test, and held
+on Windows itself, with real junctions built and never walked, in the
+windows-runtime job by `tests/test_standing_obligations_windows.py`; every content refusal
 about a private overlay is one sentence, byte-identical on stderr for a
 defect at index 0 or 42, in the seventh of seven items, at position 299 of
 300, nested three deep, oversized, nested past the parser, or invalid UTF-8,
@@ -719,8 +729,9 @@ Not claimed: that anyone runs the check; that anyone read an item; that the
 overlay content; that an identifier an overlay author chose is not itself
 telling; that a commit cannot change the checker or the registry (both are
 governed inputs, so such a change moves the evidence digest, and no more);
-that a hard link, a same-identity rewrite or an alias of a single file is
-seen; that a junction is followed rather than refused; or
+that a same-identity rewrite or an alias of a single file made by a bind
+mount is seen; that any link is followed rather than refused; that a private
+overlay is judged at all where no handle backend exists; or
 that the root `AGENTS.md`, which is outside the governed input set, is bound by
 any digest. Passing admission is not approval, not merge or release authority,
 and not evidence about any other gate.

@@ -105,62 +105,66 @@ not:
   no scan of the working directory or the home directory. The only route is
   `--overlay`, given once: a repeated option is refused rather than last
   wins. The one traversal the checker performs is of the repository's own
-  directories, for their identities (below): it follows no link, opens no
+  directories, for their identities (below), through descriptors: each
+  directory is listed from its handle and each child directory is opened
+  relative to it without following a link. It follows no link, opens no
   file, reads no name into any output and selects nothing; it scans each
   directory once, whatever else the directory is called; and when any entry
-  cannot be judged it refuses the run rather than judging from a partial set.
+  cannot be judged, or is not the entry looked at a moment before, it
+  refuses the run rather than judging from a partial set.
   `tests/test_standing_development_obligations.py` plants decoys on
   every such route and holds that none is read; a structural lint over the
   checker's source refuses the obvious spellings, allows that one traversal
   in that one function and nowhere else, and is a lint, not a proof.
-- **Outside the repository, at every step.** An overlay path that names
-  anything inside this repository is refused: the path as given after
-  lexical normalisation, every component the walk reaches, every link it
-  follows, and its final resolution. The walk judges each component by
-  `lstat` where it sits. A symlink -- file or directory, first hop or third
-  -- is judged at its own location and then followed one hop, so a link
-  inside the tree pointing out, a path outside the tree resolving in, a
-  chain that merely hops through the tree, and a directory link that hops
-  through the tree are all refused. Any other reparse point -- a Windows
-  directory junction, a mount point, a cloud placeholder, an entry whose
-  reparse tag the platform does not expose -- is refused rather than
-  followed, wherever it sits and wherever it leads: the checker does not
-  claim to know where such a link goes, so an uninspectable state fails
-  closed, and nothing beyond such a link is consulted, not even by
-  resolution -- a chain the walk stops at is judged as far as it was walked
-  and refused for the link. A component the walk cannot `lstat` is not
-  stepped past, and an ancestor whose identity cannot be read is not
-  skipped: either refuses the judgment, because a link that goes unjudged
-  when one `lstat` fails is a link into the tree that nobody looked at.
-  `tests/test_standing_obligations_windows.py` builds real
-  junctions in the windows-runtime CI job and holds the refusal on the
-  platform it concerns; a Windows symlink target is judged only behind a
-  drive letter, and a share, volume-GUID, device or NT-namespace spelling
-  of a target is refused rather than judged.
+- **Outside the repository, at every component, judged through held
+  descriptors.** An overlay path that names anything inside this repository
+  is refused: the path as given after lexical normalisation, and every
+  component of it. Where the handle backend exists (POSIX) the walk starts
+  at the filesystem root and, for each component, judges its spelling
+  against the repository root, looks at it relative to the directory
+  already held without following a link, refuses it if it is a link of any
+  kind, opens it relative to the held directory without following, refuses
+  it unless it is the very entry just inspected, and compares the directory
+  now held by identity against every directory of the repository. No link
+  is followed, wherever it points: a link inside the tree pointing out, a
+  link outside the tree pointing in, a chain that hops through the tree and
+  a loop are all refused for the first link met, and what a link points at
+  is never consulted, not even to refuse it. No pathname is looked up
+  twice: after the two anchors -- the filesystem root, and the repository
+  root, which is held only once the directory contains the checker that is
+  running -- every `stat` and `open` a judgment makes is relative to a
+  descriptor it holds, so a component swapped between the moment it is looked at
+  and the next lookup, the shape the sixth external review measured as followed by
+  the pathname walk, meets `O_NOFOLLOW` on the open and is refused.
+  `Path.resolve` takes part in no security decision. Where no handle
+  backend exists -- Windows, whose `os` has no `openat`, no `O_NOFOLLOW`
+  and no `scandir` on a handle -- a private overlay is refused outright,
+  with one sentence, whatever the path's shape;
+  `tests/test_standing_obligations_windows.py` holds that in the
+  windows-runtime CI job, with real junctions built and never walked.
 - **Judged by identity as well as by name.** One directory has several
-  spellings: `\\?\C:\...`, a mapped or substituted drive letter or an
-  administrative share on Windows, a bind mount or a double leading slash on
-  POSIX. Beside the lexical comparison, every walked location and the final
-  resolution are compared by file identity -- device and inode, volume
-  serial and file index on Windows -- against every directory of the
-  repository, so an alternate spelling of the repository, or of any
+  spellings: a bind mount or a double leading slash on POSIX, `\\?\C:\...`,
+  a mapped or substituted drive letter or an administrative share on
+  Windows. Beside the lexical comparison, every directory the walk holds is
+  compared by file identity -- device and inode -- against every directory
+  of the repository, so an alternate spelling of the repository, or of any
   directory below its root, is still the repository. Comparing against the
   root alone was not enough: an alias rooted at a subdirectory has that
   directory's identity at its mount point and external identities above it,
   and a real bind mount of `.nornyx/runtime` was measured to admit an
   in-repository overlay before every directory was compared. The identities
-  are judged by `lstat`, so no link is followed for them. Where the platform
-  exposes no identity, nothing is claimed and the lexical rule stands alone.
-  A hard link, and an alias of a single file, are outside what either rule
-  can see; see the limitations.
-- **The bytes read are the object that was judged.** The walk records the
-  identity of the entry it ends at; the file is then opened once, judged by
-  `fstat` on that descriptor, read within a size bound, and digested from
-  the bytes that were parsed. Unless the opened object is the very entry the
-  walk ended at, the read is refused as changed during admission: a link
-  retargeted, a file replaced or a path swapped between the walk and the
-  open reaches a different object, and is not read. A FIFO is refused
-  rather than read.
+  are gathered through descriptors with no link followed, and the set is
+  taken fresh for every judgment: no snapshot outlives the judgment it was
+  taken for. Where the platform exposes no identity, nothing is claimed and
+  the lexical rule stands alone. An alias of a single file made by a bind
+  mount is outside what either rule can see; see the limitations.
+- **The bytes read are the object that was judged.** The final component
+  is opened relative to the last held directory without following a link,
+  refused unless it is the entry just looked at, and the descriptor so
+  opened is the only object read: `fstat` on it, a bounded read from it,
+  and the digest from the very bytes that were parsed. A regular file with
+  more than one name -- a hard link -- is refused: the checker judges the
+  object, not the name it was handed by. A FIFO is refused rather than read.
 - **Not emitted, and refused without detail.** No refusal names a value, a
   key, a path or a byte from the overlay. A refusal about the overlay's
   CONTENT is one sentence -- the overlay is not valid, and no detail is
@@ -171,7 +175,8 @@ not:
   size class, field, value or position of the private document is
   summarised. A refusal about the overlay's PATH says where the rule was
   broken -- inside the repository, unreadable, unresolvable, a link not
-  followed, changed during admission -- and never what the path is. The
+  followed, changed during admission, more than one name, not admitted on
+  this platform -- and never what the path is. The
   loaders raise their refusal outside the handler that caught the
   underlying error, so the refusal carries no `__context__` at all. The
   PASS output states that an overlay was supplied, and nothing else about
@@ -282,13 +287,13 @@ developer's obligation, not a measurement.
 - **A shadowed interpreter environment is out of scope.** The checker is run
   with whatever Python and `scripts/` directory the caller has; a hostile
   module placed beside it is the same trust as the checker itself.
-- **A hard link, or an alias of a single file, is invisible to a path rule
-  and to identity.** A file outside the tree that is a hard link to a file
-  inside it, or a bind mount of that one file, is accepted, because nothing
-  about its path names the tree and no directory of the tree is among its
-  ancestors. The checker judges paths, links and the identity of
-  directories, not the other names a file may have; a caller who hard-links
-  or mounts an overlay into a checkout has placed it there.
+- **A hard link is refused; an alias of a single file made by a bind mount
+  is not seen.** A regular file with more than one name is refused whichever
+  name it is given by, so an overlay hard-linked into a checkout is refused
+  rather than read, and a legitimately hard-linked overlay is refused too.
+  A bind mount of a single file keeps one name and one identity and is
+  outside what a path rule or a directory identity can see; a caller who
+  mounts an overlay into a checkout has placed it there.
 - **The identity traversal is bounded, and fails closed.** A repository with
   more than the bound's number of directories is refused rather than judged
   partially, so a very large checkout needs the bound raised, visibly, in
@@ -297,15 +302,35 @@ developer's obligation, not a measurement.
   traversal cannot `lstat` -- a transient filesystem error, an entry renamed
   under it, a name too long to reach -- refuses the run for the same reason:
   a directory left out of the set is one an alias could reach unjudged, so
-  the run is repeated rather than judged from a partial set.
+  the run is repeated rather than judged from a partial set. Each directory
+  is opened relative to its parent without following a link and refused
+  unless it is the entry looked at, so a directory swapped for a link before
+  its scan refuses the run rather than being listed through the link.
 - **The identity bound sees a different object, not a different content.**
   A replacement that keeps the same device and inode -- a file rewritten in
   place between the walk and the open -- is the same object to every
   platform and is read. The digest still binds the bytes that were read.
-- **A junction is refused, not judged.** A legitimate overlay reached
-  through a Windows junction, a mount point or a cloud-placeholder file is
-  refused with the same sentence as a hostile one; the caller places the
-  file where no such link is on its path.
+- **A symlink anywhere on an overlay's path is refused.** Nothing is
+  followed, so an overlay reached through a symlinked directory -- `/tmp` on
+  macOS, a linked home -- must be given by a path with no link on it. The
+  refusal names the link, and not the path or what it points at.
+- **On Windows the private overlay is refused, not judged.** Windows has no
+  handle-relative lookups in `os`, and the pathname walk that stood in for
+  them was measured to follow a component swapped between being looked at
+  and being used. Rather than admit an overlay over that race, the checker refuses
+  `--overlay` on that platform with one sentence, whatever the path's
+  shape, until a separately reviewed HANDLE-based backend exists.
+  Public-registry admission stays available there: the disposition is
+  created by pathname under an exclusive create, which refuses a second
+  initializer and a link at the name, and the gap between inspecting that
+  pathname and creating under it is the platform's remaining race.
+- **A held directory that is renamed stays the directory that was judged.**
+  The disposition is created relative to the directory held, which was
+  reached from the repository root without following a link. A directory
+  renamed after it was held keeps its identity, so the file is created in it
+  wherever it is then named, and never through a link put in its old place;
+  a caller who moves a directory of `.nornyx/runtime` out of the checkout
+  mid-run has moved the judged object.
 - **The disposition binds the registry and the overlay, not the checker.** A
   change to the checker's own bytes does not stale a disposition; a checker
   cannot meaningfully certify itself. Its change is visible through the

@@ -28,36 +28,42 @@ environment variable, no directory scan and no search of the working
 directory or the home directory: the only way an overlay reaches this script
 is the `--overlay` argument.
 
-WHERE AN OVERLAY MAY LIVE. Outside this repository at every step: the path as
-given, every component the walk reaches, every link it follows, and the final
-resolution. The walk judges each component by `lstat` where it sits. A
-symlink is followed one hop at a time and judged at its own location; any
-other reparse point -- a Windows directory junction, a mount point, a cloud
-placeholder, anything the platform flags as a reparse point that is not a
-symlink -- is refused rather than followed, because this script does not
-claim to know where such a link leads; nothing beyond such a link is
-consulted, not even by resolution. Beside the lexical comparison, every
-walked location and the final resolution are compared BY IDENTITY (device and
-inode; volume serial and file index on Windows) against EVERY directory of
-the repository, so another spelling of the same directory -- `\\?\C:\...`, a
-mapped or substituted drive letter, an administrative share, a double leading
-slash, a bind mount of the root OR OF ANY DIRECTORY BELOW IT -- is still the
-repository. The identities come from the one traversal this script performs,
-of the repository's own directories: no symlink followed, no file opened, no
-name read into any output, nothing selected; each directory scanned once,
-whatever else it is called; and refused whole, never judged from a partial
-set, if any entry of the tree cannot be judged. The walk and the identity
-comparison hold the same rule: a component or an ancestor that cannot be
-inspected refuses the judgment rather than being stepped past or skipped.
+WHERE AN OVERLAY MAY LIVE, AND HOW THAT IS JUDGED. Outside this repository at
+every component of the path as given. Where the handle backend exists (POSIX)
+the judgment is made through HELD DIRECTORY DESCRIPTORS and nothing else:
+the walk starts at the filesystem root, inspects each component relative to
+the directory it already holds without following a link, refuses any
+component that is a link of any kind -- no link is followed, wherever it
+points, so a link inside the tree, a link outside it, a chain that hops
+through it and a loop are all refused for the first link met -- and opens
+the component relative to the held directory without following, refusing it
+unless it is the entry just inspected. Every directory held is compared
+lexically against the repository root and BY IDENTITY (device and inode)
+against every directory of the repository, so a bind mount of the root or of
+any directory below it is still the repository. The identities come from the
+one traversal this script performs, of the repository's own tree, through
+descriptors as well: each child directory is opened relative to its parent
+without following a link and must still be the entry inspected; the set is
+taken fresh for every judgment and cached for none. The final component is
+opened relative to the last held directory, without following, and THE
+DESCRIPTOR SO OPENED IS THE ONLY OBJECT READ. No pathname is resolved again
+after it was inspected, by this script or by the kernel on its behalf, so a
+component swapped between an inspection and the next lookup is not followed:
+the lookup is relative to a handle the swap cannot move. `Path.resolve` takes
+part in no security decision. A regular file with more than one name -- a
+hard link -- is refused rather than judged by one of its names. What this
+does not see: an alias of a single file made by a bind mount, which keeps
+one name and one identity.
 
-THE BYTES ARE THE OBJECT THAT WAS JUDGED. The walk records the identity of the
-entry it ends at. The file is then opened ONCE, judged by `fstat` on that
-descriptor, and refused unless the opened object is that very entry: a path,
-a link or a file swapped between the walk and the open reaches a different
-object and is refused as changed during admission. The digest is taken from
-the bytes that were read through that descriptor and parsed. What this does
-not see: a hard link, which gives one object two names; and a replacement
-that keeps the same identity, which no platform exposes.
+WHERE NO HANDLE-BASED JUDGMENT EXISTS, THE OVERLAY IS REFUSED. Windows has no
+`openat`, no `O_NOFOLLOW` and no `scandir` on a handle in `os`, and a
+pathname inspected and then used again is a race an external review
+measured against this script. So on a platform without the handle backend a
+private `--overlay` is refused outright, with a sentence that names the
+platform and nothing else, until a separately reviewed HANDLE-based backend
+exists. Public-registry admission stays available there: the disposition is
+created by pathname with an exclusive create, and the gap between inspecting
+that pathname and using it is stated as the platform's limitation.
 
 NOTHING FROM A PRIVATE OVERLAY IS EMITTED. Nothing from it reaches stdout,
 stderr, the disposition or any evidence except the opaque item identifiers
@@ -95,7 +101,7 @@ import re
 import stat
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_REGISTRY = ROOT / "docs" / "governance" / "STANDING_DEVELOPMENT_OBLIGATIONS.json"
@@ -151,19 +157,51 @@ DEDUPE_KEY = re.compile(r"[a-z0-9][a-z0-9-]{2,79}")
 CYCLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 TEXT_BOUND = 2000
 DOCUMENT_BYTES_BOUND = 1_048_576
-#: A symlink chain longer than this is refused rather than followed.
-SYMLINK_HOPS_BOUND = 40
 #: Directories the identity traversal will record before refusing to judge.
 DIRECTORY_SCAN_BOUND = 250_000
 
-#: What the walk concludes about one path component from its `lstat`.
-SYMLINK = "symlink"
-PLAIN = "plain"
-UNSUPPORTED_LINK = "unsupported"
 #: FILE_ATTRIBUTE_REPARSE_POINT, spelled here so that no platform's `stat`
-#: module can leave the classifier with a zero mask and every reparse point
-#: looking plain. Only Windows sets `st_file_attributes` at all.
+#: module can leave the test with a zero mask and every reparse point looking
+#: plain. Only Windows sets `st_file_attributes` at all; there a junction, a
+#: mount point and a cloud placeholder carry it, and none of them is followed.
 _REPARSE_POINT_ATTRIBUTE = 0x400
+
+#: True where every security-sensitive operation can be made relative to a
+#: held directory descriptor without following a link: `openat` with
+#: `O_NOFOLLOW` and `O_DIRECTORY`, `fstatat` without following, `mkdirat`,
+#: and `scandir` on a descriptor. POSIX has them all. Windows has no
+#: equivalent in `os`, and a HANDLE-based backend for it is a separate change
+#: with its own review: where this is False a private overlay is refused
+#: outright, and the disposition is created by pathname with an exclusive
+#: create, which is the platform's stated limitation.
+HANDLE_BACKEND = (
+    os.name == "posix"
+    and os.open in os.supports_dir_fd
+    and os.stat in os.supports_dir_fd
+    and os.mkdir in os.supports_dir_fd
+    and os.scandir in os.supports_fd
+    and all(hasattr(os, name) for name in ("O_NOFOLLOW", "O_DIRECTORY", "O_CLOEXEC"))
+)
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
+_O_BINARY = getattr(os, "O_BINARY", 0)
+#: A directory that only needs to be traversed, not listed: `O_PATH` where the
+#: platform has it, so an execute-only ancestor of an overlay can be held.
+_O_PATH = getattr(os, "O_PATH", 0)
+#: A directory the identity traversal lists.
+_LISTED_DIRECTORY = os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC
+#: A directory a walk passes through and holds.
+_HELD_DIRECTORY = _LISTED_DIRECTORY | _O_PATH
+#: A file read through its descriptor and nothing else.
+_READ_FILE = os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK | _O_CLOEXEC
+#: A disposition created exclusively: an entry of any kind at the name refuses.
+_CREATE_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC
+#: This script's own place in its repository, and the public registry's: the
+#: names each is reached by from the root handle, one no-follow open at a time.
+_OWN_SCRIPT = ("scripts", "check_standing_development_obligations.py")
+_PUBLIC_REGISTRY_NAMES = ("docs", "governance", "STANDING_DEVELOPMENT_OBLIGATIONS.json")
 
 #: Printed after every PASS. The sentence is the boundary, stated where a
 #: reader of the output will see it rather than only in a document, and it
@@ -216,9 +254,6 @@ class _Identity(NamedTuple):
     inode: int
 
 
-#: No entry was seen, or the platform exposed no identity for it. An inode of
-#: zero is never accepted as an identity, so nothing can be "the same" as it.
-_NO_IDENTITY = _Identity(0, 0)
 
 
 def _identity_of(info: os.stat_result) -> _Identity:
@@ -289,93 +324,72 @@ def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return document
 
 
-def _read_bytes_bounded(
-    path: Path,
-    *,
-    label: str,
-    confidential: bool = False,
-    expected: _Identity | None = None,
-) -> bytes:
-    """The file's bytes, read through ONE descriptor, or a labelled refusal.
+def _read_bytes_bounded(descriptor: int, *, label: str, confidential: bool = False) -> bytes:
+    """The bytes behind a descriptor the caller opened without following a link.
 
-    One open, `fstat` on that descriptor, then a bounded read from it: a
-    `stat` followed by a separate `read_bytes` is two opens, and a FIFO swapped
-    in between would hang the caller's own run. `O_NONBLOCK` keeps the open
-    itself from blocking on a FIFO where the platform has it.
+    ONE descriptor, opened relative to a held directory by the walk that
+    judged its location, then `fstat` on that descriptor and a bounded read
+    from it -- never a second open by pathname, so the bytes read are the
+    object that was judged and not whatever the same name means a moment
+    later. A FIFO, a directory or a device is refused rather than read, and
+    for private input the refusal says only that it cannot be read: what the
+    object IS stays with the caller. `O_NONBLOCK` on the open keeps a FIFO
+    swapped in from hanging the caller's own run.
 
-    When an `expected` identity is given, the opened object must BE the entry
-    the walk ended at: same device and inode, and an inode the platform
-    actually exposed. Measured by an external review of the merged head: a
-    path checked and then opened is two operations, and a link retargeted
-    between them opened a file whose location nobody had judged.
-
-    The refusal is raised AFTER the handler has been left. `raise ... from
-    None` only suppresses the display of `__context__`; the original
-    `OSError`, with the filename in it, would still hang off the exception
-    object for any caller that looks. Constructing the refusal inside the
-    handler and raising outside it leaves no context at all.
+    The descriptor is closed here, whatever happens. The refusal is raised
+    AFTER the handler has been left: `raise ... from None` only suppresses
+    the display of `__context__`, and the original `OSError`, with a
+    filename in it, would still hang off the exception for any caller that
+    looked. Constructing the refusal inside the handler and raising outside
+    it leaves no context at all.
     """
     refusal: AdmissionError | None = None
     raw = b""
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-    except (OSError, ValueError):
-        refusal = _refuse(label, "cannot be read")
-    else:
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) and confidential:
-                # A FIFO, a directory, a device: what it is stays with the
-                # caller when the input is private.
-                refusal = _refuse(label, "cannot be read")
-            elif not stat.S_ISREG(info.st_mode):
-                refusal = _refuse(label, "is not a regular file")
-            elif expected is not None and expected.inode == 0:
-                refusal = _refuse(label, "identity cannot be established")
-            elif expected is not None and _identity_of(info) != expected:
-                refusal = _refuse(label, "changed during admission")
-            elif info.st_size > DOCUMENT_BYTES_BOUND:
-                refusal = _refuse(label, "exceeds the size bound", confidential=confidential)
-            else:
-                chunks: list[bytes] = []
-                remaining = DOCUMENT_BYTES_BOUND + 1
-                while remaining > 0:
-                    chunk = os.read(descriptor, min(remaining, 65536))
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-                    remaining -= len(chunk)
-                raw = b"".join(chunks)
-                if len(raw) > DOCUMENT_BYTES_BOUND:
-                    refusal = _refuse(label, "exceeds the size bound", confidential=confidential)
-        except OSError:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) and confidential:
             refusal = _refuse(label, "cannot be read")
-        finally:
-            os.close(descriptor)
+        elif not stat.S_ISREG(info.st_mode):
+            refusal = _refuse(label, "is not a regular file")
+        elif info.st_size > DOCUMENT_BYTES_BOUND:
+            refusal = _refuse(label, "exceeds the size bound", confidential=confidential)
+        else:
+            chunks: list[bytes] = []
+            remaining = DOCUMENT_BYTES_BOUND + 1
+            while remaining > 0:
+                chunk = os.read(descriptor, min(remaining, 65536))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            if len(raw) > DOCUMENT_BYTES_BOUND:
+                refusal = _refuse(label, "exceeds the size bound", confidential=confidential)
+    except OSError:
+        refusal = _refuse(label, "cannot be read")
+    finally:
+        os.close(descriptor)
     if refusal is not None:
         raise refusal
     return raw
 
 
 def _read_document(
-    path: Path,
-    *,
-    label: str,
-    confidential: bool = False,
-    expected: _Identity | None = None,
+    descriptor: int, *, label: str, confidential: bool = False
 ) -> tuple[dict[str, Any], str]:
     """The parsed JSON object and the SHA-256 of the bytes it was parsed from.
 
-    ONE read. The digest is taken from the same bytes that were parsed, so a
-    file replaced between a load and a later digest cannot bind a disposition
-    to bytes nobody validated.
+    ONE read, through the descriptor the caller opened, which is closed here.
+    The digest is taken from the same bytes that were parsed, so nothing is
+    reopened between the parse and the digest: a file replaced after the read
+    cannot bind a disposition to bytes nobody validated.
 
     `UnicodeDecodeError` quotes the offending byte, `JSONDecodeError` quotes a
     position, `RecursionError` comes out of a deeply nested document, and a
     repeated key is refused by the pairs hook. None of them travels further
     than this function, and none is left as the refusal's `__context__`.
     """
-    raw = _read_bytes_bounded(path, label=label, confidential=confidential, expected=expected)
+    raw = _read_bytes_bounded(descriptor, label=label, confidential=confidential)
     refusal: AdmissionError | None = None
     value: Any = None
     try:
@@ -392,21 +406,21 @@ def _read_document(
 
 
 # ---------------------------------------------------------------------------
-# Where a path leads, judged one component at a time
+# Where a path leads, judged through held descriptors and never looked up twice
 # ---------------------------------------------------------------------------
 
 
 def _lexical_absolute(path: Path) -> Path:
-    """The path as given, made absolute, with NO symlink followed.
+    """The path as given, made absolute lexically, with NO symlink followed.
 
     POSIX keeps a double leading slash as a root of its own, so `//home/...`
     is a different anchor from `/home/...` to a lexical comparison and the
     same directory to the kernel. Measured: an in-repository path spelled
-    with two leading slashes was outside for every walked component and was
-    caught only by the final resolution -- and a symlink TARGET spelled that
-    way would have hopped through the repository unjudged. Collapsed here;
-    the identity comparison in `_names_the_root` catches the spellings this
-    does not.
+    with two leading slashes was outside for every walked component. It is
+    collapsed here, and the identity comparison catches the spellings this
+    does not. `..` is collapsed lexically too, and that is what the walk then
+    opens: the kernel is never asked to resolve `..` through a link, because
+    every component is opened relative to the directory already held.
     """
     text = os.path.abspath(path)
     if os.name != "nt" and text.startswith("//"):
@@ -422,313 +436,433 @@ def _is_within(path: Path, parent: Path) -> bool:
     return True
 
 
-def _link_kind(info: os.stat_result) -> str:
-    """Symlink, plain entry, or a reparse point this script does not follow.
-
-    `Path.is_symlink()` is `S_ISLNK` and nothing else: on Windows a directory
-    junction, a mount point and every other reparse point report False, so a
-    walk built on it stepped through a junction into the repository and out
-    again without noticing either hop. Measured by an external review of the
-    merged head. Here every reparse point that is not a symlink is refused
-    rather than followed -- this script does not claim to know where a
-    junction, a mount point or a cloud placeholder leads -- and an entry
-    whose reparse attribute is set but whose tag the platform does not expose
-    is refused the same way, so an uninspectable state fails closed.
-    """
+def _is_link(info: os.stat_result) -> bool:
+    """A symlink, or on Windows any reparse point: nothing this script follows."""
     if stat.S_ISLNK(info.st_mode):
-        return SYMLINK
-    attributes = getattr(info, "st_file_attributes", 0)
-    if attributes & _REPARSE_POINT_ATTRIBUTE:
-        return UNSUPPORTED_LINK
-    return PLAIN
+        return True
+    return bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT_ATTRIBUTE)
 
 
-_WIN32_FILE_PREFIX = "\\\\?\\"
-_DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/].*", re.DOTALL)
-
-
-def _windows_link_target(raw: str) -> str | None:
-    r"""A Windows symlink target as a path the walk can judge, or None.
-
-    `os.readlink` returns the substitute name, which carries the `\\?\`
-    prefix for an absolute target. Behind that prefix only a drive-letter
-    path is judged; a `\\?\UNC\` share, a `\\?\Volume{...}` GUID, a
-    `\\?\GLOBALROOT` device and every other namespace spelling are refused
-    rather than judged, because the lexical rule cannot see the repository
-    through them. Without the prefix a drive-letter path or a relative
-    target is judged, and a `\\server\share`, `\\.\device`, drive-relative
-    (`C:name`) or root-relative (`\name`) spelling is refused.
-    """
-    if raw.startswith(_WIN32_FILE_PREFIX):
-        text = raw[len(_WIN32_FILE_PREFIX):]
-        return text if _DRIVE_PATH.fullmatch(text) else None
-    if _DRIVE_PATH.fullmatch(raw):
-        return raw
-    if raw and ":" not in raw and raw[0] not in "\\/":
-        return raw
-    return None
-
-
-def _link_target(link: Path) -> Path | None:
-    """Where a symlink points, as an absolute lexical path from the link's own directory."""
-    raw = os.readlink(link)
-    if os.name == "nt":
-        judged = _windows_link_target(raw)
-        if judged is None:
-            return None
-        raw = judged
-    return _lexical_absolute(Path(os.path.join(str(link.parent), raw)))
-
-
-def _walk(path: Path, *, label: str) -> tuple[list[Path], _Identity, bool]:
-    """Every location the walk touches, what it ends at, and whether it got there.
-
-    COMPONENT BY COMPONENT, never collapsed. The first version placed each hop
-    at `realpath(parent)`, and `realpath` follows a directory symlink all the
-    way through: for `outside/a -> repo/.nornyx/runtime/dir -> outside/final`
-    the parent of `outside/a/overlay.json` collapsed straight to
-    `outside/final`, and the in-repository directory link in the middle was
-    never seen. Measured by an external review on the merged head: PASS.
-
-    So the walk is its own: it takes the given path one component at a time
-    and judges each by `lstat` where it sits. A plain entry is stepped into.
-    A symlink is followed one hop: the walk records where the link sits,
-    reads the target, and continues from the target's components followed by
-    the rest of the original path. Any other reparse point refuses. Every
-    prefix reached this way is recorded, so a link inside the tree is judged
-    wherever it sits in the chain -- directory or file, first hop or third --
-    and a real directory inside the tree that the chain passes through is
-    recorded too. The entry the walk ends at -- the last plain component --
-    is returned by identity, so the read that follows can be held to the very
-    object that was judged.
-
-    A reparse point that is not a symlink stops the walk: the locations
-    reached so far and a `False` third value are returned rather than a
-    refusal raised here, so that the caller judges those locations FIRST. An
-    unsupported link that sits inside the repository is refused for sitting
-    there -- the rule broken first -- and one outside it for not being
-    followed. Measured on a Windows runner: the first version raised at the
-    junction and named the wrong rule for an in-repository junction.
-
-    FAILS CLOSED. A component the walk cannot `lstat` is not stepped past:
-    the failure propagates to the caller, whose one refusal names no path.
-    Measured by an external review of the repaired head: with the first
-    `lstat` of `outside/a` failing once, the walk treated that link as plain
-    and stepped on, the next `lstat` -- of the file -- resolved the whole
-    chain in the kernel, the descriptor matched that file, and a chain
-    through the repository was accepted with its in-repository link never
-    judged.
-    """
-    locations: list[Path] = []
-    start = _lexical_absolute(path)
-    remaining = list(start.parts[1:])
-    walked = Path(start.parts[0])
-    hops = 0
-    final = _NO_IDENTITY
-    while remaining:
-        walked = walked / remaining.pop(0)
-        locations.append(walked)
-        # Not caught here: a component the walk cannot inspect is not stepped
-        # past. The failure reaches the caller's one refusal, so no link goes
-        # unjudged because its `lstat` failed once.
-        info = os.lstat(walked)
-        kind = _link_kind(info)
-        if kind == PLAIN:
-            final = _identity_of(info)
-            continue
-        if kind == UNSUPPORTED_LINK:
-            return locations, _NO_IDENTITY, False
-        hops += 1
-        if hops > SYMLINK_HOPS_BOUND:
-            # The same words as a loop the interpreter detects itself: which
-            # step noticed is not the property.
-            raise AdmissionError(f"{label} path cannot be resolved")
-        target = _link_target(walked)
-        if target is None:
-            raise AdmissionError(f"{label} path cannot be resolved")
-        remaining = list(target.parts[1:]) + remaining
-        walked = Path(target.parts[0])
-        final = _NO_IDENTITY
-    return locations, final, True
-
-
-_DIRECTORY_IDENTITIES: frozenset[_Identity] | None = None
+class _Swapped(Exception):
+    """The entry opened is not the entry inspected a moment before; refused, never re-looked-up."""
 
 
 class _ScanBound(Exception):
     """The identity traversal passed its bound; refused rather than judged partially."""
 
 
-def _repository_directory_identities() -> frozenset[_Identity]:
+def _inspect(handle: int, name: str, *, label: str) -> os.stat_result:
+    """`name` inside the held directory, inspected without following a link; a link refuses.
+
+    Relative to the descriptor, so the kernel resolves nothing above `name`
+    on this script's behalf: a directory swapped for a link after it was
+    held is not consulted, because the held descriptor still names the
+    directory that was inspected.
+    """
+    info = os.stat(name, dir_fd=handle, follow_symlinks=False)
+    if _is_link(info):
+        raise AdmissionError(f"{label} path crosses a link that is not followed")
+    return info
+
+
+def _open_inspected(
+    handle: int | None, name: str, info: os.stat_result, *, flags: int
+) -> tuple[int, os.stat_result]:
+    """Open `name` relative to the held directory, without following, as the entry inspected.
+
+    `O_NOFOLLOW` refuses a link swapped in between the inspection and the
+    open; `fstat` on what was opened must name the very object inspected --
+    same device, inode and kind -- or the open is refused as a swap. The
+    descriptor returned is the object that will be used, and nothing about
+    it is ever looked up by name again.
+    """
+    opened = os.open(name, flags, dir_fd=handle)
+    try:
+        held = os.fstat(opened)
+        if _identity_of(held) != _identity_of(info) or stat.S_IFMT(held.st_mode) != stat.S_IFMT(
+            info.st_mode
+        ):
+            raise _Swapped()
+    except BaseException:
+        os.close(opened)
+        raise
+    return opened, held
+
+
+def _hold_below(handle: int, names: Sequence[str], *, label: str, create: bool = False) -> int:
+    """Hold the directory `names` deep below the held `handle`, one no-follow open at a time.
+
+    Every intermediate descriptor is closed; the one returned is the
+    caller's to close; `handle` itself is left open. With `create`, a
+    missing directory is made relative to the one held (`mkdirat`) and then
+    inspected and opened like any other, so a link put in its place between
+    the two is refused rather than followed.
+    """
+    current = handle
+    owned = False
+    try:
+        for name in names:
+            if create:
+                try:
+                    os.mkdir(name, 0o755, dir_fd=current)
+                except FileExistsError:
+                    pass
+            info = _inspect(current, name, label=label)
+            if not stat.S_ISDIR(info.st_mode):
+                raise AdmissionError(f"{label} path cannot be resolved")
+            opened, _held = _open_inspected(current, name, info, flags=_HELD_DIRECTORY)
+            if owned:
+                os.close(current)
+            current, owned = opened, True
+        return current if owned else os.dup(handle)
+    except BaseException:
+        if owned:
+            os.close(current)
+        raise
+
+
+def _open_file_below(handle: int, names: Sequence[str], *, label: str) -> int:
+    """A regular-file descriptor for `names` below the held `handle`, reached without following."""
+    parent = _hold_below(handle, names[:-1], label=label)
+    try:
+        info = _inspect(parent, names[-1], label=label)
+        descriptor, _held = _open_inspected(parent, names[-1], info, flags=_READ_FILE)
+    finally:
+        os.close(parent)
+    return descriptor
+
+
+def _open_repository_root() -> int:
+    """The repository root as a held descriptor, bound to the checker that is running.
+
+    The root is this script's own location, found by this script's own
+    path. That is not an input: a caller who can move the checker controls
+    the code anyway. What is checked is that the directory held contains
+    the very file that is running -- same device and inode, reached without
+    following a link -- so the handle every later judgment descends from is
+    the root of the checkout this code came from, not a directory swapped
+    in under the same name after the path was resolved.
+    """
+    refusal: AdmissionError | None = None
+    handle = os.open(ROOT, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+    try:
+        scripts = _hold_below(handle, _OWN_SCRIPT[:-1], label="repository")
+        try:
+            own = os.stat(_OWN_SCRIPT[-1], dir_fd=scripts, follow_symlinks=False)
+        finally:
+            os.close(scripts)
+        if _identity_of(own) != _identity_of(os.stat(__file__)):
+            refusal = AdmissionError("repository root cannot be established")
+    except AdmissionError:
+        os.close(handle)
+        raise
+    except (OSError, ValueError):
+        refusal = AdmissionError("repository root cannot be established")
+    if refusal is not None:
+        os.close(handle)
+        raise refusal
+    return handle
+
+
+def _repository_directory_identities(handle: int) -> frozenset[_Identity]:
     r"""The identity of every directory in the repository, the root included.
 
     THE ONE TRAVERSAL THIS SCRIPT PERFORMS, and it is of the repository's own
-    tree: directory entries only, judged by `lstat`; no symlink or other
-    reparse point followed; no file opened; no name read into any output;
-    nothing selected. Comparing against the root's identity alone was not
-    enough: an alias of a directory BELOW the root -- a bind mount, a mapped
-    or substituted drive rooted at a subdirectory -- has that directory's
-    identity at its mount point and external identities above it, so the
-    root was never among the candidates. Measured by an external review of
-    the PR head and reproduced with a real bind mount of `.nornyx/runtime`
-    at `/tmp/alias`: an in-repository overlay was read through the alias.
-    Bounded, and refused rather than judged when the bound is passed; cached
-    for the process, so a run pays for it once.
+    tree, through descriptors: each directory is listed from its handle, each
+    child directory is inspected without following a link and then opened
+    relative to its parent without following one, and must still be the
+    entry inspected -- a directory swapped for a link between the two is a
+    swap, and the whole judgment is refused. No file is opened, no name is
+    read into any output, nothing is selected. Comparing against the root's
+    identity alone was not enough: an alias of a directory BELOW the root --
+    a bind mount, a mapped or substituted drive rooted at a subdirectory --
+    has that directory's identity at its mount point and external identities
+    above it, so the root was never among the candidates; a real bind mount
+    of `.nornyx/runtime` was measured to admit an in-repository overlay
+    before every directory was compared.
 
-    FAILS CLOSED, AND SCANS EACH DIRECTORY ONCE. An entry this traversal
-    cannot `lstat` -- a transient filesystem error, an entry renamed under
-    it, a name too long to reach -- is not left out: the whole judgment is
-    refused, because a directory missing from the set is one an alias could
-    reach unjudged (measured by an external review of the PR head, and
-    reproduced with a directory too long to `lstat` and a bind mount of it).
-    And an identity already in the set is not enqueued again, so an alias of
-    a repository directory inside the tree -- a bind mount of `docs/` beside
-    it -- adds no scan: the bound limits the directories traversed, not only
-    the identities collected (measured by the same review, and reproduced
-    with three bind mounts of `docs/`: twelve scans more, the bound never
-    crossed).
+    Bounded, and refused rather than judged when the bound is passed; each
+    directory scanned once, whatever else it is called, so the bound limits
+    the directories traversed and not only the identities collected; refused
+    whole, never judged from a partial set, when any entry cannot be judged,
+    because a directory missing from the set is one an alias could reach
+    unjudged. Taken fresh for every judgment and cached for none: a snapshot
+    that outlived the judgment it was taken for would be stale for the next.
     """
-    global _DIRECTORY_IDENTITIES
-    if _DIRECTORY_IDENTITIES is not None:
-        return _DIRECTORY_IDENTITIES
     identities: set[_Identity] = set()
-    pending: list[Path] = [ROOT]
     refusal: AdmissionError | None = None
+    stack: list[tuple[int, Any]] = [(handle, None)]
     try:
-        identities.add(_identity_of(os.lstat(ROOT)))
-        while pending:
-            directory = pending.pop()
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    info = entry.stat(follow_symlinks=False)
-                    if not stat.S_ISDIR(info.st_mode) or _link_kind(info) != PLAIN:
-                        continue
-                    identity = _identity_of(info)
-                    if identity in identities:
-                        continue
-                    identities.add(identity)
-                    if len(identities) > DIRECTORY_SCAN_BOUND:
-                        raise _ScanBound()
-                    pending.append(Path(entry.path))
+        identities.add(_identity_of(os.fstat(handle)))
+        while stack:
+            current, entries = stack[-1]
+            if entries is None:
+                entries = os.scandir(current)
+                stack[-1] = (current, entries)
+            entry = next(entries, None)
+            if entry is None:
+                entries.close()
+                stack.pop()
+                if current != handle:
+                    os.close(current)
+                continue
+            info = entry.stat(follow_symlinks=False)
+            if not stat.S_ISDIR(info.st_mode) or _is_link(info):
+                continue
+            identity = _identity_of(info)
+            if identity in identities:
+                continue
+            opened, _held = _open_inspected(current, entry.name, info, flags=_LISTED_DIRECTORY)
+            identities.add(identity)
+            if len(identities) > DIRECTORY_SCAN_BOUND:
+                os.close(opened)
+                raise _ScanBound()
+            stack.append((opened, None))
     except _ScanBound:
         refusal = AdmissionError("repository is too large to judge by identity")
-    except OSError:
+    except (_Swapped, OSError):
         refusal = AdmissionError("repository directories cannot be judged by identity")
+    finally:
+        for current, entries in stack:
+            if entries is not None:
+                entries.close()
+            if current != handle:
+                os.close(current)
     if refusal is not None:
         raise refusal
-    _DIRECTORY_IDENTITIES = frozenset(identities)
-    return _DIRECTORY_IDENTITIES
+    return frozenset(identities)
 
 
-def _inside_by_identity(location: Path, identities: frozenset[_Identity], checked: set[Path]) -> bool:
-    r"""Whether `location` or an ancestor of it IS a repository directory, by identity.
+def _judge_held(walked: Path, held: os.stat_result, *, label: str, identities: frozenset[_Identity]) -> None:
+    """A held directory of the overlay's path: outside the repository by name and by identity."""
+    if _is_within(walked, ROOT) or _identity_of(held) in identities:
+        raise AdmissionError(f"{label} must remain outside the Forge repository")
 
-    The lexical rule compares spellings, and one directory has several: on
-    Windows `\\?\C:\...`, a mapped or substituted drive letter, an
-    administrative share; on POSIX a bind mount or a double leading slash.
-    Identity -- device and inode, volume serial and file index -- names the
-    directory itself, wherever it is spelled from. Judged by `lstat`, so no
-    link is followed here: a followed symlink's target components are already
-    among the walked locations, and an unfollowed link is not looked through.
-    Where the platform exposes no identity for an entry (inode 0) nothing is
-    claimed for it and the lexical rule stands alone.
 
-    FAILS CLOSED. A candidate whose `lstat` fails is not skipped: the failure
-    propagates to the caller's one refusal. Measured by an external review
-    of the repaired head: an alias directory whose `lstat` failed once during
-    this comparison was skipped -- and marked checked, so never looked at
-    again -- while the lexical rule passed its external spelling, and an
-    in-repository overlay was accepted through it.
+def _open_confined(path: Path, *, label: str, identities: frozenset[_Identity]) -> int:
+    """The overlay's descriptor, reached only through held directories that stay outside.
+
+    From the filesystem root down, every component is judged lexically
+    against the repository root BEFORE it is inspected -- a link that sits
+    inside the tree is refused for sitting there, the rule broken first --
+    then inspected relative to the directory already held, refused if it is
+    a link of any kind, opened relative to that directory without following,
+    refused unless it is the entry inspected, and judged by identity against
+    every directory of the repository. The final component is opened the same
+    way and its descriptor is returned as the only object that will be read.
+    A regular file with more than one name is refused: a hard link gives one
+    object a name outside the tree and one inside, and this script judges the
+    object, not the name it was handed.
     """
-    for candidate in (location, *location.parents):
-        if candidate in checked:
-            continue
-        checked.add(candidate)
-        # Not caught here: a candidate that cannot be inspected is not
-        # skipped. For an alias of a repository directory it is the ONE
-        # candidate whose identity would match, so a skip is an admission.
-        identity = _identity_of(os.lstat(candidate))
-        if identity.inode != 0 and identity in identities:
-            return True
-    return False
-
-
-def _confine_outside(path: Path, *, label: str) -> _Identity:
-    """Refuse a path naming anything inside this repository; return what the walk ended at.
-
-    The path as given (after lexical normalisation), every link it passes
-    through, every directory the chain crosses, and -- for a chain the walk
-    followed to its end -- its final resolution are all judged, lexically and
-    by identity against every directory of the repository. A chain the walk
-    stopped at (a reparse point it does not follow) is judged as far as it was
-    walked and no further: nothing beyond the unfollowed link is consulted. A symlink inside the repository
-    that points outside is still a path inside the repository -- and one
-    that could be committed -- so it is refused; a path outside the
-    repository that resolves inside it is content inside the repository
-    under another name; and a chain that merely passes through the tree is
-    refused for the same reason as the first.
-
-    `resolve()` raises `RuntimeError` on a symlink loop on some interpreter
-    versions and `OSError` on others, and both spell the path in their
-    message. Neither is allowed out, and neither is left as context.
-    """
-    refusal: AdmissionError | None = None
-    inside = False
-    followed = False
-    final = _NO_IDENTITY
+    start = _lexical_absolute(path)
+    parts = start.parts
+    if len(parts) < 2:
+        raise AdmissionError(f"{label} path cannot be resolved")
+    walked = Path(parts[0])
+    current = os.open(parts[0], _HELD_DIRECTORY)
     try:
-        locations, final, followed = _walk(path, label=label)
-        identities = _repository_directory_identities()
-        checked: set[Path] = set()
-        candidates = list(locations)
-        if followed:
-            # Only a chain the walk followed to its end is resolved; an
-            # unfollowed link is not looked through, not even by resolution.
-            candidates.append(path.resolve(strict=False))
-        for location in candidates:
-            inside = inside or _is_within(location, ROOT) or _inside_by_identity(
-                location, identities, checked
+        _judge_held(walked, os.fstat(current), label=label, identities=identities)
+        for name in parts[1:-1]:
+            walked = walked / name
+            if _is_within(walked, ROOT):
+                raise AdmissionError(f"{label} must remain outside the Forge repository")
+            info = _inspect(current, name, label=label)
+            if not stat.S_ISDIR(info.st_mode):
+                raise AdmissionError(f"{label} path cannot be resolved")
+            opened, held = _open_inspected(current, name, info, flags=_HELD_DIRECTORY)
+            os.close(current)
+            current = opened
+            _judge_held(walked, held, label=label, identities=identities)
+        name = parts[-1]
+        walked = walked / name
+        if _is_within(walked, ROOT):
+            raise AdmissionError(f"{label} must remain outside the Forge repository")
+        info = _inspect(current, name, label=label)
+        descriptor, held = _open_inspected(current, name, info, flags=_READ_FILE)
+        try:
+            if stat.S_ISDIR(held.st_mode):
+                _judge_held(walked, held, label=label, identities=identities)
+            elif stat.S_ISREG(held.st_mode) and held.st_nlink > 1:
+                raise AdmissionError(f"{label} has more than one name")
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
+    finally:
+        os.close(current)
+
+
+def _judge_overlay(path: Path, *, label: str, root: int) -> int:
+    """The overlay's descriptor on a platform with the handle backend; a refusal without one.
+
+    Where no handle-based judgment exists -- Windows, whose `os` has no
+    `openat`, no `O_NOFOLLOW` and no `scandir` on a handle -- a pathname
+    inspected and then used again is a race an external review measured
+    against this script, so the overlay is refused outright rather than
+    admitted over that race. Public-registry admission stays available
+    there. A HANDLE-based backend for that platform is a separate change,
+    with its own review.
+
+    `_Swapped` is raised inside the walk and turned into a refusal here,
+    outside the handler; an `OSError` or `ValueError` from any lookup -- a
+    missing component, one this process may not traverse, a name too long
+    to reach, an embedded NUL -- is the one refusal that says the path
+    cannot be resolved, and never what the path is.
+    """
+    if not HANDLE_BACKEND:
+        raise AdmissionError(f"{label} is not admitted on this platform without a handle-based backend")
+    refusal: AdmissionError | None = None
+    descriptor = -1
+    try:
+        identities = _repository_directory_identities(root)
+        descriptor = _open_confined(path, label=label, identities=identities)
+    except AdmissionError:
+        raise
+    except _Swapped:
+        refusal = _refuse(label, "changed during admission")
+    except (OSError, ValueError):
+        refusal = _refuse(label, "path cannot be resolved")
+    if refusal is not None:
+        raise refusal
+    return descriptor
+
+
+def _open_public_registry(root: int) -> int:
+    """The public registry's descriptor: below the root handle where one exists, by pathname otherwise."""
+    refusal: AdmissionError | None = None
+    descriptor = -1
+    try:
+        if HANDLE_BACKEND:
+            descriptor = _open_file_below(root, _PUBLIC_REGISTRY_NAMES, label="public registry")
+        else:
+            descriptor = os.open(PUBLIC_REGISTRY, os.O_RDONLY | _O_BINARY | _O_CLOEXEC)
+    except AdmissionError:
+        raise
+    except _Swapped:
+        refusal = _refuse("public registry", "changed during admission")
+    except (OSError, ValueError):
+        refusal = _refuse("public registry", "cannot be read")
+    if refusal is not None:
+        raise refusal
+    return descriptor
+
+
+def _runtime_names(path: Path, *, label: str) -> list[str]:
+    """The disposition's components below the repository root, or a refusal.
+
+    The disposition lives under the gitignored runtime root and only there,
+    judged lexically on the path as given; where the handle backend exists
+    it is then reached from the root handle one no-follow open at a time, so
+    the lexical rule and the object reached cannot disagree.
+    """
+    given = _lexical_absolute(path)
+    if given == RUNTIME_ROOT or not _is_within(given, RUNTIME_ROOT):
+        raise AdmissionError(f"{label} must be under .nornyx/runtime/")
+    return list(given.relative_to(ROOT).parts)
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    view = memoryview(payload)
+    while view:
+        written = os.write(descriptor, view)
+        view = view[written:]
+
+
+def _create_disposition(output: Path, payload: bytes, *, label: str) -> None:
+    """Create the disposition EXCLUSIVELY, so no existing entry is truncated or followed.
+
+    With the handle backend the file is created relative to its parent
+    directory, which was reached from the root handle without following a
+    link, with `O_CREAT | O_EXCL | O_NOFOLLOW`: a second initializer, a link
+    put at the name, or a parent swapped for a link after the judgment
+    refuses rather than writes elsewhere. Measured by an external review of
+    this script: a check followed by a truncating write let one initializer
+    overwrite another's cycle, and a parent swapped to a symlink in the same
+    gap put the disposition outside the runtime root.
+
+    Without the handle backend the create is exclusive by pathname, which
+    closes the overwrite and leaves the parent race as the platform's stated
+    limitation.
+    """
+    names = _runtime_names(output, label=label)
+    refusal: AdmissionError | None = None
+    try:
+        if HANDLE_BACKEND:
+            root = _open_repository_root()
+            try:
+                parent = _hold_below(root, names[:-1], label=label, create=True)
+                try:
+                    _refuse_existing(parent, names[-1], label=label)
+                    descriptor = os.open(names[-1], _CREATE_FILE, 0o644, dir_fd=parent)
+                finally:
+                    os.close(parent)
+            finally:
+                os.close(root)
+        else:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            _refuse_existing(None, str(output), label=label)
+            descriptor = os.open(output, _CREATE_FILE | _O_BINARY, 0o644)
+        try:
+            _write_all(descriptor, payload)
+        finally:
+            os.close(descriptor)
+    except AdmissionError:
+        raise
+    except FileExistsError:
+        refusal = _refuse(label, "already exists; remove it to start a new cycle")
+    except (OSError, ValueError):
+        refusal = _refuse(label, "cannot be written")
+    if refusal is not None:
+        raise refusal
+
+
+def _refuse_existing(handle: int | None, name: str, *, label: str) -> None:
+    """Nothing may sit at the disposition's name: a link is refused as a link, anything else as existing."""
+    try:
+        if handle is None:
+            existing = os.lstat(name)
+        else:
+            existing = os.stat(name, dir_fd=handle, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if _is_link(existing):
+        raise AdmissionError(f"{label} path crosses a link that is not followed")
+    raise AdmissionError(f"{label} already exists; remove it to start a new cycle")
+
+
+def _open_disposition(path: Path, *, label: str) -> int:
+    """The disposition's descriptor, reached from the root handle where one exists.
+
+    Without the handle backend it is inspected and opened by pathname, the
+    opened object held to the inspected one by `fstat`; the gap between the
+    two is the platform's stated limitation.
+    """
+    names = _runtime_names(path, label=label)
+    refusal: AdmissionError | None = None
+    descriptor = -1
+    try:
+        if HANDLE_BACKEND:
+            root = _open_repository_root()
+            try:
+                descriptor = _open_file_below(root, names, label=label)
+            finally:
+                os.close(root)
+        else:
+            info = os.lstat(path)
+            if _is_link(info):
+                raise AdmissionError(f"{label} path crosses a link that is not followed")
+            descriptor, _held = _open_inspected(
+                None, str(path), info, flags=os.O_RDONLY | _O_BINARY | _O_CLOEXEC
             )
     except AdmissionError:
         raise
-    except (OSError, RuntimeError, ValueError):
-        refusal = _refuse(label, "path cannot be resolved")
+    except _Swapped:
+        refusal = _refuse(label, "changed during admission")
+    except (OSError, ValueError):
+        refusal = _refuse(label, "cannot be read")
     if refusal is not None:
         raise refusal
-    if inside:
-        raise AdmissionError(f"{label} must remain outside the Forge repository")
-    if not followed:
-        raise AdmissionError(f"{label} path crosses a link that is not followed")
-    return final
-
-
-def _require_runtime_file(path: Path, *, label: str) -> _Identity:
-    """The disposition lives under the gitignored runtime root, and only there.
-
-    Returns the identity of the entry at the resolved path, so the read that
-    follows can be held to the object that was judged; no identity when
-    nothing is there yet, which is what `--init` expects.
-    """
-    refusal: AdmissionError | None = None
-    inside = False
-    final = _NO_IDENTITY
-    try:
-        resolved = path.resolve(strict=False)
-        inside = _is_within(_lexical_absolute(path), RUNTIME_ROOT) and _is_within(
-            resolved, RUNTIME_ROOT
-        )
-        if inside:
-            try:
-                final = _identity_of(os.lstat(resolved))
-            except OSError:
-                final = _NO_IDENTITY
-    except (OSError, RuntimeError, ValueError):
-        refusal = _refuse(label, "path cannot be resolved")
-    if refusal is not None:
-        raise refusal
-    if not inside:
-        raise AdmissionError(f"{label} must be under .nornyx/runtime/")
-    return final
+    return descriptor
 
 
 # ---------------------------------------------------------------------------
@@ -832,43 +966,54 @@ def _validate_registry(
 
 
 def load_registries(overlay_path: Path | None) -> Registries:
-    """The public registry and, only when a path was GIVEN, the overlay."""
-    public_doc, public_digest = _read_document(PUBLIC_REGISTRY, label="public registry")
-    if public_doc.get("visibility") != "public":
-        raise AdmissionError("public registry must declare public visibility")
-    public_items = _validate_registry(
-        public_doc,
-        schema=PUBLIC_SCHEMA,
-        label="public registry",
-        document_fields=PUBLIC_DOCUMENT_FIELDS,
-    )
-    statuses = {("public", item["id"]): item["status"] for item in public_items}
+    """The public registry and, only when a path was GIVEN, the overlay.
 
-    private_items: list[dict[str, Any]] = []
-    private_digest: str | None = None
-    if overlay_path is not None:
-        judged = _confine_outside(overlay_path, label="private overlay")
-        overlay_doc, private_digest = _read_document(
-            overlay_path, label="private overlay", confidential=True, expected=judged
+    Both are read through descriptors reached from the repository root
+    handle (or, without the handle backend, the registry by pathname and the
+    overlay not at all). The root handle is held for the whole load and
+    closed after it.
+    """
+    root = _open_repository_root() if HANDLE_BACKEND else -1
+    try:
+        public_doc, public_digest = _read_document(_open_public_registry(root), label="public registry")
+        if public_doc.get("visibility") != "public":
+            raise AdmissionError("public registry must declare public visibility")
+        public_items = _validate_registry(
+            public_doc,
+            schema=PUBLIC_SCHEMA,
+            label="public registry",
+            document_fields=PUBLIC_DOCUMENT_FIELDS,
         )
-        if overlay_doc.get("classification") != "private":
-            raise _refuse("private overlay", "must declare private classification", confidential=True)
-        private_items = _validate_registry(
-            overlay_doc,
-            schema=OVERLAY_SCHEMA,
-            label="private overlay",
-            document_fields=OVERLAY_DOCUMENT_FIELDS,
-            confidential=True,
-        )
-        # A collision with the public registry is a fact about the overlay's
-        # content -- which public id or key it repeats -- so it is refused
-        # with the same sentence as any other content refusal.
-        if {item["id"] for item in public_items} & {item["id"] for item in private_items}:
-            raise _refuse("private overlay", "repeats a public item id", confidential=True)
-        public_keys = {item["dedupe_key"] for item in public_items}
-        if public_keys & {item["dedupe_key"] for item in private_items}:
-            raise _refuse("private overlay", "repeats a public semantic key", confidential=True)
-        statuses.update({("private", item["id"]): item["status"] for item in private_items})
+        statuses = {("public", item["id"]): item["status"] for item in public_items}
+
+        private_items: list[dict[str, Any]] = []
+        private_digest: str | None = None
+        if overlay_path is not None:
+            descriptor = _judge_overlay(overlay_path, label="private overlay", root=root)
+            overlay_doc, private_digest = _read_document(
+                descriptor, label="private overlay", confidential=True
+            )
+            if overlay_doc.get("classification") != "private":
+                raise _refuse("private overlay", "must declare private classification", confidential=True)
+            private_items = _validate_registry(
+                overlay_doc,
+                schema=OVERLAY_SCHEMA,
+                label="private overlay",
+                document_fields=OVERLAY_DOCUMENT_FIELDS,
+                confidential=True,
+            )
+            # A collision with the public registry is a fact about the overlay's
+            # content -- which public id or key it repeats -- so it is refused
+            # with the same sentence as any other content refusal.
+            if {item["id"] for item in public_items} & {item["id"] for item in private_items}:
+                raise _refuse("private overlay", "repeats a public item id", confidential=True)
+            public_keys = {item["dedupe_key"] for item in public_items}
+            if public_keys & {item["dedupe_key"] for item in private_items}:
+                raise _refuse("private overlay", "repeats a public semantic key", confidential=True)
+            statuses.update({("private", item["id"]): item["status"] for item in private_items})
+    finally:
+        if root != -1:
+            os.close(root)
 
     return Registries(
         public_items=tuple(public_items),
@@ -889,13 +1034,13 @@ def initialize_disposition(output: Path, *, cycle_id: str, registries: Registrie
 
     Only the item identifier, its source and the two digests are written. The
     title, rule, reopen condition and semantic key of an overlay item never
-    reach this file, and nothing else from the overlay does either.
+    reach this file, and nothing else from the overlay does either. The file
+    is created exclusively, relative to a parent reached from the root handle
+    without following a link where the handle backend exists.
     """
-    _require_runtime_file(output, label="cycle disposition")
+    _runtime_names(output, label="cycle disposition")
     if not isinstance(cycle_id, str) or not CYCLE_ID.fullmatch(cycle_id):
         raise AdmissionError("--cycle-id must be a short identifier")
-    if output.exists() or output.is_symlink():
-        raise AdmissionError("cycle disposition already exists; remove it to start a new cycle")
     rows = [
         {"id": item["id"], "source": source, "disposition": "pending", "reason": ""}
         for source, items in (
@@ -911,11 +1056,8 @@ def initialize_disposition(output: Path, *, cycle_id: str, registries: Registrie
         "private_overlay_sha256": registries.private_digest,
         "items": rows,
     }
-    try:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
-    except (OSError, ValueError):
-        raise AdmissionError("cycle disposition cannot be written") from None
+    payload = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    _create_disposition(output, payload, label="cycle disposition")
     return len(rows)
 
 
@@ -939,8 +1081,7 @@ def validate_disposition(path: Path, *, registries: Registries) -> tuple[int, in
     loaded.
     """
     label = "cycle disposition"
-    judged = _require_runtime_file(path, label=label)
-    record, _digest = _read_document(path, label=label, expected=judged)
+    record, _digest = _read_document(_open_disposition(path, label=label), label=label)
     if set(record) - DISPOSITION_FIELDS:
         raise AdmissionError("cycle disposition carries an unsupported field")
     if record.get("schema") != DISPOSITION_SCHEMA:
