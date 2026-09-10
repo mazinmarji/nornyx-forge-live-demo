@@ -89,9 +89,27 @@ locally for one person, like the CLI it sits beside. The actor on each
 request is taken verbatim from the request and judged by the capsule's
 KIND rule; the surface does not authenticate humans, and it also never
 upgrades an actor — a client that says it is a model is refused exactly
-where a model must be refused. Authenticating the human is a later,
-separately-scoped slice, and until it lands no claim of authentication is
-made anywhere on this surface.
+where a model must be refused. No claim of authenticating a person is made
+anywhere on this surface, nor on the operational routes a launcher attaches to
+it, and that now holds LITERALLY rather than by module boundary: one attached
+route used to return a sentence claiming otherwise, and A-030 records why the
+sentence was wrong and what would be needed to earn it. THREE ROUTES HERE
+OUTLIVED THAT REPAIR BY ONE SYNONYM -- retry, restore and build answered a
+non-human declaration with "<what> is a human act on this surface", which
+asserts of the ACT the thing this paragraph says is never asserted of the
+caller. They now refuse in the stop route's words, and A-030 records why "human
+act" was narrowed rather than exempted.
+
+WHAT THE KIND RULE ACTUALLY BUYS, said once here so no route has to imply
+more. It DECLINES an actor that honestly declares itself non-human. It
+establishes nothing about one that declares itself human, so it filters
+exactly the callers that were never the threat. The admission to every
+authority-moving route is the per-run bearer (A-027), which bounds the caller
+to this run, this computer and this logged-in user — and to nothing narrower.
+Distinguishing a person from a program running as that same user needs an
+authority outside the same-user domain, which is external authority this
+repository may not create, adopt, infer or backdate. That is the limit, not a
+gap awaiting a later slice's login screen.
 
 `layer.application`, following the forge_cli precedent: this module
 composes the capsule domain, the store adapter, the journey mapping and
@@ -248,17 +266,44 @@ def _refused(reason: str) -> JSONResponse:
 
 
 def _human_act(payload: ResolvePayload, what: str) -> Actor | JSONResponse:
-    """The actions this surface offers are a person's. A request claiming any
-    other kind is refused here by name, before any contract is consulted --
-    and where the contract is stricter still (CONFIRM, READY admit only a
-    human), the contract's refusal is returned as well, in its own words."""
+    """DECLINE an actor that declares itself non-human. That is the whole of
+    what this does, and it is deliberately narrower than the name reads.
+
+    A request claiming any other kind is refused here by name, before any
+    contract is consulted -- and where the contract is stricter still (CONFIRM,
+    READY admit only a human), the contract's refusal is returned as well, in
+    its own words. What this does NOT do is establish that the caller is a
+    person: `payload.actor.kind` is request-body text and `validate()` only
+    asks that it names one of three closed kinds, so a caller that declares
+    `human` passes here whatever it is. The admission to any of these routes is
+    the per-run bearer the session gate applied before this function was
+    reached (A-027); the kind check preserves the never-upgrade-an-actor
+    posture on top of it and authenticates nobody. A-030 states the limit and
+    what closing it would require.
+
+    WHAT THE REFUSAL SAYS, and why it changed. It used to end "<what> is a human
+    act on this surface", which is the retired stop-route claim one synonym
+    away: it tells the caller that the act it just declined IS a human one,
+    which is the thing nothing here establishes. The stop route's refusal was
+    narrowed first and this one was left standing, so three live routes went on
+    speaking the claim while its DOCSTRING twin had been repaired -- the inverse
+    of the priority this docstring argues for. It now says what the stop route's
+    says, in the same words and for the same reasons: the session holder is what
+    the composition establishes, the declared kind is what was refused, and the
+    limit is stated in the body rather than left to a register the caller will
+    never read."""
     actor = payload.actor.to_actor()
     try:
         actor.validate()
     except CapsuleError as error:
         return _refusal(error)
     if actor.kind != "human":
-        return _refused(f"{what} is a human act on this surface; got kind={actor.kind!r}")
+        return _refused(
+            f"{what} is accepted only from the holder of this run's session, "
+            f"on this computer; this request declared a {actor.kind} actor. "
+            "Forge does not verify that a person, rather than a program "
+            "running as the same user, sent it"
+        )
     return actor
 
 
@@ -1138,7 +1183,7 @@ function renderJourney(s){
     blockers.append(list);
   }
   const held = s.authority || {};
-  text("authority", s.finding ? (s.restorable ? "does not match Forge's seal; a person may restore it" : "—")
+  text("authority", s.finding ? (s.restorable ? "does not match Forge's seal; it can be restored from the seal" : "—")
     : !s.initialized ? "—"
     : (held.build === "running" ? "sealed while the build runs; the store on disk is not consulted"
     : (held.anchor === "sealed" ? "sealed by Forge (currency not independently anchored"

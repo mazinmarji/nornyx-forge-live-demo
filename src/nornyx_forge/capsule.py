@@ -36,6 +36,27 @@ tamper-EVIDENCE mechanism against out-of-band edits, not a signature: an
 attacker who can rewrite the whole file can rebuild the whole chain. Detecting
 that requires the store's git history or an external anchor, and this module
 does not claim otherwise.
+
+`by` IS A DECLARATION THIS MODULE RECORDS, NEVER AN IDENTITY IT ESTABLISHED.
+`created.by`, each proposal's `author` and `resolved.by`, and every `by` in
+`history` are `Actor.ident` copied verbatim from the caller. `validate` asks
+only that the ident matches `_IDENT` and that the kind is one of `ACTOR_KINDS`;
+nothing in this module, and nothing in any caller of it, checks either against
+a person. So the human-gated transitions are moved by a SELF-DECLARED kind, and
+the identifier that then enters the digest-chained record is unauthenticated.
+Measured by driving this module directly: `create_document` and `confirm` each
+accept `Actor(kind="human", ident="president-lincoln")` and stamp that ident
+into a record `verify_integrity` and `validate_document` afterwards pass over.
+(`experience.start_experience` does the same for the lifecycle; its own module
+says so, and the impostor was also driven through the gated surface at
+`POST /api/project`.) The chain therefore establishes that the recorded
+provenance HAS NOT BEEN EDITED SINCE IT WAS WRITTEN -- not that it was true
+when it was written. The kind
+check DECLINES an actor that honestly declares itself non-human and establishes
+nothing about one that declares itself human; it is worth keeping for that and
+worth no more than that. Reading `resolved.by` as "who decided" is the
+substitution this paragraph exists to refuse. A-030 states the limit, and that
+closing it needs an external authority this repository may not synthesize.
 """
 
 from __future__ import annotations
@@ -394,12 +415,16 @@ def _copy(document: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def create_document(project_id: str, project_name: str, created_by: Actor, at: str) -> dict[str, Any]:
-    """A new capsule. Creation is a human act.
+    """A new capsule. Creation requires an actor DECLARING kind `human`.
 
     A project exists because a person decided it should; a model or a pipeline
     proposing a project is a proposal like any other and has no capsule to put
     it in yet. `kind == "human"` is therefore required at the root, for the
     same reason `confirm` requires it at every step after.
+
+    The requirement is on the DECLARATION, and `created.by` below records the
+    declared ident verbatim. Nothing here establishes that a person made the
+    call (module docstring, A-030).
     """
     created_by.validate()
     if created_by.kind != "human":
@@ -475,6 +500,12 @@ def confirm(
 
     On success the digest chain is extended, which is what makes out-of-band
     edits to the result detectable.
+
+    "human-gated" means gated on the DECLARED kind. The first refusal above
+    declines an actor that says it is not human; a caller that says it is
+    passes, and `resolved.by` then records that caller's self-declared ident
+    inside the chain. What the chain protects is the record's integrity after
+    the fact, never the truth of the declaration (module docstring, A-030).
     """
     confirmed_by.validate()
     _validate_at(at)

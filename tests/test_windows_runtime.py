@@ -546,7 +546,19 @@ def test_w8_the_probe_accepts_only_a_forge_runtime_answer():
         thread.join(10)
 
 
-def test_the_stop_route_is_a_persons_act_and_the_identity_route_is_a_copy():
+def test_the_stop_route_declines_a_declared_non_human_and_the_identity_route_is_a_copy():
+    """RENAMED FROM `..._is_a_persons_act`, with the claim it was named for.
+
+    The route's refusal used to say "stopping Forge is a person's act at this
+    computer", and this test asserted the phrase. Both were wrong in the same
+    way: `actor.kind` is request-body text, so the check DECLINES a caller that
+    declares itself non-human and establishes nothing about one that declares
+    itself human -- measured, a script with the bearer declaring `human` stops
+    Forge. The check is kept and the claim is not (A-030). What this asserts
+    now is the refusal Forge can back: the session holder, this computer, and
+    the stated absence of any person/program distinction. The wider interlock
+    is `tests/test_actor_declaration_boundary.py`.
+    """
     app = FastAPI()
     calls: list[str] = []
     identity = {"schema": RUNTIME_SCHEMA, "instance": "abc", "port": 1}
@@ -555,7 +567,13 @@ def test_the_stop_route_is_a_persons_act_and_the_identity_route_is_a_copy():
     client = TestClient(app)
     assert client.get("/api/runtime").json()["instance"] == "abc"
     refused = client.post("/api/runtime/stop", json={"actor": MODEL})
-    assert refused.status_code == 409 and "person's act" in refused.json()["refused"]
+    assert refused.status_code == 409
+    said = refused.json()["refused"]
+    assert "holder of this run's session" in said, said
+    assert "on this computer" in said, said
+    assert "same user" in said, said
+    assert "person's act" not in said, said
+    assert "model" in said, "the refusal still names the kind it declined"
     assert calls == []
     assert client.post("/api/runtime/stop").status_code == 422
     # The surface's actor rule, not a looser one: an unacceptable ident is 422.

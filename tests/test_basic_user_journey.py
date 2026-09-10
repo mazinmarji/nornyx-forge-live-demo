@@ -584,12 +584,20 @@ def test_j7_a_failed_or_incomplete_flow_leaves_build_failed(tmp_path: Path, fact
         assert "failed at BUILD; retry it" in response.json()["refused"], path
 
 
-def test_a_failure_is_retried_only_through_the_contract_and_only_by_a_person(tmp_path: Path):
+def test_a_failure_is_retried_only_through_the_contract_and_only_by_a_declared_human(
+    tmp_path: Path,
+):
     client = _client(tmp_path, factory=RejectedFlow)
     _built(client)
     for actor in (MODEL, SYSTEM):
         response = client.post("/api/journey/retry", json={"actor": actor})
-        assert response.status_code == 409 and "human act" in response.json()["refused"]
+        said = response.json()["refused"]
+        assert response.status_code == 409, said
+        # The refusal names what the composition establishes and no more. It
+        # used to call retrying "a human act on this surface", which is the
+        # retired stop-route claim one synonym away (A-030).
+        assert "holder of this run's session" in said, said
+        assert "human act" not in said, said
     retried = _ok(client.post("/api/journey/retry", json={"actor": HUMAN}))
     assert retried == {"stage": "BUILD", "status": "active"}
     assert _events(_persisted(tmp_path))[-1] == ("retried", "BUILD", "casey", "human")

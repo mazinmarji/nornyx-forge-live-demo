@@ -511,7 +511,13 @@ def test_b10_a_forgery_left_for_a_later_process_is_tampered_until_a_person_resto
         assert response.status_code == 409 and response.json().get("finding") == "TAMPERED", path
 
     refused = client.post("/api/journey/restore", json={"actor": MODEL})
-    assert refused.status_code == 409 and "human act" in refused.json()["refused"]
+    said = refused.json()["refused"]
+    assert refused.status_code == 409, said
+    # "restoring the authority store is a human act on this surface" was the
+    # retired stop-route claim one synonym away; the refusal now claims only
+    # the session holder (A-030).
+    assert "holder of this run's session" in said, said
+    assert "human act" not in said, said
     restored = _ok(client.post("/api/journey/restore", json={"actor": HUMAN}))
     assert restored["stage"] == "BUILD" and restored["status"] == "failed"
     persisted = _persisted(tmp_path)

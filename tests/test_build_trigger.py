@@ -149,7 +149,11 @@ def test_a_model_actor_cannot_start_a_build(tmp_path: Path):
     client = _client(_project(tmp_path))
     response = client.post("/api/build", json={"actor": MODEL})
     assert response.status_code == 409
-    assert "human act" in response.json()["refused"]
+    said = response.json()["refused"]
+    # It used to say "starting a build is a human act on this surface". The
+    # refusal now claims only the session holder, as the stop route's does.
+    assert "holder of this run's session" in said, said
+    assert "human act" not in said, said
     assert RecordingFlow.instances == []
 
 

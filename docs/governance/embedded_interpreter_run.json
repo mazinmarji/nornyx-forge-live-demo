@@ -220,7 +220,8 @@
     ]
   },
   "not_measured": {
-    "stop_route_and_stopped_record": "The stop route refuses any actor whose kind is not human: windows_runtime.py answers a non-human actor with a refusal, because stopping Forge is a person's act at that computer. The builder-agent is not a person and declined to assert that it was, so the stop route and the stopped record were not exercised on this run. The smoke, which does assert that actor, hung before reaching them.",
+    "stop_route_and_stopped_record": "The stop route declines any actor whose DECLARED kind is not human: windows_runtime.py answers a declared non-human actor with a refusal. The builder-agent is not a person and declined to assert that it was, so the stop route and the stopped record were not exercised on this run. The smoke, which does assert that actor, hung before reaching them.",
+    "stop_route_rationale_correction": "This field originally gave the reason for the refusal as \"because stopping Forge is a person's act at that computer\", restating the route's own claim of the day. That claim was unbacked: actor.kind is request-body text and the check establishes nothing about a person. The route's refusal was later narrowed to what is measured (the holder of this run's session, on this computer) and the limit recorded as A-030. Only the rationale quoted here was corrected; no observation on this run changes, and the agent's own reason for not calling -- it would not assert a declaration it knew to be false -- stands on its own.",
     "developer_bundle_smoke": "Not run on this host.",
     "second_host": "None. One host, one archive, one architecture."
   },

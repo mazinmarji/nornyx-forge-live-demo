@@ -527,6 +527,26 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # -- which is what the windows-runtime job did on `main` at dabaade.
     # 97 collected, floor at band(97) = 88.
     "tests/test_windows_runtime.py": 88,
+    # Tranche G, what a self-declared actor establishes: 6 collected at
+    # introduction, 7 after round 2, floor at band(7) = 7. Required rather than
+    # absorbed into a neighbour's slack, because the property it holds IS a
+    # census -- every route reading a self-declared actor, derived from the
+    # composed routing table -- and a census that another module's slack can
+    # swallow stops being one. Six at introduction: the enumerate-and-pin
+    # interlock over that derived route set and `ALLOWLIST`; the AST-derived
+    # personhood-claim guard with its controls; the stop refusal read off the
+    # real route; which of the two checks actually admits a stop; the
+    # fabricated human still moving authority into the chain-covered record;
+    # and `test_the_personhood_limit_is_the_disclosed_boundary`, which reads
+    # A-030 in A-029's pattern. THE SEVENTH is
+    # `test_the_ready_line_defers_to_the_record_and_claims_nobody`, and it
+    # exists because the six above were defeated by a synonym: with the
+    # person-only phrase list, rewriting `_NEXT["READY"]` to "a human confirmed
+    # it" left this module GREEN at 6 passed. The seventh pins that line in the
+    # AFFIRMATIVE, which is the half a phrase list cannot supply. None skips on
+    # any platform: the module runs on a `TestClient`, drives the pure
+    # lifecycle contract, and reads files already in the tree.
+    "tests/test_actor_declaration_boundary.py": 7,
     # Tranche B's control-plane session: 43 collected at introduction, 77 after
     # the repair round, 80 after round 3 (the allowlisted routes ignoring
     # cookies, the owner-failure 503 on the composed surface, the page's CSP
@@ -1471,10 +1491,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3377   (113 modules)
-#     sum of the module floors    3094
-#     band(3377) = ceil(0.9*n)    3040
-#     MINIMUM_COLLECTED           3102
+#     collected across tests/     3384   (114 modules)
+#     sum of the module floors    3101
+#     band(3384) = ceil(0.9*n)    3046
+#     MINIMUM_COLLECTED           3109
 #     above the module sum         8
 #     below what collects         275
 #
@@ -1571,7 +1591,45 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # than silently repaired, because the file whose subject is that prose beside
 # a constant is not a measurement of it had its own prose cut in half by a
 # merge for two review rounds.
-MINIMUM_COLLECTED = 3102
+#
+# TRANCHE G ADDS ONE MODULE AND SIX ROWS, and moves nothing else. The suite
+# collects 3377 -> 3383 and 113 modules become 114:
+# `tests/test_actor_declaration_boundary.py` is new at 6 collected, floor
+# band(6) = 6, and it is REQUIRED because the property it holds is a census of
+# the routes that read a self-declared actor. Nothing else moved --
+# `tests/test_windows_runtime.py` still collects 97 against floor 88, because
+# Tranche G RENAMED one of its tests and widened its assertions rather than
+# adding a row. The module-floor sum therefore rises by exactly six,
+# 3094 -> 3100, the aggregate follows to 3108, and the margin above the sum
+# stays 8. The working room below what collects is UNCHANGED at 275: the
+# collection and the aggregate each rose by six, which is the one row a
+# careless edit here would move in the wrong direction. band(n) goes
+# 3040 -> 3045 and grants this module the slack its own floor already implies
+# -- band(6) = 6 leaves zero, so the total slack the bands grant is unchanged
+# at 283. NO SKIP IS ADDED: the new module runs everywhere, so the
+# windows-runtime job's own floor is untouched at 263 -- that job runs six
+# named modules and this is not one of them.
+#
+# TRANCHE G ROUND 2 ADDS ONE ROW TO THAT SAME MODULE AND NO MODULE. The rows
+# above are re-measured for this head and are NOT the paragraph above's plus
+# one: a superseded measurement left standing beside the thing it no longer
+# measures is the rot this block exists to stop. The suite collects
+# 3383 -> 3384 and 114 modules still stand, because the new row is
+# `test_the_ready_line_defers_to_the_record_and_claims_nobody` in the module
+# that already holds the interlock. Its floor moves band(6) = 6 -> band(7) = 7,
+# so the module sum rises by exactly one, 3100 -> 3101, and the aggregate
+# follows to 3109 to hold the margin above the sum at 8. The working room below
+# what collects is UNCHANGED at 275 -- the collection and the aggregate each
+# rose by one, which is the row a careless edit moves in two directions at
+# once. band(n) goes 3045 -> 3046. THE SLACK THE BANDS GRANT IS UNCHANGED AT
+# 283: band(7) = 7 leaves this module zero, exactly as band(6) = 6 did, so the
+# figure `test_the_slack_the_bands_grant_is_the_measured_sum` reads does not
+# move. Nothing else moved: the three route-refusal tests this round rewrote
+# assert on a different string, and one test was RENAMED
+# (`..._only_by_a_person` -> `..._only_by_a_declared_human`, its own name having
+# become the retired claim), neither of which is a row. No skip is added and
+# the windows-runtime job's floor is untouched at 263.
+MINIMUM_COLLECTED = 3109
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -1661,6 +1719,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_bundle.py",
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
+    "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",
     "tests/test_control_plane_authority.py",
     "tests/test_brd_authoring.py",
