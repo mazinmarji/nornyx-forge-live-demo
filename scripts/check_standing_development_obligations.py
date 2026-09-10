@@ -214,16 +214,24 @@ _CREATE_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_CLOEXEC
 _OWN_SCRIPT = ("scripts", "check_standing_development_obligations.py")
 _PUBLIC_REGISTRY_NAMES = ("docs", "governance", "STANDING_DEVELOPMENT_OBLIGATIONS.json")
 
-#: Printed after every PASS. The sentence is the boundary, stated where a
-#: reader of the output will see it rather than only in a document, and it
-#: claims exactly what `validate_disposition` measures and nothing about the
-#: person or model that wrote the file.
+#: What `validate_disposition` MEASURED, printed by the one mode that measures
+#: it. This sentence used to open the epilogue below and was therefore printed
+#: after every PASS -- including the bare invocation, which validates no
+#: disposition at all, and `--init`, which creates one whose every row is still
+#: pending. Both then stated a measurement neither had taken.
+ADMISSION_RECORD = (
+    "This run recorded that a local disposition covers exactly the loaded standing "
+    "obligations, gives each a resolved disposition with a non-empty reason, and is "
+    "digest-bound to the exact input bytes checked."
+)
+#: Printed after every PASS, in every mode, because it is true of every mode.
+#: The sentence is the boundary, stated where a reader of the output will see
+#: it rather than only in a document, and it claims nothing about the person or
+#: model that wrote the file.
 ADMISSION_BOUNDARY = (
-    "Admission is procedural: it records that a local disposition covers exactly the "
-    "loaded standing obligations, gives each a resolved disposition with a non-empty "
-    "reason, and is digest-bound to the exact input bytes checked. It establishes "
-    "nothing about whether anyone read or weighed them, authorizes nothing, and "
-    "confers no merge, publication, release, deployment, approval or other authority."
+    "Admission is procedural: it establishes nothing about whether anyone read or "
+    "weighed the standing obligations, authorizes nothing, and confers no merge, "
+    "publication, release, deployment, approval or other authority."
 )
 OVERLAY_NOTICE = (
     "External overlay: supplied explicitly, validated and digest-bound; its path, "
@@ -1359,6 +1367,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         if overlay is not None:
             print(OVERLAY_NOTICE)
+        if check is not None:
+            # Only this mode validated a disposition, so only this mode may
+            # say that one was recorded.
+            print(ADMISSION_RECORD)
         print(ADMISSION_BOUNDARY)
         return 0
     except AdmissionError as exc:

@@ -45,7 +45,9 @@ from test_standing_development_obligations import (
 
 windows_only = pytest.mark.skipif(
     os.name != "nt",
-    reason="directory junctions exist only on Windows; the windows-runtime CI job runs these",
+    reason="Windows is the subject: these measure the checker where no handle-based "
+           "backend exists, and three of them need a junction to do it; the "
+           "windows-runtime CI job runs them all",
 )
 
 #: The one sentence every private overlay is refused with on this platform.

@@ -295,8 +295,9 @@ jobs:
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 was clear of any four of the five. These numbers are "
-                    "not maintained by hand: "
+                    "floor of 60 is clear of any FIVE of these seven -- the five "
+                    "smallest carry 113 -- so two whole modules could vanish beneath "
+                    "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "
                     "sentence, to what it measures.")

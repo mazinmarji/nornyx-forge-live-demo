@@ -1,13 +1,17 @@
 # Nornyx Forge operating instructions
 
 Before planning or editing any repository-changing development cycle, follow
-`AGENTS.md` and pass `scripts/check_standing_development_obligations.py` with
-any explicitly supplied external overlay. Standing admission does not replace
-the controls below: it records that a local disposition covers every loaded
-standing obligation with a resolved disposition, a non-empty reason and
-matching input digests; it establishes nothing about whether anyone read
-them; and it confers no authority to begin, merge, publish, release or deploy
-anything.
+`AGENTS.md` and pass `scripts/check_standing_development_obligations.py
+--check-disposition` against the completed disposition, with any explicitly
+supplied external overlay. Name that mode: it is the only one that measures a
+disposition. The bare invocation loads the registries and validates nothing
+else, and `--init` writes a file whose every row is still `pending`; neither
+is admission, and this paragraph asked for neither by name. Standing admission
+does not replace the controls below: it records that a local disposition
+covers every loaded standing obligation with a resolved disposition, a
+non-empty reason and matching input digests; it establishes nothing about
+whether anyone read them; and it confers no authority to begin, merge,
+publish, release or deploy anything.
 
 Treat `BRD.md` as the business source of truth and `.nornyx/contracts/*.nyx` as the governance source of truth.
 
