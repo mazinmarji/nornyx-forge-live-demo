@@ -51,6 +51,63 @@ EXPECTED_SKIPS = {
         "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
     "tests/test_special_files.py::test_a_symlink_pointing_outside_the_tree_is_refused":
         "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
+    # The standing-obligation checker's symlink refusals, the same fixture
+    # limit as the four above.
+    "tests/test_standing_development_obligations.py::test_an_overlay_symlink_that_resolves_into_the_repository_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_an_overlay_symlink_inside_the_repository_pointing_outside_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_symlink_loop_overlay_is_refused_without_a_traceback":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_disposition_symlink_under_the_runtime_root_pointing_outside_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_symlink_chain_that_passes_through_the_repository_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_link_reached_through_a_directory_symlink_into_the_repository_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_fifo_overlay_is_refused_without_blocking":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_directory_symlink_chain_through_the_repository_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_double_slash_spelling_of_an_in_repository_path_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_the_identity_traversal_follows_no_link_and_is_bounded":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_file_replaced_by_an_in_repository_link_after_the_walk_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_every_lookup_in_a_judgment_is_relative_to_a_held_directory":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_plain_entry_swapped_for_a_link_between_inspection_and_open_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_component_that_cannot_be_inspected_refuses_the_path":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_queued_directory_swapped_for_a_link_before_its_scan_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_hard_linked_overlay_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_link_is_refused_where_it_sits_and_nothing_beyond_it_is_consulted":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_the_repository_root_handle_is_bound_to_the_running_checker":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_substituted_repository_root_is_refused":
+        "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
+    "tests/test_standing_development_obligations.py::test_a_mount_change_spanning_the_walk_is_refused":
+        "The handle backend does not exist on Windows, where a private overlay is refused before any judgment, so the second census this test supplies is never taken there. The property is not weakened: every CI test job runs Linux and executes it, and the platform refusal is held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    # The standing-obligation checker measured on Windows: the platform refusal
+    # in five path shapes -- three of them real junctions -- and the public
+    # cycle that still runs under it. Run where that platform is.
+    "tests/test_standing_obligations_windows.py::test_a_plain_external_overlay_is_refused_on_this_platform":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_chain_through_the_repository_is_refused":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_inside_the_repository_pointing_outside_is_refused":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    "tests/test_standing_obligations_windows.py::test_a_junction_that_never_touches_the_repository_is_still_refused":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    "tests/test_standing_obligations_windows.py::test_a_namespace_spelling_of_an_in_repository_path_is_refused":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    "tests/test_standing_obligations_windows.py::test_public_registry_admission_runs_on_this_platform":
+        "Windows is the SUBJECT of all six, not merely the host that can build a fixture: they measure the checker on the platform that has no handle-based backend -- five that a private overlay is refused there whatever the path's shape (a plain external file, three junction shapes, a namespace spelling), and one that public-registry admission still runs there. Three of the six build no junction at all; off Windows there is no such platform to measure, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_standing_obligations_windows.py and refuses a skip, so every one of them executes on the platform it concerns; the platform refusal they exercise is also held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
     "tests/test_special_files.py::test_a_fifo_under_a_governed_root_is_refused":
         "Symlink, FIFO and device-node fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these, and test_the_refusals_are_reachable_on_every_platform asserts the refusals still exist in the observer, so deleting one cannot hide here.",
     "tests/test_special_files.py::test_a_device_node_is_refused_if_one_can_be_referenced":
@@ -810,7 +867,28 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # governance documents, so it gained nothing of its own -- a doc is a test
     # here, and a tranche that adds one owes the census the same update a new
     # module does.
-    "tests/test_recorded_measurements.py": 180,
+    # Raised 180 -> 184 for the STANDING-OBLIGATION ADMISSION mechanism:
+    # docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md entered the document
+    # sweep (204 collected, band(204) = 184). Same shape as Tranche I: a
+    # governance document is a test here.
+    "tests/test_recorded_measurements.py": 184,
+    # The standing-obligation checker: 82 collected at introduction, 103 after
+    # the in-session adversarial review round, 106 after the Codex review of
+    # the merged head (the directory-link chain, the count-free output, the
+    # uninspected reason stated), floor at band(106) = 96.
+    # Registry validity and duplicate refusal; the closed disposition
+    # vocabulary and field sets; digest binding and staleness; exact
+    # coverage; `defer` only for a deferred item; no discovery under planted
+    # decoys, with the structural lint stated as a lint; the in-repository
+    # overlay refusal as given, at every component and link and after
+    # resolution; and the sentinel sweep over every output, file, refusal and
+    # refusal context on the failure paths -- a symlink loop, a chain through
+    # the tree, a directory-link chain, a FIFO, invalid UTF-8, a repeated JSON
+    # key, a trailing line break in an identifier, an unhashable value, a
+    # deeply nested document, a repeated option, a stray argument,
+    # twenty-three malformed shapes.
+    "tests/test_standing_development_obligations.py": 120,
+    "tests/test_standing_obligations_windows.py": 7,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
     # Protected because Lens B measured 103 tests of slack in the aggregate
@@ -1003,6 +1081,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
     # proof runs a real runtime once for each provider PROVIDERS declares; a
     # third provider would be a diff here as well as in the contract.
     "tests/test_windows_host_runtime.py::test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refused": 2,
+    # TWO, on a Windows workstation: the two link shapes -- a directory link
+    # and a file link retargeted between the walk and the open -- are one
+    # parametrised identity, and both need a symlink. On Linux neither skips.
+    "tests/test_standing_development_obligations.py::test_a_plain_entry_swapped_for_a_link_between_inspection_and_open_is_refused": 2,
     # THREE, and three is the LARGER of the two platform counts rather than a
     # sum: on Windows the three symlink shapes skip, on Linux the two junction
     # shapes do. A cap of two would fail the Windows workstation and a cap of
@@ -1489,14 +1571,200 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # round 2, two in round 3 and six in round 4, a fact about the slice rather
 # than about the base under it:
 #
+# Re-measured for the STANDING-OBLIGATION ADMISSION mechanism (PR #51), after
+# its reconciliation with main as it stood AFTER TRANCHE E, the monotonic
+# freshness slice, one in-session adversarial review round and one Codex
+# review round. ONE MODULE WAS ADDED:
+# tests/test_standing_development_obligations.py collects 106 with a floor at
+# band(106) = 96, so 114 modules stand. The DOCUMENT SWEEP moved as well:
+# docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md is a governance
+# document, so tests/test_recorded_measurements.py collects 199 -> 204 and its
+# floor follows band(199) = 180 -> band(204) = 184. The module-floor sum rises
+# by 100 to 3192 and the aggregate follows to 3200, keeping the same 8 above
+# it. The suite collects 3375 -> 3486, band(n) 3038 -> 3138, and the working
+# room below the floor moves 275 -> 286. THE SLACK THE BANDS GRANT moves
+# 283 -> 294: the new module sits 10 above its band and the sweep module now
+# sits 20 above its own, one more than before. Earlier reconciliations of this
+# same slice, against main before Tranche D and before Tranche E, measured
+# 3416 and 3480 across 114 modules; those totals are gone from here for the
+# reason the paragraph above gives. NO PROVIDER ROW MOVED -- admission is
+# procedure and decides nothing about eligibility, approval or release.
+#
+# THE SECOND CODEX ROUND ADDS ONE MODULE AND FORTY-THREE TESTS.
+# tests/test_standing_development_obligations.py collects 106 -> 142 (floor
+# band(106) = 96 -> band(142) = 128): the reparse-point classifier, the
+# Windows link-target rule, the identity backstop, the double-slash chain,
+# five swap-between-walk-and-open shapes, the one-sentence private refusals
+# and the measured-claim sweep. tests/test_standing_obligations_windows.py is
+# new and collects 7 (floor band(7) = 7; the band is no smaller for a module
+# this size): six real directory junctions, buildable only on Windows, so
+# each is a declared skip here and executes in the windows-runtime job, which
+# refuses a skip -- plus the one test that runs everywhere and holds that the
+# job names the module, without which the module would be present and
+# executing nothing. 115 modules stand. The module-floor sum rises by 39 to
+# 3231 and the aggregate follows to 3239, keeping the same 8 above it; the
+# suite collects 3486 -> 3529, band(n) 3138 -> 3177, and the working room
+# below the floor 286 -> 290. THE SLACK THE BANDS GRANT moves 294 -> 298: the
+# standing module now sits 14 above its band rather than 10, and the Windows
+# module sits on its own. Ten declared symlink skips in the standing module
+# now rather than seven, beside the FIFO: the three new link shapes, one of
+# them two cases. NO PROVIDER ROW MOVED.
+#
 # (rows below):
 #
-#     collected across tests/     3384   (114 modules)
-#     sum of the module floors    3101
-#     band(3384) = ceil(0.9*n)    3046
-#     MINIMUM_COLLECTED           3109
+#     collected across tests/     3529   (116 modules)
+#     sum of the module floors    3232
+#     band(3529) = ceil(0.9*n)    3177
+#     MINIMUM_COLLECTED           3240
 #     above the module sum         8
-#     below what collects         275
+#     below what collects         289
+#
+# THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
+# tests/test_standing_development_obligations.py collects 142 -> 145 (floor
+# band(142) = 128 -> band(145) = 131): the alias rooted below the repository
+# root, the identity traversal that follows no link and refuses past its
+# bound, and the unfollowed link that nothing looks beyond. The module-floor
+# sum rises by three to 3236 and the aggregate follows to 3244, keeping the
+# same 8 above it; the suite collects 3531 -> 3534, band(n) 3178 -> 3181, and
+# the working room below the floor stays 290. THE SLACK THE BANDS GRANT stays
+# 298: the module and its floor each moved by three. Twelve declared symlink
+# skips in the standing module now rather than ten: the two new link shapes.
+# NO PROVIDER ROW MOVED.
+#
+# THE FOURTH CODEX ROUND ADDS TWO TESTS AND NO MODULE.
+# tests/test_standing_development_obligations.py collects 145 -> 147 (floor
+# band(145) = 131 -> band(147) = 133): the stat failure that refuses the
+# identity traversal whole rather than leaving a directory out, and the
+# traversal that scans each directory once whatever its aliases. Both run
+# everywhere -- the entries are supplied to the traversal, not built on disk
+# -- so no skip is declared. The module-floor sum rises by two to 3238 and
+# the aggregate follows to 3246, keeping the same 8 above it; the suite
+# collects 3534 -> 3536, band(n) 3181 -> 3183, and the working room below
+# the floor stays 290. THE SLACK THE BANDS GRANT stays 298: the module and
+# its floor each moved by two. NO PROVIDER ROW MOVED.
+#
+# THE SIXTH CODEX ROUND REDESIGNS THE CONFINEMENT AND THE MODULE SHRINKS.
+# The pathname walk could not hold its claim under concurrent namespace
+# mutation (three races measured), so the checker judges through held
+# descriptors now, follows no link at all, and refuses a private overlay
+# outright where no handle backend exists (Windows). The tests over what
+# was removed went with it: the reparse-point classifier (8 cases), the
+# Windows link-target rule (15), the fake-link precedence test, the
+# retargeted-link pair (2), the unfollowed-link resolution spy, and the two
+# fifth-round lstat-failure pins whose subjects no longer exist -- 30
+# collected items -- while eleven pins of the new properties arrived: every
+# lookup relative to a held directory, a plain entry swapped for a link
+# between inspection and open (2 cases), a component that cannot be
+# inspected, a queued directory swapped before its scan, exclusive
+# disposition creation, a hard-linked overlay, a link refused where it sits
+# with nothing beyond it consulted, the fail-closed platform without the
+# backend, one identity snapshot per judgment, and the root handle bound to
+# the running checker; the double-slash pin now takes the given path rather
+# than a link target. tests/test_standing_development_obligations.py
+# collects 149 -> 131 (floor band(149) = 135 -> band(131) = 118), a
+# DELIBERATE shrink of a module whose subject changed, not a silent one.
+# tests/test_standing_obligations_windows.py stays at 7 with its six
+# junction proofs now holding the platform refusal and one new proof that
+# public-registry admission still runs there; the classifier proof it lost
+# had no subject left. The module-floor sum falls by seventeen to 3223 and
+# the aggregate follows to 3231, keeping the same 8 above it; the suite
+# collects 3538 -> 3520, band(n) 3185 -> 3168, and the working room below
+# the floor 290 -> 289. THE SLACK THE BANDS GRANT moves 298 -> 297: the
+# standing module sits 13 above its band rather than 14. Eighteen declared
+# symlink skips in the standing module now rather than thirteen, one of
+# them two cases. NO PROVIDER ROW MOVED.
+#
+# THE SEVENTH CODEX ROUND ADDS TWO TESTS AND NO MODULE.
+# tests/test_standing_development_obligations.py collects 131 -> 133 (floor
+# band(131) = 118 -> band(133) = 120): the checkout path substituted after
+# the checker was loaded, three ways, each refused (a real symlink, so a
+# declared symlink skip on Windows -- the nineteenth), and the mount change
+# spanning the walk, refused by the second census (no fixture a workstation
+# cannot build, but a judgment the platform without the handle backend never
+# makes, so a declared skip of its own kind there). The module-floor sum
+# rises by two to 3232 and the aggregate follows to 3240, keeping the same 8
+# above it; the suite collects 3527 -> 3529, band(n) 3175 -> 3177, and the
+# working room below the floor stays 289. THE SLACK THE BANDS GRANT stays
+# 297: the module and its floor each moved by two. Nineteen declared symlink
+# skips in the standing module now rather than eighteen, and one skip of the
+# handle-backend kind. NO PROVIDER ROW MOVED.
+#
+# THE FIFTH CODEX ROUND ADDS TWO TESTS AND NO MODULE.
+# tests/test_standing_development_obligations.py collects 147 -> 149 (floor
+# band(147) = 133 -> band(149) = 135): the component the walk cannot lstat
+# that refuses the path rather than being stepped past (a real link chain,
+# so a declared symlink skip -- the thirteenth), and the ancestor whose
+# identity cannot be read that refuses rather than being skipped (runs
+# everywhere). The module-floor sum rises by two to 3240 and the aggregate
+# follows to 3248, keeping the same 8 above it; the suite collects 3536 ->
+# 3538, band(n) 3183 -> 3185, and the working room below the floor stays
+# 290. THE SLACK THE BANDS GRANT stays 298: the module and its floor each
+# moved by two. NO PROVIDER ROW MOVED.
+#
+# THE SIXTH RECONCILIATION OF PR #51, with main as it stood after Tranche G
+# and its second round (the two paragraphs beside the constant below, main's
+# own), moves that tranche's one module into this tree and adds no module of
+# its own: tests/test_actor_declaration_boundary.py collects 7 (floor
+# band(7) = 7) here as it did on main, so 116 modules stand. The rows above
+# were RE-MEASURED from a fresh collection of this merged tree, not summed
+# from either side's rows: 116 modules collect 3527, the module floors sum
+# to 3230, band(n) is 3175. The aggregate follows the rule both sides carry
+# -- the module sum plus 8 -- and lands at 3238, which is main's 3109 raised
+# by the floors this branch adds (the standing module's 118, the Windows
+# module's 7 and the four the document sweep gained) and this branch's 3231
+# raised by seven, the new module's own floor; the room above the module sum
+# is 8 again and the room below what collects is 289, unchanged, because the
+# collection and the aggregate each rose by seven. THE SLACK THE BANDS GRANT
+# is unchanged at 297: band(7) = 7 leaves the new module zero, so nothing
+# moved. The windows-latest job's floor does not move either: a collection
+# of the seven modules its command names gives 283 again on this tree
+# (7/14/15/23/54/73/97), because Tranche G renamed a test in
+# tests/test_windows_runtime.py and added none, so 277 stands. Where main's
+# two Tranche G paragraphs say that job's floor is 263 over six modules,
+# they describe main, which does not carry the standing module; here the
+# job runs seven and the fifth reconciliation's 277 is the floor. Every
+# generated evidence artifact was regenerated over this merged tree rather
+# than taken from either side.
+#
+# THE FIFTH RECONCILIATION OF PR #51, with main as it stood after the
+# launcher-pipe repair below, moves that repair's one row into this tree and
+# adds no module of its own: tests/test_windows_bundle.py collects 53 -> 54
+# (floor band(53) = 48 -> band(54) = 49) here as it did on main. The rows
+# above were RE-MEASURED from a fresh collection of this merged tree, not
+# summed from either side's rows: 115 modules collect 3531, the module
+# floors sum to 3233, band(n) is 3178. The aggregate follows main's own
+# rule for this tree -- the module sum plus 8 -- and lands at 3241, which is
+# main's 3102 raised by the standing-obligation floors this branch adds and
+# this branch's 3239 raised by two, the same two units main added for the
+# same reason; the room above the module sum is 8 again and the room below
+# what collects is 290. THE SLACK THE BANDS GRANT is 298: band(54) = 49 leaves
+# the bundle module the same 5 that band(53) = 48 did, so nothing moved. The
+# windows-latest job's floor moves with the bundle module's one new test,
+# 276 -> 277 over seven modules, from a collection of those modules rather
+# than from either side's arithmetic. Every generated evidence artifact was
+# regenerated over this merged tree rather than taken from either side.
+#
+# THE FOURTH RECONCILIATION OF PR #51, with main as it stood after the
+# vanished-entry repair below, moves that repair's one row into this tree and
+# adds no module of its own: tests/test_provider_authority_boundary.py
+# collects 102 -> 103 (floor band(102) = 92 -> band(103) = 93) here as it did
+# on main. The module-floor sum rises by one to 3232 and the suite collects
+# 3529 -> 3530; band(n) stays 3177, because ceil(0.9 * 3530) is 3177 too.
+# MINIMUM_COLLECTED does not move, exactly as main chose not to move it for
+# the same one-test change, so the room above the module sum falls 8 -> 7
+# while the room below what collects rises 290 -> 291. The slack the
+# per-module bands grant stays 298: the module and its floor each moved by
+# one. Every generated evidence artifact was regenerated over this merged
+# tree rather than taken from either side.
+#
+# THE VANISHED-ENTRY REPAIR MOVED THE SAME ROW AND ADDED NO MODULE. One test in
+# tests/test_provider_authority_boundary.py, 102 -> 103 (floor band(102) = 92 ->
+# band(103) = 93), for the CI race described at that module's floor above;
+# MINIMUM_COLLECTED did not move. The slack the per-module bands grant was
+# unchanged: the module and its floor each moved by one. ITS SUITE-WIDE
+# TOTALS ARE NOT KEPT HERE, for the reason the Tranche E paragraph below
+# gives: they described main before this reconciliation and are false of
+# this tree; the paragraph above carries the merged measurement.
 #
 # THE LAUNCHER-PIPE REPAIR MOVES ONE ROW AND ADDS NO MODULE. The unscripted
 # smoke test lives in the module that already holds the smoke, so
@@ -1558,7 +1826,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 283 in total, and the aggregate refuses
+# per-module bands already grant 297 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1629,7 +1897,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (`..._only_by_a_person` -> `..._only_by_a_declared_human`, its own name having
 # become the retired claim), neither of which is a row. No skip is added and
 # the windows-runtime job's floor is untouched at 263.
-MINIMUM_COLLECTED = 3109
+MINIMUM_COLLECTED = 3240
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -1732,6 +2000,8 @@ REQUIRED_MODULES = (
     # Losing it would leave `PROVIDER_CONFINEMENT` promotable to `established`
     # with no measurement objecting.
     "tests/test_codex_confinement_admission.py",
+    "tests/test_standing_development_obligations.py",
+    "tests/test_standing_obligations_windows.py",
     "tests/test_trusted_greenfield_acceptance.py",
     "tests/test_project_capsule.py",
     "tests/test_experience_contract.py",

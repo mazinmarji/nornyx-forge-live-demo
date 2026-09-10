@@ -113,9 +113,15 @@ lasted, and the suite stayed green throughout -- see
 `tests/test_baseline_discrimination.py`.
 
 Recording a violation afterwards is the fallback, not the plan.
-`docs/governance/EVIDENCE_BINDING_BASELINE.json` carries six commits made after
+`docs/governance/EVIDENCE_BINDING_BASELINE.json` carries eight commits made after
 the defect was understood, and a rising count there means this discipline is
-not being followed.
+not being followed. The seventh is the first head of PR #51, whose repair
+cycle recorded it rather than rewriting the branch. The eighth is that PR's
+fifth reconciliation merge: the regeneration refused to run because git
+reported dubious ownership of the checkout, which the tooling honours rather
+than overrides, and the commit step did not fail closed on that refusal, so
+the merge shipped the evidence it had taken from main. The next commit
+regenerated the evidence over that tree and recorded the merge here.
 
 ## What is deliberately not regenerated
 

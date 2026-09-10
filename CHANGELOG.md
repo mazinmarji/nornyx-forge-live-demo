@@ -2,6 +2,232 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Standing development obligations (PR #51, reconciled with main and
+  repaired). A public-safe, provider-neutral mechanism for carrying standing
+  development obligations across sessions, models, workstations and
+  developers: a machine-readable registry
+  (`docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.json`), a procedure
+  document, a deterministic checker
+  (`scripts/check_standing_development_obligations.py`), a root `AGENTS.md`,
+  and wiring into `CLAUDE.md` and the `build-app` Skill. A cycle disposition
+  under the gitignored `.nornyx/runtime/` names every loaded item, is bound by
+  SHA-256 to the exact registry and overlay bytes, and refuses while any item
+  is `pending` or `requires_decision`, duplicated, uncovered or stale. An
+  external overlay is read only from `--overlay` -- never discovered -- must
+  resolve outside this repository as given and after symlinks are followed,
+  and contributes to the disposition only its item identifiers and a digest.
+  WHAT PASSING MEANS is now stated in the registry itself (FGR-SDO-005), in
+  every entry point and in the checker's own output: a local disposition
+  covers exactly the loaded obligations, gives each a resolved disposition
+  and a non-empty reason, and is digest-bound for the cycle, and nothing
+  else -- nothing about whether anyone read an item, and no human,
+  organizational, merge, publication, release, deployment or other
+  consequential authority follows from it; a private overlay governs a
+  cycle whose authority comes separately and creates none.
+  The repair cycle found and closed, on the first head: every refusal now
+  names a label and at most an item index, exception chaining from the
+  loaders is severed, and the two failure paths that DID carry a value are
+  pinned -- a symlink-loop overlay made `Path.resolve` raise `RuntimeError`
+  with the path in its message on CPython 3.11, uncaught, and
+  `UnicodeDecodeError` quotes the offending byte; a stray positional argument
+  was echoed by argparse; unknown fields in a registry, an overlay or a
+  disposition were ignored and are refused, so a fabricated `approved_by`
+  cannot ride along; `defer` was accepted on an ACTIVE invariant, which is
+  ignoring it under a resolved label, and is refused unless the item's
+  registry status is already `deferred`; `--init` overwrote a completed
+  disposition and refuses one that exists; the disposition was written with
+  platform line endings; the procedure document used a participle the
+  overclaim sweep reads as a claim; and the registry put `governance` and
+  `Nornyx` on one line, which the operator-surface sweep reads as a
+  governance-mode claim. Eighty-two tests hold the mechanism, twenty-three of
+  them malformed-overlay shapes with sentinels in the refused field and a
+  sentinel sweep over stdout, stderr, the disposition and every refusal.
+  The first head of PR #51 also shipped stale evidence: it added governed
+  inputs without regenerating the set, so `--verify` reported every artifact
+  stale, seven mutation proofs in `tests/test_subject_completeness.py`
+  became tautologies, and the evidence-binding check reported the commit.
+  History was preserved on instruction, so the commit is recorded in
+  `docs/governance/EVIDENCE_BINDING_BASELINE.json` as the seventh made after
+  the defect was known, with the pinned count in
+  `tests/test_evidence_binding.py` raised deliberately; the merge and every
+  later commit regenerate the evidence in the same commit, except the fifth
+  reconciliation merge (a1f9995), recorded as the eighth: its regeneration
+  refused to run under a checkout git reported as dubiously owned and the
+  commit step did not fail closed, so it shipped main's evidence and the
+  commit after it regenerated the set over that tree. Collection
+  3308 -> 3395 across 114 modules; the recorded-measurements floor follows
+  the new governance document to 184.
+  An in-session read-only adversarial review of the first repaired head --
+  bounded review evidence, not an independent inspection -- found no P1 and
+  three P2s, each contradicting a stated claim, each reproduced and closed:
+  a repeated JSON key let a disposition row read `requires_decision` to a
+  person and `considered` to the checker, and let a shadowed `items` carry
+  `approved_by` past the closed field set (every document is now parsed
+  with a pairs hook that refuses repetition); `$`-anchored identifier
+  grammars admitted a trailing newline, so `PRV-001` plus a line break was
+  written into the disposition and a public id plus a line break walked
+  past the cross-registry duplicate check (matched in full now); and a
+  symlink chain hopping through `.nornyx/runtime/` was accepted because
+  only its two ends were judged (every link is now judged at the directory
+  where it really sits). Also closed from that review: a repeated
+  `--overlay` was last-wins and is refused; an unhashable value where a
+  word belongs, and a deeply nested document, raised `TypeError` and
+  `RecursionError` past the labelled refusals; the read was two opens and a
+  FIFO swapped between them would have hung the caller; and `from None`
+  only hid the loaders' `__context__`, which still carried the filename --
+  refusals are now raised outside the handler and pinned to carry none.
+  Stated rather than fixed: a hard link is invisible to a path rule, the
+  disposition does not bind the checker's own bytes, and the structural
+  lint over the source is a lint that thirteen of fifteen evasions walked
+  past; the discovery property rests on the behavioural sweep.
+  A Codex review of the merged head (bounded automated review evidence)
+  found one P1 and three P2s, each reproduced and closed: a DIRECTORY link
+  chain -- `outside/a` to an in-repository directory link to
+  `outside/final` -- passed, because the walk placed each hop at the
+  realpath of its parent and `realpath` follows a directory link straight
+  through; the walk is now component by component, every link judged where
+  it sits and then followed, pinned by that shape. The PASS line printed the
+  overlay's item count, which is a summary of the overlay: no successful
+  output now carries an overlay-derived count, refusals say overlay items
+  are unresolved without saying how many, and two overlays of different
+  sizes are pinned to byte-identical output. Two document claims were wider
+  than their tests and are narrowed: "nothing rides along" is now "no
+  FIELD rides along", with the uninspected `reason` named as the place an
+  approval sentence can sit unread; and "Forge learns nothing about where
+  the file lives" is now "neither retains nor emits", since the path
+  necessarily enters through the argument.
+  A second Codex review, of the PR head after the third merge of main
+  (bounded automated review evidence), found one P1 and three P2s, each
+  reproduced and closed. On Windows a directory junction is a plain
+  directory to `Path.is_symlink()`, so an overlay path shaped
+  `outside/junction -> repo/junction -> outside` was accepted at both hops:
+  the walk now classifies every component from its `lstat`, follows a
+  symlink one hop and refuses every other reparse point -- a junction, a
+  mount point, a cloud placeholder, an entry whose tag the platform does
+  not expose -- rather than following it, judges a Windows symlink target
+  only behind a drive letter, and compares every walked location by file
+  identity against the repository root as well as by name. Real junctions
+  are built and refused in the windows-runtime job by the new
+  `tests/test_standing_obligations_windows.py`, and the identity comparison
+  also closed a POSIX shape measured while repairing it: a symlink target
+  spelled with a double leading slash hopped through the repository outside
+  to every walked component. The path was checked and then opened, two
+  operations, so a link retargeted between them opened a file nobody had
+  judged: the walk now records the identity of the entry it ends at and the
+  one open is refused unless `fstat` names that entry, pinned by a
+  retargeted directory link, a retargeted file link, a file replaced by an
+  in-repository link, a file replaced by another and a file that appears
+  only after the walk, for the disposition as for the overlay. A malformed
+  private item said `item 42`, a lower bound on the overlay's size, and an
+  oversized one said so: every content refusal about private input is now
+  one sentence, byte-identical across defects at different indices, counts,
+  sizes, nesting depths and duplicate positions; a malformed disposition
+  row is named by its public id or, while an overlay is loaded, not at all;
+  the public registry keeps its specific diagnostics. And every surface
+  said each item was "given a deliberate disposition", which nothing
+  measures: PASS now states the measured result -- exact coverage, a
+  resolved vocabulary word and a non-empty reason per row, matching digests
+  -- and that nothing is established about whether anyone read an item or
+  whether the `cycle_id` names a cycle, in the checker's output, the
+  registry, `AGENTS.md`, `CLAUDE.md`, the Skill, the procedure document,
+  `docs/VALIDATION.md` and A-031, held there by test. The standing module
+  collects 106 -> 142, the Windows module adds 7 (six junction proofs and
+  the one test that holds the job to running them), and the suite 3486 ->
+  3529 across 115 modules.
+  A third Codex review, of the reconciled head, found one P1 and one P2
+  against those repairs, each reproduced and closed. The identity backstop
+  compared against the repository root alone, so an alias rooted at a
+  subdirectory -- a bind mount or mapped drive of `.nornyx/runtime/` --
+  admitted an in-repository overlay (reproduced with a real bind mount:
+  PASS); every directory of the repository is compared now, from the one
+  traversal the checker performs, of its own tree, following no link,
+  opening nothing and refusing past a bound. And a chain the walk stopped at
+  for an unfollowed reparse point was still resolved through it before the
+  refusal; nothing beyond such a link is consulted now, pinned by a spy on
+  `Path.resolve`.
+  A fourth Codex review, of the head carrying those repairs, found one P1
+  and one P2 against the new traversal, each reproduced and closed. An entry
+  the traversal could not `lstat` was skipped, so a directory and everything
+  below it could be missing from the identity set and an alias of it would
+  admit an in-repository overlay (reproduced with a directory too long to
+  `lstat` and a bind mount of it: read through the alias, PASS); the
+  traversal refuses whole now and caches no partial set. And an alias of a
+  directory inside the tree was deduplicated in the set but traversed again
+  in full, so the scan bound counted identities while the work grew with
+  every alias (reproduced with three bind mounts of `docs/`: twelve scans
+  more, the bound never crossed); an identity already seen is not enqueued
+  now, one scan per directory.
+  A fifth Codex review, of the head carrying those repairs, found two P1s
+  of the same class in two other places, each reproduced and closed. The
+  overlay walk stepped past a component whose `lstat` failed, so one failed
+  `lstat` of an outside link made the walk treat it as plain, the next
+  `lstat` resolved the whole chain in the kernel, and a chain through the
+  repository was accepted with its in-repository link never judged
+  (reproduced with that chain and one failing `lstat`: accepted). And the
+  identity comparison skipped a candidate whose `lstat` failed -- for an
+  alias of a repository directory, the one candidate whose identity would
+  match -- so an in-repository overlay was accepted through the alias
+  (reproduced: accepted). Neither failure is caught now; each reaches
+  confinement's one refusal, which names no path, and nothing is opened.
+  Every `lstat` the confinement judgment performs -- in the repository
+  traversal, the walk and the comparison -- refuses on failure.
+  A sixth Codex review, of the head carrying those repairs, found three
+  findings of one class the earlier rounds had not covered: a pathname
+  inspected and then used again. A plain directory swapped for a link chain
+  between being looked at and the next lookup was followed by that lookup
+  (reproduced: accepted, the in-repository hop unjudged); disposition
+  creation was check-then-write, so a parent swapped to a symlink after the
+  runtime judgment put the file outside the runtime root and two
+  initializers overwrote each other (reproduced, both); and a queued
+  repository directory swapped for a link before its scan was listed
+  through the link (reproduced: an external tree's identities entered the
+  set and a legitimate overlay was refused as inside). Re-checking a
+  pathname cannot close that class, so the confinement was REDESIGNED
+  around held descriptors on POSIX: every component is inspected and opened
+  relative to the directory already held, without following a link, and
+  refused unless it is the entry just looked at; no link of any kind is
+  followed, and nothing a link points at is consulted; the descriptor so
+  opened is the only object read, and a file with more than one name is
+  refused; the identity traversal opens each directory relative to its
+  parent the same way and its snapshot is taken for every judgment; the
+  disposition is created exclusively relative to a parent reached from the
+  root handle, and the root handle is refused unless it contains the
+  running checker; `Path.resolve` takes part in no security decision. Where
+  no handle backend exists -- Windows -- a private overlay is refused
+  outright with one sentence, and public-registry admission stays, with an
+  exclusive create by pathname and the parent race stated as that
+  platform's limitation. The standing module collects 149 -> 131, its
+  subject having changed; the Windows module stays at 7.
+  A seventh Codex review, of the redesigned head after its sixth
+  reconciliation, found two P1s in what the redesign had kept by pathname:
+  the root anchor opened the repository root by pathname without
+  `O_NOFOLLOW` and compared the checker below it against
+  `os.stat(__file__)` evaluated through the same pathname, so a checkout
+  path substituted after the load put a counterfeit on both sides
+  (reproduced: an ancestor swapped for a link to a counterfeit tree, and a
+  counterfeit carrying a hard link to the loaded file, each reading a
+  fabricated public registry); and the directory census was taken once,
+  before the walk, so an external directory bound into the checkout after
+  it had no identity in it and the overlay below it was admitted
+  (reproduced with a real bind mount). The loaded file's identity is taken
+  at import now; the root is reached from the filesystem root through held
+  directories, following no link, and must contain that file by that
+  identity and by one name; the census is taken again once the overlay is
+  held, and every directory held on the way must be absent from both. The
+  standing module collects 131 -> 133; the Windows module stays at 7.
+  Not claimed, and recorded as such in A-031: that anyone runs the check;
+  that anyone read an item; that a `cycle_id` names a cycle; that an alias
+  of a single file, a same-identity rewrite, or a mount change made and
+  unmade within a judgment or after it is seen (a hard link is refused, not
+  judged); that a link of any kind is followed rather than refused; that a private overlay
+  is judged at all where no handle backend exists; that a free-text `reason` is
+  free of overlay content; that an identifier an
+  overlay author chose is not itself telling; that a commit cannot change the
+  checker or the registry (both are governed inputs, so the change moves the
+  evidence digest and no more); or that the root `AGENTS.md`, outside the
+  governed input set, is bound by any digest. Passing admission is not
+  approval and not authority over anything.
+
 - A wholesale rollback of the authority store is now DETECTED while the Forge
   process that wrote the newer seal is still running, and the disclosure says
   exactly how far that reaches. The seal catches a store that moved away from

@@ -269,9 +269,16 @@ jobs:
       # witness (the CLI in a child process); the in-process self-probe is
       # not_applicable on its own pid everywhere, and the whole module degrades
       # to not_applicable off Windows, so it adds no skip on any host.
+      # tests/test_standing_obligations_windows.py joins for the standing-
+      # obligation checker: a directory junction is a plain directory to
+      # `Path.is_symlink()`, so the overlay confinement it pins -- junctions
+      # refused wherever they sit, a `\\?\` spelling still the repository,
+      # a plain external overlay admitted -- is observable only here. Junctions
+      # need no privilege, so nothing in it skips on this host; off Windows
+      # every test in it is a declared skip in the census.
       - name: Windows runtime, bundle builder, launch, provider and control-plane tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -282,14 +289,15 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 263:
-              print("the windows job collected fewer than 263 tests. Its six modules "
-                    "carry 276 here (14/15/23/54/73/97), so this floor is 276 - 14 + 1, "
-                    "one above what is left when the SMALLEST module -- 14 tests, "
-                    "tests/test_windows_host_runtime.py -- stops running: below it, at "
+          if len(cases) < 277:
+              print("the windows job collected fewer than 277 tests. Its seven modules "
+                    "carry 283 here (7/14/15/23/54/73/97), so this floor is 283 - 7 + 1, "
+                    "one above what is left when the SMALLEST module -- 7 tests, "
+                    "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 was clear of any four of the five. These numbers are "
-                    "not maintained by hand: "
+                    "floor of 60 is clear of any FIVE of these seven -- the five "
+                    "smallest carry 113 -- so two whole modules could vanish beneath "
+                    "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "
                     "sentence, to what it measures.")

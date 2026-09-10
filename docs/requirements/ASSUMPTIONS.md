@@ -4228,3 +4228,233 @@ without inheriting what backs it.
 "a label must never stand in for the thing measured"), A-015's trust
 boundary, A-023's open finding, and A-027's statement of what the bearer does
 and does not defend.
+
+## A-031 Standing development admission is procedure, not authority
+
+**Assumption.** A standing obligation that must survive a change of model,
+tool, workstation or developer is carried by a public, machine-readable
+registry and a deterministic checker, not by the memory of whoever last worked
+here. A caller with obligations that are not public carries them in an
+external overlay it supplies by path, and Forge neither retains nor emits
+anything about that caller: not who it is, not where the file lives, not
+what it says. The path itself necessarily enters the process through the
+argument and is walked before the file is opened; what is established is
+that it is never discovered and never emitted, not that the checker does not
+learn it for the run.
+
+**Why it needs stating.** Three substitutions are easy here and all are the
+class this repository keeps finding. The first reads a passing admission
+check as authority over the cycle: passing means only that a local
+disposition covers exactly the loaded registry and overlay items, gives each
+a disposition from the resolved vocabulary, carries a non-empty reason
+beside each, and binds the SHA-256 of the exact registry and overlay bytes
+checked, and it confers no human, organizational, merge, publication,
+release, deployment or other consequential authority. A private overlay
+governs a cycle whose authority, if any, comes separately; it creates none,
+and neither does the result. The second reads the PASS as a statement about
+the person or model: it establishes nothing about whether anyone read,
+understood or weighed an obligation -- a disposition of `considered` and `x`
+throughout passes, and the same file passes again under another `cycle_id`,
+which is a label bound to nothing. Five surfaces said each item was "given a
+deliberate disposition"; a Codex review of the PR head measured that nothing
+measures deliberation, and every surface now states the measured result.
+The third reads "the overlay is confidential" as a property of Forge rather
+than of the caller: Forge refuses an in-repository overlay path and emits
+nothing from the file, and that is the whole of what it establishes.
+
+**What is established, and only this.** `tests/test_standing_development_obligations.py`
+holds: registry validity and duplicate refusal within and across registries;
+closed field sets and a closed disposition vocabulary, so a fabricated
+`approved_by` FIELD beside a row is refused rather than ignored and relabelling
+`requires_decision` to any other word refuses -- while the free-text `reason`
+is not inspected, so a sentence asserting an approval passes inside it, and
+the documents say so rather than claiming that nothing misleading can be
+accepted; digest binding with staleness
+on a one-byte change to either input; exact coverage; `defer` admitted only
+for an item whose registry status is already deferred; no discovery under
+planted decoys, with a structural lint over the checker's source that refuses
+the obvious spellings and is stated to be a lint; refusal of an overlay path
+inside the repository as given, at every component and link the walk passes
+through, and after resolution; a repeated JSON key refused rather than
+last-wins; identifier
+grammars matched in full; and no sentinel from an overlay's content, field
+names, schema string, directory name or invalid bytes reaching any output,
+file, refusal or refusal context, on the failure paths included. Measured
+while writing them: on CPython 3.11 a symlink-loop overlay made
+`Path.resolve` raise `RuntimeError` with the path in its message, a class the
+first checker did not catch; `UnicodeDecodeError` quotes the offending byte.
+An in-session adversarial review of the first repaired head then measured
+three more: a repeated JSON key let a row read `requires_decision` to a person
+and `considered` to the checker; a `$`-anchored identifier grammar admitted a
+trailing newline; and a symlink chain that hopped through the repository was
+accepted because only its two ends were judged. All are now refused with a
+label and nothing else, and each is pinned by the test that reproduced it.
+A Codex review of the merged head then measured one more of the same shape
+-- a DIRECTORY link chain, `outside/a` to an in-repository directory link to
+`outside/final`, which the parent-collapsing walk passed straight through --
+and three claims wider than their tests: the PASS line printed the overlay's
+item count, a summary of the overlay; the procedure document said nothing
+misleading rides along when the uninspected reason can carry an approval
+sentence; and this entry said Forge learns nothing about where the file
+lives. The walk is now component by component and pinned by the shape that
+escaped; no output carries an overlay-derived count; and both claims are
+narrowed here and in the procedure document to what the tests measure.
+A second Codex review, of the PR head, measured four more. On Windows a
+directory junction is a plain directory to `Path.is_symlink()`, so
+`outside/junction -> repo/junction -> outside` was accepted at both hops:
+every component is now classified from its `lstat`, every reparse point that
+is not a symlink is refused rather than followed -- a junction, a cloud
+placeholder, an entry whose tag the platform does not expose -- and real
+junctions are built and refused in the windows-runtime job by
+`tests/test_standing_obligations_windows.py`; alongside the name comparison,
+every walked location is compared by file identity against the repository
+root, which also closes a POSIX shape measured while repairing it: a symlink
+target spelled with a double leading slash hopped through the repository
+outside to every walked component. The path was checked and then opened, two
+operations, so a link retargeted between them opened a file nobody had
+judged: the walk now records the identity of the entry it ends at and the
+one open is refused unless `fstat` names that entry, pinned by a retargeted
+directory link, a retargeted file link, a file replaced by an in-repository
+link, a file replaced by another, and a disposition that appears only after
+its judgment (an overlay path with nothing at it is refused by the walk
+itself now, before anything could appear there). A malformed private item
+said `item 42`, a lower bound on the overlay's
+size, and an oversized one said so: every content refusal about private input
+is now one sentence, byte-identical across defects at different indices,
+counts, sizes, nesting depths and duplicate positions, while the public
+registry keeps its specific diagnostics. And every surface said each item
+was "given a deliberate disposition", which nothing measures; the measured
+wording replaces it everywhere and is held there by test. A third Codex
+review, of the reconciled head, measured two more against those repairs.
+The identity comparison was against the repository root alone, so an alias
+rooted at a subdirectory -- a bind mount, a mapped or substituted drive of
+`docs/` or `.nornyx/runtime/` -- had that directory's identity at its mount
+point and external identities above it, and never the root's: reproduced
+with a real bind mount of `.nornyx/runtime`, through which an in-repository
+overlay was read and passed. Every directory of the repository is compared
+now, from the one traversal the checker performs, of its own tree, following
+no link and opening nothing, bounded and refusing past the bound. And a
+chain the walk stopped at, for a reparse point it does not follow, was still
+resolved through that link before the refusal: nothing beyond an unfollowed
+link is consulted now, pinned by a spy on resolution. A fourth Codex review,
+of the head carrying those repairs, measured two more against the new
+traversal, each reproduced and closed. An entry the traversal could not
+`lstat` was skipped rather than refused, so a directory and everything below
+it could be missing from the identity set and an alias of it would carry an
+in-repository overlay past the comparison: reproduced with a directory whose
+name is too long to `lstat` and a bind mount of it, read through the alias
+and passed. The traversal refuses whole now and caches no partial set. And
+an alias of a directory inside the tree added nothing to the set but was
+traversed again in full, so the bound counted identities while the work grew
+with every alias: reproduced with three bind mounts of `docs/`, twelve scans
+more with the bound never crossed. An identity already seen is not enqueued
+now, so the traversal is one scan per directory. A fifth Codex review, of
+the head carrying those repairs, measured two more of the same class in two
+other places, each reproduced and closed. The overlay walk stepped past a
+component whose `lstat` failed: one failed `lstat` of an outside link made
+the walk treat it as plain, the next `lstat` resolved the whole chain in the
+kernel, the descriptor matched the file, and a chain through the repository
+was accepted with its in-repository link never judged. And the identity
+comparison skipped a candidate whose `lstat` failed -- for an alias of a
+repository directory the one candidate whose identity would match -- so an
+in-repository overlay was accepted through the alias. Neither failure is
+caught now: each reaches confinement's one refusal, which names no path,
+and nothing is opened. Every `lstat` the confinement judgment performs, in
+the repository traversal, the walk and the comparison, refuses on failure. A sixth Codex review, of the head carrying those
+repairs, measured three findings of a class the earlier rounds had not
+covered, a pathname looked at and then used again: a plain directory
+swapped for a link chain between being looked at and the next lookup was
+followed by that lookup and the overlay accepted with the in-repository hop
+unjudged; disposition creation was check-then-write, so a parent swapped to
+a symlink after the runtime judgment put the file outside the runtime root
+and two initializers overwrote each other; and a queued repository
+directory swapped for a link before its scan was listed through the link,
+so an external tree's identities entered the set and a legitimate overlay
+was refused as inside. Each reproduced. Re-checking a pathname cannot close
+that class, because each re-check is itself a pathname lookup, so the
+confinement was redesigned around held descriptors on POSIX: every
+component looked at and opened relative to the directory already held,
+without following a link, and refused unless it is the entry just
+inspected; no link of any kind followed and nothing a link points at
+consulted; the descriptor so opened the only object read, a file with more
+than one name refused; the identity traversal opening each directory
+relative to its parent the same way, its snapshot taken for every judgment;
+the disposition created exclusively relative to a parent reached from the
+root handle, which is refused unless it contains the running checker;
+`Path.resolve` in no security decision. Where no handle backend exists --
+Windows -- a private overlay is refused outright with one sentence and
+public-registry admission stays, with an exclusive create by pathname and
+the parent race stated as that platform's limitation. Not seen still: an
+alias of a single file made by a bind mount, and a same-identity rewrite.
+A seventh Codex review, of the redesigned head after its sixth
+reconciliation, measured two findings in what the redesign had kept by
+pathname. The root anchor opened the repository root by pathname without
+`O_NOFOLLOW` and compared the checker found below it against
+`os.stat(__file__)` evaluated through the same pathname, so a checkout path
+substituted after the load -- an ancestor swapped for a link to a
+counterfeit tree, or a counterfeit carrying a hard link to the loaded file
+-- put the counterfeit on both sides of the comparison, and a fabricated
+public registry was read (reproduced, both shapes). And the directory
+census was taken once, before the walk, so an external directory bound
+into the checkout after it was taken had no identity in it, and the overlay
+below that directory was admitted although it was by then reachable inside
+the repository (reproduced with a real bind mount). The identity of the
+loaded file is taken at import now; the root is reached from the filesystem
+root through held directories, following no link, and must contain that
+file by that identity and by one name; and the census is taken again once
+the overlay is held, every directory held on the way absent from both. Not
+seen still: an alias of a single file made by a bind mount, a same-identity
+rewrite, and a mount change made and unmade between the two censuses or
+made after the judgment.
+
+**What is not established.** Nothing makes a person or a model invoke the
+checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
+Nothing measures reading: a mechanically written or reused disposition
+passes, and the `cycle_id` binds nothing. An alias of a single file made by
+a bind mount, a rewrite that keeps a file's identity, and a mount change
+made and unmade within a judgment or after it, are not seen by the path
+rule, the identity rule or the identity bound; a hard link is refused, not
+judged. A junction is refused, not judged, so a legitimate overlay
+behind one is refused too. The free-text `reason` a developer writes is not
+inspected. An item `id` is
+bounded to a short token and not judged. The checker and the registry are
+repository content, so a commit can change them; both are governed inputs, so
+the change moves the governed input digest and must regenerate the evidence in
+the same commit for the binding to hold, and that is visibility, not
+prevention. The root `AGENTS.md` is outside the governed input set, so an edit
+to it moves no digest; the substantive rules live in the governed procedure
+document and the registry, and widening the subject scope is a change to the
+governed subject that this mechanism does not make. The local disposition can
+be edited after a PASS; every check re-evaluates it, and nothing checks again
+on the developer's behalf. The disposition binds the registry and the overlay
+and not the checker's own bytes. A hard link from outside the tree to a file
+inside it is invisible to a path rule and is accepted. The structural lint
+over the checker's source is a lint: the same review walked thirteen of
+fifteen evasions past it, and the discovery property rests on the behavioural
+sweep under planted decoys, which sees only the routes it exercises.
+
+**The recorded evidence-binding violation.** The first head of PR #51 added
+governed inputs without regenerating the evidence set, so `--verify` reported
+every artifact stale on that head and the evidence-binding check reported the
+commit. The repair cycle was instructed to preserve reviewable history and not
+rebase, so the commit is immutable and is recorded in
+`docs/governance/EVIDENCE_BINDING_BASELINE.json` as the seventh commit made
+after the defect was known, with its recorded and actual digests; the pinned
+count in `tests/test_evidence_binding.py` moved with it, deliberately. The
+merge and every later commit on the branch regenerate the evidence in the
+same commit, with one exception recorded the same way: the fifth
+reconciliation merge (a1f9995) shipped main's evidence, because the
+regeneration refused to run under a checkout git reported as dubiously owned
+and the commit step did not fail closed on that refusal; it is the eighth
+entry, the count moved to eight, and the commit after it regenerated the
+evidence over that tree.
+
+**Scope.** A registry, a checker, a procedure document, entry-point
+instructions and their tests. No Experience stage, provider row, eligibility
+rule, seal, lock, token, port, contract or approval diagnostic moves. No
+evidence is produced from an overlay, and no overlay is committed, cached,
+synchronized or derived from.
+
+**Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
+-- a gate may claim only the exact property it mechanically measures -- applied
+to a mechanism whose easiest misreading is that it grants what it only records.

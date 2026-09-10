@@ -44,6 +44,15 @@ See `docs/FORGE_SKILL_BOUNDARY.md` for the architectural boundary.
 
 ## Required stages
 
+0. Follow `AGENTS.md`: validate the standing-obligation registries, initialize
+   a cycle disposition, read every loaded item and give each a resolved
+   disposition and reason, then require
+   `scripts/check_standing_development_obligations.py` to admit the development
+   cycle before planning or editing. Load an external overlay only when the
+   caller explicitly supplies one; never copy its contents into this repository.
+   Admission is procedure: it measures the disposition file and nothing about
+   whether the items were read, it confers no authority over the cycle, and
+   every stage and rule below applies after it exactly as before.
 1. Check the environment and install the project in `.venv`.
 2. Normalize requirements and preserve BRD traceability.
 3. Select the certified foundation, qualify a supplied target, or run Repo Scout.

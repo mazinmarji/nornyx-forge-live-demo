@@ -1,0 +1,46 @@
+{
+  "schema": "nornyx.forge.standing_development_obligations.v1",
+  "visibility": "public",
+  "items": [
+    {
+      "id": "FGR-SDO-001",
+      "kind": "invariant",
+      "dedupe_key": "development-cycle-standing-obligation-admission",
+      "status": "active",
+      "title": "Standing-obligation admission",
+      "rule": "Before planning or editing a Forge development cycle, load the public standing-obligation registry and any explicitly supplied external overlay, create a local cycle disposition, resolve every item, and pass the standing-obligation check."
+    },
+    {
+      "id": "FGR-SDO-002",
+      "kind": "invariant",
+      "dedupe_key": "deferred-state-is-not-authority",
+      "status": "active",
+      "title": "Deferred state is not authority",
+      "rule": "A deferred item, trigger, candidate, or prior observation never authorizes implementation, publication, merge, approval, or another consequential act. The controlling authority boundary still applies."
+    },
+    {
+      "id": "FGR-SDO-003",
+      "kind": "invariant",
+      "dedupe_key": "external-overlay-confidentiality",
+      "status": "active",
+      "title": "External overlay confidentiality",
+      "rule": "An explicitly supplied external overlay is read-only development input. Do not discover, copy, quote, summarize, log, commit, or turn its contents into public Forge evidence. Persist only the opaque item identifiers needed for the gitignored local cycle disposition."
+    },
+    {
+      "id": "FGR-SDO-004",
+      "kind": "invariant",
+      "dedupe_key": "existing-authority-boundaries-preserved",
+      "status": "active",
+      "title": "Existing authority boundaries are preserved",
+      "rule": "Standing-obligation admission is procedure. It cannot weaken or replace a deterministic Forge or Nornyx check, an evidence requirement, an independent-review boundary, or explicit human or organizational authority."
+    },
+    {
+      "id": "FGR-SDO-005",
+      "kind": "invariant",
+      "dedupe_key": "admission-is-not-authority",
+      "status": "active",
+      "title": "Admission is not authority",
+      "rule": "Passing standing-development admission means only that a local cycle disposition covers exactly the loaded public-registry and overlay items, gives every one of them a disposition from the resolved vocabulary, carries a non-empty reason beside each, and is bound by SHA-256 to the exact registry and overlay bytes it was checked against. It establishes nothing about whether anyone read, understood or weighed an obligation: a disposition written mechanically passes, and so does one reused from an earlier cycle under a new cycle_id. It does not authorize the development cycle itself, and it confers no human, organizational, merge, publication, release, deployment or other consequential authority."
+    }
+  ]
+}
