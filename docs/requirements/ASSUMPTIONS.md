@@ -4107,10 +4107,16 @@ that half is the same documentation-level residue recorded below.
 the person-only list in place: rewriting `_NEXT["READY"]` to "...licensed it
 and A HUMAN CONFIRMED IT" left `tests/test_actor_declaration_boundary.py`
 GREEN, 6 passed, and nothing anywhere pinned that string's wording. The list
-now carries the human family -- `is a human act`, `a human confirmed`, `a human
-approved`, `a human started`, `a human stopped`, `a human's act`, `is a
-human's`, `a human action`, `proves a human`, `establishes that a human`,
-`confirms a human` -- with three positive controls and two negative ones.
+now carries the human family alongside the person one, mirroring each person
+shape in the human vocabulary. What the family covers is the assertion that
+such a party owns an act on this surface, is one, was shown by the surface to
+be one, or settled something on it. THE MEMBERS ARE NOT COPIED OUT HERE. They
+live in exactly one place, `FORBIDDEN_CLAIMS` in that module, and a reader who
+wants the spellings reads the constant rather than this paragraph. A second
+copy in prose is a second thing to maintain, free to drift from the first with
+nothing comparing the two -- the hand-maintained-duplicate shape this register
+has already recorded once, reintroduced here while closing something else.
+Three positive controls sit under the extension and two negative ones.
 `is a human act` is anchored rather than bare because the bare phrase is a
 prefix of "a human actOR" and flags three literals that are not claims at all
 ("a capsule is created by a human actor" and two like it), each of which names
