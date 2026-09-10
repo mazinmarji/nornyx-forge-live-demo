@@ -36,6 +36,7 @@ sandbox's reach; within the same operating-system user's reach.
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -3273,6 +3274,201 @@ def _rolled_back_to(tmp_path: Path, held: Path, manifests: tuple[dict, dict]) ->
         "the rollback did not reproduce the earlier seal byte for byte")
 
 
+class _Listed:
+    """What `os.scandir` hands back: a closeable ITERATOR of the entries as
+    they were AT THE LISTING. Real `os.DirEntry` objects, so every later
+    `stat` or `open` still goes to the filesystem.
+
+    A plain iterable is not enough: 3.12's `rmtree` walks Windows trees
+    through `os.walk`, which calls `next()` on this directly.
+
+    ONE SPELLING, TWO SITES. It was defined inside the vanishing-entry pin
+    below until the appearing-entry pin needed exactly the same stale listing
+    from the other direction. Two copies of a fake this load-bearing drift
+    apart, and a drifted one stops reproducing the failure it was written for
+    while still passing.
+    """
+
+    def __init__(self, entries):
+        self._entries = iter(entries)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._entries)
+
+    def close(self):
+        self._entries = iter(())
+
+
+def _git_shaped_capsule(tmp_path: Path) -> Path:
+    """A capsule directory whose `.git` carries loose objects left exactly as
+    git leaves them: read-only. Both listing-window pins remove one of these,
+    so the case `_remove_tree`s handler exists for is live in both."""
+    capsule = tmp_path / "capsule"
+    objects = capsule / ".git" / "objects"
+    objects.mkdir(parents=True)
+    for name in ("7e", "7f", "80"):
+        fanout = objects / name
+        fanout.mkdir()
+        blob = fanout / ("a" * 38)
+        blob.write_bytes(b"an object")
+        os.chmod(blob, stat.S_IRUSR)  # exactly how git leaves a loose object
+    return capsule
+
+
+def _is_directory(target, path: Path) -> bool:
+    """Is the `os.scandir` argument THIS directory?
+
+    `rmtree` passes a PATH on Windows and an open DIRECTORY FD on the POSIX
+    walk. `os.stat` accepts both, so identity by `(st_dev, st_ino)` answers on
+    either platform. Recognising by the names that came back instead -- which
+    is all the vanishing-entry pin below needs, because it fires once on a
+    tree nobody is changing -- stops working the moment a retry re-lists a
+    directory whose contents have moved on.
+    """
+    try:
+        seen, want = os.stat(target), os.stat(path)
+    except OSError:
+        return False
+    return (seen.st_dev, seen.st_ino) == (want.st_dev, want.st_ino)
+
+
+def test_a_removal_survives_an_entry_that_appears_between_listing_and_removing(
+    tmp_path: Path,
+):
+    """THE SIBLING OF THE PIN BELOW, AND THE OPPOSITE DIRECTION.
+
+    CI, Python 3.12, this module's rollback helper -- the same helper, the same
+    store, one run of `test_a_rollback_across_a_restart_is_the_disclosed_limit`:
+    `OSError: [Errno 39] Directory not empty:
+    '/tmp/pytest-of-runner/pytest-0/test_a_rollback_across_a_resta0/capsule/.git'`.
+    It passed on the retry, so the run's conclusion read success; that is a
+    property of retries, not evidence about the code.
+
+    `rmtree` LISTS a directory and then removes what it listed. An entry that
+    VANISHES in that window is the pin below. An entry that APPEARS in that
+    window is this one: the listing is already stale, the appeared name is
+    never visited, and the closing `os.rmdir` refuses the directory it was
+    told to remove. The handler chmods and retries the same `os.rmdir`, gets
+    `ENOTEMPTY` a second time, and that one escapes the handler and `rmtree`
+    both -- which is why the failure surfaces at `.git` itself rather than at
+    any name under it.
+
+    WHY THIS IS NOT ABSORBED THE WAY `FileNotFoundError` IS, pinned as
+    behaviour by `test_a_removal_still_refuses_a_tree_it_cannot_empty`: not
+    found means the goal is already reached, not empty means it is NOT, and
+    returning on it would report a store removed while it was still on disk.
+
+    The condition is injected rather than raced, so this pin is deterministic;
+    a real second thread would make the suite depend on scheduling. Measured
+    with a real one anyway, before trusting the injection: a writer planting
+    files inside `.git` while the removal ran failed 60 of 60 trials before the
+    repair and 0 of 300 after, on 3.12. The injection fires ONCE, which is what
+    a transient writer does -- git's own auto-maintenance finishes -- and it is
+    asserted to have HAPPENED, because an instrument that quietly stops firing
+    proves nothing.
+    """
+    capsule = _git_shaped_capsule(tmp_path)
+    gitdir = capsule / ".git"
+    real_scandir = os.scandir
+    appeared: list[str] = []
+
+    def scandir_then_appear(target):
+        entries = list(real_scandir(target))
+        if not appeared and _is_directory(target, gitdir):
+            planted = gitdir / "maintenance.lock"
+            planted.write_bytes(b"held")
+            appeared.append(planted.name)
+        return _Listed(entries)
+
+    with mock.patch("os.scandir", scandir_then_appear):
+        _remove_tree(capsule)
+
+    assert appeared == ["maintenance.lock"], (
+        "the entry was never made to appear, so this pins nothing")
+    assert not capsule.exists(), (
+        "the removal must finish the tree it was given; returning with the "
+        "store still on disk is the fail-open this refuses to become")
+
+
+def test_a_removal_still_refuses_a_tree_it_cannot_empty(tmp_path: Path):
+    """THE RETRY ABOVE MUST NOT BECOME A WAY OF REPORTING SUCCESS.
+
+    A writer that never stops is not a transient one, and no bound outlasts
+    it. When the attempts are spent the removal RAISES -- the real `ENOTEMPTY`
+    at the real path -- and leaves the tree it could not empty visibly on
+    disk. This is the assertion that separates a bounded retry from absorbing
+    the error: with `ENOTEMPTY` absorbed both pins above pass and this one
+    fails, which is exactly the fail-open a partially removed store would be.
+    """
+    capsule = _git_shaped_capsule(tmp_path)
+    gitdir = capsule / ".git"
+    real_scandir = os.scandir
+    plants: list[str] = []
+
+    def scandir_then_appear_forever(target):
+        entries = list(real_scandir(target))
+        if _is_directory(target, gitdir):
+            planted = gitdir / f"forever-{len(plants)}.lock"
+            planted.write_bytes(b"held")
+            plants.append(planted.name)
+        return _Listed(entries)
+
+    with mock.patch("os.scandir", scandir_then_appear_forever):
+        with pytest.raises(OSError) as caught:
+            _remove_tree(capsule)
+
+    assert caught.value.errno == errno.ENOTEMPTY, (
+        "the refusal must be the real filesystem error, not a substitute")
+    assert Path(caught.value.filename) == gitdir, (
+        "and it must name the directory that could not be emptied")
+    assert len(plants) == store_module._APPEARED_ATTEMPTS, (
+        "every attempt in the bound must have been spent -- one listing of "
+        "`.git` per attempt -- so this pins the bound and not a single try")
+    assert capsule.exists(), (
+        "a removal that refused must leave the tree it refused, not a "
+        "half-removed one reported as gone")
+
+
+def test_a_removal_that_is_not_being_written_into_takes_no_retry(tmp_path: Path):
+    """AND THE ORDINARY REMOVAL PAYS NOTHING FOR THE BOUND ABOVE.
+
+    The first attempt wins whenever nothing is writing, so no pause is taken
+    and `.git` is listed exactly once. A builder who moves the `time.sleep`
+    ahead of the attempt, or who retries unconditionally, turns this red --
+    which matters because the sleep is otherwise invisible until a suite gets
+    slow for reasons nobody attributes.
+    """
+    capsule = _git_shaped_capsule(tmp_path)
+    gitdir = capsule / ".git"
+    real_scandir = os.scandir
+    listings: list[str] = []
+
+    def counted(target):
+        entries = list(real_scandir(target))
+        if _is_directory(target, gitdir):
+            listings.append("git")
+        return _Listed(entries)
+
+    slept: list[float] = []
+    with mock.patch("os.scandir", counted), \
+            mock.patch.object(store_module.time, "sleep", slept.append):
+        _remove_tree(capsule)
+
+    assert not capsule.exists()
+    assert listings == ["git"], "the tree must be listed once, not retried"
+    assert slept == [], "no pause may be taken when the first attempt succeeds"
+
+
 def test_a_removal_survives_an_entry_that_vanishes_between_listing_and_visiting(
     tmp_path: Path,
 ):
@@ -3300,45 +3496,11 @@ def test_a_removal_survives_an_entry_that_vanishes_between_listing_and_visiting(
     present throughout, so the case the handler exists for is live at the same
     time.
     """
-    capsule = tmp_path / "capsule"
+    capsule = _git_shaped_capsule(tmp_path)
     objects = capsule / ".git" / "objects"
-    objects.mkdir(parents=True)
-    for name in ("7e", "7f", "80"):
-        fanout = objects / name
-        fanout.mkdir()
-        blob = fanout / ("a" * 38)
-        blob.write_bytes(b"an object")
-        os.chmod(blob, stat.S_IRUSR)  # exactly how git leaves a loose object
 
     real_scandir = os.scandir
     vanished: list[str] = []
-
-    class _Listed:
-        """What `os.scandir` hands back: a closeable ITERATOR of the entries as
-        they were AT THE LISTING. Real `os.DirEntry` objects, so every later
-        `stat` or `open` still goes to the filesystem.
-
-        A plain iterable is not enough: 3.12's `rmtree` walks Windows trees
-        through `os.walk`, which calls `next()` on this directly."""
-
-        def __init__(self, entries):
-            self._entries = iter(entries)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc):
-            self.close()
-            return False
-
-        def __iter__(self):
-            return self
-
-        def __next__(self):
-            return next(self._entries)
-
-        def close(self):
-            self._entries = iter(())
 
     def scandir_then_vanish(target):
         # `target` is a path on Windows and a DIRECTORY FD on the POSIX

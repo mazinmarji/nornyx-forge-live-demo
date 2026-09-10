@@ -790,7 +790,22 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # platform. 102 -> 103, band(102) = 92 -> band(103) = 93: the module-floor
     # sum rises by one and so does the module, so the slack it contributes is 10
     # either way and the total the bands grant does not move.
-    "tests/test_provider_authority_boundary.py": 93,
+    #
+    # THREE MAINTENANCE ROWS FOR THE SIBLING OF THAT RACE, hit by the same
+    # rollback helper on 3.12: `OSError: [Errno 39] Directory not empty` at
+    # `capsule/.git`, an entry APPEARING between the listing and the closing
+    # `rmdir` where the row above had one vanish. One pin injects that
+    # appearance and requires the removal to finish; one requires a removal
+    # that CANNOT finish to raise the real `ENOTEMPTY` at the real path and
+    # leave the tree standing, which is what separates a bounded retry from
+    # absorbing the error; one requires the ordinary removal to list once and
+    # sleep not at all, so the retry cannot become an unattributed cost on
+    # every teardown. None of them skips: the appearance is injected at the
+    # listing, so they need no threads, no writer and no platform.
+    # 103 -> 106, band(103) = 93 -> band(106) = 96: the module-floor sum rises
+    # by three and so does the module, so the slack it contributes is 10 either
+    # way and the total the bands grant does not move.
+    "tests/test_provider_authority_boundary.py": 96,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1612,10 +1627,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3529   (116 modules)
-#     sum of the module floors    3232
-#     band(3529) = ceil(0.9*n)    3177
-#     MINIMUM_COLLECTED           3240
+#     collected across tests/     3532   (116 modules)
+#     sum of the module floors    3235
+#     band(3532) = ceil(0.9*n)    3179
+#     MINIMUM_COLLECTED           3243
 #     above the module sum         8
 #     below what collects         289
 #
@@ -1897,7 +1912,31 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (`..._only_by_a_person` -> `..._only_by_a_declared_human`, its own name having
 # become the retired claim), neither of which is a row. No skip is added and
 # the windows-runtime job's floor is untouched at 263.
-MINIMUM_COLLECTED = 3240
+#
+# THE APPEARING-ENTRY REPAIR ADDS THREE ROWS TO ONE EXISTING MODULE AND NO
+# MODULE. This slice was REBASED onto a head that had itself moved the census,
+# so the rows above are re-measured from a fresh collection on THIS head and
+# are neither the paragraph above's plus three nor the pre-rebase branch's
+# carried forward. Both would have been arithmetic about a tree that never
+# existed. The suite collects 3529 -> 3532 and 116 modules still stand,
+# because all three rows land in `tests/test_provider_authority_boundary.py`
+# -- the module whose own rollback helper hit the race in CI, and which
+# already holds the vanishing-entry sibling these sit beside. Its floor moves
+# band(103) = 93 -> band(106) = 96, so the module sum rises by exactly three,
+# 3232 -> 3235, and the aggregate follows to 3243 to hold the margin above the
+# sum at 8. The working room below what collects is UNCHANGED at 289 -- the
+# collection and the aggregate each rose by three, which is the row a careless
+# edit moves in two directions at once. The AGGREGATE band row goes
+# 3177 -> 3179, a rise of two where the collection rose by three, because
+# `ceil(0.9n)` is not linear and 0.9 * 3529 had already been rounded up;
+# the MODULE's own band rose by three, and the two are different quantities.
+# THE SLACK THE BANDS GRANT IS UNCHANGED AT 297: the module collects 10 above
+# its floor at 106 exactly as it did at 103, because band(106) - band(103) is
+# three where the module moved three. NO SKIP IS ADDED -- the appearance is
+# injected at the listing, so the pins need no threads, no concurrent writer
+# and no platform -- and the windows-runtime job's floor is untouched at 277,
+# because that job runs SEVEN named modules and this is not one of them.
+MINIMUM_COLLECTED = 3243
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
