@@ -353,7 +353,14 @@ SMOKE_SCHEMA = "nornyx.forge.windows_bundle_smoke.v2"
 #: and pinned equal to it by test, so that this script imports nothing from
 #: the package whose bundle it measures.
 RUNTIME_SCHEMA = "nornyx.forge.windows_runtime.v1"
-#: The actor the smoke stops the runtime as: a person, by the route's contract.
+#: The actor the smoke DECLARES when it stops the runtime. NOT a person: the
+#: smoke is a program, and the route's kind rule declines only an actor that
+#: declares itself non-human, so this declaration is simply what gets past it.
+#: The stop observation therefore means "the holder of this run's session
+#: requested a stop" -- true of the smoke, which read this run's bearer out of
+#: the session file -- and never "a person stopped Forge". A-023 recorded the
+#: mismatch as an open finding while the route still claimed personhood; the
+#: declaration is unchanged and the route's CLAIM is what moved (A-030).
 SMOKE_ACTOR = {"kind": "human", "ident": "bundle-smoke"}
 #: How much of a response body is read. Enough for the page; a listener that
 #: sends more is not this runtime and is not read further.
@@ -637,6 +644,11 @@ def _page_route(step: dict, expected: str | None) -> str | None:
 
 
 def _stop_route(step: dict, expected: str | None) -> str | None:
+    """WHAT A PASSING STOP OBSERVATION MEANS: the holder of this run's session
+    asked the built runtime to stop, over loopback, and it answered that it was
+    stopping as the instance the record named. It does NOT mean a person
+    stopped Forge -- `SMOKE_ACTOR` says why, and A-030 says why no observation
+    on this path could mean that."""
     if (reason := _http_ok(step)) is not None:
         return reason
     if step.get("json") != "object":

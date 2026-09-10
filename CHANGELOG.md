@@ -130,7 +130,7 @@
   -- and that nothing is established about whether anyone read an item or
   whether the `cycle_id` names a cycle, in the checker's output, the
   registry, `AGENTS.md`, `CLAUDE.md`, the Skill, the procedure document,
-  `docs/VALIDATION.md` and A-030, held there by test. The standing module
+  `docs/VALIDATION.md` and A-031, held there by test. The standing module
   collects 106 -> 142, the Windows module adds 7 (six junction proofs and
   the one test that holds the job to running them), and the suite 3486 ->
   3529 across 115 modules.
@@ -198,7 +198,7 @@
   exclusive create by pathname and the parent race stated as that
   platform's limitation. The standing module collects 149 -> 131, its
   subject having changed; the Windows module stays at 7.
-  Not claimed, and recorded as such in A-030: that anyone runs the check;
+  Not claimed, and recorded as such in A-031: that anyone runs the check;
   that anyone read an item; that a `cycle_id` names a cycle; that a hard
   link, an alias of a single file or a same-identity rewrite is seen; that a
   link of any kind is followed rather than refused; that a private overlay

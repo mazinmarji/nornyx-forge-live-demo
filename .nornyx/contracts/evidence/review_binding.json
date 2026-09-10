@@ -3,28 +3,28 @@
     "human_review": "not_performed",
     "records": []
   },
-  "contract_set_digest": "sha256:f2813ae2195060eb92e1cccf6bf9a487e5402a98758512714ffbbb1cb5e6a7d6",
-  "control_pack_digest": "sha256:eea9f2014aa849032a62969beded9fe03ec66248cad9c18b18a87dd09d90a584",
+  "contract_set_digest": "sha256:f3e5931fed717a847f928edfc7e425eb0decda213b4535a33bce70561b3c25b8",
+  "control_pack_digest": "sha256:1d0d314e056d2cc71c0584a778c068b2336f6181890d833a05c5a95f15d1b90d",
   "digests": {
-    "architecture_contract": "sha256:00069e4c37a4e66a92cda682d959bdf1f9494172f76feb32d558fb7bd7139934",
-    "evidence_index": "sha256:ca0adb445a29e7809075b14a5caf7466755c634a219b5e12abb64781e2ff74ca",
-    "evidence_manifest": "sha256:4d89bef90e073092f7baccb8917c647d62bf19da05dd0d36d4d3b6da0e8ed000",
+    "architecture_contract": "sha256:cb3cb8f86296e1d15f4a66ef7dcee24632f98b53d9570c168e5f4b81ebed045f",
+    "evidence_index": "sha256:58b79aa15f18b414c5b37a8e21006638e4a2cce566a171d76e63d6b6367dd5da",
+    "evidence_manifest": "sha256:0e1ccb2686a95e47120d2e9b1bcace51e7a163b9d3ec90584403cc239f556224",
     "forge_control_contract": "sha256:072ef9ceaea8c997add695b9dbb81ac6e706e20f577d63bcdbc2fc3fb33e7764",
-    "independent_review_record": "sha256:c79a2fe2b4b160116b7468854a1b0686e05761bc6faa0fd298c0b1e728a6f107",
-    "runtime_contract": "sha256:87c1b6d52439f30dbb28d7dd2621aaf4d342b4c621ad19cdf23c5de3608bb0fa"
+    "independent_review_record": "sha256:8c18d8951c10f146f600b08543459da69cc9a0e5b12ed77233116bfa351de1ad",
+    "runtime_contract": "sha256:d7cf51b37e043b4c5266d2372dd8be6a0e35a9b80627867b4e682ef0b9aa1f61"
   },
-  "evidence_manifest_digest": "sha256:1b2462e1700c0ada961444ce24bea057fee97452dd7b19bab5bcf358ecce2cc7",
-  "generated_at": "2026-09-10T04:45:21Z",
-  "governed_input_digest": "sha256:0a03312ae8e4bf2412d5159bc5a182ca6169c9271af2702d74c5d0f948508be8",
+  "evidence_manifest_digest": "sha256:563823c2a760aaa5f18db1202b208be5c46b135364b6b9086f2e5824381694e6",
+  "generated_at": "2026-09-10T06:15:29Z",
+  "governed_input_digest": "sha256:34b9cd8387ad4c97ed82dcd7826e750f6c373660befa599476eb17f728063480",
   "independent_review": {
     "artifact": "evidence/architecture_independent_review.json",
     "embedded": true,
     "status": "observed"
   },
-  "inspection_subject_digest": "sha256:3feecdb68f828dabe9919bc124741f5e95b5970975ab3f2215c835abb475d324",
+  "inspection_subject_digest": "sha256:96713480199293912e620171008b1eaaea9abef7d3dab5a0823701de36ad1f2a",
   "note": "governed_input_digest is what a human authored. contract_set_digest is the settled governance contracts. inspection_subject_digest is exactly what the independent inspectors reviewed, and moves if either moves. source_commit is provenance only.",
   "production_approval": "not_granted",
   "schema": "nornyx.forge.review_binding.v1",
-  "source_commit": "git:d2f220324840e25639c6a5a38e19a074ee4d5e8b",
-  "subject_revision": "git:d2f220324840e25639c6a5a38e19a074ee4d5e8b"
+  "source_commit": "git:5f53a8f2746c0a50b7cf4c06b38442c917180937",
+  "subject_revision": "git:5f53a8f2746c0a50b7cf4c06b38442c917180937"
 }

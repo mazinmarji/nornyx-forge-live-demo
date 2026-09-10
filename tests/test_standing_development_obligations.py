@@ -1596,12 +1596,12 @@ def test_the_admission_claim_is_the_measured_one_everywhere(module):
                               "# Nornyx Forge operating instructions", "\n## "),
         "VALIDATION.md": _section((ROOT / "docs" / "VALIDATION.md").read_text(encoding="utf-8"),
                                   "## Standing development admission", "\n## "),
-        "A-030": _section((ROOT / "docs" / "requirements" / "ASSUMPTIONS.md").read_text(encoding="utf-8"),
-                          "## A-030 ", "\n## A-"),
+        "A-031": _section((ROOT / "docs" / "requirements" / "ASSUMPTIONS.md").read_text(encoding="utf-8"),
+                          "## A-031 ", "\n## A-"),
     }
     for name, text in surfaces.items():
         flat = " ".join(text.split())
-        if name == "A-030":
+        if name == "A-031":
             # The assumption records the history: it may QUOTE the old
             # wording as the thing that was measured away, and may not make
             # the claim.
@@ -1610,7 +1610,7 @@ def test_the_admission_claim_is_the_measured_one_everywhere(module):
         else:
             assert not re.search(r"deliberat", flat, re.IGNORECASE), f"{name} claims deliberation"
         assert not re.search(r"(each|every)[^.]{0,40}(read and|read,) (understood|weighed)", flat), name
-    for name in ("checker", "registry", "AGENTS.md", "procedure", "CLAUDE.md", "VALIDATION.md", "A-030"):
+    for name in ("checker", "registry", "AGENTS.md", "procedure", "CLAUDE.md", "VALIDATION.md", "A-031"):
         assert MEASURED_PHRASE in " ".join(surfaces[name].split()), f"{name} lacks the measured claim"
     assert MEASURED_PHRASE in " ".join(module.ADMISSION_BOUNDARY.split())
     rule = next(item for item in module.load_registries(None).public_items
