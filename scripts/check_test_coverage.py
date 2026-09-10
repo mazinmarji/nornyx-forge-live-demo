@@ -827,8 +827,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # refusing both declared providers before anything executes, no
     # fallback, the Forge-owned decision pinned in the served composition,
     # the seam's own eligibility, the protected-store-without-seal refusal
-    # and the legacy distinction.
-    "tests/test_governed_provider_eligibility.py": 15,
+    # and the legacy distinction. Raised 15 -> 19 for TRANCHE H's platform
+    # axis -- 5 new collected (21 total): a measurement green on another
+    # platform leaving this one ineligible, the required platform parameter,
+    # an unrecognised platform refused by name, the derivation and the table
+    # answering each other in both directions, and the served surface driven
+    # with an injected platform. Floor at band(21) = 19.
+    "tests/test_governed_provider_eligibility.py": 19,
     # PA-01's admission criterion: 38 collected before Tranche C, 66 after
     # slice C1 replaced one criterion, floor at band(66) = 60. The 28 new hold
     # the replacement itself: that `control_plane_authority` is required
@@ -859,6 +864,17 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # that is not an integer, a route that is not a pair of strings) that used
     # to fail open or raise `TypeError`. Floor at band(106) = 96.
     "tests/test_codex_confinement_admission.py": 96,
+    # Tranche H, the Claude half of the same criterion: 26 collected at
+    # introduction, floor at band(26) = 24 exactly, because the slack guard
+    # requires every declared floor to BE the band of what its module collects.
+    # The shipped record put through the REAL verifier and refused, the positive
+    # twin accepted so the criterion is applied rather than restated, both
+    # subject bindings, the platform binding item 1 added, the harness read by
+    # AST for any argv that could start a provider session, the ambient control
+    # proved unloadable as probes, the adapter's command tuple beside its
+    # fourteen absent isolation flags, and the A-033 limit pinned in the
+    # affirmative.
+    "tests/test_claude_confinement_admission.py": 24,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1643,12 +1659,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3533   (116 modules)
-#     sum of the module floors    3236
-#     band(3533) = ceil(0.9*n)    3180
-#     MINIMUM_COLLECTED           3244
+#     collected across tests/     3564   (117 modules)
+#     sum of the module floors    3264
+#     band(3564) = ceil(0.9*n)    3208
+#     MINIMUM_COLLECTED           3272
 #     above the module sum         8
-#     below what collects         289
+#     below what collects         292
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1857,7 +1873,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 297 in total, and the aggregate refuses
+# per-module bands already grant 300 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1972,7 +1988,40 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # band(107) - band(106) is one where the module moved one. NO SKIP IS ADDED --
 # the appearing entry and the refusing `unlink` are both injected -- and the
 # windows-runtime job's floor is untouched at 277, for the same reason.
-MINIMUM_COLLECTED = 3244
+#
+# TRANCHE H ADDS ONE MODULE AND FIVE ROWS TO AN EXISTING ONE. Re-measured from
+# a fresh collection on THIS head rather than carried forward, because
+# arithmetic about a tree nobody collected is how these rows went stale twice.
+# `tests/test_claude_confinement_admission.py` is new and collects 26 (floor
+# band(26) = 24): the shipped Claude record refused by the real verifier, the
+# positive twin accepted so the criterion is applied rather than restated, both
+# subject bindings, the platform binding, the harness read by AST for any argv
+# that could start a provider session, the ambient control proved unloadable as
+# probes, the adapter's command tuple beside its fourteen absent isolation
+# flags, and the A-033 limit pinned in the affirmative.
+# `tests/test_governed_provider_eligibility.py` collects 16 -> 21 (floor
+# band(16) = 15 -> band(21) = 19) for the platform axis. NO OTHER MODULE MOVES:
+# `tests/test_codex_confinement_admission.py` stands at 106 (one test was
+# RENAMED and rewritten in place, which moves no count) and
+# `tests/test_provider_authority_boundary.py` at 107. The two document-sweep
+# modules were re-collected specifically to check the new governance document
+# did not enter their parametrised sweeps, and they stand at 159 and 204.
+# The module-floor sum rises by 28 to 3264 -- 24 for the new module and 4 for
+# the raised one -- and the aggregate follows to 3272, holding the margin above
+# the sum at 8. The suite collects 3533 -> 3564 and 117 modules stand. The
+# AGGREGATE band row goes 3180 -> 3208, a rise of 28 that happens to match the
+# floor sum's; as an earlier round warns, that is where `ceil(0.9n)` fell and
+# not a rule. The working room below what collects rises 289 -> 292, because
+# the collection rose by 31 while the aggregate rose by 28. THE SLACK THE BANDS
+# GRANT rises 297 -> 300: the new module sits 2 above its own band and the
+# raised one now sits 2 above its band where it sat 1. NO SKIP IS ADDED, and
+# THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- measured, not assumed:
+# its seven modules still collect 7/14/15/23/54/73/97 (sum 283, floor
+# 283 - 7 + 1), because the new module is not one of them and neither
+# `test_provider_execution.py` nor `test_control_plane_authority.py` gained a
+# row. NO PROVIDER ROW MOVED: `PROVIDER_CONFINEMENT` gained a PLATFORM axis and
+# `claude` on `windows` stays `none`, now as a measured state (A-033).
+MINIMUM_COLLECTED = 3272
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -2075,6 +2124,13 @@ REQUIRED_MODULES = (
     # Losing it would leave `PROVIDER_CONFINEMENT` promotable to `established`
     # with no measurement objecting.
     "tests/test_codex_confinement_admission.py",
+    # Tranche H, the same job for the other provider. The eligibility module
+    # proves the DECISION fails closed; this one proves the Claude row cannot
+    # be promoted by an edit -- and, because the finding is an ABSENCE, that it
+    # cannot be demoted back to an untested default either. Losing it would
+    # leave the only measurement of the platform Forge actually ships on with
+    # nothing reading it.
+    "tests/test_claude_confinement_admission.py",
     "tests/test_standing_development_obligations.py",
     "tests/test_standing_obligations_windows.py",
     "tests/test_trusted_greenfield_acceptance.py",

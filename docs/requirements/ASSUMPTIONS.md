@@ -2199,7 +2199,9 @@ measured, junction semantics are not symlink semantics, and the Windows result
 does not travel. Nothing about model behaviour: two production-path runs left
 every canary pristine because the model executed nothing at all, including the
 control, and both are recorded as inconclusive rather than counted. Nothing
-about Claude, which was not measured and keeps the row it had.
+about Claude, which was not measured and keeps the row it had -- A-033
+has since measured Claude on native Windows, and the row it keeps is now a
+measured `none` rather than an untested one.
 
 **Scope.** Not an admission, not a control-plane authenticator, not a Claude
 sandbox, not A-018.
@@ -4458,3 +4460,124 @@ synchronized or derived from.
 **Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
 -- a gate may claim only the exact property it mechanically measures -- applied
 to a mechanism whose easiest misreading is that it grants what it only records.
+
+## A-033 Claude confinement was measured on the platform Forge ships on, and the platform has no mechanism to measure
+
+**Assumption.** A provider row that says `none` should say so because someone
+looked, not because nobody did. Tranche H looked. **NO OPERATING-SYSTEM
+CONFINEMENT MECHANISM IS REACHABLE FOR CLAUDE ON NATIVE WINDOWS** at
+`claude 2.1.211`, so `PROVIDER_CONFINEMENT["claude"]["windows"]` is a measured
+state rather than an untested default -- and **the row stays `none`**, because
+on this platform `established` is not merely unreached, it is unreachable.
+
+**What was measured, and how.** The record is
+`docs/governance/claude_confinement_measurement.json`; the document that reads
+it is `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`; the harness is
+`scripts/probe_claude_confinement.py`, which is pinned by AST never to
+construct a provider invocation, and **no model was invoked**. Four things were
+established, and they are different kinds of fact:
+
+1. **The provider CLI offers no sandbox surface here.** Parsed from
+   `claude --help`: the `Commands:` list is `agents, auth, auto-mode, doctor,
+   gateway, install, mcp, plugin, project, setup-token, ultrareview, update`
+   -- no `sandbox` subcommand -- and there is no `--sandbox` flag. The only two
+   occurrences of the word in the whole help text both say *run this inside a
+   sandbox someone else provides*. `--permission-mode` exists with choices
+   `acceptEdits, auto, bypassPermissions, dontAsk, manual, plan`; none of them
+   is an operating-system boundary, they select how Claude Code decides in its
+   own harness whether to run a tool call. "Claude Code refused" is not "the
+   operating system refused", and only the second is confinement here.
+2. **The bundled Windows sandbox runtime is not provisioned here.** A bounded
+   walk of five roots (1,556,031 entries, completed within its bound) plus a
+   PATH lookup found no broker binary; `net user` shows no dedicated sandbox
+   account; the Claude settings file carries no `sandbox` key (key names only
+   were read, never a value). **This is the sentence a later reader will
+   otherwise reconstruct wrongly: Claude Code DOES ship a Windows sandbox
+   implementation in its bundled runtime library.** This repository READ that
+   implementation in the executable bytes rather than exercising it, and it is
+   unreachable from the CLI on this platform at this version. The finding is
+   "no mechanism is reachable here", not "no mechanism exists anywhere".
+3. **The Forge adapter asks the operating system for nothing.** Read from the
+   AST of `ClaudeCodeWorker.run`: `(<exe>, "-p", <prompt>, "--output-format",
+   "json", "--max-turns", <n>, "--allowedTools", <tools>)`. Fourteen isolation
+   flags are absent from the module, the environment handed to the child is the
+   current one minus `FORGE` and `FORGE_*`, `Bash` is among the granted tools,
+   and `cwd` is a working directory rather than a boundary. `--allowedTools` is
+   the provider own permission allowlist over a model tool calls.
+4. **`control_plane_authority: denied` is unreachable for Claude here.** The
+   only competent mechanism is an observed surface record taken from the judged
+   principal; every state the shipped v1 producers can derive maps to
+   `inconclusive` or `allowed`, `separated` is refused by both the producer and
+   the contract, and this platform has no separated Claude principal to take a
+   record from.
+
+**Why no attempt was observed.** Codex could be probed without a model in the
+loop because its CLI has a sandbox entry point a harness can start directly.
+Claude has no equivalent on this platform, so every forbidden operation would
+be a **model decision** -- and PA-01 measured what that buys: two runs in which
+the model executed nothing at all, including the positive control, which graded
+on aftermath alone would have read as flawless confinement. So all six probes
+carry `attempt_observed: false`, which is an honest absence rather than a
+refusal, and **`denied` cannot be observed on this platform** for the five
+write properties, because there is nothing here that could do the refusing.
+
+**The control, and what it is not.** The harness ran one ambient-capability
+control inside a disposable `%TEMP%` root: a stand-in process under the
+adapter working-directory rule and environment wrote the workspace, a seal
+surrogate, a sibling, Forge material, a home-config surrogate, and a target
+through a junction proved live before use. The real seal directory was listed
+and never written. It carries no vote, and the reason is one sentence:
+**a stand-in process is not the provider**, so those results
+say nothing about any confinement property; what they describe is what the Forge
+launch construction leaves reachable to whatever runs under it, which is the
+world the row `none` already describes.
+
+**The platform axis, added here because its absence failed open.**
+`assess_confinement` was already platform-bound: a `claude`/`linux` record that
+closes every property establishes nothing about `claude` on `windows`, and it
+refuses by name. `PROVIDER_CONFINEMENT` was not. So a green taken on a platform
+Forge does not ship on -- and WSL2/Linux is exactly where the Claude Code
+sandbox does run -- could have been written into a flat row that the served
+governed-build decision read on every host. The table is now keyed
+provider -> platform, `governed_build_eligibility(provider, platform)` takes a
+required platform and refuses an absent or unrecognised one by name rather than
+falling through to whichever row exists, `GovernedEligibility` carries the
+platform it decided for so `/api/state` says which one, and `served_platform()`
+in `onboarding_app` is the single derivation of the word. The rule the verifier
+already enforced on the evidence is now true of the claim as well:
+**evidence does not travel between platforms**.
+
+**What this does NOT assume.** Nothing about macOS, Linux or WSL2, none of
+which was measured. Nothing about any other Claude Code version: the version is
+a subject, as A-024 already recorded of a Codex CLI bump. Nothing about model
+behaviour or what a model chooses to do. Nothing about whether a real
+`claude -p` worker would attempt the forbidden writes -- that is unknowable
+without a model, and the act that would answer it is named below.
+
+**The external acts not taken.** **EA-1**: bounded `claude -p` runs under an
+attempt-marker protocol, which would spend the founder provider quota; buys
+`attempt_observed: true` with `outcome: allowed`, cannot buy any `denied`, and
+cannot move the row in either direction. **EA-2**: provisioning the sandbox
+broker dedicated account under an elevation prompt; its subject would not be
+the adapter launch construction, and the CLI own platform gate excludes native
+Windows at this version anyway. **EA-3**: installing Claude Code and its
+sandbox dependencies inside WSL2 and authenticating that installation; buys
+evidence about `linux`/`wsl2`, which does not answer for `windows`. **EA-4**: a
+control-plane probe record from a Claude principal, which closes nothing
+because no v1 record can report `denied`. None was taken, and none is filed in
+`docs/governance/HUMAN_BLOCKED_MEASUREMENTS.md`: the permanent rule of that
+register is about approval records, and EA-1 is blocked by a provider quota
+rather than by an approval. Blurring the two would cost the one distinction
+that register exists to hold.
+
+**Scope.** A platform axis on the claim table and the served decision, a
+measurement record, a document, a harness and a test module. No admission, no
+row promotion, no change to `CONFINEMENT_PROPERTIES`, no change to the adapter
+invocation, no approval diagnostic and no Experience stage moves. Both declared
+providers remain ineligible for the governed build.
+
+**Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
+-- a gate may claim only the exact property it mechanically measures -- and the
+A-028 P3 lesson, which said a platform-scoped closure must not promote a row on
+every platform and which until now was stated in this register and implemented
+nowhere.

@@ -98,14 +98,19 @@ def _clock():
     return lambda: f"2026-09-03T{(next(ticks) // 60) % 24:02d}:{next(ticks) % 60:02d}:00Z"
 
 
-def _seam_eligibility(provider: str) -> GovernedEligibility:
+def _seam_eligibility(provider: str, platform: str) -> GovernedEligibility:
     """The injectable seam executes no provider: the deterministic flow the
     tests install answers in the flow's shape and never runs an engineering
     agent, so the governed-eligibility gate -- which exists to keep an
     unconfined provider off the authority store -- has nothing to decide.
     The shipped surface never sees this; it uses the contract's own decision,
-    and tests/test_governed_provider_eligibility.py pins that."""
-    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+    and tests/test_governed_provider_eligibility.py pins that.
+
+    It takes the PLATFORM the surface decided for, and echoes it back, because
+    the shipped decision does: a seam with the older one-argument shape would
+    have hidden the surface handing a platform through."""
+    return GovernedEligibility(provider=provider, platform=platform, eligible=True,
+                               confinement="established",
                                reason="deterministic flow at the injectable seam; no provider executes")
 
 
@@ -3070,8 +3075,18 @@ def test_the_marker_trust_basis_cannot_survive_an_eligible_provider():
         "eligibility decision says and this node passes by vacuity rather "
         f"than by measurement: {sorted(PROVIDER_CONFINEMENT)}"
     )
-    eligible = sorted(name for name in PROVIDER_CONFINEMENT
-                      if governed_build_eligibility(name).eligible)
+    # The table is keyed provider -> platform -> state since Tranche H, so
+    # "anything eligible" is a question about pairs. Asking it over EVERY row
+    # rather than over this host's platform is deliberate: the interlock is
+    # about whether any provider may execute on the governed path at all, and
+    # a promotion on a platform nobody is currently running on would still be
+    # a promotion this constant has to be re-argued for.
+    eligible = sorted(
+        f"{name} on {platform}"
+        for name, rows in PROVIDER_CONFINEMENT.items()
+        for platform in rows
+        if governed_build_eligibility(name, platform).eligible
+    )
     if eligible:
         assert MARKER_TRUST_BASIS != "no_provider_executes_on_the_governed_path", (
             f"{eligible} may now execute on the governed path, and the seal "

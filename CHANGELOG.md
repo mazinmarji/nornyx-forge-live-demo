@@ -2,6 +2,65 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Claude confinement measured on native Windows, recorded as NOT ESTABLISHED,
+  and the platform added to the eligibility decision (Tranche H, A-033). THE
+  FINDING: no operating-system confinement mechanism is REACHABLE for a Claude
+  Code worker on native Windows at `claude 2.1.211`. Parsed from the CLI's own
+  help, there is no `sandbox` subcommand and no `--sandbox` flag; a bounded
+  walk of five roots (1,556,031 entries, completed within its bound) plus a
+  PATH lookup found no broker binary for the bundled Windows sandbox runtime;
+  `net user` shows no dedicated sandbox account; the settings file carries no
+  `sandbox` key. Read from `ClaudeCodeWorker.run`'s AST, Forge's adapter asks
+  the operating system for nothing: fourteen isolation flags are absent, the
+  child gets the current environment minus `FORGE`/`FORGE_*`, `Bash` is
+  granted, and `cwd` is a working directory rather than a boundary. So
+  `PROVIDER_CONFINEMENT["claude"]["windows"]` STAYS `none` -- now as a measured
+  state rather than an untested default -- and both declared providers remain
+  ineligible for the governed build. What is NOT claimed is stated where it can
+  be read: Claude Code DOES ship a Windows sandbox implementation in its bundled
+  runtime library, which this repository READ in the executable's bytes rather
+  than exercising, so the finding is "no mechanism is reachable here", not "no
+  mechanism exists anywhere".
+  NO MODEL WAS INVOKED. Unlike Codex, whose probes were driven by the CLI's own
+  sandbox entry point with no model in the loop, Claude has no such entry point
+  on this platform: every forbidden operation would be a model decision. All six
+  probes therefore carry `attempt_observed: false` -- an honest absence, not a
+  refusal -- and `scripts/probe_claude_confinement.py` is pinned by AST never to
+  construct a provider invocation, with the pin falsified by adding a prompt flag
+  and observing it go red. `denied` is unreachable here for all five write
+  properties (nothing could do the refusing) and for `control_plane_authority`
+  (no v1 producer state maps to it, and there is no separated Claude principal
+  to measure). The record's ambient-capability section is a CONTROL run with a
+  stand-in process, carries no vote, and a test proves its rows cannot be loaded
+  as probes: a stand-in process is not the provider.
+  THE PLATFORM AXIS, added because its absence FAILED OPEN. `assess_confinement`
+  was already platform-bound -- a `claude`/`linux` record that closes every
+  property establishes nothing about `claude` on `windows` -- while
+  `PROVIDER_CONFINEMENT` was a flat `provider -> state`, so a green taken on a
+  platform Forge does not ship on (and WSL2/Linux is exactly where Claude Code's
+  sandbox runs) could have been written into a row the served decision read on
+  every host. The table is now keyed provider -> platform,
+  `governed_build_eligibility(provider, platform)` takes a REQUIRED platform and
+  refuses an absent or unrecognised one by name rather than falling through to
+  whichever row exists, and `served_platform()` in `onboarding_app` is the single
+  derivation of the word (`win32 -> windows`, `linux -> linux`,
+  `darwin -> macos`, anything else to a word with no row). SERVED-SURFACE CHANGE:
+  `GovernedEligibility` gains a `platform` field, so `/api/state`'s eligibility
+  block now says which platform the decision was made for; the exact-keys
+  assertion in `tests/test_governed_provider_eligibility.py` was rewritten to
+  match rather than relaxed. `provider_contract` stays `layer.domain` -- the
+  platform arrives as data and the module reads no `sys`.
+  New: `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`,
+  `docs/governance/claude_confinement_measurement.json`,
+  `scripts/probe_claude_confinement.py`,
+  `tests/test_claude_confinement_admission.py` (26 collected). The pin asserting
+  the Claude refusal made no measurement claim was REWRITTEN in place rather than
+  deleted: it now holds the reason to naming its measurement document and its
+  platform while still containing neither "established" nor "confined". Out of
+  scope and stated as such: no admission, no widening of
+  `CONFINEMENT_PROPERTIES` (which would strand Tranche C's record), no change to
+  the adapter's invocation, no `srt-win` provisioning, no WSL2 measurement.
+
 - Standing development obligations (PR #51, reconciled with main and
   repaired). A public-safe, provider-neutral mechanism for carrying standing
   development obligations across sessions, models, workstations and

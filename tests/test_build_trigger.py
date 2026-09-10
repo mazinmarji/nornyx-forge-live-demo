@@ -77,14 +77,19 @@ class RecordingFlow:
         return {"accepted": False, "gates": ["worker unavailable"]}
 
 
-def _seam_eligibility(provider: str) -> GovernedEligibility:
+def _seam_eligibility(provider: str, platform: str) -> GovernedEligibility:
     """The injectable seam executes no provider: the deterministic flow the
     tests install answers in the flow's shape and never runs an engineering
     agent, so the governed-eligibility gate -- which exists to keep an
     unconfined provider off the authority store -- has nothing to decide.
     The shipped surface never sees this; it uses the contract's own decision,
-    and tests/test_governed_provider_eligibility.py pins that."""
-    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+    and tests/test_governed_provider_eligibility.py pins that.
+
+    It takes the PLATFORM the surface decided for, and echoes it back, because
+    the shipped decision does: a seam with the older one-argument shape would
+    have hidden the surface handing a platform through."""
+    return GovernedEligibility(provider=provider, platform=platform, eligible=True,
+                               confinement="established",
                                reason="deterministic flow at the injectable seam; no provider executes")
 
 

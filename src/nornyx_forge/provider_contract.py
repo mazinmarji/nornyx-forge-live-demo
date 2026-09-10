@@ -37,9 +37,19 @@ shell capability can replace that state and the anchor that validates it.
 So the contract carries, as data, what Forge itself can ESTABLISH about each
 adapter's confinement, and `governed_build_eligibility` decides from that
 table alone -- never from the request, the capsule, the project directory,
-or anything the provider says about itself. Today no adapter's confinement
-is established, and the two rows are unequal for different reasons. Claude
-runs with no filesystem confinement at all. Codex HAS now been measured
+or anything the provider says about itself. The table and the decision are
+keyed by PROVIDER AND PLATFORM, because confinement is a property of a
+provider under a particular operating system and evidence does not travel
+between them; the platform arrives as data, so this module still reads no
+`sys`, no process state and no filesystem. Today no adapter's confinement
+is established on any platform, and the two rows are unequal for different
+reasons. Claude has now been measured on the platform Forge ships on
+(Tranche H, native Windows, claude 2.1.211, at 894218f9): no
+operating-system confinement mechanism is REACHABLE there at all, so the row
+is a measured `none` rather than an untested one, and `established` is not
+merely unreached but unreachable -- five of the six properties would need an
+operating system to refuse something, and nothing on that platform can. Codex
+HAS also been measured
 (PA-01, Windows, codex-cli 0.128.0, at 7ce306b1): driven through the CLI's
 own `codex sandbox windows` entry point, with no model in the loop to decide
 whether the forbidden operation was attempted, its sandbox refused every
@@ -173,11 +183,36 @@ _ROLE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,59}$")
 #: the governed build requires `established`, and nothing reaches it today.
 CONFINEMENT = ("none", "declared", "established")
 
-#: The table the eligibility decision reads. One row per declared provider;
-#: growing PROVIDERS without a row here is refused by the decision itself.
-PROVIDER_CONFINEMENT: Mapping[str, str] = MappingProxyType({
-    "claude": "none",
-    "codex": "declared",
+#: The table the eligibility decision reads, keyed PROVIDER -> PLATFORM ->
+#: state. Growing PROVIDERS without a row here is refused by the decision
+#: itself.
+#:
+#: THE PLATFORM AXIS IS LOAD-BEARING, AND ITS ABSENCE FAILED OPEN.
+#: `assess_confinement` has always been platform-bound: a measurement taken
+#: against `claude` on `linux` establishes nothing about `claude` on `windows`,
+#: and it refuses by name. This table was not. So a measurement that honestly
+#: turned an assessment green on a platform Forge does not ship on -- Claude
+#: Code's sandbox runs on macOS, Linux and WSL2, and not on native Windows --
+#: could be written into a single flat row that the served governed-build
+#: decision then read on EVERY platform, including the one where nothing was
+#: measured. Nothing in this module prevented it; the only guard was a
+#: per-module test constant in the Codex test file, stated as an implication
+#: that stops objecting the moment some assessment passes.
+#:
+#: The word is `windows`, chosen once and derived in exactly one place
+#: (`onboarding_app.served_platform`). The repository already carries two
+#: spellings -- `codex_confinement_measurement.json` says `windows` (authored)
+#: and `control_plane_authority_measurement.json` says `win32` (`sys.platform`)
+#: -- and a test holds them apart precisely so a decision cannot be made to
+#: rest on whichever file was edited first.
+#:
+#: A provider's rows are a Mapping and not a bare state, so there is no shape
+#: into which a platform-blind value can be written by accident: a state
+#: assigned without a platform is refused at the decision rather than promoted
+#: silently on every host.
+PROVIDER_CONFINEMENT: Mapping[str, Mapping[str, str]] = MappingProxyType({
+    "claude": MappingProxyType({"windows": "none"}),
+    "codex": MappingProxyType({"windows": "declared"}),
 })
 
 _CONFINEMENT_REASON: Mapping[str, str] = {
@@ -193,18 +228,35 @@ _CONFINEMENT_REASON: Mapping[str, str] = {
     "established": "Forge has established that it is confined to the project subject",
 }
 
-#: What a per-provider row may add: the measured finding behind it, so the
-#: reason a person reads names evidence rather than a category. Absent for a
-#: provider Forge has not measured, and absence says exactly that.
-_CONFINEMENT_FINDING: Mapping[str, str] = {
-    "codex": (
+#: What a per-provider, PER-PLATFORM row may add: the measured finding behind
+#: it, so the reason a person reads names evidence rather than a category.
+#: Absent for a provider-platform pair Forge has not measured, and absence says
+#: exactly that.
+#:
+#: Keyed by platform for the same reason the table above is: a finding measured
+#: on Windows is a fact about Windows, and attaching it to a decision made for
+#: another platform would be the header-re-subjecting-the-observations move
+#: `ConfinementMeasurement` already refuses one layer down.
+_CONFINEMENT_FINDING: Mapping[str, Mapping[str, str]] = {
+    "codex": {"windows": (
         "measured on Windows at 7ce306b1 (docs/governance/CODEX_CONFINEMENT_MEASUREMENT.md): "
         "its sandbox DOES refuse every write outside the workspace, including Forge's "
         "external seal, but it does NOT confine loopback egress. The property left unmet is "
         "'control_plane_authority': no observation of Forge's own gated surface, taken from a "
         "Codex principal, exists, and the retired reachability sub-fact entails nothing here "
         "because it was recorded as reached"
-    ),
+    )},
+    "claude": {"windows": (
+        "measured on windows at 894218f9 (docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md): "
+        "no operating-system confinement mechanism is reachable for this provider on native "
+        "Windows at claude 2.1.211. The CLI exposes no sandbox subcommand and no sandbox flag, "
+        "the bundled runtime's Windows broker binary was not found under the searched roots "
+        "and its dedicated account is not provisioned, and Forge's adapter asks the operating "
+        "system for nothing: what it passes is that provider's own tool allowlist and a working "
+        "directory. All six properties are unmet, every one of them for the same reason -- no "
+        "attempt by a Claude principal was observed, because this platform offers no model-free "
+        "entry point by which one could be made and no model was invoked"
+    )},
 }
 
 
@@ -1221,50 +1273,102 @@ class ProviderResult:
 @dataclass(frozen=True)
 class GovernedEligibility:
     """The decision, as data: whether a declared provider may execute on the
-    governed basic-user build, what Forge established about its confinement,
-    and the reason in words a person can read."""
+    governed basic-user build ON A NAMED PLATFORM, what Forge established about
+    its confinement there, and the reason in words a person can read.
+
+    `platform` is carried on the verdict and not only in the reason, because a
+    decision that depends on a platform should SAY which one it was made for.
+    The served surface renders this dict; a reader who cannot see the platform
+    cannot tell a Windows answer from a Linux one.
+    """
 
     provider: str
+    platform: str
     eligible: bool
     confinement: str
     reason: str
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "provider": self.provider, "eligible": self.eligible,
-            "confinement": self.confinement, "reason": self.reason,
+            "provider": self.provider, "platform": self.platform,
+            "eligible": self.eligible, "confinement": self.confinement,
+            "reason": self.reason,
         }
 
 
-def governed_build_eligibility(provider: str) -> GovernedEligibility:
+def governed_build_eligibility(provider: str, platform: str) -> GovernedEligibility:
     """THE eligibility decision for the governed build. Forge-owned and
     deterministic: it reads the confinement table and nothing else -- not the
     request, not the capsule, not the project directory, not the provider's
-    own account of itself. A provider is eligible only when Forge has
-    ESTABLISHED its confinement; a declared or absent confinement fails
-    closed, and no other provider is tried in its place."""
+    own account of itself, and NOT the host it happens to be running on. A
+    provider is eligible only when Forge has ESTABLISHED its confinement on the
+    platform being asked about; a declared or absent confinement fails closed,
+    and no other provider is tried in its place.
+
+    `platform` IS REQUIRED AND HAS NO DEFAULT. A default would rebuild the hole
+    this parameter closes one level down: every caller that forgot the platform
+    would silently receive the same row on every host, which is exactly the
+    fail-open the flat table had. It arrives as DATA -- this module reads no
+    `sys`, no process state and no filesystem -- so the one place that decides
+    which word describes the running host is the surface
+    (`onboarding_app.served_platform`), and it decides it once.
+
+    A platform with no row for this provider is refused BY NAME and treated as
+    `none`, never as a fall-through to whichever row exists. Silence about a
+    platform is not evidence about it: a measurement taken on `linux` says
+    nothing about `windows`, which is the rule `assess_confinement` already
+    enforces on the evidence and which this makes true of the claim as well.
+    """
     if provider not in PROVIDERS:
         raise ProviderError(f"provider {provider!r} is not one of {PROVIDERS}")
-    confinement = PROVIDER_CONFINEMENT.get(provider)
+    if not isinstance(platform, str) or not platform.strip():
+        raise ProviderError(
+            "the governed-build decision must name the platform it is being made "
+            "for; a decision taken without one would read the same row on every "
+            "host, including hosts where nothing was measured"
+        )
+    rows = PROVIDER_CONFINEMENT.get(provider)
+    if not rows:
+        raise ProviderError(
+            f"provider {provider!r} has no confinement rows; the table must cover "
+            "every declared provider before eligibility can be decided"
+        )
+    confinement = rows.get(platform)
+    if confinement is None:
+        elsewhere = ", ".join(repr(name) for name in sorted(rows))
+        return GovernedEligibility(
+            provider=provider, platform=platform, eligible=False, confinement="none",
+            reason=(
+                f"provider {provider!r} has no confinement row for platform "
+                f"{platform!r}, so it is not eligible for the governed build there: "
+                f"the table carries rows for {elsewhere} only, and a measurement "
+                "taken on one platform says nothing about another; the build is "
+                "refused and no other provider is tried"
+            ),
+        )
     if confinement not in CONFINEMENT:
         raise ProviderError(
-            f"provider {provider!r} has no confinement row; the table must cover "
-            "every declared provider before eligibility can be decided"
+            f"provider {provider!r} on platform {platform!r} carries confinement "
+            f"{confinement!r}, which is not one of {CONFINEMENT}"
         )
     eligible = confinement == "established"
     if eligible:
-        reason = f"provider {provider!r} is eligible: {_CONFINEMENT_REASON[confinement]}"
+        reason = (
+            f"provider {provider!r} is eligible on platform {platform!r}: "
+            f"{_CONFINEMENT_REASON[confinement]}"
+        )
     else:
         reason = (
-            f"provider {provider!r} is declared but not eligible for the governed build: "
-            f"it {_CONFINEMENT_REASON[confinement]}; the build is refused and no other "
-            "provider is tried"
+            f"provider {provider!r} is declared but not eligible for the governed "
+            f"build on platform {platform!r}: it {_CONFINEMENT_REASON[confinement]}; "
+            "the build is refused and no other provider is tried"
         )
-    finding = _CONFINEMENT_FINDING.get(provider)
+    finding = _CONFINEMENT_FINDING.get(provider, {}).get(platform)
     if finding:
         reason = f"{reason}. {finding}"
     return GovernedEligibility(
-        provider=provider, eligible=eligible, confinement=confinement, reason=reason,
+        provider=provider, platform=platform, eligible=eligible,
+        confinement=confinement, reason=reason,
     )
 
 
