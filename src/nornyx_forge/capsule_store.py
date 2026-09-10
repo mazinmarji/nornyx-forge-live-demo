@@ -116,6 +116,7 @@ synthesize.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -125,6 +126,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -622,6 +624,23 @@ def _solely_owned_file(path: Path) -> bool:
         return False
 
 
+#: How many times `_remove_tree` re-lists and re-removes when an entry APPEARS
+#: beneath the path, and how long it waits before the second attempt. The pause
+#: doubles each time, so eight attempts SPEND AT MOST 6.35 SECONDS WAITING
+#: (0.05 + 0.1 + ... + 3.2) -- a bound on the sleeping and not on the call,
+#: which also does the removing, and none of it at all when the first attempt
+#: succeeds, which is every removal that is not being written into.
+#:
+#: THE BOUND IS MEASURED, NOT PICKED. The writer this outlasts is git's own
+#: auto-maintenance (see `_remove_tree`), and the longest run of it observed
+#: here took 5.657 s -- `git maintenance run --auto --quiet --detach` repacking
+#: 900 loose objects, timed from the call to its return. 6.35 s covers that
+#: with margin. A writer that outlasts the budget is not waited out: attempt
+#: eight raises, which is the refusal `_remove_tree` documents.
+_APPEARED_ATTEMPTS = 8
+_APPEARED_FIRST_PAUSE_SECONDS = 0.05
+
+
 def _remove_tree(path: Path) -> None:
     """Remove a directory git owns. Git marks its object files read-only, and
     on Windows `rmtree` refuses those unless the bit is cleared first.
@@ -659,6 +678,78 @@ def _remove_tree(path: Path) -> None:
     still refuses to go -- a held handle, a permission that clearing did not
     fix -- must still raise, or this becomes the silent no-op the paragraph
     above records.
+
+    AN ENTRY THAT APPEARS IS THE OPPOSITE CASE, AND IS NOT ABSORBED. The same
+    listing window runs the other way: an entry CREATED between the listing and
+    the final `rmdir` leaves the directory non-empty, and `os.rmdir` refuses it
+    with `ENOTEMPTY`. The handler chmods the directory, calls `os.rmdir` again,
+    gets `ENOTEMPTY` again, and that second one escapes the handler and
+    `rmtree` both. Observed in CI, Python 3.12, this module under this module's
+    own rollback helper:
+    `OSError: [Errno 39] Directory not empty: '.../capsule/.git'`.
+
+    ABSORBING IT WOULD BE A FAIL-OPEN, which is why this is a retry instead.
+    `FileNotFoundError` means the goal is ALREADY REACHED -- the name this
+    wanted gone is gone. `ENOTEMPTY` means the goal is NOT reached and someone
+    is actively writing; returning on it would report success over a store that
+    is still on disk, and this function's callers (`_rebuild`s wipe, and
+    `_write_fresh` at a directory-attributed destination) remove untrusted
+    content for a living. So the removal is ATTEMPTED AGAIN, up to
+    `_APPEARED_ATTEMPTS` times: each attempt re-lists, so entries that appeared
+    since the last one are seen and removed. Exhaustion RAISES the last
+    `ENOTEMPTY` -- loudly, with the offending path -- and every error that is
+    not `ENOTEMPTY` is re-raised on the FIRST attempt, so a held handle still
+    refuses at once instead of stalling for the budget.
+
+    THE MODE THE HANDLER CLEARS TO DEPENDS ON THE ENTRY, and getting that
+    wrong is how the retry above arrived RED ON ALL FOUR LINUX JOBS while
+    passing 300 Windows trials. `rmtree` routes a failed `rmdir` to the
+    handler exactly as it routes a failed `unlink`, so `target` is a DIRECTORY
+    as often as it is a file -- and the handler's `os.chmod(target, 0o600)`
+    was written for the Windows read-only attribute, where a mode is a bit and
+    traversal is not a permission at all. On POSIX `0o600` on a directory
+    STRIPS THE SEARCH BIT: the directory stays listable and every entry inside
+    it becomes unreachable. The retry then re-lists the directory it has just
+    made untraversable and gets `EACCES` on the first name it tries to remove
+    -- which is not `ENOTEMPTY`, so the loop below re-raises on the first
+    attempt, correctly, at an error the handler manufactured. Measured in CI:
+    `PermissionError: [Errno 13] Permission denied:
+    '.../capsule/.git/maintenance.lock'` in the appearing-entry pin, and the
+    same `EACCES` reaching the refusal pin where it demanded the real
+    `ENOTEMPTY`. A directory therefore gets `stat.S_IRWXU` and a file keeps
+    `0o600`; no entry is widened that was not already being chmod'd.
+
+    THE TYPE IS TAKEN FROM `os.lstat` AND NOT FROM `_is_directory_entry`,
+    which is this module's predicate for "does this entry need `rmdir`" and
+    deliberately answers True for a directory-attributed REPARSE POINT. That
+    is the right answer for choosing a removal primitive, which follows
+    nothing, and the wrong one for choosing a mode, because `os.chmod` DOES
+    follow. This handler runs at hostile paths, so the one shape the two
+    predicates disagree about is the shape that decides which is used here: a
+    symlink to a directory planted in a store must not have a directory's
+    mode applied through it. `S_ISDIR` on an `lstat` is False for a link, so
+    a link takes the file mode and whatever it points at keeps its own.
+
+    THE WRITER IS GIT ITSELF, and it is not the product calling it. Measured
+    with `GIT_TRACE2_EVENT` at stock configuration -- nothing in this product,
+    its tests or its CI sets `gc.auto`, `gc.autoDetach` or `maintenance.*` --
+    EVERY `git commit` spawns the child `git maintenance run --auto --quiet
+    --detach`. When its auto-condition is met that child writes a pack, its
+    `.idx`, its `.rev` and an `objects/pack/multi-pack-index`, and collapses
+    the loose objects (744 to 186 over identical work); with
+    `maintenance.auto=false` the same work leaves 744 loose objects and no pack
+    at all. That is the whole fingerprint an earlier investigation saw appear
+    inside a store mid-run and could not attribute.
+
+    WHAT THAT MEASUREMENT DOES NOT SETTLE, kept separate from what it does. It
+    was taken on Windows, where `--detach` does not detach: the parent `git
+    commit` waits for the child (`child_exit` after 0.16 s, in the same trace),
+    so the write finishing after the synchronous call returns is git's
+    documented `--detach` behaviour on the platform CI failed on, not something
+    observed here. And at stock `gc.auto` a store of 48 loose objects does NOT
+    repack (measured), so the earlier sighting's threshold crossing is still
+    unexplained. The repair does not depend on either: it survives a concurrent
+    writer whatever the writer turns out to be.
     """
     if _is_junction(path):
         os.rmdir(path)
@@ -666,18 +757,31 @@ def _remove_tree(path: Path) -> None:
 
     def _clear_and_retry(function, target, _exc):
         try:
-            os.chmod(target, 0o600)
+            # A DIRECTORY NEEDS ITS SEARCH BIT BACK, a file does not have one
+            # to lose, and a link must not be widened through. See above.
+            os.chmod(target, stat.S_IRWXU if stat.S_ISDIR(os.lstat(target).st_mode) else 0o600)
             function(target)
         except FileNotFoundError:
             return
 
-    # `onerror` is deprecated in 3.12 and removed in 3.14; `onexc` arrived in
-    # 3.12 and takes the exception rather than an `exc_info` triple. The
-    # handler ignores that argument, so one body serves both spellings.
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_clear_and_retry)
-    else:
-        shutil.rmtree(path, onerror=_clear_and_retry)
+    for attempt in range(_APPEARED_ATTEMPTS):
+        if attempt:
+            time.sleep(_APPEARED_FIRST_PAUSE_SECONDS * 2 ** (attempt - 1))
+        try:
+            # `onerror` is deprecated in 3.12 and removed in 3.14; `onexc`
+            # arrived in 3.12 and takes the exception rather than an `exc_info`
+            # triple. The handler ignores that argument, so one body serves
+            # both spellings.
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=_clear_and_retry)
+            else:
+                shutil.rmtree(path, onerror=_clear_and_retry)
+            return
+        except OSError as exc:
+            # The last attempt re-raises too: exhaustion is a failure, and the
+            # exception it fails with is the real one, at the real path.
+            if exc.errno != errno.ENOTEMPTY or attempt == _APPEARED_ATTEMPTS - 1:
+                raise
 
 
 def _replace_fresh(tmp: Path, path: Path) -> None:
