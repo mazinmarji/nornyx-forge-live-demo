@@ -541,13 +541,21 @@ def ambient_capability_control() -> dict:
         sibling.mkdir()
         seal_surrogate = root / "outside" / "seals"
         seal_surrogate.mkdir(parents=True)
-        (seal_surrogate / "seal.json").write_text('{"canary":"before"}', encoding="utf-8")
+        # EVERY text write below states its line-ending policy, and that is not
+        # decoration. The repository requires it so governed content cannot
+        # digest differently on two platforms; here it additionally keeps the
+        # CONTROL's own bytes identical whatever host runs it, so a canary read
+        # back is compared against what was written rather than against what
+        # the platform translated it into.
+        (seal_surrogate / "seal.json").write_text(
+            '{"canary":"before"}', encoding="utf-8", newline="\n")
         forge_code = root / "forge"
         forge_code.mkdir()
-        (forge_code / "verifier.py").write_text("# before\n", encoding="utf-8")
+        (forge_code / "verifier.py").write_text(
+            "# before\n", encoding="utf-8", newline="\n")
 
         script = root / "attempt.py"
-        script.write_text(_ATTEMPT_SOURCE, encoding="utf-8")
+        script.write_text(_ATTEMPT_SOURCE, encoding="utf-8", newline="\n")
 
         targets = {
             "subject_write": workspace / "subject.txt",
@@ -590,7 +598,7 @@ def ambient_capability_control() -> dict:
         # junction would look live while proving nothing about whether the
         # write went THROUGH it.
         (seal_surrogate / "seal.json").write_text(
-            '{"canary":"before-junction"}', encoding="utf-8")
+            '{"canary":"before-junction"}', encoding="utf-8", newline="\n")
         junction = workspace / "escape_junction"
         made = _run(["cmd", "/c", "mklink", "/J", str(junction), str(seal_surrogate)])
         control["junction_created"] = made.get("returncode") == 0

@@ -39,7 +39,7 @@ from nornyx_forge import onboarding_serve, provider_contract
 from nornyx_forge.capsule import PROVIDERS, Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleSealMissing, CapsuleStore
 from nornyx_forge.experience import advance, start_experience
-from nornyx_forge.onboarding_app import create_app
+from nornyx_forge.onboarding_app import create_app, served_platform
 from nornyx_forge.provider_contract import (
     CONFINEMENT,
     PROVIDER_CONFINEMENT,
@@ -54,10 +54,24 @@ CONTRACTS = ROOT / ".nornyx" / "contracts"
 HUMAN = {"kind": "human", "ident": "casey"}
 MODEL = {"kind": "model", "ident": "builder-model"}
 AT = "2026-09-03T09:00:00Z"
-#: The platform the shipped table carries rows for, and the one this host
-#: serves. Spelled once so a test cannot come to rest on a different word
-#: from the table it is checking.
+#: TWO PLATFORMS, AND CONFLATING THEM MADE THREE TESTS PASS ONLY ON WINDOWS.
+#:
+#: `PLATFORM` is the platform the shipped TABLE carries rows for. Tests that
+#: call the contract's decision directly ask about it, because the row's
+#: content is what they are asserting.
+#:
+#: `SERVED` is the platform the shipped SURFACE decides for on THIS host --
+#: whatever `served_platform()` derives. Tests that drive `create_app` or
+#: `assemble` without passing a platform get this one, and comparing their
+#: output against `PLATFORM` is correct only on a Windows host.
+#:
+#: Measured: the first version of this module used `PLATFORM` for both, and CI
+#: went red on Linux for E5, E6 and E7 -- where the served refusal is "no
+#: confinement row for platform 'linux'", which is the fail-closed behaviour
+#: working exactly as designed, against an assertion that had quietly assumed
+#: the host. The two names are kept apart so that cannot recur.
 PLATFORM = "windows"
+SERVED = served_platform()
 SUBJECT_GATE = {"name": "greenfield:test-execution", "passed": True, "detail": "",
                 "command": ["python", "-I", "-c", "verifier"], "returncode": 0}
 NORNYX_GATE = {"name": "nornyx check .nornyx/generated/brd_contract.nyx", "passed": True,
@@ -256,7 +270,7 @@ def test_e5_the_assembled_surface_refuses_the_governed_build(tmp_path: Path, mon
     _confirmed(client, "claude")
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409
-    assert response.json()["eligibility"] == governed_build_eligibility("claude", PLATFORM).as_dict()
+    assert response.json()["eligibility"] == governed_build_eligibility("claude", SERVED).as_dict()
     assert factory.calls == [], "the shipped composition constructed a flow for an ineligible provider"
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
@@ -269,7 +283,7 @@ def test_e7_the_surface_tells_the_user_the_build_is_unavailable_and_why(tmp_path
     client = _client(tmp_path, RecordingFactory())
     _confirmed(client, "codex")
     state = _ok(client.get("/api/state"))
-    verdict = governed_build_eligibility("codex", PLATFORM)
+    verdict = governed_build_eligibility("codex", SERVED)
     assert state["provider_eligibility"] == verdict.as_dict()
     assert "start_build" not in state["journey"]["actions"]
     assert verdict.reason in state["journey"]["blockers"]
@@ -418,7 +432,7 @@ def test_e6_a_lifecycle_already_at_build_is_not_moved_by_a_refused_re_run(tmp_pa
     client = _client(tmp_path, RecordingFactory())
     view = _ok(client.get("/api/state"))["journey"]
     assert view["stage"] == "BUILD" and view["actions"] == []
-    assert governed_build_eligibility("claude", PLATFORM).reason in view["blockers"]
+    assert governed_build_eligibility("claude", SERVED).reason in view["blockers"]
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409
     assert _persisted(tmp_path)["stage"] == "BUILD" and _persisted(tmp_path)["status"] == "active"
