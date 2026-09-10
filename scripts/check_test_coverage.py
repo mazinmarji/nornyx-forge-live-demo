@@ -805,7 +805,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # 103 -> 106, band(103) = 93 -> band(106) = 96: the module-floor sum rises
     # by three and so does the module, so the slack it contributes is 10 either
     # way and the total the bands grant does not move.
-    "tests/test_provider_authority_boundary.py": 96,
+    #
+    # ONE ROW FOR THE PLATFORM DEFECT THOSE THREE EXPOSED. The retry above
+    # arrived RED ON ALL FOUR LINUX JOBS while passing 300 Windows trials,
+    # because `_remove_tree`s handler chmod'd its target to `0o600` whether
+    # that target was a file or a DIRECTORY, and on POSIX `0o600` strips a
+    # directory's search bit and makes every entry inside it unreachable. The
+    # pin asserts the MODE THE HANDLER CHOOSES -- `S_IRWXU` for a directory,
+    # `0o600` still for a file, so the repair is pinned in both directions --
+    # which is a fact about an argument and is therefore checkable on either
+    # platform. The traversal effect it repairs is POSIX semantics no Windows
+    # host can exhibit, and the two pins above are what measure it, on Linux,
+    # in CI. It never skips: the appearance and the refusing `unlink` are both
+    # injected, so it needs no threads, no writer and no platform.
+    # 106 -> 107, band(106) = 96 -> band(107) = 97: the module-floor sum rises
+    # by one and so does the module, so the slack it contributes is 10 either
+    # way and the total the bands grant does not move.
+    "tests/test_provider_authority_boundary.py": 97,
     # Declared is not eligible (R1-R3 of the independent review): 16
     # collected at introduction, floor at band(16) = 15. The governed build
     # refusing both declared providers before anything executes, no
@@ -1627,10 +1643,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3532   (116 modules)
-#     sum of the module floors    3235
-#     band(3532) = ceil(0.9*n)    3179
-#     MINIMUM_COLLECTED           3243
+#     collected across tests/     3533   (116 modules)
+#     sum of the module floors    3236
+#     band(3533) = ceil(0.9*n)    3180
+#     MINIMUM_COLLECTED           3244
 #     above the module sum         8
 #     below what collects         289
 #
@@ -1936,7 +1952,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # injected at the listing, so the pins need no threads, no concurrent writer
 # and no platform -- and the windows-runtime job's floor is untouched at 277,
 # because that job runs SEVEN named modules and this is not one of them.
-MINIMUM_COLLECTED = 3243
+#
+# THE DIRECTORY-MODE REPAIR ADDS ONE ROW TO THAT SAME MODULE AND NO MODULE.
+# The three rows above went RED ON ALL FOUR LINUX JOBS, on a `0o600` the
+# handler had been applying to directories since long before them, so the row
+# added here pins the mode the handler chooses rather than the traversal it
+# restores -- see the comment beside the module's floor. The suite collects
+# 3532 -> 3533 and 116 modules still stand, because the row lands in
+# `tests/test_provider_authority_boundary.py` beside the pins it repairs. Its
+# floor moves band(106) = 96 -> band(107) = 97, so the module sum rises by
+# exactly one, 3235 -> 3236, and the aggregate follows to 3244 to hold the
+# margin above the sum at 8. The working room below what collects is UNCHANGED
+# at 289 -- the collection and the aggregate each rose by one, which is the row
+# a careless edit moves in two directions at once. The AGGREGATE band row goes
+# 3179 -> 3180, a rise of one that happens to match the collection's, which the
+# round above should be read as warning is a coincidence of where `ceil(0.9n)`
+# falls and not a rule. THE SLACK THE BANDS GRANT IS UNCHANGED AT 297: the
+# module collects 10 above its floor at 107 exactly as it did at 106, because
+# band(107) - band(106) is one where the module moved one. NO SKIP IS ADDED --
+# the appearing entry and the refusing `unlink` are both injected -- and the
+# windows-runtime job's floor is untouched at 277, for the same reason.
+MINIMUM_COLLECTED = 3244
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

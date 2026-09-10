@@ -3439,6 +3439,109 @@ def test_a_removal_still_refuses_a_tree_it_cannot_empty(tmp_path: Path):
         "half-removed one reported as gone")
 
 
+def test_the_removal_handler_leaves_a_directory_a_mode_it_can_be_entered_through(
+    tmp_path: Path,
+):
+    """THE PLATFORM DEFECT THAT MADE THE TWO PINS ABOVE RED ON LINUX.
+
+    `rmtree` hands a failed `rmdir` to the handler exactly as it hands it a
+    failed `unlink`, so the handler's `target` is a DIRECTORY as often as it
+    is a file. `os.chmod(target, 0o600)` was written for the Windows
+    read-only attribute, where traversal is not a permission; on POSIX it
+    STRIPS THE SEARCH BIT off a directory and makes every entry inside it
+    unreachable. The retry the two pins above added then re-lists the
+    directory the handler just sealed and gets `EACCES` on the first name it
+    tries to remove -- which is not `ENOTEMPTY`, so `_remove_tree` re-raises
+    on the first attempt at an error the handler manufactured. Measured on
+    all four Linux jobs at the previous head:
+    `PermissionError: [Errno 13] Permission denied:
+    '.../capsule/.git/maintenance.lock'` in the appearing-entry pin, and that
+    same `EACCES` reaching the refusal pin where it demanded the real
+    `ENOTEMPTY`. Windows passed 300 trials of the same mechanism, because
+    there the two modes differ in no bit that Win32 reads.
+
+    WHAT THIS PIN PROVES AND WHERE. It asserts the MODE THE HANDLER CHOOSES,
+    which is a fact about the argument and is therefore checkable on either
+    platform and skips on neither. It does NOT prove the traversal effect:
+    that a directory at `0o600` is unenterable, and that `stat.S_IRWXU`
+    restores it, is POSIX semantics this Windows host cannot exhibit, and the
+    two pins above are what measure it -- on Linux, in CI, which is the
+    instrument for this repair because Linux is where the defect lives.
+
+    BOTH DIRECTIONS, because "make it traversable" is as easy to overdo as to
+    omit: a builder who chmods everything `0o700` would hand every git loose
+    object an execute bit it never had. The directory keeps its search bit,
+    the file keeps `0o600`, and each injection is asserted to have HAPPENED.
+    """
+    real_chmod = os.chmod
+    real_scandir = os.scandir
+    real_unlink = os.unlink
+
+    capsule = _git_shaped_capsule(tmp_path / "appearing")
+    gitdir = capsule / ".git"
+    appeared: list[str] = []
+    modes: list[tuple[str, int]] = []
+
+    def recording_chmod(target, mode, *args, **kwargs):
+        modes.append((os.fspath(target), mode))
+        return real_chmod(target, mode, *args, **kwargs)
+
+    def scandir_then_appear(target):
+        entries = list(real_scandir(target))
+        if not appeared and _is_directory(target, gitdir):
+            planted = gitdir / "maintenance.lock"
+            planted.write_bytes(b"held")
+            appeared.append(planted.name)
+        return _Listed(entries)
+
+    with mock.patch("os.scandir", scandir_then_appear), \
+            mock.patch("os.chmod", recording_chmod):
+        _remove_tree(capsule)
+
+    assert appeared == ["maintenance.lock"], (
+        "the entry was never made to appear, so no `rmdir` refused and this "
+        "pins nothing")
+    on_the_directory = [mode for name, mode in modes if Path(name) == gitdir]
+    assert on_the_directory, (
+        "the handler never chmod'd the directory whose `rmdir` refused, so "
+        "the mode this pins was never chosen")
+    assert set(on_the_directory) == {stat.S_IRWXU}, (
+        "a directory the handler is about to re-`rmdir` must keep the search "
+        "bit it is entered through -- `0o600` strips it on POSIX and every "
+        "entry inside becomes unreachable, which is the `EACCES` CI reported: "
+        f"{sorted(oct(mode) for mode in set(on_the_directory))}")
+
+    plain = _git_shaped_capsule(tmp_path / "plain")
+    refused: list[str] = []
+    file_modes: list[tuple[str, int]] = []
+
+    def unlink_refusing_the_first_entry(target, *args, **kwargs):
+        if not refused:
+            refused.append(os.fspath(target))
+            raise PermissionError(errno.EACCES, "refused once", os.fspath(target))
+        return real_unlink(target, *args, **kwargs)
+
+    def recording_file_chmod(target, mode, *args, **kwargs):
+        file_modes.append((os.fspath(target), mode))
+        return real_chmod(target, mode, *args, **kwargs)
+
+    with mock.patch("os.unlink", unlink_refusing_the_first_entry), \
+            mock.patch("os.chmod", recording_file_chmod):
+        _remove_tree(plain)
+
+    assert refused, (
+        "no `unlink` was made to refuse, so the file branch of the handler "
+        "never ran and this half pins nothing")
+    assert not plain.exists(), (
+        "clearing the bit must still finish the removal, on the file branch "
+        "as on the directory one")
+    assert file_modes, "the handler never chmod'd the entry whose `unlink` refused"
+    assert {mode for _, mode in file_modes} == {0o600}, (
+        "a plain file keeps `0o600`: it has no search bit to lose, and "
+        "granting one to every git loose object is the opposite mistake to "
+        f"the one repaired above: {sorted(oct(mode) for _, mode in file_modes)}")
+
+
 def test_a_removal_that_is_not_being_written_into_takes_no_retry(tmp_path: Path):
     """AND THE ORDINARY REMOVAL PAYS NOTHING FOR THE BOUND ABOVE.
 

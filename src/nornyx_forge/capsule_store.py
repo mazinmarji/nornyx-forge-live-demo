@@ -701,6 +701,35 @@ def _remove_tree(path: Path) -> None:
     not `ENOTEMPTY` is re-raised on the FIRST attempt, so a held handle still
     refuses at once instead of stalling for the budget.
 
+    THE MODE THE HANDLER CLEARS TO DEPENDS ON THE ENTRY, and getting that
+    wrong is how the retry above arrived RED ON ALL FOUR LINUX JOBS while
+    passing 300 Windows trials. `rmtree` routes a failed `rmdir` to the
+    handler exactly as it routes a failed `unlink`, so `target` is a DIRECTORY
+    as often as it is a file -- and the handler's `os.chmod(target, 0o600)`
+    was written for the Windows read-only attribute, where a mode is a bit and
+    traversal is not a permission at all. On POSIX `0o600` on a directory
+    STRIPS THE SEARCH BIT: the directory stays listable and every entry inside
+    it becomes unreachable. The retry then re-lists the directory it has just
+    made untraversable and gets `EACCES` on the first name it tries to remove
+    -- which is not `ENOTEMPTY`, so the loop below re-raises on the first
+    attempt, correctly, at an error the handler manufactured. Measured in CI:
+    `PermissionError: [Errno 13] Permission denied:
+    '.../capsule/.git/maintenance.lock'` in the appearing-entry pin, and the
+    same `EACCES` reaching the refusal pin where it demanded the real
+    `ENOTEMPTY`. A directory therefore gets `stat.S_IRWXU` and a file keeps
+    `0o600`; no entry is widened that was not already being chmod'd.
+
+    THE TYPE IS TAKEN FROM `os.lstat` AND NOT FROM `_is_directory_entry`,
+    which is this module's predicate for "does this entry need `rmdir`" and
+    deliberately answers True for a directory-attributed REPARSE POINT. That
+    is the right answer for choosing a removal primitive, which follows
+    nothing, and the wrong one for choosing a mode, because `os.chmod` DOES
+    follow. This handler runs at hostile paths, so the one shape the two
+    predicates disagree about is the shape that decides which is used here: a
+    symlink to a directory planted in a store must not have a directory's
+    mode applied through it. `S_ISDIR` on an `lstat` is False for a link, so
+    a link takes the file mode and whatever it points at keeps its own.
+
     THE WRITER IS GIT ITSELF, and it is not the product calling it. Measured
     with `GIT_TRACE2_EVENT` at stock configuration -- nothing in this product,
     its tests or its CI sets `gc.auto`, `gc.autoDetach` or `maintenance.*` --
@@ -728,7 +757,9 @@ def _remove_tree(path: Path) -> None:
 
     def _clear_and_retry(function, target, _exc):
         try:
-            os.chmod(target, 0o600)
+            # A DIRECTORY NEEDS ITS SEARCH BIT BACK, a file does not have one
+            # to lose, and a link must not be widened through. See above.
+            os.chmod(target, stat.S_IRWXU if stat.S_ISDIR(os.lstat(target).st_mode) else 0o600)
             function(target)
         except FileNotFoundError:
             return
