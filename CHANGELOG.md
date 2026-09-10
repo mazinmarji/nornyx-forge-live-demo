@@ -198,10 +198,28 @@
   exclusive create by pathname and the parent race stated as that
   platform's limitation. The standing module collects 149 -> 131, its
   subject having changed; the Windows module stays at 7.
+  A seventh Codex review, of the redesigned head after its sixth
+  reconciliation, found two P1s in what the redesign had kept by pathname:
+  the root anchor opened the repository root by pathname without
+  `O_NOFOLLOW` and compared the checker below it against
+  `os.stat(__file__)` evaluated through the same pathname, so a checkout
+  path substituted after the load put a counterfeit on both sides
+  (reproduced: an ancestor swapped for a link to a counterfeit tree, and a
+  counterfeit carrying a hard link to the loaded file, each reading a
+  fabricated public registry); and the directory census was taken once,
+  before the walk, so an external directory bound into the checkout after
+  it had no identity in it and the overlay below it was admitted
+  (reproduced with a real bind mount). The loaded file's identity is taken
+  at import now; the root is reached from the filesystem root through held
+  directories, following no link, and must contain that file by that
+  identity and by one name; the census is taken again once the overlay is
+  held, and every directory held on the way must be absent from both. The
+  standing module collects 131 -> 133; the Windows module stays at 7.
   Not claimed, and recorded as such in A-031: that anyone runs the check;
-  that anyone read an item; that a `cycle_id` names a cycle; that a hard
-  link, an alias of a single file or a same-identity rewrite is seen; that a
-  link of any kind is followed rather than refused; that a private overlay
+  that anyone read an item; that a `cycle_id` names a cycle; that an alias
+  of a single file, a same-identity rewrite, or a mount change made and
+  unmade within a judgment or after it is seen (a hard link is refused, not
+  judged); that a link of any kind is followed rather than refused; that a private overlay
   is judged at all where no handle backend exists; that a free-text `reason` is
   free of overlay content; that an identifier an
   overlay author chose is not itself telling; that a commit cannot change the

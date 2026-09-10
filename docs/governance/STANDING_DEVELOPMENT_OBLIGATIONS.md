@@ -130,12 +130,20 @@ not:
   link outside the tree pointing in, a chain that hops through the tree and
   a loop are all refused for the first link met, and what a link points at
   is never consulted, not even to refuse it. No pathname is looked up
-  twice: after the two anchors -- the filesystem root, and the repository
-  root, which is held only once the directory contains the checker that is
-  running -- every `stat` and `open` a judgment makes is relative to a
-  descriptor it holds, so a component swapped between the moment it is looked at
-  and the next lookup, the shape the sixth external review measured as followed by
-  the pathname walk, meets `O_NOFOLLOW` on the open and is refused.
+  twice: after the one anchor, the filesystem root, every `stat` and `open`
+  a judgment makes is relative to a descriptor it holds, so a component
+  swapped between the moment it is looked at and the next lookup, the shape
+  the sixth external review measured as followed by the pathname walk, meets
+  `O_NOFOLLOW` on the open and is refused. The repository root itself is
+  reached from that anchor through held directories, following no link, and
+  is held only once the directory contains the file the checker was loaded
+  from, by an identity taken at import and by one name: a checkout path
+  substituted after the load -- an ancestor swapped for a link to a
+  counterfeit tree, the directory swapped by rename, a counterfeit carrying
+  a hard link to the loaded file, the shapes the seventh external review
+  measured as anchored when the root was opened by pathname and compared
+  against `os.stat(__file__)` through that same pathname -- is refused
+  rather than anchored.
   `Path.resolve` takes part in no security decision. Where no handle
   backend exists -- Windows, whose `os` has no `openat`, no `O_NOFOLLOW`
   and no `scandir` on a handle -- a private overlay is refused outright,
@@ -154,8 +162,12 @@ not:
   and a real bind mount of `.nornyx/runtime` was measured to admit an
   in-repository overlay before every directory was compared. The identities
   are gathered through descriptors with no link followed, and the set is
-  taken fresh for every judgment: no snapshot outlives the judgment it was
-  taken for. Where the platform exposes no identity, nothing is claimed and
+  taken before the walk and again once the overlay is held, every directory
+  held on the way absent from both: a directory bound into the checkout
+  while the walk ran, the shape the seventh external review measured as
+  admitted against a census taken only before the walk, is in the second
+  set and refuses the overlay held below it, and no set outlives the
+  judgment it was taken for. Where the platform exposes no identity, nothing is claimed and
   the lexical rule stands alone. An alias of a single file made by a bind
   mount is outside what either rule can see; see the limitations.
 - **The bytes read are the object that was judged.** The final component
@@ -294,6 +306,21 @@ developer's obligation, not a measurement.
   A bind mount of a single file keeps one name and one identity and is
   outside what a path rule or a directory identity can see; a caller who
   mounts an overlay into a checkout has placed it there.
+- **A mount change is seen only when it spans the walk.** The census is
+  taken before the walk and again once the overlay is held. A directory
+  bound into the checkout between the two is in the second census and
+  refuses the overlay held below it; one bound and unbound between the two,
+  or bound after the judgment, is not seen, and a caller with the privilege
+  to mount has placed the overlay wherever it then appears.
+- **The repository root is the loaded checker's, by identity.** The root is
+  reached from the filesystem root through held directories with no link
+  followed, and must contain the file the checker was loaded from, by the
+  identity taken at import and by one name. A checkout path substituted
+  after the load is refused, however it was substituted; a checker loaded
+  from a counterfeit in the first place is the caller's code, as the
+  shadowed-interpreter limitation says; and a checkout whose own checker
+  file has a second name -- a hard link, however it came to be -- is refused
+  until the second name is gone.
 - **The identity traversal is bounded, and fails closed.** A repository with
   more than the bound's number of directories is refused rather than judged
   partially, so a very large checkout needs the bound raised, visibly, in

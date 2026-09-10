@@ -44,16 +44,27 @@ any directory below it is still the repository. The identities come from the
 one traversal this script performs, of the repository's own tree, through
 descriptors as well: each child directory is opened relative to its parent
 without following a link and must still be the entry inspected; the set is
-taken fresh for every judgment and cached for none. The final component is
-opened relative to the last held directory, without following, and THE
-DESCRIPTOR SO OPENED IS THE ONLY OBJECT READ. No pathname is resolved again
-after it was inspected, by this script or by the kernel on its behalf, so a
-component swapped between an inspection and the next lookup is not followed:
-the lookup is relative to a handle the swap cannot move. `Path.resolve` takes
-part in no security decision. A regular file with more than one name -- a
-hard link -- is refused rather than judged by one of its names. What this
-does not see: an alias of a single file made by a bind mount, which keeps
-one name and one identity.
+taken before the walk and again once the overlay is held, every directory
+held on the way must be absent from both, and no set outlives the judgment
+it was taken for -- a directory bound into the checkout while the walk ran
+is in the second set and refuses the overlay held below it. The final
+component is opened relative to the last held directory, without following,
+and THE DESCRIPTOR SO OPENED IS THE ONLY OBJECT READ. No pathname is resolved
+again after it was inspected, by this script or by the kernel on its behalf,
+so a component swapped between an inspection and the next lookup is not
+followed: the lookup is relative to a handle the swap cannot move. The one
+anchor is the filesystem root: the repository root is reached from it
+through held directories, following no link, and is held only once the
+directory contains THE FILE THIS CODE WAS LOADED FROM, by an identity taken
+at import and by one name, so a checkout path substituted after the load --
+an ancestor swapped for a link to a counterfeit tree, the directory swapped
+by rename, a counterfeit carrying a hard link to the loaded file -- is
+refused rather than anchored. `Path.resolve` takes part in no security
+decision. A regular file with more than one name -- a hard link -- is
+refused rather than judged by one of its names. What this does not see: an
+alias of a single file made by a bind mount, which keeps one name and one
+identity; a mount change made and unmade between the two censuses, or made
+after the judgment.
 
 WHERE NO HANDLE-BASED JUDGMENT EXISTS, THE OVERLAY IS REFUSED. Windows has no
 `openat`, no `O_NOFOLLOW` and no `scandir` on a handle in `os`, and a
@@ -258,6 +269,28 @@ class _Identity(NamedTuple):
 
 def _identity_of(info: os.stat_result) -> _Identity:
     return _Identity(int(info.st_dev), int(info.st_ino))
+
+
+def _loaded_checker() -> _Identity | None:
+    """The identity of the file this code was loaded from, taken once, at import.
+
+    The anchor every root judgment is bound to. Taken at import, not when a
+    root is opened: the seventh external review measured the root opened by
+    pathname and compared against `os.stat(__file__)` evaluated through the
+    same pathname, so a checkout path substituted after the load put a
+    counterfeit checker on both sides of the comparison. An identity read
+    before the substitution is one the substitute cannot equal, and a
+    substitute carrying a hard link to the loaded file is refused for the
+    file's second name. A checker loaded from a counterfeit in the first
+    place is the caller's code, and outside what any check here can see.
+    """
+    try:
+        return _identity_of(os.stat(__file__))
+    except (OSError, ValueError):
+        return None
+
+
+_LOADED_CHECKER: _Identity | None = _loaded_checker()
 
 
 # ---------------------------------------------------------------------------
@@ -533,33 +566,59 @@ def _open_file_below(handle: int, names: Sequence[str], *, label: str) -> int:
 
 
 def _open_repository_root() -> int:
-    """The repository root as a held descriptor, bound to the checker that is running.
+    """The repository root as a held descriptor, bound to the file this code was loaded from.
 
     The root is this script's own location, found by this script's own
-    path. That is not an input: a caller who can move the checker controls
-    the code anyway. What is checked is that the directory held contains
-    the very file that is running -- same device and inode, reached without
-    following a link -- so the handle every later judgment descends from is
-    the root of the checkout this code came from, not a directory swapped
-    in under the same name after the path was resolved.
+    path at import. That is not an input: a caller who can move the checker
+    before it is loaded controls the code anyway. What is checked is the
+    path AFTER the load: the root is reached from the filesystem root one
+    no-follow open at a time -- a link at any component refuses, so an
+    ancestor swapped for a link to a counterfeit tree is met as a link, not
+    followed into -- and the directory held must contain the very file this
+    code was loaded from, same device and inode as `_LOADED_CHECKER`, reached
+    without following a link, with one name. A counterfeit put in place by
+    rename carries a checker of another identity; one carrying a hard link to
+    the loaded file gives that file a second name; both refuse. The seventh
+    external review measured the earlier anchor, a pathname open compared
+    against `os.stat(__file__)` evaluated through the same pathname, accept
+    both shapes.
     """
+    if _LOADED_CHECKER is None:
+        raise AdmissionError("repository root cannot be established")
     refusal: AdmissionError | None = None
-    handle = os.open(ROOT, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
+    handle = -1
+    parts = ROOT.parts
     try:
+        if len(parts) < 2:
+            raise AdmissionError("repository root cannot be established")
+        anchor = os.open(parts[0], _HELD_DIRECTORY)
+        try:
+            parent = _hold_below(anchor, parts[1:-1], label="repository")
+        finally:
+            os.close(anchor)
+        try:
+            info = _inspect(parent, parts[-1], label="repository")
+            if not stat.S_ISDIR(info.st_mode):
+                raise AdmissionError("repository root cannot be established")
+            handle, _held = _open_inspected(parent, parts[-1], info, flags=_LISTED_DIRECTORY)
+        finally:
+            os.close(parent)
         scripts = _hold_below(handle, _OWN_SCRIPT[:-1], label="repository")
         try:
             own = os.stat(_OWN_SCRIPT[-1], dir_fd=scripts, follow_symlinks=False)
         finally:
             os.close(scripts)
-        if _identity_of(own) != _identity_of(os.stat(__file__)):
+        if not stat.S_ISREG(own.st_mode) or own.st_nlink != 1 or _identity_of(own) != _LOADED_CHECKER:
             refusal = AdmissionError("repository root cannot be established")
     except AdmissionError:
-        os.close(handle)
+        if handle != -1:
+            os.close(handle)
         raise
-    except (OSError, ValueError):
+    except (_Swapped, OSError, ValueError):
         refusal = AdmissionError("repository root cannot be established")
     if refusal is not None:
-        os.close(handle)
+        if handle != -1:
+            os.close(handle)
         raise refusal
     return handle
 
@@ -586,8 +645,12 @@ def _repository_directory_identities(handle: int) -> frozenset[_Identity]:
     the directories traversed and not only the identities collected; refused
     whole, never judged from a partial set, when any entry cannot be judged,
     because a directory missing from the set is one an alias could reach
-    unjudged. Taken fresh for every judgment and cached for none: a snapshot
-    that outlived the judgment it was taken for would be stale for the next.
+    unjudged. Taken twice for every judgment -- before the walk and again
+    once the overlay is held, every directory held on the way absent from
+    both -- and cached for none: a snapshot that outlived the judgment it was
+    taken for would be stale for the next, and one taken only before the walk
+    was measured stale within it, by the seventh external review, when an
+    external directory was bound into the checkout after it was taken.
     """
     identities: set[_Identity] = set()
     refusal: AdmissionError | None = None
@@ -639,7 +702,9 @@ def _judge_held(walked: Path, held: os.stat_result, *, label: str, identities: f
         raise AdmissionError(f"{label} must remain outside the Forge repository")
 
 
-def _open_confined(path: Path, *, label: str, identities: frozenset[_Identity]) -> int:
+def _open_confined(
+    path: Path, *, label: str, identities: frozenset[_Identity], held_identities: list[_Identity] | None = None
+) -> int:
     """The overlay's descriptor, reached only through held directories that stay outside.
 
     From the filesystem root down, every component is judged lexically
@@ -652,16 +717,21 @@ def _open_confined(path: Path, *, label: str, identities: frozenset[_Identity]) 
     way and its descriptor is returned as the only object that will be read.
     A regular file with more than one name is refused: a hard link gives one
     object a name outside the tree and one inside, and this script judges the
-    object, not the name it was handed.
+    object, not the name it was handed. The identity of every directory
+    held on the way is appended to `held_identities`, so the caller can judge
+    them again against a census taken once the overlay is held.
     """
     start = _lexical_absolute(path)
     parts = start.parts
     if len(parts) < 2:
         raise AdmissionError(f"{label} path cannot be resolved")
+    recorded = held_identities if held_identities is not None else []
     walked = Path(parts[0])
     current = os.open(parts[0], _HELD_DIRECTORY)
     try:
-        _judge_held(walked, os.fstat(current), label=label, identities=identities)
+        held = os.fstat(current)
+        recorded.append(_identity_of(held))
+        _judge_held(walked, held, label=label, identities=identities)
         for name in parts[1:-1]:
             walked = walked / name
             if _is_within(walked, ROOT):
@@ -672,6 +742,7 @@ def _open_confined(path: Path, *, label: str, identities: frozenset[_Identity]) 
             opened, held = _open_inspected(current, name, info, flags=_HELD_DIRECTORY)
             os.close(current)
             current = opened
+            recorded.append(_identity_of(held))
             _judge_held(walked, held, label=label, identities=identities)
         name = parts[-1]
         walked = walked / name
@@ -681,6 +752,7 @@ def _open_confined(path: Path, *, label: str, identities: frozenset[_Identity]) 
         descriptor, held = _open_inspected(current, name, info, flags=_READ_FILE)
         try:
             if stat.S_ISDIR(held.st_mode):
+                recorded.append(_identity_of(held))
                 _judge_held(walked, held, label=label, identities=identities)
             elif stat.S_ISREG(held.st_mode) and held.st_nlink > 1:
                 raise AdmissionError(f"{label} has more than one name")
@@ -703,6 +775,16 @@ def _judge_overlay(path: Path, *, label: str, root: int) -> int:
     there. A HANDLE-based backend for that platform is a separate change,
     with its own review.
 
+    The repository's directory census is taken before the walk and again
+    once the overlay is held, and every directory held on the way must be
+    absent from both. A census taken only before the walk was measured stale
+    within it by the seventh external review: an external directory bound
+    into the checkout after the census had no identity in it, and the
+    overlay below that directory was accepted although it was by then
+    reachable inside the repository. A mount change that spans the walk is
+    in the second census and refuses; one made and unmade between the two,
+    or made after the judgment, is not seen, and is said so.
+
     `_Swapped` is raised inside the walk and turned into a refusal here,
     outside the handler; an `OSError` or `ValueError` from any lookup -- a
     missing component, one this process may not traverse, a name too long
@@ -714,15 +796,24 @@ def _judge_overlay(path: Path, *, label: str, root: int) -> int:
     refusal: AdmissionError | None = None
     descriptor = -1
     try:
-        identities = _repository_directory_identities(root)
-        descriptor = _open_confined(path, label=label, identities=identities)
+        held: list[_Identity] = []
+        descriptor = _open_confined(
+            path, label=label, identities=_repository_directory_identities(root), held_identities=held
+        )
+        after = _repository_directory_identities(root)
+        if any(identity in after for identity in held):
+            refusal = AdmissionError(f"{label} must remain outside the Forge repository")
     except AdmissionError:
+        if descriptor != -1:
+            os.close(descriptor)
         raise
     except _Swapped:
         refusal = _refuse(label, "changed during admission")
     except (OSError, ValueError):
         refusal = _refuse(label, "path cannot be resolved")
     if refusal is not None:
+        if descriptor != -1:
+            os.close(descriptor)
         raise refusal
     return descriptor
 

@@ -4386,13 +4386,35 @@ Windows -- a private overlay is refused outright with one sentence and
 public-registry admission stays, with an exclusive create by pathname and
 the parent race stated as that platform's limitation. Not seen still: an
 alias of a single file made by a bind mount, and a same-identity rewrite.
+A seventh Codex review, of the redesigned head after its sixth
+reconciliation, measured two findings in what the redesign had kept by
+pathname. The root anchor opened the repository root by pathname without
+`O_NOFOLLOW` and compared the checker found below it against
+`os.stat(__file__)` evaluated through the same pathname, so a checkout path
+substituted after the load -- an ancestor swapped for a link to a
+counterfeit tree, or a counterfeit carrying a hard link to the loaded file
+-- put the counterfeit on both sides of the comparison, and a fabricated
+public registry was read (reproduced, both shapes). And the directory
+census was taken once, before the walk, so an external directory bound
+into the checkout after it was taken had no identity in it, and the overlay
+below that directory was admitted although it was by then reachable inside
+the repository (reproduced with a real bind mount). The identity of the
+loaded file is taken at import now; the root is reached from the filesystem
+root through held directories, following no link, and must contain that
+file by that identity and by one name; and the census is taken again once
+the overlay is held, every directory held on the way absent from both. Not
+seen still: an alias of a single file made by a bind mount, a same-identity
+rewrite, and a mount change made and unmade between the two censuses or
+made after the judgment.
 
 **What is not established.** Nothing makes a person or a model invoke the
 checker; `AGENTS.md`, `CLAUDE.md` and the Skill instruct and do not enforce.
 Nothing measures reading: a mechanically written or reused disposition
-passes, and the `cycle_id` binds nothing. A hard link, an alias of a single
-file, and a rewrite that keeps a file's identity, are not seen by the path
-rule, the identity rule or the identity bound. A junction is refused, not judged, so a legitimate overlay
+passes, and the `cycle_id` binds nothing. An alias of a single file made by
+a bind mount, a rewrite that keeps a file's identity, and a mount change
+made and unmade within a judgment or after it, are not seen by the path
+rule, the identity rule or the identity bound; a hard link is refused, not
+judged. A junction is refused, not judged, so a legitimate overlay
 behind one is refused too. The free-text `reason` a developer writes is not
 inspected. An item `id` is
 bounded to a short token and not judged. The checker and the registry are

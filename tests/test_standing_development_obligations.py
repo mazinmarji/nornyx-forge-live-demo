@@ -38,6 +38,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -209,6 +210,10 @@ def _between_inspection_and_open(module, monkeypatch, name: str, action) -> list
 posix_only = pytest.mark.skipif(
     os.name != "posix",
     reason="symlink fixtures cannot be built on a Windows workstation without elevation",
+)
+handle_backend_only = pytest.mark.skipif(
+    os.name != "posix",
+    reason="the handle backend does not exist on Windows, where a private overlay is refused before any judgment",
 )
 
 
@@ -1652,17 +1657,22 @@ def test_a_mechanically_written_or_reused_disposition_passes_and_the_documents_s
 
 @posix_only
 def test_every_lookup_in_a_judgment_is_relative_to_a_held_directory(module, monkeypatch, tmp_path):
-    """No pathname is looked up twice: after the anchors, every `stat` and `open` is relative to a held directory.
+    """No pathname is looked up twice: after the one anchor, every `stat` and `open` is relative to a held directory.
 
     The property the sixth Codex review measured as absent from the pathname
-    walk. The only absolute lookups a judgment makes are its anchors -- the
-    filesystem root, the repository root (bound to the running checker by
-    identity) and the checker's own file; everything else is relative to a
+    walk. The only absolute lookup a judgment makes is its anchor, the
+    filesystem root; the repository root is reached from it through held
+    directories and bound to the file this code was loaded from by an
+    identity taken at import, and everything else is relative to a
     descriptor already held, so a swap under a name already inspected
-    changes nothing the judgment will look at.
+    changes nothing the judgment will look at. The seventh Codex review
+    measured two further anchors -- the repository root opened by pathname,
+    and `os.stat(__file__)` evaluated through that same pathname -- and a
+    checkout path substituted after the load satisfied both; neither exists
+    now.
     """
     overlay = _write_overlay(tmp_path)
-    anchors = {os.sep, str(module.ROOT), str(module.__file__)}
+    anchors = {os.sep}
     absolute: list[tuple[str, str]] = []
     watching: list[int] = []
     real_stat, real_open = os.stat, os.open
@@ -2010,7 +2020,13 @@ def test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admi
 
 
 def test_the_identity_snapshot_is_taken_for_every_judgment(module, monkeypatch, tmp_path):
-    """No identity set outlives the judgment it was taken for: two judgments, two traversals."""
+    """No identity set outlives the judgment it was taken for: two judgments, four censuses.
+
+    Each judgment takes the census twice -- before the walk, and again once
+    the overlay is held -- and keeps neither for the next judgment. Exactly
+    twice: a draft of the second census was evaluated once per directory
+    held, which this count caught.
+    """
     overlay = _write_overlay(tmp_path)
     taken: list[int] = []
     real = module._repository_directory_identities
@@ -2021,21 +2037,149 @@ def test_the_identity_snapshot_is_taken_for_every_judgment(module, monkeypatch, 
 
     monkeypatch.setattr(module, "_repository_directory_identities", counting)
     module.load_registries(overlay)
-    module.load_registries(overlay)
     assert len(taken) == 2
+    module.load_registries(overlay)
+    assert len(taken) == 4
 
 
 @posix_only
 def test_the_repository_root_handle_is_bound_to_the_running_checker(module, monkeypatch, tmp_path):
-    """The root handle is refused unless the directory it holds contains the checker that is running."""
+    """The root handle is refused unless the directory it holds contains the file this code was loaded from.
+
+    The identity it must contain was taken at import (`_LOADED_CHECKER`);
+    what `__file__` says at judgment time takes no part, so a pathname
+    substituted after the load has nothing to satisfy.
+    """
     with _root(module) as root:
         assert module._identity_of(os.fstat(root)) == module._identity_of(os.lstat(ROOT))
+    assert module._LOADED_CHECKER == module._identity_of(os.stat(SCRIPT))
     elsewhere = tmp_path / "elsewhere.py"
     elsewhere.write_text("# not the checker\n", encoding="utf-8")
     monkeypatch.setattr(module, "__file__", str(elsewhere))
+    with _root(module) as root:
+        assert module._identity_of(os.fstat(root)) == module._identity_of(os.lstat(ROOT))
+    monkeypatch.setattr(module, "_LOADED_CHECKER", module._identity_of(os.stat(elsewhere)))
     assert _refusal(module, module._open_repository_root) == "repository root cannot be established"
+    monkeypatch.setattr(module, "_LOADED_CHECKER", None)
+    assert _refusal(module, module._open_repository_root) == "repository root cannot be established"
+    monkeypatch.setattr(module, "_LOADED_CHECKER", module._identity_of(os.stat(SCRIPT)))
     monkeypatch.setattr(module, "_OWN_SCRIPT", ("scripts", "SENTINEL-ABSENT-CHECKER.py"))
     assert _refusal(module, module._open_repository_root) == "repository root cannot be established"
+
+
+@posix_only
+def test_a_substituted_repository_root_is_refused(tmp_path):
+    """A checkout path replaced after the checker was loaded is refused, whichever way it is replaced.
+
+    The seventh Codex review measured the anchor following a link: the root
+    was opened by pathname without `O_NOFOLLOW` and compared against
+    `os.stat(__file__)` evaluated through the same substituted path, so a
+    counterfeit tree's checker compared equal to itself and a fabricated
+    public registry was read (reproduced, with a hard-linked variant). Here
+    the checker is loaded from a copy at `parent/real`, so its ROOT is that
+    path and its loaded identity is the copy's, and the path is then
+    replaced three ways: `parent` swapped for a link to a counterfeit tree;
+    `real` swapped by rename for a counterfeit plain directory; and a
+    counterfeit whose checker is a hard link to the loaded file. Each is
+    refused, and the checkout put back is held again.
+    """
+    base = tmp_path / "SENTINEL-SUBSTITUTED-ROOT"
+    parent = base / "parent"
+    real = parent / "real"
+    relatives = (
+        ("scripts", "check_standing_development_obligations.py"),
+        ("docs", "governance", "STANDING_DEVELOPMENT_OBLIGATIONS.json"),
+    )
+    for relative in relatives:
+        real.joinpath(*relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT.joinpath(*relative), real.joinpath(*relative))
+    checker = real.joinpath(*relatives[0])
+    spec = importlib.util.spec_from_file_location("standing_obligations_copy", checker)
+    assert spec is not None and spec.loader is not None
+    copy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(copy)
+    assert copy.ROOT == real
+    assert copy._LOADED_CHECKER == copy._identity_of(os.stat(checker))
+    with _root(copy) as root:
+        assert copy._identity_of(os.fstat(root)) == copy._identity_of(os.lstat(real))
+    assert copy.load_registries(None).public_items  # control: the copy's registry, through the anchor
+
+    moved = base / "moved"
+    os.rename(parent, moved)  # the loaded checkout is renamed away; the loaded file is now below `moved`
+    loaded = moved.joinpath("real", *relatives[0])
+
+    def counterfeit(name: str, *, link_to: Path | None) -> Path:
+        tree = base / name / "real"
+        for relative in relatives:
+            tree.joinpath(*relative).parent.mkdir(parents=True, exist_ok=True)
+        if link_to is None:
+            tree.joinpath(*relatives[0]).write_bytes(loaded.read_bytes() + b"\n# SENTINEL-COUNTERFEIT\n")
+        else:
+            os.link(link_to, tree.joinpath(*relatives[0]))
+        shutil.copyfile(PUBLIC, tree.joinpath(*relatives[1]))
+        return base / name
+
+    try:
+        os.symlink(counterfeit("linked", link_to=None), parent)
+        assert _refusal(copy, copy._open_repository_root) == "repository path crosses a link that is not followed"
+        assert _refusal(copy, lambda: copy.load_registries(None)) == "repository path crosses a link that is not followed"
+        parent.unlink()
+
+        os.rename(counterfeit("plain", link_to=None), parent)
+        assert _refusal(copy, copy._open_repository_root) == "repository root cannot be established"
+        shutil.rmtree(parent)
+
+        os.rename(counterfeit("hard", link_to=loaded), parent)
+        assert os.stat(loaded).st_nlink == 2
+        assert _refusal(copy, copy._open_repository_root) == "repository root cannot be established"
+        shutil.rmtree(parent)
+        assert os.stat(loaded).st_nlink == 1
+    finally:
+        if parent.is_symlink():
+            parent.unlink()
+        elif parent.exists():
+            shutil.rmtree(parent)
+        os.rename(moved, parent)
+    with _root(copy) as root:
+        assert copy._identity_of(os.fstat(root)) == copy._identity_of(os.lstat(real))
+
+
+@handle_backend_only
+def test_a_mount_change_spanning_the_walk_is_refused(module, monkeypatch, tmp_path):
+    """A directory bound into the checkout while the walk ran is in the second census, and the overlay held below it refuses.
+
+    The seventh Codex review measured the census going stale: taken before
+    the walk, it did not contain an external directory bind-mounted onto a
+    mount point inside the checkout after it was taken, so the overlay below
+    that directory was accepted although it was by then reachable inside the
+    repository (reproduced with a real bind mount). The census is taken
+    again once the overlay is held, and every directory held on the way must
+    be absent from both. A mount needs a privilege the suite must not depend
+    on, so the second census is supplied here with the external directory's
+    identity in it, as a bind mount would have put it there; the control
+    with the same census twice admits the overlay.
+    """
+    overlay = _write_overlay(tmp_path)
+    external = module._identity_of(os.stat(overlay.parent))
+    with _root(module) as root:
+        before = module._repository_directory_identities(root)
+    assert external not in before
+    censuses: list[int] = []
+
+    def supplied(root):
+        censuses.append(root)
+        return before if len(censuses) == 1 else before | {external}
+
+    monkeypatch.setattr(module, "_repository_directory_identities", supplied)
+    refusal = _refusal(module, lambda: module.load_registries(overlay))
+    assert refusal == "private overlay must remain outside the Forge repository"
+    assert SENTINEL_DIR not in refusal
+    assert len(censuses) == 2
+
+    censuses.clear()
+    monkeypatch.setattr(module, "_repository_directory_identities", lambda root: (censuses.append(root), before)[1])
+    assert module.load_registries(overlay).private_items
+    assert len(censuses) == 2
 
 
 # ---------------------------------------------------------------------------

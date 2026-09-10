@@ -674,9 +674,10 @@ leading slash refuses; an alias whose directory identity is a repository
 directory's -- the shape of a bind mount or mapped drive rooted below the
 root, measured to admit an in-repository overlay through a real bind mount
 before every directory was compared -- refuses); the walk is made through
-held descriptors and never by a second pathname lookup -- after the two
-anchors, every `stat` and `open` a judgment makes is relative to a
-descriptor it holds, pinned by a spy over a whole init-and-check cycle --
+held descriptors and never by a second pathname lookup -- after the one
+anchor, the filesystem root, every `stat` and `open` a judgment makes is
+relative to a descriptor it holds, pinned by a spy over a whole
+init-and-check cycle --
 so a plain entry swapped for a link between being looked at and being opened,
 the shape the sixth external review measured as followed by the pathname
 walk, refuses at the open, and a component that cannot be looked at refuses
@@ -690,8 +691,12 @@ following, so a queued directory swapped for a link before its scan refuses
 the run rather than listing through the link, it scans each directory once
 whatever its aliases -- three bind mounts of `docs/` measured to add twelve
 scans and no identity before -- and refuses past its bound and on any entry
-it cannot look at, and its snapshot is taken for every judgment and cached
-for none; the bytes read are the descriptor the walk opened -- a file
+it cannot look at, and its census is taken before the walk and again once
+the overlay is held, every directory held on the way absent from both, so a
+directory bound into the checkout while the walk ran refuses the overlay
+held below it (the shape the seventh external review measured as admitted
+against one census, reproduced with a real bind mount), and is cached for
+none; the bytes read are the descriptor the walk opened -- a file
 replaced by an in-repository link, a file replaced by another of a different
 identity, and a disposition replaced between being looked at and being opened all
 refuse, an overlay or disposition absent when looked at is refused there
@@ -700,8 +705,13 @@ more than one name is refused; the disposition is created exclusively,
 relative to a parent reached from the root handle without following a link,
 so a second initializer refuses with the first cycle's file intact and a
 parent swapped for a link after it was held is never written through; the
-root handle is refused unless the directory it holds contains the checker
-that is running; and where no handle backend exists a private overlay is
+root handle is reached from the filesystem root through held directories
+with no link followed and is refused unless the directory it holds contains
+the file the checker was loaded from, by an identity taken at import and by
+one name -- an ancestor swapped for a link to a counterfeit tree, a
+counterfeit swapped in by rename and a counterfeit carrying a hard link to
+the loaded file, the shapes the seventh external review measured as
+anchored, all refuse; and where no handle backend exists a private overlay is
 refused outright with one sentence, whatever the path's shape, while the
 public cycle still runs -- switched into on every platform by test, and held
 on Windows itself, with real junctions built and never walked, in the
@@ -729,8 +739,9 @@ Not claimed: that anyone runs the check; that anyone read an item; that the
 overlay content; that an identifier an overlay author chose is not itself
 telling; that a commit cannot change the checker or the registry (both are
 governed inputs, so such a change moves the evidence digest, and no more);
-that a same-identity rewrite or an alias of a single file made by a bind
-mount is seen; that any link is followed rather than refused; that a private
+that a same-identity rewrite, an alias of a single file made by a bind
+mount, or a mount change made and unmade within a judgment or after it is
+seen; that any link is followed rather than refused; that a private
 overlay is judged at all where no handle backend exists; or
 that the root `AGENTS.md`, which is outside the governed input set, is bound by
 any digest. Passing admission is not approval, not merge or release authority,
