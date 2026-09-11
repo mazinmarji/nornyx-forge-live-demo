@@ -4490,7 +4490,11 @@ evasion specimens were appended one at a time and each observed to go red.
 named shapes, not a proof that no model can be invoked: it holds the shapes it
 names and no others. **What decides a call is the spelling of its final
 attribute together with the exact dotted prefix in front of it**, and nothing
-else -- in particular, not how many expressions the call is written across.
+else about a call EXPRESSION written outside the seam -- in particular, not
+how many expressions the call is written across. A process-module attribute
+that is never written as a call -- a bare decorator, for instance -- is not
+seen at all, because the rule walks call nodes; and a spawn inside `_run_cli`
+is the seam rather than a refusal.
 Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused,
 because its final attribute is spelled `system` and the bare-name arm catches
 that spelling; `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is NOT

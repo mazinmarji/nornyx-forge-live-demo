@@ -45,7 +45,11 @@
   named shapes, not a proof that no model can be invoked: it holds the shapes
   it names and no others. WHAT DECIDES A CALL is the spelling of its final
   attribute together with the exact dotted prefix in front of it, and nothing
-  else -- in particular, not how many expressions the call is written across.
+  else about a call EXPRESSION written outside the seam -- in particular, not
+  how many expressions the call is written across. A process-module attribute
+  that is never written as a call -- a bare decorator, for instance -- is not
+  seen at all, because the rule walks call nodes; and a spawn inside
+  `_run_cli` is the seam rather than a refusal.
   Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused
   because its final attribute is spelled `system`, which the bare-name arm
   catches, while `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is
@@ -89,8 +93,8 @@
   rule over one module's own syntax cannot see a call into another module that
   spawns. A pin holds A-033 to naming all eight, scoped to that section, and a
   second pin holds these three texts to the measured bound and refuses the
-  retired universal wording, so neither the disclosure nor the claim around it
-  can quietly drift back.
+  retired universal wording; a paraphrase it does not enumerate is not caught,
+  and what ties the claim to a measurement is the specimen table beside it.
   `denied` is unreachable here for all five write
   properties (no mechanism that could refuse is reachable) and for `control_plane_authority`
   (no v1 producer state maps to it, and there is no separated Claude principal
