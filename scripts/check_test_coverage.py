@@ -888,8 +888,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # revision read in the repository rather than the caller's directory, and
     # the two platform-mechanism pins (the finding derives from the search bound
     # instead of contradicting it, and all three of its sentences move with the
-    # derived state). Floor at band(32) = 29.
-    "tests/test_claude_confinement_admission.py": 29,
+    # derived state). Raised 29 -> 30 in TRANCHE H'S THIRD ROUND -- 33
+    # collected, net 1: the pin holding A-033 to naming each of the five
+    # spellings the structural rule does not refuse, scoped to that section.
+    # Floor at band(33) = 30.
+    "tests/test_claude_confinement_admission.py": 30,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1678,10 +1681,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3578   (117 modules)
-#     sum of the module floors    3277
-#     band(3578) = ceil(0.9*n)    3221
-#     MINIMUM_COLLECTED           3285
+#     collected across tests/     3579   (117 modules)
+#     sum of the module floors    3278
+#     band(3579) = ceil(0.9*n)    3222
+#     MINIMUM_COLLECTED           3286
 #     above the module sum         8
 #     below what collects         293
 #
@@ -2066,7 +2069,36 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # modules still collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none
 # of them being a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`.
-MINIMUM_COLLECTED = 3285
+#
+# TRANCHE H'S THIRD ROUND ADDS ONE ROW AND NO MODULE. Re-measured from a fresh
+# collection on this head, as above. `tests/test_claude_confinement_
+# admission.py` collects 32 -> 33 (floor band(32) = 29 -> band(33) = 30): a pin
+# holding A-033 to naming each of the five spellings that walked past the
+# harness's structural rule in a second in-session adversarial sweep. The round corrected three
+# governed texts that claimed the rule refused ANY spawn call and did NOT widen
+# the rule, so the correction is a claim and the pin is what keeps it honest.
+# NO OTHER MODULE MOVES. `tests/test_governed_provider_eligibility.py` stands
+# at 27 -- two arms were repaired in place, which moves no count -- and
+# `tests/test_recorded_measurements.py` stands at 204, which was MEASURED
+# rather than assumed: the CHANGELOG paragraph this round rewrote first wrapped
+# two lines into the shape `<single-token key><gap><value>`, which that
+# module's transcript recogniser reads as a machine record, and CHANGELOG.md
+# entered its corpus and added five parametrised cases (204 -> 209). The
+# wrapping was the transcript, not the prose, so the paragraph was reflowed and
+# the corpus is the 34 documents it was.
+# The module-floor sum rises by one to 3278 and the aggregate follows to 3286,
+# holding the margin above the sum at 8. The suite collects 3578 -> 3579 and
+# 117 modules stand. The AGGREGATE band row goes 3221 -> 3222. The working room
+# below what collects is UNCHANGED at 293, because the collection and the
+# aggregate each rose by one. THE SLACK THE BANDS GRANT IS UNCHANGED AT 301:
+# the admission module sits 3 above its band at 33 exactly as it did at 32,
+# because band(33) - band(32) is one where the module moved one. NO SKIP IS
+# ADDED, and THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- its seven
+# modules still collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none
+# of them being a module this round touched. NO PROVIDER ROW MOVED:
+# `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
+# took no admission of any kind.
+MINIMUM_COLLECTED = 3286
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

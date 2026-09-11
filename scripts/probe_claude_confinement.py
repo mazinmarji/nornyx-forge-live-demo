@@ -57,12 +57,35 @@ process-spawning seam, `_run_cli`, and the argv it starts is selected from
 option strings are `PERMITTED_ARGV_FLAGS`. A caller fills a shape's holes
 positionally with paths and arguments, never with options, and the seam
 refuses a filler that looks like one.
-`tests/test_claude_confinement_admission.py` reads this module's AST and
-refuses: any process-creation call outside that seam, any argument built by
-formatting, concatenation or joining rather than taken from the constant, and
-any environment read outside the one function allowed one. That is a
-STRUCTURAL RULE OVER THE SHAPES IT NAMES, not a proof that no model can be
-invoked. Spending provider quota to convert those absences into observed
+`tests/test_claude_confinement_admission.py` reads this module's own syntax
+tree and refuses THE PROCESS-CREATION SHAPES IT NAMES: a call whose dotted name
+is one of the enumerated `subprocess`, `os`, `asyncio`, `pty`, `runpy`,
+`multiprocessing` or `ctypes` spawners made outside that seam; an argument
+built by formatting, concatenation or joining rather than taken from the
+constant; and an environment read outside the one function allowed one. Both
+`SPAWN_SHAPES` and `PERMITTED_ARGV_FLAGS` are held to literals declared in the
+pin itself.
+
+THE STRUCTURAL RULE PROVES LESS THAN ITS NAME. It is a structural rule over
+named shapes, not a proof that no model can be invoked: it holds the shapes it
+names and no others. FIVE spellings walked past it in an in-session
+adversarial sweep -- past `ruff`, `scripts/check_security.py` and
+`scripts/check_architecture.py` as well -- and they are DISCLOSED here rather
+than closed: a spawner fetched by name through `getattr`; a process module reached
+through `sys.modules` rather than imported; a module-level alias the
+enumeration does not spell, called through the alias; a `ctypes` handle bound
+to a local before it is called, the one-expression form being refused and the
+two-step form not; and a spawn shape carrying no option string at all, which an
+allow-list that inspects only tokens beginning with `-` cannot see. NONE OF THE
+FIVE IS PRESENT HERE -- both `standin_attempt` call sites fill the executable
+hole with `sys.executable` -- so what is disclosed is a future-edit risk rather
+than a defect in what ran. The first four are refused by nothing in this
+repository; the fifth is refused by the shape-table literal in the pin, which
+makes adding a shape a red test rather than a silent widening, but not by the
+structural rule. Widening that rule to catch the other four is a separate slice
+with its own review, deliberately not taken here.
+
+Spending provider quota to convert those absences into observed
 counterexamples is an external act; it is named in the record and in A-033,
 and it cannot move the row in either direction because no mechanism is
 reachable on this platform to produce a `denied`.

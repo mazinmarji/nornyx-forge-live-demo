@@ -4477,13 +4477,36 @@ it is `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`; the harness is
 that, and what it does not hold: the harness has exactly ONE process-spawning
 seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES` -- a closed list of
 complete argument tuples whose only option strings are `--version` and
-`--help` -- and a structural test reads the module's AST and refuses any other
-spawn call, any argument built by formatting, concatenation or joining rather
-than taken from that constant, and any environment read outside the one
-function allowed one. Seven evasion specimens were appended one at a time and
-each observed to go red. **That is a structural rule over the shapes it names,
-not a proof that no model can be invoked**; what a person may rely on is the
-rule, and what the rule covers is written above. Four things were
+`--help` -- and a structural test reads the module's own syntax tree and
+refuses the process-creation shapes it names: a call whose dotted name is one of
+the enumerated `subprocess`, `os`, `asyncio`, `pty`, `runpy`, `multiprocessing`
+or `ctypes` spawners made outside that seam; an argument built by formatting,
+concatenation or joining rather than taken from that constant; and an
+environment read outside the one function allowed one. Both `SPAWN_SHAPES` and
+the option allow-list are held to literals declared in the pin itself. Seven
+evasion specimens were appended one at a time and each observed to go red.
+
+**THE STRUCTURAL RULE PROVES LESS THAN ITS NAME.** It is a structural rule over
+named shapes, not a proof that no model can be invoked: it holds the shapes it
+names and no others. FIVE spellings walked past it in an in-session
+adversarial sweep -- past `ruff`, `scripts/check_security.py` and
+`scripts/check_architecture.py` as well -- and they are disclosed here rather
+than closed: a spawner fetched by name through `getattr`; a process module
+reached through
+`sys.modules` rather than imported; a module-level alias the enumeration does
+not spell, called through the alias; a `ctypes` handle bound to a local before
+it is called, the one-expression form being refused and the two-step form not;
+and a spawn shape carrying no option string at all, which an allow-list that
+inspects only tokens beginning with `-` cannot see. **None of the five is
+present in the shipped harness** -- both `standin_attempt` call sites fill the
+executable hole with `sys.executable` -- so what is disclosed is a future-edit
+risk, not a defect in what ran. Of the five, the first four are refused by
+nothing in this repository; the fifth is refused by the shape-table literal,
+which makes adding a shape a red test rather than a silent widening, but not by
+the structural rule. WIDENING THE RULE TO CATCH THE OTHER FOUR IS A SEPARATE
+SLICE with its own review, deliberately not taken: what was corrected here is
+the claim, not the mechanism. What a person may rely on is the rule, and what
+the rule covers -- and what it does not -- is written above. Four things were
 established, and they are different kinds of fact:
 
 1. **The provider CLI offers no sandbox surface here.** Parsed from

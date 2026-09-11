@@ -612,6 +612,16 @@ forbidden = {
     # the platform-blind decision the axis exists to close, one level down, so
     # the claim is made checkable here. Verified by injecting `sys` and
     # `pathlib` and requiring a failure.
+    #
+    # WHICH HALF OF THAT CLAIM THIS ENTRY HOLDS. It is a forbidden-DEPENDENCY
+    # rule, so it reaches imports and only imports: the "no `sys`" clause, and
+    # every other name below, is GATE-HELD here. The "no filesystem" clause is
+    # NOT -- the builtin `open()` needs no import, and an injected
+    # `open(__file__, encoding='utf-8').read()` leaves this checker at
+    # `status: pass`, measured. That half is LINT-HELD, by the substring lint
+    # in `tests/test_governed_provider_eligibility.py`
+    # (`test_e5_the_served_surface_decides_by_the_contract_and_nothing_else`),
+    # which carries `open(` and refuses it.
     "src/nornyx_forge/provider_contract.py": {
         "sys", "os", "pathlib", "platform", "subprocess", "socket", "shutil",
         "importlib", "tempfile",

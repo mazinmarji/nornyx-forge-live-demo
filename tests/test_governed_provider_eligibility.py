@@ -564,6 +564,15 @@ def test_e13_a_platform_with_no_row_is_refused_by_name_and_claims_nothing(monkey
         "claude": {"windows": "established"},
         "codex": {"windows": "declared"},
     })
+    # POSITIVE CONTROL FIRST, as the sibling test below does it. Without it a
+    # rebinding that stopped taking effect -- a refactor reading the table
+    # through a closure, a local import, a copy -- would leave the assertion
+    # after it passing for the wrong reason, and this arm would measure nothing.
+    assert provider_contract.governed_build_eligibility(
+        "claude", "windows").eligible is True, (
+        "the in-memory promotion did not take effect, so the fall-through "
+        "assertion below would pass against the shipped table"
+    )
     fell_through = provider_contract.governed_build_eligibility("claude", "plan9")
     assert fell_through.eligible is False, (
         "a platform with no row read a row measured on another platform, and "
@@ -620,12 +629,30 @@ def test_a_promoted_row_would_not_serve_its_own_unmet_property(monkeypatch):
     this test; the shipped rows are untouched, and the assertion at the end
     says so by reading them back.
     """
+    # WHICH ROW IS SIMULATED, AND WHY THIS ONE: Claude/Windows is the row
+    # Tranche H measured as `none` because no mechanism is REACHABLE there, so
+    # it is the row no later tranche promotes; simulating on codex/windows
+    # would go VACUOUS the day a tranche legitimately ships
+    # `codex: established`, because the patch would then set the table to what
+    # it already is and this test would stop simulating a promotion at all.
     monkeypatch.setattr(provider_contract, "PROVIDER_CONFINEMENT", {
-        "claude": {"windows": "none"},
-        "codex": {"windows": "established"},
+        "claude": {"windows": "established"},
+        "codex": {"windows": "declared"},
     })
-    promoted = provider_contract.governed_build_eligibility("codex", "windows")
+    promoted = provider_contract.governed_build_eligibility("claude", "windows")
     assert promoted.eligible is True, "the in-memory promotion did not take effect"
+    # THE MARKER IS THE FINDING'S OWN DOCUMENT, not one phrase out of it.
+    # Measured: the Claude finding says "All six properties are unmet" and
+    # carries no "property left unmet" at all, so that phrase alone would be
+    # VACUOUS on this row -- which would have traded a test that goes vacuous
+    # at C4 for one that is vacuous now. Every finding in the table names the
+    # document it was measured in, so that is what discriminates for whichever
+    # row is simulated.
+    assert "CLAUDE_CONFINEMENT_MEASUREMENT" not in promoted.reason, (
+        "an eligible verdict serves a finding written for a refusal, so one "
+        "string says the provider is confined and then cites the measurement "
+        "that refused it"
+    )
     assert "property left unmet" not in promoted.reason, (
         "an eligible verdict serves a finding written for a refusal, so one "
         "string says the provider is confined and that a property is unmet"
@@ -634,9 +661,9 @@ def test_a_promoted_row_would_not_serve_its_own_unmet_property(monkeypatch):
 
     # The refused twin still carries its finding, so this did not simply delete
     # the evidence from the reason a person reads.
-    refused = provider_contract.governed_build_eligibility("claude", "windows")
+    refused = provider_contract.governed_build_eligibility("codex", "windows")
     assert refused.eligible is False
-    assert "CLAUDE_CONFINEMENT_MEASUREMENT" in refused.reason
+    assert "CODEX_CONFINEMENT_MEASUREMENT" in refused.reason
 
     monkeypatch.undo()
     assert PROVIDER_CONFINEMENT == {

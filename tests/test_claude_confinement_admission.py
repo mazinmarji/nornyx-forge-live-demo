@@ -99,8 +99,39 @@ ISOLATION_FLAGS = (
 #: red test in this file rather than a silent licence to spend quota.
 PERMITTED_ARGV_FLAGS = ("--version", "--help")
 
+#: EVERY argv the harness may start, as COMPLETE tuples -- declared HERE and
+#: held equal to the harness's own table, for the same reason the flags above
+#: are: a pin that read its subject's own table would pass whatever the subject
+#: put in it. The option allow-list is not enough on its own, because it can
+#: only see tokens that begin with `-`: a review added the FLAGLESS shape
+#: `("<executable>", "<argument>")` -- which would start `claude <prompt>` on
+#: the CLI's own documented positional -- and every gate passed.
+SPAWN_SHAPES = {
+    "claude_version": ("<executable>", "--version"),
+    "claude_help": ("<executable>", "--help"),
+    "host_accounts": ("net", "user"),
+    "head_revision": ("git", "rev-parse", "HEAD"),
+    "make_junction": ("cmd", "/c", "mklink", "/J", "<path>", "<path>"),
+    "standin_attempt": ("<executable>", "<path>", "<argument>"),
+}
+
 #: The ONE function in the harness that may start a process.
 SPAWN_SEAM = "_run_cli"
+
+#: The five spellings that walked past the rule below in an in-session
+#: adversarial sweep -- past `ruff check .`, `scripts/check_security.py` and
+#: `scripts/check_architecture.py` as well. The rule was deliberately NOT widened to
+#: catch them -- that is a separate slice with its own review -- so what a
+#: later reader has is the DISCLOSURE, and a disclosure nothing reads is a
+#: disclosure that rots. Held against A-033 by the pin at the end of this
+#: module, in the register's own words.
+DISCLOSED_UNREFUSED_SPELLINGS = (
+    "a spawner fetched by name through `getattr`",
+    "a process module reached through `sys.modules` rather than imported",
+    "a module-level alias the enumeration does not spell",
+    "a `ctypes` handle bound to a local before it is called",
+    "a spawn shape carrying no option string at all",
+)
 
 #: The only function allowed to read the environment, and what it reads it for:
 #: `adapter_construction` compares `os.environ` against the adapter's own
@@ -164,9 +195,17 @@ def _starts_a_process(dotted: str) -> bool:
     if root in {"pty", "runpy", "multiprocessing", "ctypes"}:
         return True
     if not module:
-        # A bare spawner name can exist only if it was imported directly, which
-        # the import rule refuses -- so this arm is the second line, not the
-        # first. `__import__` is here for the same reason.
+        # WHAT THIS ARM HOLDS, and it is narrower than the reason that used to
+        # be written here. It refuses a bare name SPELLED like one of the
+        # enumerated spawners, however that name came to exist: a direct import
+        # (which the import rule already refuses, so this is the second line)
+        # or an alias. WHAT IT DOES NOT HOLD: an alias spelled anything else.
+        # `run = subprocess.run` is caught because `run` is enumerated;
+        # `_launch = subprocess.run`, then `_launch(...)`, is a bare spawner
+        # name under the plain `import subprocess` the rule allows, and it is
+        # NOT caught -- measured by a review, past this pin and all three
+        # deterministic gates. `__import__` is enumerated for the same spelling
+        # reason, not for a stronger one.
         return attr in SUBPROCESS_SPAWNERS | OS_SPAWNERS | {"__import__"}
     return False
 
@@ -485,7 +524,6 @@ def test_no_call_site_hands_the_seam_a_built_argument():
     at runtime. Both are refused here.
     """
     tree = _harness_tree()
-    from probe_claude_confinement import SPAWN_SHAPES  # noqa: PLC0415
 
     calls = [node for node in ast.walk(tree)
              if isinstance(node, ast.Call) and _dotted(node.func) == SPAWN_SEAM]
@@ -553,14 +591,24 @@ def test_the_harnesss_permitted_flags_are_the_ones_this_module_allows():
     from probe_claude_confinement import (  # noqa: PLC0415
         PERMITTED_ARGV_FLAGS as declared,
     )
-    from probe_claude_confinement import SPAWN_SHAPES  # noqa: PLC0415
+    from probe_claude_confinement import (  # noqa: PLC0415
+        SPAWN_SHAPES as declared_shapes,
+    )
 
     assert tuple(declared) == PERMITTED_ARGV_FLAGS, (
         "the harness widened the set of option flags it may construct; every "
         "addition is a step toward a provider session and belongs in a diff "
         "that says so"
     )
-    options = {token for shape in SPAWN_SHAPES.values() for token in shape
+    # THE TABLE, not only its flags. The assertion below can see nothing in a
+    # shape whose tokens all lack a leading `-`, so the shapes themselves are
+    # held to this module's own literal.
+    assert {name: tuple(shape) for name, shape in declared_shapes.items()} \
+        == SPAWN_SHAPES, (
+        "the harness's declared spawn shapes are not the ones this pin names; "
+        "adding or editing a shape belongs in a diff that says so"
+    )
+    options = {token for shape in declared_shapes.values() for token in shape
                if token.startswith("-")}
     assert options == set(PERMITTED_ARGV_FLAGS), (
         "a declared spawn shape carries an option string outside the allow-list: "
@@ -1007,3 +1055,44 @@ def test_the_claude_confinement_limit_is_the_disclosed_boundary():
             attempt_observed=True, outcome="not_applicable",
             mechanism="observed_process_result",
         ).validate()
+
+
+def test_the_a033_disclosure_names_every_spelling_the_rule_does_not_refuse():
+    """PIN: the register's limit sentence and the structural rule agree.
+
+    The rule refuses the process-creation shapes it names and no others. Three
+    governed texts used to say it refused "any other spawn call"; they now
+    state the measured bound and name what got past it. This holds the A-033
+    half, because the register is the text a person quotes -- and a sentence
+    that names four of five is the substitution this repository keeps finding.
+
+    SCOPED TO THE A-033 SECTION ON PURPOSE. A phrase matched anywhere in a
+    4,600-line register would let the disclosure drift into some other entry
+    and still pass here, which would make this pin a spell-checker rather than
+    a measurement of where the limit is written.
+
+    Falsified before it was kept: with one named spelling deleted from A-033
+    this reddens and names the missing one.
+    """
+    disclosed = ASSUMPTIONS.read_text(encoding="utf-8")
+    assert "## A-033" in disclosed, "A-033 is gone; the limit is disclosed nowhere"
+    section = disclosed.split("## A-033", 1)[1].split("\n## ", 1)[0]
+    # POSITIVE CONTROL ON THE SPLIT. A boundary that matched the wrong thing
+    # would hand an empty string to the loop below, every phrase would be
+    # "missing", and the failure would look like a disclosure defect rather
+    # than a broken reader. A short section is the louder, truer message.
+    assert len(section) > 2000, (
+        f"the A-033 section read back as {len(section)} characters, which is "
+        "too short to be the register entry; the section split found the wrong "
+        "boundary and nothing below is measuring the disclosure"
+    )
+    # WHITESPACE ONLY, for the reason the pin above gives: a load-bearing
+    # sentence that wraps across a line is the same sentence.
+    flattened = " ".join(section.split())
+    missing = [phrase for phrase in DISCLOSED_UNREFUSED_SPELLINGS
+               if " ".join(phrase.split()) not in flattened]
+    assert missing == [], (
+        "A-033 no longer names every spelling the structural rule does NOT "
+        "refuse, so the register states a bound wider than the one measured. "
+        f"Name them or close them, but do not drop them: {missing}"
+    )

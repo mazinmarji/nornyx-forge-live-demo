@@ -28,15 +28,40 @@
   refusal. `scripts/probe_claude_confinement.py` has exactly ONE
   process-spawning seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES`
   -- a closed list of complete argument tuples whose only option strings are
-  `--version` and `--help` -- and a structural test reads the module's AST and
-  refuses any other spawn call, any argument built by formatting, concatenation
-  or joining rather than taken from that constant, and any environment read
-  outside the one function allowed one. It was falsified with seven specimens
-  appended one at a time (a literal `-p`; a shell string; `os.system`;
+  `--version` and `--help` -- and a structural test reads the module's own
+  syntax tree and refuses the process-creation shapes it names: a call whose
+  dotted name is one of the enumerated `subprocess`, `os`, `asyncio`, `pty`,
+  `runpy`, `multiprocessing` or `ctypes` spawners made outside that seam; an
+  argument built by formatting, concatenation or joining rather than taken from
+  that constant; and an environment read outside the one function allowed one.
+  Both `SPAWN_SHAPES` and `PERMITTED_ARGV_FLAGS` are held to literals declared
+  in the pin itself. It was falsified with seven specimens appended one at a
+  time (a literal `-p`; a shell string; `os.system`;
   `subprocess.check_output` with `--print`; a concatenated `"-" + "p"`; an
   environment-derived flag; a concatenated flag inside a `subprocess.run`
-  literal), each observed to go red and each restored. That is a structural
-  rule over the shapes it names, not a proof that no model can be invoked.
+  literal), each observed to go red and each restored.
+  THE STRUCTURAL RULE PROVES LESS THAN ITS NAME, and this entry now says so
+  where it used to say "any other spawn call". It is a structural rule over
+  named shapes, not a proof that no model can be invoked: it holds the shapes
+  it names and no others. FIVE spellings walked past it in an in-session
+  adversarial sweep -- past `ruff`, `scripts/check_security.py` and
+  `scripts/check_architecture.py` as well: a spawner fetched by name through
+  `getattr`; a process module reached through `sys.modules` rather than
+  imported; a
+  module-level alias the enumeration does not spell, called through the alias;
+  a `ctypes` handle bound to a local before it is called, the one-expression
+  form being refused and the two-step form not; and a spawn shape carrying no
+  option string at all, which an allow-list inspecting only tokens that begin
+  with a hyphen cannot see. None of the five is present in the shipped harness,
+  because the two `standin_attempt` call sites fill the executable hole with
+  the running interpreter (`sys.executable`), so these are future-edit risks
+  and not defects in what ran.
+  THE CLAIM WAS CORRECTED, NOT THE MECHANISM: the first four remain refused by
+  nothing here, the fifth is refused by the new shape-table literal (adding a
+  shape is a red test rather than a silent widening) but not by the structural
+  rule, and widening that rule to catch the other four is a separate slice with
+  its own review. A pin holds A-033 to naming all five, scoped to that section,
+  so the disclosure cannot quietly shed one.
   `denied` is unreachable here for all five write
   properties (no mechanism that could refuse is reachable) and for `control_plane_authority`
   (no v1 producer state maps to it, and there is no separated Claude principal
