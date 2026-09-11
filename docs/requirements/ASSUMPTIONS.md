@@ -4528,10 +4528,14 @@ seam:
   characters or more appeared anywhere in the state outside its own chain,
   and the capsule's chain tip appeared nowhere in it.
 
-A-022 disclosed two of these three paths, and its parenthetical read "every
-such input is still human-confirmed capsule content". That was false for C1
-and C4: a hand-edited `BRD.md` is not confirmed capsule content, and both the
-scope confirmation and the build accepted one. The parenthetical is rewritten
+Of these FOUR paths A-022 disclosed one -- C2, a proposal confirmed after the
+scope confirmation -- and its parenthetical read "every such input is still
+human-confirmed capsule content". That was false for C1 and C4: a hand-edited
+`BRD.md` is not confirmed capsule content, and both the scope confirmation and
+the build accepted one. C1, C4 and B2 appear in no disclosure before this
+entry; A-022 names neither a hand-edited nor a hand-written `BRD.md` nor the
+identical count-shaped references, which is why the count in the sentence this
+replaces was wrong in both of its numbers. The parenthetical is rewritten
 where it stands rather than argued with here.
 
 **What is established, and only this.** CONFIRM requires a `brd_requirements`
