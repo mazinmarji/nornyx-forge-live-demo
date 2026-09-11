@@ -43,25 +43,54 @@
   THE STRUCTURAL RULE PROVES LESS THAN ITS NAME, and this entry now says so
   where it used to say "any other spawn call". It is a structural rule over
   named shapes, not a proof that no model can be invoked: it holds the shapes
-  it names and no others. FIVE spellings walked past it in an in-session
-  adversarial sweep -- past `ruff`, `scripts/check_security.py` and
-  `scripts/check_architecture.py` as well: a spawner fetched by name through
-  `getattr`; a process module reached through `sys.modules` rather than
-  imported; a
-  module-level alias the enumeration does not spell, called through the alias;
-  a `ctypes` handle bound to a local before it is called, the one-expression
-  form being refused and the two-step form not; and a spawn shape carrying no
+  it names and no others. WHAT DECIDES A CALL is the spelling of its final
+  attribute together with the exact dotted prefix in front of it, and nothing
+  else -- in particular, not how many expressions the call is written across.
+  Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused
+  because its final attribute is spelled `system`, which the bare-name arm
+  catches, while `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is
+  not refused, because `WinExec` is not an enumerated spelling and
+  `windll.kernel32` is not an enumerated prefix. Both are a single expression
+  and both reach `ctypes`. An earlier version of this entry drew the line
+  between the one-expression and the two-step spelling of that class instead,
+  which read the accident of one specimen as a property of the rule; it was
+  false, and it is gone.
+  WHAT GOT PAST THE RULE IS A SAMPLE, NOT A BOUND. AT LEAST EIGHT spellings
+  walked past it in in-session adversarial sweeps -- past `ruff`,
+  `scripts/check_security.py` and `scripts/check_architecture.py` as well: a
+  spawner fetched by name through `getattr`; a process module reached through
+  `sys.modules` rather than imported and bound to a local before it is called;
+  a module-level alias the enumeration does not spell, called through the
+  alias; a `ctypes` handle bound to a local before it is called, and the
+  one-expression `WinExec` spelling above with it; a spawn shape carrying no
   option string at all, which an allow-list inspecting only tokens that begin
-  with a hyphen cannot see. None of the five is present in the shipped harness,
-  because the two `standin_attempt` call sites fill the executable hole with
-  the running interpreter (`sys.executable`), so these are future-edit risks
-  and not defects in what ran.
-  THE CLAIM WAS CORRECTED, NOT THE MECHANISM: the first four remain refused by
-  nothing here, the fifth is refused by the new shape-table literal (adding a
-  shape is a red test rather than a silent widening) but not by the structural
-  rule, and widening that rule to catch the other four is a separate slice with
-  its own review. A pin holds A-033 to naming all five, scoped to that section,
-  so the disclosure cannot quietly shed one.
+  with a hyphen cannot see; an extra attribute hop through
+  `subprocess.run.__call__`, which defeats the exact-prefix match; a subclass
+  of `subprocess.Popen`, whose base is an attribute and never a call the rule
+  can see; and -- different in kind from the other seven -- a call into Forge's
+  own already-imported `claude_worker` adapter, `_adapter.run(...)` on a bound
+  `ClaudeCodeWorker`, which spawns `claude -p <prompt>` from another module
+  while naming no process module here at all. THE LIST IS OPEN: it is what two
+  sweeps happened to try, not an enumeration of what survives.
+  None of the eight is present in the shipped harness, measured on that
+  module's own syntax tree: no `getattr` call, no `sys.modules` subscript, no
+  `ctypes` name, no assignment binding a spawner, no `.__call__` attribute and
+  no subclass of a process module; the adapter module is imported and
+  `_provider_env()` is called from it, but `ClaudeCodeWorker.run` -- the one
+  function there that spawns -- is only read, by `inspect.getsource`; and both
+  `standin_attempt` call sites fill the executable hole with the running
+  interpreter (`sys.executable`), so these are future-edit risks and not
+  defects in what ran.
+  THE CLAIM WAS CORRECTED, NOT THE MECHANISM: seven of the eight remain refused
+  by nothing here, the flagless shape is refused by the new shape-table literal
+  (adding a shape is a red test rather than a silent widening) but not by the
+  structural rule, and widening that rule is a separate slice with its own
+  review -- for which the adapter route is now a named requirement, because a
+  rule over one module's own syntax cannot see a call into another module that
+  spawns. A pin holds A-033 to naming all eight, scoped to that section, and a
+  second pin holds these three texts to the measured bound and refuses the
+  retired universal wording, so neither the disclosure nor the claim around it
+  can quietly drift back.
   `denied` is unreachable here for all five write
   properties (no mechanism that could refuse is reachable) and for `control_plane_authority`
   (no v1 producer state maps to it, and there is no separated Claude principal

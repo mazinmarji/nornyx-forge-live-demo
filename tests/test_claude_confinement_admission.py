@@ -77,6 +77,7 @@ CODEX_RECORD = ROOT / "docs" / "governance" / "codex_confinement_measurement.jso
 DOCUMENT = ROOT / "docs" / "governance" / "CLAUDE_CONFINEMENT_MEASUREMENT.md"
 ASSUMPTIONS = ROOT / "docs" / "requirements" / "ASSUMPTIONS.md"
 HARNESS = ROOT / "scripts" / "probe_claude_confinement.py"
+CHANGELOG = ROOT / "CHANGELOG.md"
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -118,19 +119,73 @@ SPAWN_SHAPES = {
 #: The ONE function in the harness that may start a process.
 SPAWN_SEAM = "_run_cli"
 
-#: The five spellings that walked past the rule below in an in-session
-#: adversarial sweep -- past `ruff check .`, `scripts/check_security.py` and
+#: The spellings measured to walk past the rule below, in in-session
+#: adversarial sweeps -- past `ruff check .`, `scripts/check_security.py` and
 #: `scripts/check_architecture.py` as well. The rule was deliberately NOT widened to
 #: catch them -- that is a separate slice with its own review -- so what a
 #: later reader has is the DISCLOSURE, and a disclosure nothing reads is a
 #: disclosure that rots. Held against A-033 by the pin at the end of this
 #: module, in the register's own words.
+#:
+#: A SAMPLE, NOT A BOUND. This is what two sweeps happened to try; the second
+#: added the last three to a list the first had presented as the whole of it.
+#: The last one is different in kind: it names no process module at all, and no
+#: rule phrased over process-module names can reach it.
 DISCLOSED_UNREFUSED_SPELLINGS = (
     "a spawner fetched by name through `getattr`",
     "a process module reached through `sys.modules` rather than imported",
     "a module-level alias the enumeration does not spell",
     "a `ctypes` handle bound to a local before it is called",
     "a spawn shape carrying no option string at all",
+    "an extra attribute hop through `subprocess.run.__call__`",
+    "a subclass of `subprocess.Popen`",
+    "a call into Forge's own already-imported `claude_worker` adapter",
+)
+
+#: The universal claim these three governed texts used to make, and the
+#: distinction that the correction of it introduced. BOTH WERE FALSE, and the
+#: second was written while removing the first -- so this register holds the
+#: retired spellings rather than trusting the next editor to remember them.
+#: `test_the_three_governed_texts_state_the_measured_bound` below asserts their
+#: ABSENCE; a review restored each one and watched nothing go red.
+RETIRED_UNIVERSAL_CLAIMS = (
+    "refuses any other spawn call",
+    "refuses any spawn call",
+    "refuses any process-creation call",
+    "refuses: any process-creation call",
+    "refuse any process-creation call",
+    "the one-expression form being refused",
+)
+
+#: The bound each of the three must state instead, in the register the
+#: repository already uses for its standing-obligations lint.
+MEASURED_BOUND = "it holds the shapes it names and no others"
+
+#: CALL SPELLINGS, AND WHETHER THE RULE BELOW REFUSES THEM. Every row was
+#: measured by driving this module's own `_dotted` and `_starts_a_process` over
+#: the parsed source, and each was also appended ALONE to the harness and run
+#: against this whole module, `ruff check .`, `scripts/check_security.py` and
+#: `scripts/check_architecture.py`.
+#:
+#: THE TWO `ctypes` ROWS ARE THE REASON THIS TABLE EXISTS. They are both a
+#: single expression, they both reach `ctypes`, and they differ only in the
+#: spelling of the final attribute -- which is what the rule decides on. Three
+#: governed texts once said the discriminator was the one-expression form
+#: versus the two-step form. It is not, and a table that would redden if that
+#: ever changed is the difference between a claim and a sentence about one.
+RULE_SPECIMENS = (
+    # (source, the dotted names the rule derives, whether the rule refuses it)
+    ("os.system(cmd)", ("os.system",), True),
+    ("subprocess.run(argv)", ("subprocess.run",), True),
+    ('sys.modules["subprocess"].check_output(argv)', ("check_output",), True),
+    ('sys.modules["ctypes"].CDLL("msvcrt").system(cmd)',
+     ("system", "CDLL"), True),
+    ('sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)',
+     ("windll.kernel32.WinExec",), False),
+    ('getattr(subprocess, "run")(argv)', ("", "getattr"), False),
+    ("subprocess.run.__call__(argv)", ("subprocess.run.__call__",), False),
+    ("_adapter.run(role=r, goal=g, workspace=w, allowed_tools=t)",
+     ("_adapter.run",), False),
 )
 
 #: The only function allowed to read the environment, and what it reads it for:
@@ -1096,3 +1151,108 @@ def test_the_a033_disclosure_names_every_spelling_the_rule_does_not_refuse():
         "refuse, so the register states a bound wider than the one measured. "
         f"Name them or close them, but do not drop them: {missing}"
     )
+
+
+def test_the_rule_is_decided_by_the_spelling_not_by_the_expression_shape():
+    """PIN: the named specimens, and what the rule above ACTUALLY does to them.
+
+    THE DEFECT THIS EXISTS TO STOP RECURRING. Three governed texts said the
+    rule refused "any" process-creation call; that was corrected, and the
+    correction asserted instead that a `ctypes` handle was refused in its
+    one-expression form and not in its two-step form. The second sentence was
+    false for the same reason as the first: it generalised one specimen. The
+    round-2 specimen reddened because its final attribute happened to be spelled
+    `system`, not because it was one expression -- and the row below carrying
+    `windll.kernel32.WinExec` is one expression, reaches `ctypes`, and is NOT
+    refused.
+
+    So the discriminator is asserted here as a measurement rather than
+    described in prose: the same expression shape appears twice, once refused
+    and once not, and what separates them is the spelling of the final
+    attribute together with the exact dotted prefix.
+
+    THE ADAPTER ROW IS DIFFERENT IN KIND. `_adapter.run(...)` names no process
+    module at all; `_dotted` returns `_adapter.run`, whose module part is not
+    enumerated and cannot be, because the spawn is in another module. Nothing
+    here closes it, and no rule phrased over process-module names would.
+
+    NOT AN EXECUTION. Every source below is PARSED and never run.
+    """
+    for source, expected_dotted, expected_refused in RULE_SPECIMENS:
+        dotted = tuple(_dotted(node.func)
+                       for node in ast.walk(ast.parse(source))
+                       if isinstance(node, ast.Call))
+        assert dotted == expected_dotted, (
+            f"the rule derives {dotted} from {source!r}, not "
+            f"{expected_dotted}; `_dotted` has changed and this table is now "
+            "describing a rule that no longer exists"
+        )
+        refused = any(_starts_a_process(name) for name in dotted)
+        assert refused is expected_refused, (
+            f"the rule {'refuses' if refused else 'does NOT refuse'} "
+            f"{source!r}, and this table says the opposite. Either the rule "
+            "moved, in which case the three governed texts that describe it "
+            "have to move with it, or the table states a refusal that is not "
+            "performed"
+        )
+    # THE TABLE MUST CONTAIN BOTH ANSWERS, or it measures nothing. A row set
+    # that drifted to all-refused would pass every assertion above while
+    # proving the rule catches everything, which is the claim this whole
+    # round exists to retire.
+    verdicts = {row[2] for row in RULE_SPECIMENS}
+    assert verdicts == {True, False}, (
+        "the specimen table no longer carries both a refused and an unrefused "
+        f"spelling ({verdicts}), so it cannot show where the rule's edge is"
+    )
+
+
+def test_the_three_governed_texts_state_the_measured_bound():
+    """PIN: the CLAIM the three texts make, not the vocabulary beside it.
+
+    The pin above holds A-033 to NAMING the spellings. A review then restored
+    the retired universal claim AROUND those names -- in A-033, in the CHANGELOG
+    entry and in the harness docstring, one text at a time -- and all three runs
+    stayed green, because naming a spelling and stating a bound are different
+    assertions and only the first was held anywhere.
+
+    WHAT THIS HOLDS: that none of the three carries one of the retired
+    spellings, and that each states the measured bound.
+
+    WHAT IT DOES NOT HOLD, said plainly because the failure mode here is
+    believing otherwise: it is a text pin over named strings. A paraphrase it
+    does not enumerate can still claim too much, and no string test can decide
+    that question. What ties the claim to a measurement is the specimen table
+    above; this holds the three texts to the words that measurement produced.
+    Both are needed, and neither is a substitute for the other.
+    """
+    disclosed = ASSUMPTIONS.read_text(encoding="utf-8")
+    assert "## A-033" in disclosed, "A-033 is gone; the limit is disclosed nowhere"
+    section = disclosed.split("## A-033", 1)[1].split("\n## ", 1)[0]
+    # THE SAME POSITIVE CONTROL ON THE SPLIT the sibling pin carries: a boundary
+    # that matched the wrong thing would hand a short string to the loop and
+    # every absence would pass for the wrong reason.
+    assert len(section) > 2000, (
+        f"the A-033 section read back as {len(section)} characters, which is "
+        "too short to be the register entry; nothing below is measuring it"
+    )
+    texts = {
+        "docs/requirements/ASSUMPTIONS.md (## A-033)": section,
+        "CHANGELOG.md": CHANGELOG.read_text(encoding="utf-8"),
+        "scripts/probe_claude_confinement.py (module docstring)":
+            ast.get_docstring(_harness_tree()) or "",
+    }
+    for label, text in texts.items():
+        flattened = " ".join(text.split()).lower()
+        restored = [claim for claim in RETIRED_UNIVERSAL_CLAIMS
+                    if claim in flattened]
+        assert restored == [], (
+            f"{label} states a bound wider than the one measured: {restored}. "
+            "The rule refuses the shapes it names and no others, and at least "
+            "eight spellings have been measured getting past it. Correct the "
+            "claim; do not correct this register"
+        )
+        assert MEASURED_BOUND in flattened, (
+            f"{label} no longer states the measured bound "
+            f"({MEASURED_BOUND!r}), so a reader has the disclosure without the "
+            "sentence that says what the rule is worth"
+        )

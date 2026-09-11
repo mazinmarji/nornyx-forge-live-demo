@@ -4488,26 +4488,60 @@ evasion specimens were appended one at a time and each observed to go red.
 
 **THE STRUCTURAL RULE PROVES LESS THAN ITS NAME.** It is a structural rule over
 named shapes, not a proof that no model can be invoked: it holds the shapes it
-names and no others. FIVE spellings walked past it in an in-session
-adversarial sweep -- past `ruff`, `scripts/check_security.py` and
-`scripts/check_architecture.py` as well -- and they are disclosed here rather
-than closed: a spawner fetched by name through `getattr`; a process module
-reached through
-`sys.modules` rather than imported; a module-level alias the enumeration does
-not spell, called through the alias; a `ctypes` handle bound to a local before
-it is called, the one-expression form being refused and the two-step form not;
-and a spawn shape carrying no option string at all, which an allow-list that
-inspects only tokens beginning with `-` cannot see. **None of the five is
-present in the shipped harness** -- both `standin_attempt` call sites fill the
-executable hole with `sys.executable` -- so what is disclosed is a future-edit
-risk, not a defect in what ran. Of the five, the first four are refused by
-nothing in this repository; the fifth is refused by the shape-table literal,
-which makes adding a shape a red test rather than a silent widening, but not by
-the structural rule. WIDENING THE RULE TO CATCH THE OTHER FOUR IS A SEPARATE
-SLICE with its own review, deliberately not taken: what was corrected here is
-the claim, not the mechanism. What a person may rely on is the rule, and what
-the rule covers -- and what it does not -- is written above. Four things were
-established, and they are different kinds of fact:
+names and no others. **What decides a call is the spelling of its final
+attribute together with the exact dotted prefix in front of it**, and nothing
+else -- in particular, not how many expressions the call is written across.
+Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused,
+because its final attribute is spelled `system` and the bare-name arm catches
+that spelling; `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is NOT
+refused, because `WinExec` is not an enumerated spelling and `windll.kernel32`
+is not an enumerated prefix. Both are a single expression, both reach `ctypes`,
+and the rule separates them on spelling alone. An earlier version of this
+paragraph drew the line between the one-expression and the two-step spelling of
+that class instead; that read the accident of one specimen as a property of the
+rule, and it was false.
+
+**WHAT GOT PAST THE RULE IS A SAMPLE, NOT A BOUND.** AT LEAST EIGHT spellings
+walked past it in in-session adversarial sweeps -- past `ruff`,
+`scripts/check_security.py` and `scripts/check_architecture.py` as well -- and
+they are disclosed here rather than closed: a spawner fetched by name through
+`getattr`; a process module reached through `sys.modules` rather than imported
+and bound to a local before it is called, the one-expression
+`sys.modules["subprocess"].check_output(argv)` being caught by the bare-name
+arm; a module-level alias the enumeration does not spell, called through the
+alias; a `ctypes` handle bound to a local before it is called, and the
+one-expression `WinExec` spelling above with it; a spawn shape carrying no
+option string at all, which an allow-list that inspects only tokens beginning
+with `-` cannot see; an extra attribute hop through `subprocess.run.__call__`,
+which defeats the exact-prefix match; a subclass of `subprocess.Popen`, whose
+base is an attribute and never a call the rule can see; and -- different in kind
+from the other seven -- **a call into Forge's own already-imported
+`claude_worker` adapter**, `_adapter.run(...)` on a bound `ClaudeCodeWorker`,
+which spawns `claude -p <prompt>` from another module while naming no process
+module here at all. **THE LIST IS OPEN.** It is what two sweeps happened to
+try, not an enumeration of what survives, and a later sweep should be expected
+to add to it.
+
+**None of the eight is present in the shipped harness**, measured on that
+module's own syntax tree: no `getattr` call, no `sys.modules` subscript, no
+`ctypes` name, no assignment binding a spawner, no `.__call__` attribute and no
+subclass of a process module. `claude_worker` IS imported there and
+`_provider_env()` IS called from it, but `ClaudeCodeWorker.run` -- the one
+function in that module which spawns -- is only READ, by `inspect.getsource`;
+and both `standin_attempt` call sites fill the executable hole with
+`sys.executable`. So what is disclosed is a future-edit risk, not a defect in
+what ran. Seven of the eight are refused by nothing in this repository; the
+flagless shape is refused by the shape-table literal, which makes adding a shape
+a red test rather than a silent widening, but not by the structural rule.
+WIDENING THE RULE IS A SEPARATE SLICE with its own review, deliberately not
+taken: what was corrected here is the claim, not the mechanism. **The adapter
+route is a named requirement for that slice.** A rule over one module's own
+syntax cannot see a call into another module that spawns, so no rule phrased
+over process-module names reaches it; closing it means reading the callee, which
+is a different mechanism from the one here, and that was not attempted. What a
+person may rely on is the rule, and what the rule covers is written above; what
+it does NOT cover is open, and the eight named here are a sample of it. Four
+things were established, and they are different kinds of fact:
 
 1. **The provider CLI offers no sandbox surface here.** Parsed from
    `claude --help`: the `Commands:` list is `agents, auth, auto-mode, doctor,
