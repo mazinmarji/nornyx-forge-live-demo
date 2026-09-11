@@ -1187,20 +1187,58 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
     `begin_build` -- record which locks were held, by the primitive's own
     `locked()`, and at which epoch.
 
-    EVERY HOLD AT THE FIRST SEAM SURVIVES INTO EVERY LATER ONE. That is a
-    SUBSET and not an intersection, and the difference is the whole test.
-    MEASURED UNDER REVIEW: this asked only that SOME `(lock, epoch)` pair be
-    common to the four records, and `/api/build` takes TWO locks -- so a
-    route that hoisted the build lock above all four seams while releasing
-    the store lock between the document read and the BRD measurement, which
-    is exactly the window this test exists to hold shut, kept a common pair
-    and stayed GREEN. A pair carries its epoch, so a lock released and
-    retaken is a DIFFERENT pair and drops out of the subset; requiring the
-    first seam's pairs to survive makes releasing ANY of them visible, on
-    the lock that was released. The non-empty guard beside it is
-    load-bearing: the empty set is a subset of everything, so a route
-    holding no lock at all would otherwise pass vacuously -- and that is
-    what the parent did, where the BRD measurement ran with nothing held.
+    EVERY HOLD AT THE FIRST SEAM SURVIVES INTO EVERY RECORD OF EVERY LATER
+    ONE, AND ONE OF THOSE HOLDS IS THE STORE LOCK. Three properties, each one
+    added after a route walked through the pin that stood here before it.
+
+    (1) A SUBSET AND NOT AN INTERSECTION. MEASURED UNDER REVIEW: this asked
+    only that SOME `(lock, epoch)` pair be common to the four records, and
+    `/api/build` takes TWO locks -- so a route that hoisted the build lock
+    above all four seams while releasing the store lock between the document
+    read and the BRD measurement, which is exactly the window this test
+    exists to hold shut, kept a common pair and stayed GREEN. A pair carries
+    its epoch, so a lock released and retaken is a DIFFERENT pair and drops
+    out of the subset. The non-empty guard beside it is load-bearing: the
+    empty set is a subset of everything, so a route holding no lock at all
+    would otherwise pass vacuously -- and that is what the parent did, where
+    the BRD measurement ran with nothing held.
+
+    (2) EVERY RECORD OF EACH SEAM, NOT THE FIRST OF EACH. MEASURED UNDER
+    REVIEW: the subset was taken over the first record of each seam, so a
+    route that ran all four seams consistently under one hold as a REHEARSAL,
+    dropped that hold -- the window -- and then took the real decision under a
+    second one stayed GREEN, because the pin never looked past the rehearsal.
+    A validate-then-commit or retry-the-setup rewrite is the realistic shape
+    of it. Every record now has to sit inside the hold the document read sat
+    inside, which binds the decision that commits to that read whichever
+    record of `begin_build` it turns out to be.
+
+    WHAT (2) DOES NOT MEASURE, said rather than implied. It cannot tell which
+    `begin_build` call the route keeps the answer of; it requires ALL of them
+    to be inside the read's hold, which is stronger than the property named
+    and covers the committing one without identifying it -- the cost being
+    that a route which decided first and rehearsed afterwards would redden
+    here although it is safe. Nor does it see a seam that runs on another
+    thread: the records are scoped to the worker that read the document,
+    because the build thread takes the store lock again, on a thread of its
+    own, as soon as the build is running.
+
+    (3) WHICH LOCK. MEASURED UNDER REVIEW: (1) and (2) are true of ANY lock,
+    so a route that put the whole setup under a PRIVATE lock nothing else
+    takes satisfied them both -- and under a race harness that route stranded
+    the lifecycle mid-BUILD in every attempt, because a hold that excludes
+    nobody excludes nobody. The lock is named here, and named the way a
+    CALLER reaches it: `create_app` keeps the store lock in a closure and
+    publishes it nowhere, so naming it by its position in the recorder's list
+    would assert the creation ORDER of the code under test against itself.
+    MEASURED, not argued: on that private-lock route the recorder's list is
+    the build lock, then the private lock, then the store lock, so a
+    positional check on the second entry names the PRIVATE lock and stays
+    GREEN on the very route it was added to catch, while the reader routes
+    below name the third. What the application states is a BEHAVIOUR --
+    every route that reads or writes the store does so under this lock -- so
+    two ordinary reader routes are driven and the lock they agree on while
+    they read the document is the one this test then demands of the setup.
     """
     recorder = _RecordingThreading()
     monkeypatch.setattr(onboarding_app, "threading", recorder)
@@ -1212,7 +1250,7 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
     def note(name: str) -> None:
         journal.append((name, frozenset(
             (lock.index, lock.epoch) for lock in recorder.locks if lock.locked()
-        )))
+        ), threading.get_ident()))
 
     class RecordingStore(CapsuleStore):
         def load(self):
@@ -1235,25 +1273,56 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
     monkeypatch.setattr(onboarding_app, "begin_build",
                         recording("begin_build", onboarding_app.begin_build))
 
+    # THE STORE LOCK, IDENTIFIED FROM OUTSIDE. Two shipped read-only routes,
+    # neither of which this test changes and neither of which is the build
+    # setup, are driven one at a time; each reads the document under exactly
+    # one lock, and the lock they agree on is the store's. Nothing here reads
+    # the application's lock list by position.
+    def reader_holds(call) -> frozenset:
+        journal.clear()
+        response = call()
+        assert response.status_code == 200, response.text
+        reads = [held for seam, held, _ in journal if seam == "document read"]
+        assert len(reads) == 1, (
+            f"an ordinary reader route read the store {len(reads)} times, so "
+            "it names no single lock")
+        return frozenset(index for index, _epoch in reads[0])
+
+    agreed = (reader_holds(lambda: client.get("/api/state"))
+              & reader_holds(lambda: client.get("/api/sharing-preview")))
+    assert len(agreed) == 1, (
+        "two ordinary reader routes hold no one lock in common, so this test "
+        f"cannot say which lock the store's writers take: {sorted(agreed)}")
+    store_lock_index = next(iter(agreed))
+
     journal.clear()
     assert _ok(client.post("/api/build", json={"actor": HUMAN}))["status"] == "running"
 
     wanted = ("document read", "brd measured", "lifecycle read", "begin_build")
-    firsts: dict = {}
-    for name, held in journal:
-        firsts.setdefault(name, held)
-    missing = [name for name in wanted if name not in firsts]
+    reads = [row for row in journal if row[0] == "document read"]
+    assert reads, "the build setup never read the document"
+    setup_thread = reads[0][2]
+    records = {name: [held for seam, held, ident in journal
+                      if seam == name and ident == setup_thread]
+               for name in wanted}
+    missing = [name for name in wanted if not records[name]]
     assert missing == [], f"a seam never ran, so this measures nothing: {missing}"
 
-    held_at_the_read = firsts["document read"]
+    held_at_the_read = records["document read"][0]
     assert held_at_the_read and all(
-        held_at_the_read <= firsts[name] for name in wanted
+        held_at_the_read <= held for name in wanted for held in records[name]
     ), (
         "a lock the build setup held when it read the document was not still "
-        "held, at the same acquisition, when it positioned the lifecycle -- "
-        "the store lock between the read and the BRD measurement is the "
+        "held, at the same acquisition, at every record of every later seam "
+        "-- the store lock between the read and the BRD measurement is the "
         "window a concurrent confirmation lands in: "
-        f"{[(name, sorted(firsts[name])) for name in wanted]}"
+        f"{[(name, [sorted(held) for held in records[name]]) for name in wanted]}"
+    )
+    assert any(index == store_lock_index for index, _epoch in held_at_the_read), (
+        "the hold that spans the build setup is not the lock the ordinary "
+        "reader routes take, so the setup excludes nobody and a confirmation "
+        f"lands inside it: the readers agree on lock {store_lock_index}, and "
+        f"the setup held {sorted(held_at_the_read)} when it read the document"
     )
 
     _wait_finished(client)

@@ -6,16 +6,23 @@
   positions now NAME the content they were recorded about, and the surface
   refuses to license work over content the record does not name. Measured at
   `ea16d97` through the real gated surface, all five paths reachable through
-  shipped routes, and the measurement transfers to the parent. TRACED rather
-  than assumed: each of the five executes nine modules under `src/` --
-  `onboarding_app`, `experience`, `experience_journey`, `experience_build`,
-  `capsule`, `capsule_store`, `brd_authoring`, `control_plane_session` and
-  `provider_contract` -- and eight of the nine are byte-identical at
-  `894218f`. The ninth is `capsule_store.py`, which moved inside
-  `_remove_tree` only (a retry for a directory that is not empty, and the two
-  constants and two imports it needs); recording every call to that handler
-  while each path ran gave NONE, on all five, so the region that moved is not
-  one these paths enter. The five: a
+  shipped routes, and the measurement transfers to the parent. WHAT MAKES IT
+  TRANSFER IS NOT A MODULE COUNT. Exactly one file under `src/` moved across
+  `ea16d97..894218f` -- `capsule_store.py` -- and it moved in one region:
+  `_remove_tree`'s retry for a directory that is not empty, and the two
+  constants and two imports that retry needs. Tracing the call events of each
+  path at this head, all five enter `capsule_store` and NONE of them enters
+  `_remove_tree` or `_solely_owned_file`, so the code that moved is not code
+  these paths run, and every other module they enter is byte-identical across
+  that range. THE MODULE COUNT IS NOT THE CLAIM: this entry has carried two
+  such counts and both were measured false, because which modules a path
+  enters is a property of how the path is DRIVEN and not of the path. Tracing
+  the five in-repo path tests at this head returns 9, 9, 9, 8 and 8 modules
+  under `src/` and a union of nine; driving the third of them through the
+  three readers named just below -- `/api/state`, the sharing preview and a
+  restart -- returns ten, the tenth being `experience_sharing`, which only the
+  sharing preview enters and which is byte-identical at `894218f` as well.
+  Neither rendering moves the transfer above, which is the point. The five: a
   `BRD.md` overwritten by hand after the scope confirmation
   was accepted at CONFIRM and handed to the build, and the real parser read
   the overwritten text; a further intent confirmed under CONFIRM left the page
