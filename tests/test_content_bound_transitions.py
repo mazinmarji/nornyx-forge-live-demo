@@ -782,12 +782,25 @@ A032_REQUIRED = (
     # above it; this one is reachable by a single ordinary click and was
     # disclosed nowhere while the page gave advice into it.
     "a confirmation at GOVERN makes READY unreachable for that lifecycle",
+    # AND THE THIRD, added in round 3, which this binding does not cause: the
+    # register said "the two dead ends", and a reader on the profile that
+    # ships is in a third one.
+    "a lifecycle that reaches GOVERN with no governance validation is stuck "
+    "there too",
     "EXTERNAL AUTHORITY",
 )
 
 
-def _a032_section() -> str:
-    """A-032's own text, with whitespace collapsed.
+#: Where one register entry stops: the next top-level heading. `## A-` was
+#: the boundary until round 3 and swallowed a following `## Appendix`
+#: silently; `## ` stops at any of them, and A-032 carries no `## ` line of
+#: its own, so the slice this returns today is byte-for-byte the one it
+#: returned before.
+_ENTRY_BOUNDARY = "\n## "
+
+
+def _section(text: str, heading: str) -> str:
+    """One register entry's text, with whitespace collapsed.
 
     SEARCHED WITHIN THE SECTION, not across the register. Measured: six of the
     seven phrases this pin carried occurred only inside A-032, and "EXTERNAL
@@ -796,37 +809,70 @@ def _a032_section() -> str:
     a property anybody can maintain, and leaning on it makes the pin weaker
     every time the register grows. The slice between this heading and the next
     one is a property the file's own structure guarantees.
+
+    TAKES THE TEXT rather than reading the file, so the boundary can be
+    measured against a register whose shape the test owns. Against the real
+    one it cannot be: A-032 is the LAST entry, so the slice runs to end of
+    file and every boundary assertion made against file position is vacuous.
     """
-    text = ASSUMPTIONS.read_text(encoding="utf-8")
-    heading = "## A-032"
     start = text.find(heading)
-    assert start != -1, "A-032 is gone; the limit is disclosed nowhere"
+    assert start != -1, f"{heading} is gone; the limit is disclosed nowhere"
     rest = text[start + len(heading):]
-    end = rest.find("\n## A-")
+    end = rest.find(_ENTRY_BOUNDARY)
     return " ".join((rest if end == -1 else rest[:end]).split())
 
 
-def test_the_a032_pin_reads_only_the_a032_section():
-    """THE GUARD ON THE GUARD. `_a032_section` is the whole reason the pin
-    below measures A-032 rather than the register, so it gets its own
-    falsification: the slice must stop at the next entry, and it must contain
-    the phrases the pin looks for.
+def _a032_section() -> str:
+    """A-032's own text, sliced out of the register as it is on disk."""
+    return _section(ASSUMPTIONS.read_text(encoding="utf-8"), "## A-032")
 
-    Measured rather than reasoned, because "it slices correctly" is exactly
-    the kind of claim that stays true until somebody renames a heading.
+
+def test_the_a032_pin_reads_only_the_a032_section():
+    """THE GUARD ON THE GUARD. `_section` is the whole reason the pin below
+    measures A-032 rather than the register, so it gets its own falsification:
+    the slice must stop at the next entry, and it must contain the phrases the
+    pin looks for.
+
+    MEASURED UNDER REVIEW: all three boundary assertions this test carried
+    were VACUOUS. A-032 is the last `## A-` entry in the register, so a slice
+    forced to run to end of file -- the exact failure they name -- left them
+    green, because `## A-031` precedes A-032 and `## A-033` does not exist.
+    The boundary is measured against a synthetic register now, where a
+    following entry always exists, and the real file is held to the property
+    only WHEN it has one to be held to.
     """
+    # (i) THE BOUNDARY, against a register this test owns, so the property is
+    # measured rather than inferred from where A-032 happens to sit today.
+    register = ("front matter\n"
+                "## A-031 the entry before\nBEFORE\n"
+                "## A-032 the subject\nINSIDE\n"
+                "## A-033 the entry after\nAFTER\n")
+    sliced = _section(register, "## A-032")
+    assert "INSIDE" in sliced, sliced
+    assert "AFTER" not in sliced, "the slice ran past its own entry"
+    assert "BEFORE" not in sliced, "the slice began before its own heading"
+    # A following entry that is not an A- number stops it too: the boundary is
+    # "the next top-level heading", not "the next A- number".
+    assert "AFTER" not in _section(
+        "## A-032 the subject\nINSIDE\n## Appendix\nAFTER\n", "## A-032")
+    # And a LAST entry runs to the end of the file, which is what A-032 is
+    # today -- the reason (ii) can measure so little.
+    assert "INSIDE" in _section("## A-032 the subject\nINSIDE\n", "## A-032")
+
+    # (ii) THE REAL REGISTER. The slice starts at the heading, and if an entry
+    # is ever appended after A-032 this stops being vacuous on the day it is.
+    text = ASSUMPTIONS.read_text(encoding="utf-8")
     section = _a032_section()
-    whole = " ".join(ASSUMPTIONS.read_text(encoding="utf-8").split())
+    whole = " ".join(text.split())
     assert len(section) < len(whole), "the slice is the whole file"
     assert "EXTERNAL AUTHORITY" in section, section[-400:]
-    # A-030 also says "EXTERNAL AUTHORITY", which is why the slice exists; and
-    # A-031's own heading text must be outside it, or the slice ran past its
-    # section into the next one.
-    assert "## A-031" not in section and "## A-033" not in section, (
-        "the A-032 slice reaches into a neighbouring entry, so the pin below "
-        "measures more of the register than it says it does"
-    )
-    assert "Standing development admission is procedure" not in section, section[:200]
+    following = text.find(_ENTRY_BOUNDARY, text.find("## A-032") + 1)
+    if following != -1:
+        heading = text[following + 1:text.index("\n", following + 1)]
+        assert heading not in section, (
+            f"the A-032 slice reaches into {heading!r}, so the pin below "
+            "measures more of the register than it says it does"
+        )
 
 
 def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
@@ -1139,9 +1185,22 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
     test that passes on a fast machine. The lock records an epoch; four seams
     -- the document read, the BRD measurement, the lifecycle read and
     `begin_build` -- record which locks were held, by the primitive's own
-    `locked()`, and at which epoch. One acquisition spanning all four is one
-    `(lock, epoch)` pair common to the four records. Before the repair there
-    is none: the BRD measurement ran with no lock held at all.
+    `locked()`, and at which epoch.
+
+    EVERY HOLD AT THE FIRST SEAM SURVIVES INTO EVERY LATER ONE. That is a
+    SUBSET and not an intersection, and the difference is the whole test.
+    MEASURED UNDER REVIEW: this asked only that SOME `(lock, epoch)` pair be
+    common to the four records, and `/api/build` takes TWO locks -- so a
+    route that hoisted the build lock above all four seams while releasing
+    the store lock between the document read and the BRD measurement, which
+    is exactly the window this test exists to hold shut, kept a common pair
+    and stayed GREEN. A pair carries its epoch, so a lock released and
+    retaken is a DIFFERENT pair and drops out of the subset; requiring the
+    first seam's pairs to survive makes releasing ANY of them visible, on
+    the lock that was released. The non-empty guard beside it is
+    load-bearing: the empty set is a subset of everything, so a route
+    holding no lock at all would otherwise pass vacuously -- and that is
+    what the parent did, where the BRD measurement ran with nothing held.
     """
     recorder = _RecordingThreading()
     monkeypatch.setattr(onboarding_app, "threading", recorder)
@@ -1186,11 +1245,15 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
     missing = [name for name in wanted if name not in firsts]
     assert missing == [], f"a seam never ran, so this measures nothing: {missing}"
 
-    common = frozenset.intersection(*(firsts[name] for name in wanted))
-    assert common, (
-        "the build setup released the store lock between reading the document "
-        "and positioning the lifecycle, so a concurrent confirmation can land "
-        f"between them: {[(name, sorted(firsts[name])) for name in wanted]}"
+    held_at_the_read = firsts["document read"]
+    assert held_at_the_read and all(
+        held_at_the_read <= firsts[name] for name in wanted
+    ), (
+        "a lock the build setup held when it read the document was not still "
+        "held, at the same acquisition, when it positioned the lifecycle -- "
+        "the store lock between the read and the BRD measurement is the "
+        "window a concurrent confirmation lands in: "
+        f"{[(name, sorted(firsts[name])) for name in wanted]}"
     )
 
     _wait_finished(client)
@@ -1199,43 +1262,116 @@ def test_f5_the_build_setup_reads_and_decides_under_one_lock(
 
 def test_f5_a_lifecycle_with_no_way_back_says_so_instead_of_instructing_ready(
         tmp_path: Path):
-    """THE SECOND DEAD END, and the page used to give advice into it.
+    """BOTH READERS STUCK AT GOVERN, and the page used to give advice to one
+    of them and then, after round 2, to the other.
 
-    One ordinary confirmed proposal while the lifecycle sits at GOVERN makes
-    READY unreachable for that lifecycle for good: `mark_ready` refuses the
-    drift, correctly; `retry` needs a failed workflow; and the contract
+    (a) One ordinary confirmed proposal while the lifecycle sits at GOVERN
+    makes READY unreachable for that lifecycle for good: `mark_ready` refuses
+    the drift, correctly; `retry` needs a failed workflow; and the contract
     declares no GOVERN -> CONFIRM and no GOVERN -> BUILD edge, so nothing can
-    record a new binding. The blocker beside it was accurate and the headline
-    above it read "Marking ready is your act" -- to a reader for whom no act
-    reaches READY at all.
+    record a new binding.
 
-    The refusals themselves are pinned in the limit test; what is pinned here
-    is that the page stops instructing an impossible act.
+    (b) A build whose acceptance profile ran no Nornyx gate records no
+    `governance_validation`, and GOVERN requires none -- so the lifecycle
+    lands there and the three edges out of it (SIMULATE, REVIEW, READY) every
+    one require the kind that is missing. That is the profile that SHIPS --
+    A-022 says so in as many words -- it predates this tranche, and round 2
+    left it the READY instruction because the flag it keyed on was set in the
+    drift branch only.
+
+    WHAT IS PINNED HERE is the headline, for both, through the shipped
+    routes, in the SERVED TEXT and not only against the constant it came
+    from: every assertion on that sentence compared it with
+    `journey._NEXT_SCOPE_DEAD_END` itself, so a rewording into another
+    impossible instruction would have stayed green. The blocker lists are
+    asserted unchanged beside it -- the repair moves the sentence above them
+    and nothing else -- and (b)'s refusals are measured here rather than in
+    the limit test, which owns (a)'s.
     """
-    client = _client(tmp_path)
-    _confirmed(client)
-    _ok(client.post("/api/build", json={"actor": HUMAN}))
-    _wait_finished(client)
-    assert _persisted(tmp_path)["stage"] == "GOVERN"
+    class UngovernedFlow(GovernedFlow):
+        """Accepted, its gates passing, and NONE of them the Nornyx one. The
+        translator decides on the command, so dropping that record is what
+        makes the flow produce no governance validation -- the shape a real
+        greenfield profile produces, not an error injected to reach it."""
+
+        def result(self) -> dict:
+            return dict(super().result(), gates=[dict(SUBJECT_GATE)])
+
+    def at_govern(name: str, factory) -> tuple[TestClient, Path]:
+        root = tmp_path / name
+        root.mkdir()
+        client = _client(root, factory=factory)
+        _confirmed(client)
+        _ok(client.post("/api/build", json={"actor": HUMAN}))
+        _wait_finished(client)
+        assert _persisted(root)["stage"] == "GOVERN", name
+        return client, root
+
+    def says_the_dead_end(view: dict, blocker: str) -> None:
+        """The headline, as the reader is served it."""
+        said = view["next"]
+        assert said == journey._NEXT_SCOPE_DEAD_END, said
+        assert "READY cannot be recorded for this lifecycle" in said, said
+        assert "the refusal beside this says why" in said, said
+        assert "no action on this page reaches READY" in said, said
+        assert said.rstrip().endswith("this lifecycle is a dead end."), said
+        assert "Marking ready is your act" not in said, said
+        assert said != journey._NEXT["GOVERN"], (
+            "the page still tells a reader with no reachable READY that "
+            "marking ready is the next thing to do"
+        )
+        # THE REFUSAL THE HEADLINE DEFERS TO IS THE REAL ONE, and it is the
+        # only blocker: the repair changed the sentence above the list, not
+        # the list.
+        assert view["blockers"] == [blocker], view["blockers"]
+        # NOT A STAGE NAME IN THE SELECTION. The sentence is chosen because
+        # the contract declares no edge back to CONFIRM or BUILD from here,
+        # read from its own table rather than written as `stage == "GOVERN"`.
+        allowed = experience_contract.TRANSITIONS[view["stage"]]
+        assert "CONFIRM" not in allowed and "BUILD" not in allowed, allowed
+
+    # (a) THE DRIFT. The control first: before the further confirmation this
+    # reader really can mark ready, so the sentence below is a change and not
+    # a constant.
+    client, _ = at_govern("drift", GovernedFlow)
     before = _journey(client)
     assert before["actions"] == ["mark_ready"], before
     assert before["next"] == journey._NEXT["GOVERN"], before
 
     _confirm_field(client, "intent", "Build something else now.")
-
     view = _journey(client)
     assert view["stage"] == "GOVERN" and view["actions"] == [], view
-    assert view["blockers"] == [journey._SCOPE_DRIFT_READY], view
-    assert view["next"] == journey._NEXT_SCOPE_DEAD_END, view["next"]
-    assert view["next"] != journey._NEXT["GOVERN"], (
-        "the page still tells a reader with no reachable READY that marking "
-        "ready is the next thing to do"
-    )
-    # NOT A STAGE NAME IN THE SELECTION. The sentence is chosen because the
-    # contract declares no edge back to CONFIRM or BUILD from here, read from
-    # its own table rather than written as `stage == "GOVERN"`.
-    allowed = experience_contract.TRANSITIONS[view["stage"]]
-    assert "CONFIRM" not in allowed and "BUILD" not in allowed, allowed
+    says_the_dead_end(view, journey._SCOPE_DRIFT_READY)
+
+    # (b) NO GOVERNANCE VALIDATION AT ALL, and there never was one to lose:
+    # nothing is confirmed after the build here, so the scope still matches
+    # and the ONLY reason READY is refused is the missing kind.
+    ungoverned, root = at_govern("ungoverned", UngovernedFlow)
+    persisted = _persisted(root)
+    assert [row["kind"] for row in persisted["evidence"]["GOVERN"]] == ["gate_results"]
+    view = _journey(ungoverned)
+    assert view["stage"] == "GOVERN" and view["actions"] == [], view
+    assert view["scope"]["unchanged"] is True, view["scope"]
+    says_the_dead_end(view, journey._READY_UNREACHABLE)
+
+    # AND IT IS PERMANENT, measured rather than reasoned from the table: the
+    # three edges the table declares out of GOVERN all require the kind this
+    # build did not record, and `retry` needs a failed workflow.
+    refusals = {
+        "ready": ungoverned.post("/api/journey/ready", json={"actor": HUMAN}),
+        "confirm-scope": ungoverned.post("/api/journey/confirm-scope",
+                                         json={"actor": HUMAN}),
+        "build": ungoverned.post("/api/build", json={"actor": HUMAN}),
+        "retry": ungoverned.post("/api/journey/retry", json={"actor": HUMAN}),
+    }
+    assert [code for code in (r.status_code for r in refusals.values()) if code != 409] == []
+    assert "governance_validation" in refusals["ready"].json()["refused"]
+    assert "no transition GOVERN -> CONFIRM" in refusals["confirm-scope"].json()["refused"]
+    assert "no transition GOVERN -> BUILD" in refusals["build"].json()["refused"]
+    assert "failed workflow" in refusals["retry"].json()["refused"]
+    assert _persisted(root)["stage"] == "GOVERN", "the dead end moved the lifecycle"
+    for target in ("SIMULATE", "REVIEW", "READY"):
+        assert "governance_validation" in experience_contract.STAGE_EVIDENCE[target], target
 
 
 def test_f5_a_backend_the_reference_format_cannot_carry_is_refused(
@@ -1278,7 +1414,7 @@ def test_f5_a_backend_the_reference_format_cannot_carry_is_refused(
 
 
 def test_f5_no_reference_pattern_accepts_a_trailing_newline():
-    r"""The three patterns anchored with `$`, which in Python also matches
+    r"""Three of these were anchored with `$`, which in Python also matches
     immediately before a trailing newline -- so `capsule/<hex>/brd/<hex>\n`
     parsed as a binding and `sha256:<hex>\n` as a digest.
 
@@ -1286,13 +1422,25 @@ def test_f5_no_reference_pattern_accepts_a_trailing_newline():
     `\Z` is what these patterns mean, and a pattern that means something else
     is one nobody can rely on the day a reader hands it bytes from a file
     rather than from a builder.
+
+    ALL SIX DECLARED FORMATS, not the three that were wrong. `FLOW_REF`,
+    `GATE_REF` and `NORNYX_GATE_REF` were written `\A...\Z` in the same round
+    and were held to nothing here: a property measured on the patterns that
+    happened to be defective is one the next pattern is outside. The six are
+    the six `experience_build` declares, which is also what A-032 writes down.
     """
     scope = experience_build.scope_reference("a" * 64, "b" * 64)
     flow = experience_build.flow_reference("sequential", "c" * 64)
+    plain_flow = experience_build.flow_reference("sequential")
+    gates = experience_build.gate_reference(2, "e" * 16)
+    nornyx_gates = experience_build.gate_reference(1, "f" * 16, nornyx=True)
     digest = f"sha256:{'d' * 64}"
 
     for pattern, text in ((experience_build.SCOPE_REF, scope),
+                          (experience_build.FLOW_REF, plain_flow),
                           (experience_build.FLOW_BRD_REF, flow),
+                          (experience_build.GATE_REF, gates),
+                          (experience_build.NORNYX_GATE_REF, nornyx_gates),
                           (experience_build._SOURCE_DIGEST, digest)):
         assert pattern.match(text) is not None, (pattern.pattern, text)
         assert pattern.match(text + "\n") is None, (

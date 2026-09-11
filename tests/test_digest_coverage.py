@@ -178,7 +178,7 @@ def test_the_experience_chain_covers_its_whole_record(tmp_path: Path) -> None:
     is what the capsule chain does not have.
 
     AND THE REACH IS NOT "HAS NOT BEEN EDITED". `verify_experience` compares
-    the FINAL LINK and no other, so the four edits below -- none of which
+    the FINAL LINK and no other, so the five edits below -- none of which
     rebuilds it -- measure the narrow property, and the round-1 docstring
     said the wide one. The second half of this test is the same edits WITH
     the final link rebuilt, one line of arithmetic: both experience-domain

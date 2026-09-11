@@ -741,20 +741,27 @@ _NEXT_SCOPE_DRIFT = (
     "The capsule or the BRD has changed since the scope was confirmed. Confirm "
     "the scope again to record what the build may consume."
 )
-#: WHERE READY IS REFUSED FOR WHAT THE RECORD NAMES AND NOTHING LEADS BACK.
-#: The second dead end this slice introduces, and the one reachable by a
-#: single ordinary click: confirm one more proposal while the lifecycle is at
-#: GOVERN and READY is gone for the life of that lifecycle. `mark_ready`
-#: refuses the drift, which is correct; `retry` needs a failed workflow; the
-#: contract declares no GOVERN -> CONFIRM and no GOVERN -> BUILD edge; and
-#: re-deriving `BRD.md` moves no binding. The page said "Marking ready is your
-#: act" to that reader -- an instruction nobody can take -- so it says this
-#: instead. Disclosed in A-032 beside the BUILD re-entry dead end.
+#: WHERE READY IS REFUSED AND NOTHING LEADS BACK -- whatever the refusal was.
+#: The dead end this slice introduces is the one reachable by a single
+#: ordinary click: confirm one more proposal while the lifecycle is at GOVERN
+#: and READY is gone for the life of that lifecycle. `mark_ready` refuses the
+#: drift, which is correct; `retry` needs a failed workflow; the contract
+#: declares no GOVERN -> CONFIRM and no GOVERN -> BUILD edge; and re-deriving
+#: `BRD.md` moves no binding. The page said "Marking ready is your act" to
+#: that reader -- an instruction nobody can take -- so it says this instead.
 #:
-#: IT NAMES NO CAUSE, because there are three (an absent binding, a drifted
-#: one, and a flow that parsed another BRD) and the refusal beside it already
-#: says which. A `next` that guessed would be a fourth sentence able to be
-#: wrong about the three above it.
+#: AND TO THE READER BESIDE THEM, who is in the same position for a reason
+#: this slice did not create: a build whose acceptance profile ran no Nornyx
+#: gate records no `governance_validation`, so GOVERN allows SIMULATE, REVIEW
+#: and READY on paper and every one of them requires the kind that is missing.
+#: Round 2 set this sentence for the drift alone and left that reader the
+#: READY instruction, which is the same defect one branch to the left.
+#: Disclosed in A-032 beside the BUILD re-entry dead end.
+#:
+#: IT NAMES NO CAUSE, because there are four (an absent binding, a drifted
+#: one, a flow that parsed another BRD, and no governance validation at all)
+#: and the refusal beside it already says which. A `next` that guessed would
+#: be a fifth sentence able to be wrong about the four above it.
 _NEXT_SCOPE_DEAD_END = (
     "READY cannot be recorded for this lifecycle; the refusal beside this says "
     "why. The contract declares no edge back to CONFIRM or BUILD from here, so "
@@ -900,19 +907,23 @@ def journey_view(
         blockers.extend(why for why in missing if why not in blockers)
         if not missing:
             actions.append("start_build")
-    # WHETHER READY IS REFUSED FOR WHAT THE RECORD NAMES, kept so the sentence
-    # above the blockers can stop instructing an act nobody can perform.
-    scope_refused = False
+    # WHY READY IS REFUSED, WHATEVER THE REASON -- taken from this block and
+    # not from a second list of reasons kept beside it, so the sentence above
+    # the blockers stops instructing an act nobody can perform in every case
+    # this block refuses, including ones added after it was written. Round 2
+    # set a flag on ONE of these two branches, and the other reader -- a build
+    # whose acceptance profile ran no Nornyx gate, which is the profile that
+    # ships -- was still told that marking ready was their act.
+    ready_refusal: str | None = None
     if "READY" in allowed:
         if not any(ref.kind == "governance_validation" for ref in ready_evidence(experience)):
-            blockers.append(_READY_UNREACHABLE)
+            ready_refusal = _READY_UNREACHABLE
         else:
-            refusal = ready_scope_refusal(experience, document, brd)
-            if refusal is None:
-                actions.append("mark_ready")
-            else:
-                blockers.append(refusal)
-                scope_refused = True
+            ready_refusal = ready_scope_refusal(experience, document, brd)
+        if ready_refusal is None:
+            actions.append("mark_ready")
+        else:
+            blockers.append(ready_refusal)
 
     if stage == "BUILD" and not build_running:
         next_text = _BUILD_NOT_RUNNING
@@ -928,13 +939,18 @@ def journey_view(
         # nobody can perform is the defect, not the wording.
         next_text = (_NEXT_SCOPE_DRIFT if "confirm_scope" in actions
                      else build_brd_refusal(brd) or _NEXT_SCOPE_DRIFT)
-    elif scope_refused and "CONFIRM" not in allowed and "BUILD" not in allowed:
+    elif ready_refusal is not None and "CONFIRM" not in allowed and "BUILD" not in allowed:
         # READ FROM THE CONTRACT'S OWN TABLE rather than written as
         # `stage == "GOVERN"`. What makes the position a dead end is that no
         # declared edge from it can record a new binding, and that is exactly
         # "no CONFIRM and no BUILD from here" -- true of GOVERN, and of
         # SIMULATE and REVIEW beside it, without this line having to know
         # which stages those are.
+        #
+        # AND THE CONDITION IS THE REFUSAL ITSELF, not one kind of refusal:
+        # `ready_refusal` is the sentence the block above appended to the
+        # blockers, so this branch is taken exactly when the reader was told
+        # READY is refused and the table offers nothing that could change it.
         next_text = _NEXT_SCOPE_DEAD_END
     else:
         next_text = _NEXT.get(stage, _NEXT_OUTSIDE_PATH)

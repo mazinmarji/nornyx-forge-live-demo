@@ -6,8 +6,16 @@
   positions now NAME the content they were recorded about, and the surface
   refuses to license work over content the record does not name. Measured at
   `ea16d97` through the real gated surface, all five paths reachable through
-  shipped routes -- and the seven modules those paths run through are
-  byte-identical at `894218f`, so the measurement transfers to the parent: a
+  shipped routes, and the measurement transfers to the parent. TRACED rather
+  than assumed: each of the five executes nine modules under `src/` --
+  `onboarding_app`, `experience`, `experience_journey`, `experience_build`,
+  `capsule`, `capsule_store`, `brd_authoring`, `control_plane_session` and
+  `provider_contract` -- and eight of the nine are byte-identical at
+  `894218f`. The ninth is `capsule_store.py`, which moved inside
+  `_remove_tree` only (a retry for a directory that is not empty, and the two
+  constants and two imports it needs); recording every call to that handler
+  while each path ran gave NONE, on all five, so the region that moved is not
+  one these paths enter. The five: a
   `BRD.md` overwritten by hand after the scope confirmation
   was accepted at CONFIRM and handed to the build, and the real parser read
   the overwritten text; a further intent confirmed under CONFIRM left the page
@@ -61,9 +69,16 @@
   confirmation won 7 of 8 unforced races, leaving a build recorded against a
   capsule its binding did not name. `journey_view` stops instructing an act
   nobody can perform: at a stage from which the contract declares no edge back
-  to CONFIRM or BUILD it names the dead end instead of the READY instruction,
-  and at CONFIRM it offers a re-confirmation headline only when a
-  re-confirmation is on offer. `confirm_scope` lets the contract answer first,
+  to CONFIRM or BUILD, whenever READY is refused -- for a scope that drifted,
+  or because the build recorded no Nornyx governance validation at all, which
+  is what the shipped greenfield acceptance profile produces -- it names the
+  dead end instead of the READY instruction, and at CONFIRM it offers a
+  re-confirmation headline only when a re-confirmation is on offer. The
+  condition is the refusal the blocker list already carries, not a second
+  list of reasons: round 2 keyed it to the drift alone and left the
+  governance-validation reader the READY instruction, and A-032 now names
+  that third stuck position and the measured sequence that makes it
+  permanent. `confirm_scope` lets the contract answer first,
   the guard its two siblings were given in the same slice. The three evidence
   reference formats have one owner, one backend alphabet and anchors that
   refuse a trailing newline, and a backend the format cannot carry is refused

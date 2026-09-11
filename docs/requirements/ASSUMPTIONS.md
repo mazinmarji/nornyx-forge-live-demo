@@ -4542,7 +4542,9 @@ the confirmed capsule, makes the comparison fail and is refused by name: the
 build is refused at CONFIRM, a re-entered build is refused at BUILD, and READY
 is refused at GOVERN -- PERMANENTLY in that last case, because no declared edge
 leads back from GOVERN to a stage that could record a new binding, which
-limits 6 and 7 below state as the two dead ends they are. `derived` is an
+limits 6 and 7 below state as the two dead ends THIS BINDING creates. They
+are not an enumeration of every stuck position a lifecycle has: limit 7 names
+a third that predates the binding and that no slice here closes. `derived` is an
 EQUALITY against `brd_from_capsule`, a
 pure function of the capsule, so "a derived BRD" now names the thing it says.
 One new edge exists, CONFIRM -> CONFIRM, which records a second binding and a
@@ -4618,6 +4620,22 @@ could close only by adding a mechanism, never by rewording this entry.
    transition table at the one place this repository has been most careful
    about widening; the second raises what happens to the old record. Naming
    them is this entry's job; choosing is not.
+
+   A THIRD STUCK POSITION IS NOT THIS BINDING'S AND IS NOT CLOSED HERE:
+   a lifecycle that reaches GOVERN with no governance validation is stuck
+   there too -- what the shipped greenfield acceptance profile produces,
+   since no gate runs the Nornyx CLI (A-022) -- and it is PERMANENT for that
+   lifecycle, because `GOVERN -> SIMULATE` and `GOVERN -> REVIEW` each
+   require a `governance_validation` row, `GOVERN -> READY` requires one
+   beside the gate results, and `retry` re-enters the stage it is handed
+   without recording evidence; measured through the shipped routes on a build
+   whose gate list carries no Nornyx gate: `ready` 409 naming the missing
+   kind, `confirm-scope` 409 and `build` 409 naming the missing edges,
+   `retry` 409 "only a failed workflow can be retried", and the stage still
+   persisted as GOVERN. It predates this tranche -- the refusal and the
+   blocker beside it are `894218f`'s -- and what changes here is the headline
+   above them, which told that reader to mark ready in the same words the
+   drifted reader used to get.
 8. **Any line-ending-only rewrite of `BRD.md` is invisible** -- CRLF and a
    lone CR alike. `Path.read_text` normalises line endings, and the digest
    follows `parse_brd`'s convention on purpose so that the two agree; a file
