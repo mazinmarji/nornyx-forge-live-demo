@@ -704,8 +704,11 @@ def test_j9_one_failing_gate_keeps_govern_unreachable(tmp_path: Path):
     # The scope bindings CONFIRM and BUILD recorded are still there -- they
     # are what the build was licensed to consume, and they were written before
     # it ran. What must be absent is anything the FAILED RUN produced, which
-    # is the property this line has always held.
-    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), persisted["evidence"]
+    # is the property this line has always held. Asserted as the EXACT key set
+    # rather than as "not TEST and not GOVERN": the narrower form names the two
+    # stages a translated result lands in and stops catching a row landing
+    # anywhere else.
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, persisted["evidence"]
     assert "gate_results" in persisted["history"][-1]["detail"]
     assert "reports failure" in persisted["history"][-1]["detail"]
     _ok(client.post("/api/journey/retry", json={"actor": HUMAN}))
@@ -961,15 +964,28 @@ def test_a_store_refusal_is_returned_in_its_own_words_not_as_a_missing_project(
 def test_the_page_offers_no_build_the_route_would_refuse(tmp_path: Path):
     """A review deleted BRD.md after CONFIRM and measured the build button
     enabled while the route refused. The projection now reads the build's
-    own prerequisites; the route still enforces them independently."""
+    own prerequisites; the route still enforces them independently.
+
+    AND IT READS THE SAME SENTENCE. This test pinned `_BRD_MISSING` here --
+    "...before confirming the scope" -- to a reader the page is sending
+    toward the BUILD, while the route said "no BRD.md in the project; derive
+    it first". Two sentences for one file, at one position, from two places.
+    `build_blockers` takes its sentence from `build_brd_refusal` now, the one
+    function the route refuses with, so the expectation here is the route's
+    own words and the two are asserted equal rather than separately.
+    """
     client = _client(tmp_path)
     _confirmed(client)
     assert _journey(client)["actions"] == ["start_build"]
     (tmp_path / "BRD.md").unlink()
     view = _journey(client)
-    assert view["actions"] == [] and view["blockers"] == [journey._BRD_MISSING]
+    assert view["actions"] == [] and view["blockers"] == [journey._BRD_ABSENT_BUILD]
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409 and "derive it first" in response.json()["refused"]
+    assert response.json()["refused"] in view["blockers"], (
+        "the route and the page name the same file in different words, which "
+        "is what `_BRD_SENTENCES` was introduced to prevent"
+    )
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
 
@@ -1004,10 +1020,13 @@ def test_j14_a_second_scope_confirmation_is_refused_and_recorded_once(tmp_path: 
 
     The contract used to refuse this with "no transition CONFIRM -> CONFIRM",
     and that edge exists now: a scope whose capsule or BRD has changed can be
-    re-confirmed, which is how a lifecycle whose content moved stops being a
-    dead end. What is refused here is the OTHER case, the one J14 was written
-    for: the same click over content the record already names. Nothing moves,
-    the journey says why, and the history still holds one CONFIRM.
+    re-confirmed, which is how a lifecycle whose content moved AT OR BEFORE
+    CONFIRM stops being a dead end. PAST CONFIRM it stops nothing -- there is
+    no edge back to CONFIRM from BUILD or GOVERN, so content that moves after
+    the build is a dead end the contract cannot leave, which A-032 discloses.
+    What is refused here is the OTHER case, the one J14 was written for: the
+    same click over content the record already names. Nothing moves, the
+    journey says why, and the history still holds one CONFIRM.
     """
     client = _client(tmp_path)
     _confirmed(client)
@@ -1138,7 +1157,9 @@ def test_j15_a_workers_own_success_words_move_nothing(tmp_path: Path):
     assert status["result"]["ready"] is True, "the specimen must actually boast"
     persisted = _persisted(tmp_path)
     assert persisted["stage"] == "BUILD" and persisted["status"] == "failed"
-    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), persisted["evidence"]
+    # The exact key set, not "not TEST and not GOVERN": CONFIRM and BUILD carry
+    # the bindings the surface wrote before the run, and nothing else belongs.
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, persisted["evidence"]
     serialized = json.dumps(persisted)
     for word in ("tests_passed", "governance_passed", "READY.", "Governance validated"):
         assert word not in serialized

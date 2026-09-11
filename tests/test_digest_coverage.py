@@ -46,9 +46,12 @@ from nornyx_forge.capsule import (
 )
 from nornyx_forge.capsule_store import CapsuleSealError, CapsuleStore
 from nornyx_forge.experience import (
+    GENESIS,
     EvidenceRef,
+    _link,
     advance,
     start_experience,
+    validate_experience,
     verify_experience,
 )
 
@@ -168,10 +171,23 @@ def test_the_capsule_chain_does_cover_the_authoritative_region(tmp_path: Path) -
 
 
 def test_the_experience_chain_covers_its_whole_record(tmp_path: Path) -> None:
-    """The contrast that makes the correction necessary. The experience
-    link function takes the state MINUS its chain, so evidence, history,
-    entered and status are all inside it -- the sentence the capsule
-    docstring claimed for itself is true here."""
+    """The contrast that makes the correction necessary, AND ITS OWN BOUND.
+
+    The experience link function takes the state MINUS its chain, so
+    evidence, history, entered and status are all inside its reach -- which
+    is what the capsule chain does not have.
+
+    AND THE REACH IS NOT "HAS NOT BEEN EDITED". `verify_experience` compares
+    the FINAL LINK and no other, so the four edits below -- none of which
+    rebuilds it -- measure the narrow property, and the round-1 docstring
+    said the wide one. The second half of this test is the same edits WITH
+    the final link rebuilt, one line of arithmetic: both experience-domain
+    verifiers accept them, including a CONFIRM scope binding replaced with
+    one naming different content, which is this tranche's own subject. What
+    holds those bytes is the STORE'S SEAL on the served path, measured here,
+    and nothing at all on an unsealed store -- the same split the capsule
+    half already states, and the reason the docstring now names it.
+    """
     scope = EvidenceRef(kind="brd_requirements",
                         ref=f"capsule/{'a' * 64}/brd/{'b' * 64}", passed=True)
     state = start_experience(HUMAN, AT)
@@ -192,11 +208,54 @@ def test_the_experience_chain_covers_its_whole_record(tmp_path: Path) -> None:
     def status(edited: dict) -> None:
         edited["status"] = "failed"
 
-    for edit in (evidence_ref, history_by, entered_by, status):
+    def scope_binding(edited: dict) -> None:
+        edited["evidence"]["CONFIRM"][0]["ref"] = f"capsule/{'c' * 64}/brd/{'d' * 64}"
+
+    edits = (evidence_ref, history_by, entered_by, status, scope_binding)
+    for edit in edits:
         edited = json.loads(json.dumps(state))
         edit(edited)
         with pytest.raises(CapsuleTamperError, match="experience state"):
             verify_experience(edited)
+
+    # THE OTHER HALF OF THE SAME BOUND: rebuild the final link and every one
+    # of those edits is accepted by both experience-domain verifiers. Nothing
+    # here is a defect being reported as a finding -- `verify_experience`'s
+    # own docstring says it compares one link -- but the capsule docstring
+    # claimed the wider reach for this chain until round 2, in the very
+    # sentence whose first half was corrected for claiming it about the other
+    # chain.
+    for edit in edits:
+        rebuilt = json.loads(json.dumps(state))
+        edit(rebuilt)
+        previous = rebuilt["chain"][-2] if len(rebuilt["chain"]) > 1 else GENESIS
+        rebuilt["chain"][-1] = _link(previous, rebuilt)
+        verify_experience(rebuilt)       # no raise: that IS the reach
+        validate_experience(rebuilt)
+    assert rebuilt["evidence"]["CONFIRM"][0]["ref"] == f"capsule/{'c' * 64}/brd/{'d' * 64}", (
+        "the last rebuilt specimen must be the replaced scope binding, which "
+        "is the edit this tranche's own mechanism depends on not happening"
+    )
+
+    # AND WHAT DOES HOLD THEM ON THE SERVED PATH: the store's seal, a byte
+    # comparison against what Forge last wrote, which no amount of rebuilding
+    # inside the file can satisfy.
+    root = tmp_path / "sealed" / "capsule"
+    store = CapsuleStore(root, seal_dir=tmp_path / "seals")
+    store.initialize(_specimen(), experience=state)
+    assert store.load_experience()["evidence"]["CONFIRM"][0]["ref"] == scope.ref
+
+    path = root / "experience.json"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(json.dumps(rebuilt, sort_keys=True, separators=(",", ":")) + "\n",
+                    encoding="utf-8", newline="")
+    with pytest.raises(CapsuleSealError):
+        store.load_experience()
+
+    # The control, as next door: the seal is a comparison and not a one-way
+    # door, so the original bytes load again.
+    path.write_text(original, encoding="utf-8", newline="")
+    assert store.load_experience()["evidence"]["CONFIRM"][0]["ref"] == scope.ref
 
 
 # ---------------------------------------------------------------------------
@@ -278,10 +337,28 @@ def test_the_capsule_docstring_states_the_reach_its_chain_actually_has() -> None
         "authoritative_region: the capsule chain covers the authoritative "
         "region and nothing else."
     )
+    # THE EXPERIENCE HALF WAS NARROWED IN ROUND 2, for the same reason the
+    # capsule half was narrowed in round 1 -- and it is worth saying that the
+    # correction of an overclaim carried one of its own. The replacement said
+    # the experience chain establishes that its provenance "has not been
+    # edited since it was written", flat, while `verify_experience` compares
+    # the FINAL LINK and says so in its own docstring. One line of arithmetic
+    # rebuilds that link, and both experience-domain verifiers then pass over
+    # a replaced CONFIRM scope binding: measured in
+    # `test_the_experience_chain_covers_its_whole_record` below, which now
+    # holds both halves of the bound this phrase names.
     for phrase in (
         "The EXPERIENCE chain establishes that its recorded provenance "
-        "has not been edited since it was written",
+        "has not been edited in a way that leaves the final link unrebuilt",
+        "a full-chain rebuild -- one line of arithmetic over a state anyone "
+        "can write -- is held by the store's seal on the served path and by "
+        "nothing on an unsealed store",
         "the capsule chain covers the authoritative region only",
         "held by the store's seal (served path) and by nothing on an unsealed store",
     ):
         assert phrase in source, f"capsule.py no longer states: {phrase!r}"
+    assert "has not been edited since it was written" not in source, (
+        "capsule.py states an unqualified has-not-been-edited claim again. "
+        "`verify_experience` compares the final link only, so a rebuilt chain "
+        "passes it; the qualified sentence is the one the mechanism supports."
+    )

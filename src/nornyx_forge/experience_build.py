@@ -11,6 +11,12 @@ whole discipline is REFUSING TO IMPROVE THE NEWS:
     is ABSENT, not passing. An environment that could not ask the governance
     question produces no governance answer.
 
+IT ALSO OWNS THE THREE EVIDENCE-REFERENCE FORMATS -- the scope binding, the
+flow run and the gate records -- as regular expressions beside the builders
+that write them, so a producer and a parser in two modules are one statement
+rather than two that happen to agree. See the block beside them for why the
+owner is this module and not the journey.
+
 Behaviour-preserving by construction: this module never imports, calls, or
 alters `development_flow`. It reads the plain dictionary the flow already
 returns (`DevelopmentFlow.run()` / `run_sequential()`), and the flow's own
@@ -39,7 +45,98 @@ _NORNYX_EXECUTABLE = "nornyx"
 #: which BRD it parsed. MATCHED rather than trusted: a result carrying
 #: anything else under that key contributes nothing to the reference, which
 #: is honest absence rather than a digest of something nobody parsed.
-_SOURCE_DIGEST = re.compile(r"^sha256:([0-9a-f]{64})$")
+_SOURCE_DIGEST = re.compile(r"\Asha256:([0-9a-f]{64})\Z")
+
+# ---------------------------------------------------------------------------
+# THE EVIDENCE-REFERENCE FORMATS, OWNED IN ONE PLACE
+#
+# Three formats, and until this module owned them they existed as an f-string
+# here and a regular expression in `experience_journey`, with nothing holding
+# the two to the same alphabet. Measured: a backend spelled
+# `sequential/brd/<64 hex>` produced a `flow_run` reference that the parser
+# read as a BRD digest from a run that recorded none -- the producer's label
+# spelling a segment of the producer's own format. Unreachable at this head,
+# because `DevelopmentFlow` writes three slash-free literals, and repaired as
+# a SHAPE rather than as an exploit: one owner, one alphabet, and a producer
+# that REFUSES a token it cannot spell instead of interpolating it.
+#
+# THIS MODULE IS THE OWNER BECAUSE THE DEPENDENCY RUNS ONE WAY.
+# `experience_journey` imports this module; this module must never import the
+# journey. So the formats live here and the journey imports the two it parses,
+# which is what makes producer and parser one statement rather than two that
+# happen to agree today.
+#
+# ANCHORED `\A...\Z`, NOT `^...$`. In Python `$` also matches immediately
+# before a trailing newline, so `capsule/<hex>/brd/<hex>\n` parsed as a
+# binding and `sha256:<hex>\n` parsed as a digest. Nothing was exploitable --
+# the parsed value is identical either way -- but `\Z` is what these mean, and
+# a pattern that means something else is a pattern nobody can rely on.
+# ---------------------------------------------------------------------------
+
+#: The one character class a `flow_run` backend segment may use. No `/`: a
+#: backend can never spell another segment of the format it sits in.
+BACKEND_TOKEN = re.compile(r"\A[A-Za-z0-9._-]+\Z")
+
+#: `capsule/<64 hex>/brd/<64 hex>` -- a scope binding: the capsule's chain tip
+#: beside the digest of the BRD text.
+SCOPE_REF = re.compile(r"\Acapsule/([0-9a-f]{64})/brd/([0-9a-f]{64})\Z")
+
+#: `flow/<backend>` -- one run, by the backend that drove it, when the run
+#: recorded no BRD of its own.
+FLOW_REF = re.compile(r"\Aflow/([A-Za-z0-9._-]+)\Z")
+
+#: `flow/<backend>/brd/<64 hex>` -- the same, plus the BRD the run said it
+#: parsed. The backend segment's class is `BACKEND_TOKEN`'s, written out here
+#: because a regular expression cannot interpolate one and keep its anchors.
+FLOW_BRD_REF = re.compile(r"\Aflow/[A-Za-z0-9._-]+/brd/([0-9a-f]{64})\Z")
+
+#: `gates/<n>-run/<16 hex>` and `gates/nornyx/<n>-run/<16 hex>` -- how many
+#: gate records the translator was handed, and a fingerprint of the records
+#: themselves. Parsed nowhere today; declared here so that a later reader
+#: parses the format its producer writes rather than one it inferred.
+GATE_REF = re.compile(r"\Agates/(\d+)-run/([0-9a-f]{16})\Z")
+NORNYX_GATE_REF = re.compile(r"\Agates/nornyx/(\d+)-run/([0-9a-f]{16})\Z")
+
+
+def scope_reference(capsule_tip: str, brd_digest: str) -> str:
+    """The scope binding's one spelling: `capsule/<tip>/brd/<digest>`.
+
+    FORMATS; IT DOES NOT JUDGE. `SCOPE_REF` above is the only reader, and a
+    pair that does not spell a parseable reference reads back as NO BINDING --
+    which is how every consumer of it already fails closed. Refusing here as
+    well would add a second answer to a question that already has one.
+    """
+    return f"capsule/{capsule_tip}/brd/{brd_digest}"
+
+
+def flow_reference(backend: str, brd_digest: str | None = None) -> str:
+    """`flow/<backend>`, or `flow/<backend>/brd/<digest>` when the run said
+    which BRD it read.
+
+    REFUSES A BACKEND IT CANNOT SPELL, rather than interpolating it. The
+    alphabet is the parser's own, so the label a flow chose for itself can
+    never spell another segment of this format; and an evidence reference
+    that cannot be formed is an ERROR, not a silent shape that reads as
+    something else downstream.
+    """
+    if not BACKEND_TOKEN.match(backend):
+        raise CapsuleValidationError(
+            f"flow 'execution_backend' {backend!r} cannot be spelled in an "
+            f"evidence reference: the backend segment is {BACKEND_TOKEN.pattern}, "
+            "and a reference that cannot be formed is an error rather than a "
+            "shape that reads as something the run never recorded"
+        )
+    return f"flow/{backend}" if brd_digest is None else f"flow/{backend}/brd/{brd_digest}"
+
+
+def gate_reference(runs: int, fingerprint: str, *, nornyx: bool = False) -> str:
+    """`gates/<n>-run/<fingerprint>`, or the `gates/nornyx/...` variant.
+
+    One builder for both, because they are one format with one segment
+    inserted: two builders would be two places for the shape to drift.
+    """
+    prefix = "gates/nornyx" if nornyx else "gates"
+    return f"{prefix}/{runs}-run/{fingerprint}"
 
 
 def flow_evidence(data: Mapping[str, Any]) -> tuple[EvidenceRef, ...]:
@@ -82,16 +179,16 @@ def flow_evidence(data: Mapping[str, Any]) -> tuple[EvidenceRef, ...]:
     # provenance: every `passed` below is exactly what it was, and none of
     # these digests is re-checked anywhere as a verdict.
     parsed_brd = _parsed_brd_digest(data)
+    # FIRST, so a backend this format cannot carry is refused BEFORE any
+    # reference exists. The alternative -- form the others and fail late --
+    # would leave the translator half-built over a result it had already
+    # decided it could not describe.
+    flow_ref = flow_reference(backend, parsed_brd)
     refs = [
-        EvidenceRef(
-            kind="flow_run",
-            ref=f"flow/{backend}" if parsed_brd is None
-            else f"flow/{backend}/brd/{parsed_brd}",
-            passed=data["accepted"],
-        ),
+        EvidenceRef(kind="flow_run", ref=flow_ref, passed=data["accepted"]),
         EvidenceRef(
             kind="gate_results",
-            ref=f"gates/{len(gates)}-run/{_gate_fingerprint(gates)}",
+            ref=gate_reference(len(gates), _gate_fingerprint(gates)),
             passed=bool(gates) and all(gate["passed"] for gate in gates),
         ),
     ]
@@ -101,8 +198,8 @@ def flow_evidence(data: Mapping[str, Any]) -> tuple[EvidenceRef, ...]:
         refs.append(
             EvidenceRef(
                 kind="governance_validation",
-                ref=f"gates/nornyx/{len(nornyx_gates)}-run/"
-                    f"{_gate_fingerprint(nornyx_gates)}",
+                ref=gate_reference(len(nornyx_gates),
+                                   _gate_fingerprint(nornyx_gates), nornyx=True),
                 passed=all(gate["passed"] for gate in nornyx_gates),
             )
         )

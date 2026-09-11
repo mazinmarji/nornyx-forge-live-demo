@@ -414,4 +414,13 @@ def test_e6_a_lifecycle_already_at_build_is_not_moved_by_a_refused_re_run(tmp_pa
     assert governed_build_eligibility("claude").reason in view["blockers"]
     response = client.post("/api/build", json={"actor": HUMAN})
     assert response.status_code == 409
+    # THE SENTENCE, not only the code. With this specimen binding and a
+    # hand-written BRD, three independent refusals now produce a 409 here --
+    # eligibility, the scope binding, and the derivation check -- where before
+    # this tranche only eligibility did. Asserting the status alone would let
+    # this test pass for a reason it does not name; the route decides
+    # eligibility first, and that is what it must still be refusing.
+    assert response.json()["refused"] == governed_build_eligibility("claude").reason, (
+        response.text
+    )
     assert _persisted(tmp_path)["stage"] == "BUILD" and _persisted(tmp_path)["status"] == "active"

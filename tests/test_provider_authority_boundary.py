@@ -54,6 +54,7 @@ from fastapi.testclient import TestClient
 from session_client import authed_client
 
 from nornyx_forge import capsule_store as store_module
+from nornyx_forge import experience_journey as journey
 from nornyx_forge import onboarding_app as onboarding
 from nornyx_forge import onboarding_serve
 from nornyx_forge.capsule import Actor, _chain_digest, confirm, create_document, propose
@@ -326,11 +327,12 @@ def test_b2_b3_the_accepted_result_is_not_translated_after_a_breach(tmp_path: Pa
     status = _wait_finished(client)
     assert status["status"] == "finished" and status["accepted"] is True
     persisted = _persisted(tmp_path)
-    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), (
-        "the provider's result reached the lifecycle: TEST and GOVERN are the "
-        "stages a translated result would land in. CONFIRM and BUILD carry the "
-        "scope bindings the surface wrote before the run, which is what the "
-        "build was licensed to consume and not anything the provider said."
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, (
+        "the provider's result reached the lifecycle. CONFIRM and BUILD carry "
+        "the scope bindings the surface wrote BEFORE the run -- what the build "
+        "was licensed to consume -- and nothing else may be there: TEST and "
+        "GOVERN are where a translated result would land, and an exact key set "
+        "also catches a row landing anywhere the narrower check never named."
     )
     assert _stages(persisted) == ["DISCOVER", "CONFIRM", "BUILD", "BUILD"]
     log = _git_log(tmp_path / "capsule")
@@ -394,13 +396,17 @@ def test_b5_polling_during_the_build_shows_only_the_sealed_position(tmp_path: Pa
         "blockers": [], "failure": None, "scope": mid["journey"]["scope"],
         "next": mid["journey"]["next"],
     }
-    assert "running" in mid["journey"]["next"]
     # AND THE TWO SELF-REFERENCED KEYS ARE ASSERTED, not waved through. The
     # answer comes from the SEAL while the build runs, so the scope it reports
     # is the sealed lifecycle's binding against the sealed capsule -- unchanged,
     # whatever the worker has written to the disk underneath.
     assert mid["journey"]["scope"]["unchanged"] is True, mid["journey"]["scope"]
     assert mid["journey"]["scope"]["confirmed_against"] == mid["journey"]["scope"]["current"]
+    # `next` gets the same treatment `scope` got: a substring was all that
+    # stood under a key the dict above names after itself, so the sentence is
+    # asserted against the projection's own constant for this position.
+    assert mid["journey"]["next"] == journey._NEXT["BUILD"], mid["journey"]["next"]
+    assert "running" in mid["journey"]["next"]
     assert mid["experience"]["stage"] == "BUILD"
     assert mid["revision"] == _store(tmp_path).sealed().revision
     preview = _ok(client.get("/api/sharing-preview"))

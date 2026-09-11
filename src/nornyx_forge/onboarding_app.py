@@ -879,39 +879,61 @@ def create_app(
         if isinstance(actor, JSONResponse):
             return actor
         current = store()
-        with store_lock:
-            if app.state.sealed is not None:
-                return _refused("a build is already running for this project")
-            try:
-                document = project(current)
-            except CapsuleError as error:
-                return _refusal(error)
-        provider = document["authoritative"].get("provider")
-        if provider is None:
-            return _refused("no confirmed provider; confirm one before building")
-        # DECLARED IS NOT ELIGIBLE. Decided here, before the lifecycle moves
-        # and before any flow exists: an ineligible provider is refused in
-        # the contract's words, nothing is tried in its place, and the
-        # lifecycle stays exactly where it was.
-        verdict = eligibility(provider["name"])
-        if not verdict.eligible:
-            return JSONResponse(status_code=409, content={
-                "refused": verdict.reason, "eligibility": verdict.as_dict(),
-            })
         project_dir = root.parent
-        # THE BRD THE BUILD WILL READ, measured before anything moves. The
-        # flow parses `BRD.md` from disk at run time, so "a derived BRD" has
-        # to mean the bytes that are there and not a file that once was. The
-        # sentence comes from the journey so the route and the page cannot
-        # drift apart on what the prerequisite is called.
-        brd = brd_state(document)
-        refusal = build_brd_refusal(brd)
-        if refusal is not None:
-            return _refused(refusal)
-        if not build_lock.acquire(blocking=False):
-            return _refused("a build is already running for this project")
+        held = False
+        # ONE ACQUISITION FROM THE DOCUMENT READ TO `begin_build`.
+        #
+        # This used to read the document under the lock, RELEASE it, measure
+        # `BRD.md` and re-take the lock to position the lifecycle over the pair
+        # it had read before. A confirmation landing in that window won 7 of 8
+        # unforced attempts under review, and the build then ran over a capsule
+        # its binding did not name. Nothing was laundered -- the BUILD row
+        # records the stale pair and READY refuses it afterwards -- but the
+        # lifecycle was left at a dead end by a plain concurrent request rather
+        # than by anything its owner did, which is not an outcome a race gets
+        # to choose. Every read the decision rests on, and the decision itself,
+        # now happen under one hold: a confirmation either lands before the
+        # document read or waits until the store is sealed and is refused.
+        #
+        # `build_lock` IS TAKEN INSIDE `store_lock` AND NEVER WAITS. The build
+        # thread takes them the other way round (build_lock for its whole
+        # life, store_lock for each write), so a BLOCKING acquire here would
+        # be a lock-order inversion; `blocking=False` cannot wait and so
+        # cannot deadlock, and the refusal it returns is the one the route
+        # already gave.
+        #
+        # The window this closes is the build's SETUP. The unbounded stretch
+        # while the lifecycle sits at TEST or GOVERN is not a window a lock can
+        # close, and A-032 names it.
         try:
             with store_lock:
+                if app.state.sealed is not None:
+                    return _refused("a build is already running for this project")
+                document = project(current)
+                provider = document["authoritative"].get("provider")
+                if provider is None:
+                    return _refused("no confirmed provider; confirm one before building")
+                # DECLARED IS NOT ELIGIBLE. Decided here, before the lifecycle
+                # moves and before any flow exists: an ineligible provider is
+                # refused in the contract's words, nothing is tried in its
+                # place, and the lifecycle stays exactly where it was.
+                verdict = eligibility(provider["name"])
+                if not verdict.eligible:
+                    return JSONResponse(status_code=409, content={
+                        "refused": verdict.reason, "eligibility": verdict.as_dict(),
+                    })
+                # THE BRD THE BUILD WILL READ, measured before anything moves.
+                # The flow parses `BRD.md` from disk at run time, so "a derived
+                # BRD" has to mean the bytes that are there and not a file that
+                # once was. The sentence comes from the journey so the route and
+                # the page cannot drift apart on what the prerequisite is called.
+                brd = brd_state(document)
+                refusal = build_brd_refusal(brd)
+                if refusal is not None:
+                    return _refused(refusal)
+                if not build_lock.acquire(blocking=False):
+                    return _refused("a build is already running for this project")
+                held = True
                 lifecycle = recorded(current)
                 positioned, advanced = begin_build(lifecycle, document, brd, actor, at())
                 if advanced:
@@ -931,14 +953,16 @@ def create_app(
                     "document": document, "lifecycle": positioned, "snapshot": snapshot,
                 }
         except CapsuleError as error:
-            build_lock.release()
+            if held:
+                build_lock.release()
             return _refusal(error)
         except BaseException:
             # Anything else -- an absent git, an interrupted request -- must
             # not leave the build lock held for the rest of the session.
             with store_lock:
                 app.state.sealed = None
-            build_lock.release()
+            if held:
+                build_lock.release()
             raise
         app.state.build = {"status": "running", "provider": provider["name"]}
 

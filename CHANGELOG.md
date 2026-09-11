@@ -4,9 +4,11 @@
 
 - Content-bound CONFIRM and READY (Tranche F). The lifecycle's two human
   positions now NAME the content they were recorded about, and the surface
-  refuses to license work over content the record does not name. Measured on
-  the parent through the real gated surface, all five paths reachable through
-  shipped routes: a `BRD.md` overwritten by hand after the scope confirmation
+  refuses to license work over content the record does not name. Measured at
+  `ea16d97` through the real gated surface, all five paths reachable through
+  shipped routes -- and the seven modules those paths run through are
+  byte-identical at `894218f`, so the measurement transfers to the parent: a
+  `BRD.md` overwritten by hand after the scope confirmation
   was accepted at CONFIRM and handed to the build, and the real parser read
   the overwritten text; a further intent confirmed under CONFIRM left the page
   offering `start_build` and `POST /api/build` returned 200, so a scope
@@ -39,13 +41,35 @@
   confirmed-looking row and a reversed ledger all pass `verify_integrity` and
   `validate_document` -- and is corrected, with the same five edits pinned at
   rest against a sealed store (refused) and an unsealed one (accepted
-  verbatim). A-032 records what a content binding establishes and, at length,
-  what it does not: nobody is shown to have read anything, the page does not
-  display the BRD, the built artefact is not bound, `BRD.md` is outside the
-  seal, the capsule chain covers the authoritative region only, a re-run whose
-  scope changed cannot be re-bound in this lifecycle, and a CRLF-only rewrite
-  is invisible by design. A-022's false parenthetical is rewritten and A-030's
-  "chain-covered history" is qualified.
+  verbatim). The experience half of that same sentence was then wider than
+  `verify_experience`, which compares the final link and no other, so it is
+  qualified too and the rebuilt-link case is pinned beside the four that do
+  not rebuild it: accepted by both experience-domain verifiers, refused by the
+  store's seal at rest. A-032 records what a content binding establishes and,
+  at length, what it does not: nobody is shown to have read anything, the page
+  does not display the BRD, the built artefact is not bound, `BRD.md` is
+  outside the seal, the capsule chain covers the authoritative region only, a
+  re-run whose scope changed cannot be re-bound in this lifecycle, a
+  confirmation at GOVERN makes READY unreachable for that lifecycle, any
+  line-ending-only rewrite is invisible by design, and `/api/sharing-preview`
+  carries no referent. A-022's false parenthetical is rewritten and A-030's
+  "chain-covered history" is qualified for both chains.
+
+  Round 2, from three independent review lanes. `/api/build` performs the
+  document read, the BRD measurement and `begin_build` under ONE acquisition
+  of the store lock -- it released the lock between them, and a concurrent
+  confirmation won 7 of 8 unforced races, leaving a build recorded against a
+  capsule its binding did not name. `journey_view` stops instructing an act
+  nobody can perform: at a stage from which the contract declares no edge back
+  to CONFIRM or BUILD it names the dead end instead of the READY instruction,
+  and at CONFIRM it offers a re-confirmation headline only when a
+  re-confirmation is on offer. `confirm_scope` lets the contract answer first,
+  the guard its two siblings were given in the same slice. The three evidence
+  reference formats have one owner, one backend alphabet and anchors that
+  refuse a trailing newline, and a backend the format cannot carry is refused
+  rather than interpolated. `build_blockers` takes its BRD sentence from the
+  function the route refuses with, so the two agree for an absent file as well
+  as a stale one. `scope_binding` honours `passed`.
 
 - Standing development obligations (PR #51, reconciled with main and
   repaired). A public-safe, provider-neutral mechanism for carrying standing

@@ -719,7 +719,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # refusal-ORDER pins (the contract answers first for an edge it does not
     # declare; the one unnameable scope names the only cause that reaches
     # it), and the affirmative limit pin over A-032.
-    "tests/test_content_bound_transitions.py": 22,
+    #
+    # ROUND 2 ADDS NINE, so it collects 33 and the floor moves to
+    # band(33) = 30. The introduction figure above is history and stays as
+    # history. The nine: the build setup's one-lock property, RECORDED rather
+    # than timed; the GOVERN dead end's truthful headline; a backend the
+    # reference format cannot carry, refused before any reference exists; a
+    # trailing newline parsing as none of the three formats; producer and
+    # parser agreeing across all four patterns; the route and the projection
+    # naming one BRD sentence in both file states; a failing scope row that is
+    # not a binding; the CONFIRM headline that stopped instructing a
+    # re-confirmation the route refuses; and the guard on the A-032 pin's own
+    # section slice.
+    "tests/test_content_bound_transitions.py": 30,
     # The build trigger: 9 collected at introduction, floor at band(9) = 9.
     # It collects 10 today and band(10) is also 9, so the floor stands
     # unmoved -- the introduction figure is history and is left as history.
@@ -1664,12 +1676,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3567   (118 modules)
-#     sum of the module floors    3267
-#     band(3567) = ceil(0.9*n)    3211
-#     MINIMUM_COLLECTED           3275
+#     collected across tests/     3576   (118 modules)
+#     sum of the module floors    3275
+#     band(3576) = ceil(0.9*n)    3219
+#     MINIMUM_COLLECTED           3283
 #     above the module sum         8
-#     below what collects         292
+#     below what collects         293
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1878,7 +1890,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 300 in total, and the aggregate refuses
+# per-module bands already grant 301 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2017,7 +2029,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # client, with no platform, no network and no provider. The windows-runtime
 # job's floor is untouched at 277, because that job runs SEVEN named modules
 # and neither of these is one of them.
-MINIMUM_COLLECTED = 3275
+#
+# TRANCHE F ROUND 2 ADDS NINE TESTS, ONE ROW AND NO MODULE. Every one lands in
+# `tests/test_content_bound_transitions.py`, beside the pins whose defects
+# three review lanes found: the build setup's one-lock property, the GOVERN
+# dead end's headline, the reference-format owner (a refused backend, a
+# trailing newline, producer/parser agreement), one BRD sentence for the route
+# and the projection, `passed` honoured by the binding reader, the CONFIRM
+# headline, and a guard on the A-032 pin's own section slice. So 118 modules
+# still stand and exactly ONE floor moves: band(24) = 22 -> band(33) = 30. The
+# module-floor sum rises by 8 to 3275 and the aggregate follows to 3283,
+# keeping the same 8 above it; the suite collects 3567 -> 3576 and band(n)
+# 3211 -> 3219. THE WORKING ROOM BELOW WHAT COLLECTS RISES BY ONE, 292 -> 293,
+# and so does THE SLACK THE BANDS GRANT, 300 -> 301: the module sits 3 above
+# its band at 33 where it sat 2 at 24, which is the rounding of `ceil(0.9n)`
+# and nothing else. Nine collected against a floor rising by eight is that
+# same one. NO SKIP IS ADDED, and the windows-runtime job's floor is untouched
+# at 277 for the reason above.
+MINIMUM_COLLECTED = 3283
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated

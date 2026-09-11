@@ -50,7 +50,11 @@ into a record `verify_integrity` and `validate_document` afterwards pass over.
 (`experience.start_experience` does the same for the lifecycle; its own module
 says so, and the impostor was also driven through the gated surface at
 `POST /api/project`.) The EXPERIENCE chain establishes that its recorded
-provenance has not been edited since it was written; the capsule chain covers
+provenance has not been edited in a way that leaves the final link unrebuilt;
+`verify_experience` compares that one link, so a full-chain rebuild -- one
+line of arithmetic over a state anyone can write -- is held by the store's
+seal on the served path and by nothing on an unsealed store, which is the
+same bound A-022 states for the capsule; the capsule chain covers
 the authoritative region only, so `resolved.by`, `history` and the proposal
 ledger are held by the store's seal (served path) and by nothing on an
 unsealed store. NEITHER establishes that what was recorded was true WHEN it

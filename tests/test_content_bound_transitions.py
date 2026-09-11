@@ -3,9 +3,9 @@
 THE PROPERTY UNDER TEST. Before this slice the lifecycle's two human
 positions named no content at all. `CONFIRM` recorded a stage, an actor and
 a timestamp; `READY` recorded a stage and two count-shaped evidence rows.
-Neither carried a reference to the capsule region a person confirmed or to
+Neither carried a reference to the record's confirmed capsule region or to
 the BRD the build would read, so nothing could notice either changing
-underneath the record -- and nothing did. Measured on the parent through
+underneath the record -- and nothing did. Measured at `ea16d97` through
 the real gated surface: a BRD.md overwritten by hand after CONFIRM was
 built without a murmur; a further intent confirmed under CONFIRM left the
 page offering `start_build`; a new intent confirmed under READY left every
@@ -36,9 +36,16 @@ from session_client import authed_client
 from test_actor_declaration_boundary import FORBIDDEN_CLAIMS
 
 from nornyx_forge import experience as experience_contract
+from nornyx_forge import experience_build, onboarding_app
 from nornyx_forge import experience_journey as journey
 from nornyx_forge.brd_authoring import brd_from_capsule
-from nornyx_forge.capsule import Actor, confirm, create_document, propose
+from nornyx_forge.capsule import (
+    Actor,
+    CapsuleValidationError,
+    confirm,
+    create_document,
+    propose,
+)
 from nornyx_forge.capsule_store import CapsuleStore
 from nornyx_forge.experience import (
     EvidenceRef,
@@ -526,6 +533,16 @@ def test_f2_the_contract_answers_first_for_an_edge_it_does_not_declare(tmp_path:
 
     Both directions are held here: the contract speaks for the edge it does
     not declare, and for the workflow that has to be retried first.
+
+    AND `confirm_scope` IS HELD TO THE SAME RULE, which it was not when this
+    test was written. `begin_build` and `mark_ready` were given the guard in
+    that commit and the sibling entry point was missed: a lifecycle FAILED at
+    CONFIRM answered a re-confirmation with "there is nothing to re-confirm",
+    where the contract's own answer is "the workflow is failed at CONFIRM;
+    retry it before advancing" -- and `retry` then succeeds, so there IS
+    something to do and the refusal said the opposite. Nothing advanced either
+    way, which is why it is an accuracy defect and not a bypass; what is wrong
+    is the cause named, and that is this test's whole subject.
     """
     document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}},
                 "digest_chain": ["a" * 64]}
@@ -546,6 +563,33 @@ def test_f2_the_contract_answers_first_for_an_edge_it_does_not_declare(tmp_path:
     failed = experience_contract.fail(confirmed, human, "the build did not complete", AT)
     with pytest.raises(ExperienceError, match="retry it before advancing"):
         journey.begin_build(failed, document, DERIVED_BRD, human, AT)
+
+    # THE SIBLING, over the SAME fixture. The binding matches the content, so
+    # the no-op refusal is what answered before the guard; a failed workflow
+    # is the contract's business and the contract's sentence is the true one.
+    with pytest.raises(ExperienceError) as raised:
+        journey.confirm_scope(failed, document, DERIVED_BRD, human, AT)
+    assert "retry it before advancing" in str(raised.value), raised.value
+    assert journey._SCOPE_NO_OP not in str(raised.value), (
+        "the journey answered before the contract did, with a sentence saying "
+        "there is nothing to do about a lifecycle that can be retried"
+    )
+    # And the second new refusal in that function: a capsule that cannot be
+    # named at all, on a failed lifecycle, answered "the capsule has no digest
+    # chain" where the contract answers for the workflow's status.
+    chainless = {"authoritative": document["authoritative"]}
+    failed_discover = experience_contract.fail(at_discover, human, "stopped", AT)
+    with pytest.raises(ExperienceError, match="retry it before advancing"):
+        journey.confirm_scope(failed_discover, chainless, DERIVED_BRD, human, AT)
+
+    # THE CONTROL, so the two above cannot pass because `confirm_scope` refuses
+    # everything: retried, the same call over the same content is the no-op
+    # refusal again, and over CHANGED content it advances.
+    retried = experience_contract.retry(failed, human, AT)
+    with pytest.raises(journey.JourneyRefusal, match="nothing to re-confirm"):
+        journey.confirm_scope(retried, document, DERIVED_BRD, human, AT)
+    moved = dict(document, digest_chain=["a" * 64, "b" * 64])
+    assert journey.confirm_scope(retried, moved, DERIVED_BRD, human, AT)["stage"] == "CONFIRM"
 
 
 def test_f2_a_capsule_with_no_chain_cannot_be_named_and_says_so(tmp_path: Path):
@@ -734,8 +778,55 @@ A032_REQUIRED = (
     "BRD.md is outside the seal",
     "the capsule digest chain covers the authoritative region only",
     "a re-run whose scope changed cannot be re-bound in this lifecycle",
+    # THE SECOND DEAD END, added in round 2. The first is the BUILD re-entry
+    # above it; this one is reachable by a single ordinary click and was
+    # disclosed nowhere while the page gave advice into it.
+    "a confirmation at GOVERN makes READY unreachable for that lifecycle",
     "EXTERNAL AUTHORITY",
 )
+
+
+def _a032_section() -> str:
+    """A-032's own text, with whitespace collapsed.
+
+    SEARCHED WITHIN THE SECTION, not across the register. Measured: six of the
+    seven phrases this pin carried occurred only inside A-032, and "EXTERNAL
+    AUTHORITY" also occurs in A-030 -- so deleting A-032's limit 8 alone left
+    that strand green. Phrase uniqueness across a document of this size is not
+    a property anybody can maintain, and leaning on it makes the pin weaker
+    every time the register grows. The slice between this heading and the next
+    one is a property the file's own structure guarantees.
+    """
+    text = ASSUMPTIONS.read_text(encoding="utf-8")
+    heading = "## A-032"
+    start = text.find(heading)
+    assert start != -1, "A-032 is gone; the limit is disclosed nowhere"
+    rest = text[start + len(heading):]
+    end = rest.find("\n## A-")
+    return " ".join((rest if end == -1 else rest[:end]).split())
+
+
+def test_the_a032_pin_reads_only_the_a032_section():
+    """THE GUARD ON THE GUARD. `_a032_section` is the whole reason the pin
+    below measures A-032 rather than the register, so it gets its own
+    falsification: the slice must stop at the next entry, and it must contain
+    the phrases the pin looks for.
+
+    Measured rather than reasoned, because "it slices correctly" is exactly
+    the kind of claim that stays true until somebody renames a heading.
+    """
+    section = _a032_section()
+    whole = " ".join(ASSUMPTIONS.read_text(encoding="utf-8").split())
+    assert len(section) < len(whole), "the slice is the whole file"
+    assert "EXTERNAL AUTHORITY" in section, section[-400:]
+    # A-030 also says "EXTERNAL AUTHORITY", which is why the slice exists; and
+    # A-031's own heading text must be outside it, or the slice ran past its
+    # section into the next one.
+    assert "## A-031" not in section and "## A-033" not in section, (
+        "the A-032 slice reaches into a neighbouring entry, so the pin below "
+        "measures more of the register than it says it does"
+    )
+    assert "Standing development admission is procedure" not in section, section[:200]
 
 
 def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
@@ -750,8 +841,7 @@ def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
     The behaviours are chosen because each could be closed -- or could rot
     into a wider claim -- without touching a single line of A-032.
     """
-    disclosed = " ".join(ASSUMPTIONS.read_text(encoding="utf-8").split())
-    assert "## A-032" in disclosed, "A-032 is gone; the limit is disclosed nowhere"
+    disclosed = _a032_section()
     missing = [phrase for phrase in A032_REQUIRED
                if " ".join(phrase.split()) not in disclosed]
     assert missing == [], (
@@ -803,6 +893,45 @@ def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
     assert [phrase for phrase in FORBIDDEN_CLAIMS if phrase in said] == [], said
     for unbackable in ("a person", "a human", "reviewed", "read the"):
         assert unbackable not in said, (unbackable, said)
+
+    # (iv) THE SECOND DEAD END, and it is a dead end and not a delay. One
+    # ordinary confirmed proposal at GOVERN and READY is unreachable for the
+    # life of that lifecycle: every recovery a reader could try is refused,
+    # each in the words of whatever is refusing it, and the stage does not
+    # move. Disclosed as a limit rather than closed -- closing it needs an
+    # edge that can re-bind, which is a design decision and not a slice's.
+    dead = tmp_path / "dead-end"
+    dead.mkdir()
+    other = _client(dead)
+    _confirmed(other)
+    _ok(other.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(other)
+    assert _persisted(dead)["stage"] == "GOVERN"
+    _confirm_field(other, "intent", "Build something else now.")
+
+    first = other.post("/api/journey/ready", json={"actor": HUMAN})
+    assert first.status_code == 409, first.text
+    assert first.json()["refused"] == journey._SCOPE_DRIFT_READY
+    # RE-DERIVING THE BRD IS THE FIRST THING A READER TRIES, and it is the
+    # recovery whose failure is least obvious: it succeeds, and changes
+    # nothing, because the binding names the capsule's chain tip as well.
+    # Taking it first is also what lets the contract answer the three requests
+    # below -- a stale BRD is a prerequisite the journey refuses by name
+    # before the contract is asked, which is older than this slice.
+    _ok(other.post("/api/brd"))
+    refusals = {
+        "ready": other.post("/api/journey/ready", json={"actor": HUMAN}),
+        "confirm-scope": other.post("/api/journey/confirm-scope", json={"actor": HUMAN}),
+        "build": other.post("/api/build", json={"actor": HUMAN}),
+        "retry": other.post("/api/journey/retry", json={"actor": HUMAN}),
+    }
+    assert [code for code in (r.status_code for r in refusals.values()) if code != 409] == []
+    assert refusals["ready"].json()["refused"] == journey._SCOPE_DRIFT_READY
+    assert "no transition GOVERN -> CONFIRM" in refusals["confirm-scope"].json()["refused"]
+    assert "no transition GOVERN -> BUILD" in refusals["build"].json()["refused"]
+    assert "failed workflow" in refusals["retry"].json()["refused"]
+    assert _persisted(dead)["stage"] == "GOVERN", "the dead end moved the lifecycle"
+    assert _journey(other)["next"] == journey._NEXT_SCOPE_DEAD_END
 
 
 # ---------------------------------------------------------------------------
@@ -926,3 +1055,433 @@ def test_f4_an_honest_flow_reports_the_brd_the_build_was_licensed_to_consume(
     assert parsed is not None, persisted["evidence"]["TEST"]
     assert parsed == journey.scope_binding(persisted, "BUILD")[1]
     assert _ok(client.post("/api/journey/ready", json={"actor": HUMAN}))["stage"] == "READY"
+
+
+# ---------------------------------------------------------------------------
+# F5  round-2 repairs: the setup race, the second dead end, one owner for the
+#     reference formats, one sentence per file state, and two headlines that
+#     told a reader to do something nobody could do
+# ---------------------------------------------------------------------------
+
+class _RecordingLock:
+    """A lock that keeps count of how many times it has been taken.
+
+    NOT A SUBSTITUTE LOCK. Every acquisition and release is delegated to a
+    real `threading.Lock`, so what runs under test is what ships, and
+    `locked()` is the primitive's own answer rather than this class's
+    bookkeeping. What is added is an EPOCH -- how many times this lock has
+    been acquired -- so a seam can record WHICH hold it ran inside. That turns
+    "one acquisition" into an equality between four recorded numbers rather
+    than a stopwatch reading, which is the only way to pin a race without
+    timing one.
+    """
+
+    def __init__(self, index: int):
+        self._lock = threading.Lock()
+        self.index = index
+        self.epoch = 0
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def acquire(self, *args, **kwargs) -> bool:
+        got = self._lock.acquire(*args, **kwargs)
+        if got:
+            self.epoch += 1
+        return got
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        self.release()
+        return False
+
+
+class _RecordingThreading:
+    """`onboarding_app`'s view of `threading`, with `Lock` recorded.
+
+    Patched onto the MODULE and not onto `threading` itself, so no other
+    thread in this process can be handed one of these by accident; every
+    other attribute the module uses is forwarded to the real module
+    unchanged.
+    """
+
+    def __init__(self):
+        self.locks: list = []
+
+    def Lock(self):  # noqa: N802 - this is threading's name, not a new one
+        lock = _RecordingLock(len(self.locks))
+        self.locks.append(lock)
+        return lock
+
+    def __getattr__(self, name):
+        return getattr(threading, name)
+
+
+def test_f5_the_build_setup_reads_and_decides_under_one_lock(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """MEASURED UNDER REVIEW: `/api/build` read the document under the store
+    lock, RELEASED it, measured `BRD.md`, and re-took the lock to position the
+    lifecycle over the pair it had read before. A thread confirming a proposal
+    in that window won 7 of 8 unforced attempts, and the build then ran over a
+    capsule its binding did not name.
+
+    Nothing was laundered -- the BUILD row records the stale pair and READY
+    refuses it afterwards -- but the lifecycle was left at a dead end by a
+    plain concurrent request rather than by anything its owner did.
+
+    PINNED WITHOUT TIMING ANYTHING, because a race pinned by a stopwatch is a
+    test that passes on a fast machine. The lock records an epoch; four seams
+    -- the document read, the BRD measurement, the lifecycle read and
+    `begin_build` -- record which locks were held, by the primitive's own
+    `locked()`, and at which epoch. One acquisition spanning all four is one
+    `(lock, epoch)` pair common to the four records. Before the repair there
+    is none: the BRD measurement ran with no lock held at all.
+    """
+    recorder = _RecordingThreading()
+    monkeypatch.setattr(onboarding_app, "threading", recorder)
+    client = _client(tmp_path)
+    _confirmed(client)
+
+    journal: list = []
+
+    def note(name: str) -> None:
+        journal.append((name, frozenset(
+            (lock.index, lock.epoch) for lock in recorder.locks if lock.locked()
+        )))
+
+    class RecordingStore(CapsuleStore):
+        def load(self):
+            note("document read")
+            return super().load()
+
+        def load_experience(self):
+            note("lifecycle read")
+            return super().load_experience()
+
+    def recording(name, real):
+        def wrapper(*args, **kwargs):
+            note(name)
+            return real(*args, **kwargs)
+        return wrapper
+
+    monkeypatch.setattr(onboarding_app, "CapsuleStore", RecordingStore)
+    monkeypatch.setattr(onboarding_app, "brd_from_capsule",
+                        recording("brd measured", onboarding_app.brd_from_capsule))
+    monkeypatch.setattr(onboarding_app, "begin_build",
+                        recording("begin_build", onboarding_app.begin_build))
+
+    journal.clear()
+    assert _ok(client.post("/api/build", json={"actor": HUMAN}))["status"] == "running"
+
+    wanted = ("document read", "brd measured", "lifecycle read", "begin_build")
+    firsts: dict = {}
+    for name, held in journal:
+        firsts.setdefault(name, held)
+    missing = [name for name in wanted if name not in firsts]
+    assert missing == [], f"a seam never ran, so this measures nothing: {missing}"
+
+    common = frozenset.intersection(*(firsts[name] for name in wanted))
+    assert common, (
+        "the build setup released the store lock between reading the document "
+        "and positioning the lifecycle, so a concurrent confirmation can land "
+        f"between them: {[(name, sorted(firsts[name])) for name in wanted]}"
+    )
+
+    _wait_finished(client)
+    assert _persisted(tmp_path)["stage"] == "GOVERN"
+
+
+def test_f5_a_lifecycle_with_no_way_back_says_so_instead_of_instructing_ready(
+        tmp_path: Path):
+    """THE SECOND DEAD END, and the page used to give advice into it.
+
+    One ordinary confirmed proposal while the lifecycle sits at GOVERN makes
+    READY unreachable for that lifecycle for good: `mark_ready` refuses the
+    drift, correctly; `retry` needs a failed workflow; and the contract
+    declares no GOVERN -> CONFIRM and no GOVERN -> BUILD edge, so nothing can
+    record a new binding. The blocker beside it was accurate and the headline
+    above it read "Marking ready is your act" -- to a reader for whom no act
+    reaches READY at all.
+
+    The refusals themselves are pinned in the limit test; what is pinned here
+    is that the page stops instructing an impossible act.
+    """
+    client = _client(tmp_path)
+    _confirmed(client)
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    _wait_finished(client)
+    assert _persisted(tmp_path)["stage"] == "GOVERN"
+    before = _journey(client)
+    assert before["actions"] == ["mark_ready"], before
+    assert before["next"] == journey._NEXT["GOVERN"], before
+
+    _confirm_field(client, "intent", "Build something else now.")
+
+    view = _journey(client)
+    assert view["stage"] == "GOVERN" and view["actions"] == [], view
+    assert view["blockers"] == [journey._SCOPE_DRIFT_READY], view
+    assert view["next"] == journey._NEXT_SCOPE_DEAD_END, view["next"]
+    assert view["next"] != journey._NEXT["GOVERN"], (
+        "the page still tells a reader with no reachable READY that marking "
+        "ready is the next thing to do"
+    )
+    # NOT A STAGE NAME IN THE SELECTION. The sentence is chosen because the
+    # contract declares no edge back to CONFIRM or BUILD from here, read from
+    # its own table rather than written as `stage == "GOVERN"`.
+    allowed = experience_contract.TRANSITIONS[view["stage"]]
+    assert "CONFIRM" not in allowed and "BUILD" not in allowed, allowed
+
+
+def test_f5_a_backend_the_reference_format_cannot_carry_is_refused(
+        monkeypatch: pytest.MonkeyPatch):
+    """`execution_backend` was validated as "a non-empty string" and
+    interpolated into `flow/<backend>/brd/<hex>`, while the parser assumed the
+    segment could not contain `/`. A backend spelled `sequential/brd/<64 hex>`
+    therefore produced a reference that `flow_brd_digest` read as a BRD digest
+    from a result carrying no `requirements_model` at all.
+
+    NOT REACHABLE AT THIS HEAD -- `DevelopmentFlow` writes three slash-free
+    literals -- and repaired as a shape: the producer refuses a token it
+    cannot spell rather than interpolating it, BEFORE any reference exists.
+    That last part is measured and not asserted: the gate fingerprint is
+    computed for the reference built next, and it is never computed.
+    """
+    forged = {"accepted": True, "execution_backend": f"sequential/brd/{'d' * 64}",
+              "gates": [dict(SUBJECT_GATE)]}
+    fingerprints: list = []
+    monkeypatch.setattr(experience_build, "_gate_fingerprint",
+                        lambda gates: fingerprints.append(list(gates)) or "0" * 16)
+
+    with pytest.raises(CapsuleValidationError, match="cannot be spelled"):
+        flow_evidence(forged)
+    assert fingerprints == [], (
+        "a reference was built for a result the translator had already decided "
+        "it could not describe"
+    )
+
+    # The control: the same result under a backend the format can carry.
+    honest = dict(forged, execution_backend="sequential")
+    refs = {ref.kind: ref for ref in flow_evidence(honest)}
+    assert refs["flow_run"].ref == "flow/sequential"
+    assert fingerprints, "the control did not reach the reference it is the control for"
+
+    # And the family the alphabet excludes, each refused by name.
+    for backend in ("a/b", "seq/../..", "flow run", "back\\slash", "tab\there"):
+        with pytest.raises(CapsuleValidationError, match="cannot be spelled"):
+            flow_evidence(dict(forged, execution_backend=backend))
+
+
+def test_f5_no_reference_pattern_accepts_a_trailing_newline():
+    r"""The three patterns anchored with `$`, which in Python also matches
+    immediately before a trailing newline -- so `capsule/<hex>/brd/<hex>\n`
+    parsed as a binding and `sha256:<hex>\n` as a digest.
+
+    Nothing was exploitable: the parsed value is identical either way. But
+    `\Z` is what these patterns mean, and a pattern that means something else
+    is one nobody can rely on the day a reader hands it bytes from a file
+    rather than from a builder.
+    """
+    scope = experience_build.scope_reference("a" * 64, "b" * 64)
+    flow = experience_build.flow_reference("sequential", "c" * 64)
+    digest = f"sha256:{'d' * 64}"
+
+    for pattern, text in ((experience_build.SCOPE_REF, scope),
+                          (experience_build.FLOW_BRD_REF, flow),
+                          (experience_build._SOURCE_DIGEST, digest)):
+        assert pattern.match(text) is not None, (pattern.pattern, text)
+        assert pattern.match(text + "\n") is None, (
+            f"{pattern.pattern} still accepts a trailing newline, so a "
+            "reference read from a file parses as one the producer built"
+        )
+
+    # And through the reader that consumes it: a row whose reference carries a
+    # newline is NO BINDING, which is how everything downstream fails closed.
+    state = {"evidence": {"CONFIRM": [
+        {"kind": "brd_requirements", "ref": scope + "\n", "passed": True},
+    ]}}
+    assert journey.scope_binding(state, "CONFIRM") is None
+
+
+def test_f5_every_reference_builder_agrees_with_its_own_parser():
+    """ONE OWNER, AND THE TWO HALVES MEASURED AGAINST EACH OTHER.
+
+    The formats were an f-string in `experience_build` and a regular
+    expression in `experience_journey`, with nothing holding the two to the
+    same alphabet -- which is how a backend containing `/` came to spell a
+    segment of the format it sat in. They are built and parsed from one module
+    now, and this is the test that the two halves cannot drift: build with
+    each constant, parse the result back, and compare what comes out with what
+    went in.
+    """
+    tip, brd, fingerprint = "a" * 64, "b" * 64, "c" * 16
+
+    # EVERY PARSE IS ASSERTED BEFORE IT IS READ, so a producer the parser
+    # refuses reddens on the assertion that says so rather than on an
+    # `AttributeError` from reading `.groups()` off `None`.
+    def parsed(pattern, text):
+        found = pattern.match(text)
+        assert found is not None, (
+            f"{pattern.pattern} does not parse {text!r}, which its own builder "
+            "produced: the producer and the parser have drifted apart"
+        )
+        return found
+
+    scope = experience_build.scope_reference(tip, brd)
+    assert parsed(experience_build.SCOPE_REF, scope).groups() == (tip, brd)
+    assert journey.scope_binding(
+        {"evidence": {"CONFIRM": [
+            {"kind": "brd_requirements", "ref": scope, "passed": True}]}},
+        "CONFIRM",
+    ) == (tip, brd)
+
+    for backend in ("sequential", "crewai_flow", "sequential_fallback", "a.b-c_1"):
+        plain = experience_build.flow_reference(backend)
+        assert parsed(experience_build.FLOW_REF, plain).group(1) == backend
+        assert experience_build.FLOW_BRD_REF.match(plain) is None
+        carried = experience_build.flow_reference(backend, brd)
+        assert parsed(experience_build.FLOW_BRD_REF, carried).group(1) == brd
+        assert journey.flow_brd_digest(
+            {"evidence": {"TEST": [{"kind": "flow_run", "ref": carried, "passed": True}]}}
+        ) == brd
+
+    gates = experience_build.gate_reference(2, fingerprint)
+    assert parsed(experience_build.GATE_REF, gates).groups() == ("2", fingerprint)
+    assert experience_build.NORNYX_GATE_REF.match(gates) is None
+    nornyx = experience_build.gate_reference(1, fingerprint, nornyx=True)
+    assert parsed(experience_build.NORNYX_GATE_REF, nornyx).groups() == ("1", fingerprint)
+
+    # And the shapes a real run produces are the shapes these patterns parse,
+    # so the agreement is with the producer and not only with itself.
+    refs = {ref.kind: ref.ref for ref in flow_evidence(
+        {"accepted": True, "execution_backend": "sequential",
+         "gates": [dict(SUBJECT_GATE), dict(NORNYX_GATE)],
+         "requirements_model": {"source_digest": f"sha256:{brd}"}}
+    )}
+    assert parsed(experience_build.FLOW_BRD_REF, refs["flow_run"]).group(1) == brd
+    parsed(experience_build.GATE_REF, refs["gate_results"])
+    parsed(experience_build.NORNYX_GATE_REF, refs["governance_validation"])
+
+
+def test_f5_the_build_route_and_the_projection_name_the_same_brd_sentence(
+        tmp_path: Path):
+    """`build_brd_refusal`'s docstring claimed the route and the projection
+    say the same thing about the same file, and for an ABSENT file they did
+    not: the route said "no BRD.md in the project; derive it first" while the
+    blocker list said "...before confirming the scope" -- the scope variant,
+    to a reader being sent toward the build.
+
+    The claim is made TRUE rather than narrowed, which is the direction this
+    slice is about: `build_blockers` takes its sentence from the one function
+    the route refuses with.
+    """
+    for brd in (journey.BrdState.absent(), journey.BrdState.stale("f" * 64)):
+        document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}},
+                    "digest_chain": ["a" * 64]}
+        assert journey.build_blockers(document, brd) == (
+            journey.build_brd_refusal(brd),
+        ), brd
+
+    # And through the real surface, which is where it was measured: at CONFIRM
+    # with no BRD.md at all, the route's refusal and the page's blocker are one
+    # sentence.
+    client = _client(tmp_path)
+    _confirmed(client)
+    (tmp_path / "BRD.md").unlink()
+
+    view = _journey(client)
+    refused = client.post("/api/build", json={"actor": HUMAN})
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["refused"] == journey._BRD_ABSENT_BUILD
+    assert view["blockers"] == [journey._BRD_ABSENT_BUILD], view
+
+    # The scope variant is still what a reader BEFORE CONFIRM is told, because
+    # that reader is heading for a scope confirmation and not for a build.
+    assert journey.scope_blockers(
+        {"authoritative": {"intent": "x", "provider": {"name": "codex"}}},
+        journey.BrdState.absent(),
+    ) == (journey._BRD_MISSING,)
+
+
+def test_f5_a_failing_scope_row_is_not_a_binding():
+    """The writer records `passed` as the MEASUREMENT -- a BRD that is not the
+    capsule's rendering presents failing evidence -- and the reader ignored it,
+    so a row the writer marked as not a licence was honoured as one.
+
+    NOT REACHABLE THROUGH ANY ROUTE: the contract refuses a failing
+    `brd_requirements` into CONFIRM outright, and `/api/build` measures the
+    BRD before `begin_build` is called. BUILD is where such a row can exist at
+    all, because BUILD requires no evidence and `advance` stores what it is
+    given -- which is exactly the row this reads.
+    """
+    human = Actor("human", "casey")
+    document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}},
+                "digest_chain": ["a" * 64]}
+    ref = journey.scope_ref(document, DERIVED_BRD)
+    state = start_experience(human, AT)
+    state = advance(state, "CONFIRM", human, AT,
+                    (EvidenceRef(kind="brd_requirements", ref=ref, passed=True),))
+    failing = advance(state, "BUILD", human, AT,
+                      (EvidenceRef(kind="brd_requirements", ref=ref, passed=False),))
+
+    assert failing["evidence"]["BUILD"][0]["passed"] is False, failing["evidence"]
+    assert journey.scope_binding(failing, "BUILD") is None, (
+        "a failing proof was read as the licence the build was given"
+    )
+    assert journey.ready_scope_refusal(failing, document, DERIVED_BRD) == (
+        journey._SCOPE_UNBOUND_READY
+    )
+
+    # The control: the same row, passing, IS the binding -- so the refusal
+    # above is about `passed` and not about anything else in the row.
+    passing = advance(state, "BUILD", human, AT,
+                      (EvidenceRef(kind="brd_requirements", ref=ref, passed=True),))
+    assert journey.scope_binding(passing, "BUILD") == journey.scope_current(
+        document, DERIVED_BRD)
+    assert journey.ready_scope_refusal(passing, document, DERIVED_BRD) is None
+
+
+def test_f5_a_stale_brd_at_confirm_does_not_headline_a_re_confirmation(
+        tmp_path: Path):
+    """`_NEXT_SCOPE_DRIFT` was selected at CONFIRM whenever the record was
+    unbound, which is true whichever half moved. When the BRD is the half that
+    moved, the headline said "Confirm the scope again" and the route refused
+    exactly that by name, while the blocker under it named the real next step.
+
+    Both halves are held: the capsule-moved case still gets the
+    re-confirmation headline, and the BRD-moved case gets the build's own
+    sentence for that file -- the one the route refuses with.
+    """
+    client = _client(tmp_path)
+    _confirmed(client)
+
+    # (a) THE BRD MOVED. No re-confirmation is offered, and none is suggested.
+    (tmp_path / "BRD.md").write_text(
+        "# BRD — Support Portal\n\n## BRD-001 Purpose\n\nSomething else.\n",
+        encoding="utf-8", newline="",
+    )
+    view = _journey(client)
+    assert view["stage"] == "CONFIRM" and view["actions"] == [], view
+    assert view["next"] == journey._BRD_STALE_BUILD, view["next"]
+    assert view["next"] != journey._NEXT_SCOPE_DRIFT, (
+        "the page tells the reader to confirm the scope again while the route "
+        "refuses a re-confirmation until the BRD is derived again"
+    )
+    assert view["next"] in view["blockers"], view
+    refused = client.post("/api/journey/confirm-scope", json={"actor": HUMAN})
+    assert refused.status_code == 409, refused.text
+    assert journey._BRD_STALE in refused.json()["refused"], refused.text
+
+    # (b) THE CAPSULE MOVED. A re-confirmation IS offered, and the headline
+    # that was always about this case is the one that survives.
+    _ok(client.post("/api/brd"))
+    _confirm_field(client, "intent", "Build a portal for a different team.")
+    _ok(client.post("/api/brd"))
+    view = _journey(client)
+    assert view["actions"] == ["confirm_scope"], view
+    assert view["next"] == journey._NEXT_SCOPE_DRIFT, view["next"]
