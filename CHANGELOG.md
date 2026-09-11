@@ -7,22 +7,22 @@
   refuses to license work over content the record does not name. Measured at
   `ea16d97` through the real gated surface, all five paths reachable through
   shipped routes, and the measurement transfers to the parent. WHAT MAKES IT
-  TRANSFER IS NOT A MODULE COUNT. Exactly one file under `src/` moved across
-  `ea16d97..894218f` -- `capsule_store.py` -- and it moved in one region:
-  `_remove_tree`'s retry for a directory that is not empty, and the two
-  constants and two imports that retry needs. Tracing the call events of each
-  path at this head, all five enter `capsule_store` and NONE of them enters
-  `_remove_tree` or `_solely_owned_file`, so the code that moved is not code
-  these paths run, and every other module they enter is byte-identical across
-  that range. THE MODULE COUNT IS NOT THE CLAIM: this entry has carried two
-  such counts and both were measured false, because which modules a path
-  enters is a property of how the path is DRIVEN and not of the path. Tracing
-  the five in-repo path tests at this head returns 9, 9, 9, 8 and 8 modules
-  under `src/` and a union of nine; driving the third of them through the
-  three readers named just below -- `/api/state`, the sharing preview and a
-  restart -- returns ten, the tenth being `experience_sharing`, which only the
-  sharing preview enters and which is byte-identical at `894218f` as well.
-  Neither rendering moves the transfer above, which is the point. The five: a
+  TRANSFER IS A MOVED REGION, NOT A TRACE. Exactly one file under `src/`
+  moved across `ea16d97..894218f`: `capsule_store.py`. Every line it changed
+  is inside `_remove_tree` -- its retry for a directory that is not empty,
+  together with the nested `_clear_and_retry` that retry installs as its
+  error handler -- or is one of two imports (`errno`, `time`) and two
+  constants (`_APPEARED_ATTEMPTS`, `_APPEARED_FIRST_PAUSE_SECONDS`) that
+  nothing but that retry reads. `_clear_and_retry` is DEFINED INSIDE
+  `_remove_tree` and named nowhere else, so it cannot be entered without it.
+  Two independently written traces of the path tests recorded no call into
+  that region. NO COUNT IS WRITTEN HERE, and the entry's own history is the
+  reason: this paragraph carried a per-path module count three times and
+  every version was measured false -- twice on the arithmetic, and once
+  because the fifth path it enumerates was traced through a different test
+  than the one that pins it. Which modules a path enters is a property of
+  how the path is DRIVEN; the moved region is a property of the revision
+  range, and it is the half that carries the transfer. The five: a
   `BRD.md` overwritten by hand after the scope confirmation
   was accepted at CONFIRM and handed to the build, and the real parser read
   the overwritten text; a further intent confirmed under CONFIRM left the page
