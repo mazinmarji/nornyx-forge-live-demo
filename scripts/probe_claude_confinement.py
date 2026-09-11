@@ -76,10 +76,14 @@ together with the exact dotted prefix in front of it, and nothing else about a
 call EXPRESSION written outside the seam -- in particular, not how many
 expressions the call is written across. A process-module attribute that is
 never written as a call -- a bare decorator, for instance -- is not seen at
-all, because the rule walks call nodes. The seam is not an exemption either:
-the pin holds `_run_cli` to exactly ONE spawn, so a second one written inside
-it is refused as well -- measured, `os.system` added there fails the pin with
-`'_run_cli' starts more than one process`. Measured:
+all, because the rule walks call nodes. The seam is no exemption from the
+spellings the rule DOES name: the pin holds `_run_cli` to exactly one spawn
+of a named spelling, so a second such call written inside it is refused as
+well -- measured, `os.system` added there fails the pin with `'_run_cli'
+starts more than one process`. A second call the rule does not name is not
+counted there either, for the same reason it is not caught anywhere else:
+measured, `WinExec`, `getattr(subprocess, "run")(...)` and
+`subprocess.run.__call__(...)` each leave the pin green inside the seam. Measured:
 `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused, because its
 final attribute is spelled `system` and the bare-name arm catches that
 spelling; `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is NOT
