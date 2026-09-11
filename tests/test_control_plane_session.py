@@ -136,8 +136,9 @@ def _app(tmp_path: Path, **kwargs):
     return create_app(tmp_path / "capsule", CONTRACTS, seal_dir=tmp_path / "seals", **kwargs)
 
 
-def _eligible(provider: str) -> GovernedEligibility:
-    return GovernedEligibility(provider=provider, eligible=True, confinement="established",
+def _eligible(provider: str, platform: str) -> GovernedEligibility:
+    return GovernedEligibility(provider=provider, platform=platform, eligible=True,
+                              confinement="established",
                               reason="deterministic seam; no provider executes")
 
 

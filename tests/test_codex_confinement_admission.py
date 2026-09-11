@@ -578,7 +578,7 @@ def test_the_table_may_not_claim_more_than_the_evidence():
     be rewritten by the person who closed it."""
     assessment = assess_confinement("codex", PLATFORM, _measurement())
     if not assessment.establishes:
-        assert PROVIDER_CONFINEMENT["codex"] != "established", (
+        assert PROVIDER_CONFINEMENT["codex"][PLATFORM] != "established", (
             "the confinement table says Codex is established, but the recorded "
             f"measurement leaves {assessment.unmet} unmet; promotion requires "
             "evidence, not an edit"
@@ -706,8 +706,17 @@ def test_the_witness_selection_can_never_name_a_retired_property():
 
 
 def test_codex_stays_declared_and_claude_stays_none():
-    assert PROVIDER_CONFINEMENT["codex"] == "declared"
-    assert PROVIDER_CONFINEMENT["claude"] == "none", (
+    """Assertions verbatim; the table gained a PLATFORM axis in Tranche H, so
+    each row named here is now the row for the platform it was measured on
+    rather than one that answered on every host.
+
+    `PLATFORM` and not `C3_PLATFORM`: the table is keyed by the AUTHORED word
+    `windows`, and `C3_PLATFORM` is the `sys.platform` spelling `win32` that
+    the control-plane record carries. The two are pinned not to combine, and
+    indexing this table with the wrong one is a KeyError rather than a quiet
+    answer about a platform nobody measured."""
+    assert PROVIDER_CONFINEMENT["codex"][PLATFORM] == "declared"
+    assert PROVIDER_CONFINEMENT["claude"][PLATFORM] == "none", (
         "this tranche measured Codex only; Claude was not measured and must "
         "not have moved"
     )
@@ -715,7 +724,7 @@ def test_codex_stays_declared_and_claude_stays_none():
 
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_both_providers_remain_ineligible_for_the_governed_build(provider):
-    verdict = governed_build_eligibility(provider)
+    verdict = governed_build_eligibility(provider, PLATFORM)
     assert verdict.eligible is False
     assert "no other provider is tried" in verdict.reason
 
@@ -724,18 +733,42 @@ def test_the_codex_refusal_now_names_the_measurement():
     """Claim hygiene: the refusal text must say what was actually found, so a
     reader is not left with the pre-tranche implication that nothing about
     Codex's sandbox had been established."""
-    reason = governed_build_eligibility("codex").reason
+    reason = governed_build_eligibility("codex", PLATFORM).reason
     assert "loopback" in reason
     assert "7ce306b1" in reason
     assert "CODEX_CONFINEMENT_MEASUREMENT" in reason
 
 
-def test_the_claude_refusal_makes_no_measurement_claim():
-    reason = governed_build_eligibility("claude").reason
-    assert "measured" not in reason, (
-        "nothing was measured about Claude in this tranche"
+def test_the_claude_refusal_names_its_measurement_and_claims_no_more():
+    """THE PIN THAT HAD TO MOVE, rewritten in place rather than deleted.
+
+    It used to assert `"measured" not in reason`, and that was right while
+    nothing about Claude had been measured. Tranche H measured Claude on the
+    platform Forge ships on and found no reachable mechanism, so the refusal
+    SHOULD now name its measurement -- and the old assertion would have gone
+    red for exactly the right reason.
+
+    Its purpose is unchanged and is what survives the rewrite: the reason a
+    person reads must claim no more than the evidence behind it. So it names
+    the document and the platform, it still says what the row means, and it
+    may not use either of the two words that would turn a measured absence
+    into a claim of enforcement.
+    """
+    reason = governed_build_eligibility("claude", PLATFORM).reason
+    assert "CLAUDE_CONFINEMENT_MEASUREMENT" in reason, (
+        "the Claude refusal names no measurement, which leaves a reader with "
+        "the pre-tranche implication that nobody has looked"
+    )
+    assert PLATFORM in reason, (
+        "a finding measured on one platform must say which; the row is "
+        "per-platform since Tranche H and the reason has to be too"
     )
     assert "no filesystem confinement" in reason
+    assert "established" not in reason
+    assert "confined" not in reason, (
+        "the refusal for a provider that nothing confines here uses the word "
+        "that means the opposite"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1048,7 +1081,7 @@ def test_both_providers_are_ineligible_and_the_reason_names_the_missing_property
     with confinement, and a refusal that reached for them would be borrowing an
     unrelated blocker to explain this one.
     """
-    verdict = governed_build_eligibility(provider)
+    verdict = governed_build_eligibility(provider, PLATFORM)
     assert verdict.eligible is False
     assert verdict.confinement != "established"
     assert "approval" not in verdict.reason.lower()
@@ -1232,7 +1265,7 @@ def test_an_absent_probe_record_is_inconclusive_and_never_a_refusal():
     assessment = assess_confinement("codex", PLATFORM, silent)
     assert assessment.establishes is False
     assert f"{AUTHORITY}: no competent observation" in assessment.reason
-    assert PROVIDER_CONFINEMENT["codex"] != "established"
+    assert PROVIDER_CONFINEMENT["codex"][PLATFORM] != "established"
 
 
 # ---------------------------------------------------------------------------
@@ -1883,10 +1916,10 @@ def test_the_recorded_c3_measurement_translates_to_the_verdict_it_states():
     assert "where 'denied' is required" in assessment.reason
 
     # And nothing moved.
-    assert PROVIDER_CONFINEMENT["codex"] == "declared"
-    assert PROVIDER_CONFINEMENT["claude"] == "none"
+    assert PROVIDER_CONFINEMENT["codex"][PLATFORM] == "declared"
+    assert PROVIDER_CONFINEMENT["claude"][PLATFORM] == "none"
     for name in ("codex", "claude"):
-        assert governed_build_eligibility(name).eligible is False
+        assert governed_build_eligibility(name, PLATFORM).eligible is False
 
 
 def test_the_confined_arm_of_the_recorded_measurement_says_what_it_found():
@@ -2082,12 +2115,12 @@ def test_the_c3_document_states_the_measured_record():
         "probe platform": (f"`{translated.platform}`",),
         "measurement revision": (f"`{abbreviated(measurement.measured_at_commit)}`",),
         "establishes": (f"`{str(assessment.establishes).lower()}`",),
-        "codex row": (f"`{PROVIDER_CONFINEMENT['codex']}`",),
-        "claude row": (f"`{PROVIDER_CONFINEMENT['claude']}`",),
+        "codex row": (f"`{PROVIDER_CONFINEMENT['codex'][PLATFORM]}`",),
+        "claude row": (f"`{PROVIDER_CONFINEMENT['claude'][PLATFORM]}`",),
         "codex eligible": (
-            f"`{str(governed_build_eligibility('codex').eligible).lower()}`",),
+            f"`{str(governed_build_eligibility('codex', PLATFORM).eligible).lower()}`",),
         "claude eligible": (
-            f"`{str(governed_build_eligibility('claude').eligible).lower()}`",),
+            f"`{str(governed_build_eligibility('claude', PLATFORM).eligible).lower()}`",),
         # -- subject binding -------------------------------------------------
         "measured revision": (f"`{abbreviated(document['measured_at_commit'])}`",),
         "parent revision": (f"`{abbreviated(document['parent_revision'])}`",),

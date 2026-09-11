@@ -98,12 +98,18 @@ def _clock():
     )
 
 
-def _seam_eligibility(provider: str) -> GovernedEligibility:
+def _seam_eligibility(provider: str, platform: str) -> GovernedEligibility:
     """The injectable seam executes no provider: the deterministic flow the
     tests install answers in the flow's shape and never runs an engineering
-    agent, so the governed-eligibility gate has nothing to decide."""
+    agent, so the governed-eligibility gate has nothing to decide.
+
+    It takes AND ECHOES the platform because the shipped decision does: a
+    one-argument seam would hide the surface handing a platform through, which
+    is the whole of what the platform axis added.
+    """
     return GovernedEligibility(
-        provider=provider, eligible=True, confinement="established",
+        provider=provider, platform=platform, eligible=True,
+        confinement="established",
         reason="deterministic flow at the injectable seam; no provider executes",
     )
 

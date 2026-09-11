@@ -93,6 +93,149 @@
   function the route refuses with, so the two agree for an absent file as well
   as a stale one. `scope_binding` honours `passed`.
 
+- Claude confinement measured on native Windows, recorded as NOT ESTABLISHED,
+  and the platform added to the eligibility decision (Tranche H, A-033). THE
+  FINDING: no operating-system confinement mechanism is REACHABLE for a Claude
+  Code worker on native Windows at `claude 2.1.211`. Parsed from the CLI's own
+  help, there is no `sandbox` subcommand and no `--sandbox` flag; a bounded
+  walk of five roots (1,854,211 entries, completed within its bound) plus a
+  PATH lookup found no broker binary for the bundled Windows sandbox runtime;
+  `net user` shows no dedicated sandbox account; the settings file carries no
+  `sandbox` key. Read from `ClaudeCodeWorker.run`'s AST, Forge's adapter asks
+  the operating system for nothing: fourteen isolation flags are absent, the
+  child gets the current environment minus `FORGE`/`FORGE_*`, `Bash` is
+  granted, and `cwd` is a working directory rather than a boundary. So
+  `PROVIDER_CONFINEMENT["claude"]["windows"]` STAYS `none` -- now as a measured
+  state rather than an untested default -- and both declared providers remain
+  ineligible for the governed build. What is NOT claimed is stated where it can
+  be read: Claude Code DOES ship a Windows sandbox implementation in its bundled
+  runtime library, which this repository READ in the executable's bytes rather
+  than exercising, so the finding is "no mechanism is reachable here", not "no
+  mechanism exists anywhere".
+  NO MODEL WAS INVOKED. Unlike Codex, whose probes were driven by the CLI's own
+  sandbox entry point with no model in the loop, Claude has no such entry point
+  on this platform: every forbidden operation would be a model decision. All six
+  probes therefore carry `attempt_observed: false` -- an honest absence, not a
+  refusal. `scripts/probe_claude_confinement.py` has exactly ONE
+  process-spawning seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES`
+  -- a closed list of complete argument tuples whose only option strings are
+  `--version` and `--help` -- and a structural test reads the module's own
+  syntax tree and refuses the process-creation shapes it names: a call whose
+  dotted name is one of the enumerated `subprocess`, `os`, `asyncio`, `pty`,
+  `runpy`, `multiprocessing` or `ctypes` spawners made outside that seam; an
+  argument built by formatting, concatenation or joining rather than taken from
+  that constant; and an environment read outside the one function allowed one.
+  Both `SPAWN_SHAPES` and `PERMITTED_ARGV_FLAGS` are held to literals declared
+  in the pin itself. It was falsified with seven specimens appended one at a
+  time (a literal `-p`; a shell string; `os.system`;
+  `subprocess.check_output` with `--print`; a concatenated `"-" + "p"`; an
+  environment-derived flag; a concatenated flag inside a `subprocess.run`
+  literal), each observed to go red and each restored.
+  THE STRUCTURAL RULE PROVES LESS THAN ITS NAME, and this entry now says so
+  where it used to say "any other spawn call". It is a structural rule over
+  named shapes, not a proof that no model can be invoked: it holds the shapes
+  it names and no others. WHAT DECIDES A CALL is the spelling of its final
+  attribute together with the exact dotted prefix in front of it, and nothing
+  else about a call EXPRESSION written outside the seam -- in particular, not
+  how many expressions the call is written across. A process-module attribute
+  that is never written as a call -- a bare decorator, for instance -- is not
+  seen at all, because the rule walks call nodes. The seam is no exemption
+  from the spellings the rule DOES name: the pin holds `_run_cli` to exactly
+  one spawn of a named spelling, so a second such call written inside it is
+  refused as well -- measured, `os.system` added there fails the pin with
+  `'_run_cli' starts more than one process`. A second call the rule does not
+  name is not counted there either, for the same reason it is not caught
+  anywhere else: measured, `WinExec`, `getattr(subprocess, "run")(...)` and
+  `subprocess.run.__call__(...)` each leave the pin green inside the seam.
+  Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused
+  because its final attribute is spelled `system`, which the bare-name arm
+  catches, while `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is
+  not refused, because `WinExec` is not an enumerated spelling and
+  `windll.kernel32` is not an enumerated prefix. Both are a single expression
+  and both reach `ctypes`. An earlier version of this entry drew the line
+  between the one-expression and the two-step spelling of that class instead,
+  which read the accident of one specimen as a property of the rule; it was
+  false, and it is gone.
+  WHAT GOT PAST THE RULE IS A SAMPLE, NOT A BOUND. AT LEAST EIGHT spellings
+  walked past it in in-session adversarial sweeps -- past `ruff`,
+  `scripts/check_security.py` and `scripts/check_architecture.py` as well: a
+  spawner fetched by name through `getattr`; a process module reached through
+  `sys.modules` rather than imported and bound to a local before it is called;
+  a module-level alias the enumeration does not spell, called through the
+  alias; a `ctypes` handle bound to a local before it is called, and the
+  one-expression `WinExec` spelling above with it; a spawn shape carrying no
+  option string at all, which an allow-list inspecting only tokens that begin
+  with a hyphen cannot see; an extra attribute hop through
+  `subprocess.run.__call__`, which defeats the exact-prefix match; a subclass
+  of `subprocess.Popen`, whose base is an attribute and never a call the rule
+  can see; and -- different in kind from the other seven -- a call into Forge's
+  own already-imported `claude_worker` adapter, `_adapter.run(...)` on a bound
+  `ClaudeCodeWorker`, which spawns `claude -p <prompt>` from another module
+  while naming no process module here at all. THE LIST IS OPEN: it is what two
+  sweeps happened to try, not an enumeration of what survives.
+  None of the eight is present in the shipped harness, measured on that
+  module's own syntax tree: no `getattr` call, no `sys.modules` subscript, no
+  `ctypes` name, no assignment binding a spawner, no `.__call__` attribute and
+  no subclass of a process module; the adapter module is imported and
+  `_provider_env()` is called from it, but `ClaudeCodeWorker.run` -- the one
+  function there that spawns -- is only read, by `inspect.getsource`; and both
+  `standin_attempt` call sites fill the executable hole with the running
+  interpreter (`sys.executable`), so these are future-edit risks and not
+  defects in what ran.
+  THE CLAIM WAS CORRECTED, NOT THE MECHANISM: seven of the eight remain refused
+  by nothing here, the flagless shape is refused by the new shape-table literal
+  (adding a shape is a red test rather than a silent widening) but not by the
+  structural rule, and widening that rule is a separate slice with its own
+  review -- for which the adapter route is now a named requirement, because a
+  rule over one module's own syntax cannot see a call into another module that
+  spawns. A pin holds A-033 to naming all eight, scoped to that section, and a
+  second pin holds these three texts to the measured bound and refuses the
+  retired universal wording; a paraphrase it does not enumerate is not caught,
+  and what ties the claim to a measurement is the specimen table beside it.
+  `denied` is unreachable here for all five write
+  properties (no mechanism that could refuse is reachable) and for `control_plane_authority`
+  (no v1 producer state maps to it, and there is no separated Claude principal
+  to measure). The record's ambient-capability section is a CONTROL run with a
+  stand-in process, carries no vote, and a test proves its rows cannot be loaded
+  as probes: a stand-in process is not the provider.
+  THE PLATFORM AXIS, added because its absence FAILED OPEN. `assess_confinement`
+  was already platform-bound -- a `claude`/`linux` record that closes every
+  property establishes nothing about `claude` on `windows` -- while
+  `PROVIDER_CONFINEMENT` was a flat `provider -> state`, so a green taken on a
+  platform Forge does not ship on (and WSL2/Linux is exactly where Claude Code's
+  sandbox runs) could have been written into a row the served decision read on
+  every host. The table is now keyed provider -> platform,
+  `governed_build_eligibility(provider, platform)` takes a REQUIRED platform and
+  refuses an absent or unrecognised one by name rather than falling through to
+  whichever row exists, and `served_platform()` in `onboarding_app` is the single
+  derivation of the word (`win32 -> windows`, `linux -> linux`,
+  `darwin -> macos`, anything else to a word with no row). SERVED-SURFACE CHANGE:
+  `GovernedEligibility` gains a `platform` field, so `/api/state`'s eligibility
+  block now says which platform the decision was made for; the exact-keys
+  assertion in `tests/test_governed_provider_eligibility.py` was rewritten to
+  match rather than relaxed. `provider_contract` stays `layer.domain` -- the
+  platform arrives as data and the module reads no `sys`, which is now a GATE
+  rather than a habit: `scripts/check_architecture.py` carries a per-file
+  forbidden-dependency rule for the module (`sys`, `os`, `pathlib`, `platform`,
+  `subprocess`, `socket`, `shutil`, `importlib`, `tempfile`), falsified the way
+  its two neighbours were, by injecting `import sys` and `import pathlib` into
+  a copied tree and requiring the checker to report a violation. Measured
+  before the rule existed: those injections passed every architecture check.
+  The served refusal appends its measured finding on the REFUSED branch only,
+  because every finding in the table is written for a row that is not
+  established and a promotion would otherwise serve "is eligible ... The
+  property left unmet is ..." in one string.
+  New: `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`,
+  `docs/governance/claude_confinement_measurement.json`,
+  `scripts/probe_claude_confinement.py`,
+  `tests/test_claude_confinement_admission.py` (26 collected). The pin asserting
+  the Claude refusal made no measurement claim was REWRITTEN in place rather than
+  deleted: it now holds the reason to naming its measurement document and its
+  platform while still containing neither "established" nor "confined". Out of
+  scope and stated as such: no admission, no widening of
+  `CONFINEMENT_PROPERTIES` (which would strand Tranche C's record), no change to
+  the adapter's invocation, no `srt-win` provisioning, no WSL2 measurement.
+
 - Standing development obligations (PR #51, reconciled with main and
   repaired). A public-safe, provider-neutral mechanism for carrying standing
   development obligations across sessions, models, workstations and

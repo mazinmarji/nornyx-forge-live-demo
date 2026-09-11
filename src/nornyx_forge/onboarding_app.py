@@ -77,7 +77,12 @@ asks the Provider Contract's `governed_build_eligibility` whether the
 confirmed provider may execute on the governed path at all. The answer is
 Forge-owned data about what Forge has established of the provider's
 confinement; it is never read from the request, the capsule, the project
-directory or the provider. Today neither declared provider is eligible, so
+directory or the provider. The question is asked FOR A PLATFORM: confinement is
+a property of a provider under a particular operating system, and a measurement
+taken on one says nothing about another, so the surface derives this host's word
+once (`served_platform`) and hands it to the decision, which refuses a platform
+it has no row for by name rather than falling through to one it does.
+Today neither declared provider is eligible, so
 the governed build refuses -- explicitly, before the lifecycle moves and
 before any flow is constructed, with no fallback to another provider and no
 change of execution mode -- and the page says why. The injectable seam that
@@ -120,6 +125,7 @@ decorators sitting on top of it. It starts no process; serving it is the launche
 from __future__ import annotations
 
 import hashlib
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -177,6 +183,38 @@ from .experience_journey import (
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
 from .provider_contract import GovernedEligibility, governed_build_eligibility
+
+#: THE ONE PLACE THAT DECIDES WHICH PLATFORM WORD DESCRIBES THIS HOST.
+#:
+#: The Provider Contract's confinement table is keyed provider -> platform, and
+#: the decision takes the platform as DATA so the contract can stay a pure
+#: domain module that reads no `sys`, no process state and no filesystem. That
+#: makes the derivation a surface concern, and a derivation that happened in
+#: two places would be two answers waiting to disagree -- which is the shape of
+#: the defect the platform axis exists to close, one level up.
+#:
+#: `windows` is the authored word, matching `codex_confinement_measurement.json`
+#: and the table. It is deliberately NOT `sys.platform`'s `win32`: the
+#: repository carries both spellings, and a test holds them apart so a decision
+#: cannot come to rest on whichever file was edited first.
+PLATFORM_WORDS: Mapping[str, str] = {
+    "win32": "windows",
+    "linux": "linux",
+    "darwin": "macos",
+}
+
+
+def served_platform() -> str:
+    """The platform word this host's governed-build decision is made for.
+
+    An unrecognised host FAILS CLOSED rather than guessing: it gets a word that
+    has no row in any provider's table, so `governed_build_eligibility` refuses
+    it by name instead of falling through to whichever row exists. The word
+    carries the raw `sys.platform` so the refusal a reader sees names the host
+    it actually refused.
+    """
+    return PLATFORM_WORDS.get(sys.platform, f"unsupported:{sys.platform}")
+
 
 #: The honest words for lifecycle state that does not exist. A surface that
 #: invented a starting stage here would be reporting a workflow position
@@ -317,7 +355,8 @@ def create_app(
     flow_factory: Callable[..., Any] | None = None,
     *,
     seal_dir: Path,
-    eligibility: Callable[[str], GovernedEligibility] = governed_build_eligibility,
+    eligibility: Callable[[str, str], GovernedEligibility] = governed_build_eligibility,
+    platform: str | None = None,
 ) -> FastAPI:
     """The onboarding application over one capsule store and one contract set.
 
@@ -330,12 +369,16 @@ def create_app(
     governed build; the default is the Provider Contract's own decision and
     the shipped surface passes nothing else. A test that installs a
     deterministic flow at `flow_factory` passes its own, because that flow
-    executes no provider.
+    executes no provider. `platform` is the word that decision is made FOR,
+    defaulting to this host's; it is a parameter rather than a lookup at the
+    call site so a test can prove the surface serves the platform it was built
+    with instead of hard-coding one.
     """
     root = Path(capsule_root)
     contracts = Path(contracts_dir)
     seals = Path(seal_dir)
     at = clock if clock is not None else _now_iso
+    platform_word = served_platform() if platform is None else platform
     if flow_factory is None:
         from .development_flow import DevelopmentFlow
         flow_factory = DevelopmentFlow
@@ -449,7 +492,7 @@ def create_app(
         provider = document["authoritative"].get("provider")
         if provider is None:
             return None
-        return eligibility(provider["name"])
+        return eligibility(provider["name"], platform_word)
 
     def brd_state(document: Mapping[str, Any]) -> BrdState:
         """What BRD.md IS, measured against the capsule beside it.
@@ -917,7 +960,7 @@ def create_app(
                 # moves and before any flow exists: an ineligible provider is
                 # refused in the contract's words, nothing is tried in its
                 # place, and the lifecycle stays exactly where it was.
-                verdict = eligibility(provider["name"])
+                verdict = eligibility(provider["name"], platform_word)
                 if not verdict.eligible:
                     return JSONResponse(status_code=409, content={
                         "refused": verdict.reason, "eligibility": verdict.as_dict(),
