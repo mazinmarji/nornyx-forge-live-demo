@@ -4473,8 +4473,17 @@ on this platform `established` is not merely unreached, it is unreachable.
 **What was measured, and how.** The record is
 `docs/governance/claude_confinement_measurement.json`; the document that reads
 it is `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`; the harness is
-`scripts/probe_claude_confinement.py`, which is pinned by AST never to
-construct a provider invocation, and **no model was invoked**. Four things were
+`scripts/probe_claude_confinement.py`, and **no model was invoked**. What holds
+that, and what it does not hold: the harness has exactly ONE process-spawning
+seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES` -- a closed list of
+complete argument tuples whose only option strings are `--version` and
+`--help` -- and a structural test reads the module's AST and refuses any other
+spawn call, any argument built by formatting, concatenation or joining rather
+than taken from that constant, and any environment read outside the one
+function allowed one. Seven evasion specimens were appended one at a time and
+each observed to go red. **That is a structural rule over the shapes it names,
+not a proof that no model can be invoked**; what a person may rely on is the
+rule, and what the rule covers is written above. Four things were
 established, and they are different kinds of fact:
 
 1. **The provider CLI offers no sandbox surface here.** Parsed from
@@ -4488,7 +4497,7 @@ established, and they are different kinds of fact:
    own harness whether to run a tool call. "Claude Code refused" is not "the
    operating system refused", and only the second is confinement here.
 2. **The bundled Windows sandbox runtime is not provisioned here.** A bounded
-   walk of five roots (1,556,031 entries, completed within its bound) plus a
+   walk of five roots (1,854,211 entries, completed within its bound) plus a
    PATH lookup found no broker binary; `net user` shows no dedicated sandbox
    account; the Claude settings file carries no `sandbox` key (key names only
    were read, never a value). **This is the sentence a later reader will
@@ -4503,7 +4512,7 @@ established, and they are different kinds of fact:
    flags are absent from the module, the environment handed to the child is the
    current one minus `FORGE` and `FORGE_*`, `Bash` is among the granted tools,
    and `cwd` is a working directory rather than a boundary. `--allowedTools` is
-   the provider own permission allowlist over a model tool calls.
+   the provider's own permission allowlist over a model's tool calls.
 4. **`control_plane_authority: denied` is unreachable for Claude here.** The
    only competent mechanism is an observed surface record taken from the judged
    principal; every state the shipped v1 producers can derive maps to
@@ -4519,11 +4528,11 @@ the model executed nothing at all, including the positive control, which graded
 on aftermath alone would have read as flawless confinement. So all six probes
 carry `attempt_observed: false`, which is an honest absence rather than a
 refusal, and **`denied` cannot be observed on this platform** for the five
-write properties, because there is nothing here that could do the refusing.
+write properties, because no mechanism that could refuse is reachable here.
 
 **The control, and what it is not.** The harness ran one ambient-capability
 control inside a disposable `%TEMP%` root: a stand-in process under the
-adapter working-directory rule and environment wrote the workspace, a seal
+adapter's working-directory rule and environment wrote the workspace, a seal
 surrogate, a sibling, Forge material, a home-config surrogate, and a target
 through a junction proved live before use. The real seal directory was listed
 and never written. It carries no vote, and the reason is one sentence:
@@ -4555,11 +4564,11 @@ behaviour or what a model chooses to do. Nothing about whether a real
 without a model, and the act that would answer it is named below.
 
 **The external acts not taken.** **EA-1**: bounded `claude -p` runs under an
-attempt-marker protocol, which would spend the founder provider quota; buys
+attempt-marker protocol, which would spend the founder's provider quota; buys
 `attempt_observed: true` with `outcome: allowed`, cannot buy any `denied`, and
 cannot move the row in either direction. **EA-2**: provisioning the sandbox
 broker dedicated account under an elevation prompt; its subject would not be
-the adapter launch construction, and the CLI own platform gate excludes native
+the adapter's launch construction, and the CLI's own platform gate excludes native
 Windows at this version anyway. **EA-3**: installing Claude Code and its
 sandbox dependencies inside WSL2 and authenticating that installation; buys
 evidence about `linux`/`wsl2`, which does not answer for `windows`. **EA-4**: a

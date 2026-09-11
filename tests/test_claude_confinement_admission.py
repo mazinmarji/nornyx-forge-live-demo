@@ -4,7 +4,8 @@ THE FINDING, stated first so nothing below has to be read to reach it. No
 operating-system confinement mechanism is reachable for a Claude Code worker on
 native Windows at the measured version. The CLI exposes no `sandbox`
 subcommand and no `--sandbox` flag, the bundled Windows sandbox runtime's
-broker binary is not on disk here, the dedicated sandbox account it requires is
+broker binary was not found within a bounded search of the named roots and is
+not on PATH, the dedicated sandbox account it requires is
 not provisioned, and Forge's own adapter asks the operating system for nothing:
 its command line carries `--allowedTools`, which is Claude Code's own
 permission allowlist over the MODEL's tool calls, and a working directory,
@@ -47,7 +48,10 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -95,8 +99,109 @@ ISOLATION_FLAGS = (
 #: red test in this file rather than a silent licence to spend quota.
 PERMITTED_ARGV_FLAGS = ("--version", "--help")
 
-#: The call names whose first positional argument is an argv.
-_ARGV_CALLS = {"run", "Popen", "_run"}
+#: The ONE function in the harness that may start a process.
+SPAWN_SEAM = "_run_cli"
+
+#: The only function allowed to read the environment, and what it reads it for:
+#: `adapter_construction` compares `os.environ` against the adapter's own
+#: filtered environment to report which variables Forge drops. The result is a
+#: list of NAMES in the record, and a test below proves it reaches no argv.
+ENVIRONMENT_READERS = frozenset({"adapter_construction"})
+
+#: EVERY SPELLING BY WHICH A PROCESS CAN BE STARTED, enumerated HERE rather than
+#: imported from the harness: a pin that read its subject's own list of what to
+#: refuse is a pin the subject can switch off. The previous version of this pin
+#: watched three call NAMES (`run`, `Popen`, `_run`), and an independent review
+#: walked past it with `os.system`, `subprocess.check_output([exe, "--print",
+#: prompt])` and a concatenated `"-" + "p"` -- each of which also passed `ruff`,
+#: `scripts/check_security.py` and `scripts/check_architecture.py`.
+SUBPROCESS_SPAWNERS = frozenset({
+    "run", "Popen", "call", "check_call", "check_output",
+    "getoutput", "getstatusoutput",
+})
+OS_SPAWNERS = frozenset({
+    "system", "popen", "startfile", "fork", "forkpty",
+    "posix_spawn", "posix_spawnp",
+})
+#: `os.exec*` and `os.spawn*` are families, so they are matched by prefix.
+OS_SPAWN_PREFIXES = ("exec", "spawn", "posix_spawn")
+#: Modules whose callables create processes or load code. None may be imported,
+#: and `subprocess` only in its plain module form -- `from subprocess import
+#: check_output` would put a spawner behind a bare name.
+PROCESS_MODULES = frozenset({
+    "subprocess", "multiprocessing", "pty", "runpy", "ctypes", "asyncio",
+    "importlib",
+})
+PERMITTED_PROCESS_IMPORT = "subprocess"
+#: String-building method names. A built string is a string a reader cannot
+#: check against the allow-list.
+STRING_BUILDING_METHODS = frozenset({"format", "join"})
+#: Environment-read spellings.
+ENVIRONMENT_READS = frozenset({"os.environ", "os.getenv", "os.environb",
+                               "os.putenv", "os.unsetenv"})
+
+
+def _dotted(node: ast.AST) -> str:
+    """`subprocess.run` for an Attribute chain, `run` for a bare Name."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _starts_a_process(dotted: str) -> bool:
+    """Whether a call by this dotted name can create a process."""
+    module, _, attr = dotted.rpartition(".")
+    root = module.split(".")[0]
+    if module == "subprocess":
+        return attr in SUBPROCESS_SPAWNERS
+    if module == "os":
+        return attr in OS_SPAWNERS or attr.startswith(OS_SPAWN_PREFIXES)
+    if module == "asyncio":
+        return attr.startswith("create_subprocess")
+    if root in {"pty", "runpy", "multiprocessing", "ctypes"}:
+        return True
+    if not module:
+        # A bare spawner name can exist only if it was imported directly, which
+        # the import rule refuses -- so this arm is the second line, not the
+        # first. `__import__` is here for the same reason.
+        return attr in SUBPROCESS_SPAWNERS | OS_SPAWNERS | {"__import__"}
+    return False
+
+
+def _builds_a_string(node: ast.AST) -> bool:
+    """An f-string, a `+`/`%` expression, or a `.format()`/`.join()` call."""
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in STRING_BUILDING_METHODS
+    )
+
+
+def _harness_tree() -> ast.Module:
+    return ast.parse(HARNESS.read_text(encoding="utf-8"), filename=str(HARNESS))
+
+
+def _harness_functions(tree: ast.Module) -> dict[str, ast.AST]:
+    return {node.name: node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def _owner_of(tree: ast.Module) -> dict[int, str]:
+    """Which function each node sits inside, keyed by object id. Module-level
+    nodes are absent from the mapping, which is itself a refusal: a spawn at
+    module level belongs to no function and so is not the seam."""
+    owner: dict[int, str] = {}
+    for name, function in _harness_functions(tree).items():
+        for node in ast.walk(function):
+            owner[id(node)] = name
+    return owner
 
 
 def _record() -> dict:
@@ -241,18 +346,26 @@ def test_the_claude_row_stays_none_while_the_assessment_fails():
 # H2  the harness cannot spend quota
 # ---------------------------------------------------------------------------
 
-def test_the_harness_constructs_no_provider_invocation():
-    """PIN (v). AST, not substring: the module is parsed and every argv it
-    builds is read.
+def test_the_harness_has_one_process_spawning_seam():
+    """PIN (v), first arm. A STRUCTURAL RULE OVER THE SHAPES IT NAMES, and not
+    a proof that no model can be invoked.
 
     A harness that could send a prompt to a provider is a harness that can
-    spend the founder's quota, and quota is an external act. This reads every
-    call whose first positional argument is an argv, and refuses any option
-    constant outside the closed list -- `-p` above all. It also refuses an argv
-    assembled from a variable anywhere but the single dispatcher, because an
-    argv that cannot be read cannot be checked.
+    spend the founder's quota, and quota is an external act. What this measures
+    is that the module contains exactly one function able to start a process,
+    and that no import puts another spelling within reach. What it does NOT
+    measure is that the property holds under every possible evasion: an earlier
+    version of this pin watched three call names, and three specimens walked
+    past it. The rule below names the spellings it refuses; a spelling it does
+    not name is not refused, and that is the honest bound of it.
     """
-    tree = ast.parse(HARNESS.read_text(encoding="utf-8"), filename=str(HARNESS))
+    tree = _harness_tree()
+    owner = _owner_of(tree)
+    functions = _harness_functions(tree)
+    assert SPAWN_SEAM in functions, (
+        f"the harness has no {SPAWN_SEAM!r}; this pin is reading the wrong file "
+        "or the seam has been renamed without renaming the rule"
+    )
 
     # The blanket check first: the prompt flag must not appear as a string
     # anywhere in the module, in an argv or out of one.
@@ -263,58 +376,237 @@ def test_the_harness_constructs_no_provider_invocation():
         "measurement that can start a provider session is not model-free"
     )
 
-    # Then every argv, read where it is built.
-    indirections: list[str] = []
-    checked = 0
-    for function in [n for n in ast.walk(tree)
-                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Call) or not node.args:
-                continue
-            name = (node.func.attr if isinstance(node.func, ast.Attribute)
-                    else node.func.id if isinstance(node.func, ast.Name) else None)
-            if name not in _ARGV_CALLS:
-                continue
-            argv = node.args[0]
-            if isinstance(argv, (ast.List, ast.Tuple)):
-                checked += 1
-                for element in argv.elts:
-                    if not (isinstance(element, ast.Constant)
-                            and isinstance(element.value, str)):
-                        continue
-                    if element.value.startswith("-"):
-                        assert element.value in PERMITTED_ARGV_FLAGS, (
-                            f"the harness builds an argv containing "
-                            f"{element.value!r}, which is not one of "
-                            f"{PERMITTED_ARGV_FLAGS}"
-                        )
-            elif isinstance(argv, ast.Name):
-                indirections.append(function.name)
-            else:
-                pytest.fail(
-                    f"{function.name} builds an argv this pin cannot read "
-                    f"({type(argv).__name__}); an argv that cannot be read "
-                    "cannot be checked"
+    # No import may put a second spawning spelling within reach.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                assert root not in PROCESS_MODULES or (
+                    alias.name == PERMITTED_PROCESS_IMPORT and alias.asname is None
+                ), (
+                    f"the harness imports {alias.name!r}, which can start a "
+                    f"process; only a plain `import {PERMITTED_PROCESS_IMPORT}` "
+                    "is allowed, and only because the seam needs it"
                 )
-    assert checked >= 3, (
-        f"only {checked} argv literals were found in the harness, so this pin "
-        "is probably reading the wrong file or the wrong call names"
+        if isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            assert root not in PROCESS_MODULES, (
+                f"the harness imports names out of {node.module!r}; a spawner "
+                "behind a bare name is a spawner this pin would have to guess at"
+            )
+
+    # Every process-creating call sits inside the seam, and nowhere else.
+    spawns: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        dotted = _dotted(node.func)
+        if not _starts_a_process(dotted):
+            continue
+        spawns.setdefault(owner.get(id(node), "<module level>"), []).append(dotted)
+    assert set(spawns) == {SPAWN_SEAM}, (
+        f"process-creating calls were found outside {SPAWN_SEAM!r}: "
+        f"{ {name: sorted(calls) for name, calls in sorted(spawns.items()) if name != SPAWN_SEAM} }"
     )
-    assert set(indirections) == {"_run"}, (
-        "exactly one dispatcher may take an argv as a variable, and every other "
-        f"call site must build it literally: {sorted(set(indirections))}"
+    assert len(spawns[SPAWN_SEAM]) == 1, (
+        f"{SPAWN_SEAM!r} starts more than one process ({sorted(spawns[SPAWN_SEAM])}); "
+        "one seam means one call, so there is one argv to read"
     )
+
+
+def test_the_seam_starts_only_an_allow_listed_argv_and_builds_no_string():
+    """PIN (v), second arm: the seam's argv comes from the constant.
+
+    The spawn's first positional argument is the local `argv`, `argv` is bound
+    from `SPAWN_SHAPES`, and the seam performs no string formatting,
+    concatenation or joining ANYWHERE -- so there is no expression in it
+    through which a built argument could reach an argv. That last rule is why
+    the seam delegates its refusal and failure messages to helpers: a message
+    is a built string, and the function that starts processes builds none.
+    """
+    tree = _harness_tree()
+    seam = _harness_functions(tree)[SPAWN_SEAM]
+
+    spawn = next(node for node in ast.walk(seam)
+                 if isinstance(node, ast.Call) and _starts_a_process(_dotted(node.func)))
+    assert spawn.args and isinstance(spawn.args[0], ast.Name), (
+        "the seam's argv is not a plain local name, so this pin cannot say "
+        "where it came from -- and an argv that cannot be read cannot be checked"
+    )
+    argv_name = spawn.args[0].id
+
+    bindings = [node for node in ast.walk(seam)
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == argv_name
+                        for target in node.targets)]
+    assert len(bindings) == 1, (
+        f"{argv_name!r} is bound {len(bindings)} times in the seam; one binding "
+        "means one place to read the argv's origin"
+    )
+    # TWO LINKS, BOTH READ: `argv` is bound from a local, and that local is bound
+    # from a subscript of the shape constant. A pin that only checked the local's
+    # NAME appeared here would pass on any local spelled the same way.
+    locals_used = {node.id for node in ast.walk(bindings[0].value)
+                   if isinstance(node, ast.Name)}
+    origins = {
+        _dotted(node.value.value)
+        for node in ast.walk(seam)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Subscript)
+        and any(isinstance(target, ast.Name) and target.id in locals_used
+                for target in node.targets)
+    }
+    assert origins == {"SPAWN_SHAPES"}, (
+        f"{argv_name!r} is not built from the shape constant ({sorted(origins)}); "
+        "the seam may start only an argv the allow-list names"
+    )
+    # And every token written into it afterwards is a plain local, not an
+    # expression: `argv[index] = token`, never `argv[index] = something + flag`.
+    for store in [node for node in ast.walk(seam) if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Subscript)
+                          and _dotted(target.value) == argv_name
+                          for target in node.targets)]:
+        assert isinstance(store.value, ast.Name), (
+            "a token is written into the seam's argv from an expression rather "
+            f"than a checked local: {ast.dump(store.value)}"
+        )
+
+    built = [ast.dump(node) for node in ast.walk(seam) if _builds_a_string(node)]
+    assert built == [], (
+        f"{SPAWN_SEAM!r} builds strings, so an argument could be assembled "
+        f"inside the one function that starts processes: {built}"
+    )
+
+
+def test_no_call_site_hands_the_seam_a_built_argument():
+    """PIN (v), third arm: every caller names a shape and passes no built string.
+
+    `_run_cli("claude_version", located)` is checkable by reading. `_run_cli(
+    "claude_version", exe + flag)` is not, and neither is a shape name computed
+    at runtime. Both are refused here.
+    """
+    tree = _harness_tree()
+    from probe_claude_confinement import SPAWN_SHAPES  # noqa: PLC0415
+
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and _dotted(node.func) == SPAWN_SEAM]
+    assert len(calls) >= 5, (
+        f"only {len(calls)} call sites of {SPAWN_SEAM!r} were found, so this pin "
+        "is probably reading the wrong file"
+    )
+    for call in calls:
+        assert call.args, f"{SPAWN_SEAM} was called with no shape name"
+        shape = call.args[0]
+        assert isinstance(shape, ast.Constant) and isinstance(shape.value, str), (
+            "a shape name computed at runtime is a shape no reader can check "
+            "against the allow-list"
+        )
+        assert shape.value in SPAWN_SHAPES, (
+            f"{shape.value!r} is not a shape the harness declares"
+        )
+        for argument in call.args[1:] + [keyword.value for keyword in call.keywords]:
+            built = [ast.dump(node) for node in ast.walk(argument)
+                     if _builds_a_string(node)]
+            assert built == [], (
+                f"a call to {SPAWN_SEAM} with shape {shape.value!r} passes an "
+                f"argument built by formatting, concatenation or joining: {built}"
+            )
+
+
+def test_the_harness_reads_no_environment_into_an_argv():
+    """PIN (v), fourth arm: the environment cannot become a flag.
+
+    An environment-derived option string is the evasion that leaves no literal
+    to find. Exactly one function here may read the environment, it reads it to
+    report which variables Forge's adapter DROPS, and it starts no process.
+    """
+    tree = _harness_tree()
+    owner = _owner_of(tree)
+
+    readers: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        dotted = _dotted(node) if isinstance(node, (ast.Name, ast.Attribute)) else ""
+        if dotted in ENVIRONMENT_READS:
+            readers.setdefault(owner.get(id(node), "<module level>"), []).append(dotted)
+    unexpected = sorted(name for name in readers if name not in ENVIRONMENT_READERS)
+    assert unexpected == [], (
+        "the harness reads the environment outside the functions allowed to: "
+        f"{unexpected}"
+    )
+    functions = _harness_functions(tree)
+    for reader in sorted(set(readers)):
+        seam_calls = [node for node in ast.walk(functions[reader])
+                      if isinstance(node, ast.Call) and _dotted(node.func) == SPAWN_SEAM]
+        assert seam_calls == [], (
+            f"{reader!r} both reads the environment and starts a process, so a "
+            "value from the environment has a route into an argv"
+        )
 
 
 def test_the_harnesss_permitted_flags_are_the_ones_this_module_allows():
     """The allowlist is declared in TWO places on purpose. A pin that read the
-    harness's own constant would pass whatever the harness put in it."""
-    from probe_claude_confinement import PERMITTED_ARGV_FLAGS as declared  # noqa: PLC0415
+    harness's own constant would pass whatever the harness put in it.
+
+    The second assertion is what makes the first load-bearing now that argvs
+    are selected rather than written: every option string across EVERY declared
+    shape must be one of these, so a new shape cannot smuggle a flag in.
+    """
+    from probe_claude_confinement import (  # noqa: PLC0415
+        PERMITTED_ARGV_FLAGS as declared,
+    )
+    from probe_claude_confinement import SPAWN_SHAPES  # noqa: PLC0415
 
     assert tuple(declared) == PERMITTED_ARGV_FLAGS, (
         "the harness widened the set of option flags it may construct; every "
         "addition is a step toward a provider session and belongs in a diff "
         "that says so"
+    )
+    options = {token for shape in SPAWN_SHAPES.values() for token in shape
+               if token.startswith("-")}
+    assert options == set(PERMITTED_ARGV_FLAGS), (
+        "a declared spawn shape carries an option string outside the allow-list: "
+        f"{sorted(options - set(PERMITTED_ARGV_FLAGS))}"
+    )
+
+
+def test_the_harness_reads_the_repositorys_revision_not_the_callers():
+    """`measured_at_commit` is the subject revision A-024's version-is-a-subject
+    rule turns on, and a record carrying `null` there looks complete.
+
+    Measured before the repair: `_head_revision()` ran `git rev-parse HEAD` in
+    the CURRENT WORKING DIRECTORY, so a harness run from anywhere outside the
+    checkout produced a complete-looking record with a `null` subject, silently.
+
+    This drives the harness's own function from a foreign working directory in
+    a bounded subprocess. It does NOT run `--print`: that would re-run the
+    bounded directory walk, which took over an hour on this host, and a test
+    that takes an hour is a test nobody runs.
+    """
+    foreign = Path(tempfile.mkdtemp(prefix="forgeH_foreign_cwd_"))
+    try:
+        control = subprocess.run(
+            [sys.executable, "-c", "import subprocess,sys;"
+             "sys.exit(subprocess.run(['git','rev-parse','HEAD'],"
+             "capture_output=True).returncode)"],
+            cwd=foreign, capture_output=True, timeout=120, check=False,
+        )
+        assert control.returncode != 0, (
+            f"{foreign} is inside a git repository, so this test would pass "
+            "even with the defect: it is measuring nothing"
+        )
+        measured = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, sys.argv[1]);"
+             "import probe_claude_confinement as p; print(p._head_revision())",
+             str(ROOT / "scripts")],
+            cwd=foreign, capture_output=True, text=True, timeout=300, check=False,
+        )
+        assert measured.returncode == 0, measured.stderr
+        revision = measured.stdout.strip()
+    finally:
+        shutil.rmtree(foreign, ignore_errors=True)
+    assert len(revision) == 40 and set(revision) <= set("0123456789abcdef"), (
+        "the harness read no revision from a foreign working directory, so a "
+        f"record taken from there would carry a null subject: {revision!r}"
     )
 
 
@@ -466,6 +758,75 @@ def test_the_platform_mechanism_field_says_it_and_carries_no_vote():
     assert "not 'no mechanism exists'" in field["what_is_not_being_claimed"]
     with pytest.raises((TypeError, KeyError)):
         ConfinementProbe(**field)
+
+
+def test_the_platform_mechanisms_finding_does_not_contradict_its_own_bound():
+    """The field a reader is most likely to quote must not assert the sentence
+    the record beside it records as NOT being claimed.
+
+    It did. `platform_mechanism.finding` said the vendor broker binary was "not
+    on disk" while `host.srt_win_search_bound.establishes` says "NOT 'absent
+    from this disk'" and the measurement document lists that same sentence
+    under "What is explicitly NOT claimed". The walk is BOUNDED -- depth-limited
+    below five named roots, plus PATH -- and a bounded walk that finds nothing
+    establishes "not found within that bound".
+    """
+    record = _record()
+    finding = record["platform_mechanism"]["finding"]
+    bound = record["host"]["srt_win_search_bound"]
+    for overstated in ("not on disk", "absent from this disk", "anywhere on this disk"):
+        assert overstated not in finding, (
+            f"the recorded finding claims {overstated!r}, which the search bound "
+            "beside it and the measurement document both say is not claimed"
+        )
+    assert "not found within" in finding, (
+        "the finding does not say what the bounded search established"
+    )
+    assert str(bound["entries_visited"]) in finding, (
+        "the finding names no bound, so a reader cannot tell how wide the "
+        "search that found nothing actually was"
+    )
+    assert str(bound["max_depth_below_each_root"]) in finding
+    assert bound["search_completed_within_bound"] is True, (
+        "the walk hit its own limit, so even 'not found within the bound' is "
+        "weaker than this finding says"
+    )
+
+
+def test_the_platform_mechanisms_three_sentences_move_together():
+    """`state`, `finding` and `what_is_not_being_claimed` are all DERIVED from
+    the same four signals, so a host on which a mechanism became reachable
+    cannot ship a record whose state says one thing and whose sentences beside
+    it were written for the other.
+
+    Driven rather than read: the harness's own deriving function is called with
+    a surface that reports a sandbox subcommand, and every one of the three
+    fields has to change.
+    """
+    from probe_claude_confinement import _platform_mechanism  # noqa: PLC0415
+
+    record = _record()
+    absent = _platform_mechanism(record["cli_surface"], record["host"])
+    assert absent["state"] == "absent"
+    assert absent == {key: record["platform_mechanism"][key] for key in absent}, (
+        "the shipped record's platform_mechanism is not what the harness's own "
+        "deriving function produces from the record's own inputs"
+    )
+
+    reachable = _platform_mechanism(
+        {**record["cli_surface"], "sandbox_subcommand": True}, record["host"])
+    assert reachable["state"] == "present"
+    assert reachable["carries_a_vote"] is False, (
+        "a reachable mechanism is still not a probe; nothing about this field "
+        "votes on any confinement property"
+    )
+    for key in ("finding", "what_is_not_being_claimed"):
+        assert reachable[key] != absent[key], (
+            f"{key} did not move with the state, so a future host would ship a "
+            "record contradicting itself"
+        )
+    assert "IS reachable" in reachable["finding"]
+    assert "a sandbox subcommand" in reachable["finding"]
 
 
 def test_the_ambient_control_cannot_be_loaded_as_probes():

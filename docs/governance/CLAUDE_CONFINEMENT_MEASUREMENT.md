@@ -3,7 +3,7 @@
 **Result: NOT ESTABLISHED.** `PROVIDER_CONFINEMENT["claude"]["windows"]` stays
 `none`. The governed basic-user build still executes no provider.
 
-Measured at `894218f9` on 2026-09-10 against `claude 2.1.211 (Claude Code)`,
+Measured at `3436b48c` on 2026-09-11 against `claude 2.1.211 (Claude Code)`,
 Windows 11 Home 10.0.22000. The data behind every claim below — and the full
 revision the measurement was taken at, which belongs in the record rather than
 in prose that goes stale on the next commit — is
@@ -11,15 +11,17 @@ in prose that goes stale on the next commit — is
 `scripts/probe_claude_confinement.py`.
 
 **No model was invoked.** Not by the harness, and not by the analysis behind it.
-What was run against the provider's CLI is `--version`, `--help` and `doctor` —
-a local health check that starts no session — plus reads of the shipped
-executable's own bytes and of host account and file listings. No prompt reached
-any provider.
+What the harness runs against the provider's CLI is `--version` and `--help`,
+and those two are the whole of its `PERMITTED_ARGV_FLAGS`; `doctor` — a local
+health check that starts no session — was run once by hand alongside the
+measurement and is not part of the record. Everything else is reads of the
+shipped executable's own bytes and of host account and file listings. No prompt
+reached any provider.
 
 This is not a split verdict like PA-01's. It is a single finding with an
 uncomfortable shape: **the criterion cannot be satisfied here, and it cannot be
 failed here either.** Five of its six properties require an operating system to
-refuse something, and on this platform there is nothing to do the refusing.
+refuse something, and on this platform no mechanism that could is reachable.
 
 ---
 
@@ -69,8 +71,8 @@ attempt a forbidden operation without a model in the loop.
 Converting the five write absences into observed counterexamples therefore
 costs provider quota, which is an external act. It is named as EA-1 below. It
 would buy `attempt_observed: true` with `outcome: allowed`; it could not buy a
-single `denied`, because no mechanism exists here to deny. **It cannot move the
-row in either direction.**
+single `denied`, because no mechanism is reachable here to deny. **It cannot
+move the row in either direction.**
 
 ---
 
@@ -99,7 +101,7 @@ observation. The row it would license stays `none`.
 |---|---|---|
 | Does the CLI expose a sandbox subcommand? | parsed from `claude --help` | no |
 | Does the CLI expose a `--sandbox` flag? | parsed from `claude --help` | no |
-| Is the bundled runtime's Windows broker binary on disk? | bounded walk of five roots, plus PATH | not found (1,556,031 entries visited, walk completed) |
+| Is the bundled runtime's Windows broker binary found under the searched roots? | bounded walk of five roots, plus PATH | not found (1,854,211 entries visited, walk completed within its bound) |
 | Is the dedicated sandbox OS account provisioned? | `net user` | no |
 
 The user's Claude settings file carries no `sandbox` key either — top-level key
@@ -240,7 +242,7 @@ task with an obvious answer.
   COMPLETES the five forbidden writes on native Windows. Spends the founder's
   provider quota. **Buys:** `attempt_observed: true` and `outcome: allowed`, an
   observed counterexample in place of an absence. **Cannot buy:** any `denied`,
-  because no mechanism exists to deny. **It cannot move the row in either
+  because no mechanism is reachable to deny. **It cannot move the row in either
   direction.**
 - **EA-2 (host administration; NOT recommended).** `srt-win install` — one
   elevation prompt — to provision the dedicated sandbox account. Even if it

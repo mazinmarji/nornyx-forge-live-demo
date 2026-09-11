@@ -600,6 +600,22 @@ forbidden = {
         "subprocess", "os", "pathlib", "shutil", "socket", "urllib",
         "requests", "httpx", "yaml", "sqlite3", "tempfile",
     },
+    # The provider contract decides governed-build eligibility from its own
+    # table, keyed provider -> platform. The platform word ARRIVES AS DATA:
+    # `onboarding_app.served_platform()` derives it once and hands it in, and
+    # the module's docstring, the CHANGELOG and A-033 all lean on this module
+    # reading no `sys`, no process state and no filesystem. The layer rules
+    # alone did not make that a gate — `layer.domain` here forbids starting a
+    # process, not reading ambient state — and an injected `import sys` plus a
+    # `pathlib.Path.cwd()` call passed every architecture check (Tranche H
+    # first review, P2). A second derivation inside this module would rebuild
+    # the platform-blind decision the axis exists to close, one level down, so
+    # the claim is made checkable here. Verified by injecting `sys` and
+    # `pathlib` and requiring a failure.
+    "src/nornyx_forge/provider_contract.py": {
+        "sys", "os", "pathlib", "platform", "subprocess", "socket", "shutil",
+        "importlib", "tempfile",
+    },
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative

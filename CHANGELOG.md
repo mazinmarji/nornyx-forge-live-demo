@@ -7,7 +7,7 @@
   FINDING: no operating-system confinement mechanism is REACHABLE for a Claude
   Code worker on native Windows at `claude 2.1.211`. Parsed from the CLI's own
   help, there is no `sandbox` subcommand and no `--sandbox` flag; a bounded
-  walk of five roots (1,556,031 entries, completed within its bound) plus a
+  walk of five roots (1,854,211 entries, completed within its bound) plus a
   PATH lookup found no broker binary for the bundled Windows sandbox runtime;
   `net user` shows no dedicated sandbox account; the settings file carries no
   `sandbox` key. Read from `ClaudeCodeWorker.run`'s AST, Forge's adapter asks
@@ -25,10 +25,20 @@
   sandbox entry point with no model in the loop, Claude has no such entry point
   on this platform: every forbidden operation would be a model decision. All six
   probes therefore carry `attempt_observed: false` -- an honest absence, not a
-  refusal -- and `scripts/probe_claude_confinement.py` is pinned by AST never to
-  construct a provider invocation, with the pin falsified by adding a prompt flag
-  and observing it go red. `denied` is unreachable here for all five write
-  properties (nothing could do the refusing) and for `control_plane_authority`
+  refusal. `scripts/probe_claude_confinement.py` has exactly ONE
+  process-spawning seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES`
+  -- a closed list of complete argument tuples whose only option strings are
+  `--version` and `--help` -- and a structural test reads the module's AST and
+  refuses any other spawn call, any argument built by formatting, concatenation
+  or joining rather than taken from that constant, and any environment read
+  outside the one function allowed one. It was falsified with seven specimens
+  appended one at a time (a literal `-p`; a shell string; `os.system`;
+  `subprocess.check_output` with `--print`; a concatenated `"-" + "p"`; an
+  environment-derived flag; a concatenated flag inside a `subprocess.run`
+  literal), each observed to go red and each restored. That is a structural
+  rule over the shapes it names, not a proof that no model can be invoked.
+  `denied` is unreachable here for all five write
+  properties (no mechanism that could refuse is reachable) and for `control_plane_authority`
   (no v1 producer state maps to it, and there is no separated Claude principal
   to measure). The record's ambient-capability section is a CONTROL run with a
   stand-in process, carries no vote, and a test proves its rows cannot be loaded
@@ -49,7 +59,17 @@
   block now says which platform the decision was made for; the exact-keys
   assertion in `tests/test_governed_provider_eligibility.py` was rewritten to
   match rather than relaxed. `provider_contract` stays `layer.domain` -- the
-  platform arrives as data and the module reads no `sys`.
+  platform arrives as data and the module reads no `sys`, which is now a GATE
+  rather than a habit: `scripts/check_architecture.py` carries a per-file
+  forbidden-dependency rule for the module (`sys`, `os`, `pathlib`, `platform`,
+  `subprocess`, `socket`, `shutil`, `importlib`, `tempfile`), falsified the way
+  its two neighbours were, by injecting `import sys` and `import pathlib` into
+  a copied tree and requiring the checker to report a violation. Measured
+  before the rule existed: those injections passed every architecture check.
+  The served refusal appends its measured finding on the REFUSED branch only,
+  because every finding in the table is written for a row that is not
+  established and a promotion would otherwise serve "is eligible ... The
+  property left unmet is ..." in one string.
   New: `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`,
   `docs/governance/claude_confinement_measurement.json`,
   `scripts/probe_claude_confinement.py`,

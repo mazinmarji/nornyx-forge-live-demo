@@ -41,14 +41,18 @@ or anything the provider says about itself. The table and the decision are
 keyed by PROVIDER AND PLATFORM, because confinement is a property of a
 provider under a particular operating system and evidence does not travel
 between them; the platform arrives as data, so this module still reads no
-`sys`, no process state and no filesystem. Today no adapter's confinement
+`sys`, no process state and no filesystem -- and that is a gate, not a habit:
+`scripts/check_architecture.py` carries a per-file forbidden-dependency rule
+for this module, falsified by injecting `sys` and requiring a failure. Today
+no adapter's confinement
 is established on any platform, and the two rows are unequal for different
 reasons. Claude has now been measured on the platform Forge ships on
-(Tranche H, native Windows, claude 2.1.211, at 894218f9): no
+(Tranche H, native Windows, claude 2.1.211, at 3436b48c): no
 operating-system confinement mechanism is REACHABLE there at all, so the row
 is a measured `none` rather than an untested one, and `established` is not
 merely unreached but unreachable -- five of the six properties would need an
-operating system to refuse something, and nothing on that platform can. Codex
+operating system to refuse something, and no mechanism that could is reachable
+there. Codex
 HAS also been measured
 (PA-01, Windows, codex-cli 0.128.0, at 7ce306b1): driven through the CLI's
 own `codex sandbox windows` entry point, with no model in the loop to decide
@@ -233,6 +237,11 @@ _CONFINEMENT_REASON: Mapping[str, str] = {
 #: Absent for a provider-platform pair Forge has not measured, and absence says
 #: exactly that.
 #:
+#: READ ONLY ON THE REFUSED BRANCH. Both findings below are written for a row
+#: that is not established -- each names the property left unmet -- so a row
+#: promoted to `established` with one of these still attached would serve a
+#: reason contradicting itself in a single sentence.
+#:
 #: Keyed by platform for the same reason the table above is: a finding measured
 #: on Windows is a fact about Windows, and attaching it to a decision made for
 #: another platform would be the header-re-subjecting-the-observations move
@@ -247,7 +256,7 @@ _CONFINEMENT_FINDING: Mapping[str, Mapping[str, str]] = {
         "because it was recorded as reached"
     )},
     "claude": {"windows": (
-        "measured on windows at 894218f9 (docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md): "
+        "measured on windows at 3436b48c (docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md): "
         "no operating-system confinement mechanism is reachable for this provider on native "
         "Windows at claude 2.1.211. The CLI exposes no sandbox subcommand and no sandbox flag, "
         "the bundled runtime's Windows broker binary was not found under the searched roots "
@@ -1363,9 +1372,17 @@ def governed_build_eligibility(provider: str, platform: str) -> GovernedEligibil
             f"build on platform {platform!r}: it {_CONFINEMENT_REASON[confinement]}; "
             "the build is refused and no other provider is tried"
         )
-    finding = _CONFINEMENT_FINDING.get(provider, {}).get(platform)
-    if finding:
-        reason = f"{reason}. {finding}"
+        # THE FINDING IS APPENDED ON THE REFUSED BRANCH ONLY, and the reason is
+        # measured rather than stylistic. Every finding in the table below is
+        # written for a row that is NOT established -- each one names the
+        # property left unmet. Appended on the eligible branch too, a promotion
+        # would serve one string reading "is eligible ... Forge has established
+        # that it is confined ... The property left unmet is ...", on the
+        # surface a basic user reads. A promotion that wants a finding beside it
+        # must write one that says what was established.
+        finding = _CONFINEMENT_FINDING.get(provider, {}).get(platform)
+        if finding:
+            reason = f"{reason}. {finding}"
     return GovernedEligibility(
         provider=provider, platform=platform, eligible=eligible,
         confinement=confinement, reason=reason,

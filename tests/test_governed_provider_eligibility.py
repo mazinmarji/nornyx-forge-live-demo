@@ -224,7 +224,10 @@ def test_e4_e11_neither_the_provider_nor_the_workspace_can_authorize_a_build(
     assert governed_build_eligibility("codex", PLATFORM).eligible is False
 
 
-def test_e4_the_decision_takes_only_the_provider_name_and_is_deterministic():
+def test_e4_the_decision_takes_the_provider_and_the_platform_and_nothing_else():
+    """The name used to say "only the provider name", which stopped being what
+    the body holds when Tranche H made the platform a required parameter: the
+    signature assertion beneath it was updated and the name was left behind."""
     signature = inspect.signature(governed_build_eligibility)
     assert list(signature.parameters) == ["provider", "platform"]
     first = governed_build_eligibility("claude", PLATFORM)
@@ -247,8 +250,18 @@ def test_e5_the_served_surface_decides_by_the_contract_and_nothing_else(tmp_path
     assert parameter.default is governed_build_eligibility
     served = Path(onboarding_serve.__file__).read_text(encoding="utf-8")
     assert "eligibility=" not in served, "the served composition must pass no other decision"
+    # A LINT OVER THE OBVIOUS SPELLINGS, not the gate. This list carried no
+    # `sys` term at all and `"from pathlib"` did not match `import pathlib`, so
+    # an injected `import sys` + `import pathlib` + `sys.platform` +
+    # `pathlib.Path.cwd()` passed it, `scripts/check_architecture.py` and 143
+    # architecture-facing tests (Tranche H first review, P2). What holds the
+    # property now is the per-file forbidden-dependency rule for this module in
+    # `scripts/check_architecture.py`, pinned by injection in
+    # `tests/test_architecture_security.py`. This stays as the cheap first
+    # refusal, with its blind spots closed.
     domain = Path(provider_contract.__file__).read_text(encoding="utf-8")
-    for forbidden in ("import os", "import subprocess", "from pathlib", "open(", "environ"):
+    for forbidden in ("import os", "import sys", "import subprocess", "import pathlib",
+                      "import platform", "from pathlib", "from os ", "open(", "environ"):
         assert forbidden not in domain, f"the decision's module reaches outside its table: {forbidden}"
 
 
@@ -509,17 +522,55 @@ def test_e13_the_decision_will_not_be_made_without_a_platform():
             governed_build_eligibility("claude", absent)
 
 
-def test_e13_a_platform_with_no_row_is_refused_by_name_and_claims_nothing():
+def test_e13_a_platform_with_no_row_is_refused_by_name_and_claims_nothing(monkeypatch):
     """An unrecognised host must fail CLOSED and say which word it failed on
-    -- never fall through to whichever row happens to be first."""
+    -- never fall through to whichever row happens to be first.
+
+    THE FALL-THROUGH HALF WAS NOT MEASURED HERE, and a review found it. An
+    injected `rows.get(platform, next(iter(rows.values())))` left this test
+    GREEN, because the generic not-eligible branch also interpolates the
+    platform, so the refusal still named `plan9`. Naming the platform is
+    therefore not the discriminator. Two things are: the refusal has to be the
+    NO-ROW refusal, which says so and names the platforms that do have rows;
+    and it has to stay a refusal when the row it would fall through to reads
+    `established`, which is the fail-open the platform axis exists to close.
+    """
     verdict = governed_build_eligibility("claude", "plan9")
     assert verdict.eligible is False
     assert verdict.confinement == "none"
     assert "plan9" in verdict.reason, "the refusal does not name the platform it refused"
+    assert "no confinement row for platform" in verdict.reason, (
+        "the refusal is not the no-row refusal, so the decision found a row for "
+        "a platform that has none: it fell through to another platform's "
+        "measurement"
+    )
+    for rowed in sorted(PROVIDER_CONFINEMENT["claude"]):
+        assert repr(rowed) in verdict.reason, (
+            f"the refusal does not say which platforms DO have rows ({rowed!r} "
+            "is missing), so a reader cannot tell what was and was not measured"
+        )
     assert "established" not in verdict.reason, (
         "a refusal for a platform nothing was measured on used the word that "
         "means the opposite"
     )
+    assert "confined" not in verdict.reason
+
+    # THE SAME QUESTION AGAINST A PROMOTED ROW. Nothing here promotes a shipped
+    # row: the table is replaced IN MEMORY for the length of this test, so what
+    # is measured is the decision's behaviour on a table that has one -- which
+    # is the table a later slice would ship, and the arrangement under which a
+    # fall-through stops being cosmetic and starts being an admission.
+    monkeypatch.setattr(provider_contract, "PROVIDER_CONFINEMENT", {
+        "claude": {"windows": "established"},
+        "codex": {"windows": "declared"},
+    })
+    fell_through = provider_contract.governed_build_eligibility("claude", "plan9")
+    assert fell_through.eligible is False, (
+        "a platform with no row read a row measured on another platform, and "
+        "that row was established: evidence travelled between platforms"
+    )
+    assert fell_through.confinement == "none"
+    assert "plan9" in fell_through.reason
 
 
 def test_e13_the_served_platform_word_and_the_table_answer_each_other():
@@ -530,31 +581,159 @@ def test_e13_the_served_platform_word_and_the_table_answer_each_other():
     DECIDED -- either it has a row, or the decision refuses it by name -- so
     there is no derivable host for which the decision falls through.
     """
-    from nornyx_forge.onboarding_app import PLATFORM_WORDS, served_platform  # noqa: PLC0415
+    from nornyx_forge.onboarding_app import PLATFORM_WORDS  # noqa: PLC0415
 
     derivable = set(PLATFORM_WORDS.values())
     rows = {platform for table in PROVIDER_CONFINEMENT.values() for platform in table}
     assert rows <= derivable, (
         f"the table carries rows no served host can ask about: {sorted(rows - derivable)}"
     )
-    # THE FALLBACK'S SHAPE, asserted rather than assumed. A first draft of this
-    # line read `current in derivable or current not in rows`, which is true of
-    # every possible value and therefore measured nothing. What matters is that
-    # an unrecognised host gets a word that NAMES it and that no table can
-    # carry, so the refusal a reader sees is about their host.
-    import sys as _sys  # noqa: PLC0415
-
-    current = served_platform()
-    assert current in derivable or current == f"unsupported:{_sys.platform}", (
-        f"served_platform() answered {current!r}, which is neither a derived "
-        "word nor the fail-closed spelling that names the host it could not map"
-    )
-
+    # THE SECOND TAUTOLOGY, FOUND BY A REVIEW AND REMOVED. This line used to
+    # read `current in derivable or current == f"unsupported:{sys.platform}"`,
+    # which is a RESTATEMENT OF `served_platform()`'S BODY: if `sys.platform`
+    # is a key the first disjunct holds by construction, and if it is not the
+    # second does, so the assertion was true for EVERY possible content of
+    # `PLATFORM_WORDS`. Measured: swapping `win32 -> linux` and
+    # `linux -> windows` left all 153 tests in the three modules green, and a
+    # Linux host then read the Windows-measured row through the served surface.
+    # The oracle has to live outside the code under test, so it is a LITERAL in
+    # `test_e13_the_platform_mapping_is_this_exact_table` and the per-key
+    # behaviour is driven under a monkeypatched `sys.platform` beside it.
     for word in sorted(derivable | {"a-host-nobody-has-heard-of"}):
         verdict = governed_build_eligibility("claude", word)
         assert verdict.platform == word
         if word not in PROVIDER_CONFINEMENT["claude"]:
             assert verdict.eligible is False and word in verdict.reason
+
+
+def test_a_promoted_row_would_not_serve_its_own_unmet_property(monkeypatch):
+    """The measured FINDING is appended on the refused branch only.
+
+    Every finding in `_CONFINEMENT_FINDING` is written for a row that is NOT
+    established: each one names the property left unmet. Appended on both
+    branches -- as it was -- a promotion would serve one string reading "is
+    eligible ... Forge has established that it is confined ... The property
+    left unmet is 'control_plane_authority'", on the surface a basic user
+    reads.
+
+    NOTHING IS PROMOTED HERE. The table is replaced in memory for the length of
+    this test; the shipped rows are untouched, and the assertion at the end
+    says so by reading them back.
+    """
+    monkeypatch.setattr(provider_contract, "PROVIDER_CONFINEMENT", {
+        "claude": {"windows": "none"},
+        "codex": {"windows": "established"},
+    })
+    promoted = provider_contract.governed_build_eligibility("codex", "windows")
+    assert promoted.eligible is True, "the in-memory promotion did not take effect"
+    assert "property left unmet" not in promoted.reason, (
+        "an eligible verdict serves a finding written for a refusal, so one "
+        "string says the provider is confined and that a property is unmet"
+    )
+    assert "not eligible" not in promoted.reason
+
+    # The refused twin still carries its finding, so this did not simply delete
+    # the evidence from the reason a person reads.
+    refused = provider_contract.governed_build_eligibility("claude", "windows")
+    assert refused.eligible is False
+    assert "CLAUDE_CONFINEMENT_MEASUREMENT" in refused.reason
+
+    monkeypatch.undo()
+    assert PROVIDER_CONFINEMENT == {
+        "claude": {"windows": "none"}, "codex": {"windows": "declared"},
+    }, "the shipped table did not survive this test unchanged"
+
+
+def test_e13_the_platform_mapping_is_this_exact_table():
+    """THE CENSUS LITERAL for the one derivation the platform axis rests on.
+
+    Written out here, in the same style as the confinement table's own literal
+    above, because an assertion derived from `PLATFORM_WORDS` cannot tell a
+    right mapping from a wrong one: its oracle would be the code under test.
+    Measured, before this existed: swapping two entries so `win32 -> linux` and
+    `linux -> windows` -- leaving the VALUE SET identical -- left every test in
+    this module and the two beside it green, while the shipped Windows host
+    reported its governed-build decision as made for `linux` and a Linux host
+    read the row measured on Windows. Editing the mapping is a legitimate act;
+    editing it without editing this line is not.
+    """
+    from nornyx_forge.onboarding_app import PLATFORM_WORDS  # noqa: PLC0415
+
+    assert PLATFORM_WORDS == {
+        "win32": "windows", "linux": "linux", "darwin": "macos",
+    }
+
+
+@pytest.mark.parametrize(("host", "word"), [
+    ("win32", "windows"), ("linux", "linux"), ("darwin", "macos"),
+])
+def test_e13_each_mapped_host_serves_its_own_word(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host: str, word: str):
+    """Each key SERVES its word -- through the derivation and through the
+    surface -- with the host driven rather than observed.
+
+    On a real host only one row of the mapping is ever exercised, so the other
+    two are held by nothing that runs. `sys.platform` is patched on the module
+    object `onboarding_app` reads, and the decision is then followed all the
+    way to `/api/state`'s eligibility block, because that is where a wrong word
+    would be read as an answer about this host.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    from nornyx_forge import onboarding_app  # noqa: PLC0415
+
+    monkeypatch.setattr(_sys, "platform", host)
+    assert onboarding_app.served_platform() == word
+
+    client = _client(tmp_path, RecordingFactory())
+    _confirmed(client, "claude")
+    served = _ok(client.get("/api/state"))["provider_eligibility"]
+    assert served["platform"] == word, (
+        f"a host reporting {host!r} had its governed-build decision made for "
+        f"{served['platform']!r} rather than {word!r}, so the served verdict "
+        "answers for a platform this host is not"
+    )
+    assert served == governed_build_eligibility("claude", word).as_dict()
+
+
+def test_e13_an_unmapped_host_fails_closed_and_reads_no_row(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """THE FALLBACK BRANCH, REACHED. It was asserted by nothing that ran.
+
+    Every host CI runs on (`win32`, `linux`) hits the mapping, so the default
+    was unexercised: a review replaced it with `PLATFORM_WORDS.get(sys.platform,
+    "windows")` and 47 tests stayed green while an unrecognised host silently
+    read the shipped Windows row. Here the host is driven to one nothing maps,
+    and the word it gets has to name the host, have no row in ANY provider's
+    table, and be refused by the decision without claiming anything.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    from nornyx_forge import onboarding_app  # noqa: PLC0415
+
+    monkeypatch.setattr(_sys, "platform", "freebsd14")
+    word = onboarding_app.served_platform()
+    assert word == "unsupported:freebsd14", (
+        f"an unrecognised host derived {word!r}; a fail-closed default must name "
+        "the host it could not map, and must not be a word any table carries"
+    )
+    for provider, rows in PROVIDER_CONFINEMENT.items():
+        assert word not in rows, f"{word!r} has a row under {provider!r}"
+
+    for provider in sorted(PROVIDER_CONFINEMENT):
+        verdict = governed_build_eligibility(provider, word)
+        assert verdict.eligible is False
+        assert verdict.confinement == "none"
+        assert verdict.platform == word
+        assert "freebsd14" in verdict.reason
+        assert "established" not in verdict.reason
+        assert "confined" not in verdict.reason
+
+    # And through the surface, because that is where it would be read.
+    client = _client(tmp_path, RecordingFactory())
+    _confirmed(client, "claude")
+    served = _ok(client.get("/api/state"))["provider_eligibility"]
+    assert served["platform"] == word and served["eligible"] is False
 
 
 def test_e13_the_surface_serves_the_platform_it_decided_for(tmp_path: Path):

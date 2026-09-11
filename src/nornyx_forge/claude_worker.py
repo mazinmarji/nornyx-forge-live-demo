@@ -37,8 +37,9 @@ open item A-025 used to carry here -- mirrored test for test in
 tests/test_codex_provider.py via the shared tests/provider_specimens.py -- so
 the two adapters agree on this point now.
 Neither adapter's confinement or eligibility is touched by either
-half: `PROVIDER_CONFINEMENT["claude"]` stays `none`, and reading a provider's
-bytes correctly says nothing about what that provider may reach.
+half: `PROVIDER_CONFINEMENT["claude"]["windows"]` stays `none` -- the table is
+keyed provider then platform since Tranche H -- and reading a provider's bytes
+correctly says nothing about what that provider may reach.
 
 WHERE FORGE'S ACCOUNT ENDS AND THE PROVIDER'S TEXT BEGINS IS MARKED. On the
 two branches that keep a decoded stream's text beside Forge's own account of

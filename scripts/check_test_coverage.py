@@ -832,8 +832,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # platform leaving this one ineligible, the required platform parameter,
     # an unrecognised platform refused by name, the derivation and the table
     # answering each other in both directions, and the served surface driven
-    # with an injected platform. Floor at band(21) = 19.
-    "tests/test_governed_provider_eligibility.py": 19,
+    # with an injected platform. Raised 19 -> 25 in TRANCHE H'S SECOND ROUND
+    # -- 6 more collected (27 total): the platform mapping pinned as a census
+    # LITERAL (the assertion it replaces restated `served_platform()`'s body and
+    # was true of every possible mapping), each of the three mapped hosts driven
+    # under a patched `sys.platform` through the derivation AND through
+    # `/api/state`, the fail-closed default reached at last, and a promoted row
+    # proved not to serve the finding written for its own refusal. Floor at
+    # band(27) = 25.
+    "tests/test_governed_provider_eligibility.py": 25,
     # PA-01's admission criterion: 38 collected before Tranche C, 66 after
     # slice C1 replaced one criterion, floor at band(66) = 60. The 28 new hold
     # the replacement itself: that `control_plane_authority` is required
@@ -873,8 +880,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # AST for any argv that could start a provider session, the ambient control
     # proved unloadable as probes, the adapter's command tuple beside its
     # fourteen absent isolation flags, and the A-033 limit pinned in the
-    # affirmative.
-    "tests/test_claude_confinement_admission.py": 24,
+    # affirmative. Raised 24 -> 29 in TRANCHE H'S SECOND ROUND -- 32 collected,
+    # net 6 (seven added, one replaced): the harness's single process-spawning
+    # seam and the import rule that keeps it single, the seam's argv taken from
+    # the shape constant with no string built inside it, no call site handing it
+    # a built argument, no environment read reaching an argv, the subject
+    # revision read in the repository rather than the caller's directory, and
+    # the two platform-mechanism pins (the finding derives from the search bound
+    # instead of contradicting it, and all three of its sentences move with the
+    # derived state). Floor at band(32) = 29.
+    "tests/test_claude_confinement_admission.py": 29,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1019,7 +1034,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
-    "tests/test_architecture_security.py": 7,
+    # 7 -> 9 in TRANCHE H'S SECOND ROUND: the provider contract's purity claim
+    # made checkable by a per-file forbidden-dependency rule, falsified by
+    # injecting `sys` and `pathlib` into a copied tree the way the two
+    # neighbouring entries were. Floor at band(9) = 9.
+    "tests/test_architecture_security.py": 9,
     "tests/test_authority_config.py": 12,
     "tests/test_brd_evidence_shape.py": 9,
     "tests/test_capability_binding.py": 9,
@@ -1659,12 +1678,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3564   (117 modules)
-#     sum of the module floors    3264
-#     band(3564) = ceil(0.9*n)    3208
-#     MINIMUM_COLLECTED           3272
+#     collected across tests/     3578   (117 modules)
+#     sum of the module floors    3277
+#     band(3578) = ceil(0.9*n)    3221
+#     MINIMUM_COLLECTED           3285
 #     above the module sum         8
-#     below what collects         292
+#     below what collects         293
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1873,7 +1892,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 300 in total, and the aggregate refuses
+# per-module bands already grant 301 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2021,7 +2040,33 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # `test_provider_execution.py` nor `test_control_plane_authority.py` gained a
 # row. NO PROVIDER ROW MOVED: `PROVIDER_CONFINEMENT` gained a PLATFORM axis and
 # `claude` on `windows` stays `none`, now as a measured state (A-033).
-MINIMUM_COLLECTED = 3272
+#
+# TRANCHE H'S SECOND ROUND ADDS FOURTEEN ROWS AND NO MODULE. Re-measured from a
+# fresh collection on this head, as above. `tests/test_claude_confinement_
+# admission.py` collects 26 -> 32 (floor band(26) = 24 -> band(32) = 29): the
+# harness's AST pin was REPLACED by four structural rules after an independent
+# review walked past it three ways, and two platform-mechanism pins plus a
+# subject-revision pin were added. `tests/test_governed_provider_eligibility.py`
+# collects 21 -> 27 (floor band(21) = 19 -> band(27) = 25): the platform mapping
+# as a census literal, its three keys driven under a patched `sys.platform`, the
+# fail-closed default reached, and the refused-branch finding. ONE MODULE
+# OUTSIDE THE TRANCHE MOVES: `tests/test_architecture_security.py` collects
+# 7 -> 9 (floor band(7) = 7 -> band(9) = 9) for the provider contract's purity
+# rule, which is an architecture-gate pin and belongs beside its two neighbours
+# rather than in a tranche module. NO OTHER MODULE MOVES.
+# The module-floor sum rises by 13 to 3277 -- 5, 6 and 2 -- and the aggregate
+# follows to 3285, holding the margin above the sum at 8. The suite collects
+# 3564 -> 3578 and 117 modules stand. The AGGREGATE band row goes 3208 -> 3221,
+# a rise of 13 that again matches the floor sum's rise by coincidence of where
+# `ceil(0.9n)` falls. The working room below what collects rises 292 -> 293,
+# because the collection rose by 14 while the aggregate rose by 13. THE SLACK
+# THE BANDS GRANT rises 300 -> 301: the admission module now sits 3 above its
+# band where it sat 2, and the other two sit exactly where they sat. NO SKIP IS
+# ADDED, and THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- its seven
+# modules still collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none
+# of them being a module this round touched. NO PROVIDER ROW MOVED:
+# `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`.
+MINIMUM_COLLECTED = 3285
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
