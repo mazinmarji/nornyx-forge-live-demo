@@ -6,23 +6,24 @@
   positions now NAME the content they were recorded about, and the surface
   refuses to license work over content the record does not name. Measured at
   `ea16d97` through the real gated surface, all five paths reachable through
-  shipped routes, and the measurement transfers to the parent. WHAT MAKES IT
-  TRANSFER IS A MOVED REGION, NOT A TRACE. Exactly one file under `src/`
-  moved across `ea16d97..894218f`: `capsule_store.py`. Every line it changed
-  is inside `_remove_tree` -- its retry for a directory that is not empty,
-  together with the nested `_clear_and_retry` that retry installs as its
-  error handler -- or is one of two imports (`errno`, `time`) and two
-  constants (`_APPEARED_ATTEMPTS`, `_APPEARED_FIRST_PAUSE_SECONDS`) that
-  nothing but that retry reads. `_clear_and_retry` is DEFINED INSIDE
-  `_remove_tree` and named nowhere else, so it cannot be entered without it.
-  Two independently written traces of the path tests recorded no call into
-  that region. NO COUNT IS WRITTEN HERE, and the entry's own history is the
-  reason: this paragraph carried a per-path module count three times and
-  every version was measured false -- twice on the arithmetic, and once
-  because the fifth path it enumerates was traced through a different test
-  than the one that pins it. Which modules a path enters is a property of
-  how the path is DRIVEN; the moved region is a property of the revision
-  range, and it is the half that carries the transfer. The five: a
+  shipped routes. THE ARGUMENT THAT CARRIES THOSE MEASUREMENTS IS NOT A MOVED
+  REGION, and an earlier version of this paragraph said it was. That version
+  was written when the parent was `894218f`, across which exactly one file
+  under `src/` had moved -- `capsule_store.py`, in a retry no path enters.
+  The parent is `0d60ccf` now, and FIVE files under `src/` moved across
+  `ea16d97..0d60ccf`: the capsule store, the Claude worker, the onboarding
+  application, its server, and the provider contract. Their changed lines
+  include `trigger_build`, which IS the route these observations were taken
+  through,
+  so the one-file argument is withdrawn rather than restated -- it was true of
+  a parent this branch no longer has.
+  What stands in its place needs no transfer at all. Each gap below is held by
+  a test that was shown RED against the pre-repair code AT THE HEAD WHERE ITS
+  REPAIR LANDED and green after, so the evidence for every repair is a
+  measurement at that head rather than an inference from `ea16d97`. The
+  `ea16d97` observations remain what they were: the record of how the gaps
+  presented when they were found.
+  The five: a
   `BRD.md` overwritten by hand after the scope confirmation
   was accepted at CONFIRM and handed to the build, and the real parser read
   the overwritten text; a further intent confirmed under CONFIRM left the page
