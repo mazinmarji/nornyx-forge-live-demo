@@ -21,6 +21,7 @@ J1..J18 name the regression proofs the slice was required to carry.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import threading
@@ -32,6 +33,7 @@ from session_client import authed_client
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge import onboarding_app as onboarding
+from nornyx_forge.brd_authoring import brd_from_capsule
 from nornyx_forge.capsule import (
     Actor,
     CapsuleTamperError,
@@ -45,6 +47,7 @@ from nornyx_forge.experience import (
     MANDATORY_STAGES,
     STAGES,
     TRANSITIONS,
+    EvidenceRef,
     ExperienceError,
     advance,
     start_experience,
@@ -60,6 +63,12 @@ HUMAN = {"kind": "human", "ident": "casey"}
 MODEL = {"kind": "model", "ident": "builder-model"}
 SYSTEM = {"kind": "system", "ident": "forge-core"}
 AT = "2026-09-03T09:00:00Z"
+
+#: What the surface measures about a BRD that IS the rendering of the
+#: capsule beside it. A placeholder digest, used where the subject of a
+#: test is the journey rather than the binding; tests whose subject IS
+#: the binding compute the real digest from the bytes they wrote.
+DERIVED = journey.BrdState.matching("0" * 64)
 
 #: Gate records in the exact shape `GateResult.__dict__` takes in a flow
 #: result. The nornyx one is recognised by its COMMAND, which is what the
@@ -99,7 +108,14 @@ def _seam_eligibility(provider: str) -> GovernedEligibility:
 
 class GovernedFlow:
     """Accepted, every gate passing, a Nornyx gate among them: the one shape
-    from which READY is reachable at all."""
+    from which READY is reachable at all.
+
+    It also REPORTS THE BRD IT READ, in `RequirementsModel.to_dict()`'s
+    shape, computed from the file it was actually pointed at -- which is what
+    the real flow records at `requirements_model.source_digest`. A double
+    that reported nothing would leave the comparison that consumes it
+    exercised by nothing at all.
+    """
 
     instances: list = []
 
@@ -108,9 +124,25 @@ class GovernedFlow:
         self.kwargs = kwargs
         type(self).instances.append(self)
 
+    def requirements_model(self) -> dict | None:
+        """What this flow says it parsed, or `None` when it was handed no
+        project directory to parse from -- honest absence, and the branch
+        that leaves the evidence reference unchanged."""
+        if self.root is None:
+            return None
+        text = (Path(self.root) / "BRD.md").read_text(encoding="utf-8")
+        return {"schema": "nornyx.forge.requirements.v1", "source": "BRD.md",
+                "source_digest": "sha256:" + hashlib.sha256(
+                    text.encode("utf-8")).hexdigest(),
+                "requirements": [], "assumptions": []}
+
     def result(self) -> dict:
-        return {"accepted": True, "gates": [dict(SUBJECT_GATE), dict(NORNYX_GATE)],
+        data = {"accepted": True, "gates": [dict(SUBJECT_GATE), dict(NORNYX_GATE)],
                 "execution_backend": "sequential"}
+        model = self.requirements_model()
+        if model is not None:
+            data["requirements_model"] = model
+        return data
 
     def run(self):
         return self.result()
@@ -252,6 +284,22 @@ def _stages(state: dict) -> list[tuple]:
     return [(e["event"], e["to"]) for e in state["history"]]
 
 
+def _scope_evidence(tmp_path: Path) -> EvidenceRef:
+    """The `brd_requirements` reference the surface would record for the
+    project in `tmp_path`: the capsule chain tip beside the digest of the BRD
+    on disk. Read from the BYTES, and formatted by the journey's own
+    `scope_ref` so a test cannot keep a private copy of the shape."""
+    document = CapsuleStore(tmp_path / "capsule").load()
+    digest = hashlib.sha256(
+        (tmp_path / "BRD.md").read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    return EvidenceRef(
+        kind="brd_requirements",
+        ref=journey.scope_ref(document, journey.BrdState.matching(digest)),
+        passed=True,
+    )
+
+
 def _journey(client: TestClient) -> dict:
     return _ok(client.get("/api/state"))["journey"]
 
@@ -268,9 +316,14 @@ def _legacy_project(tmp_path: Path, *, with_brd: bool = True) -> None:
     document = confirm(document, provider, Actor("human", "casey"), "2026-09-03T09:04:00Z")
     CapsuleStore(tmp_path / "capsule").initialize(document)
     if with_brd:
+        # THE DERIVED text, not a hand-written approximation of it. The
+        # docstring above always said a derived BRD; the file did not hold
+        # one, and the prerequisite could not tell the difference. It can
+        # now, so the specimen has to be what it claims to be. The C4 shape
+        # -- a BRD nobody derived -- is a specimen of its own in
+        # tests/test_content_bound_transitions.py.
         (tmp_path / "BRD.md").write_text(
-            "# BRD — Support Portal\n\n## BRD-001 Purpose\n\nBuild a portal.\n",
-            encoding="utf-8", newline="",
+            brd_from_capsule(document), encoding="utf-8", newline="",
         )
 
 
@@ -316,7 +369,8 @@ def test_j1_a_restart_still_reports_discover(tmp_path: Path):
     view = state["journey"]
     assert (view["tracking"], view["stage"], view["status"]) == ("recorded", "DISCOVER", "active")
     assert view["actions"] == [] and view["failure"] is None
-    assert view["blockers"] == list(journey.scope_blockers({"authoritative": {}}, False))
+    assert view["blockers"] == list(journey.scope_blockers(
+        {"authoritative": {}}, journey.BrdState.absent()))
     assert view["next"] == journey._NEXT["DISCOVER"]
 
 
@@ -429,11 +483,14 @@ def test_j4_the_contract_not_the_route_refuses_the_wrong_actor():
     """The mapping calls `advance` with the request's actor and adds no
     authority logic: the contract's own refusal is what comes back."""
     state = start_experience(Actor("human", "casey"), AT)
-    document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}}}
+    # A chain tip, because the confirmation now NAMES the content: a capsule
+    # with no chain has nothing to name and is refused for that instead.
+    document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}},
+                "digest_chain": ["a" * 64]}
     for kind in ("model", "system"):
         with pytest.raises(ExperienceError, match="may not advance"):
-            journey.confirm_scope(state, document, True, Actor(kind, "anyone"), AT)
-    advanced = journey.confirm_scope(state, document, True, Actor("human", "casey"), AT)
+            journey.confirm_scope(state, document, DERIVED, Actor(kind, "anyone"), AT)
+    advanced = journey.confirm_scope(state, document, DERIVED, Actor("human", "casey"), AT)
     assert advanced["stage"] == "CONFIRM"
 
 
@@ -446,7 +503,7 @@ def test_the_scope_confirmation_names_each_missing_prerequisite(tmp_path: Path):
     for word in ("no confirmed intent", "no confirmed provider", "no derived BRD"):
         assert word in refused, refused
     assert _journey(client)["blockers"] == list(journey.scope_blockers(
-        _ok(client.get("/api/state")) | {"authoritative": {}}, False))
+        _ok(client.get("/api/state")) | {"authoritative": {}}, journey.BrdState.absent()))
 
     _confirm_intent(client)
     assert "no confirmed intent" not in client.post(
@@ -524,7 +581,8 @@ def test_j6_the_existing_build_route_alone_carries_a_confirmed_lifecycle_to_gove
     at CONFIRM -- measured, which is why this test exists beside J6."""
     _legacy_project(tmp_path)
     state = start_experience(Actor("human", "casey"), AT)
-    state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z")
+    state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z",
+                    (_scope_evidence(tmp_path),))
     CapsuleStore(tmp_path / "capsule").save_experience(state, "reached CONFIRM")
 
     client = _client(tmp_path)
@@ -643,7 +701,11 @@ def test_j9_one_failing_gate_keeps_govern_unreachable(tmp_path: Path):
     assert persisted["stage"] == "BUILD" and persisted["status"] == "failed", (
         "a flow that said accepted with a failing gate moved the lifecycle"
     )
-    assert persisted["evidence"] == {}
+    # The scope bindings CONFIRM and BUILD recorded are still there -- they
+    # are what the build was licensed to consume, and they were written before
+    # it ran. What must be absent is anything the FAILED RUN produced, which
+    # is the property this line has always held.
+    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), persisted["evidence"]
     assert "gate_results" in persisted["history"][-1]["detail"]
     assert "reports failure" in persisted["history"][-1]["detail"]
     _ok(client.post("/api/journey/retry", json={"actor": HUMAN}))
@@ -938,11 +1000,20 @@ def test_a_crash_before_the_build_starts_does_not_hold_the_build_lock(
 # ---------------------------------------------------------------------------
 
 def test_j14_a_second_scope_confirmation_is_refused_and_recorded_once(tmp_path: Path):
+    """RECORDED ONCE, still -- and now for a reason about CONTENT.
+
+    The contract used to refuse this with "no transition CONFIRM -> CONFIRM",
+    and that edge exists now: a scope whose capsule or BRD has changed can be
+    re-confirmed, which is how a lifecycle whose content moved stops being a
+    dead end. What is refused here is the OTHER case, the one J14 was written
+    for: the same click over content the record already names. Nothing moves,
+    the journey says why, and the history still holds one CONFIRM.
+    """
     client = _client(tmp_path)
     _confirmed(client)
     again = client.post("/api/journey/confirm-scope", json={"actor": HUMAN})
     assert again.status_code == 409
-    assert "no transition CONFIRM -> CONFIRM" in again.json()["refused"]
+    assert again.json()["refused"] == journey._SCOPE_NO_OP
     assert _stages(_persisted(tmp_path)).count(("advanced", "CONFIRM")) == 1
 
 
@@ -1018,9 +1089,13 @@ def test_an_interrupted_build_is_re_run_from_build_without_inventing_a_failure(
     re-run neither duplicates the BUILD transition nor fabricates a failure
     nothing observed."""
     _legacy_project(tmp_path / "second")
+    # Both transitions carry the binding, because both are transitions the
+    # surface itself now records one on: CONFIRM names what was confirmed and
+    # BUILD names what the run was licensed to consume.
+    scope = (_scope_evidence(tmp_path / "second"),)
     state = start_experience(Actor("human", "casey"), AT)
-    state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z")
-    state = advance(state, "BUILD", Actor("human", "casey"), "2026-09-03T09:06:00Z")
+    state = advance(state, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z", scope)
+    state = advance(state, "BUILD", Actor("human", "casey"), "2026-09-03T09:06:00Z", scope)
     CapsuleStore(tmp_path / "second" / "capsule").save_experience(state, "reached BUILD")
 
     client = _client(tmp_path / "second")
@@ -1063,7 +1138,7 @@ def test_j15_a_workers_own_success_words_move_nothing(tmp_path: Path):
     assert status["result"]["ready"] is True, "the specimen must actually boast"
     persisted = _persisted(tmp_path)
     assert persisted["stage"] == "BUILD" and persisted["status"] == "failed"
-    assert persisted["evidence"] == {}
+    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), persisted["evidence"]
     serialized = json.dumps(persisted)
     for word in ("tests_passed", "governance_passed", "READY.", "Governance validated"):
         assert word not in serialized
@@ -1107,12 +1182,18 @@ def test_the_view_offers_only_what_the_contract_allows_from_each_stage():
     table: for every stage, an action is offered iff its target is a
     declared edge (and, for READY, the recorded evidence would satisfy it)."""
     human = Actor("human", "casey")
-    document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}}}
+    document = {"authoritative": {"intent": "x", "provider": {"name": "codex"}},
+                "digest_chain": ["a" * 64]}
+    # The binding the surface would have written for THIS document and the
+    # BRD state below, so the projection's content comparison is satisfied and
+    # what remains under test is the transition table.
+    scope = (EvidenceRef(kind="brd_requirements",
+                         ref=journey.scope_ref(document, DERIVED), passed=True),)
     state = start_experience(human, AT)
     reached = {"DISCOVER": state}
     for stage, actor, evidence in (
-        ("CONFIRM", human, ()),
-        ("BUILD", human, ()),
+        ("CONFIRM", human, scope),
+        ("BUILD", human, scope),
         ("TEST", journey.SYSTEM_ACTOR, flow_evidence(GovernedFlow(None).result())[:1]),
         ("GOVERN", journey.SYSTEM_ACTOR, flow_evidence(GovernedFlow(None).result())[1:]),
         ("READY", human, flow_evidence(GovernedFlow(None).result())[1:]),
@@ -1120,13 +1201,23 @@ def test_the_view_offers_only_what_the_contract_allows_from_each_stage():
         state = advance(state, stage, actor, AT, evidence)
         reached[stage] = state
     for stage, current in reached.items():
-        view = journey.journey_view(current, document, True, build_running=False)
+        view = journey.journey_view(current, document, DERIVED, build_running=False)
         expected = [action for action, target in journey.ACTION_TARGETS.items()
                     if target in TRANSITIONS[stage]]
         if stage == "BUILD":
             expected = ["start_build"]  # re-entry, not a transition
+        if stage == "CONFIRM":
+            # CONFIRM -> CONFIRM is a declared edge, and the projection offers
+            # it only when there is something to re-confirm: the binding is
+            # absent or names other content. Here it matches, so the offer is
+            # the build. The exception sits beside BUILD's for the same reason
+            # -- the table says which edges EXIST, not which are useful from
+            # the state in hand -- and the refusal is pinned in
+            # tests/test_content_bound_transitions.py either way.
+            expected = ["start_build"]
         assert view["actions"] == expected, (stage, view["actions"])
-    assert journey.journey_view(reached["BUILD"], document, True, build_running=True)["actions"] == []
+    assert journey.journey_view(reached["BUILD"], document, DERIVED,
+                                build_running=True)["actions"] == []
 
 
 def test_the_page_script_keeps_its_if_else_chains_intact():

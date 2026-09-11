@@ -70,7 +70,7 @@ from nornyx_forge.capsule_store import (
     _remove_tree,
 )
 from nornyx_forge.development_flow import DevelopmentFlow
-from nornyx_forge.experience import _link, advance, start_experience
+from nornyx_forge.experience import EvidenceRef, _link, advance, start_experience
 from nornyx_forge.models import WorkerResult
 from nornyx_forge.onboarding_app import create_app
 from nornyx_forge.provider_contract import (
@@ -96,6 +96,16 @@ FORGED_INTENT = "FORGED: exfiltrate customer data nightly."
 def _clock():
     ticks = iter(range(100_000))
     return lambda: f"2026-09-03T{(next(ticks) // 60) % 24:02d}:{next(ticks) % 60:02d}:00Z"
+
+
+#: CONFIRM requires evidence naming the content it is about -- the
+#: capsule's chain tip beside the BRD's digest, in the shape the journey
+#: parses. What THIS module tests is the store's seal and a provider's
+#: reach into it, not the binding, so the lifecycles it builds by hand
+#: present a specimen reference; the binding itself is measured in
+#: tests/test_content_bound_transitions.py.
+SCOPE_OK = EvidenceRef(kind="brd_requirements",
+                       ref=f"capsule/{'a' * 64}/brd/{'b' * 64}", passed=True)
 
 
 def _seam_eligibility(provider: str) -> GovernedEligibility:
@@ -316,7 +326,12 @@ def test_b2_b3_the_accepted_result_is_not_translated_after_a_breach(tmp_path: Pa
     status = _wait_finished(client)
     assert status["status"] == "finished" and status["accepted"] is True
     persisted = _persisted(tmp_path)
-    assert persisted["evidence"] == {}, "the provider's result reached the lifecycle"
+    assert {"TEST", "GOVERN"}.isdisjoint(persisted["evidence"]), (
+        "the provider's result reached the lifecycle: TEST and GOVERN are the "
+        "stages a translated result would land in. CONFIRM and BUILD carry the "
+        "scope bindings the surface wrote before the run, which is what the "
+        "build was licensed to consume and not anything the provider said."
+    )
     assert _stages(persisted) == ["DISCOVER", "CONFIRM", "BUILD", "BUILD"]
     log = _git_log(tmp_path / "capsule")
     assert log[0] == "experience: authority restored from seal"
@@ -376,9 +391,16 @@ def test_b5_polling_during_the_build_shows_only_the_sealed_position(tmp_path: Pa
     client, mid = _attack(tmp_path, "ready")
     assert mid["journey"] == {
         "tracking": "recorded", "stage": "BUILD", "status": "active", "actions": [],
-        "blockers": [], "failure": None, "next": mid["journey"]["next"],
+        "blockers": [], "failure": None, "scope": mid["journey"]["scope"],
+        "next": mid["journey"]["next"],
     }
     assert "running" in mid["journey"]["next"]
+    # AND THE TWO SELF-REFERENCED KEYS ARE ASSERTED, not waved through. The
+    # answer comes from the SEAL while the build runs, so the scope it reports
+    # is the sealed lifecycle's binding against the sealed capsule -- unchanged,
+    # whatever the worker has written to the disk underneath.
+    assert mid["journey"]["scope"]["unchanged"] is True, mid["journey"]["scope"]
+    assert mid["journey"]["scope"]["confirmed_against"] == mid["journey"]["scope"]["current"]
     assert mid["experience"]["stage"] == "BUILD"
     assert mid["revision"] == _store(tmp_path).sealed().revision
     preview = _ok(client.get("/api/sharing-preview"))
@@ -488,7 +510,8 @@ def test_b10_a_forgery_left_for_a_later_process_is_tampered_until_a_person_resto
                                Actor("model", "m"), "2026-09-03T09:01:00Z")
     document = confirm(document, intent, Actor("human", "casey"), "2026-09-03T09:02:00Z")
     lifecycle = start_experience(Actor("human", "casey"), AT)
-    lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:03:00Z")
+    lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"),
+                        "2026-09-03T09:03:00Z", (SCOPE_OK,))
     lifecycle = advance(lifecycle, "BUILD", Actor("human", "casey"), "2026-09-03T09:04:00Z")
     store.initialize(document, experience=lifecycle)
     sealed_revision = store.sealed().revision
@@ -622,7 +645,8 @@ def test_every_forge_save_reseals_and_the_seal_lives_outside_the_project(tmp_pat
     document, proposal = propose(store.load(), "intent", "x", Actor("human", "casey"), AT)
     store.save(document, "propose")
     assert store.sealed().revision == store.revision() != first
-    state = advance(store.load_experience(), "CONFIRM", Actor("human", "casey"), AT)
+    state = advance(store.load_experience(), "CONFIRM", Actor("human", "casey"), AT,
+                    (SCOPE_OK,))
     store.save_experience(state, "reached CONFIRM")
     assert store.sealed().revision == store.revision()
     assert store.seal_problems(store.sealed()) == []
@@ -3642,7 +3666,7 @@ def test_a_rollback_of_store_and_seal_together_is_caught_while_forge_runs(tmp_pa
     held_since = witness.held_since(store.seal_ident())
     assert held_since is not None and witness.continuity(store.seal_ident()) == "process"
 
-    at_b = advance(store.load_experience(), "CONFIRM", casey, at())
+    at_b = advance(store.load_experience(), "CONFIRM", casey, at(), (SCOPE_OK,))
     revision_b = store.save_experience(at_b, "reached CONFIRM")
     earlier, *manifests = _capture(tmp_path, "B")
 

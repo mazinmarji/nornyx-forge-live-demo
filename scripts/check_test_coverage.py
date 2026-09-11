@@ -701,7 +701,28 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Round-tripped against the real parse_brd; a proposal-only capsule
     # refuses; open proposals author nothing; heading collisions refused.
     "tests/test_brd_authoring.py": 9,
+    # What each digest chain covers, and what it does not: 10 collected at
+    # introduction, floor at band(10) = 9. Five edits OUTSIDE the capsule's
+    # authoritative region that both domain verifiers pass -- a confirmed
+    # proposal's value and `resolved.by`, `history`, an appended
+    # confirmed-looking row, a reversed ledger -- the two inside it that fail
+    # closed, the experience chain's wider reach, the same five refused at
+    # rest by a sealed store and returned verbatim by an unsealed one, and
+    # the docstring sentence that had claimed the wider reach for both.
+    "tests/test_digest_coverage.py": 9,
+    # Tranche F, content-bound CONFIRM and READY: 24 collected at
+    # introduction, floor at band(24) = 22. The BRD prerequisite measured as
+    # DERIVATION rather than existence, the `brd_requirements` binding at
+    # CONFIRM and BUILD, drift refused at the build, at a re-entered build
+    # and at READY, the re-confirmation self-edge and its no-op refusal,
+    # evidence references that no longer collide across builds, the two
+    # refusal-ORDER pins (the contract answers first for an edge it does not
+    # declare; the one unnameable scope names the only cause that reaches
+    # it), and the affirmative limit pin over A-032.
+    "tests/test_content_bound_transitions.py": 22,
     # The build trigger: 9 collected at introduction, floor at band(9) = 9.
+    # It collects 10 today and band(10) is also 9, so the floor stands
+    # unmoved -- the introduction figure is history and is left as history.
     # The no-terminal path runs only confirmed state; model actors, missing
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
@@ -1643,12 +1664,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3533   (116 modules)
-#     sum of the module floors    3236
-#     band(3533) = ceil(0.9*n)    3180
-#     MINIMUM_COLLECTED           3244
+#     collected across tests/     3567   (118 modules)
+#     sum of the module floors    3267
+#     band(3567) = ceil(0.9*n)    3211
+#     MINIMUM_COLLECTED           3275
 #     above the module sum         8
-#     below what collects         289
+#     below what collects         292
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1857,7 +1878,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 297 in total, and the aggregate refuses
+# per-module bands already grant 300 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1972,7 +1993,31 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # band(107) - band(106) is one where the module moved one. NO SKIP IS ADDED --
 # the appearing entry and the refusing `unlink` are both injected -- and the
 # windows-runtime job's floor is untouched at 277, for the same reason.
-MINIMUM_COLLECTED = 3244
+# TRANCHE F ADDS TWO MODULES AND THIRTY-FOUR TESTS.
+# `tests/test_digest_coverage.py` is new at 10 collected (floor band(10) = 9)
+# and `tests/test_content_bound_transitions.py` at 24 (floor band(24) = 22),
+# so 118 modules stand. NO EXISTING MODULE MOVED: the slice changed fixtures
+# and expectations in SIX modules -- `tests/test_basic_user_journey.py` (50),
+# `tests/test_experience_contract.py` (20), `tests/test_build_trigger.py`
+# (10), `tests/test_actor_declaration_boundary.py` (7),
+# `tests/test_provider_authority_boundary.py` (107) and
+# `tests/test_governed_provider_eligibility.py` (16) -- without adding or
+# removing a case in any of them, so every one of those floors is the band of
+# what its module collects exactly as before. Those six built lifecycles that
+# entered CONFIRM with no evidence, which the contract now requires; each
+# presents a specimen `brd_requirements` reference, as
+# `tests/test_experience_contract.py` already did.
+# The module-floor sum rises by 31 to 3267 and the aggregate follows to 3275,
+# keeping the same 8 above it; the suite collects 3533 -> 3567, band(n)
+# 3180 -> 3211, and the working room below the floor 289 -> 292. THE SLACK
+# THE BANDS GRANT rises by 3, from 297 to 300: each new module sits above its
+# own band by the rounding of `ceil(0.9n)` -- 1 for the module of 10 and 2
+# for the module of 24 -- and nothing else moved. NO SKIP IS ADDED: both
+# modules run everywhere, over `tmp_path` stores and the in-process test
+# client, with no platform, no network and no provider. The windows-runtime
+# job's floor is untouched at 277, because that job runs SEVEN named modules
+# and neither of these is one of them.
+MINIMUM_COLLECTED = 3275
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -2067,6 +2112,8 @@ REQUIRED_MODULES = (
     "tests/test_control_plane_authority.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
+    "tests/test_digest_coverage.py",
+    "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",

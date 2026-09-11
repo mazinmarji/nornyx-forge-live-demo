@@ -58,6 +58,12 @@ AT = "2026-08-29T18:00:00Z"
 GATES_OK = EvidenceRef(kind="gate_results", ref="gates/6-run", passed=True)
 FLOW_OK = EvidenceRef(kind="flow_run", ref="flow/sequential", passed=True)
 GOV_OK = EvidenceRef(kind="governance_validation", ref="gates/nornyx/5-run", passed=True)
+#: CONFIRM now requires evidence naming the content it is about: the
+#: capsule's chain tip and the BRD's digest, in the shape the journey
+#: parses. A specimen reference here, because what this module tests is
+#: the CONTRACT's handling of a required kind, not the journey's ref.
+SCOPE_OK = EvidenceRef(kind="brd_requirements",
+                       ref=f"capsule/{'a' * 64}/brd/{'b' * 64}", passed=True)
 
 
 def _at_stage(stage: str) -> dict:
@@ -65,11 +71,12 @@ def _at_stage(stage: str) -> dict:
     state = start_experience(HUMAN, AT)
     path = {
         "DISCOVER": [],
-        "CONFIRM": [("CONFIRM", HUMAN, ())],
-        "BUILD": [("CONFIRM", HUMAN, ()), ("BUILD", SYSTEM, ())],
-        "TEST": [("CONFIRM", HUMAN, ()), ("BUILD", SYSTEM, ()), ("TEST", SYSTEM, (FLOW_OK,))],
+        "CONFIRM": [("CONFIRM", HUMAN, (SCOPE_OK,))],
+        "BUILD": [("CONFIRM", HUMAN, (SCOPE_OK,)), ("BUILD", SYSTEM, ())],
+        "TEST": [("CONFIRM", HUMAN, (SCOPE_OK,)), ("BUILD", SYSTEM, ()),
+                 ("TEST", SYSTEM, (FLOW_OK,))],
         "GOVERN": [
-            ("CONFIRM", HUMAN, ()), ("BUILD", SYSTEM, ()),
+            ("CONFIRM", HUMAN, (SCOPE_OK,)), ("BUILD", SYSTEM, ()),
             ("TEST", SYSTEM, (FLOW_OK,)), ("GOVERN", SYSTEM, (GATES_OK,)),
         ],
     }[stage]

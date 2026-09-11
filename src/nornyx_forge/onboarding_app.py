@@ -119,6 +119,7 @@ decorators sitting on top of it. It starts no process; serving it is the launche
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -161,8 +162,10 @@ from .control_plane_session import (
 from .experience import fail as fail_lifecycle
 from .experience_journey import (
     SYSTEM_ACTOR,
+    BrdState,
     JourneyRefusal,
     begin_build,
+    build_brd_refusal,
     build_error,
     build_outcome,
     confirm_scope,
@@ -448,8 +451,45 @@ def create_app(
             return None
         return eligibility(provider["name"])
 
-    def brd_present() -> bool:
-        return (root.parent / "BRD.md").exists()
+    def brd_state(document: Mapping[str, Any]) -> BrdState:
+        """What BRD.md IS, measured against the capsule beside it.
+
+        This used to be `(root.parent / "BRD.md").exists()`, and the
+        journey reported that fact to the reader as "a derived BRD". The
+        two are not the same claim, and the gap was reachable: a file
+        overwritten by hand after the scope confirmation, and a legacy
+        project whose BRD nobody derived, both passed as derived and both
+        were handed to the build. `derived` is now an EQUALITY against the
+        pure renderer over the confirmed region.
+
+        THE DIGEST FOLLOWS THE FLOW PARSER'S CONVENTION rather than a
+        second one. `parse_brd` reads with `read_text(encoding="utf-8")`
+        -- which decodes and normalises line endings -- and hashes the
+        decoded text; so does this, and the surface publishes the hex
+        without the `sha256:` prefix `parse_brd` prepends. A later
+        comparison between the two is therefore an equality, not a
+        translation, and `test_f1_the_derived_brd_digest_is_the_flow_parsers_own_convention`
+        holds it against the real parser.
+
+        A file that exists and cannot be decoded is PRESENT AND NOT
+        DERIVED, not absent: the honest reading of bytes that are there
+        and are not the rendering.
+        """
+        path = root.parent / "BRD.md"
+        if not path.exists():
+            return BrdState.absent()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return BrdState.stale(None)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        try:
+            rendered = brd_from_capsule(document)
+        except BrdAuthoringError:
+            # No confirmed intent to render: whatever is in the file, the
+            # capsule did not author it.
+            return BrdState.stale(digest)
+        return BrdState.matching(digest) if text == rendered else BrdState.stale(digest)
 
     def project(current: CapsuleStore) -> dict[str, Any]:
         """The capsule, or the journey's refusal when no store exists at all.
@@ -544,6 +584,7 @@ def create_app(
                     return _refusal(error)
                 held = anchor()
         verdict = provider_verdict(document)
+        brd = brd_state(document)
         return {
             "initialized": True,
             "project_id": document["project_id"],
@@ -552,10 +593,15 @@ def create_app(
             "digest_chain_length": len(document["digest_chain"]),
             "experience": lifecycle if lifecycle is not None else EXPERIENCE_ABSENT,
             "journey": journey_view(
-                lifecycle, document, brd_present(), build_lock.locked(),
+                lifecycle, document, brd, build_lock.locked(),
                 provider_blocker=None if verdict is None or verdict.eligible else verdict.reason,
             ),
-            "brd_present": brd_present(),
+            # Three fields for three facts. `brd_present` is kept because it
+            # is what it always was -- whether the file is there -- and the
+            # two beside it are the questions it was silently answering.
+            "brd_present": brd.present,
+            "brd_derived": brd.derived,
+            "brd_digest": brd.digest,
             "provider_eligibility": verdict.as_dict() if verdict is not None else None,
             "authority": held,
             "providers": list(PROVIDERS),
@@ -680,7 +726,8 @@ def create_app(
                 document = project(current)
                 lifecycle = recorded(current)
                 updated = confirm_scope(
-                    lifecycle, document, brd_present(), payload.actor.to_actor(), at(),
+                    lifecycle, document, brd_state(document),
+                    payload.actor.to_actor(), at(),
                 )
                 current.save_experience(updated, "reached CONFIRM")
             except CapsuleError as error:
@@ -714,13 +761,19 @@ def create_app(
         the persisted lifecycle. A build that recorded no governance
         validation is refused by the contract, in its words; nothing here
         supplies what the build did not produce.
+
+        AND THE CLAIM HAS TO BE ABOUT WHAT WAS BUILT. The capsule and the
+        BRD are read again here and compared with what the BUILD transition
+        recorded: content that moved after the build, and a build that
+        recorded no binding at all, are both refused by name.
         """
         current = store()
         with store_lock:
             try:
-                project(current)
+                document = project(current)
                 lifecycle = recorded(current)
-                updated = mark_ready(lifecycle, payload.actor.to_actor(), at())
+                updated = mark_ready(lifecycle, document, brd_state(document),
+                                     payload.actor.to_actor(), at())
                 current.save_experience(updated, "reached READY")
             except CapsuleError as error:
                 return _refusal(error)
@@ -846,14 +899,21 @@ def create_app(
                 "refused": verdict.reason, "eligibility": verdict.as_dict(),
             })
         project_dir = root.parent
-        if not brd_present():
-            return _refused("no BRD.md in the project; derive it first")
+        # THE BRD THE BUILD WILL READ, measured before anything moves. The
+        # flow parses `BRD.md` from disk at run time, so "a derived BRD" has
+        # to mean the bytes that are there and not a file that once was. The
+        # sentence comes from the journey so the route and the page cannot
+        # drift apart on what the prerequisite is called.
+        brd = brd_state(document)
+        refusal = build_brd_refusal(brd)
+        if refusal is not None:
+            return _refused(refusal)
         if not build_lock.acquire(blocking=False):
             return _refused("a build is already running for this project")
         try:
             with store_lock:
                 lifecycle = recorded(current)
-                positioned, advanced = begin_build(lifecycle, actor, at())
+                positioned, advanced = begin_build(lifecycle, document, brd, actor, at())
                 if advanced:
                     current.save_experience(positioned, "reached BUILD")
                 # A store from before sealing existed is protected by Forge's
@@ -1106,6 +1166,7 @@ this page, are the authority.</p>
 <fieldset><legend>4 · Your project's lifecycle</legend>
  <div>Stage: <span id="stage">—</span> <span id="status"></span></div>
  <div id="next"></div>
+ <div id="scope"></div>
  <div id="failure" class="failed"></div>
  <div id="blockers"></div>
  <div>
@@ -1174,6 +1235,11 @@ function renderJourney(s){
   else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
   else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
   text("failure", (j && j.failure) ? ("Failure recorded: " + j.failure) : "");
+  // The server decides what this says; the page renders the sentence it is
+  // given. No comparison, no threshold and no stage name here: whether the
+  // record still names the content in front of it is a question the journey
+  // answered before this response was written.
+  text("scope", (j && j.scope) ? j.scope.summary : "");
   const blockers = document.getElementById("blockers");
   blockers.replaceChildren();
   if(j && j.blockers && j.blockers.length){

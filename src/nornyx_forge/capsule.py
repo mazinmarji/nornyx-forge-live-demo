@@ -49,9 +49,18 @@ accept `Actor(kind="human", ident="president-lincoln")` and stamp that ident
 into a record `verify_integrity` and `validate_document` afterwards pass over.
 (`experience.start_experience` does the same for the lifecycle; its own module
 says so, and the impostor was also driven through the gated surface at
-`POST /api/project`.) The chain therefore establishes that the recorded
-provenance HAS NOT BEEN EDITED SINCE IT WAS WRITTEN -- not that it was true
-when it was written. The kind
+`POST /api/project`.) The EXPERIENCE chain establishes that its recorded
+provenance has not been edited since it was written; the capsule chain covers
+the authoritative region only, so `resolved.by`, `history` and the proposal
+ledger are held by the store's seal (served path) and by nothing on an
+unsealed store. NEITHER establishes that what was recorded was true WHEN it
+was written. The sentence this replaces claimed the wider reach for the
+capsule as well, and that was measured false: `tests/test_digest_coverage.py`
+rewrites a confirmed proposal's `resolved.by`, rewrites `history`, appends a
+confirmed-looking row and reverses the ledger, and `verify_integrity` and
+`validate_document` pass over every one of them -- because the link function's
+inputs are the previous link and the authoritative region, and nothing else.
+The kind
 check DECLINES an actor that honestly declares itself non-human and establishes
 nothing about one that declares itself human; it is worth keeping for that and
 worth no more than that. Reading `resolved.by` as "who decided" is the

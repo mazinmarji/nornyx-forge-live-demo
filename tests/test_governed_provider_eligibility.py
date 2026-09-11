@@ -38,7 +38,7 @@ from session_client import authed_client
 from nornyx_forge import onboarding_serve, provider_contract
 from nornyx_forge.capsule import PROVIDERS, Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleSealMissing, CapsuleStore
-from nornyx_forge.experience import advance, start_experience
+from nornyx_forge.experience import EvidenceRef, advance, start_experience
 from nornyx_forge.onboarding_app import create_app
 from nornyx_forge.provider_contract import (
     CONFINEMENT,
@@ -394,7 +394,16 @@ def test_e6_a_lifecycle_already_at_build_is_not_moved_by_a_refused_re_run(tmp_pa
                                "2026-09-03T09:03:00Z")
     document = confirm(document, chosen, Actor("human", "casey"), "2026-09-03T09:04:00Z")
     lifecycle = start_experience(Actor("human", "casey"), AT)
-    lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"), "2026-09-03T09:05:00Z")
+    # CONFIRM requires evidence naming the content it is about. What this
+    # module tests is PROVIDER ELIGIBILITY, which the build route decides
+    # before it looks at the BRD at all, so a specimen reference is what this
+    # lifecycle needs; the binding itself is measured in
+    # tests/test_content_bound_transitions.py.
+    lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"),
+                        "2026-09-03T09:05:00Z",
+                        (EvidenceRef(kind="brd_requirements",
+                                     ref=f"capsule/{'a' * 64}/brd/{'b' * 64}",
+                                     passed=True),))
     lifecycle = advance(lifecycle, "BUILD", Actor("human", "casey"), "2026-09-03T09:06:00Z")
     store.initialize(document, experience=lifecycle)
     (tmp_path / "BRD.md").write_text("# BRD\n\n## BRD-001 Purpose\n\nBuild a portal.\n",

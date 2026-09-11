@@ -2,6 +2,51 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Content-bound CONFIRM and READY (Tranche F). The lifecycle's two human
+  positions now NAME the content they were recorded about, and the surface
+  refuses to license work over content the record does not name. Measured on
+  the parent through the real gated surface, all five paths reachable through
+  shipped routes: a `BRD.md` overwritten by hand after the scope confirmation
+  was accepted at CONFIRM and handed to the build, and the real parser read
+  the overwritten text; a further intent confirmed under CONFIRM left the page
+  offering `start_build` and `POST /api/build` returned 200, so a scope
+  confirmation given for one capsule licensed a build of another; a new intent
+  confirmed under READY left `/api/state`, the sharing preview and a restart
+  all reporting READY beside content that was never built; a legacy project
+  whose `BRD.md` nobody derived confirmed the scope over it; and two builds
+  with different gate names, commands and details produced IDENTICAL evidence
+  references, because the reference was a count. The prerequisite reported to
+  the reader as "no derived BRD" measured `BRD.md` EXISTING -- a label standing
+  in for the thing measured. It is an equality against `brd_from_capsule` now,
+  and `/api/state` publishes `brd_present`, `brd_derived` and `brd_digest` as
+  three fields for three facts. `experience.STAGE_EVIDENCE` requires
+  `brd_requirements` at CONFIRM and its reference denotes the content --
+  `capsule/<chain tip>/brd/<sha256 of the BRD text>`, the parser's own digest
+  convention -- answering the domain question A-022 left open. `BUILD` carries
+  the binding forward, so the run's record says what it was licensed to
+  consume, and `mark_ready` refuses when the capsule or the BRD moved after
+  the build, when the build recorded no binding at all, and when the flow
+  states it parsed a different BRD. One new edge, `CONFIRM -> CONFIRM`,
+  records a re-confirmation as a second row and a second `advanced` event
+  rather than an overwrite; an identical re-confirmation is refused as a
+  no-op, so J14's recorded-once property survives it. Evidence references
+  carry a digest of the gate records and, where the flow recorded one, of the
+  BRD it says it parsed; where it recorded none the reference is unchanged
+  rather than synthesised. No new route, no route moved, and the page renders
+  server-supplied text and decides nothing by stage name. A single sentence in
+  `capsule.py` claimed the experience chain's reach for the capsule chain as
+  well; it was measured false -- `resolved.by`, `history`, an appended
+  confirmed-looking row and a reversed ledger all pass `verify_integrity` and
+  `validate_document` -- and is corrected, with the same five edits pinned at
+  rest against a sealed store (refused) and an unsealed one (accepted
+  verbatim). A-032 records what a content binding establishes and, at length,
+  what it does not: nobody is shown to have read anything, the page does not
+  display the BRD, the built artefact is not bound, `BRD.md` is outside the
+  seal, the capsule chain covers the authoritative region only, a re-run whose
+  scope changed cannot be re-bound in this lifecycle, and a CRLF-only rewrite
+  is invisible by design. A-022's false parenthetical is rewritten and A-030's
+  "chain-covered history" is qualified.
+
 - Standing development obligations (PR #51, reconciled with main and
   repaired). A public-safe, provider-neutral mechanism for carrying standing
   development obligations across sessions, models, workstations and
