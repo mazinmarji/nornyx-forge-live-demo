@@ -827,8 +827,20 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # refusing both declared providers before anything executes, no
     # fallback, the Forge-owned decision pinned in the served composition,
     # the seam's own eligibility, the protected-store-without-seal refusal
-    # and the legacy distinction.
-    "tests/test_governed_provider_eligibility.py": 15,
+    # and the legacy distinction. Raised 15 -> 19 for TRANCHE H's platform
+    # axis -- 5 new collected (21 total): a measurement green on another
+    # platform leaving this one ineligible, the required platform parameter,
+    # an unrecognised platform refused by name, the derivation and the table
+    # answering each other in both directions, and the served surface driven
+    # with an injected platform. Raised 19 -> 25 in TRANCHE H'S SECOND ROUND
+    # -- 6 more collected (27 total): the platform mapping pinned as a census
+    # LITERAL (the assertion it replaces restated `served_platform()`'s body and
+    # was true of every possible mapping), each of the three mapped hosts driven
+    # under a patched `sys.platform` through the derivation AND through
+    # `/api/state`, the fail-closed default reached at last, and a promoted row
+    # proved not to serve the finding written for its own refusal. Floor at
+    # band(27) = 25.
+    "tests/test_governed_provider_eligibility.py": 25,
     # PA-01's admission criterion: 38 collected before Tranche C, 66 after
     # slice C1 replaced one criterion, floor at band(66) = 60. The 28 new hold
     # the replacement itself: that `control_plane_authority` is required
@@ -859,6 +871,35 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # that is not an integer, a route that is not a pair of strings) that used
     # to fail open or raise `TypeError`. Floor at band(106) = 96.
     "tests/test_codex_confinement_admission.py": 96,
+    # Tranche H, the Claude half of the same criterion: 26 collected at
+    # introduction, floor at band(26) = 24 exactly, because the slack guard
+    # requires every declared floor to BE the band of what its module collects.
+    # The shipped record put through the REAL verifier and refused, the positive
+    # twin accepted so the criterion is applied rather than restated, both
+    # subject bindings, the platform binding item 1 added, the harness read by
+    # AST for any argv that could start a provider session, the ambient control
+    # proved unloadable as probes, the adapter's command tuple beside its
+    # fourteen absent isolation flags, and the A-033 limit pinned in the
+    # affirmative. Raised 24 -> 29 in TRANCHE H'S SECOND ROUND -- 32 collected,
+    # net 6 (seven added, one replaced): the harness's single process-spawning
+    # seam and the import rule that keeps it single, the seam's argv taken from
+    # the shape constant with no string built inside it, no call site handing it
+    # a built argument, no environment read reaching an argv, the subject
+    # revision read in the repository rather than the caller's directory, and
+    # the two platform-mechanism pins (the finding derives from the search bound
+    # instead of contradicting it, and all three of its sentences move with the
+    # derived state). Raised 29 -> 30 in TRANCHE H'S THIRD ROUND -- 33
+    # collected, net 1: the pin holding A-033 to naming each of the five
+    # spellings the structural rule does not refuse, scoped to that section.
+    # Raised 30 -> 32 in TRANCHE H'S FOURTH ROUND -- 35 collected, net 2. The
+    # third round's pin held the NAMES and nothing around them, so the retired
+    # universal claim could be restored in all three governed texts with every
+    # test green. The two new tests hold the other half: a specimen table
+    # driving the module's own rule over eight call spellings, including the
+    # one-expression `ctypes` form the third round wrongly said was refused,
+    # and a pin asserting all three texts state the measured bound and carry
+    # none of the retired universal spellings. Floor at band(35) = 32.
+    "tests/test_claude_confinement_admission.py": 32,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1003,7 +1044,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_xfail_strictness.py": 18,
     "tests/test_approval_lifecycle.py": 5,
     "tests/test_architecture_coverage.py": 18,
-    "tests/test_architecture_security.py": 7,
+    # 7 -> 9 in TRANCHE H'S SECOND ROUND: the provider contract's purity claim
+    # made checkable by a per-file forbidden-dependency rule, falsified by
+    # injecting `sys` and `pathlib` into a copied tree the way the two
+    # neighbouring entries were. Floor at band(9) = 9.
+    "tests/test_architecture_security.py": 9,
     "tests/test_authority_config.py": 12,
     "tests/test_brd_evidence_shape.py": 9,
     "tests/test_capability_binding.py": 9,
@@ -1643,12 +1688,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3533   (116 modules)
-#     sum of the module floors    3236
-#     band(3533) = ceil(0.9*n)    3180
-#     MINIMUM_COLLECTED           3244
+#     collected across tests/     3581   (117 modules)
+#     sum of the module floors    3280
+#     band(3581) = ceil(0.9*n)    3223
+#     MINIMUM_COLLECTED           3288
 #     above the module sum         8
-#     below what collects         289
+#     below what collects         293
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1857,7 +1902,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 297 in total, and the aggregate refuses
+# per-module bands already grant 301 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -1972,7 +2017,120 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # band(107) - band(106) is one where the module moved one. NO SKIP IS ADDED --
 # the appearing entry and the refusing `unlink` are both injected -- and the
 # windows-runtime job's floor is untouched at 277, for the same reason.
-MINIMUM_COLLECTED = 3244
+#
+# TRANCHE H ADDS ONE MODULE AND FIVE ROWS TO AN EXISTING ONE. Re-measured from
+# a fresh collection on THIS head rather than carried forward, because
+# arithmetic about a tree nobody collected is how these rows went stale twice.
+# `tests/test_claude_confinement_admission.py` is new and collects 26 (floor
+# band(26) = 24): the shipped Claude record refused by the real verifier, the
+# positive twin accepted so the criterion is applied rather than restated, both
+# subject bindings, the platform binding, the harness read by AST for any argv
+# that could start a provider session, the ambient control proved unloadable as
+# probes, the adapter's command tuple beside its fourteen absent isolation
+# flags, and the A-033 limit pinned in the affirmative.
+# `tests/test_governed_provider_eligibility.py` collects 16 -> 21 (floor
+# band(16) = 15 -> band(21) = 19) for the platform axis. NO OTHER MODULE MOVES:
+# `tests/test_codex_confinement_admission.py` stands at 106 (one test was
+# RENAMED and rewritten in place, which moves no count) and
+# `tests/test_provider_authority_boundary.py` at 107. The two document-sweep
+# modules were re-collected specifically to check the new governance document
+# did not enter their parametrised sweeps, and they stand at 159 and 204.
+# The module-floor sum rises by 28 to 3264 -- 24 for the new module and 4 for
+# the raised one -- and the aggregate follows to 3272, holding the margin above
+# the sum at 8. The suite collects 3533 -> 3564 and 117 modules stand. The
+# AGGREGATE band row goes 3180 -> 3208, a rise of 28 that happens to match the
+# floor sum's; as an earlier round warns, that is where `ceil(0.9n)` fell and
+# not a rule. The working room below what collects rises 289 -> 292, because
+# the collection rose by 31 while the aggregate rose by 28. THE SLACK THE BANDS
+# GRANT rises 297 -> 300: the new module sits 2 above its own band and the
+# raised one now sits 2 above its band where it sat 1. NO SKIP IS ADDED, and
+# THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- measured, not assumed:
+# its seven modules still collect 7/14/15/23/54/73/97 (sum 283, floor
+# 283 - 7 + 1), because the new module is not one of them and neither
+# `test_provider_execution.py` nor `test_control_plane_authority.py` gained a
+# row. NO PROVIDER ROW MOVED: `PROVIDER_CONFINEMENT` gained a PLATFORM axis and
+# `claude` on `windows` stays `none`, now as a measured state (A-033).
+#
+# TRANCHE H'S SECOND ROUND ADDS FOURTEEN ROWS AND NO MODULE. Re-measured from a
+# fresh collection on this head, as above. `tests/test_claude_confinement_
+# admission.py` collects 26 -> 32 (floor band(26) = 24 -> band(32) = 29): the
+# harness's AST pin was REPLACED by four structural rules after an independent
+# review walked past it three ways, and two platform-mechanism pins plus a
+# subject-revision pin were added. `tests/test_governed_provider_eligibility.py`
+# collects 21 -> 27 (floor band(21) = 19 -> band(27) = 25): the platform mapping
+# as a census literal, its three keys driven under a patched `sys.platform`, the
+# fail-closed default reached, and the refused-branch finding. ONE MODULE
+# OUTSIDE THE TRANCHE MOVES: `tests/test_architecture_security.py` collects
+# 7 -> 9 (floor band(7) = 7 -> band(9) = 9) for the provider contract's purity
+# rule, which is an architecture-gate pin and belongs beside its two neighbours
+# rather than in a tranche module. NO OTHER MODULE MOVES.
+# The module-floor sum rises by 13 to 3277 -- 5, 6 and 2 -- and the aggregate
+# follows to 3285, holding the margin above the sum at 8. The suite collects
+# 3564 -> 3578 and 117 modules stand. The AGGREGATE band row goes 3208 -> 3221,
+# a rise of 13 that again matches the floor sum's rise by coincidence of where
+# `ceil(0.9n)` falls. The working room below what collects rises 292 -> 293,
+# because the collection rose by 14 while the aggregate rose by 13. THE SLACK
+# THE BANDS GRANT rises 300 -> 301: the admission module now sits 3 above its
+# band where it sat 2, and the other two sit exactly where they sat. NO SKIP IS
+# ADDED, and THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- its seven
+# modules still collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none
+# of them being a module this round touched. NO PROVIDER ROW MOVED:
+# `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`.
+#
+# TRANCHE H'S THIRD ROUND ADDS ONE ROW AND NO MODULE. Re-measured from a fresh
+# collection on this head, as above. `tests/test_claude_confinement_
+# admission.py` collects 32 -> 33 (floor band(32) = 29 -> band(33) = 30): a pin
+# holding A-033 to naming each of the five spellings that walked past the
+# harness's structural rule in a second in-session adversarial sweep. The round corrected three
+# governed texts that claimed the rule refused ANY spawn call and did NOT widen
+# the rule, so the correction is a claim and the pin is what keeps it honest.
+# NO OTHER MODULE MOVES. `tests/test_governed_provider_eligibility.py` stands
+# at 27 -- two arms were repaired in place, which moves no count -- and
+# `tests/test_recorded_measurements.py` stands at 204, which was MEASURED
+# rather than assumed: the CHANGELOG paragraph this round rewrote first wrapped
+# two lines into the shape `<single-token key><gap><value>`, which that
+# module's transcript recogniser reads as a machine record, and CHANGELOG.md
+# entered its corpus and added five parametrised cases (204 -> 209). The
+# wrapping was the transcript, not the prose, so the paragraph was reflowed and
+# the corpus is the 34 documents it was.
+# The module-floor sum rises by one to 3278 and the aggregate follows to 3286,
+# holding the margin above the sum at 8. The suite collects 3578 -> 3579 and
+# 117 modules stand. The AGGREGATE band row goes 3221 -> 3222. The working room
+# below what collects is UNCHANGED at 293, because the collection and the
+# aggregate each rose by one. THE SLACK THE BANDS GRANT IS UNCHANGED AT 301:
+# the admission module sits 3 above its band at 33 exactly as it did at 32,
+# because band(33) - band(32) is one where the module moved one. NO SKIP IS
+# ADDED, and THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- its seven
+# modules still collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none
+# of them being a module this round touched. NO PROVIDER ROW MOVED:
+# `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
+# took no admission of any kind.
+#
+# TRANCHE H'S FOURTH ROUND ADDS TWO ROWS AND NO MODULE. Re-measured from a
+# fresh collection on this head. `tests/test_claude_confinement_admission.py`
+# collects 33 -> 35 (floor band(33) = 30 -> band(35) = 32): a specimen table
+# driving that module's own `_dotted`/`_starts_a_process` over eight call
+# spellings, and a pin holding all three governed texts to the measured bound
+# while refusing the retired universal wording. The third round's correction
+# had itself introduced a false sentence -- that a `ctypes` handle was refused
+# in its one-expression form and not in its two-step form -- and nothing held
+# the corrected claim, so the retired overclaim could be restored in each of
+# the three texts with every test still green. The module-floor sum rises by
+# two to 3280 and the aggregate follows to 3288, holding the margin above the
+# sum at 8. The suite collects 3579 -> 3581 and 117 modules stand. The
+# AGGREGATE band row goes 3222 -> 3223. The working room below what collects
+# is UNCHANGED at 293, because the collection and the aggregate each rose by
+# two. THE SLACK THE BANDS GRANT IS UNCHANGED AT 301: the admission module sits
+# 3 above its band at 35 exactly as it did at 33. `tests/test_recorded_
+# measurements.py` STANDS AT 204, measured rather than assumed after this round
+# rewrote the CHANGELOG paragraph again -- the wrapping that enrolled that file
+# into the corpus last round did not recur. NO SKIP IS ADDED, and THE
+# WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277 -- its seven modules still
+# collect 7/14/15/23/54/73/97 (sum 283, floor 283 - 7 + 1), none of them being
+# a module this round touched. NO PROVIDER ROW MOVED:
+# `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
+# took no admission of any kind.
+MINIMUM_COLLECTED = 3288
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -2075,6 +2233,13 @@ REQUIRED_MODULES = (
     # Losing it would leave `PROVIDER_CONFINEMENT` promotable to `established`
     # with no measurement objecting.
     "tests/test_codex_confinement_admission.py",
+    # Tranche H, the same job for the other provider. The eligibility module
+    # proves the DECISION fails closed; this one proves the Claude row cannot
+    # be promoted by an edit -- and, because the finding is an ABSENCE, that it
+    # cannot be demoted back to an untested default either. Losing it would
+    # leave the only measurement of the platform Forge actually ships on with
+    # nothing reading it.
+    "tests/test_claude_confinement_admission.py",
     "tests/test_standing_development_obligations.py",
     "tests/test_standing_obligations_windows.py",
     "tests/test_trusted_greenfield_acceptance.py",

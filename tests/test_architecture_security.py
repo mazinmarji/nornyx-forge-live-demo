@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +91,48 @@ def test_architecture_gate_detects_relative_import_of_persistence(tmp_path: Path
     ), report["violations"]
     assert any(
         "forbidden dependency demo_app.store" in violation
+        for violation in report["violations"]
+    ), report["violations"]
+
+
+@pytest.mark.parametrize("injected", ["sys", "pathlib"])
+def test_architecture_gate_detects_ambient_state_in_the_provider_contract(
+        tmp_path: Path, injected: str):
+    """The provider contract's purity claim is a GATE, not a habit.
+
+    `provider_contract` decides governed-build eligibility from its own table,
+    keyed provider then platform, and the platform word ARRIVES AS DATA --
+    `onboarding_app.served_platform()` derives it once and hands it in. The
+    module's docstring, the CHANGELOG and A-033 all lean on that module reading
+    no `sys`, no process state and no filesystem, and `layer.domain` alone did
+    not make it checkable: it forbids starting a process, not reading ambient
+    state. Measured before the forbidden-dependency entry existed: an injected
+    `import sys` + `import pathlib` + `sys.platform` + `pathlib.Path.cwd()`
+    left `check_architecture.py` at `violations: []` and 143 architecture-facing
+    tests green.
+
+    Falsified the way the two neighbouring entries were: inject the name,
+    require a failure.
+    """
+    workspace = _forge_tree(tmp_path)
+    contract = workspace / "src/nornyx_forge/provider_contract.py"
+    contract.write_text(
+        contract.read_text(encoding="utf-8") + f"\nimport {injected}\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/check_architecture.py"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert completed.returncode == 2
+    report = json.loads(completed.stdout)
+    assert report["status"] == "fail"
+    assert any(
+        f"provider_contract.py imports forbidden dependency {injected}" in violation
         for violation in report["violations"]
     ), report["violations"]
 

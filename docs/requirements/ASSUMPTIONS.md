@@ -2199,7 +2199,9 @@ measured, junction semantics are not symlink semantics, and the Windows result
 does not travel. Nothing about model behaviour: two production-path runs left
 every canary pristine because the model executed nothing at all, including the
 control, and both are recorded as inconclusive rather than counted. Nothing
-about Claude, which was not measured and keeps the row it had.
+about Claude, which was not measured and keeps the row it had -- A-033
+has since measured Claude on native Windows, and the row it keeps is now a
+measured `none` rather than an untested one.
 
 **Scope.** Not an admission, not a control-plane authenticator, not a Claude
 sandbox, not A-018.
@@ -4458,3 +4460,200 @@ synchronized or derived from.
 **Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
 -- a gate may claim only the exact property it mechanically measures -- applied
 to a mechanism whose easiest misreading is that it grants what it only records.
+
+## A-033 Claude confinement was measured on the platform Forge ships on, and the platform has no mechanism to measure
+
+**Assumption.** A provider row that says `none` should say so because someone
+looked, not because nobody did. Tranche H looked. **NO OPERATING-SYSTEM
+CONFINEMENT MECHANISM IS REACHABLE FOR CLAUDE ON NATIVE WINDOWS** at
+`claude 2.1.211`, so `PROVIDER_CONFINEMENT["claude"]["windows"]` is a measured
+state rather than an untested default -- and **the row stays `none`**, because
+on this platform `established` is not merely unreached, it is unreachable.
+
+**What was measured, and how.** The record is
+`docs/governance/claude_confinement_measurement.json`; the document that reads
+it is `docs/governance/CLAUDE_CONFINEMENT_MEASUREMENT.md`; the harness is
+`scripts/probe_claude_confinement.py`, and **no model was invoked**. What holds
+that, and what it does not hold: the harness has exactly ONE process-spawning
+seam, `_run_cli`, whose argv is selected from `SPAWN_SHAPES` -- a closed list of
+complete argument tuples whose only option strings are `--version` and
+`--help` -- and a structural test reads the module's own syntax tree and
+refuses the process-creation shapes it names: a call whose dotted name is one of
+the enumerated `subprocess`, `os`, `asyncio`, `pty`, `runpy`, `multiprocessing`
+or `ctypes` spawners made outside that seam; an argument built by formatting,
+concatenation or joining rather than taken from that constant; and an
+environment read outside the one function allowed one. Both `SPAWN_SHAPES` and
+the option allow-list are held to literals declared in the pin itself. Seven
+evasion specimens were appended one at a time and each observed to go red.
+
+**THE STRUCTURAL RULE PROVES LESS THAN ITS NAME.** It is a structural rule over
+named shapes, not a proof that no model can be invoked: it holds the shapes it
+names and no others. **What decides a call is the spelling of its final
+attribute together with the exact dotted prefix in front of it**, and nothing
+else about a call EXPRESSION written outside the seam -- in particular, not
+how many expressions the call is written across. A process-module attribute
+that is never written as a call -- a bare decorator, for instance -- is not
+seen at all, because the rule walks call nodes. The seam is no exemption from
+the spellings the rule DOES name: the pin holds `_run_cli` to exactly one
+spawn of a named spelling, so a second such call written inside it is refused
+as well -- measured, `os.system` added there fails the pin with `'_run_cli'
+starts more than one process`. A second call the rule does not name is not
+counted there either, for the same reason it is not caught anywhere else:
+measured, `WinExec`, `getattr(subprocess, "run")(...)` and
+`subprocess.run.__call__(...)` each leave the pin green inside the seam.
+Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused,
+because its final attribute is spelled `system` and the bare-name arm catches
+that spelling; `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is NOT
+refused, because `WinExec` is not an enumerated spelling and `windll.kernel32`
+is not an enumerated prefix. Both are a single expression, both reach `ctypes`,
+and the rule separates them on spelling alone. An earlier version of this
+paragraph drew the line between the one-expression and the two-step spelling of
+that class instead; that read the accident of one specimen as a property of the
+rule, and it was false.
+
+**WHAT GOT PAST THE RULE IS A SAMPLE, NOT A BOUND.** AT LEAST EIGHT spellings
+walked past it in in-session adversarial sweeps -- past `ruff`,
+`scripts/check_security.py` and `scripts/check_architecture.py` as well -- and
+they are disclosed here rather than closed: a spawner fetched by name through
+`getattr`; a process module reached through `sys.modules` rather than imported
+and bound to a local before it is called, the one-expression
+`sys.modules["subprocess"].check_output(argv)` being caught by the bare-name
+arm; a module-level alias the enumeration does not spell, called through the
+alias; a `ctypes` handle bound to a local before it is called, and the
+one-expression `WinExec` spelling above with it; a spawn shape carrying no
+option string at all, which an allow-list that inspects only tokens beginning
+with `-` cannot see; an extra attribute hop through `subprocess.run.__call__`,
+which defeats the exact-prefix match; a subclass of `subprocess.Popen`, whose
+base is an attribute and never a call the rule can see; and -- different in kind
+from the other seven -- **a call into Forge's own already-imported
+`claude_worker` adapter**, `_adapter.run(...)` on a bound `ClaudeCodeWorker`,
+which spawns `claude -p <prompt>` from another module while naming no process
+module here at all. **THE LIST IS OPEN.** It is what two sweeps happened to
+try, not an enumeration of what survives, and a later sweep should be expected
+to add to it.
+
+**None of the eight is present in the shipped harness**, measured on that
+module's own syntax tree: no `getattr` call, no `sys.modules` subscript, no
+`ctypes` name, no assignment binding a spawner, no `.__call__` attribute and no
+subclass of a process module. `claude_worker` IS imported there and
+`_provider_env()` IS called from it, but `ClaudeCodeWorker.run` -- the one
+function in that module which spawns -- is only READ, by `inspect.getsource`;
+and both `standin_attempt` call sites fill the executable hole with
+`sys.executable`. So what is disclosed is a future-edit risk, not a defect in
+what ran. Seven of the eight are refused by nothing in this repository; the
+flagless shape is refused by the shape-table literal, which makes adding a shape
+a red test rather than a silent widening, but not by the structural rule.
+WIDENING THE RULE IS A SEPARATE SLICE with its own review, deliberately not
+taken: what was corrected here is the claim, not the mechanism. **The adapter
+route is a named requirement for that slice.** A rule over one module's own
+syntax cannot see a call into another module that spawns, so no rule phrased
+over process-module names reaches it; closing it means reading the callee, which
+is a different mechanism from the one here, and that was not attempted. What a
+person may rely on is the rule, and what the rule covers is written above; what
+it does NOT cover is open, and the eight named here are a sample of it. Four
+things were established, and they are different kinds of fact:
+
+1. **The provider CLI offers no sandbox surface here.** Parsed from
+   `claude --help`: the `Commands:` list is `agents, auth, auto-mode, doctor,
+   gateway, install, mcp, plugin, project, setup-token, ultrareview, update`
+   -- no `sandbox` subcommand -- and there is no `--sandbox` flag. The only two
+   occurrences of the word in the whole help text both say *run this inside a
+   sandbox someone else provides*. `--permission-mode` exists with choices
+   `acceptEdits, auto, bypassPermissions, dontAsk, manual, plan`; none of them
+   is an operating-system boundary, they select how Claude Code decides in its
+   own harness whether to run a tool call. "Claude Code refused" is not "the
+   operating system refused", and only the second is confinement here.
+2. **The bundled Windows sandbox runtime is not provisioned here.** A bounded
+   walk of five roots (1,854,211 entries, completed within its bound) plus a
+   PATH lookup found no broker binary; `net user` shows no dedicated sandbox
+   account; the Claude settings file carries no `sandbox` key (key names only
+   were read, never a value). **This is the sentence a later reader will
+   otherwise reconstruct wrongly: Claude Code DOES ship a Windows sandbox
+   implementation in its bundled runtime library.** This repository READ that
+   implementation in the executable bytes rather than exercising it, and it is
+   unreachable from the CLI on this platform at this version. The finding is
+   "no mechanism is reachable here", not "no mechanism exists anywhere".
+3. **The Forge adapter asks the operating system for nothing.** Read from the
+   AST of `ClaudeCodeWorker.run`: `(<exe>, "-p", <prompt>, "--output-format",
+   "json", "--max-turns", <n>, "--allowedTools", <tools>)`. Fourteen isolation
+   flags are absent from the module, the environment handed to the child is the
+   current one minus `FORGE` and `FORGE_*`, `Bash` is among the granted tools,
+   and `cwd` is a working directory rather than a boundary. `--allowedTools` is
+   the provider's own permission allowlist over a model's tool calls.
+4. **`control_plane_authority: denied` is unreachable for Claude here.** The
+   only competent mechanism is an observed surface record taken from the judged
+   principal; every state the shipped v1 producers can derive maps to
+   `inconclusive` or `allowed`, `separated` is refused by both the producer and
+   the contract, and this platform has no separated Claude principal to take a
+   record from.
+
+**Why no attempt was observed.** Codex could be probed without a model in the
+loop because its CLI has a sandbox entry point a harness can start directly.
+Claude has no equivalent on this platform, so every forbidden operation would
+be a **model decision** -- and PA-01 measured what that buys: two runs in which
+the model executed nothing at all, including the positive control, which graded
+on aftermath alone would have read as flawless confinement. So all six probes
+carry `attempt_observed: false`, which is an honest absence rather than a
+refusal, and **`denied` cannot be observed on this platform** for the five
+write properties, because no mechanism that could refuse is reachable here.
+
+**The control, and what it is not.** The harness ran one ambient-capability
+control inside a disposable `%TEMP%` root: a stand-in process under the
+adapter's working-directory rule and environment wrote the workspace, a seal
+surrogate, a sibling, Forge material, a home-config surrogate, and a target
+through a junction proved live before use. The real seal directory was listed
+and never written. It carries no vote, and the reason is one sentence:
+**a stand-in process is not the provider**, so those results
+say nothing about any confinement property; what they describe is what the Forge
+launch construction leaves reachable to whatever runs under it, which is the
+world the row `none` already describes.
+
+**The platform axis, added here because its absence failed open.**
+`assess_confinement` was already platform-bound: a `claude`/`linux` record that
+closes every property establishes nothing about `claude` on `windows`, and it
+refuses by name. `PROVIDER_CONFINEMENT` was not. So a green taken on a platform
+Forge does not ship on -- and WSL2/Linux is exactly where the Claude Code
+sandbox does run -- could have been written into a flat row that the served
+governed-build decision read on every host. The table is now keyed
+provider -> platform, `governed_build_eligibility(provider, platform)` takes a
+required platform and refuses an absent or unrecognised one by name rather than
+falling through to whichever row exists, `GovernedEligibility` carries the
+platform it decided for so `/api/state` says which one, and `served_platform()`
+in `onboarding_app` is the single derivation of the word. The rule the verifier
+already enforced on the evidence is now true of the claim as well:
+**evidence does not travel between platforms**.
+
+**What this does NOT assume.** Nothing about macOS, Linux or WSL2, none of
+which was measured. Nothing about any other Claude Code version: the version is
+a subject, as A-024 already recorded of a Codex CLI bump. Nothing about model
+behaviour or what a model chooses to do. Nothing about whether a real
+`claude -p` worker would attempt the forbidden writes -- that is unknowable
+without a model, and the act that would answer it is named below.
+
+**The external acts not taken.** **EA-1**: bounded `claude -p` runs under an
+attempt-marker protocol, which would spend the founder's provider quota; buys
+`attempt_observed: true` with `outcome: allowed`, cannot buy any `denied`, and
+cannot move the row in either direction. **EA-2**: provisioning the sandbox
+broker dedicated account under an elevation prompt; its subject would not be
+the adapter's launch construction, and the CLI's own platform gate excludes native
+Windows at this version anyway. **EA-3**: installing Claude Code and its
+sandbox dependencies inside WSL2 and authenticating that installation; buys
+evidence about `linux`/`wsl2`, which does not answer for `windows`. **EA-4**: a
+control-plane probe record from a Claude principal, which closes nothing
+because no v1 record can report `denied`. None was taken, and none is filed in
+`docs/governance/HUMAN_BLOCKED_MEASUREMENTS.md`: the permanent rule of that
+register is about approval records, and EA-1 is blocked by a provider quota
+rather than by an approval. Blurring the two would cost the one distinction
+that register exists to hold.
+
+**Scope.** A platform axis on the claim table and the served decision, a
+measurement record, a document, a harness and a test module. No admission, no
+row promotion, no change to `CONFINEMENT_PROPERTIES`, no change to the adapter
+invocation, no approval diagnostic and no Experience stage moves. Both declared
+providers remain ineligible for the governed build.
+
+**Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
+-- a gate may claim only the exact property it mechanically measures -- and the
+A-028 P3 lesson, which said a platform-scoped closure must not promote a row on
+every platform and which until now was stated in this register and implemented
+nowhere.

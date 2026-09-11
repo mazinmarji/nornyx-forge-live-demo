@@ -77,6 +77,11 @@ def assemble(project_dir: Path) -> FastAPI:
         )
     # No `eligibility` is passed: the served surface decides governed
     # eligibility by the Provider Contract's own function and nothing else.
+    # No `platform` is passed either, and that is the same choice: the decision
+    # is made for THIS host, whose word `served_platform()` derives in one
+    # place. A launcher that supplied a platform of its own would be choosing
+    # which platform's measurement the decision reads, which is the caller
+    # picking the answer.
     application = create_app(
         chosen / "capsule",
         resolve_packaged_root() / ".nornyx" / "contracts",

@@ -1,7 +1,9 @@
 # PA-01: Codex governed-build confinement — measured, and refused
 
-**Result: NOT ESTABLISHED.** `PROVIDER_CONFINEMENT["codex"]` stays `declared`.
-The governed basic-user build still executes no provider.
+**Result: NOT ESTABLISHED.** `PROVIDER_CONFINEMENT["codex"]["windows"]` stays
+`declared`. The governed basic-user build still executes no provider. (The
+table was keyed `provider -> platform` in Tranche H; this measurement was taken
+on Windows and answers for Windows only.)
 
 Measured at `7ce306b1` on 2026-09-05 against `codex-cli 0.128.0`, and
 re-measured on 2026-09-06 against `codex-cli 0.153.4` after the host's CLI was
