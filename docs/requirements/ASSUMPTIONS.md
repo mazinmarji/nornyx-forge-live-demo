@@ -4493,8 +4493,10 @@ attribute together with the exact dotted prefix in front of it**, and nothing
 else about a call EXPRESSION written outside the seam -- in particular, not
 how many expressions the call is written across. A process-module attribute
 that is never written as a call -- a bare decorator, for instance -- is not
-seen at all, because the rule walks call nodes; and a spawn inside `_run_cli`
-is the seam rather than a refusal.
+seen at all, because the rule walks call nodes. The seam is not an exemption
+either: the pin holds `_run_cli` to exactly ONE spawn, so a second one written
+inside it is refused as well -- measured, `os.system` added there fails the
+pin with `'_run_cli' starts more than one process`.
 Measured: `sys.modules["ctypes"].CDLL("msvcrt").system(cmd)` is refused,
 because its final attribute is spelled `system` and the bare-name arm catches
 that spelling; `sys.modules["ctypes"].windll.kernel32.WinExec(cmd, 1)` is NOT
