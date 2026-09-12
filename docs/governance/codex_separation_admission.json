@@ -1,0 +1,142 @@
+{
+  "schema": "nornyx.forge.separation_admission_derivation.v1",
+  "kind": "derivation over recorded evidence; NOT a new measurement",
+  "derived_from": {
+    "control_plane_authority_measurement.json": {
+      "blob": "4d3430685660d60ef0cb591b6657385bece1a89c",
+      "platform": "win32",
+      "measured_at_commit": "git:7f560094ee74e1111618c4676e4bcb2e90beba63"
+    },
+    "codex_confinement_measurement.json": {
+      "blob": "52c0b66ec597f7575eb0e75d386b500a41296df7",
+      "platform": "windows",
+      "measured_at_commit": "7ce306b1ab02c6bea5ecb28ea48eba63b8d45992"
+    }
+  },
+  "channels": {
+    "process_vm_read": "Forge's process memory, which is where this run's bearer lives (`app.state.session`) and the only place it lives; a caller holding PROCESS_VM_READ on the surface's process holds the bearer by a route no request log can record",
+    "browser_handler_cmdline": "the browser handler's command line, onto which the Windows shell launcher places the bootstrap nonce as a URL fragment for the life of that command line; `/api/runtime/reopen` is an unauthenticated trigger any local process may pull to mint a fresh one",
+    "browser_history": "the browser's on-disk history store, which records the navigated URL with its fragment when the navigation commits and which `history.replaceState` does not reach back into"
+  },
+  "arms": {
+    "sandboxed_subject": {
+      "principal_sid": "S-1-5-21-1556813898-4015428026-1657560799-1026",
+      "platform_recorded": "win32",
+      "classification": "admitted_nuisance",
+      "claimed_principal_separated": "unknown",
+      "channels": {
+        "browser_handler_cmdline": "not_applicable",
+        "browser_history": "refused",
+        "process_vm_read": "observed"
+      },
+      "derived_principal_separated": "not_separated",
+      "derivation_reason": "this caller ACQUIRED process_vm_read -- Forge's process memory, which is where this run's bearer lives (`app.state.session`) and the only place it lives; a caller holding PROCESS_VM_READ on the surface's process holds the bearer by a route no request log can record. A caller holding any one of these holds this run's bearer by a route the measured request surface never sees, whatever account it ran as",
+      "control_plane_authority_outcome": "inconclusive"
+    },
+    "unsandboxed_control": {
+      "principal_sid": "S-1-5-21-1556813898-4015428026-1657560799-1001",
+      "platform_recorded": "win32",
+      "classification": "admitted_nuisance",
+      "claimed_principal_separated": "unknown",
+      "channels": {
+        "browser_handler_cmdline": "observed",
+        "browser_history": "observed",
+        "process_vm_read": "observed"
+      },
+      "derived_principal_separated": "not_separated",
+      "derivation_reason": "this caller ACQUIRED browser_handler_cmdline, browser_history, process_vm_read -- the browser handler's command line, onto which the Windows shell launcher places the bootstrap nonce as a URL fragment for the life of that command line; `/api/runtime/reopen` is an unauthenticated trigger any local process may pull to mint a fresh one; the browser's on-disk history store, which records the navigated URL with its fragment when the navigation commits and which `history.replaceState` does not reach back into; Forge's process memory, which is where this run's bearer lives (`app.state.session`) and the only place it lives; a caller holding PROCESS_VM_READ on the surface's process holds the bearer by a route no request log can record. A caller holding any one of these holds this run's bearer by a route the measured request surface never sees, whatever account it ran as",
+      "control_plane_authority_outcome": "inconclusive"
+    }
+  },
+  "filesystem_properties": {
+    "subject_write": {
+      "required": "allowed",
+      "observations": 2,
+      "outcomes": [
+        "allowed"
+      ],
+      "cli_versions": [
+        "codex-cli 0.128.0",
+        "codex-cli 0.153.4"
+      ],
+      "platform": "windows",
+      "satisfied_on_its_own_platform": true
+    },
+    "external_seal_write": {
+      "required": "denied",
+      "observations": 2,
+      "outcomes": [
+        "denied"
+      ],
+      "cli_versions": [
+        "codex-cli 0.128.0",
+        "codex-cli 0.153.4"
+      ],
+      "platform": "windows",
+      "satisfied_on_its_own_platform": true
+    },
+    "sibling_write": {
+      "required": "denied",
+      "observations": 2,
+      "outcomes": [
+        "denied"
+      ],
+      "cli_versions": [
+        "codex-cli 0.128.0",
+        "codex-cli 0.153.4"
+      ],
+      "platform": "windows",
+      "satisfied_on_its_own_platform": true
+    },
+    "forge_code_write": {
+      "required": "denied",
+      "observations": 2,
+      "outcomes": [
+        "denied"
+      ],
+      "cli_versions": [
+        "codex-cli 0.128.0",
+        "codex-cli 0.153.4"
+      ],
+      "platform": "windows",
+      "satisfied_on_its_own_platform": true
+    },
+    "link_escape_write": {
+      "required": "denied",
+      "observations": 2,
+      "outcomes": [
+        "denied"
+      ],
+      "cli_versions": [
+        "codex-cli 0.128.0",
+        "codex-cli 0.153.4"
+      ],
+      "platform": "windows",
+      "satisfied_on_its_own_platform": true
+    }
+  },
+  "control_plane_property": {
+    "translated_platform": "win32",
+    "translated_outcome": "inconclusive",
+    "required_outcome": "denied",
+    "satisfied": false
+  },
+  "platform_binding": {
+    "served_platform_word": "windows",
+    "control_plane_evidence_platform": "win32",
+    "binds": false,
+    "assessment_against_served_platform_establishes": false,
+    "assessment_reason": "this measurement was taken against 'codex' on 'win32' and establishes nothing about 'codex' on 'windows'; confinement is a property of a particular provider under a particular sandbox, and evidence does not transfer between them"
+  },
+  "admission": {
+    "row": "declared",
+    "governed_build_eligible": false,
+    "blockers": [
+      "control_plane_authority is not satisfied: the confined principal ACQUIRED process_vm_read on Forge's surface, so it is not separated from the authority-bearing surface (C3-F4)",
+      "browser_handler_cmdline was not measured closed for the confined principal: not_applicable covers four causes indistinguishably (C3-F5)",
+      "the control-plane evidence binds platform 'win32' and the eligibility decision is made for 'windows'; the two do not combine",
+      "the measured boundary is the `codex sandbox` entry point and the shipped adapter invokes `codex exec --sandbox workspace-write`; equivalence is not demonstrated",
+      "no ConfinementProbe carries the provider version it was taken under, so no promotion can rest on version-matched evidence"
+    ]
+  }
+}

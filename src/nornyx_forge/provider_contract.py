@@ -502,6 +502,177 @@ def control_plane_authority_outcome(
         )
     return outcome
 
+
+# ---------------------------------------------------------------------------
+# What makes a principal SEPARATED (slice C4)
+# ---------------------------------------------------------------------------
+
+#: The artefact outcome vocabulary, RESTATED from `scripts/probe_control_plane.py`
+#: for the reason every other constant in this module is restated: the probe is
+#: a stranger to the surface it measures and `layer.domain` may not reach into
+#: `scripts/`. A test holds the two equal in both directions.
+#:
+#: THREE WORDS, AND THE THIRD IS NOT THE SECOND. `observed` is a capability
+#: this caller ACQUIRED; `refused` is a facility that EXISTED and denied it;
+#: `not_applicable` is that there was NOTHING TO TRY. Only `refused` is a
+#: measured negative. `not_applicable` is an absence, and the producer emits it
+#: for four causes indistinguishably -- a denied launch, a missing executable, a
+#: timeout and a non-zero exit -- so reading it as a denial is precisely the
+#: substitution that would turn an unmeasured channel into a closed one.
+ARTEFACT_OUTCOMES = ("observed", "refused", "not_applicable")
+
+#: THE OUT-OF-BAND AUTHORITY CHANNELS, as data: every route by which a caller
+#: could hold THIS RUN'S BEARER without ever presenting it through the measured
+#: request surface. A-027 concedes each one by name, and the request log cannot
+#: see any of them -- which is the whole reason `admitted_nuisance` and
+#: `reachable_unadmitted` are read off that log and still do not settle the
+#: property on their own.
+#:
+#: THIS IS THE CRITERION THE SEPARATION GUARD WAS ALWAYS ABOUT, written down.
+#: Until it was, `principal_separated` was a word a producer ASSERTED, and the
+#: only thing standing between a provider and admission was that the v1
+#: producer's own vocabulary happened to forbid the word. That is a fact about
+#: an instrument, not a criterion: a successor producer that wrote `separated`
+#: because two accounts held different Windows SIDs would have walked straight
+#: through `admitted_nuisance` to `denied` and taken Codex to `established` --
+#: and the C3 measurement that matters most would never have been consulted.
+#: C3 measured the confined Codex principal, under a DIFFERENT SID, ACQUIRING a
+#: PROCESS_VM_READ handle on Forge's own surface process. Account distinction
+#: did not close the channel the guard exists for.
+#:
+#: So separation is DERIVED from these facts and is never read from a claim.
+SEPARATION_CHANNELS: Mapping[str, str] = MappingProxyType({
+    "process_vm_read": (
+        "Forge's process memory, which is where this run's bearer lives "
+        "(`app.state.session`) and the only place it lives; a caller holding "
+        "PROCESS_VM_READ on the surface's process holds the bearer by a route no "
+        "request log can record"
+    ),
+    "browser_handler_cmdline": (
+        "the browser handler's command line, onto which the Windows shell launcher "
+        "places the bootstrap nonce as a URL fragment for the life of that command "
+        "line; `/api/runtime/reopen` is an unauthenticated trigger any local process "
+        "may pull to mint a fresh one"
+    ),
+    "browser_history": (
+        "the browser's on-disk history store, which records the navigated URL with "
+        "its fragment when the navigation commits and which `history.replaceState` "
+        "does not reach back into"
+    ),
+})
+
+
+def separation_from_channel_facts(
+    artefacts: Any,
+) -> tuple[str, str]:
+    """THE separation verdict, DERIVED from measured channel facts.
+
+    Returns the word and the reason for it, and there is deliberately no
+    parameter by which a caller states one.
+
+    THE RULE, and each branch is a different fact:
+
+      * ANY channel this caller ACQUIRED -> `not_separated`. Decisive, and it
+        DOMINATES every closed channel beside it, for the same reason a
+        contradictory observation dominates a compliant one in
+        `assess_confinement`: a capability that was acquired happened, and the
+        channels that refused it do not un-happen it. One open route to the
+        bearer is one open route to the bearer.
+      * EVERY channel measured `refused` -> `separated`. The facility existed
+        on this host and denied this caller, on every route A-027 concedes.
+        This is the POSITIVE branch, and it exists so that this function is a
+        criterion rather than a hard-coded refusal: a principal that really is
+        separated can reach it.
+      * ANYTHING ELSE -> `unknown`. A channel that was not measured, or whose
+        read degraded to `not_applicable`, is an ABSENCE. Absence is not
+        refusal -- the rule this repository keeps having to restate -- and an
+        unmeasured channel may not be counted as a closed one.
+
+    WHAT THIS DOES NOT DO, because doing it was the trivial repair this slice
+    exists to refuse: it does not read a SID, a user name, an account, or any
+    other statement of who the caller was. Two principals holding different
+    Windows SIDs is exactly the configuration C3 measured, and under it the
+    confined principal still acquired a PROCESS_VM_READ handle on the surface.
+    Account distinction is not separation for the purposes this criterion
+    relies on, so it is not an input here.
+
+    An outcome outside the vocabulary RAISES rather than reading as benign, in
+    the same direction as `capability_acquired()` in the producer: an unknown
+    word is never silently a closed channel.
+    """
+    if artefacts is None:
+        artefacts = ()
+    if isinstance(artefacts, (str, bytes, Mapping)):
+        raise ProviderError(
+            f"the artefact rows are {type(artefacts).__name__}; a separation verdict is "
+            "derived from a SEQUENCE of artefact rows, and a shape this cannot walk is "
+            "refused rather than read as an empty measurement"
+        )
+    try:
+        rows = list(artefacts)
+    except TypeError as error:
+        raise ProviderError(
+            f"the artefact rows are not iterable ({error.__class__.__name__}); a shape "
+            "this cannot walk is refused rather than read as an empty measurement"
+        ) from error
+
+    outcomes: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ProviderError(
+                f"an artefact row is {type(row).__name__}, not a mapping; a row that "
+                "cannot be read is refused rather than skipped, because a skipped row "
+                "is an unmeasured channel counted as a measured one"
+            )
+        name = row.get("name")
+        if name not in SEPARATION_CHANNELS:
+            continue
+        outcome = row.get("outcome")
+        if outcome not in ARTEFACT_OUTCOMES:
+            raise ProviderError(
+                f"artefact {name!r} carries outcome {outcome!r}; the vocabulary is "
+                f"{ARTEFACT_OUTCOMES}. A word outside it is refused rather than read as "
+                "anything, because the only reading that could be safe is a denial and "
+                "an unrecognised word is not a denial"
+            )
+        if name in outcomes and outcomes[name] != outcome:
+            # TWO ROWS, TWO ANSWERS, for one channel. The acquisition wins, by
+            # the same dominance rule as above, and the disagreement is named
+            # in the reason rather than resolved silently by row order.
+            if "observed" in (outcomes[name], outcome):
+                outcomes[name] = "observed"
+                continue
+            outcomes[name] = "not_applicable"
+            continue
+        outcomes[name] = outcome
+
+    acquired = sorted(n for n, o in outcomes.items() if o == "observed")
+    if acquired:
+        return "not_separated", (
+            "this caller ACQUIRED " + ", ".join(acquired) + " -- "
+            + "; ".join(SEPARATION_CHANNELS[n] for n in acquired)
+            + ". A caller holding any one of these holds this run's bearer by a route "
+            "the measured request surface never sees, whatever account it ran as"
+        )
+    unmeasured = sorted(
+        name for name in SEPARATION_CHANNELS if outcomes.get(name) != "refused"
+    )
+    if unmeasured:
+        return "unknown", (
+            "no channel was acquired, and " + ", ".join(unmeasured) + " "
+            + ("was" if len(unmeasured) == 1 else "were")
+            + " not measured closed for this caller (the row is absent, or it degraded "
+            "to 'not_applicable', which says there was nothing to try and not that "
+            "anything was denied). An unmeasured channel is not a closed one"
+        )
+    return "separated", (
+        "every out-of-band authority channel A-027 concedes -- "
+        + ", ".join(sorted(SEPARATION_CHANNELS))
+        + " -- existed on this host and REFUSED this caller, so it holds no route to "
+        "this run's bearer that the measured request surface would not see"
+    )
+
+
 #: WHICH OBSERVER IS COMPETENT FOR WHICH PROPERTY, as data.
 #:
 #: This was one global list, and the global list was wrong. It let
@@ -993,6 +1164,24 @@ def confinement_probe_from_surface_record(
     # "separated"`, an equality against the one word that mattered today; a
     # fourth separation word admitted into `PRINCIPAL_SEPARATION` would have
     # walked past it into the mapping.
+    # THE RECORD'S OWN CHANNEL FACTS DECIDE, BEFORE THE PRODUCER'S VOCABULARY
+    # DOES. `separated` is the word both widened states turn on, and until this
+    # existed it was a word a producer ASSERTED: the only thing between a
+    # provider and admission was that the v1 validator happened to forbid it.
+    # A successor that wrote `separated` because two accounts held different
+    # SIDs would have gone straight through `admitted_nuisance` to `denied`.
+    # So the claim is checked against the measurement under it, in the same
+    # direction and for the same reason as the classification disagreement
+    # above: a label may not disagree with the record under it.
+    derived, derived_reason = separation_from_channel_facts(record.get("artefacts"))
+    if separation == "separated" and derived != "separated":
+        raise ProviderError(
+            "the record claims principal_separated='separated' while its own artefact "
+            f"rows derive {derived!r}: {derived_reason}. Separation is DERIVED from the "
+            "out-of-band authority channels A-027 concedes and is never read from a "
+            "claim, so a record asserting the word its own measurement contradicts is "
+            "refused rather than downgraded"
+        )
     if separation not in _V1_SEPARATION_VALUES:
         raise ProviderError(
             f"the record says principal_separated={separation!r}, which a "
@@ -1002,6 +1191,17 @@ def confinement_probe_from_surface_record(
             f"that set would establish {CONTROL_PLANE_PROPERTY!r} from a producer that "
             "cannot support the claim"
         )
+    # THE DERIVATION MAY ONLY WEAKEN, NEVER STRENGTHEN. A measured OPEN channel
+    # is a fact the record's own word may not soften, so `not_separated`
+    # replaces a weaker claim; but a derived `separated` does NOT upgrade a
+    # record that did not claim it. The v1 producer was never built to
+    # establish separation -- deriving it needs a positive control from a
+    # separated principal, which that harness cannot supply -- so letting its
+    # artefact rows alone carry a record to `separated` would admit the
+    # property from an instrument that cannot support it, which is the
+    # widening this whole slice exists to refuse.
+    if derived == "not_separated":
+        separation = derived
 
     subject = record.get("subject")
     if not isinstance(subject, Mapping) or not isinstance(subject.get("principal"), Mapping):

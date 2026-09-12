@@ -933,6 +933,21 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # and a pin asserting all three texts state the measured bound and carry
     # none of the retired universal spellings. Floor at band(35) = 32.
     "tests/test_claude_confinement_admission.py": 32,
+    # Tranche C slice C4, the separation criterion: 30 collected, floor at
+    # band(30) = 27. Separation stopped being a word a producer asserts and
+    # became a verdict derived from the out-of-band authority channels A-027
+    # concedes, so this module holds the proofs that the derivation cannot be
+    # talked past: every conceded channel closed reaches `separated` (the
+    # positive twin, without which the rest is a hard-coded refusal), each
+    # channel independently defeats it when ACQUIRED, an unmeasured or absent
+    # channel is `unknown` rather than a denial, no statement of WHO the caller
+    # was is an input, a record claiming more than its own artefact rows is
+    # refused by name, the derivation may weaken and never strengthen, and the
+    # five admission gaps -- the shipped `codex exec` boundary, the win32/windows
+    # platform split, the absent provider-version binding, the verifier the
+    # candidate may not shadow, and the artefact that licenses no property --
+    # are each pinned so they cannot be forgotten into a promotion.
+    "tests/test_codex_separation_admission.py": 27,
     # PR-16's trust boundary: 107 collected after CI, security-review, POSIX
     # process-budget and F-002 remediation, floor at band(107) = 97. Real
     # DevelopmentFlow repair/review paths, all seven hostile specimens, exact
@@ -1721,12 +1736,23 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3624   (119 modules)
-#     sum of the module floors    3319
-#     band(3624) = ceil(0.9*n)    3262
-#     MINIMUM_COLLECTED           3327
+#     collected across tests/     3654   (120 modules)
+#     sum of the module floors    3346
+#     band(3654) = ceil(0.9*n)    3289
+#     MINIMUM_COLLECTED           3354
 #     above the module sum         8
-#     below what collects         297
+#     below what collects         300
+#
+# TRANCHE C SLICE C4 ADDS ONE MODULE AND NO FLOOR CHANGE ANYWHERE ELSE.
+# tests/test_codex_separation_admission.py collects 30, floor band(30) = 27, so
+# the rows move together: 3624 -> 3654 across 119 -> 120 modules, the floor sum
+# 3319 -> 3346, and MINIMUM_COLLECTED 3327 -> 3354, holding the same 8 above the
+# module sum. THE SLACK THE BANDS GRANT moves 305 -> 308, the three the new
+# module contributes. Every declared floor still equals `band(collected)` for
+# its own module, which is what makes the two routes in
+# `test_the_slack_the_bands_grant_is_the_measured_sum` agree. Recounted by
+# collecting the suite, not by adding to the previous rows. NO PROVIDER ROW
+# MOVED: `PROVIDER_CONFINEMENT["codex"]["windows"]` is still `declared`.
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1935,7 +1961,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 305 in total, and the aggregate refuses
+# per-module bands already grant 308 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2204,7 +2230,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3327
+MINIMUM_COLLECTED = 3354
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2338,6 +2364,7 @@ REQUIRED_MODULES = (
     # leave the only measurement of the platform Forge actually ships on with
     # nothing reading it.
     "tests/test_claude_confinement_admission.py",
+    "tests/test_codex_separation_admission.py",
     "tests/test_standing_development_obligations.py",
     "tests/test_standing_obligations_windows.py",
     "tests/test_trusted_greenfield_acceptance.py",

@@ -537,6 +537,72 @@ probe module's blob as the line a reader can check against the shipped commit);
 and any movement on eligibility, on any provider row, or on the
 permanently-blocked approval and inspection diagnostics.
 
+## Separation derived rather than asserted (Tranche C, slice C4)
+
+C4 moves no provider row. `PROVIDER_CONFINEMENT["codex"]["windows"]` is still
+`declared` and `governed_build_eligibility("codex", "windows")` is still false.
+What it changes is what the ineligibility RESTS ON: before C4 it rested on the
+v1 producer's vocabulary happening to forbid the word `separated`, which is a
+fact about an instrument; after C4 it rests on a measured channel fact.
+
+No new measurement was taken. This tranche ran on Linux with no Codex CLI
+installed, so no Windows observation was possible and none was invented. Every
+row below is a derivation over records already in the tree, or a deterministic
+test of the criterion itself.
+
+| Claim | Status | How |
+| --- | --- | --- |
+| separation is derived from measured channel facts and from nothing a record asserts | established | deterministic (`test_every_conceded_channel_closed_is_separated` is the positive branch and comes first, so the refusals below are a criterion rather than a hard-coded verdict; `test_no_statement_of_who_the_caller_WAS_can_reach_separated` drives SID, account and a literal `separated` row through the derivation and measures them inert in all three directions) |
+| a readable Forge process memory prevents separation | established | deterministic (`test_a_readable_forge_process_memory_prevents_separation` closes BOTH other channels so the handle alone is what is measured; `test_any_single_acquired_channel_prevents_separation` generalises it over every conceded channel) |
+| an unmeasured or ambiguous channel is `unknown`, never a denial | established | deterministic (`test_an_unmeasured_channel_is_unknown_and_never_separated` over every channel, and `test_a_missing_channel_row_is_unknown_and_never_separated` for a row that is absent entirely; C3-F5's `not_applicable` is exactly this shape and the producer emits it for four causes indistinguishably) |
+| a record whose claim outruns its own artefact rows is REFUSED, not downgraded | established | deterministic (`test_a_record_claiming_separated_against_its_own_channels_is_refused` asserts the refusal names the channel that refuted it; `test_a_record_claiming_separated_over_unmeasured_channels_is_refused` covers the ambiguous shape a successor producer would most plausibly ship) |
+| the derivation may WEAKEN a claim and may never STRENGTHEN one | established | deterministic (`test_a_derived_separation_cannot_upgrade_a_record_that_did_not_claim_it`: a v1 record with every channel closed derives `separated` and still translates to `inconclusive`, because the v1 producer cannot support the claim; `test_the_measured_open_channel_sharpens_the_records_own_word` is the twin in the permitted direction) |
+| a genuinely separated principal closes the property and the chain | established | deterministic (`test_a_separated_principal_closes_the_property_and_the_chain` reaches `establishes is True`; `test_without_measured_separation_the_property_stays_open` is the same log at either other word) |
+| the recorded C3 arms derive `not_separated` from what was measured | established | derivation over `docs/governance/control_plane_authority_measurement.json` (`test_the_recorded_c3_arms_derive_their_separation_from_what_was_measured`: the subject derives it from the acquired memory handle, the control from all three; both records' own word is `unknown`, kept distinct from the derivation) |
+| the admission verdict is reproducible from the machine-readable record | established | `scripts/derive_separation_admission.py --check`, run rather than described (`test_the_committed_derivation_is_what_the_records_derive`; `test_the_derivation_states_the_verdict_the_chain_actually_reaches` reads the row and the eligibility from the live decision so a promotion cannot edit one and not the other) |
+| an artefact remains an INFERENCE and licenses no property | established | deterministic (`test_the_control_plane_mechanism_is_still_the_surfaces_own_record`: the channel facts are `inferred_acl` rows and decide a PRECONDITION on reading the surface's record, never the property; a probe carrying that mechanism is not authoritative) |
+| the candidate cannot shadow the verifier that decides its admission | established | deterministic (`test_the_candidate_cannot_shadow_the_verifier_that_decides_its_admission`: `forge_code_write` must be `denied` while `subject_write` must be `allowed`, the recorded probes show the refusal, and a measurement that let it through cannot establish) |
+
+**The blockers, each stated as its own.** `control_plane_authority` is unmet
+because the confined principal ACQUIRED `PROCESS_VM_READ` on Forge's surface
+(C3-F4) and so is not separated from the authority-bearing surface.
+`browser_handler_cmdline` was never measured CLOSED for it (C3-F5).
+The control-plane evidence binds platform `win32` and the eligibility decision
+is made for `windows`; the two do not combine, and the historical record was
+NOT relabelled to close that
+(`test_the_control_plane_evidence_does_not_bind_the_platform_the_decision_reads`).
+The measured boundary is the `codex sandbox` entry point while the shipped
+adapter invokes `codex exec --sandbox workspace-write`, which carries a prompt
+rather than a command, so a MODEL decides whether the forbidden operation is
+attempted; equivalence is not demonstrated and the C3 record says so itself
+(`test_the_shipped_adapter_boundary_is_not_the_measured_boundary`). And no
+`ConfinementProbe` carries the provider version it was taken under
+(`test_no_probe_carries_the_provider_version_it_was_taken_under`).
+
+Not claimed by any row: that any channel is closed FOR CODEX; that the
+browser-handler channel was denied (it was not measured, and `not_applicable`
+is an absence); that a successor producer exists (none does, and writing one
+means re-measuring on Windows under the version being bound, which this
+environment cannot do); that the five filesystem properties changed (they are
+satisfied on their own platform and C4 neither adds to nor subtracts from
+them); that `separated` is unreachable in principle (the positive branch is
+reachable and tested, which is what makes this a criterion rather than a
+refusal); any change to `governed_build_eligibility`'s rule, to
+`assess_confinement`'s unanimity rule or to any provider row; and any movement
+on the permanently-blocked approval and inspection diagnostics.
+
+**One instrument defect was repaired and is recorded as one.**
+`test_no_host_derived_spelling_survives_in_the_probe_module` built its four
+known-positive specimens unconditionally from the host's machine name while
+every machine-name PATTERN is built behind `len(node) >= 3`. On a host whose
+machine name is shorter -- measured on a container reporting `vm` -- three
+specimens asked for patterns that were never added and the test failed while
+its actual sweep found nothing, because there was nothing to find. It stayed
+green wherever it had been run because a CI runner's machine name is long,
+which is how an instrument defect survives. Each specimen is now gated on the
+pattern class that matches it; the sweep itself is untouched and every
+specimen is still checked on a host that can match it.
+
 ## Requires a normal internet-connected machine or GitHub Actions
 
 The release workspace cannot reach public package indexes or GitHub from its shell. Therefore the following are delegated to the included CI workflow and the end user's bootstrap environment:

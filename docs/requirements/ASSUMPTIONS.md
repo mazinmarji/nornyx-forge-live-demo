@@ -3793,12 +3793,121 @@ proved by a mutation that was GREEN at the previous head and is RED now.
 
 ### Scope and serves, for all three slices
 
+### Separation is derived, not asserted (slice C4)
+
+**What moved, and what did not.** Codex on Windows remains `declared` and
+ineligible, and `governed_build_eligibility("codex", "windows")` is still
+false. What changed is the REASON, from an accident of an instrument into a
+measured fact.
+
+**The hole.** Until C4, `principal_separated` was a word a PRODUCER WROTE into
+its record. `control_plane_authority_outcome` reads it, and at `separated` both
+widened states answer `denied` -- the outcome the criterion requires. The only
+thing standing between Codex and `established` was that the v1 producer's own
+validator happens to forbid the word. That is a fact about a harness, not a
+criterion. The obvious next slice -- a successor producer, which C3's own
+findings invite -- would write `separated` for the most natural reason
+available: the confined account holds a different Windows SID. That record
+would have gone straight through `admitted_nuisance` to `denied`, closed the
+sixth property, and carried the row to `established`, with nothing in
+`layer.domain` objecting and the single most important thing C3 measured never
+read by the admission chain at all.
+
+**What C3 measured, which is why that repair would have been unsafe.** The
+confined Codex principal, running as a DIFFERENT OS account, ACQUIRED a
+`PROCESS_VM_READ` handle on Forge's own surface process (C3-F4). Forge's
+process memory is where this run's bearer lives and, by A-027, the only place
+it lives. A caller holding that handle holds the bearer by a route no request
+log can see -- which is the entire reason `admitted_nuisance` and
+`reachable_unadmitted` are read off a request log and still do not settle the
+property. ACCOUNT DISTINCTION DID NOT CLOSE THE CHANNEL THE SEPARATION GUARD
+EXISTS FOR.
+
+**The criterion, as data.** `SEPARATION_CHANNELS` names the out-of-band
+authority channels A-027 concedes -- Forge's process memory, the browser
+handler's command line, and the browser's on-disk history store -- each with
+what it is in words a reader can check against that entry.
+`separation_from_channel_facts` derives the word from their measured outcomes
+and from nothing else:
+
+- ANY channel ACQUIRED is `not_separated`, and it DOMINATES every closed
+  channel beside it, for the same reason a contradictory observation dominates
+  a compliant one in `assess_confinement`: a capability that was acquired
+  happened, and the channels that refused it do not un-happen it.
+- EVERY channel measured `refused` is `separated`. This is the positive branch,
+  and it exists so the function is a criterion rather than a hard-coded
+  refusal. A principal that really is separated can reach it.
+- Anything else is `unknown`. A channel with no row, or one whose read degraded
+  to `not_applicable`, is an ABSENCE, and the producer emits `not_applicable`
+  for four causes indistinguishably. An unmeasured channel is not a closed one.
+
+WHO THE CALLER WAS IS NOT AN INPUT. No SID, user name or account reaches this
+function, and a row claiming separation on the record's own say-so is inert:
+it cannot upgrade an unmeasured channel and it cannot cancel an acquired one.
+
+**The claim is checked against the measurement under it.** A record asserting
+`separated` while its own artefact rows derive anything else is REFUSED by
+name, in the same direction and for the same reason as the classification
+disagreement that was already there: a label may not disagree with the record
+under it. It is refused rather than downgraded, because a downgrade would
+translate a forged record into an honest-looking measurement result.
+
+**The derivation may only WEAKEN.** A measured open channel sharpens a softer
+claim -- the C3 subject says `unknown`, its rows derive `not_separated`, and
+the probe carries the fact -- and the OUTCOME is unchanged, because both words
+answer `inconclusive` for the guarded states. A derived `separated` does NOT
+upgrade a record that did not claim it. The v1 producer was never built to
+establish separation, so letting its artefact rows alone carry a record to
+`separated` would admit the property from an instrument that cannot support the
+claim, which is the widening this slice exists to refuse.
+
+**What C4 establishes about Codex.** Nothing new was measured: this environment
+is Linux with no Codex CLI, so no Windows observation was possible and none was
+invented. What C4 does is derive, mechanically and reproducibly, what the
+records already in the tree support.
+`scripts/derive_separation_admission.py` writes
+`docs/governance/codex_separation_admission.json` and `--check` asserts it
+still matches, so a reader re-derives the verdict rather than trusting a
+document. Both C3 arms derive `not_separated`; the confined subject derives it
+because it acquired the memory handle, the unconfined control because it
+acquired all three.
+
+**The blockers, and each is a separate one.** `control_plane_authority` is
+unmet because the confined principal is not separated from the
+authority-bearing surface. `browser_handler_cmdline` was never measured closed
+for it -- `not_applicable` is an absence, and turning it into a denial is the
+substitution this repository keeps having to refuse. The control-plane evidence
+binds platform `win32` while the eligibility decision is made for the word
+`served_platform()` produces, `windows`, and the two DO NOT COMBINE; the
+historical record is not relabelled to close that, because rewriting a
+measurement's subject to match the word a decision wants is the forgery the
+binding exists to prevent. The measured boundary is the `codex sandbox` entry
+point and the shipped adapter invokes `codex exec --sandbox workspace-write`,
+which carries a PROMPT rather than a command, so a MODEL decides whether the
+forbidden operation is attempted; equivalence is not demonstrated, and the C3
+record says so itself. And no `ConfinementProbe` carries the provider version
+it was taken under, so nothing in the chain can tell evidence from one CLI
+boundary from evidence taken under a materially different later one.
+
+**Not claimed.** That any channel is closed for Codex. That the browser-handler
+channel was denied -- it was not measured. That the five filesystem properties
+are affected; they are satisfied on their own platform and C4 neither adds to
+nor subtracts from them. That a v2 producer exists: none does, and writing one
+means re-measuring on Windows under the version being bound, which this
+environment cannot do. That `separated` is unreachable in principle -- the
+positive branch is reachable and tested, which is what makes this a criterion.
+That anything moved on the permanently-blocked approval and inspection
+diagnostics.
+
+
 **Scope.** A measurement harness with its self-probe (C2); one replaced
-admission criterion with the mechanism and vocabulary it needs (C1); and the
+admission criterion with the mechanism and vocabulary it needs (C1); the
 record-to-probe translation with the first measurement taken through it from a
 confined principal, plus the presence-check repair that measurement forced
-(C3). None of the three changes an Experience stage, the eligibility rule, the
-unanimity rule, any provider row, or any seal, lock, token or port behaviour.
+(C3); and the derivation that makes principal separation a measured verdict
+rather than a producer's assertion (C4). None of the four changes an Experience
+stage, the eligibility rule, the unanimity rule, any provider row, or any seal,
+lock, token or port behaviour.
 
 **Serves.** the surface half of the control-plane authority question, kept
 separate from any provider claim; an admission criterion that a measurement

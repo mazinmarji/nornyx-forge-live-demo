@@ -2,6 +2,51 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Principal separation is DERIVED, not asserted (Tranche C, slice C4). No
+  provider row moved: `codex`/`windows` is still `declared` and
+  `governed_build_eligibility("codex", "windows")` is still false. What moved
+  is what that refusal rests on. `principal_separated` was a word a PRODUCER
+  WROTE into its record, and the mapping answers `denied` at `separated` for
+  both widened states -- so the only thing between Codex and `established` was
+  that the v1 producer's own validator happens to forbid the word. That is a
+  fact about an instrument, not a criterion, and the obvious successor would
+  have written `separated` for the most natural reason available: the confined
+  account holds a different Windows SID. C3 had already measured why that would
+  be unsafe. The confined Codex principal, running as a DIFFERENT OS account,
+  ACQUIRED a `PROCESS_VM_READ` handle on Forge's own surface process (C3-F4),
+  and Forge's process memory is where this run's bearer lives and, by A-027,
+  the only place it lives. Account distinction did not close the channel the
+  guard exists for. `SEPARATION_CHANNELS` now names the out-of-band authority
+  channels A-027 concedes and `separation_from_channel_facts` derives the word
+  from their measured outcomes alone: any ACQUIRED channel dominates, every
+  channel measured `refused` reaches `separated` (the positive branch, so this
+  is a criterion and not a hard-coded refusal), and anything else is `unknown`,
+  because an unmeasured channel is not a closed one. Who the caller WAS is not
+  an input. A record claiming `separated` against its own artefact rows is
+  REFUSED by name rather than downgraded, and the derivation may only WEAKEN a
+  claim, never strengthen one -- a v1 record with every channel closed still
+  translates to `inconclusive`, because that producer cannot support the claim.
+  NOTHING NEW WAS MEASURED: this tranche ran on Linux with no Codex CLI, so no
+  Windows observation was possible and none was invented.
+  `scripts/derive_separation_admission.py` derives the verdict from the records
+  already in the tree and `--check` asserts the committed
+  `docs/governance/codex_separation_admission.json` still matches, so a reader
+  re-derives the admission rather than trusting a document. Five blockers are
+  recorded, each as its own: `control_plane_authority` unmet because the
+  confined principal is not separated; `browser_handler_cmdline` never measured
+  CLOSED for it (`not_applicable` covers four causes indistinguishably); the
+  control-plane evidence binds platform `win32` while the decision is made for
+  `windows`, and the historical record was NOT relabelled to close that; the
+  measured boundary is the `codex sandbox` entry point while the shipped
+  adapter invokes `codex exec --sandbox workspace-write`, which carries a
+  prompt rather than a command; and no `ConfinementProbe` carries the provider
+  version it was taken under. One instrument defect was repaired and recorded
+  as one: `test_no_host_derived_spelling_survives_in_the_probe_module` built
+  its known-positive specimens unconditionally from the host machine name while
+  every machine-name pattern is built behind `len(node) >= 3`, so on a host
+  reporting `vm` it failed while its own sweep found nothing; each specimen is
+  now gated on the pattern class that matches it and the sweep is untouched.
+
 - Content-bound CONFIRM and READY (Tranche F). The lifecycle's two human
   positions now NAME the content they were recorded about, and the surface
   refuses to license work over content the record does not name. Measured at

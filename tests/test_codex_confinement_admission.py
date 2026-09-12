@@ -1289,8 +1289,10 @@ from nornyx_forge.provider_contract import (  # noqa: E402
     CONTROL_PLANE_PROBE_SCHEMA,
     CONTROL_PLANE_PROPERTY,
     CONTROL_PLANE_TRANSPORT,
+    SEPARATION_CHANNELS,
     confinement_measurement_from_surface_record,
     confinement_probe_from_surface_record,
+    separation_from_channel_facts,
 )
 
 C3_RECORD = ROOT / "docs" / "governance" / "control_plane_authority_measurement.json"
@@ -1719,19 +1721,48 @@ def test_a_breach_asserted_by_a_label_and_absent_from_the_log_is_refused():
             provider="codex")
 
 
+def _channels(outcome="refused", **per_channel):
+    """Artefact rows for the out-of-band authority channels, by outcome.
+
+    The default is the state that DERIVES `separated`: every channel a facility
+    that existed and denied this caller. Named channels override it, which is
+    how a specimen opens exactly one route and leaves the rest closed.
+    """
+    rows = []
+    for name in SEPARATION_CHANNELS:
+        word = per_channel.get(name, outcome)
+        detail = ("readable by this principal" if word == "observed"
+                  else "denied to this principal" if word == "refused"
+                  else "there was nothing to try")
+        rows.append({"name": name, "outcome": word,
+                     "mechanism": probe.MECH_ACL, "detail": detail})
+    return rows
+
+
 def test_the_states_and_words_this_producer_cannot_record_are_refused_by_name():
     """`unreachable` answers `denied` at every separation word, and
     `separated` is the word on which both widened states turn. Neither can be
     produced by a `control_plane_probe.v1` producer -- its own validator
     refuses both -- so a v1 record carrying either did not come from it, and
     accepting either would satisfy the criterion from evidence whose producer
-    cannot support the claim."""
+    cannot support the claim.
+
+    THE `separated` SPECIMEN CARRIES CLOSED CHANNELS, so that this test
+    measures the guard it names. Separation is now DERIVED from the record's
+    own artefact rows, and a specimen with no rows at all is refused one check
+    earlier for CONTRADICTING its own measurement -- a different rule, with its
+    own tests. Closing every channel satisfies that rule and leaves this one
+    the only thing standing, which is what isolating a guard means: the
+    producer-competence refusal has to hold even for a record whose facts would
+    otherwise support the word.
+    """
     with pytest.raises(ProviderError, match="cannot derive"):
         confinement_probe_from_surface_record(
             _surface_record(validate=False, classification="unreachable"), provider="codex")
     with pytest.raises(ProviderError, match="may never record"):
         confinement_probe_from_surface_record(
-            _surface_record(validate=False, principal_separated="separated"),
+            _surface_record(validate=False, principal_separated="separated",
+                            artefacts=_channels()),
             provider="codex")
     assert control_plane_authority_outcome("unreachable") == "denied"
     assert control_plane_authority_outcome(

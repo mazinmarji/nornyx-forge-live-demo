@@ -1039,9 +1039,27 @@ def test_no_host_derived_spelling_survives_in_the_probe_module():
             assert not found, f"{what} names {label}: {found.group(0)!r} at offset {found.start()}"
     # KNOWN POSITIVES: the sweep fires on the shapes it exists to catch, in
     # both the raw and the doubled-separator spelling.
-    for specimen in (f"an interpreter under C:\\Users\\{login[:6]}~1.{node[:3]}\\python.exe",
-                     f"an interpreter under C:\\\\Users\\\\{login[:6]}~1.{node[:3]}\\\\python.exe",
-                     f"a home at /home/{login}/venv", f"a profile at C:\\Users\\x.{node}\\v"):
+    #
+    # EACH SPECIMEN IS BUILT ONLY WHEN THE PATTERN CLASS THAT MATCHES IT WAS.
+    # It was not, and the mismatch was a defect in this instrument rather than
+    # in anything it sweeps: the four specimens were built unconditionally from
+    # `node` while every node-derived pattern is built behind `len(node) >= 3`.
+    # On a host whose machine name is shorter than that -- measured on a
+    # container reporting `vm` -- three of the four asked patterns that were
+    # never added, and this test failed while the real sweep above found
+    # nothing, because there was nothing to find. It stayed green wherever it
+    # was run because a GitHub runner's node is long, which is exactly how an
+    # instrument defect survives. Gating the specimens keeps every one of them
+    # checked on a host that can match it and asserts none that cannot; the
+    # sweep itself is untouched.
+    specimens = [f"a home at /home/{login}/venv"] if len(login) >= 3 else []
+    if len(login) >= 3 and len(node) >= 3:
+        specimens += [f"an interpreter under C:\\Users\\{login[:6]}~1.{node[:3]}\\python.exe",
+                      f"an interpreter under C:\\\\Users\\\\{login[:6]}~1.{node[:3]}\\\\python.exe"]
+    if len(node) >= 3:
+        specimens.append(f"a profile at C:\\Users\\x.{node}\\v")
+    assert specimens, "this host can match no known-positive specimen at all"
+    for specimen in specimens:
         assert any(pattern.search(specimen) for _label, pattern in patterns), specimen
     # KNOWN NEGATIVE: the placeholder the module uses is not a hit here.
     assert not any(pattern.search("C:\\Users\\DEVUSER~1.BOX\\python.exe")
