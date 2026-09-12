@@ -701,7 +701,40 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Round-tripped against the real parse_brd; a proposal-only capsule
     # refuses; open proposals author nothing; heading collisions refused.
     "tests/test_brd_authoring.py": 9,
+    # What each digest chain covers, and what it does not: 10 collected at
+    # introduction, floor at band(10) = 9. Five edits OUTSIDE the capsule's
+    # authoritative region that both domain verifiers pass -- a confirmed
+    # proposal's value and `resolved.by`, `history`, an appended
+    # confirmed-looking row, a reversed ledger -- the two inside it that fail
+    # closed, the experience chain's wider reach, the same five refused at
+    # rest by a sealed store and returned verbatim by an unsealed one, and
+    # the docstring sentence that had claimed the wider reach for both.
+    "tests/test_digest_coverage.py": 9,
+    # Tranche F, content-bound CONFIRM and READY: 24 collected at
+    # introduction, floor at band(24) = 22. The BRD prerequisite measured as
+    # DERIVATION rather than existence, the `brd_requirements` binding at
+    # CONFIRM and BUILD, drift refused at the build, at a re-entered build
+    # and at READY, the re-confirmation self-edge and its no-op refusal,
+    # evidence references that no longer collide across builds, the two
+    # refusal-ORDER pins (the contract answers first for an edge it does not
+    # declare; the one unnameable scope names the only cause that reaches
+    # it), and the affirmative limit pin over A-032.
+    #
+    # ROUND 2 ADDS NINE, so it collects 33 and the floor moves to
+    # band(33) = 30. The introduction figure above is history and stays as
+    # history. The nine: the build setup's one-lock property, RECORDED rather
+    # than timed; the GOVERN dead end's truthful headline; a backend the
+    # reference format cannot carry, refused before any reference exists; a
+    # trailing newline parsing as none of the three formats; producer and
+    # parser agreeing across all four patterns; the route and the projection
+    # naming one BRD sentence in both file states; a failing scope row that is
+    # not a binding; the CONFIRM headline that stopped instructing a
+    # re-confirmation the route refuses; and the guard on the A-032 pin's own
+    # section slice.
+    "tests/test_content_bound_transitions.py": 30,
     # The build trigger: 9 collected at introduction, floor at band(9) = 9.
+    # It collects 10 today and band(10) is also 9, so the floor stands
+    # unmoved -- the introduction figure is history and is left as history.
     # The no-terminal path runs only confirmed state; model actors, missing
     # prerequisites and interleaved builds refused by name; the flow's
     # result reported verbatim.
@@ -1688,12 +1721,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3581   (117 modules)
-#     sum of the module floors    3280
-#     band(3581) = ceil(0.9*n)    3223
-#     MINIMUM_COLLECTED           3288
+#     collected across tests/     3624   (119 modules)
+#     sum of the module floors    3319
+#     band(3624) = ceil(0.9*n)    3262
+#     MINIMUM_COLLECTED           3327
 #     above the module sum         8
-#     below what collects         293
+#     below what collects         297
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1902,7 +1935,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 301 in total, and the aggregate refuses
+# per-module bands already grant 305 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2017,6 +2050,47 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # band(107) - band(106) is one where the module moved one. NO SKIP IS ADDED --
 # the appearing entry and the refusing `unlink` are both injected -- and the
 # windows-runtime job's floor is untouched at 277, for the same reason.
+# TRANCHE F ADDS TWO MODULES AND THIRTY-FOUR TESTS.
+# `tests/test_digest_coverage.py` is new at 10 collected (floor band(10) = 9)
+# and `tests/test_content_bound_transitions.py` at 24 (floor band(24) = 22),
+# so 118 modules stand. NO EXISTING MODULE MOVED: the slice changed fixtures
+# and expectations in SIX modules -- `tests/test_basic_user_journey.py` (50),
+# `tests/test_experience_contract.py` (20), `tests/test_build_trigger.py`
+# (10), `tests/test_actor_declaration_boundary.py` (7),
+# `tests/test_provider_authority_boundary.py` (107) and
+# `tests/test_governed_provider_eligibility.py` (16) -- without adding or
+# removing a case in any of them, so every one of those floors is the band of
+# what its module collects exactly as before. Those six built lifecycles that
+# entered CONFIRM with no evidence, which the contract now requires; each
+# presents a specimen `brd_requirements` reference, as
+# `tests/test_experience_contract.py` already did.
+# The module-floor sum rises by 31 to 3267 and the aggregate follows to 3275,
+# keeping the same 8 above it; the suite collects 3533 -> 3567, band(n)
+# 3180 -> 3211, and the working room below the floor 289 -> 292. THE SLACK
+# THE BANDS GRANT rises by 3, from 297 to 300: each new module sits above its
+# own band by the rounding of `ceil(0.9n)` -- 1 for the module of 10 and 2
+# for the module of 24 -- and nothing else moved. NO SKIP IS ADDED: both
+# modules run everywhere, over `tmp_path` stores and the in-process test
+# client, with no platform, no network and no provider. The windows-runtime
+# job's floor is untouched at 277, because that job runs SEVEN named modules
+# and neither of these is one of them.
+#
+# TRANCHE F ROUND 2 ADDS NINE TESTS, ONE ROW AND NO MODULE. Every one lands in
+# `tests/test_content_bound_transitions.py`, beside the pins whose defects
+# three review lanes found: the build setup's one-lock property, the GOVERN
+# dead end's headline, the reference-format owner (a refused backend, a
+# trailing newline, producer/parser agreement), one BRD sentence for the route
+# and the projection, `passed` honoured by the binding reader, the CONFIRM
+# headline, and a guard on the A-032 pin's own section slice. So 118 modules
+# still stand and exactly ONE floor moves: band(24) = 22 -> band(33) = 30. The
+# module-floor sum rises by 8 to 3275 and the aggregate follows to 3283,
+# keeping the same 8 above it; the suite collects 3567 -> 3576 and band(n)
+# 3211 -> 3219. THE WORKING ROOM BELOW WHAT COLLECTS RISES BY ONE, 292 -> 293,
+# and so does THE SLACK THE BANDS GRANT, 300 -> 301: the module sits 3 above
+# its band at 33 where it sat 2 at 24, which is the rounding of `ceil(0.9n)`
+# and nothing else. Nine collected against a floor rising by eight is that
+# same one. NO SKIP IS ADDED, and the windows-runtime job's floor is untouched
+# at 277 for the reason above.
 #
 # TRANCHE H ADDS ONE MODULE AND FIVE ROWS TO AN EXISTING ONE. Re-measured from
 # a fresh collection on THIS head rather than carried forward, because
@@ -2130,7 +2204,29 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3288
+MINIMUM_COLLECTED = 3327
+#
+# TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
+# ADDED UP. Both branches moved this file, so neither side's rows described the
+# tree that exists now: F's said 3576 across 118 modules, H's said 3581 across
+# 117, and the merged tree collects 3624 across 119 -- F's two new modules and
+# H's one, with no module in common. The per-module floors needed NO change at
+# all, which is the useful thing to record: every declared floor already equals
+# `band(collected)` for its own module, because each side declared its own rows
+# correctly and the two sets do not overlap. So only the aggregates moved --
+# the floor sum to 3319 and MINIMUM_COLLECTED to 3327, holding the same 8 above
+# it -- and THE SLACK THE BANDS GRANT is 305, summed over the merged counts
+# rather than carried from either side's 301. The working room below what
+# collects is 297. The windows-runtime job's floor is untouched at 277:
+# neither branch changed any of its seven modules.
+#
+# A NOTE ON HOW THIS WAS DERIVED, because the first attempt broke the suite.
+# The merge left this file with a placeholder aggregate carrying a trailing
+# comment, and three modules that parse it for exactly ONE plain
+# `MINIMUM_COLLECTED` assignment then failed to COLLECT -- so the recount that
+# was supposed to produce these figures could not run at all. The census is a
+# governed input to its own measurement; a value that cannot be parsed is not a
+# neutral placeholder.
 
 # PR-16's threat model is identity-sensitive: a raw module count can stay green
 # while H1, H7, or the standing real-flow proof is replaced by an unrelated
@@ -2225,6 +2321,8 @@ REQUIRED_MODULES = (
     "tests/test_control_plane_authority.py",
     "tests/test_brd_authoring.py",
     "tests/test_build_trigger.py",
+    "tests/test_digest_coverage.py",
+    "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",

@@ -23,8 +23,10 @@ worker result saying `tests_passed: true` or `ready: true` is not an input
 to anything below; only the completed flow dictionary is, and only through
 `experience_build.flow_evidence`, the single translator this repository
 keeps for that mapping. It has no filesystem, no clock and no process:
-timestamps and the "is a BRD present" fact arrive as arguments, persistence
-belongs to the store, and the surface composes the three.
+timestamps and what the surface measured about BRD.md -- present, derived,
+and its digest -- arrive as arguments, persistence belongs to the store,
+and the surface composes the three. It computes no digest of its own, so
+every hex string below is one the surface handed in.
 
 `layer.application`, like `experience_build`: it interprets application
 state and results and starts nothing.
@@ -32,6 +34,7 @@ state and results and starts nothing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Mapping
 
 from .capsule import Actor, CapsuleTransitionError, CapsuleValidationError
@@ -44,7 +47,12 @@ from .experience import (
     retry,
     start_experience,
 )
-from .experience_build import flow_evidence
+from .experience_build import (
+    FLOW_BRD_REF,
+    SCOPE_REF,
+    flow_evidence,
+    scope_reference,
+)
 
 #: The actor under which the SURFACE ITSELF records evidence-driven
 #: transitions (BUILD -> TEST -> GOVERN) and build failures. A system actor
@@ -80,33 +88,322 @@ _SCOPE_PREREQUISITES: tuple[tuple[str, str], ...] = (
 )
 _BRD_MISSING = "no derived BRD: derive it from the confirmed capsule before confirming the scope"
 
+#: THE PREREQUISITE USED TO BE `BRD.md` EXISTING, and it was reported to the
+#: reader as "a derived BRD". Measured on the parent through the real gated
+#: surface: a BRD.md overwritten by hand after the scope confirmation was
+#: accepted at CONFIRM and handed to the build, and a legacy project whose
+#: BRD.md was never derived from anything confirmed the scope over it. The
+#: file's EXISTENCE stood in for its DERIVATION -- a label standing in for
+#: the thing measured, which is the substitution this repository keeps
+#: finding. What is measured now is equality with the pure renderer over the
+#: capsule beside the file, and these two name the failure of that equality
+#: at the two places it matters.
+_BRD_STALE = (
+    "BRD.md does not match the confirmed capsule; derive it again before "
+    "confirming the scope"
+)
+_BRD_STALE_BUILD = (
+    "BRD.md does not match the confirmed capsule; derive it again before building"
+)
+#: The build's own words for an absent BRD, kept here beside the stale one so
+#: the route and the projection cannot drift apart on what the prerequisite is
+#: called. Shorter than `_BRD_MISSING` because the build has no scope
+#: confirmation to talk about; both sentences live in one place.
+_BRD_ABSENT_BUILD = "no BRD.md in the project; derive it first"
+
+#: Every sentence the PROJECTION has for the state of `BRD.md`. They are one
+#: measurement addressed to different next actions, so a position that offers
+#: both a scope confirmation and a build lists one of them rather than the
+#: same fact twice.
+#:
+#: `_BRD_ABSENT_BUILD` USED TO BE EXCLUDED HERE, under a comment saying it was
+#: "the route's refusal and never appears in a blocker list". That was
+#: measured false of the pair it describes: at CONFIRM with no `BRD.md` the
+#: route said "no BRD.md in the project; derive it first" while the projection
+#: said "...before confirming the scope" -- the scope variant, to a reader
+#: being sent toward the build -- which is the exact mismatch these sentences
+#: were introduced to prevent. `build_blockers` now takes its sentence from
+#: `build_brd_refusal`, so the build's two words are the build's in both
+#: places and this tuple holds all four.
+_BRD_SENTENCES = (_BRD_MISSING, _BRD_STALE, _BRD_ABSENT_BUILD, _BRD_STALE_BUILD)
+
+
+@dataclass(frozen=True)
+class BrdState:
+    """What the surface measured about `BRD.md`, as data this module reads.
+
+    THREE FACTS, KEPT APART. `present` is whether the file is there;
+    `derived` is whether its decoded text IS `brd_from_capsule` of the
+    capsule beside it; `digest` names those bytes under the flow parser's
+    own convention (`sha256` of the decoded text, without the `sha256:`
+    prefix `parse_brd` puts on it). Keeping them apart is the whole point:
+    the prerequisite that shipped conflated the first with the second.
+
+    The digest arrives from the surface rather than being computed here,
+    because this module has no filesystem and hashes nothing.
+    """
+
+    present: bool
+    derived: bool
+    digest: str | None
+
+    @classmethod
+    def absent(cls) -> BrdState:
+        """No file. Nothing to name and nothing to compare."""
+        return cls(present=False, derived=False, digest=None)
+
+    @classmethod
+    def matching(cls, digest: str) -> BrdState:
+        """Present, and equal to the rendering of the confirmed capsule.
+
+        NAMED `matching` AND NOT `derived`, which is what the work order
+        asked for: `derived` is a FIELD of this dataclass, and a classmethod
+        of that name in the class body is read by the dataclass machinery as
+        that field's DEFAULT VALUE rather than as a constructor. The field
+        keeps the name the surface publishes (`brd_derived`); the
+        constructor takes the one that does not collide.
+        """
+        return cls(present=True, derived=True, digest=digest)
+
+    @classmethod
+    def stale(cls, digest: str | None) -> BrdState:
+        """Present, and not that rendering. `digest` is `None` only when the
+        bytes could not be decoded at all, which is present-and-unreadable
+        rather than absent, and is refused for the same reason."""
+        return cls(present=True, derived=False, digest=digest)
+
+
+#: What the record says when it does not name the content in front of the
+#: build. A refusal, not a warning: a scope confirmation given for one
+#: capsule and one BRD does not license a build of another, and the surface
+#: measured exactly that happening before this slice.
+#:
+#: ONE SENTENCE FOR TWO STATES, AND THE WORDING IS WHY. It covers a binding
+#: that names OTHER content and a lifecycle that carries NO binding, and the
+#: obvious phrasing -- "the scope was confirmed against different content" --
+#: is false of the second: a record that names nothing has not been shown to
+#: name something else, and asserting it would be the surface stating as fact
+#: what it cannot see. What both states share is that the confirmation does
+#: not name these bytes, so that is what it says.
+_SCOPE_DRIFT = (
+    "the scope confirmation does not name the capsule and the BRD this build "
+    "would consume; confirm the scope again before building"
+)
+#: The re-confirmation self-edge exists for CHANGED content. Pressing it over
+#: content the record already names moves nothing, and says so rather than
+#: writing a second identical row.
+_SCOPE_NO_OP = (
+    "the scope confirmation already matches the capsule and the BRD; there is "
+    "nothing to re-confirm"
+)
+#: A capsule with no digest chain cannot be named. Reachable from the domain
+#: API with a malformed document; the store validates one before it lands.
+_SCOPE_UNNAMEABLE = (
+    "the capsule has no digest chain, so the scope confirmation has nothing to name"
+)
+#: A BUILD re-entry the record cannot bind. The contract declares no
+#: BUILD -> BUILD edge, so re-entering carries no transition and there is
+#: nothing for a new binding to ride on: a run whose content moved underneath
+#: it is a DEAD END, named rather than re-bound. Disclosed in A-032.
+_SCOPE_DRIFT_BUILD = (
+    "the build was not recorded against the capsule and the BRD in the project "
+    "now, so this lifecycle cannot re-run it"
+)
+#: READY over content the build never saw. Two states, two sentences, because
+#: they are two different facts: the record says the content moved, or the
+#: record says nothing at all about what the build consumed.
+_SCOPE_DRIFT_READY = (
+    "the capsule or the BRD changed after the build; READY would be recorded "
+    "for content that is no longer there"
+)
+_SCOPE_UNBOUND_READY = (
+    "the build recorded no scope binding, so READY would be recorded for "
+    "content the record does not name"
+)
+
+#: THE TWO FORMATS THIS MODULE PARSES ARE IMPORTED, NOT RESTATED.
+#: `SCOPE_REF` is `capsule/<64 hex>/brd/<64 hex>` -- the capsule's chain tip
+#: and the BRD's digest, 141 characters, inside `EvidenceRef`'s 200-char
+#: bound. `FLOW_BRD_REF` is what `experience_build` writes when the flow
+#: recorded which BRD it parsed. Both are PARSED rather than string-matched,
+#: so a reference in any other shape -- including one a previous version
+#: wrote, of which there are none -- reads as NO BINDING and fails closed
+#: instead of half-matching.
+#:
+#: They live in `experience_build` because a format written in one module and
+#: read in another is a contract, and a contract with no single owner drifts:
+#: an f-string here and a regular expression there agreed on the alphabet
+#: only by coincidence, and a backend label containing `/` was enough to
+#: break the agreement. This module cannot be the owner -- the dependency
+#: runs the other way -- so it imports.
+
+#: The flow's own statement of what it read, disagreeing with what the build
+#: was licensed to consume. Not a claim that either is wrong -- only that the
+#: two do not describe the same bytes, which is enough to refuse a completion
+#: claim over them.
+_FLOW_BRD_MISMATCH = (
+    "the flow parsed a BRD other than the one the build was licensed to consume"
+)
+
 
 class JourneyRefusal(CapsuleTransitionError):
     """The action cannot be performed from this state. Nothing moved."""
 
 
 # ---------------------------------------------------------------------------
+# What a lifecycle position is ABOUT: the content it names, and the content
+# that is there now. Two tuples and a comparison; no digest is computed here.
+# ---------------------------------------------------------------------------
+
+def scope_current(document: Mapping[str, Any], brd: BrdState) -> tuple[str, str] | None:
+    """The content a scope confirmation would name right now, or `None` when
+    it cannot be named -- no capsule chain, or no readable BRD."""
+    chain = document.get("digest_chain")
+    tip = chain[-1] if isinstance(chain, list) and chain else None
+    if not isinstance(tip, str) or brd.digest is None:
+        return None
+    return (tip, brd.digest)
+
+
+def scope_ref(document: Mapping[str, Any], brd: BrdState) -> str | None:
+    """That same pair as one resolvable reference, or `None`.
+
+    The capsule half is the chain tip, which is ALREADY a content digest --
+    `sha256(previous | canonical(authoritative))` -- so the reference names
+    the confirmed region rather than a revision number that could point
+    anywhere. The BRD half is the digest the surface measured under the flow
+    parser's own convention.
+    """
+    current = scope_current(document, brd)
+    return None if current is None else scope_reference(*current)
+
+
+def scope_binding(state: Mapping[str, Any], stage: str) -> tuple[str, str] | None:
+    """The content the record says `stage` was entered over, or `None`.
+
+    The LAST parsing `brd_requirements` row wins, because a re-confirmation
+    appends rather than replaces and the most recent one is the binding. A row
+    whose reference does not parse is not a binding: it is read as absent, and
+    everything that consults this then fails closed.
+
+    AND A FAILING ROW IS NOT A BINDING EITHER. `_scope_evidence` records
+    `passed` as the MEASUREMENT -- a BRD that is not the capsule's rendering
+    presents failing evidence -- so a reader that ignored it would honour, as
+    a licence, exactly the row the writer took care to mark as not one. The
+    contract refuses a failing `brd_requirements` into CONFIRM outright, and
+    BUILD requires none and so stores whatever is presented; this is the
+    reader's half of the same rule, and it is defence in depth rather than a
+    reachable hole.
+    """
+    for row in reversed(list(state.get("evidence", {}).get(stage, []))):
+        if row.get("kind") != "brd_requirements" or row.get("passed") is not True:
+            continue
+        found = SCOPE_REF.match(str(row.get("ref", "")))
+        if found:
+            return (found.group(1), found.group(2))
+    return None
+
+
+def flow_brd_digest(state: Mapping[str, Any]) -> str | None:
+    """The BRD the FLOW said it parsed, read back from what TEST recorded.
+
+    This is the run's own statement, translated by `experience_build` from
+    `requirements_model.source_digest` and never re-derived here. A run that
+    recorded none yields `None`, and the comparison that consumes it is then
+    simply not made -- an absence, not a pass and not a failure.
+    """
+    for row in reversed(list(state.get("evidence", {}).get("TEST", []))):
+        if row.get("kind") != "flow_run":
+            continue
+        found = FLOW_BRD_REF.match(str(row.get("ref", "")))
+        if found:
+            return found.group(1)
+    return None
+
+
+def _contract_would_accept(state: Mapping[str, Any], target: str) -> bool:
+    """Whether the contract's own table admits this edge from here, and the
+    workflow is in a position to take it.
+
+    Read from `TRANSITIONS` rather than re-implemented, and consulted so that
+    a journey-level content check never PRE-EMPTS a contract refusal: a build
+    requested from DISCOVER, or from a failed stage, gets the contract's
+    answer, which is the one that is true of the request.
+    """
+    return target in TRANSITIONS[state["stage"]] and state["status"] == "active"
+
+
+def _scope_evidence(document: Mapping[str, Any], brd: BrdState) -> EvidenceRef:
+    """One `brd_requirements` reference for the content that is there now.
+
+    Every caller reaches this only once the BRD half is known to exist -- the
+    blockers guarantee it for a scope confirmation, and the binding
+    comparison guarantees it for a build -- so the one way the reference can
+    fail to form is a capsule with no chain, which is what the refusal names.
+    """
+    ref = scope_ref(document, brd)
+    if ref is None:
+        raise JourneyRefusal(_SCOPE_UNNAMEABLE)
+    # `passed` is the MEASUREMENT, not a constant: a BRD that is not the
+    # capsule's rendering presents failing evidence, which the contract
+    # refuses outright rather than recording as a weaker pass.
+    return EvidenceRef(kind="brd_requirements", ref=ref, passed=brd.derived)
+
+
+# ---------------------------------------------------------------------------
 # The actions. Each is a thin, named mapping onto one contract call.
 # ---------------------------------------------------------------------------
 
-def scope_blockers(document: Mapping[str, Any], brd_present: bool) -> tuple[str, ...]:
+def _brd_blocker(brd: BrdState, absent: str, stale: str) -> str | None:
+    """Absent, stale, or nothing to say -- in the words of one caller.
+
+    BOTH SENTENCES ARE THE CALLER'S NOW. The absent one was fixed here while
+    the stale one was passed in, so every caller shared the scope
+    confirmation's wording for a missing file however far from a scope
+    confirmation it was. One measurement, two readings, and the reading
+    belongs to whoever is about to act.
+    """
+    if not brd.present:
+        return absent
+    return None if brd.derived else stale
+
+
+def scope_blockers(document: Mapping[str, Any], brd: BrdState) -> tuple[str, ...]:
     """What still stands between this project and a scope confirmation."""
     authoritative = document.get("authoritative", {})
     missing = [why for field, why in _SCOPE_PREREQUISITES if field not in authoritative]
-    if not brd_present:
-        missing.append(_BRD_MISSING)
+    blocker = _brd_blocker(brd, _BRD_MISSING, _BRD_STALE)
+    if blocker is not None:
+        missing.append(blocker)
     return tuple(missing)
 
 
-def build_blockers(document: Mapping[str, Any], brd_present: bool) -> tuple[str, ...]:
+def build_brd_refusal(brd: BrdState) -> str | None:
+    """The build's BRD prerequisite, or `None` when it is met.
+
+    The route enforces independently of the projection, and both say the same
+    thing about the same file BECAUSE BOTH COME FROM HERE: `/api/build`
+    refuses with what this returns, and `build_blockers` lists it. A review
+    measured the two disagreeing for an ABSENT file while this docstring
+    already claimed they could not, which is the claim-wider-than-mechanism
+    shape this slice exists to remove, one level up from the code it removed
+    it from.
+    """
+    return _brd_blocker(brd, _BRD_ABSENT_BUILD, _BRD_STALE_BUILD)
+
+
+def build_blockers(document: Mapping[str, Any], brd: BrdState) -> tuple[str, ...]:
     """What the build route refuses by name: a confirmed provider and a
     derived BRD. The route enforces these itself; the projection reads them
-    so the page offers only what the route would accept."""
+    so the page offers only what the route would accept -- and takes the BRD
+    sentence from `build_brd_refusal`, the one function the route refuses
+    with, so "what the route would say" is not a second copy of it."""
     authoritative = document.get("authoritative", {})
     missing = [why for field, why in _SCOPE_PREREQUISITES if field == "provider"
                and field not in authoritative]
-    if not brd_present:
-        missing.append(_BRD_MISSING)
+    blocker = build_brd_refusal(brd)
+    if blocker is not None:
+        missing.append(blocker)
     return tuple(missing)
 
 
@@ -125,26 +422,69 @@ def start_tracking(actor: Actor, at: str) -> dict[str, Any]:
 def confirm_scope(
     state: Mapping[str, Any],
     document: Mapping[str, Any],
-    brd_present: bool,
+    brd: BrdState,
     actor: Actor,
     at: str,
 ) -> dict[str, Any]:
-    """The human scope confirmation: lifecycle CONFIRM.
+    """The scope confirmation: lifecycle CONFIRM, over content it names.
 
     Distinct from confirming a capsule proposal, which moves one field into
-    authority. This is the person saying the confirmed intent, the confirmed
-    provider and the derived BRD together are the scope to build -- so it
-    refuses, by name, while any of the three is missing, and then asks the
-    contract, which refuses every actor kind but a human.
+    authority. This records that the confirmed intent, the confirmed
+    provider and the DERIVED BRD together are the scope to build -- so it
+    refuses, by name, while any of the three is missing or the BRD is not
+    that derivation, and then asks the contract, which refuses every actor
+    kind but a human.
+
+    WHAT IT NOW RECORDS. One `brd_requirements` reference naming the
+    capsule's chain tip and the BRD's digest -- the content the build is
+    thereby licensed to consume. From CONFIRM this is a RE-confirmation over
+    content that changed; over content the record already names it is a
+    no-op and is refused, so "recorded once" survives the new self-edge.
+
+    AND THE CONTRACT SPEAKS FIRST HERE TOO, which it did not when this was
+    written. `begin_build` and `mark_ready` were both given that guard in this
+    slice and this entry point was missed: measured through the shipped routes,
+    a lifecycle FAILED at CONFIRM answered `POST /api/journey/confirm-scope`
+    with "there is nothing to re-confirm" while the contract's own answer was
+    "the workflow is failed at CONFIRM; retry it before advancing" -- and
+    `retry` then succeeded, so there was something to do and the refusal said
+    the opposite. Nothing advanced either way; a refusal naming the wrong
+    cause is worse than one that is merely early, which is the property the
+    guard exists for.
+
+    THE BLOCKERS ABOVE STILL ANSWER FIRST, and that ordering is left alone.
+    It is older than this slice, it names prerequisites rather than a cause,
+    and moving it is a separate decision with its own pins.
     """
-    blockers = scope_blockers(document, brd_present)
+    blockers = scope_blockers(document, brd)
     if blockers:
         raise JourneyRefusal("the scope cannot be confirmed yet: " + "; ".join(blockers))
-    return advance(state, ACTION_TARGETS["confirm_scope"], actor, at)
+    if not _contract_would_accept(state, ACTION_TARGETS["confirm_scope"]):
+        # NOTHING TO ADD, so nothing is added -- and the reference is not
+        # BUILT either, for the reason `begin_build` records: argument
+        # evaluation precedes the call, so a reference that cannot be formed
+        # would speak before the contract does. `advance` checks status and
+        # the edge before it looks at evidence, so the empty tuple reaches no
+        # evidence rule that could answer in its place.
+        return advance(state, ACTION_TARGETS["confirm_scope"], actor, at)
+    if (state["stage"] == "CONFIRM"
+            and scope_binding(state, "CONFIRM") == scope_current(document, brd)):
+        # THE STAGE TEST IS LOAD-BEARING and is not implied by the guard
+        # above: from DISCOVER the contract would accept the edge, and a
+        # capsule with no chain makes BOTH sides `None` -- so dropping it
+        # would answer "there is nothing to re-confirm" for a scope that
+        # could never be named in the first place.
+        raise JourneyRefusal(_SCOPE_NO_OP)
+    return advance(state, ACTION_TARGETS["confirm_scope"], actor, at,
+                   (_scope_evidence(document, brd),))
 
 
 def begin_build(
-    state: Mapping[str, Any], actor: Actor, at: str
+    state: Mapping[str, Any],
+    document: Mapping[str, Any],
+    brd: BrdState,
+    actor: Actor,
+    at: str,
 ) -> tuple[dict[str, Any], bool]:
     """Position the lifecycle at BUILD for a run that is about to start.
 
@@ -156,10 +496,48 @@ def begin_build(
     BUILD -> BUILD edge and the stage is already the right one. Every other
     position, including a failed one, is put to the contract, whose refusal
     is the caller's answer.
+
+    AND THE SCOPE CONFIRMATION HAS TO BE ABOUT THIS CONTENT. The record's
+    `brd_requirements` binding is compared with the capsule and BRD in front
+    of the build; an absent binding and a differing one are both refused,
+    which is fail-closed for a lifecycle written before bindings existed.
+    One scope confirmation clears it.
+
+    THE CONTRACT STILL SPEAKS FIRST FOR EVERYTHING THAT IS ITS BUSINESS. The
+    binding is only consulted where the contract would ACCEPT the edge --
+    read from its own table, not re-implemented here -- so a build from
+    DISCOVER is still refused as "no transition DISCOVER -> BUILD" and a
+    failed lifecycle is still told to retry. A journey-level refusal that
+    pre-empted those would be answering a question the caller did not reach.
+
+    AND THE TRANSITION CARRIES THE BINDING FORWARD. BUILD requires no
+    evidence -- the contract asks for none -- but `advance` stores what is
+    presented, so the run's own record says what it was licensed to consume.
+    A RE-ENTRY cannot do that: there is no BUILD -> BUILD edge to carry a new
+    row, so a re-entry whose content moved is a dead end and says so.
     """
+    current = scope_current(document, brd)
     if state["stage"] == "BUILD" and state["status"] == "active":
+        recorded = scope_binding(state, "BUILD")
+        if current is None or recorded is None or recorded != current:
+            raise JourneyRefusal(_SCOPE_DRIFT_BUILD)
         return dict(state), False
-    return advance(state, ACTION_TARGETS["start_build"], actor, at), True
+    if not _contract_would_accept(state, ACTION_TARGETS["start_build"]):
+        # NOTHING TO ADD, so nothing is added -- and the reference is not
+        # BUILT either. Constructing it here was a real defect: argument
+        # evaluation precedes the call, so a build requested from DISCOVER
+        # with no BRD raised "the capsule has no digest chain" -- a refusal
+        # naming a cause nobody measured -- in place of the contract's "there
+        # is no transition DISCOVER -> BUILD". The edge is not declared from
+        # here, or the workflow is failed and has to be retried first; either
+        # way the answer belongs to the contract.
+        return advance(state, ACTION_TARGETS["start_build"], actor, at), True
+    recorded = scope_binding(state, "CONFIRM")
+    if current is None or recorded is None or recorded != current:
+        raise JourneyRefusal(_SCOPE_DRIFT)
+    # `current` is not None here, so the reference can be formed.
+    return advance(state, ACTION_TARGETS["start_build"], actor, at,
+                   (_scope_evidence(document, brd),)), True
 
 
 def build_outcome(
@@ -234,8 +612,50 @@ def ready_evidence(state: Mapping[str, Any]) -> tuple[EvidenceRef, ...]:
     return tuple(latest[kind] for kind in READY_EVIDENCE_KINDS if kind in latest)
 
 
-def mark_ready(state: Mapping[str, Any], actor: Actor, at: str) -> dict[str, Any]:
-    """The human completion claim: lifecycle READY, with GOVERN's evidence."""
+def ready_scope_refusal(
+    state: Mapping[str, Any], document: Mapping[str, Any], brd: BrdState
+) -> str | None:
+    """Why READY may not be recorded over this content, or `None`.
+
+    Compared against what the BUILD transition recorded, because that is what
+    the run was licensed to consume -- CONFIRM's binding could have been
+    re-confirmed after the build and would then say nothing about it. An
+    ABSENT binding and a DIFFERING one are two different facts and get two
+    different sentences; neither is a claim about the other.
+
+    AND THE RUN GETS A SAY. Where the flow recorded which BRD it parsed, that
+    is compared with the same binding: a run that read something else was not
+    doing what the build was licensed to do, whatever the record says about
+    the disk. A run that recorded nothing is not judged for it.
+    """
+    recorded = scope_binding(state, "BUILD")
+    if recorded is None:
+        return _SCOPE_UNBOUND_READY
+    if recorded != scope_current(document, brd):
+        return _SCOPE_DRIFT_READY
+    parsed = flow_brd_digest(state)
+    return None if parsed is None or parsed == recorded[1] else _FLOW_BRD_MISMATCH
+
+
+def mark_ready(
+    state: Mapping[str, Any],
+    document: Mapping[str, Any],
+    brd: BrdState,
+    actor: Actor,
+    at: str,
+) -> dict[str, Any]:
+    """The human completion claim: lifecycle READY, with GOVERN's evidence.
+
+    Refused over content the build never saw. What READY claims is that THIS
+    lifecycle completed -- and a completion claim recorded beside a capsule
+    and a BRD the run was not licensed to consume is a claim about something
+    that did not happen. As everywhere here, the contract speaks first for
+    positions from which READY is not an edge at all.
+    """
+    if _contract_would_accept(state, ACTION_TARGETS["mark_ready"]):
+        refusal = ready_scope_refusal(state, document, brd)
+        if refusal is not None:
+            raise JourneyRefusal(refusal)
     return advance(state, ACTION_TARGETS["mark_ready"], actor, at, ready_evidence(state))
 
 
@@ -317,12 +737,96 @@ _TRACKING_ABSENT = (
     "This project has no recorded lifecycle. Start tracking to begin at DISCOVER; "
     "no earlier progress is inferred from the project's files."
 )
+_NEXT_SCOPE_DRIFT = (
+    "The capsule or the BRD has changed since the scope was confirmed. Confirm "
+    "the scope again to record what the build may consume."
+)
+#: WHERE READY IS REFUSED AND NOTHING LEADS BACK -- whatever the refusal was.
+#: The dead end this slice introduces is the one reachable by a single
+#: ordinary click: confirm one more proposal while the lifecycle is at GOVERN
+#: and READY is gone for the life of that lifecycle. `mark_ready` refuses the
+#: drift, which is correct; `retry` needs a failed workflow; the contract
+#: declares no GOVERN -> CONFIRM and no GOVERN -> BUILD edge; and re-deriving
+#: `BRD.md` moves no binding. The page said "Marking ready is your act" to
+#: that reader -- an instruction nobody can take -- so it says this instead.
+#:
+#: AND TO THE READER BESIDE THEM, who is in the same position for a reason
+#: this slice did not create: a build whose acceptance profile ran no Nornyx
+#: gate records no `governance_validation`, so GOVERN allows SIMULATE, REVIEW
+#: and READY on paper and every one of them requires the kind that is missing.
+#: Round 2 set this sentence for the drift alone and left that reader the
+#: READY instruction, which is the same defect one branch to the left.
+#: Disclosed in A-032 beside the BUILD re-entry dead end.
+#:
+#: IT NAMES NO CAUSE, because there are four (an absent binding, a drifted
+#: one, a flow that parsed another BRD, and no governance validation at all)
+#: and the refusal beside it already says which. A `next` that guessed would
+#: be a fifth sentence able to be wrong about the four above it.
+_NEXT_SCOPE_DEAD_END = (
+    "READY cannot be recorded for this lifecycle; the refusal beside this says "
+    "why. The contract declares no edge back to CONFIRM or BUILD from here, so "
+    "no action on this page reaches READY for it: this lifecycle is a dead end."
+)
+
+#: What the page says about the record's referent. Three sentences for three
+#: states, and each says what was COMPARED rather than what it means: a digest
+#: that matches establishes that the bytes are the ones the record names, and
+#: nothing at all about whether they were read (A-032). The page does not
+#: display the BRD.
+_SCOPE_UNBOUND_SUMMARY = (
+    "This lifecycle's record does not name the content it was recorded against."
+)
+_SCOPE_MATCHES_SUMMARY = (
+    "The record names the capsule and the BRD that are in the project now."
+)
+_SCOPE_DIFFERS_SUMMARY = (
+    "The capsule or the BRD has changed since the record was written, so the "
+    "record names content that is no longer there."
+)
+
+
+def _fingerprint(pair: tuple[str, str] | None) -> dict[str, str] | None:
+    """A pair of digests, shortened for a reader. Eight hex characters each:
+    enough to see two of them differ, and never presented as an identifier
+    anything resolves -- the full reference lives in the record."""
+    return None if pair is None else {"capsule": pair[0][:8], "brd": pair[1][:8]}
+
+
+def _scope_projection(
+    experience: Mapping[str, Any] | None,
+    document: Mapping[str, Any],
+    brd: BrdState,
+) -> dict[str, Any]:
+    """What the record was recorded against, what is there now, and whether
+    they are the same -- as DATA, with the difference reported rather than
+    interpreted.
+
+    The BUILD binding is preferred over CONFIRM's because it is the later
+    statement of the same thing: what the build was licensed to consume.
+    Before BUILD there is none, and the scope confirmation's own binding is
+    what the reader is looking at.
+    """
+    recorded = None
+    if experience is not None:
+        recorded = scope_binding(experience, "BUILD") or scope_binding(experience, "CONFIRM")
+    current = scope_current(document, brd)
+    unchanged = None if recorded is None else recorded == current
+    return {
+        "confirmed_against": _fingerprint(recorded),
+        "current": _fingerprint(current),
+        "unchanged": unchanged,
+        "summary": (
+            _SCOPE_UNBOUND_SUMMARY if unchanged is None
+            else _SCOPE_MATCHES_SUMMARY if unchanged
+            else _SCOPE_DIFFERS_SUMMARY
+        ),
+    }
 
 
 def journey_view(
     experience: Mapping[str, Any] | None,
     document: Mapping[str, Any],
-    brd_present: bool,
+    brd: BrdState,
     build_running: bool,
     provider_blocker: str | None = None,
 ) -> dict[str, Any]:
@@ -336,12 +840,18 @@ def journey_view(
     surface's governed-eligibility verdict for the confirmed provider when
     that verdict is a refusal: the build is then not offered and the reason
     is listed, in the same words the build route refuses with.
+
+    `scope` is what the record NAMES beside what is there now, reported as
+    data. It is present in every shape this returns, including the ones with
+    nothing to report, so the page renders one field rather than testing for
+    its absence.
     """
+    scope = _scope_projection(experience, document, brd)
     if experience is None:
         return {
             "tracking": "absent", "stage": None, "status": None,
             "actions": ["start_tracking"], "blockers": [], "failure": None,
-            "next": _TRACKING_ABSENT,
+            "scope": scope, "next": _TRACKING_ABSENT,
         }
     stage = experience["stage"]
     status = experience["status"]
@@ -354,38 +864,100 @@ def journey_view(
         return {
             "tracking": "recorded", "stage": stage, "status": status,
             "actions": ["retry"], "blockers": [], "failure": failure,
+            "scope": scope,
             "next": f"The workflow failed at {stage}. Retry to re-enter {stage}.",
         }
 
     allowed = TRANSITIONS[stage]
+    build_reachable = "BUILD" in allowed or (stage == "BUILD" and not build_running)
+    # THE ONE COMPARISON EVERY OFFER BELOW TURNS ON. `unchanged` is True only
+    # when the record names content and that content is what is there; an
+    # absent binding is `None` and is not a pass.
+    bound = scope["unchanged"] is True
     actions: list[str] = []
     blockers: list[str] = []
     if "CONFIRM" in allowed:
-        missing = scope_blockers(document, brd_present)
-        blockers.extend(missing)
-        if not missing:
+        missing = list(scope_blockers(document, brd))
+        # THE SAME FILE, NAMED ONCE. Both branches read the same `BrdState`
+        # and each has its own sentence for the action it is about. Where
+        # both branches run -- at CONFIRM, which allows a re-confirmation and
+        # a build -- the reader is heading for the build, so the build's
+        # sentence is the one that survives. The OFFER below still turns on
+        # the full set: what is filtered is the reading, not the decision.
+        blockers.extend(why for why in missing
+                        if not (build_reachable and why in _BRD_SENTENCES))
+        # From CONFIRM the edge is a RE-confirmation, and it is offered only
+        # when there is something to re-confirm. Offering it over content the
+        # record already names would put a button on the page for a request
+        # `confirm_scope` refuses as a no-op.
+        if not missing and not (stage == "CONFIRM" and bound):
             actions.append("confirm_scope")
-    if "BUILD" in allowed or (stage == "BUILD" and not build_running):
-        missing = list(build_blockers(document, brd_present))
+    if build_reachable:
+        missing = list(build_blockers(document, brd))
         if provider_blocker:
             missing.append(provider_blocker)
+        if not missing and not bound:
+            # Listed only once the BRD itself is settled: an absent or stale
+            # BRD is already named, and saying both would report the same
+            # fact twice in different words. At BUILD the refusal is the
+            # re-entry one, because from BUILD there is no scope confirmation
+            # to offer -- advice the route would not honour is worse than
+            # none.
+            missing.append(_SCOPE_DRIFT_BUILD if stage == "BUILD" else _SCOPE_DRIFT)
         blockers.extend(why for why in missing if why not in blockers)
         if not missing:
             actions.append("start_build")
+    # WHY READY IS REFUSED, WHATEVER THE REASON -- taken from this block and
+    # not from a second list of reasons kept beside it, so the sentence above
+    # the blockers stops instructing an act nobody can perform in every case
+    # this block refuses, including ones added after it was written. Round 2
+    # set a flag on ONE of these two branches, and the other reader -- a build
+    # whose acceptance profile ran no Nornyx gate, which is the profile that
+    # ships -- was still told that marking ready was their act.
+    ready_refusal: str | None = None
     if "READY" in allowed:
-        if any(ref.kind == "governance_validation" for ref in ready_evidence(experience)):
+        if not any(ref.kind == "governance_validation" for ref in ready_evidence(experience)):
+            ready_refusal = _READY_UNREACHABLE
+        else:
+            ready_refusal = ready_scope_refusal(experience, document, brd)
+        if ready_refusal is None:
             actions.append("mark_ready")
         else:
-            blockers.append(_READY_UNREACHABLE)
+            blockers.append(ready_refusal)
 
     if stage == "BUILD" and not build_running:
         next_text = _BUILD_NOT_RUNNING
+    elif stage == "CONFIRM" and not bound:
+        # WHICH HALF MOVED DECIDES THE HEADLINE, and `bound` is false whichever
+        # it was. When a re-confirmation is on offer, that is the next step and
+        # this says so. When it is NOT on offer the BRD is the half that moved,
+        # the route refuses a re-confirmation by name, and the next step is
+        # deriving the BRD again -- so the headline is the build's own sentence
+        # for that file, from the one function both the route and the blocker
+        # list take it from. It told the reader to confirm the scope again
+        # while the route refused exactly that: a headline instructing an act
+        # nobody can perform is the defect, not the wording.
+        next_text = (_NEXT_SCOPE_DRIFT if "confirm_scope" in actions
+                     else build_brd_refusal(brd) or _NEXT_SCOPE_DRIFT)
+    elif ready_refusal is not None and "CONFIRM" not in allowed and "BUILD" not in allowed:
+        # READ FROM THE CONTRACT'S OWN TABLE rather than written as
+        # `stage == "GOVERN"`. What makes the position a dead end is that no
+        # declared edge from it can record a new binding, and that is exactly
+        # "no CONFIRM and no BUILD from here" -- true of GOVERN, and of
+        # SIMULATE and REVIEW beside it, without this line having to know
+        # which stages those are.
+        #
+        # AND THE CONDITION IS THE REFUSAL ITSELF, not one kind of refusal:
+        # `ready_refusal` is the sentence the block above appended to the
+        # blockers, so this branch is taken exactly when the reader was told
+        # READY is refused and the table offers nothing that could change it.
+        next_text = _NEXT_SCOPE_DEAD_END
     else:
         next_text = _NEXT.get(stage, _NEXT_OUTSIDE_PATH)
     return {
         "tracking": "recorded", "stage": stage, "status": status,
         "actions": actions, "blockers": blockers, "failure": failure,
-        "next": next_text,
+        "scope": scope, "next": next_text,
     }
 
 

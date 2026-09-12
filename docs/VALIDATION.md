@@ -326,7 +326,10 @@ Not claimed by any row: any change to `PROVIDER_CONFINEMENT`,
 ineligible); defence against an unconfined same-user provider that can read
 process memory (Claude's eligibility is unchanged); the non-HTTP authority
 paths (the build thread's TEST/GOVERN translation, the seal-break failure,
-`brd_present()`, the restore TOCTOU), which A-027 leaves to Tranches D and F;
+`brd_state()`, the restore TOCTOU), which A-027 left to Tranches D and F --
+the workspace read is CLOSED there, Tranche F having retired `brd_present()`
+for an equality against the capsule's own rendering (A-032), and the restore
+TOCTOU is not;
 any confinement claim about the shipped `codex exec` path, which A-024
 records as unmeasured; the browser handler's own command line, which receives
 the fragment URL and is bounded by principal separation only (A-027); the

@@ -569,10 +569,17 @@ tracking" that begins at DISCOVER, and has no stage inferred from its
 files. Four limits are disclosed. The contract does not freeze capsule
 content after CONFIRM, so a proposal confirmed and a BRD re-derived after
 the scope confirmation are built without the lifecycle re-confirming them
-(every such input is still human-confirmed capsule content); the contract
+(every such input is now the rendering of the confirmed capsule, measured by
+equality at CONFIRM and at BUILD; a hand-edited BRD.md was accepted by both
+before this slice, so the parenthetical that stood here -- "every such input
+is still human-confirmed capsule content" -- was FALSE on that path and is
+retired rather than softened, A-032); the contract
 declares a `brd_requirements` evidence kind that no stage requires, and
 whether CONFIRM should consume one -- and what its reference would denote
--- is a domain decision this slice does not take. A server that dies
+-- is a domain decision this slice does not take. BOTH HALVES OF THAT
+SENTENCE ARE NOW ANSWERED IN A-032: CONFIRM requires the kind, its reference
+denotes the capsule's chain tip beside the BRD's digest, and a build over
+content the record does not name is refused. A server that dies
 mid-build leaves the lifecycle at BUILD/active, where the next session
 reports that no build is running and re-runs it from BUILD without a
 second transition and without recording a failure nothing observed; the
@@ -3025,9 +3032,12 @@ inconclusive, and that measurement is Tranche C's, not made here. Authority
 also moves WITHOUT HTTP, and B closes none of it: the build thread turns gate
 results over the provider's own workspace into TEST/GOVERN through
 `experience_build.flow_evidence`; a broken seal makes `restored()` record a
-system failure; `brd_present()` reads the workspace; and `CapsuleStore.restore()`
+system failure; `brd_state()` reads the workspace; and `CapsuleStore.restore()`
 re-seals whatever is on disk after a reset, a TOCTOU an actor who can write the
-workspace could exploit. Those are owned by Tranches D and F. A compromised
+workspace could exploit. Those were owned by Tranches D and F; the workspace
+read is CLOSED (Tranche F: `brd_present()` is retired, and `brd_state()`
+measures the file against the capsule's own rendering, A-032). The restore
+TOCTOU is still open. A compromised
 browser or extension can read the page's token; that is out of scope, as is a
 hostile host. No sandboxing, authenticated human identity, cryptographic
 provenance, freshness anchor, provider admission, or A-018 is claimed.
@@ -4040,8 +4050,19 @@ into the experience `history`; and `verify_integrity`, `validate_document`
 and `verify_experience` all passed over the result afterwards. A fabricated
 human is stamped into permanent, chain-covered history. What the chain
 establishes is that the recorded provenance has not been edited SINCE it was
-written -- never that it was true WHEN it was written. Reading `resolved.by`
-as "who decided" is the substitution this entry refuses.
+written -- never that it was true WHEN it was written. "Chain-covered" is
+narrower than it reads, in two different ways, and both were measured. For the
+CAPSULE chain it is simply false of most of the record: the chain links the
+authoritative region only, so `resolved.by`, `history` and the proposal ledger
+are held on the served path by the store's seal and on an unsealed store by
+nothing. For the EXPERIENCE chain it holds against any edit that leaves the
+final link unrebuilt -- which is what `verify_experience` compares -- and NOT
+against a rebuilt chain: one line of arithmetic over a state anyone can write
+replaces a `by`, a history row or a scope binding and both experience-domain
+verifiers pass over it, held again by the store's seal on the served path and
+by nothing on an unsealed store (`tests/test_digest_coverage.py`, A-032). The
+limit this entry states is unchanged and gets wider, not narrower, for both.
+Reading `resolved.by` as "who decided" is the substitution this entry refuses.
 
 **AND ONE COSTUME WAS NOT A ROUTE AT ALL, which is why the guard is not a
 route census.** The eleven above are routes, and a route census finds routes.
@@ -4062,7 +4083,9 @@ holds this closed searches what a module can SAY.
 FALSE.** It read "this run's session holder confirmed it". `journey_view`
 renders that line from the PERSISTED lifecycle -- its own docstring says "the
 persisted position" -- and the bearer is PER RUN. Its parameters are
-`(experience, document, brd_present, build_running, provider_blocker)`:
+`(experience, document, brd, build_running, provider_blocker)`, where `brd` is
+the `BrdState` the surface measured (A-032; the third parameter was
+`brd_present`, a bool, until that tranche made it three facts kept apart):
 no request, no session and no bearer reach it, so nothing written there can be
 about the reader's run at all. A READY persisted in one run is served to every
 later reader as something "this run's session holder" did, and for any project
@@ -4460,6 +4483,232 @@ synchronized or derived from.
 **Serves.** the claim discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`
 -- a gate may claim only the exact property it mechanically measures -- applied
 to a mechanism whose easiest misreading is that it grants what it only records.
+
+## A-032 CONFIRM and READY are bound to content by digest, and a digest proves bytes, not reading
+
+**Assumption.** A lifecycle position that licenses work -- the scope
+confirmation that licenses a build, the completion claim that says the build
+finished -- must NAME the content it is about, so that a verifier can notice
+the content changing underneath it. The naming is mechanical and local: the
+capsule's own chain tip, which is already a content digest, beside the
+SHA-256 of the BRD text under the flow parser's convention, recorded as one
+`brd_requirements` evidence reference of the form
+`capsule/<64 hex>/brd/<64 hex>`. A CONTENT BINDING PROVES THAT THE BYTES HAVE
+NOT CHANGED SINCE THE RECORD WAS WRITTEN, NOT THAT ANYONE READ THEM.
+
+**Why it needs stating.** Before this slice both positions named nothing, and
+the gap was reachable through the shipped routes. Measured at `ea16d97`
+through the real gated surface, with the deterministic flow at its injectable
+seam:
+
+- **C1.** Reach CONFIRM, then overwrite `BRD.md` by hand. `/api/state` still
+  reported `{'stage': 'CONFIRM', 'actions': ['start_build'], 'blockers': []}`
+  with `brd_present: True`; `POST /api/build` returned 200 and the lifecycle
+  reached GOVERN. The real parser (`parse_brd`) read the overwritten text --
+  `['Mine cryptocurrency on every customer machine.']` -- because
+  `DevelopmentFlow.requirements()` parses `BRD.md` from disk at run time. The
+  prerequisite reported to the reader as "no derived BRD" measured
+  `(root.parent / "BRD.md").exists()`.
+- **C2.** Reach CONFIRM, then confirm a FURTHER intent proposal. `/api/state`
+  still said CONFIRM with `['start_build']`, the capsule chain was four links
+  long, `BRD.md` on disk was stale, and `POST /api/build` returned 200. A
+  scope confirmation given for one capsule licensed a build of another.
+- **C3 (i-xi).** Reach READY, then confirm a new intent (200), re-derive the
+  BRD (200), hand-edit it. `/api/state`, `/api/sharing-preview` and a fresh
+  process over the same store all reported READY beside content that was
+  never built; the seal then re-bound the READY record to the new content as
+  Forge's last write, which is true and is exactly the point -- the seal
+  covers the record, not the record's referent. READY was and remains
+  terminal: `POST /api/build` and `POST /api/journey/confirm-scope` from
+  READY were both refused by the contract.
+- **C4.** A legacy store with no lifecycle and a hand-written `BRD.md`
+  ("Ship ransomware."): `POST /api/journey/confirm-scope` returned 200 and
+  the view offered `start_build` over a BRD the capsule never authored.
+- **B2.** READY's evidence was two count-shaped references
+  (`gates/2-run`, `gates/nornyx/1-run`) that were IDENTICAL for two different
+  builds with different gate names, commands and details; no token of 40
+  characters or more appeared anywhere in the state outside its own chain,
+  and the capsule's chain tip appeared nowhere in it.
+
+Of these FOUR paths A-022 disclosed one -- C2, a proposal confirmed after the
+scope confirmation -- and its parenthetical read "every such input is still
+human-confirmed capsule content". That was false for C1 and C4: a hand-edited
+`BRD.md` is not confirmed capsule content, and both the scope confirmation and
+the build accepted one. C1, C4 and B2 appear in no disclosure before this
+entry; A-022 names neither a hand-edited nor a hand-written `BRD.md` nor the
+identical count-shaped references, which is why the count in the sentence this
+replaces was wrong in both of its numbers. The parenthetical is rewritten
+where it stands rather than argued with here.
+
+**What is established, and only this.** CONFIRM requires a `brd_requirements`
+reference and BUILD carries one forward, so the record says which bytes the
+confirmation was about and which bytes the run was licensed to consume. A
+capsule confirmed afterwards, or a `BRD.md` that stops being the rendering of
+the confirmed capsule, makes the comparison fail and is refused by name: the
+build is refused at CONFIRM, a re-entered build is refused at BUILD, and READY
+is refused at GOVERN -- PERMANENTLY in that last case, because no declared edge
+leads back from GOVERN to a stage that could record a new binding, which
+limits 6 and 7 below state as the two dead ends THIS BINDING creates. They
+are not an enumeration of every stuck position a lifecycle has: limit 7 names
+a third that predates the binding and that no slice here closes. `derived` is an
+EQUALITY against `brd_from_capsule`, a
+pure function of the capsule, so "a derived BRD" now names the thing it says.
+One new edge exists, CONFIRM -> CONFIRM, which records a second binding and a
+second `advanced` event rather than overwriting the first; a re-confirmation
+over content the record already names is refused as a no-op, so the
+"recorded once" property survives it.
+
+**What it does NOT establish.** Every item here is a limit that a later slice
+could close only by adding a mechanism, never by rewording this entry.
+
+1. **Nobody is shown to have read anything.** A digest compares bytes. It
+   says nothing about attention, understanding or agreement, and the page does
+   not display the BRD at all -- it offers "Derive BRD" and "Confirm scope".
+   "The scope confirmation was recorded against these bytes" means the bytes
+   were on disk when the route ran. Reading a `brd_requirements` row as a
+   record of anyone having read the requirements is the substitution this
+   entry refuses.
+2. **WHO confirmed is unchanged from A-030.** The ident is an unauthenticated
+   self-declaration; the binding adds a referent to the record, not an anchor
+   under it. The READY sentence is untouched and still claims nobody.
+3. **What was built is not named: the built artefact is not bound.** Nothing in the lifecycle digests the
+   generated application. A binding says what the build was licensed to
+   CONSUME, never what it produced. Binding the artefact would need the
+   greenfield verifier's subject digest plumbed from the flow's evidence
+   report to a stable result key, which is a separate slice.
+4. **BRD.md is outside the seal**, deliberately: it is not in the store's
+   `_AUTHORITY_FILES`, and the flow re-parses it mid-run. A provider that
+   rewrote it DURING a build would not be caught by this binding. Moot while
+   no provider is eligible on the governed path (A-024, A-028), and named
+   rather than closed.
+5. **Inherited reach: the capsule digest chain covers the authoritative region only.** The
+   binding's capsule half is that chain's tip, so it inherits exactly that
+   reach: `resolved.by`, `history` and the proposal ledger are held on the
+   served path by the store's seal and on an unsealed store by nothing.
+   Measured in `tests/test_digest_coverage.py`; `capsule.py` and A-030 now
+   say so, where a single sentence had claimed the wider reach for both
+   chains.
+6. **A dead end by design: a re-run whose scope changed cannot be re-bound in this lifecycle.** A
+   server that dies mid-build leaves BUILD/active, and the contract declares
+   no BUILD -> BUILD edge, so a re-entry carries no transition and no new
+   binding. If the content moved in between, the re-run is refused and the
+   lifecycle is a dead end. That is the honest outcome of a graph with no
+   edge back, stated rather than repaired by inventing one.
+7. **A SECOND dead end, reachable by one ordinary click: a confirmation at GOVERN makes READY unreachable for that lifecycle.**
+   Reach GOVERN by the straight path, confirm one more proposal -- a next
+   step the page keeps offering -- and READY is gone for good. `mark_ready`
+   refuses the drift, which is correct; `retry` needs a failed workflow;
+   re-deriving `BRD.md` moves no binding, because the binding names the
+   capsule's chain tip as well; and the contract declares no GOVERN -> CONFIRM
+   and no GOVERN -> BUILD edge, so nothing can record a new one. Measured
+   through the shipped routes: `ready` 409, `confirm-scope` 409 naming the
+   missing edge, `build` 409 naming the other missing edge, `retry` 409, and
+   the stage still persisted as GOVERN.
+
+   It was also reachable WITHOUT a click. `/api/build` read the document under
+   the store lock, released it, measured `BRD.md`, and re-took the lock to
+   position the lifecycle over the pair it had read before; a confirmation
+   landing in that window won 7 of 8 unforced attempts under review, and the
+   build then ran over a capsule its binding did not name. Nothing was
+   laundered -- the BUILD row records the stale pair and READY refuses it --
+   but a plain concurrent request left the lifecycle at this dead end. THE
+   SETUP WINDOW IS CLOSED: the document read, the BRD measurement and
+   `begin_build` now happen under one acquisition of that lock. The UNBOUNDED
+   STRETCH IS NOT AND CANNOT BE: once the run reaches TEST or GOVERN the store
+   is unsealed again and the owner may confirm anything, for as long as they
+   like, which is not a window a lock can close.
+
+   TWO WAYS OUT EXIST AND NEITHER IS TAKEN HERE, deliberately, because both
+   are decisions for the founder rather than a slice's to make in passing: a
+   BACKWARD EDGE that re-binds (GOVERN -> CONFIRM, recording a new
+   `brd_requirements` row and letting the build be re-run), or a LIFECYCLE
+   RESET that starts a new record beside the capsule. The first widens the
+   transition table at the one place this repository has been most careful
+   about widening; the second raises what happens to the old record. Naming
+   them is this entry's job; choosing is not.
+
+   A THIRD STUCK POSITION IS NOT THIS BINDING'S AND IS NOT CLOSED HERE:
+   a lifecycle that reaches GOVERN with no governance validation is stuck
+   there too -- what the shipped greenfield acceptance profile produces,
+   since no gate runs the Nornyx CLI (A-022) -- and it is PERMANENT for that
+   lifecycle, because `GOVERN -> SIMULATE` and `GOVERN -> REVIEW` each
+   require a `governance_validation` row, `GOVERN -> READY` requires one
+   beside the gate results, and `retry` re-enters the stage it is handed
+   without recording evidence; measured through the shipped routes on a build
+   whose gate list carries no Nornyx gate: `ready` 409 naming the missing
+   kind, `confirm-scope` 409 and `build` 409 naming the missing edges,
+   `retry` 409 "only a failed workflow can be retried", and the stage still
+   persisted as GOVERN. It predates this tranche -- the refusal and the
+   blocker beside it are `894218f`'s -- and what changes here is the headline
+   above them, which told that reader to mark ready in the same words the
+   drifted reader used to get.
+8. **Any line-ending-only rewrite of `BRD.md` is invisible** -- CRLF and a
+   lone CR alike. `Path.read_text` normalises line endings, and the digest
+   follows `parse_brd`'s convention on purpose so that the two agree; a file
+   rewritten with different line endings and no other change still counts as
+   derived. MEASURED for both: CRLF-only and CR-only leave `brd_derived` true
+   and the digest unmoved, while a BOM, a trailing space, a trailing newline,
+   UTF-16, UTF-8-SIG, an invalid UTF-8 tail, a NUL, a form feed, U+2028 and
+   U+0085 each move the digest and are refused. That is a property of the
+   flow's reader, stated, not fixed.
+9. **Not every reader carries the referent.** `/api/state` publishes `scope`
+   -- what the record names, what is there now, and whether they are the same
+   -- and it is the reader the C3 measurement above was taken on.
+   `/api/sharing-preview` reports the stage and the counts and NO referent:
+   its whole design is minimisation, and adding a field to what would leave
+   the machine is a decision about disclosure rather than about this binding.
+   So a sharing preview taken after the drift says READY and says nothing
+   about the content READY was recorded against. Nothing false is asserted --
+   the lifecycle is at READY -- and this is where that asymmetry is written
+   down.
+10. **The record is exactly as strong as the stage field beside it.** Chain
+    plus seal, not signature (A-022), not fresh (A-029). Closing 1, 2 or the
+    authenticity of the record needs an EXTERNAL AUTHORITY this repository may
+    not create, adopt, infer or backdate.
+
+**The three reference formats, written down once.** They are produced and
+parsed in two modules, and until they had an owner they existed as an f-string
+in one and a regular expression in the other, agreeing on their alphabet by
+coincidence. `experience_build` owns all three as regular expressions beside
+the builders that write them, anchored `\A...\Z` because `$` also matches
+before a trailing newline:
+
+- `capsule/<64 hex>/brd/<64 hex>` -- a scope binding, written by
+  `experience_journey` and parsed by it, naming the capsule's chain tip and
+  the digest of the BRD text;
+- `flow/<backend>` and `flow/<backend>/brd/<64 hex>` -- one flow run, and the
+  BRD the run said it parsed when it said anything. The backend segment is
+  `[A-Za-z0-9._-]+`, and a result whose `execution_backend` falls outside that
+  alphabet is REFUSED rather than interpolated: a backend spelled
+  `sequential/brd/<64 hex>` otherwise produced a reference the parser read as
+  a BRD digest from a run that recorded none. Unreachable through the shipped
+  flow, which writes `sequential`, `crewai_flow` or `sequential_fallback`, and
+  repaired as a shape rather than as an exploit;
+- `gates/<n>-run/<16 hex>` and `gates/nornyx/<n>-run/<16 hex>` -- how many
+  gate records the translator was handed, and a fingerprint of the records
+  themselves. Parsed nowhere today, and declared so that a later reader parses
+  the format its producer writes rather than one it inferred.
+
+The gate fingerprint is a label for telling records apart and resolves to
+nothing anyone can fetch; the scope binding resolves by comparison rather than
+by lookup. `EvidenceRef`'s docstring says so where the expectation that a
+reference "resolves" is stated.
+
+**Scope.** `experience.TRANSITIONS`, `experience.STAGE_EVIDENCE`,
+`experience_journey`, `experience_build` and the onboarding surface. No new
+route: re-confirmation reuses `POST /api/journey/confirm-scope`, and
+`EXPECTED_ACTOR_ROUTES` does not move. The page renders server-supplied text
+and decides nothing by stage name. The store gains no authority file. No
+provider row, eligibility rule, seal, token, port or approval diagnostic
+moves. ONE LOCK CHANGES, and only in how long it is held: `/api/build`
+performs the document read, the BRD measurement and `begin_build` under a
+single acquisition of the existing store lock instead of two, and takes the
+existing build lock inside it without ever waiting for it.
+
+**Serves.** BRD-F-002 and the claim discipline in `docs/ASSURANCE_BOUNDARY.md`:
+a gate may claim only the property it mechanically measures. A-022's open
+domain question -- whether CONFIRM should consume `brd_requirements`, and what
+its reference would denote -- is answered here.
 
 ## A-033 Claude confinement was measured on the platform Forge ships on, and the platform has no mechanism to measure
 

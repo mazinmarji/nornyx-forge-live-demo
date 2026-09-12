@@ -97,7 +97,7 @@ from nornyx_forge.capsule import (
     verify_integrity,
 )
 from nornyx_forge.control_plane_session import ALLOWLIST
-from nornyx_forge.experience_journey import journey_view
+from nornyx_forge.experience_journey import BrdState, journey_view
 from nornyx_forge.onboarding_app import ActorPayload, create_app
 from nornyx_forge.windows_runtime import attach_runtime_routes
 
@@ -109,6 +109,11 @@ HUMAN = {"kind": "human", "ident": "casey"}
 MODEL = {"kind": "model", "ident": "builder-model"}
 #: A caller that is demonstrably not a person, declaring that it is.
 IMPOSTOR = {"kind": "human", "ident": "attacker-script"}
+
+#: A BRD that IS the rendering of the capsule beside it. The subject of
+#: this module is what the surface may SAY, not what the scope is bound
+#: to, so the digest is a placeholder and the state is the satisfied one.
+DERIVED_BRD = BrdState.matching("0" * 64)
 
 #: The eleven, as the enumerator returned them at this slice's parent
 #: revision. A FLOOR under the derivation, never its source: see the module
@@ -487,8 +492,11 @@ def _ready_state(ident: str) -> dict:
     gates = (ref(kind="gate_results", ref="gates-1", passed=True),
              ref(kind="governance_validation", ref="nornyx-1", passed=True))
 
+    scope = (ref(kind="brd_requirements",
+                 ref=f"capsule/{'a' * 64}/brd/{'b' * 64}", passed=True),)
+
     state = experience_contract.start_experience(marker, at)
-    for stage, actor, evidence in (("CONFIRM", marker, ()), ("BUILD", marker, ()),
+    for stage, actor, evidence in (("CONFIRM", marker, scope), ("BUILD", marker, scope),
                                    ("TEST", system, flow), ("GOVERN", system, gates),
                                    ("READY", marker, gates)):
         state = experience_contract.advance(state, stage, actor, at, evidence)
@@ -527,7 +535,7 @@ def test_the_ready_line_defers_to_the_record_and_claims_nobody():
     # a state that is not at READY renders a different constant against which
     # each "not in" passes for free.
     assert state["stage"] == "READY", state["stage"]
-    view = journey_view(state, document, True, build_running=False)
+    view = journey_view(state, document, DERIVED_BRD, build_running=False)
     assert view["stage"] == "READY" and view["actions"] == [], view
     said = view["next"]
 
@@ -547,7 +555,7 @@ def test_the_ready_line_defers_to_the_record_and_claims_nobody():
     # renders the identical sentence.
     other = _ready_state("casey")
     assert other["history"][-1]["by"] == "casey", other["history"][-1]
-    assert journey_view(other, document, True, build_running=False)["next"] == said, (
+    assert journey_view(other, document, DERIVED_BRD, build_running=False)["next"] == said, (
         "the READY line varies with the recorded actor, so it is now making a "
         "claim ABOUT that actor -- which is the claim this site keeps growing")
 

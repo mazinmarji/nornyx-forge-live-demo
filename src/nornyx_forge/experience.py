@@ -92,16 +92,39 @@ STAGES = (
 #: construction and its two kinds of proof, READY is the claim.
 MANDATORY_STAGES = ("DISCOVER", "CONFIRM", "BUILD", "TEST", "GOVERN", "READY")
 
-#: Legal transitions. Forward edges only, plus the self-edge implied by retry
+#: Legal transitions. Forward edges only, plus CONFIRM -> CONFIRM — a
+#: RE-CONFIRMATION over changed content — and the self-edge implied by retry
 #: after failure. There is deliberately NO edge into READY except from GOVERN,
 #: SIMULATE or REVIEW — a path that has not passed TEST and GOVERN cannot
 #: spell READY at all, whatever evidence it claims.
+#:
+#: THE ONE NEW EDGE, AND WHY IT IS AN EDGE RATHER THAN AN EXCEPTION. CONFIRM
+#: now requires evidence naming the content it is about (`STAGE_EVIDENCE`
+#: below), so content changed after a scope confirmation leaves the record
+#: naming bytes that are no longer there. Something has to be able to record
+#: the new scope AT OR BEFORE CONFIRM, and the honest something is another
+#: CONFIRM: a second evidence row and a second `advanced` event in the
+#: chain-covered history, never an overwrite of the first. It opens no path
+#: into READY that was not open before — every simple path still passes
+#: MANDATORY_STAGES, and a walk that refuses to revisit a stage never takes
+#: this edge at all.
+#:
+#: AND IT RECOVERS NOTHING PAST CONFIRM. That is a limit of this table, not of
+#: the edge: from BUILD there is no BUILD -> BUILD edge for a new binding to
+#: ride on, and from GOVERN there is no edge back to CONFIRM or to BUILD at
+#: all. So a lifecycle whose content moves after the build is a DEAD END —
+#: READY is refused for what the record names, `retry` needs a failed
+#: workflow, and no declared edge can re-bind it. Reachable by one ordinary
+#: confirmation while the lifecycle sits at GOVERN. Named here, disclosed in
+#: A-032, and NOT closed here: closing it needs a backward edge that re-binds
+#: or a lifecycle reset, which is a design decision rather than something a
+#: slice takes on the way past.
 TRANSITIONS: Mapping[str, tuple[str, ...]] = {
     "DISCOVER": ("UNDERSTAND", "MODEL", "PROPOSE", "CONFIRM"),
     "UNDERSTAND": ("MODEL", "PROPOSE", "CONFIRM"),
     "MODEL": ("PROPOSE", "CONFIRM"),
     "PROPOSE": ("CONFIRM",),
-    "CONFIRM": ("ARCHITECT", "BUILD"),
+    "CONFIRM": ("CONFIRM", "ARCHITECT", "BUILD"),
     "ARCHITECT": ("BUILD",),
     "BUILD": ("TEST",),
     "TEST": ("GOVERN",),
@@ -143,7 +166,17 @@ EVIDENCE_KINDS = (
 #: among the presented references and must report passed=True. Stages absent
 #: here require none — their substance lives in the capsule as content, not
 #: here as workflow proof.
+#:
+#: CONFIRM REQUIRES `brd_requirements`, AND WHAT ITS REFERENCE DENOTES IS THE
+#: POINT. The kind was declared here from the start and required by no stage,
+#: and A-022 left "whether CONFIRM should consume one -- and what its
+#: reference would denote" as a domain decision not taken. Taken now: the
+#: reference names the capsule's chain tip and the digest of the BRD text, so
+#: the record of a scope confirmation says which bytes it was about. What that
+#: establishes is that those bytes have not changed since — never that anyone
+#: read them (A-032).
 STAGE_EVIDENCE: Mapping[str, tuple[str, ...]] = {
+    "CONFIRM": ("brd_requirements",),
     "TEST": ("flow_run",),
     "GOVERN": ("gate_results",),
     "SIMULATE": ("governance_validation",),
@@ -167,8 +200,15 @@ class EvidenceRef:
 
     `passed` is the evidence's own verdict, restated here so the guard can
     refuse without re-reading the artifact. The `ref` is expected to resolve
-    (a gate name, a report path, a capsule revision) — resolution is the
-    store's and the reviewers' business; the guard checks shape and verdict.
+    — a gate name, a report path, a capsule revision, or A CONTENT DIGEST
+    that resolves by comparison rather than by lookup: the scope binding's
+    `capsule/<hex>/brd/<hex>` names bytes anyone can re-hash, and the gate
+    fingerprint in `gates/<n>-run/<hex>` is a label for telling records apart
+    and resolves to nothing anybody can fetch. Naming that here rather than
+    arguing it in the producer, because this is where the expectation is
+    stated. Resolution is the store's and the reviewers' business; the guard
+    checks shape and verdict. The three concrete formats are owned by
+    `experience_build`.
     """
 
     kind: str

@@ -2,6 +2,98 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Content-bound CONFIRM and READY (Tranche F). The lifecycle's two human
+  positions now NAME the content they were recorded about, and the surface
+  refuses to license work over content the record does not name. Measured at
+  `ea16d97` through the real gated surface, all five paths reachable through
+  shipped routes. THE ARGUMENT THAT CARRIES THOSE MEASUREMENTS IS NOT A MOVED
+  REGION, and an earlier version of this paragraph said it was. That version
+  was written when the parent was `894218f`, across which exactly one file
+  under `src/` had moved -- `capsule_store.py`, in a retry no path enters.
+  The parent is `0d60ccf` now, and FIVE files under `src/` moved across
+  `ea16d97..0d60ccf`: the capsule store, the Claude worker, the onboarding
+  application, its server, and the provider contract. Their changed lines
+  include `trigger_build`, which IS the route these observations were taken
+  through,
+  so the one-file argument is withdrawn rather than restated -- it was true of
+  a parent this branch no longer has.
+  What stands in its place needs no transfer at all. Each gap below is held by
+  a test that was shown RED against the pre-repair code AT THE HEAD WHERE ITS
+  REPAIR LANDED and green after, so the evidence for every repair is a
+  measurement at that head rather than an inference from `ea16d97`. The
+  `ea16d97` observations remain what they were: the record of how the gaps
+  presented when they were found.
+  The five: a
+  `BRD.md` overwritten by hand after the scope confirmation
+  was accepted at CONFIRM and handed to the build, and the real parser read
+  the overwritten text; a further intent confirmed under CONFIRM left the page
+  offering `start_build` and `POST /api/build` returned 200, so a scope
+  confirmation given for one capsule licensed a build of another; a new intent
+  confirmed under READY left `/api/state`, the sharing preview and a restart
+  all reporting READY beside content that was never built; a legacy project
+  whose `BRD.md` nobody derived confirmed the scope over it; and two builds
+  with different gate names, commands and details produced IDENTICAL evidence
+  references, because the reference was a count. The prerequisite reported to
+  the reader as "no derived BRD" measured `BRD.md` EXISTING -- a label standing
+  in for the thing measured. It is an equality against `brd_from_capsule` now,
+  and `/api/state` publishes `brd_present`, `brd_derived` and `brd_digest` as
+  three fields for three facts. `experience.STAGE_EVIDENCE` requires
+  `brd_requirements` at CONFIRM and its reference denotes the content --
+  `capsule/<chain tip>/brd/<sha256 of the BRD text>`, the parser's own digest
+  convention -- answering the domain question A-022 left open. `BUILD` carries
+  the binding forward, so the run's record says what it was licensed to
+  consume, and `mark_ready` refuses when the capsule or the BRD moved after
+  the build, when the build recorded no binding at all, and when the flow
+  states it parsed a different BRD. One new edge, `CONFIRM -> CONFIRM`,
+  records a re-confirmation as a second row and a second `advanced` event
+  rather than an overwrite; an identical re-confirmation is refused as a
+  no-op, so J14's recorded-once property survives it. Evidence references
+  carry a digest of the gate records and, where the flow recorded one, of the
+  BRD it says it parsed; where it recorded none the reference is unchanged
+  rather than synthesised. No new route, no route moved, and the page renders
+  server-supplied text and decides nothing by stage name. A single sentence in
+  `capsule.py` claimed the experience chain's reach for the capsule chain as
+  well; it was measured false -- `resolved.by`, `history`, an appended
+  confirmed-looking row and a reversed ledger all pass `verify_integrity` and
+  `validate_document` -- and is corrected, with the same five edits pinned at
+  rest against a sealed store (refused) and an unsealed one (accepted
+  verbatim). The experience half of that same sentence was then wider than
+  `verify_experience`, which compares the final link and no other, so it is
+  qualified too and the rebuilt-link case is pinned beside the four that do
+  not rebuild it: accepted by both experience-domain verifiers, refused by the
+  store's seal at rest. A-032 records what a content binding establishes and,
+  at length, what it does not: nobody is shown to have read anything, the page
+  does not display the BRD, the built artefact is not bound, `BRD.md` is
+  outside the seal, the capsule chain covers the authoritative region only, a
+  re-run whose scope changed cannot be re-bound in this lifecycle, a
+  confirmation at GOVERN makes READY unreachable for that lifecycle, any
+  line-ending-only rewrite is invisible by design, and `/api/sharing-preview`
+  carries no referent. A-022's false parenthetical is rewritten and A-030's
+  "chain-covered history" is qualified for both chains.
+
+  Round 2, from three independent review lanes. `/api/build` performs the
+  document read, the BRD measurement and `begin_build` under ONE acquisition
+  of the store lock -- it released the lock between them, and a concurrent
+  confirmation won 7 of 8 unforced races, leaving a build recorded against a
+  capsule its binding did not name. `journey_view` stops instructing an act
+  nobody can perform: at a stage from which the contract declares no edge back
+  to CONFIRM or BUILD, whenever READY is refused -- for a scope that drifted,
+  or because the build recorded no Nornyx governance validation at all, which
+  is what the shipped greenfield acceptance profile produces -- it names the
+  dead end instead of the READY instruction, and at CONFIRM it offers a
+  re-confirmation headline only when a re-confirmation is on offer. The
+  condition is the refusal the blocker list already carries, not a second
+  list of reasons: round 2 keyed it to the drift alone and left the
+  governance-validation reader the READY instruction, and A-032 now names
+  that third stuck position and the measured sequence that makes it
+  permanent. `confirm_scope` lets the contract answer first,
+  the guard its two siblings were given in the same slice. The three evidence
+  reference formats have one owner, one backend alphabet and anchors that
+  refuse a trailing newline, and a backend the format cannot carry is refused
+  rather than interpolated. `build_blockers` takes its BRD sentence from the
+  function the route refuses with, so the two agree for an absent file as well
+  as a stale one. `scope_binding` honours `passed`.
+
 - Claude confinement measured on native Windows, recorded as NOT ESTABLISHED,
   and the platform added to the eligibility decision (Tranche H, A-033). THE
   FINDING: no operating-system confinement mechanism is REACHABLE for a Claude

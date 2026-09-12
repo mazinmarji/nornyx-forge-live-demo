@@ -11,15 +11,18 @@ DevelopmentFlow, pinned structurally.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from session_client import authed_client
 
+from nornyx_forge import experience_journey as journey
+from nornyx_forge.brd_authoring import brd_from_capsule
 from nornyx_forge.capsule import Actor, confirm, create_document, propose
 from nornyx_forge.capsule_store import CapsuleStore
-from nornyx_forge.experience import advance, start_experience
+from nornyx_forge.experience import EvidenceRef, advance, start_experience
 from nornyx_forge.onboarding_app import create_app
 from nornyx_forge.provider_contract import GovernedEligibility
 
@@ -47,17 +50,27 @@ def _project(tmp_path: Path, *, with_provider: bool = True,
         )
         document = confirm(document, provider_id, Actor("human", "casey"),
                            "2026-08-30T12:04:00Z")
+    # THE BRD THE CAPSULE RENDERS, and the binding that names it. A
+    # hand-written approximation used to stand here and the prerequisite
+    # could not tell the difference; it can now, so the specimen is the real
+    # derivation and the scope confirmation names it. Computed even when the
+    # file is not written, because the build refuses an ABSENT BRD before it
+    # ever consults the binding -- which is what `with_brd=False` measures.
+    rendered = brd_from_capsule(document)
+    binding = EvidenceRef(
+        kind="brd_requirements",
+        ref=journey.scope_ref(document, journey.BrdState.matching(
+            hashlib.sha256(rendered.encode("utf-8")).hexdigest())),
+        passed=True,
+    )
     lifecycle = None
     if with_lifecycle:
         lifecycle = start_experience(Actor("human", "casey"), "2026-08-30T12:00:00Z")
         lifecycle = advance(lifecycle, "CONFIRM", Actor("human", "casey"),
-                            "2026-08-30T12:05:00Z")
+                            "2026-08-30T12:05:00Z", (binding,))
     CapsuleStore(tmp_path / "capsule").initialize(document, experience=lifecycle)
     if with_brd:
-        (tmp_path / "BRD.md").write_text(
-            "# BRD — Test\n\n## BRD-001 Purpose\n\nBuild a portal.\n",
-            encoding="utf-8", newline="",
-        )
+        (tmp_path / "BRD.md").write_text(rendered, encoding="utf-8", newline="")
     return tmp_path
 
 
