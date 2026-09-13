@@ -39,6 +39,7 @@ drift would be invisible in exactly the direction that matters.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -164,6 +165,90 @@ def actual_digest(commit: str) -> str:
         return digest_of(observe_input_manifest(tree, REPOSITORY_SCOPE))
 
 
+#: Fields whose value is an EXACT revision binding: a record saying "this is
+#: the commit I am about". Each is checked for RESOLVABILITY, which is a
+#: different question from the digest check below and was asked by nothing.
+_EXACT_REVISION_FIELDS = ("subject_revision", "source_commit")
+
+
+def _revision_bindings(commit: str) -> dict[str, str]:
+    """Every exact revision an evidence artefact at `commit` claims to be about."""
+    found: dict[str, str] = {}
+    listing = _git("ls-tree", "-r", "--name-only", commit, ".nornyx/contracts/")
+    for path in listing.stdout.splitlines():
+        if not path.endswith((".json", ".nyx")):
+            continue
+        blob = _git("show", f"{commit}:{path}")
+        if blob.returncode != 0:
+            continue
+        for field in _EXACT_REVISION_FIELDS:
+            for match in re.finditer(
+                rf'{field}"?\s*[:=]\s*"?git:([0-9a-f]{{40}})', blob.stdout
+            ):
+                found.setdefault(match.group(1), f"{path}:{field}")
+    return found
+
+
+def unresolvable_revision_bindings(commit: str) -> list[str]:
+    """Exact revision bindings at `commit` that name no commit in this history.
+
+    THE DEFECT THIS EXISTS FOR, measured on this branch's own first head. An
+    `--amend` after the evidence was regenerated left twelve artefacts binding
+    `subject_revision: git:17bba3aa...`, a pre-amend commit that the amend
+    orphaned. It was in no branch, no ref and no `rev-list --all`, so on any
+    fresh clone -- CI's included -- the revision the evidence claims to be
+    about did not exist. Every existing check passed: the digest matched the
+    tree, so `check_evidence_binding` was satisfied, and nothing anywhere asked
+    whether the NAME resolved.
+
+    A digest says WHAT was measured. An exact revision binding says WHICH STATE
+    it was measured against, and a name that resolves to nothing is not a
+    weaker claim than a wrong one -- it is an unfalsifiable one, which is the
+    shape this whole checker exists to refuse.
+
+    REACHABILITY, not mere presence. A dangling object survives in the local
+    store of the machine that wrote it and is absent everywhere else, so `cat-
+    file -e` would have passed on the very clone where the defect was
+    introduced and failed in CI. The question asked is whether the commit is an
+    ANCESTOR of the commit making the claim, which is the only form of
+    existence a later reader can reproduce.
+    """
+    problems: list[str] = []
+    for revision, where in sorted(_revision_bindings(commit).items()):
+        problem = revision_binding_problem(revision, claimed_by=commit, where=where)
+        if problem:
+            problems.append(problem)
+    return problems
+
+
+def revision_binding_problem(revision: str, *, claimed_by: str, where: str) -> str | None:
+    """Why this one binding is untrustworthy, or None if it is sound.
+
+    SPLIT OUT SO IT CAN BE TESTED WITHOUT A SPECIMEN COMMIT, and that is not a
+    cosmetic refactor. The first version of this check was proved by a test
+    that loaded the actual orphaned commit -- which exists only in the clone
+    that created it. It passed locally for exactly that reason and SKIPPED in
+    CI, where the census gate refused the undeclared skip: a skipped test
+    asserts nothing, and a proof that evaporates in every clone but the
+    author's is not a proof. Driving this function directly needs no orphan: a
+    well-formed SHA naming nothing exercises the first branch, and any two real
+    commits in the wrong order exercise the second.
+    """
+    if _git("cat-file", "-e", f"{revision}^{{commit}}").returncode != 0:
+        return (
+            f"{claimed_by[:12]} binds {where} to git:{revision[:12]}, which names no "
+            "commit in this repository"
+        )
+    if _git("merge-base", "--is-ancestor", revision, claimed_by).returncode != 0:
+        return (
+            f"{claimed_by[:12]} binds {where} to git:{revision[:12]}, which exists but "
+            "is NOT an ancestor of the commit claiming it -- an orphaned or "
+            "rewritten commit is unreachable to every other clone, so the binding "
+            "is unfalsifiable there"
+        )
+    return None
+
+
 def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
     problems: list[str] = []
     checked = 0
@@ -191,6 +276,8 @@ def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
             predating.append(commit[:12])
             continue
         checked += 1
+        # RESOLVABILITY, asked beside the digest and separately from it.
+        problems.extend(unresolvable_revision_bindings(commit))
         if not isinstance(claimed, str) or not claimed:
             # The file is here and says nothing. That is a claim that cannot be
             # checked, shipped in the artifact whose entire job is to be
@@ -219,6 +306,8 @@ def evaluate(spec: str, *, apply_baseline: bool = True) -> int:
         "schema": "nornyx.forge.evidence_binding.v1",
         "range": spec,
         "commits_carrying_evidence": checked,
+        "revision_bindings_resolvable": not any(
+            "names no commit" in p or "NOT an ancestor" in p for p in problems),
         "grandfathered_commits": len(excused),
         # Reported rather than silently skipped: these commits carry a
         # binding artifact from before `governed_input_digest` existed, so

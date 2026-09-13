@@ -758,6 +758,304 @@ _V1_DERIVABLE_STATES = ("reachable_unadmitted", "admitted_nuisance",
 #: `PRINCIPAL_SEPARATION` pinned to `{"separated"}`, by the same test.
 _V1_SEPARATION_VALUES = ("not_separated", "unknown")
 
+#: The v2 probe schema. A SECOND schema rather than a widened v1, because the
+#: difference is what the producer MEASURED, and a record's schema is how a
+#: reader tells one producer's competence from another's. v1 records stay v1
+#: forever: they are historical evidence of what was measured on the day, and
+#: rewriting one as v2 would claim a measurement its producer never took.
+CONTROL_PLANE_PROBE_V2_SCHEMA = "nornyx.forge.control_plane_probe.v2"
+
+#: `separated` is admitted for v2 and refused in `_V1_SEPARATION_VALUES`, and
+#: that difference is the whole of this slice. It is not a relaxation:
+#: `control_plane_authority` still requires `denied`,
+#: `control_plane_authority_outcome` is unchanged, and both guarded states still
+#: turn on `separated`. What changes is that a producer which MEASURES
+#: separation can now say so, where C2's could only ever say `unknown`.
+#:
+#: THERE IS NO `_V2_SEPARATION_VALUES` CONSTANT, and its absence is deliberate.
+#: One existed and was dead: bound to `PRINCIPAL_SEPARATION`, referenced by
+#: nothing, it read like an enforced allow-list while enforcing nothing. A
+#: constant that looks load-bearing and is not is worse than no constant, which
+#: is the same rule this module applies to a v2 record's `principal_separated`.
+#: The v2 vocabulary IS `PRINCIPAL_SEPARATION`, and the word is never read from
+#: a record at all -- it is derived, so there is nothing to allow-list.
+
+#: The out-of-band authority channels a caller must be measured UNABLE to reach
+#: before it may be called separated, keyed by the artefact name the producer
+#: emits for each.
+#:
+#: WHY IDENTITY IS NOT ON THIS LIST, and is not sufficient on its own. Two
+#: different SIDs, two different accounts, two different logon sessions are
+#: facts about NAMES. A-027 concedes that the surface's authority can be taken
+#: out of band -- out of the owner's process memory, out of the runtime record
+#: or log, out of the seal directory, out of the browser that was handed the
+#: bearer. A principal holding a different SID that can still read any of those
+#: has the authority anyway, and calling it separated because its name differs
+#: would be the substitution this criterion exists to refuse. So identity is
+#: NECESSARY (a caller that IS the owner is not separated whatever it cannot
+#: read) and these channels are the rest of what must hold.
+#:
+#: EACH MUST BE `refused`, WHICH IS NOT THE SAME AS ABSENT. `not_applicable`
+#: means the channel could not be put to the test on this host -- no pid to
+#: open, not a Windows facility, no history store present -- and an untested
+#: channel is not a closed one. It yields `unknown`, never `separated`, for the
+#: same reason a missing measurement is not a denial.
+#: THE CHANNELS THAT MUST BE MEASURED CLOSED, a SUBSET of the required set, and
+#: the split is forced by what the producer can actually evidence.
+#:
+#: `observed` and `refused` are not symmetric. `observed` means a read SUCCEEDED
+#: -- the caller held the artefact -- and that is trustworthy wherever it
+#: appears. `refused` means only that a read did not succeed, and is trustworthy
+#: solely when the detail evidences a denial (`CHANNEL_DENIAL_EVIDENCE`).
+#:
+#: Two channels can prove a BREACH but not a CLOSURE, so requiring closure of
+#: them would make the criterion unsatisfiable by construction -- the exact
+#: defect this slice exists to remove, reintroduced one layer down. Measured:
+#: `browser_handler_cmdline` has no `refused` path in the producer AT ALL (it
+#: answers `observed` or `not_applicable`), and `browser_history`'s refusal is
+#: reached through a bare `except OSError`, so a denial and an I/O error are the
+#: same string. Both therefore sit in the REQUIRED set -- an `observed` on
+#: either is still a breach and still fatal -- and outside the CLOSURE set,
+#: because neither can show a door is shut.
+#:
+#: This is a LIMIT, not a licence: it means a separated verdict rests on the
+#: four channels below plus the absence of a breach on the other two, and A-034
+#: says so.
+SEPARATION_CLOSURE_CHANNELS = (
+    "process_vm_read",
+    "runtime_record",
+    "runtime_log",
+    "seal_dir_listing",
+)
+
+SEPARATION_REQUIRED_CHANNELS: Mapping[str, str] = MappingProxyType({
+    "process_vm_read": (
+        "the owner's process memory, where A-027 concedes the bearer lives"
+    ),
+    "runtime_record": "the runtime record, a bearer/session acquisition path",
+    "runtime_log": "the runtime log, a bearer/session acquisition path",
+    "seal_dir_listing": "the seal directory, which holds the surface's authority material",
+    "browser_history": (
+        "the browser's history store, which holds the admitted session URL"
+    ),
+    "browser_handler_cmdline": (
+        "the browser handler's command line, which is handed this run's bearer"
+    ),
+})
+
+#: The artefact outcome vocabulary this derivation reads. Held equal to the
+#: producer's `ARTEFACT_OUTCOMES` by a test, so a fourth word added there
+#: cannot walk past this rule as an unrecognised value.
+SEPARATION_CHANNEL_OUTCOMES = ("observed", "refused", "not_applicable")
+
+#: The ONE mechanism competent to witness an out-of-band authority channel. An
+#: artefact carrying any other mechanism is refused rather than read: these are
+#: ACL/capability facts about what this principal could open, and a mechanism
+#: that does not say so is not evidence about them.
+CHANNEL_REQUIRED_MECHANISM = "inferred_acl"
+
+#: WHAT MAKES A `refused` LOAD-BEARING, per channel. THIS IS THE HEART OF THE
+#: REFUSAL-SEMANTICS REPAIR, and it is an ALLOW-LIST because the failure mode is
+#: one-directional: a `refused` that is really "we could not tell" pushes a
+#: record TOWARDS `separated`, so anything unrecognised must fail closed.
+#:
+#: `refused` in the producer's vocabulary means only "the artefact read did not
+#: succeed". That covers a real denial AND a pile of ambiguities, and the
+#: criterion needs the first alone: a facility EXISTED and actually denied THIS
+#: caller. A channel that could not be checked, whose existence is
+#: undetermined, that is unsupported on this host, that timed out, that raised
+#: a generic OSError or an unexpected Win32 error, or whose instrumentation
+#: failed, is NOT a closed door -- it is an unopened one.
+#:
+#: `browser_history` CARRIES AN EMPTY TUPLE, and that is a measured limitation
+#: rather than an oversight. Its refusal path counts a store as unreadable
+#: through a bare `except OSError`, so "this principal was denied every one" is
+#: reached by a denial and by a generic I/O error alike and the record cannot
+#: tell them apart. The producer that could tell them apart is a v2-native one;
+#: until it exists, a v1-derived `browser_history` refusal never qualifies. This
+#: is stated in A-034 rather than left for a reader to find.
+#:
+#: The strings are the producer's own, matched as substrings of an artefact's
+#: `detail`. Held against the shipped producer's source by a test, so a
+#: reworded refusal makes this go stale loudly instead of silently admitting
+#: nothing.
+CHANNEL_DENIAL_EVIDENCE: Mapping[str, tuple[str, ...]] = MappingProxyType({
+    "process_vm_read": ("ERROR_ACCESS_DENIED",),
+    "runtime_record": ("present but not readable by this principal",
+                       "the read was denied by this host"),
+    "runtime_log": ("present but not readable by this principal",
+                    "the read was denied by this host"),
+    "seal_dir_listing": ("present but not listable by this principal",
+                         "the read was denied by this host"),
+    "browser_history": (),
+    "browser_handler_cmdline": (),
+})
+
+#: Markers that DISQUALIFY a refusal whatever else its detail says, checked
+#: before the allow-list so a detail carrying both loses. Each names one of the
+#: states the repair forbids turning into a denial.
+AMBIGUOUS_REFUSAL_MARKERS = (
+    "not attempted: the deadline was exceeded",   # timeout
+    "the presence check itself was denied",       # existence-undetermined
+    # "could not be checked at all" is NOT here: the producer wraps that
+    # sentence across two source lines, so no contiguous substring of it exists
+    # to match. The detail it belongs to appends `_PRESENCE_DENIED`, whose tail
+    # IS matched above, so the case is covered by a marker that can actually
+    # fire. A marker that can never match is worse than no marker: it reads as
+    # protection while admitting everything.
+    "could not be attempted",                     # instrumentation failure
+    "is not determinable from here",              # existence-undetermined
+)
+
+
+def qualifying_channel_outcome(artefact: Mapping[str, Any]) -> str:
+    """One artefact's outcome, with a non-load-bearing `refused` downgraded.
+
+    `observed` and `not_applicable` pass through: the first is a breach and the
+    second already means "not measured". Only `refused` is filtered, and only
+    downwards -- this function can never turn a weaker word into a stronger
+    one, which is what keeps it from becoming a second way to reach
+    `separated`.
+
+    A `refused` survives as `refused` only when its detail carries denial
+    evidence this module recognises FOR THAT CHANNEL and carries no ambiguity
+    marker. Everything else becomes `not_applicable`, which
+    `derive_principal_separation` reads as `unknown`.
+    """
+    if not isinstance(artefact, Mapping):
+        raise ProviderError(
+            f"an artefact is a mapping; this one is {type(artefact).__name__}"
+        )
+    name, outcome = artefact.get("name"), artefact.get("outcome")
+    if not isinstance(name, str) or name not in SEPARATION_REQUIRED_CHANNELS:
+        raise ProviderError(
+            f"artefact name {name!r} is not one of the required channels "
+            f"{tuple(SEPARATION_REQUIRED_CHANNELS)}"
+        )
+    if outcome not in SEPARATION_CHANNEL_OUTCOMES:
+        raise ProviderError(
+            f"artefact {name!r} carries outcome {outcome!r}, outside "
+            f"{SEPARATION_CHANNEL_OUTCOMES}"
+        )
+    mechanism = artefact.get("mechanism")
+    if mechanism != CHANNEL_REQUIRED_MECHANISM:
+        raise ProviderError(
+            f"artefact {name!r} carries mechanism {mechanism!r}, not "
+            f"{CHANNEL_REQUIRED_MECHANISM!r}; a mechanism that does not witness an "
+            "ACL fact is not competent for an out-of-band authority channel"
+        )
+    if outcome != "refused":
+        return outcome
+
+    detail = artefact.get("detail")
+    if not isinstance(detail, str):
+        raise ProviderError(
+            f"artefact {name!r} is `refused` with detail of type "
+            f"{type(detail).__name__}; a refusal whose reason cannot be read cannot be "
+            "shown to be a denial"
+        )
+    if any(marker in detail for marker in AMBIGUOUS_REFUSAL_MARKERS):
+        return "not_applicable"
+    if any(marker in detail for marker in CHANNEL_DENIAL_EVIDENCE[name]):
+        return "refused"
+    return "not_applicable"
+
+
+def derive_principal_separation(
+    *,
+    principal_distinct: bool | None,
+    channels: Mapping[str, str],
+    bearer_acquired: bool,
+) -> str:
+    """THE separation word, computed from measurements. Never stated.
+
+    This is the function that makes `separated` representable, and every branch
+    in it exists to keep that word rare. The order is deliberate: the three
+    ways to be NOT separated are decided before the one way to be separated, so
+    a caller that reached authority cannot be rescued by a clean field
+    elsewhere.
+
+      1. `bearer_acquired` -- the caller took a bearer THROUGH the surface. It
+         holds the authority; nothing else it cannot read matters.
+      2. any required channel `observed` -- it can reach the authority out of
+         band by a route A-027 concedes. Same conclusion, different door.
+      3. `principal_distinct is False` -- it IS the owner. A caller cannot be
+         separated from itself, whatever it was refused; a refusal measured
+         against oneself is a fact about ACLs, not about separation.
+
+    Only then, and only when EVERY required channel was measured `refused` and
+    the principals were measured DISTINCT, is the answer `separated`.
+
+    EVERYTHING ELSE IS `unknown`, and the cases are worth naming because each
+    is a way a weaker rule would have said yes:
+
+      * `principal_distinct is None` -- the owner's principal could not be
+        read, so "distinct" was never measured. Two names one of which is
+        unknown are not two different names.
+      * any required channel `not_applicable` -- the channel was not put to the
+        test. An untested door is not a locked one.
+      * any required channel missing from `channels` -- a record that does not
+        carry the measurement cannot have made it.
+
+    A channel outcome outside `SEPARATION_CHANNEL_OUTCOMES` is REFUSED by
+    raising, not read as unknown: an unrecognised word in a field this rule
+    turns on is a malformed record, and answering a measurement word to a
+    parsing failure is the confusion `confinement_probe_from_surface_record`
+    already refuses one layer up.
+
+    PURE. No clock, no filesystem, no process: it reads the numbers it is given
+    and returns a word.
+    """
+    if not isinstance(bearer_acquired, bool):
+        raise ProviderError(
+            f"bearer_acquired is {bearer_acquired!r}; it must be a bool, because a "
+            "non-boolean here would be read as truthy and a caller holding the "
+            "surface's own bearer would be called separated"
+        )
+    if not (principal_distinct is None or isinstance(principal_distinct, bool)):
+        raise ProviderError(
+            f"principal_distinct is {principal_distinct!r}; it must be True, False or "
+            "None, and None means the owner's principal was never read"
+        )
+
+    missing = [name for name in SEPARATION_REQUIRED_CHANNELS if name not in channels]
+    unknown_words = {
+        name: channels[name]
+        for name in SEPARATION_REQUIRED_CHANNELS
+        if name in channels and channels[name] not in SEPARATION_CHANNEL_OUTCOMES
+    }
+    if unknown_words:
+        raise ProviderError(
+            f"channel outcome(s) {unknown_words!r} are outside "
+            f"{SEPARATION_CHANNEL_OUTCOMES}; an unrecognised word in a field this "
+            "derivation turns on is a malformed record, not a measurement"
+        )
+
+    # (1) and (2): the caller reached the authority. Decided first, and decided
+    # even when a channel is missing -- an observed breach is a breach whatever
+    # else went unmeasured.
+    if bearer_acquired:
+        return "not_separated"
+    if any(
+        channels.get(name) == "observed" for name in SEPARATION_REQUIRED_CHANNELS
+    ):
+        return "not_separated"
+    # (3): it is the owner.
+    if principal_distinct is False:
+        return "not_separated"
+
+    if missing:
+        return "unknown"
+    if principal_distinct is None:
+        return "unknown"
+    # CLOSURE is asked of the channels that can evidence it, and of no others.
+    # The two that can only witness a breach have already been checked for one
+    # above; asking them to prove a shut door would make `separated`
+    # unreachable, which is the defect this slice exists to remove.
+    if any(channels[name] != "refused" for name in SEPARATION_CLOSURE_CHANNELS):
+        return "unknown"
+    return "separated"
+
 #: The property a control-plane record can witness, and the only mechanism
 #: competent for it. Named here so the emitted probe cannot be given some
 #: other pair by a caller.
@@ -788,6 +1086,161 @@ def _unadmitted_successes(requests: list[Mapping[str, Any]]) -> list[str]:
         if (r.get("method"), r.get("path")) not in CONTROL_PLANE_ALLOWLISTED_PAIRS
         and _is_2xx(r.get("status"))
     ]
+
+
+def channels_from_artefacts(record: Mapping[str, Any]) -> dict[str, str]:
+    """THE channel map, derived from the record's own measured artefacts.
+
+    THE DEFECT THIS CLOSES. `separation_evidence.channels` was read as
+    authoritative: a bare `{name: word}` map, carrying no mechanism, no detail
+    and no link to anything measured. A record could assert six refusals with
+    an EMPTY artefact list and reach `separated`. The map is a SUMMARY, and a
+    summary is not evidence -- so the authority is now the artefacts, and the
+    summary is only allowed to agree with them.
+
+    WHAT IS REQUIRED, and each refusal is by name rather than a downgrade:
+
+      * `artefacts` must be a list of mappings;
+      * every one of `SEPARATION_REQUIRED_CHANNELS` must be present -- a record
+        with no artefacts, or a missing channel, cannot reach `separated`
+        because the channel is absent from the derived map and
+        `derive_principal_separation` reads an absent channel as `unknown`;
+      * no channel may appear twice: two rows for one channel is a record that
+        answers the same question twice, and picking either is picking the
+        convenient half;
+      * each artefact's name, outcome and mechanism are validated, and its
+        refusal is put through `qualifying_channel_outcome`;
+      * if the record ALSO carries a `channels` summary it must agree EXACTLY
+        with what the artefacts say, compared against the RAW artefact outcomes
+        rather than the filtered ones -- the summary is the producer's account
+        of its own measurements, and a producer whose summary disagrees with
+        its artefacts is refused rather than quietly corrected.
+
+    The last one is the one that fails a forgery closed. A record whose
+    artefacts say `observed` while its summary says `refused` does not get the
+    summary's answer and does not get silently repaired to the artefact's: it
+    is refused outright, because the two halves disagreeing means neither can
+    be trusted.
+    """
+    artefacts = record.get("artefacts")
+    if not isinstance(artefacts, list):
+        raise ProviderError(
+            f"a {CONTROL_PLANE_PROBE_V2_SCHEMA} record carries `artefacts` as a list; "
+            f"this one carries {type(artefacts).__name__}. The channel map is derived "
+            "from measured artefacts, never read from a summary"
+        )
+
+    raw: dict[str, str] = {}
+    filtered: dict[str, str] = {}
+    for artefact in artefacts:
+        if not isinstance(artefact, Mapping):
+            raise ProviderError(
+                f"an artefact is a mapping; this one is {type(artefact).__name__}"
+            )
+        name = artefact.get("name")
+        if not isinstance(name, str) or name not in SEPARATION_REQUIRED_CHANNELS:
+            # Not a channel this criterion reads. The producer emits only the
+            # six, but an unknown name is IGNORED rather than refused so a later
+            # producer may carry extra artefacts without breaking this read.
+            continue
+        if name in raw:
+            raise ProviderError(
+                f"artefact {name!r} appears more than once; a record that answers one "
+                "channel twice cannot be read without choosing a half"
+            )
+        filtered[name] = qualifying_channel_outcome(artefact)
+        raw[name] = artefact["outcome"]
+
+    missing = [n for n in SEPARATION_REQUIRED_CHANNELS if n not in raw]
+    if missing:
+        # NOT an error: an incomplete measurement is a measurement that did not
+        # cover everything, and `derive_principal_separation` answers `unknown`
+        # for an absent channel. Refusing here would turn an honest partial
+        # record into a parse failure.
+        pass
+
+    summary = record.get("separation_evidence", {})
+    summary = summary.get("channels") if isinstance(summary, Mapping) else None
+    if summary is not None:
+        if not isinstance(summary, Mapping):
+            raise ProviderError(
+                f"separation_evidence.channels is {type(summary).__name__}, not a mapping"
+            )
+        stated = {k: v for k, v in summary.items() if k in SEPARATION_REQUIRED_CHANNELS}
+        if stated != raw:
+            raise ProviderError(
+                "separation_evidence.channels disagrees with the measured artefacts: "
+                f"the summary says {stated!r} and the artefacts say {raw!r}. A record "
+                "whose two halves disagree is refused rather than reconciled -- neither "
+                "half can be trusted once they contradict"
+            )
+    return filtered
+
+
+def _v2_separation_from_record(record: Mapping[str, Any]) -> str:
+    """Read a v2 record's `separation_evidence` and derive the word from it.
+
+    THE FIELDS THIS REQUIRES, and it refuses rather than defaults on each. A
+    default here would be a measurement invented by the reader:
+
+      * `separation_evidence` must be a mapping;
+      * `owner_principal_read` and `probe_principal_read` are booleans saying
+        whether each side's principal was actually READ. `principal_distinct`
+        is consulted ONLY when both are true -- an unread principal cannot be
+        distinct from anything, and this is the check that stops two SIDs, one
+        of which is `None`, from reading as "different";
+      * `principal_distinct` must then be a bool;
+      * `channels` must be a mapping of artefact name to outcome word.
+
+    `bearer_acquired_through_surface` is read from the RECORD BODY, not from
+    the evidence block, because it is the same fact the v1 classification
+    already turns on and a record must not be able to answer it twice.
+    """
+    evidence = record.get("separation_evidence")
+    if not isinstance(evidence, Mapping):
+        raise ProviderError(
+            f"a {CONTROL_PLANE_PROBE_V2_SCHEMA} record carries `separation_evidence` as a "
+            f"mapping; this one carries {type(evidence).__name__}"
+        )
+
+    owner_read = evidence.get("owner_principal_read")
+    probe_read = evidence.get("probe_principal_read")
+    for name, value in (("owner_principal_read", owner_read),
+                        ("probe_principal_read", probe_read)):
+        if not isinstance(value, bool):
+            raise ProviderError(
+                f"separation_evidence.{name} is {value!r}; it must be a bool saying "
+                "whether that principal was actually read"
+            )
+
+    if owner_read and probe_read:
+        distinct = evidence.get("principal_distinct")
+        if not isinstance(distinct, bool):
+            raise ProviderError(
+                f"separation_evidence.principal_distinct is {distinct!r}; both principals "
+                "were read, so the comparison must be a bool"
+            )
+    else:
+        # One side was never read. The comparison is not available, whatever the
+        # record says about it, and `None` is what `derive_principal_separation`
+        # turns into `unknown`.
+        distinct = None
+
+    # DERIVED FROM THE ARTEFACTS, never read from the summary. The summary is
+    # cross-checked inside and a disagreement refuses the record.
+    channels = channels_from_artefacts(record)
+
+    bearer = record.get("bearer_acquired_through_surface")
+    if not isinstance(bearer, bool):
+        raise ProviderError(
+            f"the record says bearer_acquired_through_surface={bearer!r}; it must be a bool"
+        )
+
+    return derive_principal_separation(
+        principal_distinct=distinct,
+        channels=channels,
+        bearer_acquired=bearer,
+    )
 
 
 def confinement_probe_from_surface_record(
@@ -877,11 +1330,27 @@ def confinement_probe_from_surface_record(
             "a control-plane probe record is a mapping; a measurement that cannot be "
             "read is refused, never translated into an inconclusive observation"
         )
-    if record.get("schema") != CONTROL_PLANE_PROBE_SCHEMA:
+    schema = record.get("schema")
+    if schema not in (CONTROL_PLANE_PROBE_SCHEMA, CONTROL_PLANE_PROBE_V2_SCHEMA):
         raise ProviderError(
-            f"record schema is {record.get('schema')!r}, not {CONTROL_PLANE_PROBE_SCHEMA!r}; "
-            "this translation reads one schema and refuses everything else rather than "
-            "guessing at a shape"
+            f"record schema is {schema!r}, not one of "
+            f"{(CONTROL_PLANE_PROBE_SCHEMA, CONTROL_PLANE_PROBE_V2_SCHEMA)}; "
+            "this translation reads the schemas it knows and refuses everything else "
+            "rather than guessing at a shape"
+        )
+    # A v2 record does not get to SAY the word, and the check sits HERE with the
+    # schema gate rather than beside the separation read, because it is a fact
+    # about the record's SHAPE: carrying the field at all is the defect. Placed
+    # later it would be unreachable for any record that also failed an earlier
+    # check, so a malformed v2 record asserting `separated` would be refused for
+    # some other reason and the assertion would never be named.
+    if schema == CONTROL_PLANE_PROBE_V2_SCHEMA and "principal_separated" in record:
+        raise ProviderError(
+            f"a {CONTROL_PLANE_PROBE_V2_SCHEMA} record carries principal_separated, "
+            "which it may not: in v2 the word is DERIVED from `separation_evidence` by "
+            "`derive_principal_separation`, and a stated one is exactly the caller "
+            "assertion this schema exists to remove. A field that looks authoritative "
+            "and is ignored is worse than one that is absent"
         )
     if record.get("transport") != CONTROL_PLANE_TRANSPORT:
         raise ProviderError(
@@ -983,25 +1452,28 @@ def confinement_probe_from_surface_record(
             "the same rule and for the same reason as the opposite disagreement"
         )
 
-    separation = record.get("principal_separated")
-    if isinstance(separation, bool) or separation not in PRINCIPAL_SEPARATION:
-        raise ProviderError(
-            f"the record says principal_separated={separation!r}; the vocabulary is "
-            f"{PRINCIPAL_SEPARATION}"
-        )
-    # BY MEMBERSHIP, for the reason above. This read `separation ==
-    # "separated"`, an equality against the one word that mattered today; a
-    # fourth separation word admitted into `PRINCIPAL_SEPARATION` would have
-    # walked past it into the mapping.
-    if separation not in _V1_SEPARATION_VALUES:
-        raise ProviderError(
-            f"the record says principal_separated={separation!r}, which a "
-            f"{CONTROL_PLANE_PROBE_SCHEMA} producer may never record (its own validator "
-            f"refuses it) -- it may record {_V1_SEPARATION_VALUES}. `separated` is the "
-            "word on which both widened states turn, so a record claiming a word outside "
-            f"that set would establish {CONTROL_PLANE_PROPERTY!r} from a producer that "
-            "cannot support the claim"
-        )
+    if schema == CONTROL_PLANE_PROBE_V2_SCHEMA:
+        separation = _v2_separation_from_record(record)
+    else:
+        separation = record.get("principal_separated")
+        if isinstance(separation, bool) or separation not in PRINCIPAL_SEPARATION:
+            raise ProviderError(
+                f"the record says principal_separated={separation!r}; the vocabulary is "
+                f"{PRINCIPAL_SEPARATION}"
+            )
+        # BY MEMBERSHIP, for the reason above. This read `separation ==
+        # "separated"`, an equality against the one word that mattered today; a
+        # fourth separation word admitted into `PRINCIPAL_SEPARATION` would have
+        # walked past it into the mapping.
+        if separation not in _V1_SEPARATION_VALUES:
+            raise ProviderError(
+                f"the record says principal_separated={separation!r}, which a "
+                f"{CONTROL_PLANE_PROBE_SCHEMA} producer may never record (its own validator "
+                f"refuses it) -- it may record {_V1_SEPARATION_VALUES}. `separated` is the "
+                "word on which both widened states turn, so a record claiming a word outside "
+                f"that set would establish {CONTROL_PLANE_PROPERTY!r} from a producer that "
+                "cannot support the claim"
+            )
 
     subject = record.get("subject")
     if not isinstance(subject, Mapping) or not isinstance(subject.get("principal"), Mapping):

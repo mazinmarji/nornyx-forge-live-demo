@@ -977,6 +977,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # sweep (204 collected, band(204) = 184). Same shape as Tranche I: a
     # governance document is a test here.
     "tests/test_recorded_measurements.py": 184,
+    # TRANCHE C SLICE C4a, the v2 principal-separation producer. 53 collected,
+    # floor at band(53) = 48. ITS OWN FLOOR RATHER THAN THE GLOBAL ONE for the
+    # reason this census exists: the module carries the ONE positive twin that
+    # stops the separation rule from being a function that returns `unknown`
+    # unconditionally, and the adversarial negatives around it. Deleting it
+    # would leave `derive_principal_separation` unexercised while the global
+    # floor absorbed the loss.
+    "tests/test_principal_separation_v2.py": 99,
     # The standing-obligation checker: 82 collected at introduction, 103 after
     # the in-session adversarial review round, 106 after the Codex review of
     # the merged head (the directory-link chain, the count-free output, the
@@ -999,7 +1007,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # Protected because Lens B measured 103 tests of slack in the aggregate
     # floor, and named these two: the evidence-binding proofs and the sole
     # regression for the reachability probe were both deletable.
-    "tests/test_evidence_binding.py": 19,
+    "tests/test_evidence_binding.py": 25,
     "tests/test_clause_reachability.py": 7,
     "tests/test_reviewer_authentication.py": 25,
     # Raised 16 -> 17 for the provider-adapter parity round: the
@@ -1721,12 +1729,25 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3624   (119 modules)
-#     sum of the module floors    3319
-#     band(3624) = ceil(0.9*n)    3262
-#     MINIMUM_COLLECTED           3327
-#     above the module sum         8
-#     below what collects         297
+#     collected across tests/     3740   (120 modules)
+#     sum of the module floors    3424
+#     band(3740) = ceil(0.9*n)    3366
+#     MINIMUM_COLLECTED           3432
+#     above the module sum          8
+#     below what collects         308
+#
+# TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
+# 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
+# proofs, rewritten to need no specimen commit after the first version SKIPPED
+# in CI and the census refused the undeclared skip). MINIMUM_COLLECTED RISES
+# 3327 -> 3375 -> 3429 -> 3432, each step re-measured rather than extrapolated. The first draft of this round left it at 3327 on the reasoning
+# that 3327 still clears band(3677) = 3310 -- true, and beside the point, which
+# `test_the_aggregate_floor_sits_above_the_sum_of_the_module_floors` said in one
+# line: the module floors now sum to 3367, so an aggregate of 3327 could refuse
+# nothing they already accept and was decoration. The margin above the sum is
+# held at 8, the value it had before this round, rather than recomputed to
+# whatever the new numbers happened to allow. NO PROVIDER ROW MOVED and no skip
+# is added.
 #
 # THE THIRD CODEX ROUND ADDS THREE TESTS AND NO MODULE.
 # tests/test_standing_development_obligations.py collects 142 -> 145 (floor
@@ -1935,7 +1956,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 305 in total, and the aggregate refuses
+# per-module bands already grant 316 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2204,7 +2225,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3327
+MINIMUM_COLLECTED = 3432
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2215,7 +2236,7 @@ MINIMUM_COLLECTED = 3327
 # `band(collected)` for its own module, because each side declared its own rows
 # correctly and the two sets do not overlap. So only the aggregates moved --
 # the floor sum to 3319 and MINIMUM_COLLECTED to 3327, holding the same 8 above
-# it -- and THE SLACK THE BANDS GRANT is 305, summed over the merged counts
+# it -- and THE SLACK THE BANDS GRANT is 316, summed over the merged counts
 # rather than carried from either side's 301. The working room below what
 # collects is 297. The windows-runtime job's floor is untouched at 277:
 # neither branch changed any of its seven modules.
@@ -2304,6 +2325,7 @@ REQUIRED_MODULES = (
     # only proof of the property that replaced C9-P1-7's overbroad one.
     "tests/test_claim_surface_boundary.py",
     "tests/test_process_execution_spellings.py",
+    "tests/test_principal_separation_v2.py",
     "tests/test_codex_provider.py",
     "tests/test_provider_contract.py",
     "tests/test_provider_equivalence.py",

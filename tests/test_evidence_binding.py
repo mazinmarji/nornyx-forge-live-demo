@@ -487,3 +487,80 @@ def test_the_escape_hatch_is_exercised_not_merely_present(tmp_path: Path):
         "the same range passed with the baseline DEFEATED, so the escape hatch "
         "does nothing and every grandfathered commit is unauditable"
     )
+
+
+# ---------------------------------------------------------------------------
+# Revision-binding RESOLVABILITY. A different question from the digest, and
+# until this slice nothing asked it.
+# ---------------------------------------------------------------------------
+
+def test_a_revision_that_names_no_commit_is_refused():
+    """The first failure mode, driven without any specimen commit.
+
+    A well-formed SHA that resolves to nothing. This is what a binding to a
+    garbage-collected or never-pushed revision looks like from any clone but
+    the one that wrote it.
+    """
+    import check_evidence_binding as checker
+
+    head = checker._git("rev-parse", "HEAD").stdout.strip()
+    problem = checker.revision_binding_problem(
+        "0" * 40, claimed_by=head, where="synthetic:subject_revision")
+    assert problem and "names no commit" in problem
+
+
+def test_a_revision_that_is_not_an_ancestor_is_refused():
+    """The second failure mode, and the one the real defect hit.
+
+    An ORPHANED commit still resolves in the clone that created it -- which is
+    why `cat-file -e` was not enough and ancestry is the question asked. Proved
+    here with two commits that certainly exist, in the wrong order: HEAD is not
+    an ancestor of its own base.
+    """
+    import check_evidence_binding as checker
+
+    head = checker._git("rev-parse", "HEAD").stdout.strip()
+    base = checker._git("rev-parse", "HEAD~1").stdout.strip() or head
+    problem = checker.revision_binding_problem(
+        head, claimed_by=base, where="synthetic:subject_revision")
+    assert problem and "NOT an ancestor" in problem
+
+
+def test_a_revision_that_is_a_real_ancestor_is_accepted():
+    """The forward direction, so neither negative can pass by always failing."""
+    import check_evidence_binding as checker
+
+    head = checker._git("rev-parse", "HEAD").stdout.strip()
+    parent = checker._git("rev-parse", "HEAD~1").stdout.strip()
+    assert checker.revision_binding_problem(
+        parent, claimed_by=head, where="synthetic:subject_revision") is None
+
+
+def test_the_orphaned_specimen_defect_is_described_where_it_can_be_read():
+    """The real defect is RECORDED even though its commit cannot be shipped.
+
+    PR #62's first head bound its evidence to 17bba3aa, orphaned by an
+    `--amend` after the evidence was generated against it. That commit exists
+    in no clone, so no test can load it; what can be held is that the checker
+    still explains the incident it exists for, which is how the next reader
+    learns why ancestry rather than presence is the question.
+    """
+    source = (ROOT / "scripts" / "check_evidence_binding.py").read_text(encoding="utf-8")
+    assert "17bba3aa" in source
+    assert "dangling object" in source
+
+
+def test_a_healthy_commit_has_resolvable_revision_bindings():
+    """The forward direction, so the check above cannot pass by always failing."""
+    import check_evidence_binding as checker
+
+    head = checker._git("rev-parse", "HEAD").stdout.strip()
+    assert checker.unresolvable_revision_bindings(head) == []
+
+
+def test_resolvability_is_reported_beside_the_digest_verdict():
+    """A reader of the JSON can see the answer without parsing prose."""
+    import check_evidence_binding as checker
+
+    source = (ROOT / "scripts" / "check_evidence_binding.py").read_text(encoding="utf-8")
+    assert '"revision_bindings_resolvable"' in source
