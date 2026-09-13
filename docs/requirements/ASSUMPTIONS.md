@@ -4576,19 +4576,19 @@ could close only by adding a mechanism, never by rewording this entry.
    CONSUME, never what it produced. Binding the artefact would need the
    greenfield verifier's subject digest plumbed from the flow's evidence
    report to a stable result key, which is a separate slice.
-4. **BRD.md is outside the seal**, deliberately: it is not in the store's
+6. **BRD.md is outside the seal**, deliberately: it is not in the store's
    `_AUTHORITY_FILES`, and the flow re-parses it mid-run. A provider that
    rewrote it DURING a build would not be caught by this binding. Moot while
    no provider is eligible on the governed path (A-024, A-028), and named
    rather than closed.
-5. **Inherited reach: the capsule digest chain covers the authoritative region only.** The
+7. **Inherited reach: the capsule digest chain covers the authoritative region only.** The
    binding's capsule half is that chain's tip, so it inherits exactly that
    reach: `resolved.by`, `history` and the proposal ledger are held on the
    served path by the store's seal and on an unsealed store by nothing.
    Measured in `tests/test_digest_coverage.py`; `capsule.py` and A-030 now
    say so, where a single sentence had claimed the wider reach for both
    chains.
-6. **A dead end by design: a re-run whose scope changed cannot be re-bound in this lifecycle.** A
+8. **A dead end by design: a re-run whose scope changed cannot be re-bound in this lifecycle.** A
    server that dies mid-build leaves BUILD/active, and the contract declares
    no BUILD -> BUILD edge, so a re-entry carries no transition and no new
    binding. If the content moved in between, the re-run is refused and the
@@ -4906,3 +4906,113 @@ providers remain ineligible for the governed build.
 A-028 P3 lesson, which said a platform-scoped closure must not promote a row on
 every platform and which until now was stated in this register and implemented
 nowhere.
+
+## A-034 Principal separation is a measured inability to reach authority, not a difference of names
+
+**Assumption.** `control_plane_authority` turns on whether the caller was
+SEPARATED from the surface's owner, and until this slice no producer could
+record that word: `_V1_SEPARATION_VALUES` is `("not_separated", "unknown")`, so
+every state a v1 record can derive, crossed with every separation word it may
+carry, mapped to `inconclusive` or `allowed` and never to `denied`. The
+criterion was therefore unsatisfiable BY CONSTRUCTION. That is not a high bar;
+it is a bar nothing is being measured against, and a gate that cannot pass is
+not testing a criterion, it is hard-coding a verdict. This slice makes the word
+DERIVABLE from measurement. It moves no row, and nothing here is eligible.
+
+**What separation is taken to mean, and why identity is not it.** Two different
+SIDs, two different accounts, two different logon sessions are facts about
+NAMES. A-027 concedes that this surface's authority can be taken out of band --
+out of the owner's process memory, out of the runtime record or log, out of the
+seal directory, out of the browser that was handed the bearer. A principal
+holding a different name that can still read any of those holds the authority
+anyway. So a different name is NECESSARY and is nowhere near sufficient, and a
+rule keyed on names would have said yes to exactly the caller the criterion
+exists to refuse.
+
+`SEPARATION_REQUIRED_CHANNELS` names the six channels, and
+`derive_principal_separation` answers `separated` only when the principals were
+measured DISTINCT and EVERY one of those channels was measured `refused`.
+
+**The order of the rule is part of the rule.** The three ways to be
+`not_separated` are decided before the one way to be `separated`, so a caller
+that reached the authority cannot be rescued by a clean field elsewhere: a
+bearer taken through the surface, any channel `observed`, or a caller that IS
+the owner. Only then is a complete set of refusals read as separation.
+
+**What it does NOT establish.** Every item is a limit a later slice could close
+only by adding a mechanism.
+
+1. **No row moves and no provider is eligible.**
+   `PROVIDER_CONFINEMENT["codex"]["windows"]` remains `declared`,
+   `CONFINEMENT_PROPERTIES["control_plane_authority"]` remains `denied`, and
+   `control_plane_authority_outcome` is unchanged including both guarded
+   states. `test_the_codex_row_is_untouched` and
+   `test_no_provider_becomes_eligible` refuse a slice that quietly did.
+2. **No measurement is taken here.** Nothing in this slice runs a probe against
+   a live surface from a confined principal. It makes a truthful measurement
+   REPRESENTABLE; it does not supply one, and a representable word is not a
+   recorded one.
+3. **NO PLATFORM CAN CURRENTLY PRODUCE A `separated` RECORD, and the reason
+   differs by platform.** An earlier draft of this entry named only the Windows
+   gap, which read as though POSIX were fine and Windows were the last step.
+   Both are gaps, and stating one implied a closure the other does not have.
+
+   **Windows: the owner's identity cannot be read.** `owner_principal` records
+   `read: False` there. Reading an owner's token user needs `OpenProcess` +
+   `OpenProcessToken` + `GetTokenInformation`, and a confined Codex principal
+   is the caller most likely to be DENIED that -- an ACL fact this must not
+   convert into a separation claim. Shipping untested ctypes under the word the
+   whole criterion turns on would be the substitution this register refuses. An
+   unread owner is `unknown`.
+
+   **POSIX: the identity reads, but the authority channels do not measure.**
+   `/proc/<pid>` answers the owner's uid, so the comparison is available. The
+   channels are not: `process_vm_read` is a Windows facility and answers
+   `not_applicable` off Windows, and the browser channels address Windows
+   stores. A closure channel that is `not_applicable` yields `unknown`, so a
+   REAL POSIX v2 record also derives `unknown` -- not because identity failed
+   but because the doors were never tested.
+
+   So this slice makes `separated` REPRESENTABLE and DERIVABLE, and no record
+   any shipped producer can take on any platform reaches it today. That is the
+   honest position: a criterion that can now be satisfied by evidence, with no
+   evidence yet able to satisfy it.
+
+4. **Two channels can witness a breach but never a closure.**
+   `SEPARATION_CLOSURE_CHANNELS` is a strict subset of
+   `SEPARATION_REQUIRED_CHANNELS` for a measured reason.
+   `browser_handler_cmdline` has no `refused` path in the producer at all, and
+   `browser_history`'s refusal is reached through a bare `except OSError`, so a
+   denial and an I/O error produce the same string. Requiring closure of either
+   would make the criterion unsatisfiable by construction -- the very defect
+   this slice exists to remove, reintroduced one layer down. Both stay in the
+   REQUIRED set, where an `observed` on either is still fatal, and outside the
+   CLOSURE set. A `separated` verdict therefore rests on four proven-closed
+   channels plus the absence of a breach on two others, and not on six proven
+   closures.
+
+5. **A `refused` is only as good as its detail.** `CHANNEL_DENIAL_EVIDENCE` is
+   an allow-list of the producer's own denial wordings, and
+   `AMBIGUOUS_REFUSAL_MARKERS` disqualifies a timeout, an undetermined
+   existence, an instrumentation failure or an unexpected Win32 error. The
+   filter can only weaken an outcome, never strengthen one. This is a
+   PROSE-MATCHING rule over another module's strings: a reworded refusal makes
+   a channel silently stop qualifying, which fails closed but also fails
+   quietly, so tests hold every marker against the shipped producer's source.
+6. **v1 evidence keeps its old competence.** `_V1_SEPARATION_VALUES` is
+   untouched, the v1 branch of the translation is unchanged, and no existing
+   measurement is rewritten as v2. `docs/governance/control_plane_authority_measurement.json`
+   remains what it was: a v1 record of what was measured on 2026-09-08.
+7. **The comparison is only as good as the two reads.** When either principal
+   was not read the answer is `unknown`, and when both were read on
+   incomparable axes -- one uid, one SID -- the record does not count that as a
+   comparison. Neither case is a denial.
+8. **Nobody is shown to have run the right binary.** As in A-028, the record
+   binds its subject but carries no provider name; `provider` is the caller's
+   assertion at the translation, and this slice does not change that.
+
+**Serves.** the A-028 finding that the criterion had no production consumer and
+its successor finding that no v1 producer could satisfy it; the claim
+discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`, which forbids a
+gate claiming more than it measures; and the standing rule that a missing
+measurement is `unknown` rather than a denial.
