@@ -1729,12 +1729,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3740   (120 modules)
+#     collected across tests/     3741   (120 modules)
 #     sum of the module floors    3424
-#     band(3740) = ceil(0.9*n)    3366
+#     band(3741) = ceil(0.9*n)    3367
 #     MINIMUM_COLLECTED           3432
 #     above the module sum          8
-#     below what collects         308
+#     below what collects         309
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -1956,7 +1956,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 316 in total, and the aggregate refuses
+# per-module bands already grant 317 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
