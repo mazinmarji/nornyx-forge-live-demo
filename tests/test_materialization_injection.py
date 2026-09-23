@@ -29,6 +29,22 @@ from signing import live_window  # noqa: E402
 #: Validity is a PREREQUISITE for these fixtures, not the property.
 _WINDOW = live_window()
 
+#: An expiry genuinely longer than P7D from the fixture's own issue time.
+#:
+#: This was the literal 2026-09-30, which exceeded P7D when written and stopped
+#: doing so on 2026-09-23 -- after which the loader accepted it correctly, the
+#: assertion that it must be refused failed, and the specimen asserted nothing
+#: about the window-length control it names. A specimen that decays into a
+#: failure unrelated to its property is worse than a missing one: it reddens the
+#: gate for a reason nobody can act on, and the true state of the control is
+#: unknown for as long as it stays red.
+#:
+#: SECOND OCCURRENCE IN THIS MODULE. `_CONFLICT_A`/`_CONFLICT_B` below already
+#: record fixed dates aging out of validity, and `live_window` exists because of
+#: it. The window length is the property here, so it is measured from the issue
+#: instant rather than pinned to a calendar.
+_TOO_LONG = live_window(days=8)[1]
+
 #: Two DISTINCT expiries, both temporally valid against the live clock.
 #:
 #: These were 2026-08-05 and 2026-08-04 -- fixed dates that are now earlier than
@@ -150,7 +166,7 @@ def _contracts_digest(work: Path) -> dict[str, str]:
         ("malformed timestamp", "not-a-timestamp"),
         ("naive timestamp", "2026-08-05T00:00:00"),
         ("expiry before issue", "2026-08-01T00:00:00Z"),
-        ("window longer than P7D", "2026-09-30T00:00:00Z"),
+        ("window longer than P7D", _TOO_LONG),
     ],
 )
 def test_a_crafted_expiry_never_reaches_a_contract(label: str, expires: str, tmp_path: Path):
@@ -162,6 +178,25 @@ def test_a_crafted_expiry_never_reaches_a_contract(label: str, expires: str, tmp
 
     assert completed.returncode != 0, f"{label} was accepted:\n{completed.stdout}"
     assert _contracts_digest(work) == before, f"{label} modified a contract"
+
+
+def test_the_too_long_specimen_actually_exceeds_the_permitted_window():
+    """The window-length specimen must really be longer than P7D, forever.
+
+    Its predecessor was a fixed date that silently stopped exceeding P7D, so the
+    refusal it asserted became a refusal the loader was right not to give. This
+    measures the specimen against the same issue instant the fixture signs, so a
+    specimen that stops testing its property fails HERE, naming the cause, rather
+    than surfacing as an unexplained red gate somewhere downstream.
+    """
+    from datetime import datetime, timedelta
+
+    issued = datetime.fromisoformat(_WINDOW[0].replace("Z", "+00:00"))
+    expires = datetime.fromisoformat(_TOO_LONG.replace("Z", "+00:00"))
+    assert expires - issued > timedelta(days=7), (
+        f"the 'window longer than P7D' specimen spans {expires - issued}, which the "
+        f"loader may accept; it would then assert nothing about window length"
+    )
 
 
 @needs_nornyx
