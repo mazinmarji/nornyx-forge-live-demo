@@ -976,7 +976,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # docs/governance/STANDING_DEVELOPMENT_OBLIGATIONS.md entered the document
     # sweep (204 collected, band(204) = 184). Same shape as Tranche I: a
     # governance document is a test here.
-    "tests/test_recorded_measurements.py": 184,
+    # Raised 184 -> 189 for the assurance-tier escalation repair:
+    # docs/governance/ASSURANCE_TIERS.md entered the same sweep through its
+    # property table, whose rows read as a transcript run (209 collected,
+    # band(209) = 189). Five per-document checks now run over it.
+    "tests/test_recorded_measurements.py": 189,
     # TRANCHE C SLICE C4a, the v2 principal-separation producer. 53 collected,
     # floor at band(53) = 48. ITS OWN FLOOR RATHER THAN THE GLOBAL ONE for the
     # reason this census exists: the module carries the ONE positive twin that
@@ -1135,6 +1139,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # to cover all of them, so the reviewer store cannot again sit
     # outside checks the approver store beside it has had for rounds.
     "tests/test_trust_store_parity.py": 5,
+    # The assurance-tier escalation rule: 12 collected at introduction,
+    # floor at band(12) = 11 exactly. The document is pinned byte for byte
+    # and as text, markup that can hide or demote text is refused, and the
+    # specimens resolve through the document's own table.
+    "tests/test_assurance_tiers.py": 11,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 2,
     "tests/test_requirements.py": 1,
@@ -1727,14 +1736,30 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # now rather than seven, beside the FIFO: the three new link shapes, one of
 # them two cases. NO PROVIDER ROW MOVED.
 #
+# THE ASSURANCE-TIER ESCALATION REPAIR ADDS ONE MODULE AND MOVES ONE.
+# tests/test_assurance_tiers.py is new at 12 collected, floor band(12) = 11:
+# it pins docs/governance/ASSURANCE_TIERS.md byte for byte and as text,
+# refuses markup that can hide or demote text, and resolves specimens
+# through the document's own table. THAT TABLE ALSO ENROLS THE
+# DOCUMENT in the sweep of tests/test_recorded_measurements.py: its six rows
+# read as a transcript run, so five per-document checks now run over it, and
+# pass. That module collects 204 -> 209, floor band(204) = 184 ->
+# band(209) = 189 -- found by measuring, because arithmetic from the new
+# module alone predicts five fewer tests than collect. 121 modules stand.
+# The module-floor sum rises by 16 to 3441 and the aggregate follows to 3449,
+# keeping the same 8 above it; the suite collects 3742 -> 3759, band(n)
+# 3368 -> 3384, and the working room below the floor 309 -> 310. THE SLACK
+# THE BANDS GRANT moves 317 -> 318: the new module sits 1 above its band, and
+# the measurement module sits 20 above its own, as before. NO SKIP IS ADDED.
+#
 # (rows below):
 #
-#     collected across tests/     3742   (120 modules)
-#     sum of the module floors    3425
-#     band(3742) = ceil(0.9*n)    3368
-#     MINIMUM_COLLECTED           3433
+#     collected across tests/     3759   (121 modules)
+#     sum of the module floors    3441
+#     band(3759) = ceil(0.9*n)    3384
+#     MINIMUM_COLLECTED           3449
 #     above the module sum          8
-#     below what collects         309
+#     below what collects         310
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -1956,7 +1981,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 317 in total, and the aggregate refuses
+# per-module bands already grant 318 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2225,7 +2250,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3433
+MINIMUM_COLLECTED = 3449
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2473,6 +2498,7 @@ REQUIRED_MODULES = (
     "tests/test_approval_structure_refusals.py",
     "tests/test_consequential_authority_path.py",
     "tests/test_trust_store_parity.py",
+    "tests/test_assurance_tiers.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
     "tests/test_requirements.py",
