@@ -181,6 +181,21 @@ def _root(module):
         os.close(handle)
 
 
+class _ActionFailed(BaseException):
+    """A test's own action failed inside the checker's window.
+
+    A `BaseException`, on purpose, as pytest's own outcomes are. The checker
+    reports an `OSError`, a `ValueError` or an `AdmissionError` as a refusal,
+    and its command line reports any other `Exception` as one, so an action
+    that failed where it runs came back as a refusal message: a rename across
+    filesystems raised EXDEV and was refused as an unreadable disposition, and
+    a link that could not be made after its name was unlinked or renamed away
+    would be refused as a path that cannot be resolved -- the very sentence
+    two link tests assert. No handler in the checker, as it reads today,
+    turns this one into a refusal, so it fails the test with its cause.
+    """
+
+
 def _between_inspection_and_open(module, monkeypatch, name: str, action) -> list[str]:
     """Run `action` once, after the entry called `name` is inspected and before it is opened.
 
@@ -188,6 +203,10 @@ def _between_inspection_and_open(module, monkeypatch, name: str, action) -> list
     action changes under that name is what the open then meets, and the open
     refuses unless it meets the very entry that was inspected. Returns the
     list the hook appends to when it fires, so a test can hold that it did.
+    The entry is appended before the action runs, so the list says the hook
+    fired, not that the action succeeded; an action that raises an
+    `Exception` fails the test as `_ActionFailed` instead, and never reaches
+    the checker as an error it would refuse over.
     """
     original = module._inspect
     fired: list[str] = []
@@ -196,7 +215,10 @@ def _between_inspection_and_open(module, monkeypatch, name: str, action) -> list
         info = original(handle, entry, label=label)
         if entry == name and not fired:
             fired.append(entry)
-            action()
+            try:
+                action()
+            except Exception as exc:
+                raise _ActionFailed(f"the action between inspection and open raised {exc!r}") from exc
         return info
 
     monkeypatch.setattr(module, "_inspect", inspect)
@@ -1464,17 +1486,73 @@ def test_a_file_that_appears_only_after_the_walk_is_refused(module, tmp_path, mo
         assert not fired and not path.exists()
 
 
-def test_the_disposition_read_is_bound_to_the_judged_object_too(module, tmp_path, monkeypatch):
+def _object_at(path: Path) -> tuple[int, int]:
+    """The object a name holds now, by device and inode, read without the checker's help."""
+    info = os.lstat(path)
+    return info.st_dev, info.st_ino
+
+
+def test_the_disposition_read_is_bound_to_the_judged_object_too(module, monkeypatch):
+    """A disposition replaced between its inspection and its open is refused as changed.
+
+    The replacement is written beside the disposition, never in `tmp_path`:
+    `os.replace` is a rename, and a rename cannot cross filesystems. Written
+    in `tmp_path` it raised EXDEV inside the checker's window wherever the
+    temporary directory and the checkout sit on different filesystems --
+    `/tmp` on tmpfs under an ext4 checkout, as measured on a WSL host -- and
+    the checker, failing closed, refused the disposition as unreadable. The
+    test failed for its host and asserted nothing about the swap it names.
+    So the swap is held before the refusal is read: an action that raises
+    fails the test as `_ActionFailed`, and afterwards the name must hold the
+    replacement rather than the object it held before.
+    """
     registries = module.load_registries(None)
     with _runtime_disposition() as path:
         module.initialize_disposition(path, cycle_id="TEST", registries=registries)
         _complete(path, module, registries)
-        replacement = tmp_path / "replacement.json"
-        replacement.write_bytes(path.read_bytes())
-        fired = _between_inspection_and_open(module, monkeypatch, path.name, lambda: os.replace(replacement, path))
-        message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        replacement = path.with_name(path.name + ".replacement")
+        try:
+            replacement.write_bytes(path.read_bytes())
+            judged, substitute = _object_at(path), _object_at(replacement)
+            assert judged != substitute, "the replacement is the judged object, so no swap could be seen"
+            fired = _between_inspection_and_open(
+                module, monkeypatch, path.name, lambda: os.replace(replacement, path)
+            )
+            message = _refusal(module, lambda: module.validate_disposition(path, registries=registries))
+        finally:
+            replacement.unlink(missing_ok=True)
         assert fired, "the swap never ran"
+        assert _object_at(path) == substitute, "the swap did not replace the judged object"
         assert message == "cycle disposition changed during admission"
+
+
+def test_an_action_that_fails_in_the_window_is_never_read_as_a_refusal(module, monkeypatch):
+    """The guard every swap test here stands on, held live on any host.
+
+    Where every action succeeds -- CI, one filesystem -- the swap tests pass
+    with the guard or without it, so none of them would notice it removed.
+    An action that raises either error the checker refuses over, an
+    `OSError` or a `ValueError`, must leave the hook as `_ActionFailed`,
+    carrying that error as its cause, and outside `Exception`. That much is
+    measured here. That the checker then cannot report it as a refusal is
+    the checker as it reads today -- each handler in it catches `Exception`
+    or narrower, or catches `BaseException` only to re-raise -- and is not
+    measured here. The inspection is stubbed, so no handle backend is needed.
+    """
+    inspected = os.lstat(PUBLIC)
+    for cause in (OSError(errno.EXDEV, os.strerror(errno.EXDEV)), ValueError("embedded null byte")):
+        monkeypatch.setattr(module, "_inspect", lambda handle, name, *, label: inspected)
+
+        def failing(cause=cause):
+            raise cause
+
+        fired = _between_inspection_and_open(module, monkeypatch, "entry", failing)
+        assert module._inspect(-1, "another", label="test") is inspected and fired == []
+        with pytest.raises(_ActionFailed) as failed:
+            module._inspect(-1, "entry", label="test")
+        assert fired == ["entry"], "the hook must record that it fired before the action runs"
+        assert failed.value.__cause__ is cause
+        assert not isinstance(failed.value, Exception), "an Exception is one the checker can refuse over"
 
 
 def _many(count: int, **last) -> list[dict]:

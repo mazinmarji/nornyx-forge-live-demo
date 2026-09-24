@@ -1000,7 +1000,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # key, a trailing line break in an identifier, an unhashable value, a
     # deeply nested document, a repeated option, a stray argument,
     # twenty-three malformed shapes.
-    "tests/test_standing_development_obligations.py": 120,
+    "tests/test_standing_development_obligations.py": 121,
     "tests/test_standing_obligations_windows.py": 7,
     "tests/test_approval_reachability.py": 17,
     "tests/test_approval_ledger.py": 65,
@@ -1729,10 +1729,10 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     3741   (120 modules)
-#     sum of the module floors    3424
-#     band(3741) = ceil(0.9*n)    3367
-#     MINIMUM_COLLECTED           3432
+#     collected across tests/     3742   (120 modules)
+#     sum of the module floors    3425
+#     band(3742) = ceil(0.9*n)    3368
+#     MINIMUM_COLLECTED           3433
 #     above the module sum          8
 #     below what collects         309
 #
@@ -2225,7 +2225,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3432
+MINIMUM_COLLECTED = 3433
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
