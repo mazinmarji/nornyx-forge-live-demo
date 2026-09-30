@@ -5360,3 +5360,107 @@ them.
 **Serves.** BRD-004's non-functional lines as they bind development tooling:
 Python 3.10 to 3.13, tests that run without network access, and no secrets
 committed. No functional BRD requirement is implemented.
+
+## A-039 Real entrypoints are rehearsed, and three guards are shown load-bearing
+
+**Assumption.** The process primitives of A-038 are exercised on this
+repository's own code, not only on their synthetic specimens.
+`tests/test_entrypoint_rehearsals.py` runs three real entrypoints, unmodified,
+each in a copy of the tracked files and through the rehearsal harness:
+`scripts/prepare_runtime.py` (it exits 2, names `AN_APPROVAL_RECORD_MISSING`
+and writes only `.nornyx/runtime/` and its `preparation-report.json`),
+`scripts/check_pre_approval_baseline.py` (it exits 0 and reports `pass`, with
+no file changes) and `python -m nornyx_forge.cli demo --offline` (it exits 0,
+runs the sequential backend and never reports `crewai_flow`, reports its
+Nornyx evidence as `fallback` with `RUNTIME_LOCK_MISSING` for each of its two
+cases, which the test reads from the JSON the run printed, and writes exactly
+the files it declares). It then shows three guards load-bearing with the
+guard-liveness check: the accepted-set filter of the baseline check, for a
+clock past every evidence window; its unexplained-failure guard, for a
+checker that crashes without a word; and the absent-CLI guard of runtime
+preparation, for a `PATH` with no `nornyx`. Each refusal signature names the
+guard's own finding or message. Each child is built from
+nothing: only the declared `PATH`, `PYTHONPATH` and `PYTHONDONTWRITEBYTECODE`,
+an empty home and temp directory, and no stdin. The tests are
+`test_a_real_entrypoint_matches_its_contract`,
+`test_a_guard_is_shown_load_bearing` and
+`test_no_spec_names_an_absolute_path_of_the_host`. The module's one skip is
+off Linux, where the harness refuses to run.
+
+**What it does NOT establish.**
+
+1. **Only the paths exercised.** Three entrypoints and three triggers are
+   exercised, each at its declared contract. The strict demo path, every
+   approval-bound path, the HTTP surface, the container and Windows paths and
+   CrewAI's own kickoff are not. The approval-drift guard
+   (`require_approval_matches_head`) is not shown live: its trigger is an
+   existing approval record, which no tool of this repository may create.
+2. **A MATCH is a contract, not correctness.** A rehearsal compares the exit
+   code, the set of files created, modified or deleted under the fixture copy,
+   an empty home and an empty temp directory, and literal output text. It does
+   not judge that an output is right, examines no file's content beyond a
+   digest where one is declared, and inherits the limits A-038 states for the
+   harness: writes outside the watched roots, reads, metadata changes and
+   processes that leave the child's group are not seen. Output patterns are
+   literal, so a change of the output's spacing or wording fails the run,
+   which is intended.
+3. **Liveness is per declared trigger.** A guard shown live decides for the
+   trigger declared, not for every input, and its code is not thereby shown
+   correct. Two findings came with the measurement. The absent-CLI guard is
+   not the only thing that makes that run fail: with it neutralized the run
+   still fails, with a `TypeError` and exit 1, so the guard decides the legible
+   refusal and not whether the run fails. And the statement that preparation
+   "writes only the report" holds only while the CLI is present: with the CLI
+   absent it writes nothing, not even the report.
+4. **Importing CrewAI writes under HOME, and the fix is outside this
+   change.** Importing CrewAI, which `src/demo_app/agentic.py` and
+   `src/nornyx_forge/development_flow.py` do at module level, creates its
+   generated key and state under the running user's home directory. Importing
+   `nornyx_forge.cli` does so too, and every `nornyx-forge` command imports it,
+   so this happens on the shipped sequential path, which never calls a CrewAI
+   kickoff. The demo rehearsal declares exactly what a run creates there
+   (`home/.config/crewai/`, `home/.local/share/crewai/credentials/secret.key`,
+   `home/.local/share/fixture/memory/` and the directories above each of
+   them, `fixture` being the name of the working directory), so any further
+   write fails it. The key's content and mode are not examined. The
+   behaviour is that of the third-party library at import; changing where
+   Forge imports it, or scoping the library's storage paths, is not done here.
+5. **No hidden authority dependency holds for the exercised paths, and for
+   nothing else.** On those paths the entrypoints reach their outcomes with no
+   credential reachable through the environment or the empty home, no approval record, no git metadata (the copy holds
+   no `.git` and no runtime lock or review record, because it is built from
+   `git ls-files` and nothing untracked is copied) and no agent tooling; the
+   copy's `src` is the one imported, through `PYTHONPATH`, since the absent-CLI
+   guard run could not be live otherwise; and a static
+   test holds every spec to that shape: no inherited variable, exactly the
+   three environment names, and every absolute path token in every string of
+   the spec, embedded paths included, read whole up to the next delimiter, is
+   exactly the interpreter's directory, `/usr/bin` or `/bin` (a longer path
+   with one of them as its prefix fails)
+   (`test_no_spec_names_an_absolute_path_of_the_host`). It reads specs, not
+   the children's reads. Declared ambient
+   inputs are not authority but are not excluded either: the installed
+   interpreter, its packages and the `nornyx` CLI of the `demo` extra, which
+   are reads the harness does not see, and whether the installed set is the
+   pinned one is not examined; and the wall clock, since the baseline check
+   and the controls of the guard runs pass only inside the committed evidence
+   window, as the CI step that runs the same check does. Nothing is shown about
+   Windows, which the harness refuses.
+6. **No network is not checked by this suite.** The rehearsals were also run
+   with no network access on a Linux host (a fresh user and network
+   namespace, with a positive control); that is NOT ESTABLISHED on CI, where
+   the hosted runner refuses unprivileged user namespaces ("unshare: write
+   failed /proc/self/uid_map: Operation not permitted"), so those checks are
+   not part of this suite. Nothing here shows that an entrypoint works, or
+   fails, without network access.
+7. **The fixture is the tracked tree of a checkout.** It needs `git` and a
+   work tree, and it fails if a tracked file is missing. The repository's
+   `tests/governed_workspace.py` was measured as the alternative and not used:
+   it copies a subset of the tracked files, and copies `.nornyx/` whole, so a
+   locally prepared runtime lock or review record that is ignored by git
+   changes the verdicts of the rehearsals (measured: the preparation rehearsal
+   and the absent-CLI guard then fail).
+
+**Serves.** BRD-004's non-functional lines as they bind development tooling:
+Python 3.10 to 3.13, tests that run without network access, and no secrets
+committed. No functional BRD requirement is implemented.

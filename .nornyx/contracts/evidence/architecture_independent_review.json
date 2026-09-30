@@ -1,7 +1,7 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-09-30T16:50:17Z",
-  "governed_input_digest": "sha256:a1ec52a94ceb34295b841e3c2a50d1baba4d481dec6de6a977186d0d08112449",
+  "generated_at": "2026-09-30T20:00:27Z",
+  "governed_input_digest": "sha256:54a05241ab5c28995f8447e4ef2475652cddd6b2478e983c5d8173e1a54b030d",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [],
@@ -14,6 +14,6 @@
     "source_sha256": null
   },
   "statement": "NO AUTHENTICATED INSPECTION OF THIS SUBJECT EXISTS. Any reviewer rows below come from an in-session report that is not part of the governed content and decides nothing. This record asserts no independence: an unauthenticated file cannot establish that the party who produced it was independent of it.",
-  "subject_revision": "git:365e8f7b5606557b10bc91684e1e49a136d10bb4",
+  "subject_revision": "git:1d90218a3b27840a472e6748ff0c018e678d19b5",
   "verdict_basis": "no authenticated inspection of the current subject; the in-session report is displayed but decides nothing (no reviewer trust store, so no inspection can be authenticated (~/.nornyx/forge_reviewer_trust.json (absent)))"
 }
