@@ -22,10 +22,11 @@ to treat part of it as instructions, that component must argue for itself in
 review, because no path in this adapter will do it quietly.
 
 git IDENTITY. Commits are authored as `forge-capsule <capsule@forge.invalid>`
-with `-c` overrides so the store never reads or writes the user's git config.
-The capsule directory gets its own repository; the store refuses to operate at
-the root of an EXISTING repository it did not initialize, so a capsule can
-never silently commit into a project's own history.
+with `-c` overrides, so the identity never comes from the user's git config and
+the store never writes that config; its other settings still apply. The capsule
+directory gets its own repository; the store refuses to operate at the root of
+an EXISTING repository it did not initialize, so a capsule can never silently
+commit into a project's own history.
 
 THE SEAL, and why in-document integrity is not enough. The store lives under
 the basic-user project directory, and the build hands that directory to an
@@ -875,7 +876,8 @@ def _tree_changes(porcelain: str) -> list[str]:
     where it landed in the list.
     """
     kept: list[str] = []
-    for line in porcelain.splitlines():
+    # Lines end at "\n" alone: a name may hold any other character.
+    for line in porcelain.split("\n"):
         if line.startswith("?? "):
             name = line[3:]
             if "/" not in name and "\\" not in name and _FRESH_TMP_NAME.search(name):
@@ -991,19 +993,55 @@ def _write_fresh(path: Path, text: str) -> None:
         raise
 
 
+def _git_text(raw: bytes) -> str | None:
+    """git's bytes as text, or None when they cannot be decoded.
+
+    THE FILESYSTEM CODEC, STRICTLY. git writes a name the way the filesystem
+    stores it on POSIX and as UTF-8 on Windows, which is the codec Python uses
+    for file names on each, and a translated message in the locale's charset,
+    which on POSIX is that same codec. Text mode used the locale codec instead:
+    on Windows that is the ANSI code page, so a name git wrote as UTF-8 came
+    back as mojibake or, for a byte the code page leaves undefined, as a stream
+    of None and an AttributeError; on POSIX a byte the locale cannot decode
+    raised out of `subprocess.run` itself, so a seal check that exists to
+    REPORT raised instead.
+
+    Strictly, not with the filesystem codec's own `surrogateescape`: this text
+    leaves the process -- in a refusal, a seal finding, a JSON response -- and
+    a lone surrogate cannot be encoded as UTF-8 there. So the caller gets None
+    and says, in its own words, that git's answer could not be read. Text
+    mode's newline translation is kept.
+    """
+    try:
+        text = raw.decode(sys.getfilesystemencoding())
+    except UnicodeDecodeError:
+        return None
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess:
     completed = subprocess.run(
         ["git", *_GIT_IDENTITY, *args],
         cwd=str(root),
         capture_output=True,
-        text=True,
         check=False,
     )
+    # Bytes, decoded by `_git_text`. A failure is a store refusal as it always
+    # was, and so is an answer that cannot be decoded: never a decode error.
+    stdout = _git_text(completed.stdout)
+    stderr = _git_text(completed.stderr)
     if completed.returncode != 0:
-        raise CapsuleStoreError(
-            f"git {' '.join(args[:2])} failed: {completed.stderr.strip()[:300]}"
+        detail = (
+            "its message could not be decoded" if stderr is None else stderr.strip()[:300]
         )
-    return completed
+        raise CapsuleStoreError(f"git {' '.join(args[:2])} failed: {detail}")
+    if stdout is None:
+        raise CapsuleStoreError(
+            f"git {' '.join(args[:2])} answered in output that could not be decoded"
+        )
+    # No caller reads git's error output after a success, so an undecodable
+    # one is dropped here rather than refused.
+    return subprocess.CompletedProcess(completed.args, completed.returncode, stdout, stderr or "")
 
 
 class CapsuleStore:
@@ -1137,7 +1175,7 @@ class CapsuleStore:
     def revisions(self) -> list[str]:
         """All revisions, oldest first."""
         out = _run_git(self.root, "rev-list", "--reverse", "HEAD").stdout
-        return [line.strip() for line in out.splitlines() if line.strip()]
+        return [line.strip() for line in out.split("\n") if line.strip()]
 
     # -- experience state --------------------------------------------------
     def load_experience(self) -> dict[str, Any]:
@@ -1486,27 +1524,39 @@ class CapsuleStore:
         if not (self.root / ".git").exists():
             problems.append("the store's git repository is gone")
         else:
+            # Bytes, decoded by `_git_text`: an answer that cannot be decoded
+            # is a finding naming the question, never an exception.
             head = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=str(self.root),
-                capture_output=True, text=True, check=False,
+                capture_output=True, check=False,
             )
+            revision = _git_text(head.stdout)
             if head.returncode != 0:
                 problems.append("the store's git repository cannot name HEAD")
-            elif head.stdout.strip() != snapshot.revision:
+            elif revision is None:
                 problems.append(
-                    f"HEAD is {head.stdout.strip()[:12]}, sealed revision is "
+                    "the store's git repository named HEAD in output that could not be decoded"
+                )
+            elif revision.strip() != snapshot.revision:
+                problems.append(
+                    f"HEAD is {revision.strip()[:12]}, sealed revision is "
                     f"{snapshot.revision[:12]}"
                 )
             status = subprocess.run(
                 ["git", "status", "--porcelain"], cwd=str(self.root),
-                capture_output=True, text=True, check=False,
+                capture_output=True, check=False,
             )
+            porcelain = _git_text(status.stdout)
             if status.returncode != 0:
                 problems.append("the store's working tree cannot be read")
+            elif porcelain is None:
+                problems.append(
+                    "the store's working tree was reported in output that could not be decoded"
+                )
             else:
                 # Everything except a stray of Forge's own temp shape; see
                 # `_tree_changes` for why that one name is not a finding.
-                changes = _tree_changes(status.stdout)
+                changes = _tree_changes(porcelain)
                 if changes:
                     problems.append(
                         "the working tree is not clean: " + "\n".join(changes)[:120])
@@ -1594,14 +1644,17 @@ class CapsuleStore:
         try:
             restored = False
             if (self.root / ".git").is_dir():
+                # Only the exit status is read, so the output is captured as
+                # bytes and never decoded: a message nobody reads cannot stop
+                # the honest route by failing to decode.
                 reset = subprocess.run(
                     ["git", *_GIT_IDENTITY, "reset", "--hard", "--quiet", snapshot.revision],
-                    cwd=str(self.root), capture_output=True, text=True, check=False,
+                    cwd=str(self.root), capture_output=True, check=False,
                 )
                 if reset.returncode == 0:
                     subprocess.run(
                         ["git", "clean", "-fdxq"], cwd=str(self.root),
-                        capture_output=True, text=True, check=False,
+                        capture_output=True, check=False,
                     )
                     restored = not self.seal_problems(snapshot)
             if not restored:

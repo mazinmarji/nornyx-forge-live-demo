@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import locale
 import os
 import re
 import shutil
@@ -883,9 +884,48 @@ def re_full_digest(value: Any) -> bool:
     return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
 
 
-def run(command: tuple[str, ...], *, cwd: Path) -> GateResult:
-    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
-    detail = (result.stdout + result.stderr).strip()
+#: The codec a gate child writes, where it is not the one text mode reads,
+#: keyed by the command's first word. A Python child started with this
+#: interpreter's environment writes its stdio in the locale codec -- the codec
+#: text mode reads. The Nornyx CLI is read with that codec too: its source
+#: prints through the default text stream with no stdio setting of its own.
+#: That was read in its source; its output on Windows was not measured. ruff
+#: is a native binary and writes UTF-8 whatever the locale (measured on
+#: Windows), so text mode read it as the ANSI code page there: mojibake in the
+#: recorded detail, or, for a byte that code page leaves undefined, a stream
+#: of None and a TypeError escaping `run`, so acceptance raised instead of
+#: recording a gate.
+GATE_OUTPUT_ENCODINGS = {"ruff": "utf-8"}
+
+
+def _gate_text(raw: bytes, stream: str, encoding: str) -> str:
+    """One gate stream as text mode would have read it, or Forge's account.
+
+    STRICT, AND NEVER SUBSTITUTED: the rule `claude_worker._decode` and A-025
+    set for a provider's output. A stream that cannot be decoded is not rendered
+    as replacement characters or as confident text in another codec; the detail
+    says which stream, why and where, and identifies the exact bytes by length
+    and SHA-256. The gate's verdict is its exit status, as before; the detail is
+    what a reader and the repair loop see.
+    """
+    try:
+        text = raw.decode(encoding)
+    except UnicodeDecodeError as exc:
+        return (
+            f"\n[{stream} could not be decoded as {encoding} ({exc.reason} at byte "
+            f"{exc.start}); {len(raw)} bytes, sha256:{hashlib.sha256(raw).hexdigest()}]\n"
+        )
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def run(command: tuple[str, ...], *, cwd: Path, encoding: str | None = None) -> GateResult:
+    """Run one gate. `encoding` is the codec the child writes; None is the one
+    text mode reads, which a Python child started with this environment writes."""
+    result = subprocess.run(command, cwd=cwd, capture_output=True, check=False)
+    codec = encoding or locale.getpreferredencoding(False)
+    detail = (
+        _gate_text(result.stdout, "stdout", codec) + _gate_text(result.stderr, "stderr", codec)
+    ).strip()
     return GateResult(" ".join(command), result.returncode == 0, detail, command, result.returncode)
 
 
@@ -910,4 +950,7 @@ def default_gates(root: Path, *, quick: bool = False) -> list[GateResult]:
                 (sys.executable, "scripts/prepare_runtime.py"),
             ]
         )
-    return [run(command, cwd=root) for command in commands]
+    return [
+        run(command, cwd=root, encoding=GATE_OUTPUT_ENCODINGS.get(command[0]))
+        for command in commands
+    ]

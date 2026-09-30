@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -300,15 +302,32 @@ def qualify_local(path: Path, profile: RequirementProfile | None = None) -> Qual
     )
 
 
+def _git_text(raw: bytes) -> str | None:
+    """git's bytes as text in the filesystem codec, strictly, or None.
+
+    The capsule store's rule, for the same reason: git writes names as the
+    filesystem stores them on POSIX and as UTF-8 on Windows -- the codec Python
+    uses for file names on each -- where text mode's locale codec raised on
+    POSIX or left None on Windows. Strictly, because this text leaves the
+    process in a qualification report. Text mode's newline translation is kept.
+    """
+    try:
+        text = raw.decode(sys.getfilesystemencoding())
+    except UnicodeDecodeError:
+        return None
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _local_git_revision(path: Path) -> str | None:
+    # Bytes: only the answer is read, and only a 40-hex answer is taken, so a
+    # message git writes beside it is never decoded and cannot stop the report.
     result = subprocess.run(
         ("git", "rev-parse", "HEAD"),
         cwd=path,
-        text=True,
         capture_output=True,
         check=False,
     )
-    sha = result.stdout.strip()
+    sha = (_git_text(result.stdout) or "").strip()
     return f"git:{sha}" if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", sha) else None
 
 
@@ -330,19 +349,26 @@ def qualify_deep_remote(
         target = Path(temp) / repo
         clone = subprocess.run(
             ("git", "clone", "--depth", "1", f"https://github.com/{owner}/{repo}.git", str(target)),
-            text=True,
             capture_output=True,
             check=False,
             timeout=120,
         )
         if clone.returncode:
+            # git's message is the hard stop; one that cannot be decoded is
+            # identified by length and SHA-256 rather than rendered or raised.
+            message = _git_text(clone.stderr)
+            if message is None:
+                message = (
+                    f"its message could not be decoded ({len(clone.stderr)} bytes, "
+                    f"sha256:{hashlib.sha256(clone.stderr).hexdigest()})"
+                )
             return QualificationReport(
                 repository=remote.repository,
                 revision=remote.revision,
                 verdict="INSUFFICIENT_EVIDENCE",
                 overall_score=remote.overall_score,
                 dimensions=remote.dimensions,
-                hard_stops=(f"Deep clone failed: {clone.stderr.strip()}",),
+                hard_stops=(f"Deep clone failed: {message.strip()}",),
                 remediations=remote.remediations,
                 metadata={**remote.metadata, "evidence_depth": "github_metadata_only"},
             )
