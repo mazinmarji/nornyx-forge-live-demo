@@ -5111,3 +5111,130 @@ reached and the build stopping.
 from the live act; A-019, since the generated project is the verifier's
 subject and never its verifier; and A-032, whose GOVERN position this journey
 reaches rather than works around.
+
+## A-037 The hostile-probe job runs every owner and specimen the registries name, and every test in the modules the closure protocol names
+
+**Assumption.** The closure gate in `docs/governance/RELEASE_CONTRACT_V1.md`
+names a remote CI result `hostile-probe`, and no workflow in this repository's
+history defined a job of that name, so that result could not be produced by
+any run. The name is defined nowhere else. The tests also use "probe" for other
+measurement probes, so the word alone does not settle what the job is; the
+gate's own "Permanent hostile corpus" line does, and it is the only reading
+anchored in the contract. The job is therefore that line's counterpart on
+remote CI. It runs the owner `INVENTORY` names for each false-green class and
+every specimen `ATTACK_CLASSES` names -- the owed identities -- and every other
+test in the test modules that the "Where the corpus lives" table of
+`docs/governance/CLOSURE_PROTOCOL.md` names.
+
+**Why it needs stating.** The repository describes the corpus in two ways, and
+neither is wrong: the contract counts it by class, in false-green and attack
+classes, and the protocol locates it by module. Running only one would leave
+part of the other unexecuted under a job whose name claims the whole -- a
+partial sweep read as the whole, which is FG31's class. The job runs the
+union: every test in it is an owner or specimen the registries name, or sits in
+a module the protocol's table names.
+
+**What the job decides, and only this.** It reads each part from the document
+or registry that defines it, when it runs. A section of either document runs
+from its heading to the next line that starts a heading of level one or two,
+and the job refuses a section that holds a line opening a code fence (up to
+three spaces, then three or more backticks or tildes) or a line starting with
+`<` (up to three spaces first), which is how an HTML block opens: inside
+either, a line starting `# ` is not a heading, and it would otherwise end the
+section early. Before running anything it
+refuses when the contract has no single closure-gate section, when that
+section does not state the corpus exactly once and in the form
+"(N FG + M AC)", or when those counts differ from the registries. It refuses
+when the protocol has no single corpus section, or that section does not open
+with its table. The table is the section's first block, up to its first blank
+line: every line of it must start with `|`; every row must name an existing
+test module or the registry in backticks, and every `tests/` path in a row
+must be one of those cites; and no line after the table, anywhere in the
+section, may contain `|`. So a row inside the table as defined here is read,
+apart from the limits listed below. It refuses when the table locates no test
+module, and when the registries name no owner and no specimen. After the run
+it refuses a report
+that was not written, a non-zero pytest exit, any skipped testcase, any
+`<failure>` or `<error>` element anywhere in the report, a testsuite whose own
+counts of failures and errors are not both zero, a report whose own count of
+outcomes differs from the testcases it lists, an owed identity that did not
+execute, and a module from the table that executed nothing. So the verdict
+comes from the report, not from pytest's exit code alone. A run with nowhere
+outside the checkout to write its report, or one
+that outlasts its time bound, is refused too. For each of these refusals the
+step's last line is its verdict; an exception it does not handle, such as a
+registry that no longer imports, ends it with a traceback and a non-zero exit
+instead. pytest's setup-only and setup-plan modes are switched off for the run
+and the repository's own addopts are not applied to it, so neither mode can
+pass a run that executes no test body; a `conftest.py` that turns setup-only on
+by itself leaves testcases without outcomes, and the count refuses that. The
+test matrix already runs these tests inside the whole suite on each supported
+interpreter, less the census's declared skips; this job adds a verdict about
+the corpus alone. It runs once, on 3.13, as the other single-purpose jobs do:
+the declared 3.10-3.13 range is covered for this corpus by the test matrix,
+not by this job.
+
+`tests/test_hostile_probe_job.py` holds the job. Every result the gate's
+remote-CI line names must be defined by the workflow. The job, and the
+workflow keys that reach it, must have exactly an allowed set of keys: the
+workflow, the job and each step may carry only the keys they carry today, and
+the triggers, the workflow's permissions and defaults, the checkout's options
+and the install command are pinned by value, and the interpreter must be one
+the gate names. So an environment, a working directory, permissions, a
+condition, a dependency or a tolerated failure cannot be added to the job or
+its steps without editing the pin. The workflow's `name` and `concurrency`
+values are not pinned, because neither changes what the job runs. The step is
+executed against synthetic repositories in which each refusal above has a case
+that must fail, beside one shared case that must pass. And the step is run
+against this tree with its pytest launch intercepted, and the test modules it
+locates are compared for equality with a pinned set.
+
+**What it does not establish.**
+
+1. Identity is judged per test function, with parametrisation stripped: a
+   parametrised owner that loses some of its cases to a collection hook is not
+   detected. Outside the owed identities a module is held only by its
+   presence, not by a floor; the count floors are the census's. Which modules
+   are located is pinned exactly, so a change that adds or removes a corpus
+   module must edit that pin as well. The pin sits in the commit it guards: it
+   raises an alarm on drift, and it is not evidence against tampering.
+2. A green run supplies one of the results the gate's remote-CI line names,
+   and says nothing about the others or about the gate's other lines.
+3. Every input of the verdict -- the job, the registries, the gate's text, the
+   protocol's table and the `conftest.py` files -- is read from the commit
+   under test. A `conftest.py` or plugin hook in that commit can run fewer test
+   bodies than the corpus holds, or replace them, and the step sees only the
+   owed identities and each located module's presence. A hook that rewrites
+   pytest's exit status to zero no longer hides a failure or an error, because
+   the report's own `<failure>` and `<error>` elements and its testsuite
+   counts decide. The report is written by the same pytest process, so a hook
+   that edits the report itself stays within this limit. So a green result
+   counts only for the exact candidate head, from a run of this workflow on
+   that head, matched by workflow, job, event and commit, never by check name.
+   The push trigger is filtered to `main`, so a head that is not on `main`
+   gets its result from a manually dispatched run; a pull-request run tests a
+   merge commit, not the head.
+4. Which checks a branch requires is a repository setting, and this change
+   does not touch it.
+5. The step reads raw text in the forms it recognises, not rendered Markdown,
+   and three residuals follow. (a) A module named in the table's header row is
+   not read. (b) In a row that already has one recognised cite, a second
+   module named without the string `tests/` -- a bare name, a backslash
+   spelling, a different case or an HTML entity -- passes unrun, and the exact
+   pin cannot see it, because the set of located modules does not change.
+   (c) A block opened before a section's heading -- a code fence, an HTML
+   comment or a math block -- can hide that section: the step then ends its
+   reading of the section at a line the rendered page does not treat as a
+   heading, and the rendered page shows no such section. Each of the three
+   needs an edit to a frozen governance document in the same change.
+
+**Scope.** One job in `.github/workflows/ci.yml`, placed between
+`strict-authorization` and `windows-runtime`; the test module that holds it;
+and the census raise in `scripts/check_test_coverage.py` that requires that
+module with its own floor. No other test, checker, policy, registry or frozen
+document changes, and no authored contract text: the two governance contracts
+change only in the fields the evidence refresh writes.
+
+**Serves.** the closure gate of `docs/governance/RELEASE_CONTRACT_V1.md`,
+whose remote-CI line names this job. BRD-005's `pytest` acceptance item is
+unchanged and stays served by the test matrix, of which this job reruns a part.
