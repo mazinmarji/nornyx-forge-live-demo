@@ -1,0 +1,11 @@
+# expect: json-null-unchecked 6:1
+# expect: json-null-unchecked 10:1
+# expect: json-null-unchecked 11:1
+# Synthetic specimen. An empty document gives $null and the branch silently does nothing.
+$settings = Get-Content -Raw -Path 'settings.json' | ConvertFrom-Json
+if ($null -ne $settings) {
+    Write-Output $settings.Name
+}
+$other = ConvertFrom-Json -InputObject $Text
+if ($other -ne $null) { Write-Output 'present' }
+if ($other) { Write-Output 'again' }

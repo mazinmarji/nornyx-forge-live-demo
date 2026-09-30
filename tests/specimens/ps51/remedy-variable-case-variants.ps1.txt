@@ -1,0 +1,6 @@
+# expect: none
+# Synthetic specimen. One spelling throughout, and variants that are only read, are not flagged.
+$Widget = Get-Sample
+Write-Output $Widget
+Write-Output $Total
+Write-Output $TOTAL

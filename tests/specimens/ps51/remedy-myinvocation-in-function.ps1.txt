@@ -1,0 +1,7 @@
+# expect: none
+# Synthetic specimen. The script-scope spelling and script-level use are not flagged.
+function Get-SampleRoot {
+    $path = $script:MyInvocation.MyCommand.Path
+    $path
+}
+$top = $MyInvocation.MyCommand.Path

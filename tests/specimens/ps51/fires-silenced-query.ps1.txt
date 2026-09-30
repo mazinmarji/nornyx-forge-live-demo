@@ -1,0 +1,17 @@
+# expect: silenced-query 10:30
+# expect: silenced-query 11:29
+# expect: silenced-query 12:35
+# expect: silenced-query 13:1
+# expect: silenced-query 14:23
+# expect: silenced-query 15:23
+# expect: silenced-query 16:33
+# expect: silenced-query 17:1
+# Synthetic specimen. An error and an absent result look alike.
+$item = Get-Item -Path $Path -ErrorAction SilentlyContinue
+$found = Resolve-Path $Path -ea 0
+$hits = Select-String -Path $Path -ErrorAction:Ignore -Pattern 'x'
+$ErrorActionPreference = 'SilentlyContinue'
+$more = Get-ChildItem -ErrorA ([System.Management.Automation.ActionPreference]::SilentlyContinue)
+$list = Get-ChildItem -ErrorAction 4
+$data = Get-Content -Path $Path -ErrorAction [System.Management.Automation.ActionPreference]::Ignore
+$global:ErrorActionPreference = [System.Management.Automation.ActionPreference]::Ignore

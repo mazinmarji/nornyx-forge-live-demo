@@ -1,0 +1,4 @@
+# expect: none
+# Synthetic specimen. Removing what may be absent, and stopping on error, are not flagged.
+Remove-Item -Path $Path -ErrorAction SilentlyContinue
+$item = Get-Item -Path $Path -ErrorAction Stop

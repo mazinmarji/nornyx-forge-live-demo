@@ -1,0 +1,18 @@
+# expect: variable-case-variants 9:14
+# expect: variable-case-variants 12:5
+# expect: variable-case-variants 13:18
+# expect: variable-case-variants 15:42
+# expect: variable-case-variants 18:14
+# expect: variable-case-variants 18:21
+# Synthetic specimen. One name written and read in two letter cases is one variable.
+$Widget = Get-Sample -Name 'first'
+Write-Output $widget
+function Set-Sample {
+    param([string]$Label)
+    $label = $Label.Trim()
+    Write-Output $LABEL
+}
+foreach ($Entry in $List) { Write-Output $entry }
+$Count++
+--$Left
+Write-Output $count $left

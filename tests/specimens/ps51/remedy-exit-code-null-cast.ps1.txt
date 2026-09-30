@@ -1,0 +1,6 @@
+# expect: none
+# Synthetic specimen. Reading the process handle first keeps the exit code.
+$proc = Start-Process -FilePath 'tool.exe' -PassThru
+$null = $proc.Handle
+$proc.WaitForExit()
+$code = $proc.ExitCode

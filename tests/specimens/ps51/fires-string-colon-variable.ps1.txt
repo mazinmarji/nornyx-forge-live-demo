@@ -1,0 +1,7 @@
+# expect: string-colon-variable 4:25
+# expect: string-colon-variable 6:7
+# Synthetic specimen. A name followed by a colon inside an expandable string is a drive reference.
+Write-Output "Stored in $drive:folder"
+$note = @"
+Owner $name:primary
+"@

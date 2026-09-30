@@ -1,0 +1,6 @@
+# expect: none
+# Synthetic specimen. An array parameter of a function is not flagged.
+function Set-Sample {
+    param([string[]]$Names)
+    $Names
+}

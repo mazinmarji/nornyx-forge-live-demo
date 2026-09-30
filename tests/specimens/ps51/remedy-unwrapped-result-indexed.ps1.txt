@@ -1,0 +1,8 @@
+# expect: none
+# Synthetic specimen. @( ), an array type and a leading comma keep the result an array.
+$items = @(Get-ChildItem -Path $Folder)
+$first = $items[0]
+[array]$rows = Get-Sample
+$rows.Count
+$pairs = ,(Get-Sample)
+$pairs[0]

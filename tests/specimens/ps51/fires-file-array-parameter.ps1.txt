@@ -1,0 +1,9 @@
+# expect: file-array-parameter 5:5
+# expect: file-array-parameter 6:5
+# Synthetic specimen. powershell.exe -File cannot pass an array to a script parameter.
+param(
+    [string[]]$Names,
+    [array]$Sizes,
+    [string]$Label
+)
+Write-Output $Label

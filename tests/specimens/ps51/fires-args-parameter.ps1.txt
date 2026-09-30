@@ -1,0 +1,6 @@
+# expect: args-parameter 4:21
+# Synthetic specimen. A parameter named $Args never binds.
+function Invoke-Sample {
+    param([string[]]$Args)
+    Write-Output $Args.Count
+}

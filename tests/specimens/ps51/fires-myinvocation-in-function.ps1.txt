@@ -1,0 +1,14 @@
+# expect: myinvocation-in-function 6:13
+# expect: myinvocation-in-function 10:5
+# expect: myinvocation-in-function 13:5
+# Synthetic specimen. Inside a function, $MyInvocation describes the call, not the script.
+function Get-SampleRoot {
+    $path = $MyInvocation.MyCommand.Path
+    Split-Path -Parent $path
+}
+filter Show-SampleName {
+    $MyInvocation.MyCommand.Name
+}
+function Get-SampleName {
+    $local:MyInvocation.MyCommand.Name
+}
