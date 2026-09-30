@@ -1166,6 +1166,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_ps51_lint.py": 421,
     "tests/test_rehearse_entrypoint.py": 112,
     "tests/test_guard_is_live.py": 59,
+    # Three real entrypoints rehearsed, three guards shown load-bearing and the
+    # static shape test on every spec: 7 collected at introduction, floor at
+    # band(7) = 7.
+    "tests/test_entrypoint_rehearsals.py": 7,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 2,
     "tests/test_requirements.py": 1,
@@ -1825,12 +1829,28 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # windows-runtime job's floor is untouched: that job runs seven named modules
 # and none of these is one.
 #
+# THE ENTRYPOINT-REHEARSALS SLICE ADDS ONE MODULE AND MOVES NONE.
+# tests/test_entrypoint_rehearsals.py collects 7 (floor band(7) = 7): three
+# real entrypoints rehearsed, three guards shown load-bearing, and the static
+# test on the shape of every spec. NO EXISTING MODULE MOVED, measured rather
+# than assumed: fresh collections of the base and of this tree, as a normal
+# user, differ only by the new module (4474 across 126 modules become 4481
+# across 127), and the new assumption entry entered no document sweep. The
+# module-floor sum rises by 7 to 4094 and the aggregate follows to 4102,
+# keeping the same 8 above it; band(n) 4027 -> 4033, and the working room
+# below the floor stays 379. THE SLACK THE BANDS GRANT stays 387: the new
+# module sits exactly at its band. NO SKIP IS ADDED where this census runs, and
+# none is added to the module beyond the skip off Linux that the harness
+# requires, which never fires on the Linux CI that runs this census. The
+# windows-runtime job's floor is untouched: that job runs seven named modules
+# and this is not one.
+#
 # (rows below):
 #
-#     collected across tests/     4474   (126 modules)
-#     sum of the module floors    4087
-#     band(4474) = ceil(0.9*n)    4027
-#     MINIMUM_COLLECTED           4095
+#     collected across tests/     4481   (127 modules)
+#     sum of the module floors    4094
+#     band(4481) = ceil(0.9*n)    4033
+#     MINIMUM_COLLECTED           4102
 #     above the module sum          8
 #     below what collects         379
 #
@@ -2323,7 +2343,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4095
+MINIMUM_COLLECTED = 4102
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2579,6 +2599,7 @@ REQUIRED_MODULES = (
     "tests/test_ps51_lint.py",
     "tests/test_rehearse_entrypoint.py",
     "tests/test_guard_is_live.py",
+    "tests/test_entrypoint_rehearsals.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
     "tests/test_requirements.py",
