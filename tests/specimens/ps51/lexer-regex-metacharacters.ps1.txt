@@ -1,0 +1,5 @@
+# expect: variable-case-variants 5:14
+# Synthetic specimen. Regular-expression metacharacters in names are inert.
+${Price.Tax} = 1
+${PriceXTax} = 2
+Write-Output ${price.tax}

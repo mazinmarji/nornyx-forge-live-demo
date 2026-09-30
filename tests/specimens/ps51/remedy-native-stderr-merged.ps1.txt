@@ -1,0 +1,7 @@
+# expect: none
+# Synthetic specimen. Redirection on cmdlets, aliases and functions is not flagged.
+function Invoke-Step { Write-Output 'step' }
+Invoke-Step 2>&1 | Out-Null
+Get-Sample 2>&1 | Out-Null
+echo 'hello' 2>&1
+& { git status } 2>&1

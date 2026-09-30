@@ -5238,3 +5238,125 @@ change only in the fields the evidence refresh writes.
 **Serves.** the closure gate of `docs/governance/RELEASE_CONTRACT_V1.md`,
 whose remote-CI line names this job. BRD-005's `pytest` acceptance item is
 unchanged and stays served by the test matrix, of which this job reruns a part.
+
+## A-038 The process primitives decide only what they can see
+
+**Assumption.** Three development instruments live under `scripts/` and hold
+no authority of their own. `ps51_lint.py` reports token patterns that carry
+known Windows PowerShell 5.1 defect classes in the files it is named;
+`rehearse_entrypoint.py rehearse` runs a real entrypoint against a local
+fixture, on Linux, and compares the run with a declared expectation; and
+`rehearse_entrypoint.py guard-live` shows that one guard is load-bearing for
+one declared trigger. Each refuses the inputs its module names as ones it
+cannot decide, rather than reporting them clean. Each decides nothing: a
+person or a pipeline acts on its report or record. They are plain scripts
+invoked explicitly, and no hook, skill, subagent or provider integration runs
+them.
+
+**What it does NOT establish.**
+
+1. **Unmarked PowerShell source is refused, not guessed.** Windows PowerShell
+   5.1 decodes a script without a byte-order mark in the system ANSI code page,
+   which the linter cannot know, so it refuses any such file holding a byte
+   above 0x7F (`test_undecodable_input_refuses`).
+2. **The lexer follows measured engine behaviour, not a parser equivalence.**
+   Its rules reproduce forms measured against the tokenizer of Windows
+   PowerShell 5.1 itself, on synthetic snippets
+   (`test_the_lexer_matches_the_measured_forms`); every Unicode space, line
+   separator and paragraph separator splits tokens there, as a space does.
+   Other forms are unmeasured: a control or format character anywhere in a
+   file, TAB, LF and CR aside, refuses the file before it is lexed, and code
+   inside a `$( )` subexpression of an expandable string is not checked by
+   any rule.
+3. **Eight known defect classes are not covered.** The lexer follows the
+   measured forms and the structure pass models the statements, commands and
+   scope units that the sixteen rules read; eight further classes are known
+   and have no rule here.
+4. **Cost is measured as growth, not as a deadline.** For the input shapes
+   that once cost quadratic time, among them strings and here-strings nested
+   in subexpressions, four times the input must cost under eight times as
+   much (`test_the_cost_grows_linearly_with_the_input`). No wall-clock bound
+   is set, and shapes not measured are not shown linear.
+5. **The default-alias table is one build's.** It was taken from `Get-Alias`
+   in a `-NoProfile` session of one Windows PowerShell 5.1 build. Other builds,
+   profiles and modules may add or remove aliases, and
+   `test_the_alias_table_is_sorted_unique_and_lower_case` holds only its shape.
+6. **A finding is a pattern, not a defect.** No rule claims completeness, each
+   names what it misses, and whether any rule's false-positive rate is
+   tolerable on real scripts is not measured here.
+7. **The linter judges exactly the files it is named.** It walks no
+   directory and merges nothing: each distinct argument gets one entry, so two
+   spellings or two hard-linked names of one file are two entries, and a
+   directory, a link, a special file or another suffix is refused
+   (`test_every_named_file_has_exactly_one_entry`,
+   `test_links_special_files_other_suffixes_and_oversize_refuse`). It has no
+   option: any argument starting with `-` is a usage error, and exit 0 comes
+   only from a judged clean report
+   (`test_an_option_is_refused_and_nothing_is_judged`). How the operating
+   system resolves a named path, links above it included, is not examined. A
+   name is examined, then opened by path, so a name another process swaps
+   between the two is read as it then is: through a link, or waiting on a
+   FIFO. Linting a checkout nobody else is writing is what it is built for.
+8. **The harness runs on Linux only, starts an absolutely named program and
+   gives it /dev/null as stdin.** It refuses on any other platform
+   (`test_the_harness_refuses_off_linux`), so it establishes nothing about
+   Windows entrypoints. `argv[0]` must be absolute once placeholders are
+   expanded, and no program is looked up
+   (`test_invalid_rehearsal_specs_refuse`). The environment is built from
+   nothing (`test_the_child_environment_is_exactly_the_declared_one`). Writes
+   outside the watched roots, reads, network use, metadata changes and
+   processes that leave the child's process group are not seen
+   (`test_a_write_outside_the_watched_roots_is_not_seen`,
+   `test_a_timeout_ends_the_process_group`). Records are deterministic for a
+   given spec and work root, not across work roots
+   (`test_the_record_is_deterministic_for_one_spec_and_work_root`). Output
+   patterns are literal text, tested as substrings, not regular expressions,
+   so matching costs time linear in the output
+   (`test_an_output_pattern_is_literal_text`,
+   `test_matching_the_patterns_costs_time_linear_in_the_output`), and a stream
+   holds at most 64 of them, none empty (`test_invalid_rehearsal_specs_refuse`).
+9. **One fixture, and outputs outside the spec's directory.** A rehearsal
+   copies one template directory under the spec's directory, which must
+   resolve to exactly itself, and creates every entry of the copy, a file or a
+   directory, exclusively
+   (`test_a_copy_that_would_land_on_an_existing_entry_refuses`). The work root
+   must lie outside the spec's directory, decided by file identity along the
+   work root's own path
+   (`test_the_work_root_must_lie_outside_the_spec_directory`), so a bind mount
+   of a directory inside the spec's directory, used as the work root, is not
+   detected. A declared path is '/'-separated components, none empty, '.' or
+   '..'; other characters, a leading dot and non-ASCII letters among them, are
+   accepted (`test_a_non_ascii_work_root_and_dot_directories_are_accepted`).
+   Cleanup never follows a link or changes a file's mode
+   (`test_cleanup_never_follows_a_link_or_changes_an_outside_file`), and what
+   it cannot remove stays behind and refuses the run
+   (`test_run_failures_refuse`). `rehearse`, unlike `guard-live`, does not
+   compare the copy with the template's listing, so a work root whose file
+   system drops modes gives the child other modes than the listed ones; an ext4
+   work root is preferred.
+10. **Guard liveness is per declared trigger, and only the listed entries of
+    the runs' copies are compared.** It shows a guard is load-bearing for the
+    trigger declared (`test_a_live_guard_is_reported_live`), not that the guard
+    is correct or complete, and a subject whose behaviour varies between runs
+    can yield any verdict. The subject is a regular file of the fixture
+    template, named as the template's listing names it
+    (`test_subject_errors_refuse`). Each run's copy takes its entries, kinds
+    and modes from one listing of the template; every file but the subject is
+    read again from the template and must match its listed digest, and the
+    subject is the bytes read once. A copy that differs from the listing
+    refuses the check
+    (`test_every_run_copies_the_listed_fixture_but_the_neutralized_file`).
+    Only the listed entries of each run's copy are compared; nothing else is
+    isolated or compared, among it the copy's own root directory, the spec's
+    directory (reachable through `{spec_dir}`) beyond the listed files'
+    content (a file added or a mode changed there is not seen; a changed
+    listed file's content is caught through the next copy), the work root's
+    own attributes, ACLs, extended attributes, inode flags, security labels,
+    the ownership of entries and every other path. The verdict therefore
+    assumes the subject changes no state that a later run reads: the subject
+    is the repository's own code under rehearsal, not an adversary built to
+    fake liveness.
+
+**Serves.** BRD-004's non-functional lines as they bind development tooling:
+Python 3.10 to 3.13, tests that run without network access, and no secrets
+committed. No functional BRD requirement is implemented.

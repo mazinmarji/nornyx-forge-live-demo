@@ -1,0 +1,20 @@
+# expect: unwrapped-result-indexed 9:10
+# expect: unwrapped-result-indexed 10:10
+# expect: unwrapped-result-indexed 14:14
+# expect: unwrapped-result-indexed 16:9
+# expect: unwrapped-result-indexed 18:9
+# expect: unwrapped-result-indexed 20:10
+# Synthetic specimen. One result arrives as a scalar and none as $null.
+$items = Get-ChildItem -Path $Folder -Filter '*.log'
+$first = $items[0]
+$total = $items.Count
+$items = @(Get-ChildItem -Path $Folder)
+$again = $items[0]
+$names = $List | Where-Object { $_.Length -gt 3 }
+Write-Output $names[0]
+$logs = Get-ChildItem -Path $Folder
+$tail = $logs[-1]
+$out = & 'tool.exe' --list
+$line = $out[0]
+$dot = . .\list.ps1
+$entry = $dot[0]

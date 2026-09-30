@@ -1,0 +1,8 @@
+# expect: argument-join 6:1
+# expect: argument-join 7:1
+# expect: argument-join 8:1
+# Synthetic specimen. An argument vector flattened with spaces loses its quoting.
+$info = New-Object System.Diagnostics.ProcessStartInfo
+$info.Arguments = $Parts -join ' '
+$info.Arguments = [string]::Join(' ', $Parts)
+$info.Arguments = [System.String]::Join(' ', $Parts)

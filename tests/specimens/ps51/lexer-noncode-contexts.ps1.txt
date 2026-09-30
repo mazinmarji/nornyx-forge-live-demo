@@ -1,0 +1,13 @@
+# expect: none
+# Synthetic specimen. Trigger text inside comments, strings and stop-parsing arguments is not code.
+# $code = [int]$LASTEXITCODE
+<#
+Get-WinEvent -LogName Application
+#>
+$text = 'Get-Item -Path $Path -ErrorAction SilentlyContinue'
+$more = @'
+git status 2>&1
+'@
+cmd /c echo --% x ; Get-WinEvent -LogName Application
+$note = "a # b"
+Write-Output ab<#c#>d a#b

@@ -1,0 +1,4 @@
+# expect: none
+# Synthetic specimen. Listing logs and providers reads no events.
+Get-WinEvent -ListLog 'Application'
+Get-EventLog -List

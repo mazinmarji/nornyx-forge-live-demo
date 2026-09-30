@@ -1159,6 +1159,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # and as text, markup that can hide or demote text is refused, and the
     # specimens resolve through the document's own table.
     "tests/test_assurance_tiers.py": 11,
+    # The process primitives, one module each: the PowerShell 5.1 linter
+    # (467 collected at introduction, floor band(467) = 421), the
+    # rehearsal harness (124, floor band(124) = 112) and its
+    # guard-liveness subcommand (65, floor band(65) = 59).
+    "tests/test_ps51_lint.py": 421,
+    "tests/test_rehearse_entrypoint.py": 112,
+    "tests/test_guard_is_live.py": 59,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 2,
     "tests/test_requirements.py": 1,
@@ -1795,14 +1802,37 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 310 -> 315. THE SLACK THE BANDS GRANT moves 318 -> 323:
 # the new module sits 5 above its band. NO SKIP IS ADDED.
 #
+# THE PROCESS-PRIMITIVES SLICE ADDS THREE MODULES AND MOVES NONE. A
+# PowerShell 5.1 linter and a Linux-only rehearsal harness with a
+# guard-liveness subcommand are new under scripts/, and each primitive has
+# its own module: tests/test_ps51_lint.py collects 467 (floor band(467) =
+# 421), tests/test_rehearse_entrypoint.py 124 (floor band(124) = 112) and
+# tests/test_guard_is_live.py 65 (floor band(65) = 59), so 126 modules
+# stand. The specimens under tests/specimens/ps51/ are .ps1.txt data, not
+# modules, and the non-recursive module glob does not see them. NO EXISTING
+# MODULE MOVED, measured rather than assumed: fresh collections of the base
+# and of this tree differ only by the three new modules, and the new
+# assumption entry entered no document sweep. The module-floor sum rises by
+# 592 to 4087 and the aggregate follows to 4095, keeping the same 8
+# above it; the suite collects 3818 -> 4474, band(n) 3437 -> 4027, and the
+# working room below the floor 315 -> 379. THE SLACK THE BANDS
+# GRANT moves 323 -> 387: the linter module sits 46 above its band, the
+# harness module 12 and the guard module 6. NO SKIP IS ADDED where
+# this census runs. The harness refuses to run off Linux, so its two modules
+# carry a module-level skip off Linux, which never fires on the Linux CI that
+# runs this census; the linter module collects its symbolic-link and FIFO
+# cases on POSIX only, so these counts are the POSIX ones. The
+# windows-runtime job's floor is untouched: that job runs seven named modules
+# and none of these is one.
+#
 # (rows below):
 #
-#     collected across tests/     3818   (123 modules)
-#     sum of the module floors    3495
-#     band(3818) = ceil(0.9*n)    3437
-#     MINIMUM_COLLECTED           3503
+#     collected across tests/     4474   (126 modules)
+#     sum of the module floors    4087
+#     band(4474) = ceil(0.9*n)    4027
+#     MINIMUM_COLLECTED           4095
 #     above the module sum          8
-#     below what collects         315
+#     below what collects         379
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2024,7 +2054,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 323 in total, and the aggregate refuses
+# per-module bands already grant 387 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2293,7 +2323,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3503
+MINIMUM_COLLECTED = 4095
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2546,6 +2576,9 @@ REQUIRED_MODULES = (
     "tests/test_consequential_authority_path.py",
     "tests/test_trust_store_parity.py",
     "tests/test_assurance_tiers.py",
+    "tests/test_ps51_lint.py",
+    "tests/test_rehearse_entrypoint.py",
+    "tests/test_guard_is_live.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
     "tests/test_requirements.py",

@@ -1,0 +1,10 @@
+# expect: none
+# Synthetic specimen. An else branch, or a test that refuses the null, is not flagged.
+$settings = Get-Content -Raw -Path 'settings.json' | ConvertFrom-Json
+if ($null -ne $settings) {
+    Write-Output $settings.Name
+} else {
+    throw 'the settings document is empty'
+}
+$other = ConvertFrom-Json -InputObject $Text
+if ($null -eq $other) { throw 'empty' }

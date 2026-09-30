@@ -1,0 +1,4 @@
+# expect: silenced-query 4:5
+# Synthetic specimen. A trigger split by a line continuation still fires.
+$item = Get-Item -Path $Path `
+    -ErrorAction SilentlyContinue

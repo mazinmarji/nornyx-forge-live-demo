@@ -1,0 +1,5 @@
+# expect: event-log-read 4:11
+# expect: event-log-read 5:1
+# Synthetic specimen. An unreadable log and an empty one answer alike.
+$events = Get-WinEvent -LogName 'Application' -MaxEvents 5
+Get-EventLog -LogName System -Newest 3 | Out-Null

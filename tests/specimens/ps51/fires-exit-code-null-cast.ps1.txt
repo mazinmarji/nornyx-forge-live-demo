@@ -1,0 +1,16 @@
+# expect: exit-code-null-cast 11:9
+# expect: exit-code-null-cast 13:9
+# expect: exit-code-null-cast 13:14
+# expect: exit-code-null-cast 14:10
+# expect: exit-code-null-cast 14:32
+# expect: exit-code-null-cast 14:54
+# expect: exit-code-null-cast 15:10
+# expect: exit-code-null-cast 15:39
+# expect: exit-code-null-cast 16:10
+# Synthetic specimen. A missing exit code must never read as success.
+$code = [int]$LASTEXITCODE
+$proc = Start-Process -FilePath 'tool.exe' -PassThru -Wait
+$last = [int]$proc.ExitCode
+$codes = [int32]$LASTEXITCODE, [int64]$LASTEXITCODE, [long]$LASTEXITCODE
+$named = [System.Int32]$LASTEXITCODE, [System.Int64]$LASTEXITCODE
+$inner = [int]($LASTEXITCODE)

@@ -1,0 +1,4 @@
+# expect: none
+# Synthetic specimen. A braced name, a scope and a variable drive are not flagged.
+Write-Output "Stored in ${drive}:folder"
+Write-Output "Home is $env:TEMP and count $script:Count"

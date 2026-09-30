@@ -1,0 +1,7 @@
+# expect: window-title-match 5:41
+# expect: window-title-match 6:39
+# expect: window-title-match 7:37
+# Synthetic specimen. A title check can match the caller's own console window.
+$open = Get-Process | Where-Object { $_.MainWindowTitle -like 'Sample*' }
+Get-Process | Select-Object -Property MainWindowTitle
+Get-Process | Sort-Object -Property 'MainWindowTitle'

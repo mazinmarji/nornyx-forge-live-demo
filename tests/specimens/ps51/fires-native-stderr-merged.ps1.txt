@@ -1,0 +1,7 @@
+# expect: native-stderr-merged 5:22
+# expect: native-stderr-merged 6:22
+# expect: native-stderr-merged 7:21
+# Synthetic specimen. 2>&1 on a native command turns stderr lines into error records.
+$status = git status 2>&1
+& 'tool.exe' --check *>&1 | Out-Null
+7z.exe l sample.zip 2>&1

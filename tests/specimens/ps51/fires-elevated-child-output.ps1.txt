@@ -1,0 +1,8 @@
+# expect: elevated-child-output 5:39
+# expect: elevated-child-output 7:1
+# expect: elevated-child-output 8:35
+# Synthetic specimen. An elevated child's console output never reaches the caller.
+Start-Process -FilePath 'notepad.exe' -Verb RunAs
+$info = New-Object System.Diagnostics.ProcessStartInfo
+$info.Verb = 'runas'
+Start-Process -FilePath 'cmd.exe' -Verb 'RunAs'

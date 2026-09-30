@@ -1,0 +1,15 @@
+# expect: command-runs-script 9:27
+# expect: command-runs-script 10:32
+# expect: command-runs-script 11:12
+# expect: command-runs-script 12:6
+# expect: command-runs-script 13:10
+# expect: command-runs-script 14:20
+# expect: command-runs-script 15:20
+# Synthetic specimen. -Command running a script loses its exit code.
+powershell.exe -NoProfile -Command .\build.ps1
+Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile -Command .\build.ps1' -Wait
+powershell -Command .\build.ps1
+pwsh -c .\build.ps1
+pwsh.exe -Command .\build.ps1
+Start-Process pwsh -ArgumentList '-c .\build.ps1'
+Start-Process pwsh -Args '-Command .\build.ps1'

@@ -1,0 +1,6 @@
+# expect: none
+# Synthetic specimen. A name mentioned first in a comment anchors nothing.
+# $WIDGET appears in this comment before it exists in code.
+$widget = 1
+Write-Output $widget
+<# $Widget again, in a block comment #>

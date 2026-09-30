@@ -1,0 +1,6 @@
+# expect: function-named-like-alias 4:10
+# expect: function-named-like-alias 6:10
+# Synthetic specimen. An alias outranks a function of the same name.
+function sort { param($Items) $Items }
+Write-Output 'between'
+function script:Go { 'go' }
