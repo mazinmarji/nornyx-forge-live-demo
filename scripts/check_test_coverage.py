@@ -953,6 +953,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # are pinned separately.
     "tests/test_trusted_greenfield_acceptance.py": 97,
     "tests/test_attack_classes.py": 44,
+    # The hostile-probe job's pin: the closure gate's remote-CI line read
+    # against the workflow, the job's shape, and its step executed against
+    # synthetic repositories, and against this tree with pytest
+    # intercepted. 50 collected at introduction, floor at
+    # band(50) = 45.
+    "tests/test_hostile_probe_job.py": 45,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -1774,14 +1780,29 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # SKIP IS ADDED: all seven cases execute where they are collected, and the
 # module is not one of the windows-runtime job's.
 #
+# THE HOSTILE-PROBE PIN ADDS ONE MODULE AND MOVES NONE.
+# tests/test_hostile_probe_job.py is new at 50 collected, floor band(50) =
+# 45: it reads the closure gate's remote-CI line against the workflow, holds
+# the hostile-probe job and the workflow keys that reach it to an allowed
+# shape, executes the job's step against synthetic repositories, with a case
+# for each refusal the step makes, and runs it against this tree with pytest
+# intercepted to pin the modules it locates. NO EXISTING MODULE MOVED,
+# measured rather than assumed: fresh collections of the base and of this
+# tree differ only by the new module. 123 modules stand. The
+# module-floor sum rises by 45 to 3493 and the aggregate follows to
+# 3501, keeping the same 8 above it; the suite collects 3766 -> 3816,
+# band(n) 3390 -> 3435, and the working room below the floor
+# 310 -> 315. THE SLACK THE BANDS GRANT moves 318 -> 323:
+# the new module sits 5 above its band. NO SKIP IS ADDED.
+#
 # (rows below):
 #
-#     collected across tests/     3766   (122 modules)
-#     sum of the module floors    3448
-#     band(3766) = ceil(0.9*n)    3390
-#     MINIMUM_COLLECTED           3456
+#     collected across tests/     3816   (123 modules)
+#     sum of the module floors    3493
+#     band(3816) = ceil(0.9*n)    3435
+#     MINIMUM_COLLECTED           3501
 #     above the module sum          8
-#     below what collects         310
+#     below what collects         315
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2003,7 +2024,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 318 in total, and the aggregate refuses
+# per-module bands already grant 323 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2272,7 +2293,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3456
+MINIMUM_COLLECTED = 3501
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2346,6 +2367,9 @@ REQUIRED_MODULES = (
     # as the tests it names, so the module holding them is required
     # like any other control: losing it loses every class at once.
     "tests/test_attack_classes.py",
+    # The job that runs the permanent hostile corpus on its own, held to the
+    # release contract that names it.
+    "tests/test_hostile_probe_job.py",
     "tests/test_module_acquisition_limits.py",
     "tests/test_brd_evidence_shape.py",
     "tests/test_approval_authentication.py",
