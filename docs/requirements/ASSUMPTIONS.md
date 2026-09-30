@@ -5016,3 +5016,98 @@ its successor finding that no v1 producer could satisfy it; the claim
 discipline in `CLAUDE.md` and `docs/ASSURANCE_BOUNDARY.md`, which forbids a
 gate claiming more than it measures; and the standing rule that a missing
 measurement is `unknown` rather than a denial.
+
+## A-035 The simulated journey proves the path, not a provider build
+
+**Assumption.** The basic-user journey can be shown to work from start to
+GOVERN, the furthest the greenfield profile reaches, without a live provider
+act, if that act is replaced where the product itself hands work to a
+provider and nowhere else. `tests/test_simulated_journey.py` drives the
+shipped composition -- `onboarding_serve.assemble`, its session gate, the
+capsule store and its seal, the journey mapping and the Experience Contract --
+with the page's own requests: start, describe the outcome, confirm the intent,
+choose a provider, read the rendered governance, derive the BRD, confirm the
+scope, and run the governed build. The build runs the real `DevelopmentFlow`
+on its configured backend and the real trusted greenfield verifier. Four
+things are replaced, each where other test modules already replace it: the
+provider act, at the flow's worker seam, by a simulated provider that writes
+a small application derived from the BRD and says in every record it leaves
+that no live provider executed; the eligibility verdict, because no provider
+is eligible and a simulated one executes nothing, and the clock, both passed
+through the composition's one call to `create_app`, which the test wraps for
+that alone; and the seal directory, through the composition's own
+`SEAL_DIR`, which stays outside the project as the shipped one does but is
+not the user's. The lifecycle reaches GOVERN on the verifier's verdict over
+what was generated, and each stage's record is read back from the store.
+
+`test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces`
+carries the path, and
+`test_two_runs_of_the_simulated_journey_record_the_same_outcome` its
+determinism, apart from the gate fingerprint, which carries run-specific
+paths. `test_the_real_verifier_refuses_what_the_simulated_provider_got_wrong`
+shows that the verifier, not the provider's report, decides: nothing
+generated, tests that name no requirement, and tests that fail when run are
+each refused by the verifier's own gates while the provider reports success.
+`test_without_the_seam_the_real_provider_is_reached_and_the_build_stops`
+removes the simulated provider and measures the real routed worker being
+reached and the build stopping.
+
+**What it does NOT establish.**
+
+1. **No live provider act occurred, and none is claimed.** A-018 stands
+   unchanged: the live, model-driven build remains the acceptance act it
+   describes, and nothing here is evidence of it. The capsule records a
+   declared provider's name, because its provider vocabulary is closed; the
+   worker records say the act was simulated.
+2. **The provider adapter path is not exercised.** The seam sits above it:
+   the Provider Contract's task validation and result normalization, the
+   provider's adapter and its CLI worker's command, environment and process
+   launch do not run here, and the worker records have the flow's worker
+   shape rather than the contract's result shape.
+   `test_the_real_build_route_runs_the_real_flow_and_the_provider_process_sees_neither_secret`
+   runs that path with a stand-in executable, and its build is not accepted.
+3. **No provider is eligible, and no simulation mode ships.** The eligibility
+   verdict is the test's own and exists only inside it. The shipped
+   composition still decides eligibility by the Provider Contract alone, and
+   the contract's table makes no provider eligible on any platform;
+   `test_e5_the_assembled_surface_refuses_the_governed_build` holds the
+   refusal for `claude`.
+4. **READY is not reached.** The greenfield profile runs no Nornyx gate, so
+   the journey ends at GOVERN, as A-032 records for every build on that
+   profile. The test asserts that READY is refused and that the page says the
+   lifecycle is a dead end.
+5. **The optional SIMULATE and REVIEW stages are not reached either.** They
+   come after GOVERN and need the same governance validation that READY
+   needs. The flow's review workers run inside BUILD and are the simulated
+   provider: their records show that the flow's review step ran, not that
+   anyone reviewed anything.
+6. **The generated application is a fixture.** It exists so that the verifier
+   has a real subject whose sources it parses and whose tests it runs. It says
+   nothing about what any provider would build, and no route or command opens
+   it.
+7. **The absence of network use is measured in the test's own process, at
+   the entry points it guards, and nowhere else.** Non-loopback use of
+   `socket.socket.connect`, `connect_ex`, `sendto` and `sendmsg`, and of
+   `socket.getaddrinfo`, `gethostbyname`, `gethostbyname_ex`, `gethostbyaddr`
+   and `getnameinfo`, is refused and recorded there, and none is recorded;
+   `test_the_network_guard_refuses_what_it_is_shown` shows each of them
+   refusing. `sendmsg` is checked only when its address is the fourth
+   positional argument; its other calling forms are not recognized. Raw
+   `_socket` objects, native code and child processes are not
+   guarded. The children are the verifier's isolated interpreters, which run
+   in an environment the verifier builds, and the `git` processes of the
+   capsule store and of the test, which inherit the test's environment.
+   CrewAI's check for a newer release of itself, which a flow kickoff runs on
+   a host that is not a CI runner, is switched off by CrewAI's own
+   `CREWAI_DISABLE_VERSION_CHECK`, as `CI=true` switches it off on
+   GitHub-hosted runners. With neither set, a kickoff may query the package
+   index, and this test does not measure that.
+8. **Importing CrewAI creates files under the user's home directory**, as any
+   module that imports it does; the flow's own memory store is kept in the
+   test's temporary directory through `CREWAI_STORAGE_DIR`.
+
+**Serves.** BRD-004's "Tests run without network access" and BRD-005's
+"`pytest` passes"; A-018's discipline that a simulated path stays distinct
+from the live act; A-019, since the generated project is the verifier's
+subject and never its verifier; and A-032, whose GOVERN position this journey
+reaches rather than works around.

@@ -748,6 +748,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # no-terminal journey through the routes alone, and the pre-PR-17 gap
     # (lifecycle absent at every step) pinned closed.
     "tests/test_basic_user_journey.py": 45,
+    # The simulated journey joined to GOVERN: 7 collected at introduction,
+    # floor at band(7) = 7. The shipped composition, the real development
+    # flow and the real trusted verifier from project creation to GOVERN,
+    # with the provider act simulated at the flow's worker seam, above the
+    # provider adapter path, which does not run, and the eligibility verdict
+    # simulated; three defects the verifier must refuse; the seam removed;
+    # and a guard that refuses non-loopback use of the socket entry points it
+    # names, in the test's own process.
+    "tests/test_simulated_journey.py": 7,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -1752,12 +1761,25 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # THE BANDS GRANT moves 317 -> 318: the new module sits 1 above its band, and
 # the measurement module sits 20 above its own, as before. NO SKIP IS ADDED.
 #
+# THE SIMULATED JOURNEY ADDS ONE MODULE AND MOVES NONE.
+# tests/test_simulated_journey.py collects 7 with a floor at band(7) = 7, so
+# 122 modules stand. NO EXISTING MODULE MOVED, measured rather than assumed:
+# fresh collections of the base and of this tree differ only by the new
+# module, and the new assumption entry, "The simulated journey proves the
+# path, not a provider build", entered no document sweep. The
+# module-floor sum rises by 7 to 3448 and the aggregate follows to 3456,
+# keeping the same 8 above it; the suite collects 3759 -> 3766, band(n)
+# 3384 -> 3390, and the working room below the floor stays at 310. THE SLACK
+# THE BANDS GRANT stays at 318: the new module sits exactly on its band. NO
+# SKIP IS ADDED: all seven cases execute where they are collected, and the
+# module is not one of the windows-runtime job's.
+#
 # (rows below):
 #
-#     collected across tests/     3759   (121 modules)
-#     sum of the module floors    3441
-#     band(3759) = ceil(0.9*n)    3384
-#     MINIMUM_COLLECTED           3449
+#     collected across tests/     3766   (122 modules)
+#     sum of the module floors    3448
+#     band(3766) = ceil(0.9*n)    3390
+#     MINIMUM_COLLECTED           3456
 #     above the module sum          8
 #     below what collects         310
 #
@@ -2250,7 +2272,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3449
+MINIMUM_COLLECTED = 3456
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2371,6 +2393,7 @@ REQUIRED_MODULES = (
     "tests/test_digest_coverage.py",
     "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
+    "tests/test_simulated_journey.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;
