@@ -5154,10 +5154,13 @@ section, may contain `|`. So a row inside the table as defined here is read,
 apart from the limits listed below. It refuses when the table locates no test
 module, and when the registries name no owner and no specimen. After the run
 it refuses a report
-that was not written, a non-zero pytest exit, any skipped testcase, a report
-whose own count of outcomes differs from the testcases it lists, an owed
-identity that did not execute, and a module from the table that executed
-nothing. A run with nowhere outside the checkout to write its report, or one
+that was not written, a non-zero pytest exit, any skipped testcase, any
+`<failure>` or `<error>` element anywhere in the report, a testsuite whose own
+counts of failures and errors are not both zero, a report whose own count of
+outcomes differs from the testcases it lists, an owed identity that did not
+execute, and a module from the table that executed nothing. So the verdict
+comes from the report, not from pytest's exit code alone. A run with nowhere
+outside the checkout to write its report, or one
 that outlasts its time bound, is refused too. For each of these refusals the
 step's last line is its verdict; an exception it does not handle, such as a
 registry that no longer imports, ends it with a traceback and a non-zero exit
@@ -5201,7 +5204,11 @@ locates are compared for equality with a pinned set.
    protocol's table and the `conftest.py` files -- is read from the commit
    under test. A `conftest.py` or plugin hook in that commit can run fewer test
    bodies than the corpus holds, or replace them, and the step sees only the
-   owed identities and each located module's presence. So a green result
+   owed identities and each located module's presence. A hook that rewrites
+   pytest's exit status to zero no longer hides a failure or an error, because
+   the report's own `<failure>` and `<error>` elements and its testsuite
+   counts decide. The report is written by the same pytest process, so a hook
+   that edits the report itself stays within this limit. So a green result
    counts only for the exact candidate head, from a run of this workflow on
    that head, matched by workflow, job, event and commit, never by check name.
    The push trigger is filtered to `main`, so a head that is not on `main`

@@ -380,17 +380,28 @@ jobs:
           cases = list(root.iter("testcase"))
           outcomes = sum(int(suite.get("tests", -1)) for suite in root.iter("testsuite"))
           skipped = [node_id(case) for case in cases if case.find("skipped") is not None]
-          errored = [case for case in cases if case.find("error") is not None]
+          # The report decides, not the exit code alone: a hook in the commit under
+          # test can rewrite pytest's exit status to zero, and the report still
+          # holds each failure and error, as an element and in its suite's counts.
+          failures = len(list(root.iter("failure")))
+          errors = len(list(root.iter("error")))
+          unclean = [f"{suite.get('failures')} failures and {suite.get('errors')} errors"
+                     for suite in root.iter("testsuite")
+                     if (suite.get("failures"), suite.get("errors")) != ("0", "0")]
+          broken = sorted({node_id(case) for case in cases
+                           if case.find("failure") is not None or case.find("error") is not None})
           executed = executed_node_ids(report)
           owed_nodes = {node for _, node in owed}
           missing = sorted(f"{ident} {node}" for ident, node in owed if node not in executed)
           silent = [module for module in located
                     if not any(found.startswith(module + "::") for found in executed)]
           print(f"hostile-probe: {len(cases)} testcases, {outcomes} outcomes recorded, "
-                f"{len(skipped)} skipped, {len(errored)} errored; owed identities not "
-                f"executed {len(owed_nodes - executed)} of {len(owed_nodes)}; located "
-                f"modules that executed nothing {len(silent)} of {len(located)}")
-          for line in sorted(set(skipped)) + missing + [f"module {name}" for name in silent]:
+                f"{len(skipped)} skipped, {failures} failure and {errors} error elements; "
+                f"owed identities not executed {len(owed_nodes - executed)} of "
+                f"{len(owed_nodes)}; located modules that executed nothing {len(silent)} "
+                f"of {len(located)}")
+          listed = sorted(set(skipped)) + [f"not passed {name}" for name in broken] + missing
+          for line in listed + [f"module {name}" for name in silent]:
               print(f"  {line}")
           reasons = []
           if completed.returncode:
@@ -400,6 +411,12 @@ jobs:
                              f"{outcomes} outcomes")
           if skipped:
               reasons.append(f"{len(skipped)} skipped testcases")
+          if failures:
+              reasons.append(f"{failures} <failure> elements in the report")
+          if errors:
+              reasons.append(f"{errors} <error> elements in the report")
+          if unclean:
+              reasons.append("a testsuite counts " + ", ".join(unclean))
           if missing:
               reasons.append(f"{len(owed_nodes - executed)} owed identities not executed")
           if silent:

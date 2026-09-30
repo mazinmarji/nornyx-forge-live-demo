@@ -956,9 +956,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # The hostile-probe job's pin: the closure gate's remote-CI line read
     # against the workflow, the job's shape, and its step executed against
     # synthetic repositories, and against this tree with pytest
-    # intercepted. 50 collected at introduction, floor at
-    # band(50) = 45.
-    "tests/test_hostile_probe_job.py": 45,
+    # intercepted. 52 collected at introduction, floor at
+    # band(52) = 47.
+    "tests/test_hostile_probe_job.py": 47,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -1781,26 +1781,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # module is not one of the windows-runtime job's.
 #
 # THE HOSTILE-PROBE PIN ADDS ONE MODULE AND MOVES NONE.
-# tests/test_hostile_probe_job.py is new at 50 collected, floor band(50) =
-# 45: it reads the closure gate's remote-CI line against the workflow, holds
+# tests/test_hostile_probe_job.py is new at 52 collected, floor band(52) =
+# 47: it reads the closure gate's remote-CI line against the workflow, holds
 # the hostile-probe job and the workflow keys that reach it to an allowed
 # shape, executes the job's step against synthetic repositories, with a case
 # for each refusal the step makes, and runs it against this tree with pytest
 # intercepted to pin the modules it locates. NO EXISTING MODULE MOVED,
 # measured rather than assumed: fresh collections of the base and of this
 # tree differ only by the new module. 123 modules stand. The
-# module-floor sum rises by 45 to 3493 and the aggregate follows to
-# 3501, keeping the same 8 above it; the suite collects 3766 -> 3816,
-# band(n) 3390 -> 3435, and the working room below the floor
+# module-floor sum rises by 47 to 3495 and the aggregate follows to
+# 3503, keeping the same 8 above it; the suite collects 3766 -> 3818,
+# band(n) 3390 -> 3437, and the working room below the floor
 # 310 -> 315. THE SLACK THE BANDS GRANT moves 318 -> 323:
 # the new module sits 5 above its band. NO SKIP IS ADDED.
 #
 # (rows below):
 #
-#     collected across tests/     3816   (123 modules)
-#     sum of the module floors    3493
-#     band(3816) = ceil(0.9*n)    3435
-#     MINIMUM_COLLECTED           3501
+#     collected across tests/     3818   (123 modules)
+#     sum of the module floors    3495
+#     band(3818) = ceil(0.9*n)    3437
+#     MINIMUM_COLLECTED           3503
 #     above the module sum          8
 #     below what collects         315
 #
@@ -2293,7 +2293,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 3501
+MINIMUM_COLLECTED = 3503
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

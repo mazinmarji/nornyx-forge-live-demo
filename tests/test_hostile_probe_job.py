@@ -476,6 +476,18 @@ DESELECT = (
     "def pytest_collection_modifyitems(config, items):\n"
     "    items[:] = [item for item in items if item.name != {name!r}]\n"
 )
+#: A hook in the repository's own conftest that rewrites pytest's exit status to
+#: zero, as `tests/test_trusted_greenfield_acceptance.py` reproduces. The exit
+#: code then says nothing, so what the report holds must decide.
+ZERO_EXIT = "def pytest_sessionfinish(session, exitstatus):\n    session.exitstatus = 0\n"
+#: The same hook, with a fixture that errors in the setup of one test that no
+#: registry owes, in a module another of whose tests still executes: nothing but
+#: the report's error can refuse the run.
+ZERO_EXIT_SETUP_ERROR = (
+    "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef broken(request):\n"
+    "    if request.node.name == 'test_probe':\n        raise RuntimeError('setup fails')\n\n\n"
+    + ZERO_EXIT
+)
 #: A row naming a module whose one test fails if it runs: a row the step drops
 #: without refusing would turn such a repository green.
 EXTRA_ROW = "| Extra | `tests/test_extra.py` |"
@@ -572,7 +584,8 @@ def run_step(repo: Path, tmp_path: Path, *, env: dict | None = None, unset: tupl
 
 
 #: (label, how the repository or the run differs from the first row, and the
-#: reason the verdict must give -- None for a pass).
+#: reason the verdict must give -- None for a pass, or a tuple where one case
+#: is refused by several conditions and each must be named).
 CASES = [
     ("the corpus runs", {}, None),
     ("the gate counts differently from the registries", {"gate": "(3 FG + 1 AC)"},
@@ -655,6 +668,12 @@ CASES = [
     ("a test skips", {"bodies": {"test_second_probe": "import pytest; pytest.skip('specimen')"}},
      "1 skipped testcases"),
     ("a test fails", {"bodies": {"test_specimen": "assert False"}}, "pytest exited 1"),
+    ("a test fails and a conftest rewrites the exit status to zero",
+     {"bodies": {"test_specimen": "assert False"}, "conftest": ZERO_EXIT},
+     ("1 <failure> elements in the report", "a testsuite counts 1 failures and 0 errors")),
+    ("a test errors and a conftest rewrites the exit status to zero",
+     {"conftest": ZERO_EXIT_SETUP_ERROR},
+     ("1 <error> elements in the report", "a testsuite counts 0 failures and 1 errors")),
     ("an owed test is taken out of the run", {"conftest": DESELECT.format(name="test_owner_two")},
      "1 owed identities not executed"),
     ("a located module executes nothing",
@@ -676,8 +695,8 @@ RUN_KEYS = {"env", "unset"}
 
 
 @pytest.mark.parametrize(("label", "change", "reason"), CASES, ids=[case[0] for case in CASES])
-def test_the_step_decides_each_case_as_stated(label: str, change: dict, reason: str | None,
-                                              tmp_path: Path):
+def test_the_step_decides_each_case_as_stated(label: str, change: dict,
+                                              reason: str | tuple | None, tmp_path: Path):
     """Each refusal the step makes, driven by the smallest repository that needs it."""
     repo = synthetic(tmp_path, **{key: value for key, value in change.items()
                                   if key not in RUN_KEYS})
@@ -686,8 +705,9 @@ def test_the_step_decides_each_case_as_stated(label: str, change: dict, reason: 
     if reason is None:
         assert (code, last) == (0, PASS), f"{label}: {output[-2000:]}"
     else:
-        assert code != 0 and last.startswith(FAIL) and reason in last, (
-            f"{label}: expected a refusal naming {reason!r}, got {code}: {output[-2000:]}")
+        reasons = (reason,) if isinstance(reason, str) else reason
+        assert code != 0 and last.startswith(FAIL) and all(part in last for part in reasons), (
+            f"{label}: expected a refusal naming {reasons!r}, got {code}: {output[-2000:]}")
 
 
 def test_the_step_runs_exactly_the_located_modules_and_the_owed_nodes(tmp_path: Path):
