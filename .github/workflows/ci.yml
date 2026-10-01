@@ -432,8 +432,10 @@ jobs:
   # -- the container-launch census applied again -- because a Windows job
   # that skipped every Windows test would be green over nothing. The
   # interpreter is the runner's installed CPython, i.e. the developer-bundle
-  # arrangement; the operator-supplied embeddable interpreter is never
-  # downloaded here or anywhere (A-017), so that run stays operator evidence.
+  # arrangement. No step of this job downloads the embeddable interpreter;
+  # the windows-payload job fetches the pinned archive (A-017's amendment)
+  # and never runs it, so the embedded-interpreter smoke stays operator
+  # evidence.
   windows-runtime:
     runs-on: windows-latest
     steps:
@@ -490,3 +492,85 @@ jobs:
                     "sentence, to what it measures.")
               sys.exit(1)
           PY
+
+  # The Windows payload, built TWICE and compared byte for byte: the
+  # manifests, every file (`diff -r`), and every path, type and modification
+  # time (the listings; they carry no size, because a directory's size is its
+  # file system's bookkeeping and every file's size is already compared). A
+  # difference fails the job. The second build varies what must NOT reach the
+  # bytes: another checkout path, another interpreter path (a venv), a warm uv
+  # cache holding a changed file, and ambient `UV_COMPILE_BYTECODE`,
+  # `UV_CACHE_DIR` and `UV_INDEX_URL` variables. uv is installed from a hashed
+  # requirement at the pinned version, and the interpreter archive is fetched
+  # HERE, by the pinned URL, and refused unless it has the pinned SHA-256 (the
+  # builder checks it again and downloads nothing itself). The runner is named
+  # by its image label, which GitHub updates; the actions are pinned by
+  # commit. Both builds run on one runner, so this shows that the build is a
+  # function of its pinned inputs on this image, not that a second machine
+  # agrees. It builds no installer, publishes nothing and uploads no
+  # artifact. The payload's interpreter is not run here (Linux), and no CI job
+  # runs it yet.
+  windows-payload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: first
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: second
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install the pinned installer
+        run: python -m pip install --require-hashes --no-deps -r first/scripts/windows_installer/build-tools.txt
+      - name: Fetch the pinned interpreter archive
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, urllib.request
+          pins = json.load(open("first/scripts/windows_installer/pins.json", encoding="utf-8"))
+          archive = pins["interpreter"]
+          with urllib.request.urlopen(archive["archive_url"], timeout=120) as response:
+              data = response.read()
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "python-embed.zip"), "wb") as handle:
+              handle.write(data)
+          digest = hashlib.sha256(data).hexdigest()
+          print(f"{archive['archive_url']}: sha256 {digest}")
+          if digest != archive["archive_sha256"]:
+              raise SystemExit(f"not the pinned archive: expected {archive['archive_sha256']}")
+          PY
+      - name: Build the payload from the first checkout
+        run: |
+          sha=$(python -c "import json; print(json.load(open('first/scripts/windows_installer/pins.json', encoding='utf-8'))['interpreter']['archive_sha256'])")
+          python first/scripts/build_windows_bundle.py --dist "$RUNNER_TEMP/payload-first" \
+            --python-embed "$RUNNER_TEMP/python-embed.zip" --python-embed-sha256 "$sha"
+      - name: Build it again from the second checkout, varying what must not matter
+        run: |
+          python -m venv "$RUNNER_TEMP/second-python"
+          UV_CACHE_DIR="$RUNNER_TEMP/warm-cache" uv pip install --no-config --quiet \
+            --target "$RUNNER_TEMP/warm-target" --python-platform x86_64-pc-windows-msvc \
+            --python-version 3.13 --only-binary :all: --require-hashes \
+            -r second/scripts/windows_installer/pylib-cp313-win_amd64.txt
+          changed=$(find "$RUNNER_TEMP/warm-cache" -name six.py -print -quit)
+          test -n "$changed"
+          printf '\n# changed in the cache, which the build must not read\n' >> "$changed"
+          sha=$(python -c "import json; print(json.load(open('second/scripts/windows_installer/pins.json', encoding='utf-8'))['interpreter']['archive_sha256'])")
+          UV_CACHE_DIR="$RUNNER_TEMP/warm-cache" UV_COMPILE_BYTECODE=1 \
+            UV_INDEX_URL=https://example.invalid/simple \
+            "$RUNNER_TEMP/second-python/bin/python" second/scripts/build_windows_bundle.py \
+            --dist "$RUNNER_TEMP/payload-second" \
+            --python-embed "$RUNNER_TEMP/python-embed.zip" --python-embed-sha256 "$sha"
+      - name: Compare the two payloads byte for byte
+        run: |
+          cd "$RUNNER_TEMP"
+          cmp payload-first/forge-payload.json payload-second/forge-payload.json
+          diff -r --no-dereference payload-first payload-second
+          (cd payload-first && find . -printf '%P %y %T@\n' | LC_ALL=C sort) > first.list
+          (cd payload-second && find . -printf '%P %y %T@\n' | LC_ALL=C sort) > second.list
+          cmp first.list second.list
+          PYTHONPATH="$GITHUB_WORKSPACE/first/src" python -m nornyx_forge.windows_payload verify payload-first
+          PYTHONPATH="$GITHUB_WORKSPACE/second/src" python -m nornyx_forge.windows_payload verify payload-second
+          python -c "import json; m = json.load(open('payload-first/forge-payload.json')); print('payload', m['payload_sha256'], len(m['files']), 'files', sum(f[1] for f in m['files']), 'bytes')"

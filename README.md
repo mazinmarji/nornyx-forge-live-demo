@@ -115,8 +115,32 @@ carries the session; a local process that opens the page without the code
 sees the no-session state and moves nothing (A-027).
 
 ```bash
-python scripts/build_windows_bundle.py --python-embed <embeddable zip> --python-embed-sha256 <sha256> --smoke
+python -m pip install --require-hashes --no-deps -r scripts/windows_installer/build-tools.txt
+python scripts/build_windows_bundle.py --python-embed <python-3.13.15-embed-amd64.zip> --python-embed-sha256 <the pinned sha256>
 ```
+
+**The self-contained folder is a deterministic payload (A-040, which states
+what is and is not covered).** It is built from a clean commit: the copy
+set, the pins and the lock come from the commit itself, and the builder's
+own code must be the commit's. Its dependencies come from
+`scripts/windows_installer/pylib-cp313-win_amd64.txt`, a lock with a hash on
+every distribution, installed for CPython 3.13 on 64-bit Windows by uv at the
+pinned version (the first command above installs it), with no cache and none
+of the environment's `UV_*` variables; the interpreter is the archive pinned
+by URL and SHA-256 in `scripts/windows_installer/pins.json`; every time is the
+commit's; and every path must be one Windows can hold. The folder carries
+`forge-payload.json`, whose digest is the payload's identity. CI's
+`windows-payload` job builds the folder twice, the second time from another
+checkout with another interpreter path, a warm cache and ambient uv
+variables, and fails on any byte or time that differs.
+`python -m nornyx_forge.windows_payload verify <folder> [--expect <sha256>]`
+checks a copy: a folder that verifies holds exactly the listed files, byte
+for byte. That detects corruption and naive modification; it is not a
+signature and not tamper-proofing. Running the folder writes bytecode into
+it, which `verify` refuses, so add `--smoke` to the build only for operator
+evidence: a smoked folder is no longer the payload. The installer that is to
+carry this payload does not exist yet, and nothing runs this check at launch
+yet.
 
 `--smoke` reports `pass` only when every observation its contract names
 succeeded -- the launcher returned exit code 0 within its timeout; the
@@ -124,9 +148,13 @@ record reached ready; `/api/runtime`
 and the stop answered with the recorded instance token; `/api/state`
 answered 200 as a usable state object; `/` answered 200 as HTML; and the
 record reached stopped -- and names the failed observation otherwise. Without `--python-embed` the result is a DEVELOPER bundle that carries no
-interpreter and runs on an installed Python; its launcher says so. The
-builder never downloads an interpreter: the operator supplies the archive and
-its digest, and a mismatch refuses the build (A-017). Git for Windows must be
+interpreter and runs on an installed Python; its launcher says so. Its
+dependencies are installed for the interpreter running the build, so it is
+not a deterministic payload and carries no `forge-payload.json`; like the
+payload, it needs a clean commit and is copied from the commit's own files. The
+builder never downloads an interpreter: whoever runs the build supplies the
+archive and its digest, the digest must be the pinned one, and a mismatch
+refuses the build (A-017). Git for Windows must be
 on the PATH: the project capsule is a git repository, and a launch without
 git is refused by name. Runtime state (a record, a lock, a log) lives under
 `~/.nornyx/forge/runtime` and is operational only; it decides nothing about

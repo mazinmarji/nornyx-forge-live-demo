@@ -518,6 +518,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # real detaching launcher, which is the path the scripted 53 had never
     # executed and where the hang lived. 54 collected, band(54) = 49.
     "tests/test_windows_bundle.py": 49,
+    # The deterministic Windows payload: the verifier over synthetic folders,
+    # the builder's determinism over a synthetic repository, the pins and the
+    # lock, the wheel-tag census, and the structure of the `windows-payload`
+    # job, with a named refusal for each guard the mutation runs removed (a
+    # removal no test sees is possible for any guard those runs did not
+    # remove). 167 collected at introduction, floor at band(167) = 151.
+    "tests/test_windows_payload.py": 151,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -1878,14 +1885,30 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # ADDED where the census runs: the decoding module is skipped on Windows only,
 # and the rehearsal module keeps its one skip off Linux.
 #
+# THE DETERMINISTIC WINDOWS PAYLOAD ADDS ONE MODULE AND MOVES NONE.
+# tests/test_windows_payload.py is new at 167 collected, floor band(167) =
+# 151: the payload verifier over synthetic folders, one named refusal per
+# guard; the builder's determinism over a synthetic repository; the pins and
+# the lock; the wheel-tag census; and the structure of the `windows-payload`
+# CI job. tests/test_windows_bundle.py stays at 54 (one test was edited in
+# place to stub the build's new commit check, and a comment was added), so
+# THE WINDOWS-RUNTIME JOB'S FLOOR IS UNTOUCHED AT 277. EVERY OTHER MODULE IS
+# UNMOVED, measured rather than assumed: a fresh collection of this tree, as a
+# normal user, gives 4722 across 129 modules, which is the 4555 across 128
+# that these rows recorded before plus the new module's 167. The module-floor
+# sum rises by 151 to 4312 and the aggregate follows to 4320, keeping the same
+# 8 above it; band(n) 4100 -> 4250, and the working room below the floor
+# 386 -> 402. THE SLACK THE BANDS GRANT moves 394 -> 410: the new module sits
+# 16 above its band. NO SKIP IS ADDED where the census runs.
+#
 # (rows below):
 #
-#     collected across tests/     4555   (128 modules)
-#     sum of the module floors    4161
-#     band(4555) = ceil(0.9*n)    4100
-#     MINIMUM_COLLECTED           4169
+#     collected across tests/     4722   (129 modules)
+#     sum of the module floors    4312
+#     band(4722) = ceil(0.9*n)    4250
+#     MINIMUM_COLLECTED           4320
 #     above the module sum          8
-#     below what collects         386
+#     below what collects         402
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2107,7 +2130,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 394 in total, and the aggregate refuses
+# per-module bands already grant 410 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2376,7 +2399,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4169
+MINIMUM_COLLECTED = 4320
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2492,6 +2515,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_bundle.py",
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
+    "tests/test_windows_payload.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",
     "tests/test_control_plane_authority.py",

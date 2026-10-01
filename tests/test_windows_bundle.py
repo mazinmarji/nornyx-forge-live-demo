@@ -116,6 +116,8 @@ def test_the_bundle_copies_exactly_what_the_dockerfile_copies():
 
 
 def test_the_built_tree_carries_the_resolvers_markers(tmp_path: Path):
+    # `copy_tree` with no commit copies HEAD's blobs, not working-tree edits:
+    # here and below, the tree under test is the one this checkout committed.
     dist = tmp_path / "dist"
     copy_tree(ROOT, dist)
     for marker in ("src/nornyx_forge", "src/demo_app", ".nornyx/contracts"):
@@ -127,12 +129,28 @@ def test_the_built_tree_carries_the_resolvers_markers(tmp_path: Path):
 
 
 def test_developer_state_never_rides_into_a_bundle(tmp_path: Path):
+    """Untracked developer state beside the committed copy set -- bytecode, a
+    virtual environment, an ignored runtime record -- stays out: the copy is
+    the commit's blobs, in a repository built here so that the state exists."""
+    repo = tmp_path / "repo"
+    for relative in ("pyproject.toml", "README.md", "BRD.md", "src/pkg/m.py", ".nornyx/c.nyx"):
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_bytes(b"committed\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+           "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"]
+    for arguments in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "fixture"]):
+        subprocess.run(git + arguments, cwd=str(repo), check=True, capture_output=True,
+                       timeout=60)
+    for relative in ("src/pkg/__pycache__/m.cpython-313.pyc", "src/.venv/pyvenv.cfg",
+                     ".nornyx/runtime/record.json"):
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_bytes(b"local state\n")
     dist = tmp_path / "dist"
-    copy_tree(ROOT, dist)
-    strays = [path for path in dist.rglob("__pycache__")] + [
-        path for path in dist.rglob(".venv")
-    ]
-    assert strays == [], f"developer state was bundled: {strays[:3]}"
+    copy_tree(repo, dist)
+    copied = sorted(path.relative_to(dist).as_posix() for path in dist.rglob("*")
+                    if path.is_file())
+    assert copied == [".nornyx/c.nyx", "BRD.md", "README.md", "pyproject.toml",
+                      "src/pkg/m.py"], f"developer state was bundled: {copied}"
 
 
 def test_a_nonempty_dist_is_refused(tmp_path: Path):
@@ -1000,7 +1018,7 @@ def test_main_refuses_a_non_pass_smoke_by_name_and_writes_the_report(
     for name in ("copy_tree", "install_dependencies", "write_bundle_marker",
                  "write_launcher", "verify_bundle"):
         monkeypatch.setattr(builder, name, lambda *a, **k: None)
-    monkeypatch.setattr(builder, "_source_commit", lambda root: None)
+    monkeypatch.setattr(builder, "require_clean_commit", lambda root: "0" * 40)
     failing = {"schema": SMOKE_SCHEMA, "steps": [], "result": "fail",
                "verdict": {"failed": ["get /: HTTP 404, not 200", "stop: not observed"],
                            "result": "fail"}}

@@ -37,6 +37,29 @@ started on a foreign interpreter.
 The launcher passes its own directory as the bundle root and the person's
 profile project directory explicitly; the launch directory selects nothing.
 
+THE SELF-CONTAINED BUNDLE IS A DETERMINISTIC PAYLOAD. Built twice from one
+commit with the same pinned inputs it is the same bytes, and nothing here
+reads the wall clock. Its inputs are the commit; the pins in
+`scripts/windows_installer/` (a dependency lock with a hash on every
+distribution, resolved for CPython 3.13 on win_amd64; the installer, uv, by
+the version it reports; the interpreter archive by URL and SHA-256); and the
+host tools that act on them (uv, git, the Python running this script), which
+CI's rebuild varies to show they do not reach the bytes. Everything read from
+the repository is read from the commit: the copy set, the pins and the lock
+come from its blobs, and the build refuses an uncommitted tree and a builder
+or verifier file that differs from the commit even where an index flag hides
+the change from `git status` (drift detection, not a defence against a
+writer of the clone). uv installs the lock for the target platform
+with no cache, no configuration file and none of this environment's `UV_*`
+variables; the host-specific files it writes are pruned together with their
+RECORD rows; every native module is traced to a wheel built for the target;
+every path must be one Windows can hold (`check_name`); every time is set to
+the commit's; and `forge-payload.json` (`nornyx_forge.windows_payload`)
+gives the payload its identity. A DEVELOPER bundle is still installed for
+the interpreter running this script, so it is not a deterministic payload
+and carries no manifest; like the payload it needs a clean commit, copies the
+commit's blobs, and its marker carries no `built_at`.
+
 THE SMOKE VERDICT. `--smoke` runs the built folder's own launcher and records
 every observation the smoke contract names; `result` is then DERIVED from
 those recorded observations by `evaluate_smoke_observations` and has no
@@ -52,22 +75,64 @@ eligibility or model safety, and it decides nothing about any project.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import http.client
+import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import zipfile
-from datetime import datetime, timezone
+from email.parser import HeaderParser
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10: the dev extra installs tomli
+    import tomli as tomllib
+
 ROOT = Path(__file__).resolve().parents[1]
+# The payload manifest is written and checked by ONE implementation, the one
+# the installed copy runs: this commit's own, not whichever copy is installed
+# (`require_clean_commit` refuses a build that loaded another).
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
+import nornyx_forge.windows_payload as _payload_module  # noqa: E402
+from nornyx_forge.windows_payload import (  # noqa: E402
+    ARCHIVE_URL,
+    PAYLOAD_MANIFEST,
+    PayloadError,
+    build_manifest,
+    check_names,
+    render_manifest,
+    verify,
+)
+
+#: The pinned inputs of the self-contained payload, as repository paths: the
+#: build reads them from the commit, never from the working tree.
+INSTALLER_PATH = "scripts/windows_installer"
+PINS_PATH = f"{INSTALLER_PATH}/pins.json"
+PINS_SCHEMA = "nornyx.forge.windows_build_pins.v1"
+#: The code that makes and checks the payload. Each file's raw bytes must
+#: equal the commit's blob, which no index flag or clean filter can hide.
+BUILDER_FILES = ("scripts/build_windows_bundle.py", "src/nornyx_forge/__init__.py",
+                 "src/nornyx_forge/windows_payload.py")
+
+#: What uv writes into a `--target` directory besides the distributions: the
+#: entry-point launchers it generates for the BUILD host (`bin`, each naming
+#: the interpreter that ran the build), and its own lock file. Neither is
+#: Forge's to ship -- the runtime starts with `-m` -- and their RECORD rows
+#: are dropped with them.
+PYLIB_PRUNED = ("bin", ".lock")
 
 #: The copy set, and nothing else. A test compares this against the
 #: Dockerfile's COPY sources so the two deployment surfaces cannot drift
@@ -159,24 +224,136 @@ def bundle_manifest() -> tuple[str, ...]:
     return BUNDLE_TREE
 
 
-def _copy_filter(directory: str, names: list[str]) -> set[str]:
-    return {name for name in names if name in EXCLUDED_NAMES}
+def _git_environment() -> dict[str, str]:
+    """This environment without git's own variables, and with replace refs
+    off. A `GIT_DIR`, `GIT_OBJECT_DIRECTORY` or `GIT_INDEX_FILE` left in the
+    environment (git hooks set them) would point every call at another
+    repository, and a local `refs/replace/*` would change what a blob reads
+    as. `GIT_CEILING_DIRECTORIES` is kept: it can only stop git finding a
+    repository, which the build then refuses."""
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.upper().startswith("GIT_") or key == "GIT_CEILING_DIRECTORIES"}
+    environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return environment
 
 
-def copy_tree(repo_root: Path, dist: Path) -> None:
+def _git(repo_root: Path, *arguments: str, stdin: bytes | None = None) -> bytes:
+    """One git command's standard output, as bytes, in `_git_environment`; a
+    failure is refused."""
+    completed = subprocess.run(["git", *arguments], cwd=str(repo_root), input=stdin,
+                               capture_output=True, timeout=300, env=_git_environment())
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()[:300]
+        raise BundleError(f"git {arguments[0]} failed: {detail}")
+    return completed.stdout
+
+
+def _read_blobs(repo_root: Path, objects: list[bytes]) -> list[bytes]:
+    """The raw bytes of each blob, in order, through one `git cat-file
+    --batch`: no checkout, no line-ending conversion, no working-tree file."""
+    output = _git(repo_root, "cat-file", "--batch", stdin=b"".join(o + b"\n" for o in objects))
+    blobs, position = [], 0
+    for expected in objects:
+        end = output.find(b"\n", position)
+        header = output[position:end].split(b" ") if end >= 0 else []
+        if len(header) != 3 or header[0] != expected or header[1] != b"blob":
+            raise BundleError(f"git cat-file answered {output[position:end][:120]!r} "
+                              f"for {expected.decode('ascii')}")
+        start, size = end + 1, int(header[2])
+        if output[start + size:start + size + 1] != b"\n":
+            raise BundleError("git cat-file's answer is truncated")
+        blobs.append(output[start:start + size])
+        position = start + size + 1
+    if position != len(output):
+        raise BundleError("git cat-file answered more than was asked")
+    return blobs
+
+
+def _git_blob(repo_root: Path, commit: str, path: str) -> bytes:
+    """A committed file's bytes, from the commit itself."""
+    return _git(repo_root, "cat-file", "blob", f"{commit}:{path}")
+
+
+def copy_tree(repo_root: Path, dist: Path, commit: str = "HEAD") -> None:
+    """The copy set as COMMITTED (the default is HEAD's, so a caller that
+    names no commit copies HEAD's blobs, not its working-tree edits): tracked
+    regular files only, from the commit's blobs. A file git ignores -- local
+    runtime state, a review record, a disposition -- is not in the commit and
+    cannot ride along; a tracked name in `EXCLUDED_NAMES` is left out; a link
+    or submodule is refused rather than followed; and every path must be one
+    the payload's name rule admits, so nothing is written outside `dist` or
+    under a name Windows cannot hold."""
     if dist.exists() and any(dist.iterdir()):
         raise BundleError(
             f"{dist} already contains files; a bundle is built fresh, never "
             "layered over an old one"
         )
+    listing = _git(repo_root, "ls-tree", "-r", "-z", "--full-tree", commit, "--",
+                   *bundle_manifest())
+    paths, objects = [], []
+    for record in listing.split(b"\0"):
+        if not record:
+            continue
+        meta, _, raw_path = record.partition(b"\t")
+        mode, kind, obj = meta.split(b" ")
+        path = raw_path.decode("utf-8", "surrogateescape")
+        if kind != b"blob" or mode not in (b"100644", b"100755"):
+            raise BundleError(f"{path!r} is a {mode.decode()} {kind.decode()} entry; the "
+                              "bundle copies regular files only")
+        if EXCLUDED_NAMES.intersection(path.split("/")):
+            continue
+        paths.append(path)
+        objects.append(obj)
+    # The payload's name rule, over every path and every pair, before
+    # anything is written: no path leaves `dist` or is one Windows cannot hold.
+    if refused := check_names(paths):
+        raise BundleError("the copy set holds paths a payload cannot: " + "; ".join(refused[:20]))
+    absent = [entry for entry in bundle_manifest()
+              if not any(path == entry or path.startswith(entry + "/") for path in paths)]
+    if absent:
+        raise BundleError(f"the commit carries none of {absent}; it is not this repository")
     dist.mkdir(parents=True, exist_ok=True)
-    for entry in bundle_manifest():
-        source = repo_root / entry
-        target = dist / entry
-        if source.is_dir():
-            shutil.copytree(source, target, ignore=_copy_filter)
-        else:
-            shutil.copy2(source, target)
+    for path, data in zip(paths, _read_blobs(repo_root, objects)):
+        target = dist.joinpath(*path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+def require_clean_commit(repo_root: Path) -> str:
+    """The commit the build is made from. A payload is a function of a commit,
+    so a tree that differs from it -- a modified or an untracked file -- is
+    refused, and so is a build where git names no commit at all. `git status`
+    does not see a change an index flag (skip-worktree, assume-unchanged) or
+    a clean filter hides, so the raw bytes of the code that makes and checks
+    the payload are also compared with the commit's blobs (line endings
+    normalized, so a Windows checkout that converts them still builds), and
+    the verifier this process loaded must be the one in this repository.
+    This detects drift in the build clone; it is no defence against a writer
+    of the clone, who can change this check too. The rebuild from a fresh
+    clone (CI's) is what anchors a commit's payload."""
+    commit = _source_commit(repo_root)
+    if commit is None or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise BundleError("git names no commit for this tree; a bundle records the commit "
+                          "it was built from, and there is none to record")
+    status = _git(repo_root, "status", "--porcelain", "--untracked-files=normal")
+    if status.strip():
+        raise BundleError(f"the working tree differs from {commit}: commit or remove these "
+                          f"first: {status.decode('utf-8', 'replace')[:400]}")
+    for name in BUILDER_FILES:
+        working = repo_root.joinpath(*name.split("/")).read_bytes().replace(b"\r\n", b"\n")
+        if working != _git_blob(repo_root, commit, name):
+            raise BundleError(f"{name} is not the file {commit} holds, although git status "
+                              "may not show it: the build runs only the committed builder")
+    own = Path(__file__).resolve().parents[1] / "src" / "nornyx_forge" / "windows_payload.py"
+    if Path(_payload_module.__file__).resolve() != own.resolve():
+        raise BundleError(f"the payload verifier was loaded from {_payload_module.__file__}, "
+                          f"not from {own}")
+    return commit
+
+
+def source_date_epoch(repo_root: Path, commit: str) -> int:
+    """The commit's committer time: the only time a payload carries."""
+    return int(_git(repo_root, "show", "-s", "--format=%ct", commit).decode("ascii").strip())
 
 
 def _installer_command(python_exe: str) -> list[str]:
@@ -231,22 +408,220 @@ def install_dependencies(dist: Path, python_exe: str) -> None:
         shutil.rmtree(leftover)
 
 
-def install_python(dist: Path, embed_zip: Path, expected_sha256: str) -> None:
+def load_pins(repo_root: Path, commit: str) -> dict:
+    """The pinned inputs AS COMMITTED: a working-tree edit, even one an index
+    flag hides, cannot reach the build."""
+    try:
+        pins = json.loads(_git_blob(repo_root, commit, PINS_PATH).decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as error:
+        raise BundleError(f"{PINS_PATH} at {commit} is not JSON: {error}") from None
+    return check_pins(pins)
+
+
+def check_pins(pins: object) -> dict:
+    """The pins, refused unless they carry every field the build reads and
+    the interpreter they pin is the target's CPython."""
+    try:
+        if pins["schema"] != PINS_SCHEMA:
+            raise BundleError(f"{PINS_PATH} has schema {pins['schema']!r}, not {PINS_SCHEMA!r}")
+        target, interpreter = pins["target"], pins["interpreter"]
+        fields = [pins["lock"], pins["installer"]["name"], pins["installer"]["version"],
+                  *(target[key] for key in
+                    ("python_version", "python_platform", "wheel_platform", "abi")),
+                  *(interpreter[key] for key in ("version", "archive_url", "archive_sha256"))]
+    except (KeyError, TypeError) as error:
+        raise BundleError(f"{PINS_PATH} is not a complete pin set: {error}") from None
+    if not all(isinstance(field, str) and field for field in fields):
+        raise BundleError(f"{PINS_PATH} pins an empty or non-string value")
+    if pins["installer"]["name"] != "uv":
+        raise BundleError(f"{PINS_PATH} names installer {pins['installer']['name']!r}; "
+                          "this builder drives uv")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", pins["lock"]):
+        raise BundleError(f"{PINS_PATH} names the lock {pins['lock']!r}, not a file beside it")
+    version = target["python_version"]
+    if (interpreter["version"].split(".")[:2] != version.split(".")
+            or target["abi"] != "cp" + version.replace(".", "")):
+        raise BundleError(f"{PINS_PATH} pins interpreter {interpreter['version']} for a "
+                          f"CPython {version} ({target['abi']}) target: they must agree")
+    if not ARCHIVE_URL.fullmatch(interpreter["archive_url"]) or not re.fullmatch(
+            r"[0-9a-f]{64}", interpreter["archive_sha256"]):
+        raise BundleError(f"{PINS_PATH} pins no https archive URL and SHA-256")
+    return pins
+
+
+def load_lock(repo_root: Path, commit: str, pins: dict) -> bytes:
+    """The lock's bytes, from the commit."""
+    return _git_blob(repo_root, commit, f"{INSTALLER_PATH}/{pins['lock']}")
+
+
+def _hermetic_environment() -> dict[str, str]:
+    """This environment without uv's own variables. `--no-config` blocks uv's
+    configuration files only; a `UV_*` variable (`UV_COMPILE_BYTECODE`, an
+    index, a cache) would otherwise reach the install."""
+    return {key: value for key, value in os.environ.items()
+            if not key.upper().startswith("UV_")}
+
+
+def _uv_version(uv: str) -> str:
+    """The version uv REPORTS. This checks the string a binary prints, not
+    the binary: the hash pin in `build-tools.txt` holds only where uv is
+    installed from it, as CI does."""
+    completed = subprocess.run([uv, "--version"], capture_output=True, timeout=60,
+                               env=_hermetic_environment())
+    words = completed.stdout.decode("utf-8", "replace").split()
+    return words[1] if completed.returncode == 0 and len(words) > 1 else "unknown"
+
+
+def _drop_pruned_records(pylib: Path) -> None:
+    """Remove every RECORD row that names a pruned path. Each such row
+    described a host file (a launcher naming the interpreter that ran the
+    build), not a file of the payload. Other rows keep their bytes. A RECORD
+    that is not UTF-8, or holds a blank row, is refused by name."""
+    for record in sorted(pylib.glob("*.dist-info/RECORD")):
+        try:
+            lines = record.read_bytes().decode("utf-8").splitlines(keepends=True)
+        except UnicodeDecodeError:
+            raise BundleError(f"{record.relative_to(pylib)} is not UTF-8") from None
+        rows = [next(csv.reader([line]), []) for line in lines]
+        if any(not row for row in rows):
+            raise BundleError(f"{record.relative_to(pylib)} holds a blank row")
+        kept = [line for line, row in zip(lines, rows)
+                if row[0].split("/", 1)[0] not in PYLIB_PRUNED]
+        if len(kept) != len(lines):
+            record.write_bytes("".join(kept).encode("utf-8"))
+
+
+def install_locked_dependencies(dist: Path, pins: dict, lock: bytes) -> None:
+    """The lock into `pylib`, for the TARGET platform and interpreter.
+
+    uv is told the target (`--python-platform`, `--python-version`), so the
+    wheels chosen and the environment markers evaluated are Windows' and
+    CPython 3.13's, whatever runs this script; `--only-binary` makes a
+    distribution with no wheel for the target a refusal rather than a build
+    on this host; `--require-hashes` makes every distribution match the lock,
+    and every dependency the resolver needs be in it; `--no-cache` and the
+    scrubbed environment keep a populated cache and the operator's `UV_*`
+    variables out. Then the host files are pruned with their RECORD rows, and
+    every native module is traced to a wheel built for the target."""
+    uv = shutil.which("uv")
+    wanted = pins["installer"]["version"]
+    if uv is None:
+        raise BundleError(f"uv is not on PATH; the payload is installed by uv {wanted}")
+    reported = _uv_version(uv)
+    if reported != wanted:
+        raise BundleError(f"uv reports version {reported}, not the pinned {wanted}")
+    target = pins["target"]
+    with tempfile.TemporaryDirectory(prefix="forge-lock-") as scratch:
+        requirements = Path(scratch) / "requirements.txt"
+        requirements.write_bytes(lock)
+        subprocess.run(
+            [uv, "pip", "install", "--no-config", "--no-cache", "--no-python-downloads",
+             "--python", sys.executable, "--target", str(dist / "pylib"),
+             "--python-platform", target["python_platform"],
+             "--python-version", target["python_version"],
+             "--only-binary", ":all:", "--require-hashes", "--link-mode", "copy",
+             "-r", str(requirements)],
+            check=True, timeout=1800, env=_hermetic_environment(),
+        )
+    for name in PYLIB_PRUNED:
+        pruned = dist / "pylib" / name
+        if pruned.is_dir():
+            shutil.rmtree(pruned)
+        elif pruned.exists():
+            pruned.unlink()
+    _drop_pruned_records(dist / "pylib")
+    problems = wheel_tag_census(dist / "pylib", abi=target["abi"],
+                                platform=target["wheel_platform"])
+    if problems:
+        raise BundleError("the dependency library is not built for "
+                          f"{target['abi']} {target['wheel_platform']}: " + "; ".join(problems))
+
+
+def _tag_fits(tag: str, abi: str, platform: str) -> str | None:
+    """'native' for a tag whose extension modules load into the target
+    interpreter, 'pure' for a tag with no ABI, or None for a tag that does
+    not fit the target at all."""
+    parts = tag.split("-")
+    if len(parts) != 3:
+        return None
+    interpreter, tag_abi, tag_platform = parts
+    if tag_platform == "any":
+        return "pure" if tag_abi == "none" else None
+    if tag_platform != platform:
+        return None
+    if tag_abi == abi and interpreter == abi:
+        return "native"
+    stable = re.fullmatch(r"cp3(\d+)", interpreter)
+    if tag_abi == "abi3" and stable and int(stable.group(1)) <= int(abi[3:]):
+        return "native"
+    return "pure" if tag_abi == "none" else None
+
+
+def _inside_library(row_path: str) -> bool:
+    """A RECORD path that stays inside the library: relative, POSIX, with no
+    drive, no backslash and no `..` component."""
+    return bool(row_path) and not row_path.startswith("/") and ":" not in row_path and (
+        "\\" not in row_path) and ".." not in row_path.split("/")
+
+
+def wheel_tag_census(pylib: Path, *, abi: str, platform: str) -> list[str]:
+    """Every distribution's wheel tags fit the target, and every extension
+    module (`.pyd`) is listed in the RECORD of a distribution whose wheel was
+    built for the target's ABI (`cp313`, or the stable `abi3`). A native
+    library for another platform (`.so`, `.dylib`) anywhere is refused.
+    Every RECORD row must name a file the library holds, inside it. Returns
+    the problems, each naming its file or distribution."""
+    problems: list[str] = []
+    owners: dict[str, set[str | None]] = {}
+    for dist_info in sorted(pylib.glob("*.dist-info")):
+        wheel = HeaderParser().parsestr((dist_info / "WHEEL").read_text(encoding="utf-8"))
+        tags = wheel.get_all("Tag") or []
+        fits = {_tag_fits(tag.strip(), abi, platform) for tag in tags}
+        if not tags or None in fits:
+            problems.append(f"{dist_info.name}: wheel tags {tags} do not fit {abi} {platform}")
+        record = (dist_info / "RECORD").read_text(encoding="utf-8")
+        for row in csv.reader(io.StringIO(record)):
+            if not row:
+                continue
+            owners.setdefault(row[0], set()).update(fits)
+            if not _inside_library(row[0]) or not (pylib / row[0]).is_file():
+                problems.append(f"{dist_info.name}/RECORD lists {row[0]}, which the "
+                                "library does not hold")
+    for path in sorted(pylib.rglob("*")):
+        relative = path.relative_to(pylib).as_posix()
+        if re.search(r"\.(so(\.\d+)*|dylib)$", path.name):
+            problems.append(f"{relative}: a native library for another platform")
+        elif path.suffix == ".pyd":
+            if relative not in owners:
+                problems.append(f"{relative}: listed in no installed distribution's RECORD")
+            elif "native" not in owners[relative]:
+                problems.append(f"{relative}: installed from a wheel not built for {abi}")
+    return problems
+
+
+def install_python(dist: Path, embed_zip: Path, expected_sha256: str,
+                   abi: str | None = None) -> None:
     """The operator-supplied interpreter, verified before it is extracted.
 
-    The digest is checked over the whole archive first; only a match is
-    opened. Then the archive must be the embeddable distribution -- exactly
-    one `._pth` file, and both executables the launcher needs -- and its
-    path file is rewritten to the pinned resolution order.
+    The digest is checked over the whole archive first, and only those
+    bytes, if they match, are opened. Then the archive must be the
+    embeddable distribution -- exactly one `._pth` file, and both executables
+    the launcher needs -- and, given the target's `abi`, its path file must be
+    that CPython's (`cp313` means `python313._pth`), so the archive's bytes,
+    not only the pins' labels, agree with the target. Its path file is
+    rewritten to the pinned resolution order.
     """
-    digest = hashlib.sha256(embed_zip.read_bytes()).hexdigest()
+    data = embed_zip.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
     if digest != expected_sha256.lower():
         raise BundleError(
             "the embedded interpreter zip does not match its declared "
             f"sha256: expected {expected_sha256.lower()}, measured {digest}"
         )
     target = dist / "python"
-    with zipfile.ZipFile(embed_zip) as archive:
+    # The bytes that were hashed are the bytes extracted: the path is not
+    # opened a second time.
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
         archive.extractall(target)
     pth_files = list(target.glob("python*._pth"))
     if len(pth_files) != 1:
@@ -254,6 +629,9 @@ def install_python(dist: Path, embed_zip: Path, expected_sha256: str) -> None:
             f"expected exactly one python*._pth in the embed zip; found "
             f"{len(pth_files)}"
         )
+    if abi is not None and pth_files[0].name != f"python{abi[2:]}._pth":
+        raise BundleError(f"the embed zip holds {pth_files[0].name}, not the "
+                          f"python{abi[2:]}._pth of the {abi} target")
     missing = [name for name in EMBED_EXECUTABLES if not (target / name).is_file()]
     if missing:
         raise BundleError(
@@ -266,11 +644,12 @@ def install_python(dist: Path, embed_zip: Path, expected_sha256: str) -> None:
 
 
 def _source_commit(repo_root: Path) -> str | None:
-    """Informational provenance for a reader of the folder; never authority."""
+    """The commit the tree is at, or None. Provenance for a reader of the
+    folder, required by the build (`require_clean_commit`); never authority."""
     try:
         completed = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=str(repo_root),
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=60, env=_git_environment(),
         )
     except OSError:
         return None
@@ -292,8 +671,6 @@ def write_bundle_marker(dist: Path, *, mode: str, interpreter_sha256: str | None
         "interpreter": None if interpreter_sha256 is None else {
             "source": "operator-supplied", "sha256": interpreter_sha256.lower(),
         },
-        "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-                    .replace("+00:00", "Z"),
         "source_commit": source_commit,
         "note": (
             "Says which kind of folder this is. Operational: it selects how the "
@@ -313,13 +690,60 @@ def write_launcher(dist: Path, mode: str = SELF_CONTAINED) -> None:
     (dist / "Forge.cmd").write_text(text, encoding="utf-8", newline="")
 
 
+def _project_version(dist: Path) -> str:
+    return tomllib.loads((dist / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"]
+
+
+def normalize_mtimes(dist: Path, epoch: int) -> None:
+    """Every file and directory, the root included, takes the commit's time.
+    Directories last, because writing into one moves its own time."""
+    for directory, _subdirectories, files in os.walk(dist, topdown=False):
+        for name in files:
+            os.utime(os.path.join(directory, name), (epoch, epoch))
+        os.utime(directory, (epoch, epoch))
+
+
+def seal_payload(dist: Path, *, pins: dict, lock: bytes, commit: str, epoch: int) -> dict:
+    """Write `forge-payload.json` and fix every time to the commit's. A folder
+    the payload rules refuse -- bytecode, a link, a name Windows cannot hold --
+    is refused here, at the build, by name (`build_manifest` applies the same
+    checks `verify` does). Returns the manifest; `main` verifies the folder
+    against it once the build has finished with the folder."""
+    target = pins["target"]
+    interpreter = pins["interpreter"]
+    try:
+        manifest = build_manifest(
+            dist, version=_project_version(dist), source_commit=commit,
+            source_date_epoch=epoch, target=f"{target['abi']}-{target['wheel_platform']}",
+            lock_sha256=hashlib.sha256(lock).hexdigest(),
+            installer={"name": pins["installer"]["name"],
+                       "version": pins["installer"]["version"]},
+            interpreter={key: interpreter[key]
+                         for key in ("version", "archive_url", "archive_sha256")},
+        )
+        (dist / PAYLOAD_MANIFEST).write_bytes(render_manifest(manifest))
+        normalize_mtimes(dist, epoch)
+    except PayloadError as error:
+        raise BundleError(f"the folder cannot be sealed: {error}") from None
+    return manifest
+
+
 def verify_bundle(dist: Path) -> None:
-    """The bundle proves itself: its own interpreter resolves its own root."""
+    """The bundle proves itself: its own interpreter resolves its own root.
+
+    Only on Windows, the one platform that interpreter runs on: elsewhere this
+    says so and runs nothing. `-B`: the check writes no bytecode, so a sealed
+    payload is the same folder after it."""
     python = dist / "python" / "python.exe"
     if not python.exists():
         return  # developer bundle: verified by the system interpreter's tests
+    if os.name != "nt":
+        print("the bundle's interpreter runs only on Windows; its imports were not "
+              "exercised on this host")
+        return
     completed = subprocess.run(
-        [str(python), "-c",
+        [str(python), "-B", "-c",
          "import nornyx_forge.cli, nornyx_forge.windows_launch, "
          "nornyx_forge.windows_runtime, demo_app.main; "
          "from nornyx_forge.subject_bootstrap import resolve_packaged_root; "
@@ -350,8 +774,10 @@ def verify_bundle(dist: Path) -> None:
 #: never judged; a reader of a v1 report must not read its `pass` as this one.
 SMOKE_SCHEMA = "nornyx.forge.windows_bundle_smoke.v2"
 #: The runtime record's schema, restated from `nornyx_forge.windows_runtime`
-#: and pinned equal to it by test, so that this script imports nothing from
-#: the package whose bundle it measures.
+#: and pinned equal to it by test, so that the smoke imports nothing from the
+#: runtime whose bundle it measures. (This script does import
+#: `nornyx_forge.windows_payload`, on purpose: one implementation writes and
+#: checks the payload manifest.)
 RUNTIME_SCHEMA = "nornyx.forge.windows_runtime.v1"
 #: The actor the smoke DECLARES when it stops the runtime. NOT a person: the
 #: smoke is a program, and the route's kind rule declines only an actor that
@@ -942,17 +1368,39 @@ def main(argv: list[str] | None = None) -> None:
             "unverified interpreter is not bundled"
         )
     mode = SELF_CONTAINED if arguments.python_embed is not None else DEVELOPER
-    copy_tree(ROOT, arguments.dist)
-    install_dependencies(arguments.dist, sys.executable)
-    if arguments.python_embed is not None:
+    commit = require_clean_commit(ROOT)
+    pins = load_pins(ROOT, commit) if mode == SELF_CONTAINED else None
+    if pins is not None and (arguments.python_embed_sha256.lower()
+                             != pins["interpreter"]["archive_sha256"]):
+        raise BundleError(
+            "--python-embed-sha256 is not the pinned interpreter archive "
+            f"{pins['interpreter']['archive_sha256']} ({PINS_PATH}); the payload "
+            "carries the pinned interpreter or none")
+    copy_tree(ROOT, arguments.dist, commit)
+    manifest = None
+    if pins is not None:
+        lock = load_lock(ROOT, commit, pins)
+        install_locked_dependencies(arguments.dist, pins, lock)
         install_python(arguments.dist, arguments.python_embed,
-                       arguments.python_embed_sha256)
+                       arguments.python_embed_sha256, pins["target"]["abi"])
+    else:
+        install_dependencies(arguments.dist, sys.executable)
     write_bundle_marker(
         arguments.dist, mode=mode, interpreter_sha256=arguments.python_embed_sha256,
-        source_commit=_source_commit(ROOT),
+        source_commit=commit,
     )
     write_launcher(arguments.dist, mode)
+    if pins is not None:
+        manifest = seal_payload(arguments.dist, pins=pins, lock=lock, commit=commit,
+                                epoch=source_date_epoch(ROOT, commit))
+        print(f"payload {manifest['payload_sha256']}: {len(manifest['files'])} files, "
+              f"source {commit}")
     verify_bundle(arguments.dist)
+    if manifest is not None:
+        try:
+            verify(arguments.dist, expected_payload_sha256=manifest["payload_sha256"])
+        except PayloadError as error:
+            raise BundleError(f"the import check changed the sealed folder: {error}") from None
     print(f"bundle built: {arguments.dist} ({mode})")
     if arguments.smoke:
         report = smoke_bundle(arguments.dist)
@@ -960,6 +1408,9 @@ def main(argv: list[str] | None = None) -> None:
         report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="")
         print(json.dumps(report, indent=2))
         print(f"smoke report: {report_path}")
+        if manifest is not None:
+            print(f"the folder has been run: it is now operator evidence about payload "
+                  f"{manifest['payload_sha256']}, not that payload")
         if report["result"] != "pass":
             raise BundleError("the bundle smoke did not pass: "
                               + "; ".join(report["verdict"]["failed"]))

@@ -2,6 +2,25 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The self-contained Windows folder is a deterministic payload (A-040). The
+  build reads everything from the commit -- the copy set, the pins and the
+  lock -- and refuses an uncommitted tree and a builder file that differs
+  from the commit even under an index flag; so an ignored local file can no
+  longer ride into a folder. Its dependencies come from a hashed lock
+  resolved for CPython 3.13 on 64-bit Windows (`scripts/windows_installer/`),
+  installed for that target by uv at the pinned version with no cache and no
+  `UV_*` variables, so the builder's own interpreter no longer selects the
+  wheels; the interpreter archive is pinned by URL and SHA-256; every path
+  must be one Windows can hold; `forge-bundle.json` drops `built_at` and
+  always names its commit; and every time is the commit's.
+  `forge-payload.json` lists every file with its digest, and its own digest is
+  the payload's identity. `nornyx_forge.windows_payload.verify` checks a copy
+  against it and against an expected identity (tamper-evident, not
+  tamper-proof). A new CI job, `windows-payload`, builds the folder twice,
+  varying what must not matter, and fails on any difference. A-017 is
+  amended: CI fetches the pinned archive, and the script still downloads
+  nothing.
+
 - Content-bound CONFIRM and READY (Tranche F). The lifecycle's two human
   positions now NAME the content they were recorded about, and the surface
   refuses to license work over content the record does not name. Measured at
