@@ -70,12 +70,14 @@ evidence; a model's report is not a human observation.
   DEVELOPER-bundle arrangement, through the developer launcher's bootstrap
   verbatim. Skipped by declaration off Windows; executed by the
   `windows-runtime` CI job on `windows-latest`, which fails on any skip.
-- **Operator evidence** -- the real embedded-interpreter run. The repository
-  supplies no embeddable archive and the builder never downloads one
-  (A-017), so this run needs the operator's archive and its SHA-256:
+- **Operator evidence** -- the real embedded-interpreter run. The builder
+  never downloads an archive, and it accepts only the one pinned in
+  `scripts/windows_installer/pins.json` (A-017 and its amendment), so this
+  run needs that archive and its pinned SHA-256:
 
   ```bash
-  python scripts/build_windows_bundle.py --python-embed <python-3.13.x-embed-amd64.zip> --python-embed-sha256 <sha256> --smoke
+  python -m pip install --require-hashes --no-deps -r scripts/windows_installer/build-tools.txt
+  python scripts/build_windows_bundle.py --python-embed <python-3.13.15-embed-amd64.zip> --python-embed-sha256 <the pinned sha256> --smoke
   ```
 
   `--smoke` invokes the built folder's own `Forge.cmd` (plus `--no-browser`,
@@ -536,6 +538,27 @@ anywhere (a LOCAL commit of the C3 working tree, disclosed as such, with the
 probe module's blob as the line a reader can check against the shipped commit);
 and any movement on eligibility, on any provider row, or on the
 permanently-blocked approval and inspection diagnostics.
+
+## Deterministic Windows payload (A-040)
+
+What holds the self-contained folder to its commit and its pins. "CI" is the
+`windows-payload` job; every other row is `tests/test_windows_payload.py`,
+which runs in every Linux census job without network access, on a
+case-sensitive file system.
+
+| Property | Status | Evidence |
+|---|---|---|
+| two builds of one commit are the same bytes and times, with another checkout path, interpreter path, warm cache and `UV_*` variables in the second | measured by CI, per commit | CI: `cmp` of the manifests, `diff -r`, `cmp` of the path, type and time listings, `verify` of each |
+| the lock installs for the target, and every `.pyd` comes from a `cp313` or `abi3` win_amd64 wheel | measured by CI, per commit | the CI build, which refuses a violation; the census tests for the rule |
+| no wall clock: the same build at two clocks is the same folder, every time the committer's | established | `test_two_builds_at_different_wall_clocks_are_the_same_bytes`, `test_the_marker_carries_no_wall_clock` |
+| everything is read from the commit: the copy set, the pins, the lock; the builder's own files even under an index flag or a clean filter; git with no replace refs and no `GIT_*` variables (drift detection, not a defence against a writer of the clone) | established | `test_the_copy_is_the_commit_and_an_ignored_file_never_rides_along`, `test_the_pins_and_the_lock_are_read_from_the_commit`, `test_a_builder_file_hidden_by_an_index_flag_is_refused`, `test_a_builder_file_hidden_by_a_clean_filter_is_refused`, `test_replace_refs_and_git_variables_do_not_reach_the_build`, `test_an_uncommitted_or_commitless_tree_is_refused`, `test_main_refuses_a_build_that_names_no_commit` |
+| uv is told the target, isolated from the cache and `UV_*`, and its host files leave with their RECORD rows | established | `test_uv_is_told_the_target_isolated_and_its_host_outputs_are_pruned`, `test_the_census_names_a_record_row_for_a_file_the_library_does_not_hold` |
+| the archive is the pinned one; the pins agree; uv REPORTS the pinned version (its hash is pinned only where installed from `build-tools.txt`) | established | `test_an_interpreter_archive_other_than_the_pinned_one_is_refused`, `test_pins_that_do_not_agree_with_themselves_are_refused`, `test_an_installer_reporting_another_version_is_refused` |
+| the lock is hashed and satisfies `pyproject.toml`; its header names the pins' target | established (static) | `test_the_lock_is_hashed_and_covers_what_the_project_declares`, `test_the_pins_name_the_target_the_lock_resolves_for` |
+| a name Windows cannot hold (paths and directories folded for case, file-versus-directory, device names, characters, UTF-16 length), bytecode in any case, an empty directory, a link, a reparse point (a constructed status), a hard link (the manifest included) and a FIFO, also one swapped in after the walk, are refused, at the build and at every check | established on Linux | the name-rule, collision, link, seal and copy tests |
+| a changed (past the first MiB too), missing, unlisted or renamed file, a lying size, an edited manifest, and a resealed folder against an expected identity are refused by name | established | the verifier tests |
+| the verifier loads the standard library only | established | `test_the_verifier_loads_the_standard_library_only` |
+| the folder's imports on Windows; the verifier's tests on Windows; the check at launch; the installer | not established | none yet |
 
 ## Requires a normal internet-connected machine or GitHub Actions
 

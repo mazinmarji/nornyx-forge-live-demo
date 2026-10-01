@@ -1,0 +1,21 @@
+{
+  "schema": "nornyx.forge.windows_build_pins.v1",
+  "note": "Every input of the Windows payload that is not this repository's own committed source. The builder refuses an interpreter archive whose SHA-256 differs from archive_sha256 and a uv that reports a version other than installer.version (it checks the version uv reports, not the binary; the binary is pinned by hash where it is installed from build-tools.txt), and it downloads nothing itself; the archive is fetched by whoever runs the build (CI's rebuild job, or an operator) and checked against archive_sha256 before it is opened.",
+  "target": {
+    "python_version": "3.13",
+    "python_platform": "x86_64-pc-windows-msvc",
+    "wheel_platform": "win_amd64",
+    "abi": "cp313"
+  },
+  "lock": "pylib-cp313-win_amd64.txt",
+  "installer": {
+    "name": "uv",
+    "version": "0.11.33",
+    "requirements": "build-tools.txt"
+  },
+  "interpreter": {
+    "version": "3.13.15",
+    "archive_url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+    "archive_sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf"
+  }
+}
