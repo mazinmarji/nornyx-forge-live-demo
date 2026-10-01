@@ -1168,8 +1168,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_guard_is_live.py": 59,
     # Three real entrypoints rehearsed, three guards shown load-bearing and the
     # static shape test on every spec: 7 collected at introduction, floor at
-    # band(7) = 7.
-    "tests/test_entrypoint_rehearsals.py": 7,
+    # band(7) = 7. The evidence tool's decoding of git's answers then added 9
+    # (16 collected, floor at band(16) = 15): its --verify rehearsed in a clone
+    # with history at a non-ASCII path in two locales, the codec shown
+    # load-bearing, the red control that takes the codec back, the fixture
+    # tests with their control, and the tests that pin the one locale a spec
+    # may carry.
+    "tests/test_entrypoint_rehearsals.py": 15,
+    # Subprocess output decoded with the codec each child writes: 65 collected
+    # at introduction, floor at band(65) = 59 exactly. The specimens under the
+    # C locale at a non-ASCII checkout path, a revert control for each repaired
+    # site, and the lint that holds every call still in text mode to its reason.
+    "tests/test_subprocess_decoding.py": 59,
     "tests/test_policy.py": 1,
     "tests/test_repository_structure.py": 2,
     "tests/test_requirements.py": 1,
@@ -1845,14 +1855,37 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # windows-runtime job's floor is untouched: that job runs seven named modules
 # and this is not one.
 #
+# THE SUBPROCESS-DECODING REPAIR ADDS ONE MODULE AND MOVES ONE.
+# tests/test_subprocess_decoding.py is new at 65 collected, floor
+# band(65) = 59: it reproduces the evidence tool's decode failure under the C
+# locale at a non-ASCII checkout path, holds each repaired site to a revert
+# control, and lints the calls still in text mode against their listed
+# reasons. The checks that hold the repair to the process regime live in an
+# existing module, which is the one that moves:
+# tests/test_entrypoint_rehearsals.py 7 -> 16 (floor band(7) = 7 -> band(16) =
+# 15): the evidence tool's --verify rehearsed in a clone with history at a
+# non-ASCII path, in the C locale with UTF-8 mode off and in UTF-8, the red
+# control that takes the codec back, the codec shown load-bearing, the fixture
+# tests with their control, and the tests that pin the one locale a spec may
+# carry. EVERY OTHER MODULE IS UNMOVED, measured rather than assumed: fresh
+# collections of the base and of this tree, as a normal user, differ in those
+# two modules alone (4481 across 127 modules become 4555 across 128), and the
+# edits to the assumptions record enter no document sweep. The module-floor
+# sum rises by 67 to 4161 and the aggregate follows to 4169, keeping the same 8
+# above it; band(n) 4033 -> 4100, and the working room below the floor 379 ->
+# 386. THE SLACK THE BANDS GRANT moves 387 -> 394: the decoding module sits 6
+# above its band and the rehearsal module 1 above its new one. NO SKIP IS
+# ADDED where the census runs: the decoding module is skipped on Windows only,
+# and the rehearsal module keeps its one skip off Linux.
+#
 # (rows below):
 #
-#     collected across tests/     4481   (127 modules)
-#     sum of the module floors    4094
-#     band(4481) = ceil(0.9*n)    4033
-#     MINIMUM_COLLECTED           4102
+#     collected across tests/     4555   (128 modules)
+#     sum of the module floors    4161
+#     band(4555) = ceil(0.9*n)    4100
+#     MINIMUM_COLLECTED           4169
 #     above the module sum          8
-#     below what collects         379
+#     below what collects         386
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2074,7 +2107,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 387 in total, and the aggregate refuses
+# per-module bands already grant 394 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2343,7 +2376,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4102
+MINIMUM_COLLECTED = 4169
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2600,6 +2633,7 @@ REQUIRED_MODULES = (
     "tests/test_rehearse_entrypoint.py",
     "tests/test_guard_is_live.py",
     "tests/test_entrypoint_rehearsals.py",
+    "tests/test_subprocess_decoding.py",
     "tests/test_policy.py",
     "tests/test_repository_structure.py",
     "tests/test_requirements.py",

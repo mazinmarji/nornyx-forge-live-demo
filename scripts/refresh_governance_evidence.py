@@ -247,6 +247,54 @@ def _git_environment() -> dict[str, str]:
     return environment
 
 
+#: How git's answers are decoded: with the codec Python itself uses for the
+#: names of files, and with that codec's own error handler -- what
+#: `os.fsdecode` applies. Not the locale codec text mode used, and not UTF-8.
+#:
+#: git writes a path the way the filesystem stores it on POSIX, and as UTF-8
+#: on Windows in the default filesystem-encoding mode: the filesystem codec on
+#: each. ROOT was decoded with that codec too, from `__file__`, so only the
+#: same decode makes the comparison in `_repository_root` a comparison of one
+#: directory with itself. Measured in a
+#: checkout whose path holds U+00E9, under the C locale with UTF-8 mode off,
+#: where the locale codec and the filesystem codec are both ASCII:
+#:
+#:     text mode (the locale codec, strict)    UnicodeDecodeError traceback
+#:     strict UTF-8                            UnicodeEncodeError in realpath
+#:     the filesystem codec, its own handler   --verify reports its verdict
+#:
+#: On a Windows host with ANSI code page 1252, text mode read the same answer
+#: for U+00E9 as another directory -- a refusal of the right one -- and left
+#: the stream None for U+00C1, whose UTF-8 carries a byte that code page
+#: leaves undefined. Module-level so a test can hold the refusal in
+#: `_git_text`, which cannot fire on POSIX, where the handler is
+#: `surrogateescape`.
+GIT_TEXT_ENCODING = sys.getfilesystemencoding()
+GIT_TEXT_ERRORS = sys.getfilesystemencodeerrors()
+
+
+def _git_text(raw: bytes, args: tuple[str, ...], stream: str) -> str:
+    """One stream of git's answer, in the codec above, with the newline
+    translation text mode applied -- or a refusal.
+
+    A stream that cannot be decoded is refused in this tool's own words rather
+    than raised as a decode error: on Windows, in the default filesystem-encoding
+    mode, that is invalid UTF-8, which `surrogatepass` does not take. Nothing
+    about the tree can be read from an answer that cannot be decoded, so
+    nothing is modified.
+    """
+    try:
+        text = raw.decode(GIT_TEXT_ENCODING, GIT_TEXT_ERRORS)
+    except UnicodeDecodeError as exc:
+        raise SystemExit(
+            f"git {' '.join(args)} wrote {stream} that cannot be decoded as "
+            f"{GIT_TEXT_ENCODING} ({exc.reason} at byte {exc.start}). Nothing "
+            "about this tree can be read from an answer that cannot be decoded, "
+            "and nothing was modified."
+        ) from None
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
     """Run one git question about ROOT under the policy-neutral environment.
 
@@ -259,20 +307,29 @@ def _git(*args: str) -> subprocess.CompletedProcess[str]:
     Exit status is returned, not raised. Each caller decides what a failure
     means in its own vocabulary -- a refusal for a gate, `git:unbound` for
     provenance -- and none of them may turn it into an empty answer.
+
+    Bytes are captured and decoded by `_git_text`, not by text mode: see
+    GIT_TEXT_ENCODING for why the codec is the filesystem's. An answer that
+    cannot be decoded is refused here, before any caller sees it.
     """
     pinned = [
         flag
         for key, value in GIT_POLICY_NEUTRAL_CONFIGURATION
         for flag in ("-c", f"{key}={value}")
     ]
-    return subprocess.run(
+    completed = subprocess.run(
         ["git", *pinned, *args],
         cwd=ROOT,
-        text=True,
         capture_output=True,
         check=False,
         timeout=600,
         env=_git_environment(),
+    )
+    return subprocess.CompletedProcess(
+        completed.args,
+        completed.returncode,
+        _git_text(completed.stdout, args, "output"),
+        _git_text(completed.stderr, args, "error output"),
     )
 
 
@@ -343,7 +400,7 @@ def _repository_root() -> Path | None:
         # classification: it found no repository there.
         if any(
             line.startswith("fatal: not a git repository")
-            for line in result.stderr.splitlines()
+            for line in result.stderr.split("\n")
         ):
             return None
         raise SystemExit(
@@ -1701,7 +1758,8 @@ def _git_lines(*args: str) -> list[str]:
             f"git {' '.join(args)} failed: {result.stderr.strip()}. "
             "A clean governed tree cannot be proven, so nothing was modified."
         )
-    return [line for line in result.stdout.splitlines() if line.strip()]
+    # Lines end at "\n" alone: a name may hold any other character.
+    return [line for line in result.stdout.split("\n") if line]
 
 
 def _unstaged_governed_paths() -> list[str]:

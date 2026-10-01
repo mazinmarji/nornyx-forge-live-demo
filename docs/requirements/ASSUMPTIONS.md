@@ -5112,6 +5112,128 @@ from the live act; A-019, since the generated project is the verifier's
 subject and never its verifier; and A-032, whose GOVERN position this journey
 reaches rather than works around.
 
+## A-036 Git's answers and the gates' recorded output are decoded with the codec their child writes
+
+**Assumption.** At the calls this entry covers -- git's answers to the evidence
+tool, to the capsule store and to the repository qualifier, and the output the
+acceptance gates record through `run` -- Forge captures bytes, decodes them
+with the codec the child actually writes, and reports a failure to decode in
+the caller's own terms: never a traceback, and never text the child did not
+write. git writes a path the way the filesystem stores it on POSIX and as
+UTF-8 on Windows, which is the codec Python itself uses for file names on each
+in its default mode, so git's output is decoded with that codec: in the
+evidence tool with that codec's own error handler, for every answer, because
+one of them is compared with a path Python decoded (the repository-root check
+in `scripts/refresh_governance_evidence.py`); and strictly where the text
+leaves the process (a capsule store refusal or seal finding, a
+repository-qualifier hard stop). The store's restore reads only the exit
+status of its reset and clean. ruff writes UTF-8 whatever the locale, so the
+acceptance gates declare UTF-8 for it; their other children are read with text
+mode's codec. A gate stream that cannot be decoded is described by length and
+SHA-256 rather than rendered, and a gate's verdict is still its exit status.
+git's answers are split into lines at newlines alone -- text mode's rule turns a
+carriage return into a newline first, and the result is split at newlines --
+since a name may hold any other character.
+
+**Why it needs stating.** `subprocess.run(..., text=True)` with no encoding
+named decodes with the locale codec, which is right only for a child that
+writes the locale codec. Under the C locale with UTF-8 mode off, in a checkout
+whose path holds U+00E9, `scripts/refresh_governance_evidence.py --verify` and
+the evidence build each ended in a UnicodeDecodeError traceback instead of a
+result, while the same commit at the same path under a UTF-8 locale gave one.
+On a Windows host with ANSI code page 1252 the same check refused a checkout
+whose path holds U+00E9 as not the root of its own repository, because text
+mode read git's answer as another directory, and ended in an AttributeError
+traceback for U+00C1, whose UTF-8 carries a byte that code page leaves
+undefined, so the stream came back `None`; git wrote UTF-8 in both cases. With
+the repair, the check reported the tree intact at both paths on that host.
+Naming UTF-8 is not the repair: under the C locale it moved the failure into
+the path comparison, because Python had decoded the checkout path with the
+filesystem codec. The capsule store's git calls, its seal check and restore
+among them, the acceptance gates and the repository qualifier had the same
+exposure, and now capture bytes.
+
+**Which calls keep text mode, and why.** Eight calls keep it, each listed with
+its reason in `TEXT_MODE_WITHOUT_A_CODEC` in
+`tests/test_subprocess_decoding.py`. Five start a Python program that inherits
+this interpreter's environment, and a Python child writes its standard streams
+in the codec the parent's text mode reads: the bundle builder's installer
+probe, whose exit status is the only thing read from it, and its self-check; the pre-approval
+baseline's regeneration; the evidence tool's architecture report; and the
+demonstration policy engine, which has no production caller and runs the
+Nornyx CLI. The bundle builder's source commit reads a 40-hex answer on standard output,
+ASCII in every codec. Text mode also decodes the standard error of those two,
+which limitation 9 states. The trusted greenfield verifier prints ASCII JSON from an
+environment of its own. The HTTP smoke test's server pipes nothing: it writes
+to a file that is read with a named codec. A lint over `src/` and `scripts/`
+holds that list to the code in both directions:
+`test_every_locale_decoding_subprocess_site_is_dispositioned`.
+
+**What it does NOT establish.**
+
+1. The module runs on POSIX only -- it is skipped on Windows -- and CI runs it
+   on Linux. On Windows only the evidence tool's `--verify` and ruff's output
+   were measured, on one host with ANSI code page 1252, and only in Python's
+   default filesystem-encoding mode; the other Windows statements are reasoned
+   from the same calls, and no CI job measures Windows.
+2. Only the C locale and UTF-8 are exercised. An eight-bit POSIX locale and a
+   non-English Windows are reasoned about, not measured.
+3. That a Python child shares its parent's codec is assumed from how Python
+   chooses it, not measured for non-ASCII output under a non-UTF-8 locale.
+4. ruff's UTF-8 was measured on Windows, for ruff 0.15.20, 0.16.1 and 0.16.8.
+   On POSIX it is assumed, and the tests use a double.
+5. The gates read the Nornyx CLI with text mode's codec, following its source,
+   which prints through the default text stream, while `run_nornyx` in
+   `src/nornyx_forge/nornyx_cli_adapter.py` and `_check` in
+   `scripts/check_pre_approval_baseline.py` read it as UTF-8 with replacement.
+   Its output on Windows was not measured, so which reading is right there is
+   not established.
+6. Under `src/` and `scripts/` the lint judges or reports every name
+   `subprocess`, every attribute named `subprocess` or `popen`, and every
+   import that renames `subprocess` or `os` or takes names from `subprocess`
+   (or `popen` from `os`), and it reports a text flag passed to any call it has
+   not judged, except the calls listed in `NOT_A_CHILD_PROCESS` in the module,
+   which today is one dict update in the rehearsal harness. An entry names the
+   file, the qualified scope and the spelling of the callee (`streams[name].update`
+   there), never a line. The list is held in both directions, as the text-mode
+   list is: a call with a text keyword that no entry names is reported, and an
+   entry that does not match exactly one such call in its scope is stale. What
+   it does not check is that the call starts no child: that is the entry's stated
+   reason, read by a reviewer, and any call of the listed spelling in the listed
+   scope satisfies the entry. It does not see a module reached through a string
+   or a call inside a child program assembled as a string, and it sees a new
+   call, not a changed environment for an old one.
+7. Calls that already name a codec are outside this entry, and several decode a
+   child's output as UTF-8 with `errors="replace"`, which puts U+FFFD where a
+   byte cannot be decoded: `_git` in `scripts/check_evidence_binding.py`,
+   `_check` in `scripts/check_pre_approval_baseline.py`, `_run_cli` in
+   `scripts/probe_claude_confinement.py`, `_run_system` and `_tree_git_sha` in
+   `scripts/probe_control_plane.py`, `_run_with_capped_output` in
+   `src/nornyx_forge/greenfield_verifier.py`, `run_nornyx` in
+   `src/nornyx_forge/nornyx_cli_adapter.py` and `observe_source_commit` in
+   `src/nornyx_forge/subject_observer.py`; `_launcher_log` in
+   `scripts/build_windows_bundle.py` and `_server_output` in `main` in
+   `scripts/smoke_http.py` read a child's log file the same way. This entry
+   neither changes nor vouches for them.
+8. The Windows bundle builder's self-check still refuses a bundle whose path
+   holds a character outside the ANSI code page: the child cannot print it.
+9. Text mode also decodes standard error, and three calls keep it: the trusted
+   greenfield verifier's, the bundle builder's source commit's and its
+   installer probe's. On POSIX a parent whose codec is a strict non-UTF-8 one,
+   with UTF-8 mode off, could raise when an already failing verifier writes
+   non-ASCII there, or when a git or pip message carries a path with bytes
+   that codec cannot decode. Neither bundle builder call is guarded against a
+   decode error, and the source commit's handler covers `OSError` only.
+
+**Serves.** BRD-F-007, whose repository qualification no longer stops on a git
+message it cannot decode; BRD-004's Python range and network-free tests; and
+the rule that a gate reports rather than raises (AC05). Carried by
+`test_verify_is_intact_in_a_non_ascii_checkout_under_the_c_locale`,
+`test_the_seal_check_reports_an_undecodable_name_as_a_finding`,
+`test_a_utf8_gate_child_is_recorded_exactly_under_the_c_locale` and
+`test_an_undecodable_clone_failure_is_reported_not_raised`, with their revert
+controls in the same module.
+
 ## A-037 The hostile-probe job runs every owner and specimen the registries name, and every test in the modules the closure protocol names
 
 **Assumption.** The closure gate in `docs/governance/RELEASE_CONTRACT_V1.md`
@@ -5361,7 +5483,7 @@ them.
 Python 3.10 to 3.13, tests that run without network access, and no secrets
 committed. No functional BRD requirement is implemented.
 
-## A-039 Real entrypoints are rehearsed, and three guards are shown load-bearing
+## A-039 Real entrypoints are rehearsed, and four guards are shown load-bearing
 
 **Assumption.** The process primitives of A-038 are exercised on this
 repository's own code, not only on their synthetic specimens.
@@ -5385,12 +5507,22 @@ an empty home and temp directory, and no stdin. The tests are
 `test_a_real_entrypoint_matches_its_contract`,
 `test_a_guard_is_shown_load_bearing` and
 `test_no_spec_names_an_absolute_path_of_the_host`. The module's one skip is
-off Linux, where the harness refuses to run.
+off Linux, where the harness refuses to run. It also rehearses the evidence
+tool's `--verify` and shows its decoding of git's answers (A-036)
+load-bearing, on a fixture of another kind; limitation 8 states that, and
+`test_the_evidence_tool_verifies_a_non_ascii_checkout_in_both_locales`,
+`test_the_verify_rehearsal_fails_when_the_codec_is_taken_back`,
+`test_the_working_trees_of_the_decoding_fixtures_are_the_tracked_files_only`,
+`test_a_stray_file_a_link_or_a_remote_in_a_fixture_is_seen`,
+`test_the_locale_is_carried_by_the_decoding_specs_and_only_by_them` and
+`test_the_shape_rule_refuses_every_environment_it_does_not_allow` carry it,
+with a fourth case of `test_a_guard_is_shown_load_bearing`.
 
 **What it does NOT establish.**
 
-1. **Only the paths exercised.** Three entrypoints and three triggers are
-   exercised, each at its declared contract. The strict demo path, every
+1. **Only the paths exercised.** Four entrypoints (the fourth, the evidence
+   tool's `--verify`, in two locales) and four triggers are exercised, each at
+   its declared contract. The strict demo path, every
    approval-bound path, the HTTP surface, the container and Windows paths and
    CrewAI's own kickoff are not. The approval-drift guard
    (`require_approval_matches_head`) is not shown live: its trigger is an
@@ -5427,13 +5559,14 @@ off Linux, where the harness refuses to run.
    Forge imports it, or scoping the library's storage paths, is not done here.
 5. **No hidden authority dependency holds for the exercised paths, and for
    nothing else.** On those paths the entrypoints reach their outcomes with no
-   credential reachable through the environment or the empty home, no approval record, no git metadata (the copy holds
-   no `.git` and no runtime lock or review record, because it is built from
+   credential reachable through the environment or the empty home, no approval record, no git metadata (the copy of each
+   of the three holds no `.git` and no runtime lock or review record, because it is built from
    `git ls-files` and nothing untracked is copied) and no agent tooling; the
    copy's `src` is the one imported, through `PYTHONPATH`, since the absent-CLI
    guard run could not be live otherwise; and a static
    test holds every spec to that shape: no inherited variable, exactly the
-   three environment names, and every absolute path token in every string of
+   three environment names (and, in the two specs named for it, those three and
+   the three of one pinned locale: limitation 8), and every absolute path token in every string of
    the spec, embedded paths included, read whole up to the next delimiter, is
    exactly the interpreter's directory, `/usr/bin` or `/bin` (a longer path
    with one of them as its prefix fails)
@@ -5453,13 +5586,51 @@ off Linux, where the harness refuses to run.
    failed /proc/self/uid_map: Operation not permitted"), so those checks are
    not part of this suite. Nothing here shows that an entrypoint works, or
    fails, without network access.
-7. **The fixture is the tracked tree of a checkout.** It needs `git` and a
+7. **The fixture of the three is the tracked tree of a checkout.** It needs `git` and a
    work tree, and it fails if a tracked file is missing. The repository's
    `tests/governed_workspace.py` was measured as the alternative and not used:
    it copies a subset of the tracked files, and copies `.nornyx/` whole, so a
    locally prepared runtime lock or review record that is ignored by git
    changes the verdicts of the rehearsals (measured: the preparation rehearsal
    and the absent-CLI guard then fail).
+8. **The decoding specs stand on another fixture, and show less than a locale
+   matrix.** The same module rehearses `scripts/refresh_governance_evidence.py
+   --verify` (A-036) in a full clone of this repository's HEAD: its own
+   repository, with its history, no remote, no template and no link, and a
+   working tree of exactly the tracked files (nothing untracked is copied, which
+   a test holds, with a control). Its `.git` is more than HEAD: it also carries
+   the source's local tags with their objects and a reflog line naming the
+   source path, which the tool's git calls (`rev-parse`, `diff`, `ls-files`) do
+   not consult. The run needs `git`, and a working tree that differs from HEAD
+   in a tracked file fails the building of the fixture rather than being
+   measured as something it is not. The
+   run is at a work root whose path holds U+00E9, in the C locale with UTF-8
+   mode and locale coercion off and, as its control, with no locale named, where
+   the child's codecs are UTF-8 (a test probes both), and each matches one
+   contract: exit 0, `integrity_state` intact, no traceback, and exactly one
+   write, git's refresh of the clone's index, which is declared. The child's
+   environment is still built from nothing, plus, in the two specs named for it,
+   exactly the three names of that one locale (`LC_ALL=C`, `PYTHONUTF8=0`,
+   `PYTHONCOERCECLOCALE=0`), which the shape test states and pins, with controls
+   for each form it refuses. A fourth guard shows the explicit codec
+   load-bearing for a refusal it makes reachable: a governed tree with no
+   repository of its own, enclosed by a foreign one, at that path and in that
+   locale, is refused by name ("is not the root of the git repository that
+   encloses it"); with the codec's error handler taken back (one snippet, in the
+   copy) that refusal is replaced by the tool's own refusal to decode git's
+   answer, and the same locale and path in a clone that is its own repository is
+   quiet. Three things came with the measurement. The codec guards against a
+   crash and has no refusal of its own on POSIX, where its handler does not
+   refuse, so the liveness shown is that of the refusal the codec makes
+   reachable. The usual control, the same run without the locale, cannot serve
+   as the guard's control, because the repaired tool answers alike in both
+   locales; the locale-free rehearsal is that comparison, made as a contract. And
+   the codec taken back wholesale, as text mode reads it, ends in a traceback
+   rather than in the tool's refusal, which the revert controls of
+   `tests/test_subprocess_decoding.py` hold. Only the C locale and UTF-8 are
+   exercised, nothing is shown about Windows, the clone is of the committed tree,
+   and the run's verdict depends on the committed evidence being valid at HEAD
+   and, like the baseline check's, on the wall clock.
 
 **Serves.** BRD-004's non-functional lines as they bind development tooling:
 Python 3.10 to 3.13, tests that run without network access, and no secrets
