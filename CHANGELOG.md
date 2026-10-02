@@ -2,6 +2,40 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The architecture gate reads its contract and its modules one way (A-041).
+  `scripts/check_architecture.py` looks modules up by id and by name, and
+  layers by id, and it built each index from a list, which keeps the last
+  entry for a repeated key and drops the others without a word. So a second
+  declaration did not conflict with the first; it replaced it. Measured on a
+  copy of this tree: an application module importing the infrastructure
+  store was refused, and adding a second declaration of `demo_app.store`
+  under a new id, in the application layer, with the module's edge naming
+  that id, took the gate to exit 0 with no violation, while `nornyx check`
+  reported nothing it does not report for the unchanged copy. The same held
+  for the store renamed `demo_app/store`, or `demo_app..store` beside an
+  inert dotfile, which the gate's path lookup takes to the same file; for a
+  package beside the store, which Python imports while the gate read the
+  module, written as `__init__.py`, `__init__.pyw`, a sourceless
+  `__init__.pyc` or, on Windows, `__Init__.py` or a `Store/` package; and
+  for a new layer named
+  "Application" whose module starts a process. A repeated module id or
+  layer id, a `layer` stated twice inside the store's own entry (on a line
+  of its own or through a YAML merge), a look-alike layer id, a list written
+  as one string, a module in an undeclared layer, and layers named `yes`
+  and `on` each did the same to the gate, though `nornyx check` refuses
+  every one of them. Each is now a named violation. The contract is read by
+  SafeLoader itself with one method observed, so its merges and every error
+  are the library's own; a module name must be an importable spelling of one
+  file, and every rule reads the one file discovery found under it, while
+  discovery refuses two files that are one dotted name ignoring case, any
+  `.pyw`, bytecode or native module beside the source (the interpreter's
+  own tagged caches in `__pycache__` aside), and any link under
+  `src`; identifiers are held to
+  nornyx's syntax and layers to the declared
+  ones; and process capability is allowed by layer rather than forbidden by
+  it. The report lists the checks as `unique_declarations` and
+  `declared_identifiers_and_names`.
+
 - The self-contained Windows folder is a deterministic payload (A-040). The
   build reads everything from the commit -- the copy set, the pins and the
   lock -- and refuses an uncommitted tree and a builder file that differs

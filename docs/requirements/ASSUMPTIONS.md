@@ -5797,3 +5797,166 @@ an identity; and A-023's open finding that nothing required the builder's
 interpreter and the archive to agree. The lock closes the builder's side by
 construction (the target's tags no longer come from the builder); the
 archive's side is the pins' agreement rule.
+
+## A-041 The architecture gate reads its contract and its modules one way
+
+**Assumption.** `scripts/check_architecture.py` reads the architecture
+contract into three indexes, modules by id, modules by name and layers by
+id, finds each module's file from its name, and applies every dependency,
+layer and process rule through them. Each shape below was measured passing
+this gate while the gate read the contract or the tree one way and the file,
+Python or `nornyx check` read it another. Each is now refused as a named
+violation:
+
+- **A key stated twice.** A module id, a module name or a layer id that a
+  second declaration states again (`_declared_once`), and a key stated twice
+  in one mapping anywhere in the contract. The loader that reads the
+  contract is SafeLoader with one method observed (`_ContractLoader`): the
+  library builds each mapping, its merges included, and only then are the
+  keys it flattened and built read back from its own cache, so a key the
+  flattened mapping holds twice is noted. That includes a key a YAML merge
+  (`<<`) supplies and the mapping also states, and a key two merges both
+  supply. Nothing is built, changed or reordered, so the document, and every
+  error, is the one `yaml.safe_load` gives. A repeat is reported once, where
+  it is written.
+- **A module name that is not an importable spelling of one file.** A
+  declared name must be dotted Python identifiers and the exact name
+  discovery produced, and every rule reads the one file discovery found
+  under that name (`_source_of`). A path built from the name took
+  `demo_app/store`, `demo_app//store`, `demo_app./store` and, on Windows,
+  `demo_app.Store` to `store.py`, and an inert `src/demo_app/.store.py` is
+  discovered as `demo_app..store`. Discovery itself refuses two files whose
+  dotted names are equal ignoring letter case, an `__init__` in any letter
+  case being its package, such as `demo_app/store.py` beside
+  `demo_app/store/__init__.py`, `demo_app/Store/__init__.py` or
+  `demo_app/store/__Init__.py`; and it refuses a `.pyw`, `.pyc`, `.pyo`,
+  `.pyd` or `.so` file, which Python can import and this gate cannot
+  read, except interpreter-tagged bytecode in a `__pycache__` directory,
+  such as `store.cpython-313.pyc`, which only caches a source beside it (a
+  `.py` or an untagged `.pyc` there is importable, as
+  `demo_app.__pycache__.name`, and is judged like any other file); and any
+  symbolic link or junction under `src`,
+  which Python imports through and the discovery walk does not follow.
+  None of these needs a contract edit except a second declaration.
+- **A value outside nornyx's identifier syntax, a list that is not a list,
+  or an undeclared layer.** Module ids, layer ids, each module's layer, and
+  every entry of `depends_on` and `may_depend_on` must be strings of at most
+  160 characters matching `[A-Za-z0-9][A-Za-z0-9._:@/-]*`; `depends_on` and
+  `may_depend_on` must be lists where present; and every layer a module or a
+  layer names must be declared.
+- **A process in a layer the process rule did not name.** The rule now
+  allows process capability in `layer.adapter` and `layer.infrastructure`
+  only, and every other layer delegates, including one declared later. It
+  named the three layers that delegate before.
+
+A violation quotes a contract value within a fixed bound. The report lists
+the checks as `unique_declarations` and `declared_identifiers_and_names`.
+The tests, in `tests/test_architecture_security.py`, are
+`test_the_planted_layer_violation_is_refused_on_its_own`,
+`test_a_repeated_key_is_refused_by_name` (five repeats, each after and
+before the statement it repeats),
+`test_without_the_refusals_a_repeated_key_hides_the_violation`,
+`test_every_mapping_is_checked_once_with_keys_compared_as_the_loader_builds_them`,
+`test_a_merge_inside_ordered_pairs_is_refused_as_the_loader_refuses_it`,
+`test_a_document_with_two_construction_errors_fails_as_the_loader_fails`,
+`test_merges_the_loader_resolves_are_read_as_it_reads_them`,
+`test_the_report_names_both_new_checks`,
+`test_a_module_name_is_held_to_its_spelling_on_disk`,
+`test_a_name_discovery_reaches_by_another_file_is_refused`,
+`test_a_link_under_the_source_tree_is_refused`,
+`test_a_source_file_in_a_cache_directory_is_read_like_any_other`,
+`test_an_identifier_or_layer_nornyx_would_refuse_is_refused`,
+`test_a_listed_reference_is_held_to_the_same_rule`,
+`test_a_list_written_as_one_string_is_refused`,
+`test_a_layer_not_named_as_executing_may_not_start_a_process`,
+`test_a_violation_quotes_a_value_within_a_bound` and
+`test_a_module_id_is_held_to_the_syntax_and_its_bound`.
+
+**Measured before the change**, on copies of this tree at `c5fd23f`: the
+gate on Windows, and `nornyx check` with the `nornyx` 1.11.0 of the `demo`
+extra on Linux. An application module importing `demo_app.store`, which is
+in the infrastructure layer, is refused by the gate (exit 2) and by
+`nornyx check` (`ARCH_DEPENDENCY_DIRECTION_VIOLATION`). Each of the following
+took the gate to `violations: []` at exit 0:
+
+- a second declaration of `demo_app.store` under a new id, in
+  `layer.application`, with the module's edge naming that id; and the store
+  renamed `demo_app/store`, or `demo_app..store` beside an inert dotfile,
+  next to such a declaration. For these `nornyx check` reported exactly what
+  it reports for the unchanged copy;
+- a package beside the store importing `subprocess`, with the contract
+  unchanged: `src/demo_app/store/__init__.py`, the same as `__init__.pyw`,
+  as a sourceless `__init__.pyc`, or, on Windows, as `__Init__.py`; and the
+  store renamed `demo_app.Store` beside an empty `src/demo_app/Store/`
+  package and a second declaration; and compiled bytecode as an untagged
+  `src/demo_app/__pycache__/evil.pyc`, imported from the HTTP surface;
+- a second `module.persistence` in that layer, and a second
+  `layer.application` that may depend on `layer.infrastructure`
+  (`ARCH_DUPLICATE_ID`);
+- a second `layer` line in the store's own declaration, and that declaration
+  taking `layer.infrastructure` from a merge while stating
+  `layer.application` itself (`PARSE_ERROR`);
+- a second application layer whose id has a Cyrillic letter or a trailing
+  space, and a `may_depend_on` or `depends_on` written as one string, which
+  the permission rules read as a set of its characters
+  (`GOVERNANCE_BLOCK_SCHEMA_INVALID`);
+- a module in the undeclared layer `layer.applicatoin`, and a module in
+  layer `yes` beside a declared layer `on`, which YAML 1.1 reads as the same
+  `True` (`ARCH_REFERENCE_UNKNOWN`);
+- a declared `layer.application-2`, named "Application", holding a module
+  that imports `subprocess`, for which `nornyx check` reported nothing.
+
+A repeat placed before the statement it repeats was refused, but for the
+module's violation and not for the repeat, so moving the line was enough to
+pass. With both repeat refusals taken out of a copy of the checker, each of
+the five repeats passes again
+(`test_without_the_refusals_a_repeated_key_hides_the_violation`).
+
+**What it does NOT establish.**
+
+1. **The gate does not choose.** Two readings are refused, not reconciled,
+   so the contract or the tree has to be corrected before the gate passes.
+2. **Merges are the loader's.** A key a merge alone supplies is stated once
+   and accepted, as `nornyx check` accepts it. A key two merges both supply
+   is refused, and `nornyx check` refuses that shape too (`PARSE_ERROR`). No
+   contract in this repository uses a merge key, an anchor or an alias.
+3. **Keys compare as the loader builds them, which is not always as nornyx
+   reads them.** `1` and `0x1` are one key, and `nornyx check` refuses that
+   mapping too. `yes` and `on` are one key, `True` to YAML 1.1, so the gate
+   refuses a mapping holding both, while `nornyx check` reads two keys and
+   accepts it. `yes` and `'yes'` are two keys to the gate and one to
+   `nornyx check`; no key the gate reads is spelled either way. A bare
+   `yes`, `no`, `on`, `off`, `true` or `false` as an identifier is a boolean
+   to YAML 1.1 and is refused; `nornyx check` reads the first four as
+   strings. Quoting it is enough.
+4. **Not every shape `nornyx check` refuses is a two-way reading.** A layer
+   that lists itself in `may_depend_on`, a `depends_on` entry naming no
+   declared module (it only removes permission), a repeated entry in a list,
+   and a module with no `depends_on`, or a null one, still pass the gate,
+   which reads them as no permission. A module id or name that is not a
+   string ends the run with a traceback rather than a named violation, as
+   before; it fails closed. The other way round, a module file whose name is
+   not an identifier, such as `my-mod.py`, can no longer be declared, and a
+   package's `__init__` is still not read as a declared module; Python
+   imports the first only through `importlib`, and this repository has
+   neither. A Windows junction is refused through the reparse-point
+   attribute, which `test_a_link_under_the_source_tree_is_refused`
+   exercises only on a host that cannot make a symbolic link; elsewhere it
+   builds a symbolic link instead. Any other Windows reparse point under
+   `src`, such as a cloud placeholder, is refused as a link too.
+5. **The process rule is decided by layer.** Process capability is allowed
+   in two layers by id. Which layer a module belongs in is the contract's
+   statement; the gate does not judge it.
+6. **One contract, as this gate reads it.** Only
+   `.nornyx/contracts/architecture_governance.nyx` is covered, and only as
+   this gate reads it. The tests that read the contract themselves, such as
+   `test_no_declared_dependency_crosses_a_layer_its_own_layer_forbids`, still
+   build their own indexes and rely on the gate refusing first. What
+   `nornyx check` does was measured for the shapes named above, at 1.11.0,
+   and for nothing else.
+
+**Serves.** BRD-004's "Architecture separates API, application services,
+agentic flow, governance, persistence, and UI.", which the gate's
+dependency, layer and process rules check, by keeping its reading of the
+contract and of the source tree a single reading. No functional BRD
+requirement is implemented.

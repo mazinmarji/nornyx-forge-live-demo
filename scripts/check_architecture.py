@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
+import re
+import reprlib
 from pathlib import Path
 
 import yaml
@@ -378,10 +381,230 @@ FIRST_PARTY_PACKAGES = {
     entry.name for entry in SOURCE_ROOT.iterdir() if (entry / "__init__.py").exists()
 }
 
-architecture = yaml.safe_load(CONTRACT.read_text(encoding="utf-8")).get("architecture", {})
-declared_modules = {item["id"]: item for item in architecture.get("modules", [])}
-declared_layers = {item["id"]: item for item in architecture.get("layers", [])}
-module_by_name = {item["name"]: item for item in declared_modules.values()}
+#: How a value from the contract is quoted in a violation: bounded, because
+#: an anchored list can stand for millions of entries, and an unbounded
+#: `repr` once turned ten lines of YAML into a 522 MB report.
+_SHORT = reprlib.Repr()
+_SHORT.maxstring = _SHORT.maxother = 80
+_SHORT.maxlist = _SHORT.maxtuple = _SHORT.maxdict = _SHORT.maxset = 4
+_SHORT.maxlevel = 2
+
+
+def _short_text(value) -> str:
+    """A contract value as text, as it reads, cut to the same bound as a quote."""
+    text = value if isinstance(value, str) else _SHORT.repr(value)
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+class _ContractLoader(yaml.SafeLoader):
+    """`yaml.SafeLoader`, noting every key a mapping states twice.
+
+    YAML keeps one value of a key repeated inside one mapping and drops the
+    other without a word, so a declaration stating `layer` twice is one
+    statement to a reader and another to this gate. Measured on a copy of
+    this tree at c5fd23f: with a second line, `layer: layer.application`,
+    under the store's own `layer: layer.infrastructure`, an application
+    module importing the store passed this gate at exit 0 with
+    `violations: []`, while `nornyx check` refused the contract outright as
+    PARSE_ERROR. `_declared_once` below cannot see this: the repeat is gone
+    before any declaration reaches it.
+
+    THE LOADER'S OWN CONSTRUCTION, OBSERVED, NOT A COPY OF IT. This method
+    lets SafeConstructor build the mapping first, merges (`<<`), merge lists,
+    aliases and cycles included, and only then reads the keys the library
+    flattened and built, from its own cache. Earlier versions re-derived that
+    resolution in this file, and an in-session review found each wrong in a
+    shape the library gets right: flattening the one-pair mappings of an
+    `!!omap` that SafeLoader never flattens, recursing without end on a
+    mapping that merges itself, and building every key before the first
+    value, so that a document with two construction errors raised the later
+    one. Nothing here builds, changes or reorders anything, so the document
+    is the one `yaml.safe_load` returns, and so is every error it raises.
+
+    A key a merge supplies and the mapping also states, or that two merges
+    both supply, is a repeat here because the flattened mapping holds it
+    twice; `nornyx check` refuses the first as PARSE_ERROR, measured. Keys
+    compare as YAML constructs them, so `1` and `0x1` are one key, as they
+    are to the loader. A repeat is reported once at the place it is
+    written, however many merges copy it.
+    """
+
+    def __init__(self, stream) -> None:
+        super().__init__(stream)
+        self.repeats: set = set()
+
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        if isinstance(node, yaml.MappingNode):
+            # The base method has flattened the node and built every key, so
+            # each lookup below returns the object it built and raises nothing.
+            keys: set = set()
+            for key_node, _value_node in node.value:
+                key = self.constructed_objects[key_node]
+                if key in keys:
+                    mark = key_node.start_mark
+                    self.repeats.add((mark.line + 1, mark.column + 1, _SHORT.repr(key)))
+                keys.add(key)
+        return mapping
+
+
+def _load_contract(text: str):
+    """The contract exactly as `yaml.safe_load` reads it, refusing a key stated twice."""
+    loader = _ContractLoader(text)
+    try:
+        document = loader.get_single_data()
+    finally:
+        loader.dispose()
+    for line, column, key in sorted(loader.repeats):
+        violations.append(
+            f"the architecture contract states the key {key} more than once "
+            f"in one mapping (again at line {line}, column {column}); YAML "
+            "keeps one of the statements and drops the other without a word, "
+            "so the gate would check one while the file shows both"
+        )
+    return document
+
+architecture = _load_contract(CONTRACT.read_text(encoding="utf-8")).get("architecture", {})
+
+
+def _declared_once(section: str, kind: str, key: str) -> dict:
+    """The contract's `section`, indexed by `key`, refusing a key declared twice.
+
+    Every rule below looks a declaration up through one of three indexes, and
+    a dict built from a list keeps the LAST entry for a repeated key and drops
+    the others without a word. So a second declaration did not conflict with
+    the first; it replaced it, and the rules the first one stated were never
+    applied. Measured on a copy of this tree at c5fd23f: an application module
+    importing the infrastructure store is refused, exit 2. Declare
+    `demo_app.store` a second time, under a new id and in `layer.application`,
+    point the module's edge at the new id, and the gate reported
+    `violations: []` at exit 0 -- with `nornyx check` adding nothing to its
+    usual diagnostics, because it keys modules by id and the ids differ. A
+    second `module.persistence` in that layer, or a second `layer.application`
+    that may reach the infrastructure layer, did the same to this gate;
+    `nornyx check` reports those two as ARCH_DUPLICATE_ID, so there the gate
+    was also more permissive than the engine.
+
+    REFUSED, NOT RESOLVED. Keeping the first declaration rather than the last
+    would only change which of two contradictory statements wins, and moving
+    an entry would pick the other one again; neither is the contract. The
+    index still holds the last entry, as before, so every rule below runs and
+    reports as it did, and this refusal is what fails the gate.
+    """
+    index: dict = {}
+    repeated: dict = {}
+    for entry in architecture.get(section, []):
+        value = entry[key]
+        if value in index:
+            repeated[value] = repeated.get(value, 1) + 1
+        index[value] = entry
+    for value, count in repeated.items():
+        violations.append(
+            f"the architecture contract declares {kind} {key} {_short_text(value)} more than "
+            f"once ({count} declarations); the gate looks each {kind} up by its "
+            f"{key}, so it would apply only the last and ignore the others"
+        )
+    return index
+
+
+declared_modules = _declared_once("modules", "module", "id")
+declared_layers = _declared_once("layers", "layer", "id")
+# Read from the contract's list like the two above, not from
+# `declared_modules`: that index has already dropped an entry whose id
+# repeats, so that entry's name would never be read.
+module_by_name = _declared_once("modules", "module", "name")
+
+
+#: What nornyx's architecture schema accepts as an `identity`: a module id, a
+#: layer id, a module's layer, and each entry of `depends_on` and
+#: `may_depend_on`. A module's `name` is free text there, and is held below to
+#: the module as it is spelled on disk instead.
+_IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/-]*")
+
+
+def _identity_violation(what: str, value) -> str | None:
+    if isinstance(value, str) and len(value) <= 160 and _IDENTITY.fullmatch(value):
+        return None
+    return (
+        f"the architecture contract gives {what} as {_SHORT.repr(value)}, which "
+        "this gate does not read as an identifier in nornyx's syntax (a string of "
+        f"at most 160 characters matching {_IDENTITY.pattern}); it compares "
+        "identifiers exactly, so one it cannot read as the engine does is refused "
+        "rather than read another way. YAML 1.1 reads a bare yes, no, on, off, "
+        "true or false as a boolean, so such an identifier has to be quoted"
+    )
+
+
+def _list_violation(what: str, value) -> str | None:
+    if value is None or isinstance(value, list):
+        return None
+    return (
+        f"the architecture contract gives {what} as {_SHORT.repr(value)}, which is "
+        "not a list; read as a set it would be its characters, a list of one "
+        "identifier to anyone else"
+    )
+
+
+def _references_declared() -> None:
+    """Every identifier nornyx's schema checks, every list a list, every layer declared.
+
+    The gate compared identifiers as strings and never asked whether they were
+    identifiers at all, or whether a layer a module named existed. Measured
+    by an in-session review on a copy of this tree, each passing this gate at
+    exit 0 while `nornyx check` refused the contract: a second
+    `layer.application` spelled with a Cyrillic letter or a trailing space,
+    which may reach the infrastructure layer and holds a module importing the
+    store; a module in an undeclared layer (`layer.applicatoin`) importing
+    `subprocess`; a module in layer `yes` beside a declared layer `on`, which
+    YAML 1.1 reads as the same `True` while nornyx reads two strings; and a
+    `may_depend_on` or `depends_on` written as one string, which the
+    permission rules below read as a set of characters. Each is now refused,
+    and none of them needs this gate to read the contract the way nornyx
+    reads it: a value outside nornyx's syntax is refused, whatever it would
+    have meant.
+    """
+    for module in architecture.get("modules", []):
+        ident = module.get("id")
+        name = _SHORT.repr(ident)
+        depends_on = module.get("depends_on")
+        found = [
+            _identity_violation("a module id", ident),
+            _identity_violation(f"the layer of module {name}", module.get("layer")),
+            _list_violation(f"the depends_on of module {name}", depends_on),
+        ]
+        for entry in depends_on if isinstance(depends_on, list) else []:
+            found.append(
+                _identity_violation(f"an entry of module {name}'s depends_on", entry)
+            )
+        violations.extend(message for message in found if message)
+        layer = module.get("layer")
+        if _identity_violation("", layer) is None and layer not in declared_layers:
+            violations.append(
+                f"the architecture contract places module {name} in layer {layer}, "
+                "which no layer declares, so no layer's rules would apply to it"
+            )
+    for layer in architecture.get("layers", []):
+        ident = layer.get("id")
+        name = _SHORT.repr(ident)
+        may_depend_on = layer.get("may_depend_on")
+        found = [
+            _identity_violation("a layer id", ident),
+            _list_violation(f"the may_depend_on of layer {name}", may_depend_on),
+        ]
+        for entry in may_depend_on if isinstance(may_depend_on, list) else []:
+            message = _identity_violation(
+                f"an entry of layer {name}'s may_depend_on", entry
+            )
+            found.append(message)
+            if message is None and entry not in declared_layers:
+                violations.append(
+                    f"the architecture contract lets layer {name} depend on layer "
+                    f"{entry}, which no layer declares"
+                )
+        violations.extend(message for message in found if message)
+
+
+_references_declared()
 
 def _console_scripts_without_tomllib(path: Path) -> dict[str, str]:
     """Read `[project.scripts]` on Python 3.10, which has no `tomllib`.
@@ -447,12 +670,97 @@ def _console_entrypoints() -> set[str]:
 entrypoints = _console_entrypoints()
 
 
+#: Files Python's import system can load from a source directory, on some
+#: platform, that this gate cannot read as Python source: `.pyw` on Windows,
+#: sourceless bytecode on every platform, and native extensions.
+_UNREADABLE_MODULE_SUFFIXES = (".pyw", ".pyc", ".pyo", ".pyd", ".so")
+
+#: Windows' FILE_ATTRIBUTE_REPARSE_POINT: a junction, or a symbolic link.
+_REPARSE_POINT = 0x400
+
+
+def _is_link(path: Path) -> bool:
+    """A symbolic link, or a Windows junction, which `is_symlink` does not report."""
+    if path.is_symlink():
+        return True
+    return bool(getattr(os.lstat(path), "st_file_attributes", 0) & _REPARSE_POINT)
+
+
 def _discovered_modules() -> dict[str, Path]:
-    """Every first-party module that exists, which is what the gate must cover."""
+    """Every first-party module that exists, which is what the gate must cover.
+
+    ONE FILE PER NAME, OR A REFUSAL. `demo_app/store.py` and
+    `demo_app/store/__init__.py` are both `demo_app.store`, and the dict kept
+    whichever sorted last -- `store.py` -- while Python imports the package.
+    Measured by an in-session review: `src/demo_app/store/__init__.py` holding
+    `import subprocess` beside the real store passed this gate at exit 0 with
+    no contract edit, because the code that runs was never read. The same
+    review then measured the route around a rule that compared names exactly
+    and read only `*.py`: the package as `__init__.pyw`, or as a sourceless
+    `__init__.pyc`, or, on Windows, as `__Init__.py`, each passed at exit 0
+    and each is what Python imports. So names are compared ignoring case, an
+    `__init__` in any letter case is the package, and a file Python could
+    import but this gate cannot read is refused wherever it sits, except
+    interpreter-tagged bytecode in a `__pycache__` directory, which only
+    caches a source beside it. Anything else in such a directory is read
+    like any other file.
+
+    A LINK IS REFUSED, NOT FOLLOWED. The walk does not descend into a linked
+    directory, and Python imports through one: measured by an in-session
+    review, a package linked into `src/demo_app/linked` and imported from the
+    HTTP surface passed a version of this gate that read every module through
+    discovery, because the module was never discovered and the import was
+    taken for a non-module. (The gate before that version found the module
+    through the path the link gave it.) Any symbolic link or junction under
+    `src` is a violation, wherever it points.
+    """
     found: dict[str, Path] = {}
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
-        dotted = path.relative_to(SOURCE_ROOT).as_posix().removesuffix(".py").replace("/", ".")
-        found[dotted.removesuffix(".__init__")] = path
+    seen: dict[str, Path] = {}
+    for path in sorted(SOURCE_ROOT.rglob("*")):
+        relative = path.relative_to(SOURCE_ROOT)
+        if _is_link(path):
+            violations.append(
+                f"{path.relative_to(ROOT).as_posix()} is a link; Python imports "
+                "through it and this gate does not follow it, so a source tree "
+                "holds no links"
+            )
+            continue
+        if not path.is_file():
+            continue
+        # Bytecode the interpreter caches carries its tag in the name
+        # (`store.cpython-313.pyc`), which no import can name, so it only
+        # caches a source beside it. Anything else in a cache directory is
+        # read like any other file: `__pycache__` is an identifier, so a `.py`
+        # there is importable as `demo_app.__pycache__.name`, and so is an
+        # untagged `name.pyc`, as a sourceless module -- measured by an
+        # in-session review, which this gate let through before this change.
+        if (
+            "__pycache__" in relative.parts
+            and path.suffix in (".pyc", ".pyo")
+            and "." in path.stem
+        ):
+            continue
+        if path.name.endswith(_UNREADABLE_MODULE_SUFFIXES):
+            violations.append(
+                f"{path.relative_to(ROOT).as_posix()} is a module Python can import "
+                "that this gate cannot read as source, so the code it runs would "
+                "never be checked"
+            )
+            continue
+        if path.suffix != ".py":
+            continue
+        parts = list(relative.with_suffix("").parts)
+        if parts[-1].casefold() == "__init__":
+            parts = parts[:-1]
+        dotted = ".".join(parts)
+        if dotted.casefold() in seen:
+            violations.append(
+                f"{seen[dotted.casefold()].relative_to(ROOT).as_posix()} and "
+                f"{path.relative_to(ROOT).as_posix()} are both the module {dotted}; "
+                "Python imports one of them and the gate would read the other"
+            )
+        seen[dotted.casefold()] = path
+        found[dotted] = path
     return found
 
 
@@ -488,6 +796,24 @@ INERT_DUNDERS = frozenset({"__all__", "__version__", "__author__", "__doc__"})
 
 # --- constraint.architecture_coverage ---
 discovered = _discovered_modules()
+
+
+def _source_of(dotted) -> Path | None:
+    """The one file the gate reads for a module name, or None.
+
+    ONE LOOKUP. The rules below found a module's file by turning its name into
+    a path, and the name rule compared the name with discovery: two lookups,
+    which an in-session review measured disagreeing on Windows, where the path
+    lookup is case-insensitive -- an empty `Store/` package made
+    `demo_app.Store` a discovered name, and the gate then read `store.py` for
+    it. Now the file is the one discovery found under exactly that name. A
+    package's `__init__` is not read as a declared module, as before: the
+    dependency scan resolves relative imports for a module, not a package.
+    """
+    path = discovered.get(dotted) if isinstance(dotted, str) else None
+    if path is None or path.stem.casefold() == "__init__":
+        return None
+    return path
 for dotted, path in sorted(discovered.items()):
     if dotted in module_by_name or _is_inert_package_init(path):
         continue
@@ -497,12 +823,44 @@ for dotted, path in sorted(discovered.items()):
         "model is not exempt from the gate, it is unreviewed"
     )
 
+# --- every declared name is a module's dotted name, as it is spelled on disk ---
+#
+# The gate finds a module's file from its name, and `demo_app/store`,
+# `demo_app//store` and `demo_app./store` -- and on Windows `demo_app.Store` and
+# `demo_app\store` -- all reach src/demo_app/store.py. So one module could be
+# declared twice under two spellings, which the repeated-name refusal compares
+# as strings and cannot see: measured by an in-session review, the store
+# renamed `demo_app/store` in its own layer beside a second declaration
+# `demo_app.store` in the application layer passed this gate at exit 0, and
+# `nornyx check`, whose schema leaves a module's name free text, reported
+# nothing. Being in `discovered` is not enough on its own: an inert
+# `src/demo_app/.store.py` is discovered as `demo_app..store`, which the same
+# path lookup also takes to store.py. So a name is accepted only when every
+# part is a Python identifier, which is what an import can name, and it is
+# the spelling discovery produced.
+for module in declared_modules.values():
+    name = module.get("name")
+    if not (
+        isinstance(name, str)
+        and all(part.isidentifier() for part in name.split("."))
+        and name in discovered
+    ):
+        violations.append(
+            f"the architecture contract declares module {_SHORT.repr(module.get('id'))} "
+            f"with the name {_SHORT.repr(name)}, which is not a first-party module's "
+            "dotted name as spelled on disk; another spelling of a module's name "
+            "would declare that module a second time, under a name no import uses"
+        )
+
 # --- constraint.declared_dependencies_only and constraint.layer_direction ---
 for module_id, module in sorted(declared_modules.items()):
     dotted = module["name"]
-    path = _module_path(dotted)
-    if not path.exists():
-        violations.append(f"declared module {module_id} has no source file at {path.relative_to(ROOT)}")
+    path = _source_of(dotted)
+    if path is None:
+        violations.append(
+            f"declared module {module_id} has no source file at "
+            f"{_module_path(dotted).relative_to(ROOT)}"
+        )
         continue
     relative = str(path.relative_to(ROOT)).replace("\\", "/")
 
@@ -542,7 +900,7 @@ for module_id, module in sorted(declared_modules.items()):
             if (
                 imported.split(".")[0] in FIRST_PARTY_PACKAGES
                 and imported != dotted
-                and _module_path(imported).exists()
+                and _source_of(imported) is not None
             ):
                 violations.append(
                     f"{relative} imports first-party module {imported}, "
@@ -649,7 +1007,14 @@ for relative, banned in forbidden.items():
 # A domain process-execution prohibition, not a general purity rule: domain
 # modules here still legitimately open files and SQLite. What none of them may
 # do is start a process, and the previous set let one do so unremarked.
-DELEGATING_LAYERS = {"layer.interface", "layer.application", "layer.domain"}
+#
+# AN ALLOWLIST OF THE LAYERS THAT MAY START A PROCESS, not a list of those
+# that may not. The denylist this replaced named three layers, so any other
+# layer escaped the rule: measured by an in-session review, a declared
+# `layer.application-2` named "Application", holding a module that imports
+# and runs `subprocess`, passed this gate at exit 0 and `nornyx check` said
+# nothing. Every layer not named here delegates, including one added later.
+EXECUTING_LAYERS = {"layer.adapter", "layer.infrastructure"}
 # The PROCESS_MODULES / PROCESS_FUNCTIONS / PROCESS_CALL_OWNERS /
 # PROCESS_CALLS constants were REMOVED here. They were defined, carried
 # comments that read as live rules, and were loaded by nothing -- verified by
@@ -1166,10 +1531,10 @@ def _inherited_capability(path: Path, relative: str, dotted: str) -> set[str]:
 
 
 for module in declared_modules.values():
-    if module.get("layer") not in DELEGATING_LAYERS:
+    if module.get("layer") in EXECUTING_LAYERS:
         continue
-    path = _module_path(module["name"])
-    if not path.exists():
+    path = _source_of(module["name"])
+    if path is None:
         continue
     relative = str(path.relative_to(ROOT)).replace("\\", "/")
     for marker in sorted(_process_capability_markers(path, relative)):
@@ -1251,6 +1616,8 @@ result = {
         "api_command_isolation",
         "governed_action_boundary",
         "persistence_isolation",
+        "unique_declarations",
+        "declared_identifiers_and_names",
     ],
     "declared_modules": sorted(declared_modules),
     "covered_modules": sorted(discovered),
