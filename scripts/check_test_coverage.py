@@ -525,6 +525,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # removal no test sees is possible for any guard those runs did not
     # remove). 167 collected at introduction, floor at band(167) = 151.
     "tests/test_windows_payload.py": 151,
+    # The architecture change record, derived from the architecture
+    # contract's changes: entries: the derivation over synthetic contracts
+    # with one named refusal per malformed shape, the vocabulary and the YAML
+    # loader against the installed Nornyx, the committed contract entry, its
+    # separation-of-duties assignment and the record, verification of every
+    # key, derived claim and the canonical form, and the tool end to end in a
+    # copy of the repository. 252 collected at introduction, floor at
+    # band(252) = 227.
+    "tests/test_architecture_change_record.py": 227,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -1089,7 +1098,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     "tests/test_approval_injection.py": 11,
     "tests/test_materialization_injection.py": 18,
     "tests/test_expiry_semantics.py": 8,
-    "tests/test_pre_approval_baseline.py": 6,
+    "tests/test_pre_approval_baseline.py": 36,
     "tests/test_action_binding.py": 35,
     "tests/test_untrusted_text.py": 65,
     "tests/test_subject_completeness.py": 9,
@@ -1885,6 +1894,29 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # ADDED where the census runs: the decoding module is skipped on Windows only,
 # and the rehearsal module keeps its one skip off Linux.
 #
+# THE ARCHITECTURE CHANGE RECORD ADDS ONE MODULE AND MOVES ONE.
+# tests/test_architecture_change_record.py is new at 252 collected, floor
+# band(252) = 227: the record derived from the architecture contract's
+# changes: entries, one named refusal per malformed shape, the vocabulary
+# and the YAML loader against the installed Nornyx, the committed entry, its
+# separation-of-duties assignment and the record, verification of every key,
+# derived claim and the canonical form, and the tool end to end in a copy of
+# the repository. THE MODULE THAT MOVES is
+# tests/test_pre_approval_baseline.py, 6 -> 40 (floor band(6) = 6 ->
+# band(40) = 36): the pre-approval gate now accepts the two inspection
+# diagnostics by what the contract shows missing rather than by position,
+# and its cases run against synthetic contracts, with its restatements of
+# Nornyx's evidence rules compared against Nornyx. EVERY OTHER MODULE IS
+# UNMOVED, measured by a fresh collection of this tree as a normal user:
+# 5008 across 130 modules, the 4722 across 129 recorded below with the gate
+# module's 34 more, plus the new module's 252. The module-floor sum rises by
+# 257 to 4569 and the aggregate follows to 4577, keeping the same 8 above
+# it; band(n) 4250 -> 4508, and the working room below the floor 402 -> 431.
+# THE SLACK THE BANDS GRANT moves 410 -> 439: the new module sits 25 above
+# its band and the gate module 4 above its own. NO SKIP IS ADDED.
+# The paragraph below records the payload module's introduction; its rows
+# are superseded by these.
+#
 # THE DETERMINISTIC WINDOWS PAYLOAD ADDS ONE MODULE AND MOVES NONE.
 # tests/test_windows_payload.py is new at 167 collected, floor band(167) =
 # 151: the payload verifier over synthetic folders, one named refusal per
@@ -1903,12 +1935,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     4722   (129 modules)
-#     sum of the module floors    4312
-#     band(4722) = ceil(0.9*n)    4250
-#     MINIMUM_COLLECTED           4320
+#     collected across tests/     5008   (130 modules)
+#     sum of the module floors    4569
+#     band(5008) = ceil(0.9*n)    4508
+#     MINIMUM_COLLECTED           4577
 #     above the module sum          8
-#     below what collects         402
+#     below what collects         431
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2130,7 +2162,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 410 in total, and the aggregate refuses
+# per-module bands already grant 439 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2399,7 +2431,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4320
+MINIMUM_COLLECTED = 4577
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2516,6 +2548,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
     "tests/test_windows_payload.py",
+    "tests/test_architecture_change_record.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",
     "tests/test_control_plane_authority.py",

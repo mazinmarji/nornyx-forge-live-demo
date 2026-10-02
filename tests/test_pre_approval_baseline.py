@@ -214,3 +214,366 @@ def test_baseline_fails_on_a_non_approval_defect(tmp_path: Path):
         item for entry in report["contracts"] for item in entry["unexpected_diagnostics"]
     ]
     assert offending, report
+
+
+# ---------------------------------------------------------------------------
+# Accepted by what is missing, not by position
+# ---------------------------------------------------------------------------
+#
+# The two diagnostics that stand on the absent authenticated inspection are
+# accepted at any change entry or separation-of-duties assignment, and only
+# when the contract shows that what they report missing is exactly what an
+# external authority has not yet produced. The checker is replaced by a fake
+# that prints the diagnostics under test; the contract is a synthetic one the
+# gate reads from a temporary root.
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import check_pre_approval_baseline as gate  # noqa: E402
+
+CHANGE_MISSING = ("CHANGE_EVIDENCE_MISSING", "change_control.v1")
+PRODUCER_UNKNOWN = ("SOD_EVIDENCE_PRODUCER_UNKNOWN", "separation_of_duties.v1")
+INSPECTORS = "tool:in_session_inspectors"
+
+
+def _record(record_id, record_type, status, producer, tool=None, dependencies=()):
+    kind, name = producer.split(":", 1)
+    record = {"id": record_id, "type": record_type, "status": status,
+              "producer": {"id": producer, "type": kind},
+              "dependencies": list(dependencies)}
+    if tool:
+        record["tool"] = {"name": tool, "version": "0.0.0"}
+    return record
+
+
+def _gate_contract(*, conformance_status="pass") -> dict:
+    """Two changes, each naming the approval that requires the review record,
+    and an assignment for each, as in the architecture contract."""
+    def change(change_id):
+        return {"id": change_id, "type": "architecture_change", "status": "proposed",
+                "required_evidence": ["architecture_conformance_report",
+                                      "independent_review_record"],
+                "transition": {"from": "draft", "to": "proposed",
+                               "evidence": ["architecture_conformance_report"]},
+                "approval_ids": ["ArchitectureAuthority"]}
+
+    def assignment(change_id):
+        return {"subject": change_id,
+                "evidence_producers": ["tool:check_architecture", INSPECTORS]}
+
+    return {
+        "governance_evidence": {"records": [
+            _record("architecture_conformance_report", "architecture_evidence",
+                    conformance_status, "tool:check_architecture", tool="check_architecture"),
+            _record("independent_review_record", "independent_review_record", "observed",
+                    INSPECTORS, tool="in_session_inspectors"),
+            _record("approval_record", "approval_record", "observed",
+                    "system:autonomous_demonstration"),
+            _record("change_record", "change_record", "pass", "tool:forge_gates",
+                    tool="forge_gates", dependencies=["architecture_conformance_report"]),
+            _record("unrelated_report", "unrelated_report", "pass", "tool:other_tool",
+                    tool="other_tool"),
+        ]},
+        "approvals": [{"name": "ArchitectureAuthority",
+                       "required_evidence": ["architecture_conformance_report",
+                                             "independent_review_record",
+                                             "approval_record"]}],
+        "changes": [change("change.zero"), change("change.one")],
+        "separation_of_duties": {"assignments": [assignment("change.zero"),
+                                                 assignment("change.one")]},
+    }
+
+
+def _gate_check(monkeypatch, tmp_path, document, *diagnostics, contract_bytes=None):
+    contract = tmp_path / "contract.nyx"
+    if contract_bytes is None:
+        contract.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    else:
+        contract.write_bytes(contract_bytes)
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    stdout = "\n".join(json.dumps({"level": "error", "code": code, "path": path,
+                                    "source_id": source, "message": "not read"})
+                       for code, path, source in diagnostics)
+    monkeypatch.setattr(gate.subprocess, "run",
+                        lambda command, **_kwargs: subprocess.CompletedProcess(
+                            command, 1, stdout, ""))
+    return gate._check("contract.nyx", "nornyx")
+
+
+def _change_missing(index):
+    return CHANGE_MISSING[0], f"changes[{index}].required_evidence", CHANGE_MISSING[1]
+
+
+def _producer_unknown(index):
+    return (PRODUCER_UNKNOWN[0], f"separation_of_duties.assignments[{index}].evidence_producers",
+            PRODUCER_UNKNOWN[1])
+
+
+def _accepted(result) -> bool:
+    return result["approval_blocked"] is True and result["unexpected_diagnostics"] == []
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_review_evidence_missing_at_any_change_entry_is_accepted(monkeypatch, tmp_path, index):
+    """An honest declaration of the review evidence the entry's approval
+    requires, at the first entry or a later one: the only missing item is the
+    record an authenticated inspection produces."""
+    result = _gate_check(monkeypatch, tmp_path, _gate_contract(), _change_missing(index))
+    assert _accepted(result), result
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_a_missing_decision_record_is_refused_at_any_change_entry(monkeypatch, tmp_path, index):
+    """The first entry is held to the same rule: a missing architecture
+    decision record is not the absence of an external authority."""
+    document = _gate_contract()
+    document["changes"][index]["required_evidence"].append("architecture_decision_record")
+    result = _gate_check(monkeypatch, tmp_path, document, _change_missing(index))
+    assert result["approval_blocked"] is False
+    assert [item["path"] for item in result["unexpected_diagnostics"]] == [
+        f"changes[{index}].required_evidence"]
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_a_failing_conformance_report_is_refused_at_any_change_entry(monkeypatch, tmp_path,
+                                                                    index):
+    result = _gate_check(monkeypatch, tmp_path, _gate_contract(conformance_status="fail"),
+                         _change_missing(index))
+    assert result["approval_blocked"] is False
+    assert result["unexpected_diagnostics"]
+
+
+def test_evidence_unusable_through_a_dependency_is_refused(monkeypatch, tmp_path):
+    """The change record is `pass`, but rests on a failing conformance report,
+    so it is not usable: missing, and not an external authority's."""
+    document = _gate_contract(conformance_status="fail")
+    document["changes"][1]["required_evidence"] = ["change_record",
+                                                   "independent_review_record"]
+    result = _gate_check(monkeypatch, tmp_path, document, _change_missing(1))
+    assert result["approval_blocked"] is False
+
+
+def test_a_change_missing_nothing_is_not_explained(monkeypatch, tmp_path):
+    """The contract shows nothing missing at the entry, yet the checker says
+    something is: the gate cannot account for it, so it is refused."""
+    document = _gate_contract()
+    document["changes"][1]["required_evidence"] = ["architecture_conformance_report"]
+    result = _gate_check(monkeypatch, tmp_path, document, _change_missing(1))
+    assert result["approval_blocked"] is False
+
+
+@pytest.mark.parametrize("diagnostic", [
+    _change_missing(7),
+    (CHANGE_MISSING[0], "changes[1].required_evidence.extra", CHANGE_MISSING[1]),
+    (CHANGE_MISSING[0], "changes[x].required_evidence", CHANGE_MISSING[1]),
+    (CHANGE_MISSING[0], "changes[1].required_evidence", "some_other_module.v1"),
+    (CHANGE_MISSING[0], "changes[1].closure_evidence", CHANGE_MISSING[1]),
+    _producer_unknown(7),
+    (PRODUCER_UNKNOWN[0], "separation_of_duties.assignments[1].approvers", PRODUCER_UNKNOWN[1]),
+], ids=["change-index-out-of-range", "change-path-suffix", "change-index-not-a-number",
+        "change-other-source", "change-other-field", "assignment-index-out-of-range",
+        "assignment-other-field"])
+def test_a_diagnostic_the_rule_does_not_describe_is_refused(monkeypatch, tmp_path, diagnostic):
+    result = _gate_check(monkeypatch, tmp_path, _gate_contract(), diagnostic)
+    assert result["approval_blocked"] is False
+
+
+def test_a_change_entry_that_is_not_a_mapping_is_refused(monkeypatch, tmp_path):
+    document = _gate_contract()
+    document["changes"][1] = "change.one"
+    result = _gate_check(monkeypatch, tmp_path, document, _change_missing(1))
+    assert result["approval_blocked"] is False
+
+
+def test_a_contract_the_gate_cannot_read_accepts_nothing_by_index(monkeypatch, tmp_path):
+    result = _gate_check(monkeypatch, tmp_path, None, _change_missing(0),
+                         contract_bytes=b"changes: [unclosed\n")
+    assert result["approval_blocked"] is False
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_the_review_record_s_producer_at_any_assignment_is_accepted(monkeypatch, tmp_path,
+                                                                    index):
+    result = _gate_check(monkeypatch, tmp_path, _gate_contract(), _producer_unknown(index))
+    assert _accepted(result), result
+
+
+@pytest.mark.parametrize("producer", ["tool:unknown_tool", "tool:other_tool"],
+                         ids=["unknown-producer", "producer-of-uncited-evidence"])
+def test_another_unlinked_producer_is_refused(monkeypatch, tmp_path, producer):
+    """A producer no record accounts for, or the producer of evidence the
+    change does not cite, is not an external authority's absence."""
+    document = _gate_contract()
+    document["separation_of_duties"]["assignments"][1]["evidence_producers"].append(producer)
+    result = _gate_check(monkeypatch, tmp_path, document, _producer_unknown(1))
+    assert result["approval_blocked"] is False
+
+
+@pytest.mark.parametrize("subject", ["change.missing", "change.one"], ids=["no-such-change",
+                                                                          "two-such-changes"])
+def test_an_assignment_whose_change_cannot_be_found_once_is_refused(monkeypatch, tmp_path,
+                                                                   subject):
+    document = _gate_contract()
+    document["separation_of_duties"]["assignments"][1]["subject"] = subject
+    if subject == "change.one":
+        document["changes"][0]["id"] = "change.one"
+    result = _gate_check(monkeypatch, tmp_path, document, _producer_unknown(1))
+    assert result["approval_blocked"] is False
+
+
+def test_the_message_is_not_what_decides(monkeypatch, tmp_path):
+    """The same diagnostic is accepted or refused by the contract alone."""
+    honest = _gate_check(monkeypatch, tmp_path, _gate_contract(), _change_missing(1))
+    document = _gate_contract()
+    document["changes"][1]["required_evidence"].append("architecture_decision_record")
+    other = tmp_path / "other"
+    other.mkdir()
+    refused = _gate_check(monkeypatch, other, document, _change_missing(1))
+    assert _accepted(honest) and refused["approval_blocked"] is False
+
+
+def _committed(name: str) -> dict:
+    return yaml.safe_load((ROOT / ".nornyx/contracts" / name).read_text(encoding="utf-8"))
+
+
+def test_the_external_authority_types_are_the_contract_s_own():
+    """The constant is Nornyx's approval evidence type and the review record
+    the evidence generator derives the change record's review clause from;
+    each names exactly one record of the architecture contract, and the
+    approval that contract declares requires both. A rename in any of the
+    three fails here rather than silently narrowing or widening the gate."""
+    from nornyx.governance.structural import APPROVAL_EVIDENCE_TYPE  # noqa: PLC0415
+    from refresh_governance_evidence import REVIEW_RECORD_EVIDENCE_ID  # noqa: PLC0415
+
+    assert gate.EXTERNAL_AUTHORITY_EVIDENCE_TYPES == {APPROVAL_EVIDENCE_TYPE,
+                                                     REVIEW_RECORD_EVIDENCE_ID}
+    document = _committed("architecture_governance.nyx")
+    records = document["governance_evidence"]["records"]
+    [authority] = [item for item in document["approvals"]
+                   if item["name"] == "ArchitectureAuthority"]
+    for evidence_type in gate.EXTERNAL_AUTHORITY_EVIDENCE_TYPES:
+        [record] = [item for item in records if item.get("type") == evidence_type]
+        assert record["id"] in authority["required_evidence"]
+
+
+def _variants() -> list[dict]:
+    base = _gate_contract()
+    duplicate = _gate_contract()
+    duplicate["governance_evidence"]["records"].append(
+        dict(duplicate["governance_evidence"]["records"][0]))
+    broken_dependency = _gate_contract()
+    broken_dependency["governance_evidence"]["records"][3]["dependencies"] = ["nowhere"]
+    cycle = _gate_contract()
+    cycle["governance_evidence"]["records"][3]["dependencies"] = ["unrelated_report"]
+    cycle["governance_evidence"]["records"][4]["dependencies"] = ["change_record"]
+    null_dependencies = _gate_contract()
+    null_dependencies["governance_evidence"]["records"][4]["dependencies"] = None
+    return [base, _gate_contract(conformance_status="fail"), duplicate, broken_dependency,
+            cycle, null_dependencies, _committed("architecture_governance.nyx"),
+            _committed("runtime_network.nyx")]
+
+
+def test_usable_evidence_is_what_nornyx_counts():
+    """The gate restates Nornyx's rule for usable evidence; on every shape here
+    the two agree, so a Nornyx change that moves it fails this test."""
+    from nornyx.governance.structural import _usable_evidence_records  # noqa: PLC0415
+
+    for document in _variants():
+        ours = sorted(record["id"] for record in gate._usable_records(document))
+        theirs = sorted(record["id"] for record in _usable_evidence_records(document))
+        assert ours == theirs
+
+
+def test_producer_aliases_are_what_nornyx_forms():
+    from nornyx.governance.structural import _producer_actor_aliases  # noqa: PLC0415
+
+    people = {"id": "human.alice", "type": "human", "producer": {"id": "human.alice",
+                                                                 "type": "Human"}}
+    for document in _variants():
+        for record in gate._records(document) + [people]:
+            assert gate._producer_aliases(record) == _producer_actor_aliases(record), record
+
+
+# ---------------------------------------------------------------------------
+# Only a gap the external authority alone can close
+# ---------------------------------------------------------------------------
+#
+# A missing record of an external type is accepted only when that authority
+# acting would make it usable without a repository edit: the change cites it,
+# its id is its own, and what it depends on is usable or such a record in turn.
+
+
+def _cited_by_id(document: dict) -> dict:
+    """The review record renamed, and every citation of it by that name: the
+    change and its approval cite the record by id, not by its type."""
+    for record in document["governance_evidence"]["records"]:
+        if record["id"] == "independent_review_record":
+            record["id"] = "architecture_review_record"
+    for holder in [*document["changes"], *document["approvals"]]:
+        holder["required_evidence"] = [
+            "architecture_review_record" if item == "independent_review_record" else item
+            for item in holder["required_evidence"]]
+    return document
+
+
+@pytest.mark.parametrize("cited", [False, True], ids=["uncited", "cited"])
+def test_only_the_producer_of_a_cited_external_record_is_accepted(monkeypatch, tmp_path,
+                                                                  cited):
+    """The assignment also lists the producer of a second review record. Unless
+    the change cites it, authenticating that record would not link the
+    producer: broken wiring, not an absence, and refused. Cited, it is the same
+    gap as the first record's, and accepted."""
+    document = _cited_by_id(_gate_contract())
+    document["governance_evidence"]["records"].append(
+        _record("release_review_record", "independent_review_record", "observed",
+                "tool:release_inspectors", tool="release_inspectors"))
+    document["separation_of_duties"]["assignments"][1]["evidence_producers"].append(
+        "tool:release_inspectors")
+    if cited:
+        document["changes"][1]["required_evidence"].append("release_review_record")
+    result = _gate_check(monkeypatch, tmp_path, document, _producer_unknown(1))
+    assert _accepted(result) is cited, result
+
+
+def _review_record(document: dict) -> dict:
+    [record] = [item for item in document["governance_evidence"]["records"]
+                if item["id"] == "independent_review_record"]
+    return record
+
+
+@pytest.mark.parametrize("diagnostic", [_change_missing(1), _producer_unknown(1)],
+                         ids=["change-evidence", "producer"])
+def test_an_external_record_resting_on_failing_evidence_is_refused(monkeypatch, tmp_path,
+                                                                   diagnostic):
+    """The review record depends on a failing report. Authenticating the review
+    would leave it unusable until that report is repaired."""
+    document = _gate_contract()
+    document["governance_evidence"]["records"].append(
+        _record("lint_report", "lint_report", "fail", "tool:linter", tool="linter"))
+    _review_record(document)["dependencies"] = ["lint_report"]
+    result = _gate_check(monkeypatch, tmp_path, document, diagnostic)
+    assert result["approval_blocked"] is False
+
+
+@pytest.mark.parametrize("diagnostic", [_change_missing(1), _producer_unknown(1)],
+                         ids=["change-evidence", "producer"])
+def test_an_external_record_whose_id_is_repeated_is_refused(monkeypatch, tmp_path,
+                                                           diagnostic):
+    """A second record holds the review record's id. Neither is usable while
+    the id repeats, whatever the review's outcome."""
+    document = _gate_contract()
+    document["governance_evidence"]["records"].append(
+        _record("independent_review_record", "architecture_evidence", "pass",
+                "tool:check_architecture", tool="check_architecture"))
+    result = _gate_check(monkeypatch, tmp_path, document, diagnostic)
+    assert result["approval_blocked"] is False
+
+
+def test_an_external_record_resting_on_another_external_record_is_accepted(monkeypatch,
+                                                                           tmp_path):
+    """The review record depends on the approval record, which only the same
+    kind of authority can make pass: both acting closes the gap, so it stays
+    accepted."""
+    document = _gate_contract()
+    _review_record(document)["dependencies"] = ["approval_record"]
+    result = _gate_check(monkeypatch, tmp_path, document, _change_missing(1))
+    assert _accepted(result), result

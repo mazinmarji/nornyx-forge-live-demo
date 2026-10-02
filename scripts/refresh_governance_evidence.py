@@ -440,7 +440,7 @@ def _iso(moment: datetime) -> str:
 
 def _write(path: Path, payload: dict) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+    raw = _canonical_bytes(payload)
     path.write_bytes(raw)
     return "sha256:" + hashlib.sha256(raw).hexdigest()
 
@@ -744,10 +744,346 @@ def _architecture_report() -> dict:
         raise SystemExit(f"architecture checker did not emit JSON: {exc}") from exc
 
 
+#: The contract whose declared changes the change record reports, and the
+#: record itself.
+ARCHITECTURE_CONTRACT = ".nornyx/contracts/architecture_governance.nyx"
+CHANGE_RECORD = "architecture_change_record.json"
+CHANGE_RECORD_SCHEMA = "nornyx.forge.change_record.v2"
+
+#: The nornyx.change.v1 vocabulary the record is derived in, restated because
+#: this tool does not import Nornyx. As defined by Nornyx 1.11.0, the version
+#: this repository pins:
+#:
+#: - the statuses are the `$defs.status` enum of
+#:   `nornyx/schemas/change_v1.schema.json`;
+#: - the impact scale is that schema's
+#:   `$defs.impacts.properties.architecture.enum`, which is also
+#:   `nornyx.governance.structural.ARCHITECTURE_IMPACTS`; the order, least to
+#:   most, is this record's;
+#: - the terminal statuses are those `nornyx.governance.structural.
+#:   CHANGE_TRANSITIONS` gives no transition out of: `closed` only.
+#:
+#: tests/test_architecture_change_record.py pins all three to the installed
+#: package, so a Nornyx upgrade that moves them fails there, not here. Values
+#: match exactly: a status or impact in another case, or with surrounding
+#: whitespace, is refused.
+CHANGE_STATUSES = frozenset({
+    "draft", "proposed", "approved", "in_progress", "completed", "closed",
+    "rejected", "rolled_back", "cancelled",
+})
+TERMINAL_CHANGE_STATUSES = frozenset({"closed"})
+ARCHITECTURE_IMPACT_ORDER = ("none", "minor", "major", "critical")
+
+#: The evidence id of the independent review record, which an approval the
+#: contract declares may require.
+REVIEW_RECORD_EVIDENCE_ID = "independent_review_record"
+
+#: How the two impacts are derived. Stated in every record, so a reader can
+#: check the values without reading this tool.
+ARCHITECTURE_IMPACT_RULE = (
+    "highest_declared_architecture_impact is the highest impacts.architecture "
+    "(none < minor < major < critical) over every changes: entry of the "
+    "architecture contract, whatever its status, and none when the contract "
+    "declares no entry. highest_open_declared_architecture_impact is the same "
+    "maximum over the entries whose status is not terminal; terminal means that "
+    "Nornyx's change lifecycle has no transition out of the status, which is true "
+    "of closed only. Both values describe the contract's register of declared "
+    "changes, not the impact of the commit that carries this record. Each "
+    "entry's status and impact are what its author declared; this record reports "
+    "them and verifies neither."
+)
+
+#: What the record cannot see, stated in the record rather than left to be
+#: inferred from what it omits.
+CHANGE_RECORD_LIMITATION = (
+    "This record reports the changes: entries of the architecture contract as "
+    "declared. It does not verify a declared status or impact: an entry may be "
+    "declared closed in the change that introduces it. The open value trusts each "
+    "entry's declared status, including a closure and the evidence it cites; this "
+    "record does not check closure evidence. It keeps no history: an entry removed "
+    "from the contract, or one whose declared impact is lowered, stops counting, so "
+    "both values can fall. It does not compare the declared architecture between "
+    "revisions, so it cannot detect an architecture change that no entry declares, "
+    "or a change declared in another contract. It does not check that the evidence "
+    "an entry's approval or separation-of-duties policy requires has been produced."
+)
+
+#: The provenance keys every artifact carries. With the schema and the derived
+#: claims they are the record's keys: `--verify` refuses any other key, and
+#: requires these to be present without comparing their values.
+CHANGE_RECORD_PROVENANCE_KEYS = frozenset({
+    "subject_revision", "generated_at", "governed_input_digest",
+})
+
+
+class ChangeRecordRefusal(SystemExit):
+    """The change record cannot be derived from the contract as it stands.
+
+    A `SystemExit`, so the tool stops with the message and no traceback.
+    `build()` raises it before writing anything; `--verify` reports it as a
+    named integrity problem."""
+
+
+class _ContractLoader(yaml.SafeLoader):
+    """`yaml.SafeLoader` that refuses a mapping repeating a key.
+
+    Nornyx parses contracts with `nornyx.parser.NornyxSafeLoader`, which
+    refuses duplicate keys; plain `yaml.safe_load` keeps the last one, so a
+    repeated `changes:` key would give this record and Nornyx two different
+    blocks. This mirrors Nornyx's duplicate-key refusal; Nornyx is not
+    imported, because it is only a demo dependency of this repository."""
+
+    def construct_mapping(self, node, deep=False):
+        self.flatten_mapping(node)
+        # A list, compared by equality, so an unhashable key reaches the base
+        # class's own named refusal rather than a TypeError here.
+        seen: list[object] = []
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping", node.start_mark,
+                    f"found duplicate key {key!r}", key_node.start_mark)
+            seen.append(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _refuse(problem: str) -> ChangeRecordRefusal:
+    return ChangeRecordRefusal(
+        f"{ARCHITECTURE_CONTRACT}: {problem}. The change record is derived from the "
+        "contract's changes: entries and is not written while they cannot be read."
+    )
+
+
+def _canonical_id(value: object) -> bool:
+    return isinstance(value, str) and bool(value) and value == value.strip()
+
+
+def _ids(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _highest(impacts: list[str]) -> str:
+    return max(impacts, key=ARCHITECTURE_IMPACT_ORDER.index, default="none")
+
+
+def _approvals_requiring_review(document: dict) -> frozenset[str]:
+    """The names of the contract's declared approvals whose required evidence
+    includes the independent review record. Only each approval's `name` and
+    `required_evidence` are read, and no regeneration rewrites either, so the
+    clause built on them does not move with one. An approval that declares no
+    `required_evidence` requires nothing."""
+    approvals = document.get("approvals", [])
+    if not isinstance(approvals, list):
+        raise _refuse(f"approvals is {type(approvals).__name__}, not a list of approvals")
+    names = set()
+    for index, approval in enumerate(approvals):
+        if not isinstance(approval, dict) or not _canonical_id(approval.get("name")):
+            raise _refuse(f"approvals[{index}] has no name")
+        required = approval.get("required_evidence", [])
+        if not _ids(required):
+            raise _refuse(f"approvals[{index}] ({approval['name']}) has required_evidence "
+                          "that is not a list of ids")
+        if REVIEW_RECORD_EVIDENCE_ID in required:
+            names.add(approval["name"])
+    return frozenset(names)
+
+
+def declared_change_record(document: object) -> dict:
+    """The change record's claims, derived from a parsed architecture contract:
+    its `changes:` block, and the `approvals:` its entries name. No revision, no
+    history and no clock reach them.
+
+    Every entry is listed, in declared order, with its id, type, status,
+    declared architecture impact and whole scope. A shape outside what this
+    record can read is refused with a `ChangeRecordRefusal` naming it, never
+    skipped, because a skipped entry would lower the derived impact."""
+    if not isinstance(document, dict):
+        raise _refuse("the contract is not a mapping")
+    changes = document.get("changes")
+    if changes is None:
+        raise _refuse("there is no changes: block")
+    if not isinstance(changes, list):
+        raise _refuse(f"changes is {type(changes).__name__}, not a list of change entries")
+    requiring_review = _approvals_requiring_review(document)
+    entries: list[dict] = []
+    review_gaps: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(changes):
+        where = f"changes[{index}]"
+        if not isinstance(raw, dict):
+            raise _refuse(f"{where} is {type(raw).__name__}, not a change entry")
+        change_id = raw.get("id")
+        if not _canonical_id(change_id):
+            raise _refuse(f"{where} has no id that is a non-empty string without "
+                          "surrounding whitespace")
+        if change_id in seen:
+            raise _refuse(f"{where} repeats the change id {change_id!r}")
+        seen.add(change_id)
+        named = f"{where} ({change_id})"
+        change_type = raw.get("type")
+        if not _canonical_id(change_type):
+            raise _refuse(f"{named} has no type that is a non-empty string without "
+                          "surrounding whitespace")
+        if "status" not in raw:
+            raise _refuse(f"{named} declares no status. nornyx.change.v1 does not "
+                          "require one, but this record cannot tell whether an entry "
+                          "without one is closed")
+        status = raw["status"]
+        if not isinstance(status, str) or status not in CHANGE_STATUSES:
+            raise _refuse(f"{named} has status {status!r}, which is not a "
+                          "nornyx.change.v1 status")
+        impacts = raw.get("impacts")
+        if not isinstance(impacts, dict) or "architecture" not in impacts:
+            raise _refuse(f"{named} declares no impacts.architecture")
+        impact = impacts["architecture"]
+        if not isinstance(impact, str) or impact not in ARCHITECTURE_IMPACT_ORDER:
+            raise _refuse(f"{named} declares architecture impact {impact!r}, which is "
+                          f"not one of {', '.join(ARCHITECTURE_IMPACT_ORDER)}")
+        scope = raw.get("scope", [])
+        if not _ids(scope):
+            raise _refuse(f"{named} has a scope that is not a list of ids")
+        approval_ids = raw.get("approval_ids", [])
+        if not _ids(approval_ids):
+            raise _refuse(f"{named} has approval_ids that are not a list of ids")
+        required = raw.get("required_evidence", [])
+        if not _ids(required):
+            raise _refuse(f"{named} has required_evidence that is not a list of ids")
+        naming = [name for name in approval_ids if name in requiring_review]
+        if naming:
+            listed = "lists" if REVIEW_RECORD_EVIDENCE_ID in required else "does not list"
+            review_gaps.append(f"{change_id} names {', '.join(naming)} and {listed} it "
+                               "among its own required evidence")
+        entries.append({"id": change_id, "type": change_type, "status": status,
+                        "architecture_impact": impact, "scope": list(scope)})
+
+    highest = _highest([entry["architecture_impact"] for entry in entries])
+    open_entries = [entry for entry in entries if entry["status"] not in TERMINAL_CHANGE_STATUSES]
+    highest_open = _highest([entry["architecture_impact"] for entry in open_entries])
+    if entries:
+        listed = "; ".join(f"{entry['id']} ({entry['status']}, architecture impact "
+                           f"{entry['architecture_impact']})" for entry in entries)
+        count = "1 change entry" if len(entries) == 1 else f"{len(entries)} change entries"
+        found = (f"The architecture contract declares {count}: {listed}. The highest "
+                 f"declared architecture impact is {highest}.")
+    else:
+        found = ("The architecture contract declares no change entries, so the highest "
+                 "declared architecture impact is none.")
+    if open_entries:
+        found += f" Among the entries that are not closed, it is {highest_open}."
+    else:
+        found += " No entry is open, so the highest open declared architecture impact is none."
+    statement = f"{found} {CHANGE_RECORD_LIMITATION}"
+    if review_gaps:
+        # Derived from the contract's declarations only: an entry that names
+        # no approval, or only approvals the contract does not declare, does
+        # not appear. Whether a passing review record exists is deliberately
+        # not read: that record is an outcome of the inspection, and this
+        # record is part of what the inspection covers, so reading it would
+        # move the subject the inspection is bound to.
+        statement += (f" Entries naming an approval that requires "
+                      f"{REVIEW_RECORD_EVIDENCE_ID}: {'; '.join(review_gaps)}. Whether a "
+                      f"passing {REVIEW_RECORD_EVIDENCE_ID} exists is not shown here.")
+    return {
+        "highest_declared_architecture_impact": highest,
+        "highest_open_declared_architecture_impact": highest_open,
+        "declared_changes": entries,
+        "impact_rule": ARCHITECTURE_IMPACT_RULE,
+        "statement": statement,
+    }
+
+
+def architecture_change_record() -> dict:
+    """The change record's claims for the architecture contract in this tree.
+
+    The contract's bytes go to the YAML parser as bytes, so no locale decides
+    how they are read, and the parser refuses a repeated key as Nornyx's does.
+    Any failure to parse or construct the document is refused by name."""
+    try:
+        raw = (ROOT / ARCHITECTURE_CONTRACT).read_bytes()
+    except FileNotFoundError:
+        raise _refuse("the contract is not present") from None
+    except OSError as exc:
+        raise _refuse(f"the contract cannot be read ({type(exc).__name__})") from None
+    try:
+        document = yaml.load(raw, Loader=_ContractLoader)  # noqa: S506 - a SafeLoader
+    except RecursionError:
+        raise _refuse("the contract nests too deeply to parse") from None
+    except Exception as exc:  # noqa: BLE001 - every way construction can fail
+        problem = getattr(exc, "problem", None) or str(exc)
+        raise _refuse(f"the contract is not parseable YAML ({type(exc).__name__}: "
+                      f"{problem})") from None
+    return declared_change_record(document)
+
+
+def _canonical_bytes(payload: dict) -> bytes:
+    """The bytes `_write` puts on disk for `payload`: one serialisation, so
+    `--verify` can compare a record with what the tool would write."""
+    return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    keys = [key for key, _ in pairs]
+    repeated = sorted({key for key in keys if keys.count(key) > 1})
+    if repeated:
+        raise ValueError(f"repeats the key(s) {', '.join(repeated)}")
+    return dict(pairs)
+
+
+def change_record_problems() -> list[str]:
+    """Re-derive the change record from the contract in this tree and compare
+    the record the evidence carries with what the tool would write: the same
+    keys, no repeated key, every derived claim equal, and the bytes in the
+    tool's canonical form. The provenance values must be present; this check
+    does not bind them. Empty when they agree; otherwise one named problem."""
+    try:
+        expected = {"schema": CHANGE_RECORD_SCHEMA, **architecture_change_record()}
+    except ChangeRecordRefusal as exc:
+        return [f"the change record cannot be re-derived: {exc}"]
+    path = EVIDENCE_DIR / CHANGE_RECORD
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return [f"{CHANGE_RECORD} is missing, so nothing records the declared "
+                "architecture impact"]
+    except OSError as exc:
+        return [f"{CHANGE_RECORD} cannot be read ({type(exc).__name__})"]
+    try:
+        recorded = json.loads(raw.decode("utf-8"), object_pairs_hook=_refuse_duplicate_keys)
+    except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+        return [f"{CHANGE_RECORD} is not readable JSON: {exc}"]
+    except RecursionError:
+        return [f"{CHANGE_RECORD} is nested too deeply to read"]
+    if not isinstance(recorded, dict):
+        return [f"{CHANGE_RECORD} is not a JSON object"]
+    allowed = set(expected) | CHANGE_RECORD_PROVENANCE_KEYS
+    reasons = []
+    unknown = sorted(set(recorded) - allowed)
+    if unknown:
+        reasons.append(f"keys the tool does not write: {', '.join(unknown)}")
+    missing = sorted(allowed - set(recorded))
+    if missing:
+        reasons.append(f"missing keys: {', '.join(missing)}")
+    differing = sorted(key for key, value in expected.items()
+                       if key in recorded and recorded[key] != value)
+    if differing:
+        reasons.append(f"differs from what the contract's changes: entries derive, at: "
+                       f"{', '.join(differing)}")
+    if not reasons and raw != _canonical_bytes(recorded):
+        reasons.append("is not in the form the tool writes")
+    if reasons:
+        return [f"{CHANGE_RECORD} {'; '.join(reasons)}. Regenerate the evidence; the "
+                "record is derived, not authored."]
+    return []
+
+
 def build(generated_at: datetime, window_days: int | None) -> dict:
     # Fails closed when an approval pins a revision other than HEAD, before any
     # artifact is written.
     revision = require_approval_matches_head() or _revision()
+    # Derived before anything is written: a contract whose changes: block
+    # cannot be read is refused by name, with every artifact left as it was.
+    change_record = architecture_change_record()
     generated = _iso(generated_at)
     # An honest finite window, measured from this run. Nornyx has no
     # non-expiring representation for machine evidence, so the baseline is kept
@@ -963,19 +1299,19 @@ def build(generated_at: datetime, window_days: int | None) -> dict:
         },
         status="pass",
     )
+    # DERIVED, never asserted: this record used to state "none" and
+    # "unchanged" as fixed text, whatever a change declared. It reports the
+    # architecture contract's declared changes, derived at the top of this
+    # function; `--verify` derives it again and compares every key, every
+    # derived claim and the canonical form with what this would write.
     emit(
         "architecture_change_record",
-        "architecture_change_record.json",
+        CHANGE_RECORD,
         {
-            "schema": "nornyx.forge.change_record.v1",
+            "schema": CHANGE_RECORD_SCHEMA,
             "subject_revision": revision,
             "generated_at": generated,
-            "architecture_impact": "none",
-            "statement": (
-                "Governance contracts were bound to the actual repository revision and "
-                "completed with required evidence. Declared components, layers, modules, "
-                "and dependency directions are unchanged."
-            ),
+            **change_record,
         },
         status="pass",
     )
@@ -2059,6 +2395,19 @@ def recompute_binding_claims() -> dict[str, str]:
 
 
 def verify_review_binding(binding: dict) -> list[str]:
+    """Every integrity-bearing claim, recomputed and compared; see
+    `_review_binding_claim_problems`. Recomputing reads the contracts and the
+    evidence, so this is one of the sites where `--verify` reads them: a file
+    that cannot be read or interpreted there is a named problem, not a
+    traceback."""
+    try:
+        return _review_binding_claim_problems(binding)
+    except UNREADABLE_CONTENT as exc:
+        return [_unreadable(
+            "recomputing the review binding's claims over the contracts and evidence", exc)]
+
+
+def _review_binding_claim_problems(binding: dict) -> list[str]:
     """Every integrity-bearing claim, recomputed and compared.
 
     Returns a problem per mismatch, each naming the field, what the binding
@@ -2546,6 +2895,55 @@ def _authenticated_inspections(subject_digest: str) -> tuple[dict, list[str]]:
     return accepted, problems
 
 
+#: What `--verify` reports by name, at the sites that call `_unreadable`,
+#: instead of raising: the classes YAML and JSON parsing and construction raise,
+#: and the subject observer's own error, which wraps a YAML or decoding error it
+#: meets. The catch is by class at those sites only. A shape or digest failure
+#: of the same classes there is reported the same way; the same classes raised
+#: anywhere else keep their traceback. Decoding errors, site by site: a raw
+#: UnicodeError at these sites is re-raised, because the tests prove this
+#: tool's controls for decoding git's answers by the traceback each one
+#: prevents, so a non-UTF-8 evidence index or review binding ends with a
+#: traceback; a contract the observer could not decode arrives wrapped, and is
+#: named; the evidence-file loop names an undecodable file itself; and
+#: `verify()`'s own read of each contract, outside these sites, ends with a
+#: traceback on a non-UTF-8 contract.
+UNREADABLE_CONTENT = (
+    GovernedContentError, RecursionError, yaml.YAMLError, ValueError, TypeError,
+    OverflowError, KeyError, IndexError, AttributeError,
+)
+
+
+def _unreadable(reading: str, exc: BaseException) -> str:
+    """The integrity problem for a failure of one of `UNREADABLE_CONTENT`'s
+    classes at one of `--verify`'s sites, naming the site and the cause: a file
+    that could not be parsed or constructed, or a shape or digest failure of
+    the same classes there. A raw decoding error is re-raised, with its
+    traceback."""
+    if isinstance(exc, UnicodeError):
+        raise exc
+    cause = ("nested too deeply to read" if isinstance(exc, RecursionError)
+             else f"{type(exc).__name__}: {exc}")
+    return (f"a contract or an evidence file could not be read or interpreted while {reading} "
+            f"({cause}), so the evidence cannot be shown to describe this tree")
+
+
+def _read_review_binding(path: Path, state: dict) -> dict | None:
+    """The review binding as a JSON object, or None after recording why not."""
+    try:
+        binding = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, RecursionError) as exc:
+        problem = _unreadable("reading the review binding", exc)
+    else:
+        if isinstance(binding, dict):
+            return binding
+        problem = "the review binding is not a JSON object, so no claim can be recomputed"
+    state["evidence_manifest_match"] = False
+    state["governed_input_match"] = False
+    state["problems"].append(problem)
+    return None
+
+
 def derive_assurance_state() -> dict:
     """Recompute the assurance position from artifacts, at verification time.
 
@@ -2618,7 +3016,7 @@ def derive_assurance_state() -> dict:
             continue
         try:
             payload = json.loads(location.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        except (OSError, ValueError, RecursionError):
             state["problems"].append(f"{location.name} is not readable JSON")
             continue
         if not isinstance(payload, dict):
@@ -2632,6 +3030,12 @@ def derive_assurance_state() -> dict:
                 f"tree digests to {observed}. It inspected different content; a "
                 "new inspection is required, not a new digest."
             )
+
+    # Derived from the architecture contract's changes: entries, so derived
+    # again here rather than trusted. A record that no longer says what the
+    # contract declares is an integrity problem even after every recorded
+    # digest has been rebound over it.
+    state["problems"].extend(change_record_problems())
 
     # The evidence set the review binding claims to cover.
     binding_path = EVIDENCE_DIR / "review_binding.json"
@@ -2656,8 +3060,7 @@ def derive_assurance_state() -> dict:
             "set claims to cover and no claim can be recomputed. Regenerate it "
             "with --review-binding; its absence is not a passing verification."
         )
-    else:
-        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+    elif (binding := _read_review_binding(binding_path, state)) is not None:
         current = digest_of(evidence_manifest(EVIDENCE_DIR, exclude=("review_binding.json",)))
         if binding.get("evidence_manifest_digest") != current:
             state["evidence_manifest_match"] = False
@@ -2690,7 +3093,11 @@ def derive_assurance_state() -> dict:
     # that artifact skips the check — the same defect as trusting it, reached
     # from the other direction. The subject is computed, the authenticated
     # inspections are gathered, and absence produces a refusal like any other.
-    state["inspection_subject_digest"] = current_inspection_subject()
+    try:
+        state["inspection_subject_digest"] = current_inspection_subject()
+    except UNREADABLE_CONTENT as exc:
+        state["inspection_subject_digest"] = None
+        state["problems"].append(_unreadable("computing the inspection subject", exc))
 
     # Independence is derived from authenticated identities, never read off the
     # artifact. `builder_self_approval: false` used to decide this: a builder
@@ -2702,9 +3109,15 @@ def derive_assurance_state() -> dict:
     # honestly-reported "not yet inspected" indistinguishable from a tampered
     # tree, and would fail --verify on a repository whose evidence is perfectly
     # intact. Two fields, two lists, neither standing in for the other.
-    authenticated, inspection_problems = _authenticated_inspections(
-        state["inspection_subject_digest"]
-    )
+    if state["inspection_subject_digest"] is None:
+        authenticated, inspection_problems = {}, [
+            "the inspection subject could not be computed, so no inspection can be "
+            "matched to it"
+        ]
+    else:
+        authenticated, inspection_problems = _authenticated_inspections(
+            state["inspection_subject_digest"]
+        )
     state["assurance_problems"] = list(inspection_problems)
 
     covered = {
@@ -2773,7 +3186,13 @@ def verify() -> list[str]:
     """Confirm every indexed artifact still hashes to its recorded value."""
     if not INDEX_PATH.exists():
         return ["evidence index is missing; run refresh_governance_evidence.py"]
-    index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    try:
+        index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    except (ValueError, RecursionError) as exc:
+        return [_unreadable("reading the evidence index", exc)]
+    if not isinstance(index, dict):
+        return ["the evidence index is not a JSON object, so no artifact can be checked "
+                "against it"]
     problems: list[str] = []
     # Content, not ancestry. The previous check asked whether the bound revision
     # was an *ancestor* of HEAD, which is a fact about history and not about
@@ -2853,6 +3272,8 @@ def verify() -> list[str]:
             _assert_single_managed_approval(name, declared)
         except SystemExit as exc:
             problems.append(str(exc))
+        except UNREADABLE_CONTENT as exc:
+            problems.append(_unreadable(f"counting the approval records in {name}", exc))
 
     for key, entry in index.get("entries", {}).items():
         path = EVIDENCE_DIR.parent / entry["artifact"]

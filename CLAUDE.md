@@ -54,6 +54,12 @@ The task is complete only when:
       EVIDENCE_REQUIRED_MISSING       CHANGE_EVIDENCE_MISSING
       SOD_EVIDENCE_PRODUCER_UNKNOWN
 
+  Where they are accepted is semantic, not positional: CHANGE_EVIDENCE_MISSING and
+  SOD_EVIDENCE_PRODUCER_UNKNOWN are accepted at any change entry or separation-of-duties
+  assignment only when everything missing there is an approval or authenticated-inspection
+  record (`EXTERNAL_AUTHORITY_EVIDENCE_TYPES` in the script); anything else missing at those
+  paths fails the criterion.
+
   FIVE, not three. This listed three and said any other diagnostic fails the
   criterion -- which, read literally, failed it at every head, because
   architecture_governance.nyx also emits CHANGE_EVIDENCE_MISSING and

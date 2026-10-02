@@ -39,10 +39,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_CONTRACTS = (
@@ -104,18 +107,262 @@ EXPECTED_PRE_APPROVAL_DIAGNOSTICS = frozenset(
         # independent inspection. They appeared the moment the contract stopped
         # claiming `pass` for an inspection nothing had signed, so they are not
         # a regression -- they are the state that stamp was concealing.
+        #
+        # ACCEPTED BY WHAT IS MISSING, NOT BY POSITION. These two read
+        # `changes[0]` and `assignments[0]`, which accepted ANY evidence missing
+        # at the first change entry -- an absent architecture decision record
+        # included -- and NO evidence missing at any later entry, so a second
+        # change could only pass by not declaring the review evidence its own
+        # approval requires. `[*]` stands for any index, and is reached only
+        # through `_acceptance_key`: the diagnostic is accepted when every item
+        # missing at that entry, or every producer the assignment declares that
+        # its change's evidence does not account for, belongs to a record that
+        # change cites and that an external authority alone can make usable
+        # (`EXTERNAL_AUTHORITY_EVIDENCE_TYPES`, see `_external_records`).
+        # Anything else missing there keeps its own index, matches nothing
+        # here, and fails the gate.
         (
             "CHANGE_EVIDENCE_MISSING",
-            "changes[0].required_evidence",
+            "changes[*].required_evidence",
             "change_control.v1",
         ),
         (
             "SOD_EVIDENCE_PRODUCER_UNKNOWN",
-            "separation_of_duties.assignments[0].evidence_producers",
+            "separation_of_duties.assignments[*].evidence_producers",
             "separation_of_duties.v1",
         ),
     }
 )
+
+
+#: The Nornyx evidence types whose records only an authority outside this
+#: repository can make pass: a human approval, and an authenticated independent
+#: inspection. One constant, the only place these are named;
+#: `tests/test_pre_approval_baseline.py` pins it to the governance contract,
+#: whose approval requires one record of each.
+EXTERNAL_AUTHORITY_EVIDENCE_TYPES = frozenset({"approval_record", "independent_review_record"})
+
+#: The diagnostics accepted at any index, and the path each is reported at.
+_INDEXED_PATHS = {
+    "CHANGE_EVIDENCE_MISSING": re.compile(r"changes\[(\d+)\]\.required_evidence"),
+    "SOD_EVIDENCE_PRODUCER_UNKNOWN": re.compile(
+        r"separation_of_duties\.assignments\[(\d+)\]\.evidence_producers"),
+}
+
+
+def _canonical(value: object) -> str | None:
+    if isinstance(value, str) and value and value == value.strip():
+        return value
+    return None
+
+
+def _strings(value: object) -> list[str]:
+    """The canonical strings in a list; anything else contributes nothing."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if _canonical(item) is not None]
+
+
+def _records(document: dict) -> list[dict]:
+    block = document.get("governance_evidence")
+    records = block.get("records") if isinstance(block, dict) else None
+    return [record for record in records or [] if isinstance(record, dict)]
+
+
+def _usable_records(document: dict) -> list[dict]:
+    """The records Nornyx counts as usable evidence: uniquely identified,
+    `pass`, with every dependency usable in turn. The same rule as
+    `nornyx.governance.structural._usable_evidence_records`, restated because
+    the checker is run as a program; `tests/test_pre_approval_baseline.py`
+    compares the two."""
+    by_id: dict[str, dict] = {}
+    duplicates: set[str] = set()
+    for record in _records(document):
+        identifier = _canonical(record.get("id"))
+        if identifier is None:
+            continue
+        if identifier in by_id:
+            duplicates.add(identifier)
+        else:
+            by_id[identifier] = record
+    for identifier in duplicates:
+        by_id.pop(identifier, None)
+    candidates: dict[str, list[str]] = {}
+    for identifier, record in by_id.items():
+        dependencies = record.get("dependencies")
+        if dependencies is None:
+            dependencies = []
+        if (record.get("status") != "pass" or not isinstance(dependencies, list)
+                or len(_strings(dependencies)) != len(dependencies)
+                or any(item not in by_id for item in dependencies)):
+            continue
+        candidates[identifier] = dependencies
+    usable: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for identifier, dependencies in candidates.items():
+            if identifier not in usable and set(dependencies) <= usable:
+                usable.add(identifier)
+                grew = True
+    return [by_id[identifier] for identifier in sorted(usable)]
+
+
+def _references(records: list[dict]) -> set[str]:
+    """What evidence citations resolve to: each record's id and its type."""
+    return {value for record in records
+            for value in (_canonical(record.get("id")), _canonical(record.get("type")))
+            if value is not None}
+
+
+def _producer_aliases(record: dict) -> set[str]:
+    """The names a record's producer can be declared by, as Nornyx's
+    `_producer_actor_aliases` forms them."""
+    producer = record.get("producer")
+    if not isinstance(producer, dict):
+        return set()
+    producer_id, kind = _canonical(producer.get("id")), _canonical(producer.get("type"))
+    if producer_id is None or kind is None:
+        return set()
+    kind = kind.casefold()
+    aliases = {producer_id, f"{kind}:{producer_id}"}
+    if kind == "human":
+        human = producer_id.split(".", 1)[1] if producer_id.casefold().startswith("human.") \
+            else producer_id
+        aliases.add(f"user:{human}")
+    tool = record.get("tool")
+    if kind == "tool" and isinstance(tool, dict) and _canonical(tool.get("name")) is not None:
+        aliases.update({tool["name"], f"tool:{tool['name']}"})
+    return aliases
+
+
+def _external_records(document: dict) -> list[dict]:
+    """The records whose absence an external authority alone can close: of an
+    external type, uniquely identified, and with every dependency usable
+    already or such a record in turn. A record of an external type that fails
+    any of these would stay unusable after that authority acted -- a repeated
+    id, or a dependency on failing evidence, needs a repository edit -- so
+    nothing missing on its account is accepted."""
+    usable = {record["id"] for record in _usable_records(document)}
+    counts: dict[str, int] = {}
+    for record in _records(document):
+        identifier = _canonical(record.get("id"))
+        if identifier is not None:
+            counts[identifier] = counts.get(identifier, 0) + 1
+    candidates: dict[str, tuple[dict, list[str]]] = {}
+    for record in _records(document):
+        identifier = _canonical(record.get("id"))
+        dependencies = record.get("dependencies")
+        if dependencies is None:
+            dependencies = []
+        if (identifier is None or counts[identifier] != 1
+                or record.get("type") not in EXTERNAL_AUTHORITY_EVIDENCE_TYPES
+                or not isinstance(dependencies, list)
+                or len(_strings(dependencies)) != len(dependencies)
+                or any(item not in counts for item in dependencies)):
+            continue
+        candidates[identifier] = (record, dependencies)
+    resolvable: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for identifier, (_record, dependencies) in candidates.items():
+            if identifier not in resolvable and set(dependencies) <= usable | resolvable:
+                resolvable.add(identifier)
+                grew = True
+    return [candidates[identifier][0] for identifier in sorted(resolvable)]
+
+
+def _indexed(document: dict, block: list | None, index: int) -> dict | None:
+    if not isinstance(block, list) or index >= len(block):
+        return None
+    entry = block[index]
+    return entry if isinstance(entry, dict) else None
+
+
+def _missing_change_evidence_is_external(document: dict, index: int) -> bool:
+    """Every item `changes[index]` requires that no usable record answers is a
+    record only an external authority can make pass, and there is at least one.
+    Each missing item is cited by the entry by construction: it is taken from
+    the entry's own required evidence."""
+    change = _indexed(document, document.get("changes"), index)
+    if change is None:
+        return False
+    missing = set(_strings(change.get("required_evidence"))) - _references(
+        _usable_records(document))
+    return bool(missing) and missing <= _references(_external_records(document))
+
+
+def _unlinked_producers_are_external(document: dict, index: int) -> bool:
+    """Every producer `assignments[index]` declares that no usable record cited
+    by its change, or by the approvals that change names, accounts for, is the
+    producer of a record only an external authority can make pass that the
+    same citations name; and there is at least one. The producer of an
+    external record nothing here cites is refused: authenticating that record
+    would leave the producer unlinked until the change is edited to cite it.
+    Only directly cited records count, which is stricter than Nornyx's own
+    linking, so this refuses rather than accepts at the margin."""
+    duties = document.get("separation_of_duties")
+    assignment = _indexed(document, duties.get("assignments") if isinstance(duties, dict)
+                          else None, index)
+    if assignment is None:
+        return False
+    subject = _canonical(assignment.get("subject"))
+    changes = document.get("changes") if isinstance(document.get("changes"), list) else []
+    matches = [item for item in changes if isinstance(item, dict) and subject is not None
+               and subject in (item.get("id"), f"change:{item.get('id')}")]
+    if len(matches) != 1:
+        return False
+    change = matches[0]
+    cited = set(_strings(change.get("required_evidence"))) | set(
+        _strings(change.get("closure_evidence")))
+    transition = change.get("transition")
+    if isinstance(transition, dict):
+        cited |= set(_strings(transition.get("evidence")))
+    named = set(_strings(change.get("approval_ids")))
+    approvals = document.get("approvals") if isinstance(document.get("approvals"), list) else []
+    for approval in approvals:
+        if isinstance(approval, dict) and (approval.get("name") in named
+                                           or approval.get("id") in named):
+            cited |= set(_strings(approval.get("required_evidence")))
+    linked = {alias for record in _usable_records(document)
+              if _references([record]) & cited for alias in _producer_aliases(record)}
+    unlinked = set(_strings(assignment.get("evidence_producers"))) - linked
+    external = {alias for record in _external_records(document)
+                if _references([record]) & cited for alias in _producer_aliases(record)}
+    return bool(unlinked) and unlinked <= external
+
+
+_ACCOUNTED_FOR = {
+    "CHANGE_EVIDENCE_MISSING": _missing_change_evidence_is_external,
+    "SOD_EVIDENCE_PRODUCER_UNKNOWN": _unlinked_producers_are_external,
+}
+
+
+def _acceptance_key(item: dict, document: dict | None) -> tuple[str, str, str]:
+    """The triple a diagnostic is matched against `EXPECTED_PRE_APPROVAL_DIAGNOSTICS`.
+
+    Its own `(code, path, source_id)`, except for the two diagnostics accepted
+    at any index: those take the `[*]` path only when the contract shows that
+    what they report missing is exactly what an external authority has not yet
+    produced. Read from the contract's structure, never from the message."""
+    code, path, source = (str(item.get("code")), str(item.get("path")),
+                          str(item.get("source_id")))
+    pattern = _INDEXED_PATHS.get(code)
+    match = pattern.fullmatch(path) if pattern is not None else None
+    if match is not None and document is not None and _ACCOUNTED_FOR[code](
+            document, int(match.group(1))):
+        return code, re.sub(r"\[\d+\]", "[*]", path), source
+    return code, path, source
+
+
+def _contract_document(contract: str) -> dict | None:
+    """The contract as a mapping, or None: then nothing is accepted by index."""
+    try:
+        document = yaml.safe_load((ROOT / contract).read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError, RecursionError):
+        return None
+    return document if isinstance(document, dict) else None
 
 
 class UnstructuredCheckerOutput(RuntimeError):
@@ -298,15 +545,12 @@ def _check(contract: str, executable: str, as_of: str | None = None) -> dict:
         if str(item.get("level")) not in KNOWN_DIAGNOSTIC_LEVELS
     ]
 
+    document = _contract_document(contract)
     offending = unknown_levels + [
         item
         for item in diagnostics
         if item.get("level") == "error"
-        and (
-            str(item.get("code")),
-            str(item.get("path")),
-            str(item.get("source_id")),
-        )
+        and _acceptance_key(item, document)
         not in EXPECTED_PRE_APPROVAL_DIAGNOSTICS
     ]
     # A ZERO EXIT MUST BE EXPLAINED TOO, and this is the symmetric half of the
