@@ -1124,7 +1124,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # made checkable by a per-file forbidden-dependency rule, falsified by
     # injecting `sys` and `pathlib` into a copied tree the way the two
     # neighbouring entries were. Floor at band(9) = 9.
-    "tests/test_architecture_security.py": 9,
+    # Raised 9 -> 60 for the single reading of the contract and its modules
+    # (A-041) -- 57 new collected (66 total): the planted layer violation as
+    # the control, five repeated keys refused after and before the statement
+    # they repeat and shown hiding that violation without the refusals, a walk
+    # over aliases, key spellings and merges, merges the loader resolves, a
+    # merge inside ordered pairs, two construction errors, the report naming
+    # both checks, fourteen module-name spellings and file shapes, five identifiers
+    # or layers nornyx refuses, two listed references, two lists written as
+    # strings, six layers under the process rule, two bounded quotes, three
+    # module ids, a link under the source tree, and a source in a cache
+    # directory. Floor at band(66) = 60.
+    "tests/test_architecture_security.py": 60,
     "tests/test_authority_config.py": 12,
     "tests/test_brd_evidence_shape.py": 9,
     "tests/test_capability_binding.py": 9,
@@ -1894,6 +1905,21 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # ADDED where the census runs: the decoding module is skipped on Windows only,
 # and the rehearsal module keeps its one skip off Linux.
 #
+# THE SINGLE READING OF THE CONTRACT AND ITS MODULES ADDS FIFTY-SEVEN TESTS
+# AND NO MODULE (A-041). tests/test_architecture_security.py collects 9 -> 66
+# (floor band(9) = 9 -> band(66) = 60). EVERY OTHER MODULE IS UNMOVED,
+# measured rather than assumed: a fresh collection of this tree, as a normal
+# user, gives 5065 across 130 modules, which is the 5008 these rows recorded
+# before plus the module's 57, so the CHANGELOG and assumptions entries
+# entered no document sweep. The module-floor sum rises by 51 to 4620 and the
+# aggregate follows to 4628, keeping the same 8 above it; band(n) 4508 ->
+# 4559, and the working room below the floor 431 -> 437. THE SLACK THE BANDS
+# GRANT moves 439 -> 445: the module sits 6 above its band. NO SKIP IS ADDED
+# where the census runs, and the windows-runtime job's floor is untouched at
+# 277, because that job runs seven named modules and this is not one of them.
+# The paragraph below records the architecture change record's introduction;
+# its rows are superseded by these.
+#
 # THE ARCHITECTURE CHANGE RECORD ADDS ONE MODULE AND MOVES ONE.
 # tests/test_architecture_change_record.py is new at 252 collected, floor
 # band(252) = 227: the record derived from the architecture contract's
@@ -1935,12 +1961,12 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # (rows below):
 #
-#     collected across tests/     5008   (130 modules)
-#     sum of the module floors    4569
-#     band(5008) = ceil(0.9*n)    4508
-#     MINIMUM_COLLECTED           4577
+#     collected across tests/     5065   (130 modules)
+#     sum of the module floors    4620
+#     band(5065) = ceil(0.9*n)    4559
+#     MINIMUM_COLLECTED           4628
 #     above the module sum          8
-#     below what collects         431
+#     below what collects         437
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2162,7 +2188,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 439 in total, and the aggregate refuses
+# per-module bands already grant 445 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2431,7 +2457,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4577
+MINIMUM_COLLECTED = 4628
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
