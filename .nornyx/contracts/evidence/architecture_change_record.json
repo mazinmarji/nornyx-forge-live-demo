@@ -1,8 +1,32 @@
 {
-  "architecture_impact": "none",
-  "generated_at": "2026-10-01T12:04:31Z",
-  "governed_input_digest": "sha256:7b7fa5b9bd95d1159faa608914444cac40e45549984e7486cb1f37113943e2b5",
-  "schema": "nornyx.forge.change_record.v1",
-  "statement": "Governance contracts were bound to the actual repository revision and completed with required evidence. Declared components, layers, modules, and dependency directions are unchanged.",
-  "subject_revision": "git:b3e35a20cfbc2000d783684042795f702697cd58"
+  "declared_changes": [
+    {
+      "architecture_impact": "none",
+      "id": "architecture.nornyx_forge_demo",
+      "scope": [
+        "architecture.governance_contract",
+        "architecture.conformance_evidence"
+      ],
+      "status": "proposed",
+      "type": "governance_contract_completion"
+    },
+    {
+      "architecture_impact": "minor",
+      "id": "architecture.windows_payload_module",
+      "scope": [
+        "component.windows_runtime",
+        "module.windows_payload"
+      ],
+      "status": "proposed",
+      "type": "architecture_change"
+    }
+  ],
+  "generated_at": "2026-10-02T09:01:37Z",
+  "governed_input_digest": "sha256:a584bc3d022263f8f7f45252645d654ec6f1025abc767836bd88c59c19774526",
+  "highest_declared_architecture_impact": "minor",
+  "highest_open_declared_architecture_impact": "minor",
+  "impact_rule": "highest_declared_architecture_impact is the highest impacts.architecture (none < minor < major < critical) over every changes: entry of the architecture contract, whatever its status, and none when the contract declares no entry. highest_open_declared_architecture_impact is the same maximum over the entries whose status is not terminal; terminal means that Nornyx's change lifecycle has no transition out of the status, which is true of closed only. Both values describe the contract's register of declared changes, not the impact of the commit that carries this record. Each entry's status and impact are what its author declared; this record reports them and verifies neither.",
+  "schema": "nornyx.forge.change_record.v2",
+  "statement": "The architecture contract declares 2 change entries: architecture.nornyx_forge_demo (proposed, architecture impact none); architecture.windows_payload_module (proposed, architecture impact minor). The highest declared architecture impact is minor. Among the entries that are not closed, it is minor. This record reports the changes: entries of the architecture contract as declared. It does not verify a declared status or impact: an entry may be declared closed in the change that introduces it. The open value trusts each entry's declared status, including a closure and the evidence it cites; this record does not check closure evidence. It keeps no history: an entry removed from the contract, or one whose declared impact is lowered, stops counting, so both values can fall. It does not compare the declared architecture between revisions, so it cannot detect an architecture change that no entry declares, or a change declared in another contract. It does not check that the evidence an entry's approval or separation-of-duties policy requires has been produced. Entries naming an approval that requires independent_review_record: architecture.nornyx_forge_demo names ArchitectureAuthority and lists it among its own required evidence; architecture.windows_payload_module names ArchitectureAuthority and lists it among its own required evidence. Whether a passing independent_review_record exists is not shown here.",
+  "subject_revision": "git:c5fd23f66b463af610ea84308d5cdbb73c4dc350"
 }

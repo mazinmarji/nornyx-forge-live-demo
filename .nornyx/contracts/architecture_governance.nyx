@@ -82,25 +82,25 @@ approvals:
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       exact: true
     invalidation_conditions: [revision_change, scope_change]
     expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+  subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
   records:
     - id: architecture_conformance_report
       type: architecture_evidence
       schema_id: nornyx.architecture_evidence.v1
       producer: {id: tool:check_architecture, type: tool}
       artifact: evidence/architecture_conformance_report.json
-      content_hash: sha256:fd471832af84e17644edefb813e447bfbaaad7e5e4a7976c2abbe4b9b11fba50
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:8e8e73f12a9cddc3ae62105ee7a3ef8f5ed025c17d890b188b02620d07a9a5ef
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool: {name: check_architecture, version: "0.3.0"}
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: pass
       dependencies: []
     - id: independent_review_record
@@ -108,11 +108,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:in_session_inspectors, type: tool}
       artifact: evidence/architecture_independent_review.json
-      content_hash: sha256:ec0356d8ad09a0d088a6a5863b73d18d1eab64c60c7ca4323a1df6c558642009
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:eca610417cbc0389db820af6aabc676e78ee69ac07e5e45727602d466e104332
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool: {name: in_session_inspectors, version: "0.3.0"}
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: observed
       dependencies: []
     - id: exception_review_record
@@ -120,11 +120,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_exception_review.json
-      content_hash: sha256:5090b9d4908ebbd911db02114cd082661ea205157536112282536f88e27b4d3a
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:ddb2a7e0055773fcb2348179b1ce6cc414552b2fd50d9b4cf2578f5402bb3c61
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: pass
       dependencies: []
     - id: change_record
@@ -132,11 +132,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_change_record.json
-      content_hash: sha256:62c9e019d97ed92c8c821027427dfb7329a8bbe9aa296fcb3d364a9fa750409d
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:c0ca8f15203b666c629f8eb01c2236b79511cb3bcb401e0dc2cd773315dccda4
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: pass
       dependencies: [architecture_conformance_report]
     - id: evidence_manifest
@@ -144,11 +144,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/architecture_evidence_manifest.json
-      content_hash: sha256:818c85c65f3862023cfb733eb82300c60be7d2610d04d9f3e553aef0b16ce76e
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:d59e2dead8db45e19fa4c1e9cc47e2514c5d89ac59ae41725d87015e90906602
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
 
@@ -160,13 +160,13 @@ governance_evidence:
         id: system:autonomous_demonstration
         type: system
       artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:ced2042dfcca7d9af7db913378216bdba55a997a97fb6000c9b013a029327146
-      subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      content_hash: sha256:e9fd0806f3ab00be9b3cf582a1302f398dd300c0bd1887593386174c3521893f
+      subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       tool:
         name: refresh_governance_evidence
         version: 0.3.0
-      generated_at: "2026-10-01T12:04:31Z"
-      expires_at: "2027-10-01T12:04:31Z"
+      generated_at: "2026-10-02T09:01:37Z"
+      expires_at: "2027-10-02T09:01:37Z"
       status: observed
       dependencies: []
     # <<< managed:approval_record
@@ -205,16 +205,89 @@ changes:
       disjoint: true
     revision_binding:
       kind: git
-      revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+      revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
       exact: true
       scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
     approval_invalidated_on: [revision_change, scope_change]
+    exceptions: []
+  # The Windows payload manifest and its self-check enter the declared
+  # architecture: module.windows_payload, added to component.windows_runtime
+  # with no first-party dependency. Additions only, so the architecture impact
+  # is minor. The security impact is minor too: the self-check is security
+  # relevant, CI runs it over the built payload and the bundle builder imports
+  # the module, and no installed-runtime path runs it yet. No data, dependency
+  # or operational change.
+  #
+  # Risk medium, the tier of the entry above. Both entries' highest declared
+  # impact is minor; that entry declares one minor impact (operational) and
+  # this one two (security and architecture), so this entry is graded no lower.
+  # The gates do not decide it: they pass at low and at medium alike.
+  #
+  # Merging an architecture change requires the ArchitectureAuthority approval
+  # (approvals, required_for), so this entry names that approval and its role,
+  # and declares its separation of duties; the separation-of-duties assignment
+  # under separation_of_duties names this entry. That approval, and the
+  # separation-of-duties policy, require an independent review record, so
+  # this entry requires it too. It is not yet produced in passing form: the
+  # record written under that id is observed, and states that no
+  # authenticated inspection exists; a passing one needs an authenticated
+  # independent inspection.
+  #
+  # Its evidence is the conformance report, which shows the module declared
+  # and conforming, and that review record. The move to proposed cites the
+  # conformance report alone, as the entry above does: the review comes
+  # before approval, not before proposal. The change record is not cited: it
+  # is derived from this entry, so it shows only that the entry exists.
+  - schema: nornyx.change.v1
+    id: architecture.windows_payload_module
+    type: architecture_change
+    purpose: Declare nornyx_forge.windows_payload, the Windows payload manifest and its standard-library self-check, as a module of the Windows runtime component.
+    status: proposed
+    transition:
+      from: draft
+      to: proposed
+      evidence: [architecture_conformance_report]
+    scope: [component.windows_runtime, module.windows_payload]
+    excluded_scope: []
+    risk_tier: medium
+    blast_radius: component
+    reversibility: reversible
+    rollback_required: false
+    rollback_plan_artifact: null
+    irreversible_authority: null
+    impacts:
+      security: minor
+      architecture: minor
+      data: none
+      dependency: none
+      operational: none
+    required_controls: [architecture_conformance_policy, separation_of_duties_policy]
+    required_evidence: [architecture_conformance_report, independent_review_record]
+    approver_roles: [architecture_reviewer]
+    approval_ids: [ArchitectureAuthority]
+    separation_of_duties:
+      author_role: repository_maintainer
+      approver_role: architecture_reviewer
+      disjoint: true
     exceptions: []
 
 separation_of_duties:
   schema: nornyx.separation_of_duties.v1
   assignments:
     - subject: architecture.nornyx_forge_demo
+      risk_tier: medium
+      author: human:repository_maintainer
+      approvers: [human:architecture_reviewer]
+      evidence_producers: [tool:check_architecture, tool:in_session_inspectors]
+      require_evidence_independence: true
+      release_requester: null
+      final_release_approver: null
+      exception_requester: null
+      exception_approver: null
+    # The Windows payload module's change. Its producers are those of its
+    # evidence, as for the assignment above: the conformance checker, and the
+    # in-session inspectors that produce the independent review record.
+    - subject: architecture.windows_payload_module
       risk_tier: medium
       author: human:repository_maintainer
       approvers: [human:architecture_reviewer]
@@ -232,7 +305,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
+  subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -945,9 +1018,9 @@ architecture_evidence:
     tool: scripts/check_architecture.py
     tool_version: "0.3.0"
     status: pass
-    subject_revision: git:b3e35a20cfbc2000d783684042795f702697cd58
-    generated_at: "2026-10-01T12:04:31Z"
-    expires_at: "2027-10-01T12:04:31Z"
+    subject_revision: git:c5fd23f66b463af610ea84308d5cdbb73c4dc350
+    generated_at: "2026-10-02T09:01:37Z"
+    expires_at: "2027-10-02T09:01:37Z"
     violations: []
     artifact: evidence/architecture_conformance_report.json
-    artifact_sha256: sha256:fd471832af84e17644edefb813e447bfbaaad7e5e4a7976c2abbe4b9b11fba50
+    artifact_sha256: sha256:8e8e73f12a9cddc3ae62105ee7a3ef8f5ed025c17d890b188b02620d07a9a5ef
