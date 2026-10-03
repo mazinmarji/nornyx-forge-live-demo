@@ -142,6 +142,26 @@ evidence: a smoked folder is no longer the payload. The installer that is to
 carry this payload does not exist yet, and nothing runs this check at launch
 yet.
 
+**The installer compiler is built from pinned source (A-042, which states what
+is and is not covered).** `scripts/windows_installer/build_nsis_toolchain.py`
+builds NSIS 3.13 from the upstream source archive, inside a container pinned by
+digest, with no network, over build packages pinned by size and SHA-256
+(`nsis-toolchain.json` and `nsis-build-debs.json`). CI's `nsis-toolchain` jobs
+build it twice on separate runners, `nsis-toolchain-verify` compares the bytes
+and the pinned output digests, and `nsis-smoke-build` and `nsis-smoke-windows`
+run a small installer built with it. The source pin is a trust-on-first-use
+provenance ceiling, not authenticated upstream provenance: no upstream
+cryptographic release signature is available to Forge; the SHA-256 establishes
+exact byte identity for subsequent builds, not publisher identity; SourceForge's
+size and MD5 and the agreement of the source with the upstream Git tree are
+corroboration and consistency checks, not cryptographic provenance; and any
+mismatch or later change to the pinned source, its metadata or the Git tree
+fails closed and needs a new governed admission (every build checks the
+archive; its metadata and the Git tree are compared only when the corroboration
+job is dispatched by hand). `python
+scripts/windows_installer/build_nsis_toolchain.py check` validates the pins; the
+build itself runs in CI.
+
 `--smoke` reports `pass` only when every observation its contract names
 succeeded -- the launcher returned exit code 0 within its timeout; the
 record reached ready; `/api/runtime`

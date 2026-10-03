@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-02T12:57:52Z",
-  "governed_input_digest": "sha256:ce5692c89129087d778970168892f81248494c00ed965585a76dfdc29a7a478a",
+  "generated_at": "2026-10-03T16:00:03Z",
+  "governed_input_digest": "sha256:d8d0e1631b2997d1bc2baed9a988bba37b236eb62681bc72b85b60966234b72d",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -112,5 +112,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:ab55f9354079503491fab3cd1375b0156300a880"
+  "subject_revision": "git:0a274a7c2d9337ba71c540fd15dc2531f9d72c15"
 }

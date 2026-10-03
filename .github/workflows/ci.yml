@@ -574,3 +574,162 @@ jobs:
           PYTHONPATH="$GITHUB_WORKSPACE/first/src" python -m nornyx_forge.windows_payload verify payload-first
           PYTHONPATH="$GITHUB_WORKSPACE/second/src" python -m nornyx_forge.windows_payload verify payload-second
           python -c "import json; m = json.load(open('payload-first/forge-payload.json')); print('payload', m['payload_sha256'], len(m['files']), 'files', sum(f[1] for f in m['files']), 'bytes')"
+
+  # THE INSTALLER COMPILER, BUILT FROM PINNED SOURCE TWICE AND COMPARED.
+  # NSIS 3.13 is built from the upstream source archive pinned in
+  # scripts/windows_installer/nsis-toolchain.json (size, SHA-256 and MD5). That
+  # is a trust-on-first-use pin, not authenticated upstream provenance: no
+  # upstream cryptographic release signature is available to Forge (A-042). The
+  # build runs inside the Ubuntu image pinned by digest, with no network, over
+  # the packages pinned by size and SHA-256 in nsis-build-debs.json; these jobs
+  # never refresh package lists, read no cache and have no secret. Each matrix
+  # leg is a separate runner building from the same pins, and
+  # nsis-toolchain-verify compares them byte for byte and against the pinned
+  # outputs: it fails, printing what it measured, on any difference. Equal bytes from two runners on one image and one package set show
+  # that the output is a function of its pinned inputs; they do not show that
+  # another distribution agrees.
+  nsis-toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [a, b]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Check the pins
+        run: python scripts/windows_installer/build_nsis_toolchain.py check
+      - name: Fetch and verify the source and the build packages
+        run: python scripts/windows_installer/build_nsis_toolchain.py fetch --work "$RUNNER_TEMP/nsis-work"
+      - name: Pull the pinned image
+        run: docker pull "$(python -c "import json; print(json.load(open('scripts/windows_installer/nsis-toolchain.json', encoding='utf-8'))['container']['image'])")"
+      - name: Build NSIS in the container, with no network
+        run: python scripts/windows_installer/build_nsis_toolchain.py build --work "$RUNNER_TEMP/nsis-work" --out "$RUNNER_TEMP/nsis-out"
+      - name: Copy the output to a folder this job owns, and describe it
+        run: python scripts/windows_installer/build_nsis_toolchain.py describe --from "$RUNNER_TEMP/nsis-out" --to "$RUNNER_TEMP/nsis-artifact"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nsis-toolchain-${{ matrix.leg }}
+          path: ${{ runner.temp }}/nsis-artifact
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
+  nsis-toolchain-verify:
+    needs: nsis-toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nsis-toolchain-a
+          path: ${{ runner.temp }}/leg-a
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nsis-toolchain-b
+          path: ${{ runner.temp }}/leg-b
+      - name: Compare the two builds, and both with the pinned outputs
+        run: python scripts/windows_installer/build_nsis_toolchain.py verify --a "$RUNNER_TEMP/leg-a" --b "$RUNNER_TEMP/leg-b"
+
+  # A small installer compiled with the built compiler, run on a Windows host.
+  # It shows that the cross-compiled stub and the System and nsExec plug-ins
+  # run: the process token is read, a child's exit code and output come back,
+  # the manifest asks for no privilege, and an elevated run (the runner's own
+  # administrator account) takes the refusal path. The compiler tree is checked
+  # against the pinned outputs when they are pinned, before anything in it is
+  # run; this job runs on the first leg's output whether or not the verify job
+  # has passed, and can show only that the stubs run, never that the toolchain
+  # is accepted.
+  nsis-smoke-build:
+    needs: nsis-toolchain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nsis-toolchain-a
+          path: ${{ runner.temp }}/leg-a
+      # The tree must be the one the pinned outputs name before the compiler in it
+      # is started. If the outputs were ever null again, check-tree would refuse
+      # until this step said `--allow-unpinned` in so many words, and a test would
+      # require that.
+      - name: Refuse a compiler tree that contradicts the pins
+        run: python scripts/windows_installer/build_nsis_toolchain.py check-tree --tree "$RUNNER_TEMP/leg-a/nsis"
+      - name: Pull the pinned image
+        run: docker pull "$(python -c "import json; print(json.load(open('scripts/windows_installer/nsis-toolchain.json', encoding='utf-8'))['container']['image'])")"
+      - name: Compile the smoke installer, in the pinned image with no network
+        run: |
+          chmod +x "$RUNNER_TEMP/leg-a/nsis/Bin/makensis"
+          python scripts/windows_installer/build_nsis_toolchain.py compile-smoke --tree "$RUNNER_TEMP/leg-a/nsis" --out "$RUNNER_TEMP/smoke/nsis-smoke.exe"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nsis-smoke
+          path: ${{ runner.temp }}/smoke
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
+  nsis-smoke-windows:
+    needs: nsis-smoke-build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nsis-smoke
+          path: ${{ runner.temp }}/smoke
+      - name: Run the smoke installer as the runner's administrator
+        run: python scripts/windows_installer/build_nsis_toolchain.py run-smoke --exe "$RUNNER_TEMP/smoke/nsis-smoke.exe" --work "$RUNNER_TEMP/smoke-run" --expect elevated
+
+  # The source pin is checked against the live upstream tag and SourceForge's
+  # listing only when this job runs, and it runs only when someone dispatches the
+  # workflow: a moved tag or a changed listing is otherwise not noticed by CI. It
+  # fails if the tag no longer names the pinned commit and tree, if SourceForge no
+  # longer lists the pinned size and MD5, or if the archive no longer compares to
+  # the tagged tree as pinned (A-042).
+  nsis-source-corroboration:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Compare the pinned source with the upstream tag and the published listing
+        run: python scripts/windows_installer/build_nsis_toolchain.py against-tag

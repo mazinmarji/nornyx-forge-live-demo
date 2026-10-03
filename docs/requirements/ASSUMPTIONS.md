@@ -5960,3 +5960,264 @@ agentic flow, governance, persistence, and UI.", which the gate's
 dependency, layer and process rules check, by keeping its reading of the
 contract and of the source tree a single reading. No functional BRD
 requirement is implemented.
+
+## A-042 The installer compiler is built from pinned source, and its source pin is a trust-on-first-use ceiling
+
+**Assumption.** The installer compiler is NSIS 3.13, built by
+`scripts/windows_installer/build_nsis_toolchain.py` from the upstream source
+archive, inside the Ubuntu 24.04 image pinned by digest, with no network, over
+build-tool packages pinned by size and SHA-256 from a dated archive snapshot.
+It is not a distribution package. Upstream fixed two local privilege
+escalations in the plug-in directory handling of installers that run as SYSTEM
+(NSIS bugs #1315 in 3.11 and #1326 in 3.12; the archive's own release notes
+describe both), and both fixes live in the stub and plug-ins an installer
+carries, so the stubs and plug-ins must be built from fixed source and not only
+the compiler. Every Ubuntu series that publishes NSIS carries 3.10 or older
+(Launchpad, queried at 2026-10-03T10:01Z), so no package can supply them. This
+entry says what the pins establish and what they do not; nothing here is about
+an installer, which a later change builds with this compiler.
+
+**The provenance class of the source is a trust-on-first-use ceiling, not
+authenticated upstream provenance.**
+
+- No upstream cryptographic release signature is available to Forge. The
+  release lists six files (SourceForge, queried at 2026-10-03T10:01Z), none a
+  signature or a checksum file; and the upstream Git tag and commit are
+  unsigned (the tag object and the commit report `verified: false` with the
+  reason `unsigned`).
+- The SHA-256 pinned in `nsis-toolchain.json` establishes exact byte identity
+  for subsequent builds, not publisher identity: it is the digest of the
+  archive as first fetched, and nothing authenticates who made it.
+- The size and MD5 that SourceForge publishes for the archive, and the
+  agreement of the extracted source with the upstream Git tree, are
+  corroboration and consistency checks. They are not cryptographic
+  provenance. The MD5 is published beside the file by the same project.
+- The Git mirror is not an independent authenticated provenance channel. It is
+  a second copy of the same project's material, reachable through a second
+  host, and it is not signed either.
+- Any mismatch, and any later change to the pinned source, its published
+  metadata or the Git tree, fails closed and requires a new governed admission
+  of the pins; nothing in the build edits a pin to make it pass. Every build
+  checks the archive's size, SHA-256 and MD5, so a different archive fails
+  closed there. The published metadata and the Git tree are compared with the
+  pins only when `against-tag` is run, which the `nsis-source-corroboration`
+  job does when the workflow is dispatched by hand and nothing does otherwise:
+  a change nobody runs that comparison to see is not noticed.
+
+What is pinned for the source: the exact release location and version, the
+byte size (1,819,771), the SHA-256, the MD5 SourceForge publishes, the upstream
+release tag object, the commit it names and that commit's tree. Measured
+2026-10-03: the archive's SHA-256, size and MD5 were identical from four
+SourceForge download hosts (`downloads.sourceforge.net`, `master`, `cfhcable`
+and `pilotfiber`), the MD5 and size equal the values in SourceForge's own
+listing for the release, and of the 836 files in the archive 629 are
+byte-identical to the tagged tree, 205 differ only by CRLF line ends, one
+(`Docs/src/bin/halibut/version.c`, in documentation that is not built) differs
+by a version-control keyword, and one (`ChangeLog`) is in the archive only. The
+archive holds no executable or library member. `build_nsis_toolchain.py
+against-tag` repeats that comparison against the live tag and listing; it is not
+a per-commit gate, since a commit's CI should not depend on those two services,
+and it runs when the pin is made or renewed and when someone dispatches the
+workflow.
+
+**How the build is held to its pins.**
+
+- **The archive.** It is fetched from the pinned location, or from a fallback
+  that is only another location for the same bytes, and kept only when its
+  size, SHA-256 and MD5 are the pinned ones (one byte beyond the pinned size is
+  read at most, within a time budget). A location that cannot be read, or that
+  answers with something else, is passed over for the next; if none gives the
+  pinned bytes the fetch is refused. It is unpacked by this script, after every
+  member has been checked: a link, a device, a pipe, an absolute or `..` or
+  backslash or non-canonical name, a name outside the one pinned root folder, a
+  repeated name, a folder spelled two ways that differ only in letter case, a
+  member below a file, and an archive of too many members or too many bytes
+  refuse the whole archive before anything is written. Only regular files and
+  folders are created, with fixed modes and the pinned time.
+- **The packages.** `nsis-build-debs.json` lists every package the build
+  installs over the image (66 over 92), each with the snapshot URL, size and
+  SHA-256 the signed index states, and the image's own package list. Each is
+  fetched and refused on any difference, into an empty folder, so a package the
+  lock does not name is never installed. Inside the container, which has no
+  network, `build-inside.sh` installs only those files with dpkg, by absolute
+  path, in rounds (dpkg refuses a package whose Pre-Depends is unpacked but not
+  yet configured until a later round; apt cannot install this set of local
+  files), and then the installed set must equal the lock's exactly or the build
+  stops. The package lists are never refreshed and no cache is read.
+- **The image and the container.** The image is named by the digest of its
+  linux/amd64 manifest. The build container has no network, no socket, one
+  writable mount (the output folder), every capability dropped but the seven
+  dpkg needs, and is killed if it outlives its time limit. The scripts in the
+  source archive do not run as root: the install is root's, and the compile, and
+  every program it built that the script runs, run as an ordinary user with
+  the capability sets emptied and no way to gain privilege, so they cannot
+  change the installed tools or the checks that follow.
+- **The compiler's data folder.** makensis takes its data folder (stubs,
+  plug-ins, includes) and its `nsisconf.nsh` to be the PARENT of the folder it
+  runs from, and reads them from there. The build therefore installs the
+  compiler one folder down (`PREFIX_BIN=/out/nsis/Bin`, so the compiler is
+  `Bin/makensis` and the data folder is the tree itself); installed beside
+  its data, makensis would read both from outside the pinned digest, and
+  `nsisconf.nsh` can run commands. Every consumer in this change runs it with
+  `NSISDIR` set to the tree, `-NOCONFIG` and a throwaway `HOME`; a later consumer
+  must do the same.
+- **The output.** Nothing the container wrote is trusted to be only files. The
+  host reads the output folder by lstat: it must hold exactly the tree, and the
+  tree, the root included, may hold no link, pipe, device, socket or
+  set-user-id or set-group-id file. What is uploaded is a copy made by a host
+  process, with plain modes, beside a `files.json` created exclusively, never the
+  folder the container wrote and never through a path it could have pointed
+  elsewhere.
+- **The result.** The compiler must report `v3.13`; no Windows binary the build
+  produced may import libwinpthread (the win32 thread model only), and a
+  scan that cannot read a file stops the build; imports of the GCC runtime are
+  printed, not refused, since the resource-only UI files under `Contrib/UIs`
+  import libgcc_s and are never run. Two builds, on separate runners from the
+  same pins, must agree on every file's bytes and on the executable bits their
+  jobs recorded, and equal the digests pinned under `outputs`; the digests
+  compared are those of the downloaded bytes, never those a leg wrote about
+  itself. The `verify` command fails on any difference and while `outputs` is
+  null, and prints what it measured. The pinned outputs are those of CI run
+  37122873329 on commit 0ee88c2 (two legs on separate hosted runners, 312 files,
+  byte-identical), which also equal a build of the same pinned inputs under
+  Docker on a developer machine. The tree digest (`tree_digest`: every regular file's path and
+  SHA-256, in byte order) is one definition for every consumer of the tree.
+- **An unpinned tree.** `check-tree` refuses a tree that is not the pinned one,
+  and would refuse ANY tree if `outputs` were null, unless `--allow-unpinned`
+  were given. The outputs are pinned and no workflow step passes the flag; a test
+  requires the flag exactly when the outputs are null, so resetting them cannot
+  quietly switch the check off.
+- **A smoke installer.** `nsis-smoke.nsi` is compiled with the new compiler
+  and run on a Windows host. The compile runs inside the pinned image with no
+  network and no capability, the tree and the script mounted read-only and
+  only an output folder writable, with warnings treated as errors (NSIS 3.13
+  prints them as `warning: ...`, `warning <code>: ...` and `N warning(s):`).
+  The installer selects `Target x86-unicode`, asks for no privilege, reads its
+  process token through the System plug-in, runs a child through nsExec and
+  reports the child's exit code and output and the compiler version it was
+  built by, and when run elevated exits with the refusal code. The job fails on
+  any other result. The Windows run executes the freshly built stub and plug-ins
+  as the runner's administrator: an ephemeral host with a read-only token, and
+  that is the stated limit of what binds it.
+- **The lock's author.** `resolve_nsis_debs.py` wrote the lock. It is not
+  `apt`; it fetched each suite's `InRelease`, checked its OpenPGP signature
+  with `gpgv` against the Ubuntu archive keyring (the 2012 and 2018 archive
+  signing keys), checked each `Packages.xz` against the signed listing, and
+  resolved the closure itself. It refuses a signed Release file that is for
+  another suite or codename, or dated after the snapshot, and the lock records
+  the digest of each `InRelease` and the size and hash of each index, so the
+  chain can be checked again from the repository. As a second opinion,
+  `apt-get -s install`, given only the locked files as its package source and
+  the image's package list as its installed state, chose exactly the same 66
+  packages and removed nothing (2026-10-03T09:50Z). The tool is kept so the lock
+  can be renewed on purpose.
+
+**Where input an attacker controls enters, and what binds it.**
+
+| Location | Used when | Bound by |
+|---|---|---|
+| the SourceForge response, or a fallback host's | the fetch | the pinned size, SHA-256 and MD5; refused before anything is written |
+| the archive's members | the unpack | the refusals above, all checked before the first write; this script, not `tarfile`, creates the files |
+| the build scripts inside the archive (`SConstruct` and the Python it runs) | the build | their bytes are fixed by the source pin; the container has no network, no secret and no socket, the source is mounted read-only, only the output folder is writable, and they run as an ordinary user with no capability |
+| what the container wrote into the output folder | after the build | read by lstat; the folder must hold exactly the tree, with no link, pipe, device or set-id file; a host-made copy is uploaded, and `files.json` is created exclusively |
+| the built compiler and its data folder | the smoke compile | the compiler runs inside the pinned image with no network and no capability, the tree read-only, `NSISDIR` and the configuration fixed (the data folder is otherwise the parent of the compiler's own folder) |
+| the built stub and plug-ins, in the smoke installer | the Windows run | not bound: stated limit, an ephemeral runner administrator with a read-only token |
+| the package files | the fetch and the install | the lock's URL, size and SHA-256 for each; an empty folder, so only the lock's files exist; the installed set compared with the lock |
+| the container image | the pull | the manifest digest |
+| the snapshot service and the registry | the lock, the pull | hashes from the signed index; the digest |
+| the runner's own Python and Docker engine | the fetch, the hashing, starting the container | not bound: stated limit, they compile nothing |
+| the artifacts passed between jobs | the comparison, the smoke build | each consumer checks what it received: `files.json` against the bytes (the compiler's and the tree's digests included), and the tree against the pinned outputs before the compiler in it is started |
+| a cache | never | none is read or written |
+| a pull request from a fork | the workflow | a read-only token, no secret, no privileged trigger; a pin changes only through a reviewed diff |
+| files the job's own account can write between its steps | each step | not bound: stated limit, the runner is trusted for the length of the job |
+
+**Boundary touch: the canonical text rule.** This change edits one path outside
+the toolchain's own files, `src/nornyx_forge/governed_subject.py`, which decides
+how governed files are hashed. `CANONICAL_TEXT_SUFFIXES` gains `.nsi`, `.nsh`
+and `.ps1` (five lines added, one removed), so the toolchain's sources are
+hashed as LF text like the `.sh` beside them (`.gitattributes` keeps them LF on
+every checkout) instead of raw. The first CI run needed it: the governed-text
+test refused `nsis-smoke.nsi` as governed text outside the rule. It is named
+here, in the architecture contract's declared change
+`architecture.canonical_text_rule` (architecture impact none, security impact
+minor, proposed, with the same approval and separation of duties as the other
+entries, which the change record derives from), and in the change record. The
+alternative, renaming the file with a `.txt` suffix, was not taken.
+**No existing digest changes.** Measured on 2026-10-03 on main at `0a274a7`, the
+base of this change:
+
+```
+git ls-tree -r --name-only 0a274a7 | grep -c -i -E '\.(nsi|nsh|ps1)$'
+0
+```
+
+none of the 342 tracked paths has one of the three suffixes, in any letter case,
+so no file that was hashed before is hashed differently now. At the head the
+same command lists exactly `scripts/windows_installer/nsis-smoke.nsi`. What the
+touch does change: a governed file with one of the suffixes that carries CR
+bytes is now refused by the subject observer instead of hashed raw. Not
+established: the effect on a checkout that rewrites line endings outside what
+`.gitattributes` governs.
+
+**The release closure gate.** The closure gate in
+`docs/governance/RELEASE_CONTRACT_V1.md` lists the remote CI results v1 closes
+on. Its remote-CI line now also names `nsis-toolchain`, `nsis-toolchain-verify`,
+`nsis-smoke-build` and `nsis-smoke-windows`, so a failed or cancelled NSIS build
+cannot stand beside a passing gate. `nsis-toolchain` is named as well as the
+jobs that need it, because a job whose needed job fails is skipped, not failed.
+`nsis-source-corroboration` is not named: it runs only when the workflow is
+dispatched, so on a push or pull request it is skipped. This edits the authored
+text of a governance document that lies outside the architecture boundary
+(`src/`, `scripts/check_architecture.py` and `docs/ARCHITECTURE.md`), so there
+is no declared change for it. The check is two-way. `tests/test_hostile_probe_job.py`
+already required every name the line carries to be a job, or a matrix of
+interpreters, in the workflow. It now also requires every job of the workflow to
+be named by the line or listed, with a reason, as outside it, and refuses a
+named job that carries an `if`, continues on error, or needs a job the line does
+not name. Listed as outside the gate: `nsis-source-corroboration` (dispatch
+only), and `windows-runtime` and `windows-payload`, which the line did not name
+before this change; whether it should is a separate decision and is not made
+here.
+
+**Not established.**
+
+- Who published the source. The ceiling above is the whole claim.
+- That another distribution, another image, another compiler version or
+  another set of packages gives the same bytes. Two builds on two runners from
+  one image and one package set show only that the output is a function of its
+  pinned inputs.
+- That the outputs are the same for any other input. They were measured in CI
+  run 37122873329 on commit 0ee88c2: two legs on separate hosted runners,
+  byte-identical, with the stubs and plug-ins built by GCC 13 and binutils 2.42
+  and the smoke installer running on `windows-latest`; and they equal a build of
+  the same pinned inputs under Docker Desktop on one machine on 2026-10-03
+  (about three minutes, `makensis -VERSION` printing `v3.13`, no libwinpthread
+  import). The same image digest and `.deb` set were used throughout; nothing
+  here shows another distribution, image or package set agrees, and a renewal of
+  any pin needs new outputs.
+- The `.deb` files carry no signature this build checks. Their trust rests on
+  the signed index's hash for each, and on the snapshot service serving the
+  bytes it signed.
+- The keyring `gpgv` trusted when the lock was made is the one installed with
+  the maintainer's Ubuntu release (`ubuntu-keyring` 2023.11.28.1); that its
+  fingerprints are Ubuntu's was read from that keyring, not confirmed against a
+  second source.
+- The GitHub runner's own Python and Docker engine are not pinned. They fetch,
+  verify and hash, and start the container; they compile nothing.
+- Docker Hub's anonymous pull limits can fail the pull step; a failure is a
+  refusal, not a fallback.
+- The built tree's executable bits are recorded in `files.json` and compared
+  between the two builds, but a workflow artifact does not preserve them, so a
+  consumer that downloads the tree sets the compiler executable after checking
+  the digests, which do not cover modes. The tree digest covers file paths and
+  bytes only: an empty folder is not in it.
+- The host-side copy of the build output opens each file without following a
+  link, creates its copies and `files.json` exclusively, and hashes each file
+  as it copies it. Those three guards matter only against something that
+  changes the folder while it is being read, and no test exercises that.
+
+**Serves.** A-020's EXE-first direction: an installer is compiled by a
+compiler whose bytes Forge can name. An installer's own refusal to run
+elevated cannot make up for a fault in the compiler's stub or plug-ins, since
+the plug-in extraction the fixes concern happens before any refusal can run. No
+functional BRD requirement is implemented.

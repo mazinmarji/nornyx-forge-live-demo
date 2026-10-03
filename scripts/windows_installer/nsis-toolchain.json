@@ -1,0 +1,83 @@
+{
+  "schema": "nornyx.forge.nsis_toolchain.v1",
+  "note": "The installer compiler, NSIS, built from source and pinned. Provenance class: TRUST-ON-FIRST-USE (TOFU) provenance ceiling, not authenticated upstream provenance. No upstream cryptographic release signature is available to Forge. The SHA-256 below establishes exact byte identity for subsequent builds, not publisher identity. The size and MD5 that SourceForge publishes, and the agreement of the source with the upstream Git tree, are corroboration and consistency checks, not cryptographic provenance; the Git mirror is not an independent authenticated provenance channel. Any mismatch, and any later change to the pinned source, its published metadata or the Git tree, fails closed and requires a new governed admission of the pins. Every build checks the archive's size, SHA-256 and MD5; the published metadata and the Git tree are compared with these pins only when the corroboration is run, by hand or by the manually dispatched corroboration job.",
+  "source": {
+    "name": "NSIS",
+    "version": "3.13",
+    "release_page": "https://sourceforge.net/projects/nsis/files/NSIS%203/3.13/",
+    "url": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13-src.tar.bz2",
+    "fallback_urls": [
+      "https://cfhcable.dl.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13-src.tar.bz2",
+      "https://pilotfiber.dl.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13-src.tar.bz2"
+    ],
+    "size": 1819771,
+    "sha256": "a8ffe024602d46b6d766f9e1ce30c324ad2a24daeacd3efc2642d436a0c157ac",
+    "md5": "3f992d176c50fb653cf0230eed38cfea",
+    "md5_published_at": "https://sourceforge.net/projects/nsis/rss?path=/NSIS%203/3.13",
+    "root": "nsis-3.13-src",
+    "git": {
+      "repository": "nsis-dev/nsis",
+      "tag": "v313",
+      "tag_object": "3255586f67626dd397760cd7a68daa9847284020",
+      "commit": "a4ba28e60bd9e7c271cd2bfc1558889ce3355653",
+      "commit_time": "2026-09-27T15:24:32Z",
+      "tree": "47846c554e07eb21197179b01a48a0d27f618723",
+      "comparison": {
+        "identical": 629,
+        "crlf_only": 205,
+        "different": ["Docs/src/bin/halibut/version.c"],
+        "tarball_only": ["ChangeLog"],
+        "git_only": []
+      }
+    }
+  },
+  "container": {
+    "image": "ubuntu@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b",
+    "image_tag_when_pinned": "ubuntu:noble",
+    "image_created": "2026-09-18T21:20:38Z",
+    "snapshot": "20261002T000000Z",
+    "suites": ["noble", "noble-updates", "noble-security"],
+    "components": ["main", "universe"],
+    "install": [
+      "binutils-mingw-w64-i686",
+      "g++",
+      "g++-mingw-w64-i686-win32",
+      "gcc",
+      "gcc-mingw-w64-i686-win32",
+      "mingw-w64-i686-dev",
+      "python3",
+      "scons",
+      "zlib1g-dev"
+    ],
+    "lock": "nsis-build-debs.json"
+  },
+  "build": {
+    "version_output": "v3.13",
+    "source_date_epoch": 1790522672,
+    "source_date_epoch_basis": "the commit time of the upstream release tag, source.git.commit_time",
+    "environment": {"LC_ALL": "C.UTF-8", "TZ": "UTC"},
+    "scons_args": [
+      "VERSION=3.13",
+      "VER_MAJOR=3",
+      "VER_MINOR=13",
+      "VER_REVISION=0",
+      "VER_BUILD=0",
+      "TARGET_ARCH=x86",
+      "UNICODE=yes",
+      "XGCC_W32_PREFIX=i686-w64-mingw32-",
+      "NSIS_CONFIG_CONST_DATA_PATH=no",
+      "PREFIX=/out/nsis",
+      "PREFIX_BIN=/out/nsis/Bin",
+      "SKIPUTILS=Library/RegTool,MakeLangId,Makensisw,NSIS Menu,SubStart,VPatch/Source/GenPat,zip2exe",
+      "SKIPDOC=all",
+      "install-compiler",
+      "install-conf",
+      "install-data",
+      "install-utils"
+    ]
+  },
+  "outputs": {
+    "makensis_sha256": "7c345d2f0172ec3e84025ca3dc511235e06629c0e241fbf503f8144af2563597",
+    "data_tree_sha256": "0d012c89739c075d780a12bbfe105bfa3873a5ae63699b44f974b2ef96f6e62d"
+  }
+}
