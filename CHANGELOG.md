@@ -2,6 +2,43 @@
 
 ## Unreleased — hardening from adversarial review
 
+- `ForgeSetup.exe`, an unsigned per-user Windows installer for the
+  deterministic payload (A-042). Built by `scripts/build_windows_installer.py`
+  from a clean commit with the NSIS the pins name
+  (`scripts/windows_installer/installer-tools.json`: two Ubuntu packages, by
+  URL, size and SHA-256, then a `makensis` whose binary, data directory and
+  version the build checks). It refuses to run elevated and reads its token to
+  do so; installs into `%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>`
+  by extracting into a `.partial` folder, verifying it with the payload's own
+  interpreter against the identity baked into the executable, and then
+  renaming it; writes one Start-menu shortcut that starts the embedded
+  interpreter with bytecode writing off, and `install-receipt.json`, which may
+  not name anything the installer does not own; verifies the same payload when
+  run again; and refuses another version, a folder that is not its own, an
+  unfinished earlier install and a Start-menu shortcut that already exists.
+  It deletes nothing and replaces no existing folder, file or shortcut (a
+  race between a check and the write is the limit), appends only to a log a
+  caller names, writes no registry value, changes no `PATH`, registers no
+  uninstaller and warns when Git for Windows is missing. It is not an MSI and
+  has no service. For the real installer the build also compares every file of
+  the payload's copy of the repository, and the version, with the commit's.
+  The canonical text rule (`CANONICAL_TEXT_SUFFIXES` in
+  `src/nornyx_forge/governed_subject.py`, a boundary path outside the
+  installer's own files) now names `.nsi`, `.nsh` and `.ps1`, so the installer's
+  sources are hashed as LF text like the rest. No file at the base had those
+  suffixes, so no existing digest changes (measured, A-042); the touch is
+  declared as the change `architecture.canonical_text_rule` in the architecture
+  contract and appears in the derived change record.
+  Two new CI jobs: `windows-installer` builds it twice from two checkouts and
+  compares the bytes; `windows-install` installs (into an existing empty
+  folder and into an absent one), provokes the refusals, launches, stops and
+  reopens it on Windows as a standard user. What CI builds is test evidence
+  made with NSIS 3.09, not a release (the compiler moves to 3.12 or later in a
+  separate change). Not established (non-blocking; no release is claimed): that
+  two builds agree until CI has run
+  them, the installer on a clean machine, SmartScreen and Smart App Control,
+  and a double-click.
+
 - The architecture gate reads its contract and its modules one way (A-041).
   `scripts/check_architecture.py` looks modules up by id and by name, and
   layers by id, and it built each index from a list, which keeps the last

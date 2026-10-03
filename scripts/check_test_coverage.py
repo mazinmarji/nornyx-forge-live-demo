@@ -525,6 +525,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # removal no test sees is possible for any guard those runs did not
     # remove). 167 collected at introduction, floor at band(167) = 151.
     "tests/test_windows_payload.py": 151,
+    # ForgeSetup.exe: the installer script read as source (its exit codes,
+    # variables, elevation check, forbidden instructions and one started
+    # process), the file list and the receipt it generates, the builder over a
+    # synthetic repository and a stand-in compiler (what it refuses before and
+    # after compiling, and that the same inputs give the same bytes), the
+    # driver's pure parts, and the structure of the `windows-installer` and
+    # `windows-install` jobs, with a named refusal for each guard a mutation
+    # sweep removed. 170 collected, floor at band(170) = 153.
+    "tests/test_windows_installer.py": 153,
     # The architecture change record, derived from the architecture
     # contract's changes: entries: the derivation over synthetic contracts
     # with one named refusal per malformed shape, the vocabulary and the YAML
@@ -532,8 +541,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # separation-of-duties assignment and the record, verification of every
     # key, derived claim and the canonical form, and the tool end to end in a
     # copy of the repository. 252 collected at introduction, floor at
-    # band(252) = 227.
-    "tests/test_architecture_change_record.py": 227,
+    # band(252) = 227; 254 once the canonical text rule's change was declared,
+    # floor at band(254) = 229.
+    "tests/test_architecture_change_record.py": 229,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -1959,14 +1969,33 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 386 -> 402. THE SLACK THE BANDS GRANT moves 394 -> 410: the new module sits
 # 16 above its band. NO SKIP IS ADDED where the census runs.
 #
+# FORGESETUP.EXE ADDS ONE MODULE AND MOVES ONE.
+# tests/test_windows_installer.py is new at 170 collected, floor band(170) =
+# 153: the installer script read as source, the generated file list and
+# receipt, the builder over a stand-in compiler, the driver's pure parts and
+# the structure of the two new CI jobs. THE MODULE THAT MOVES is
+# tests/test_architecture_change_record.py, 252 -> 254 (floor band(252) = 227
+# -> band(254) = 229): the contract now declares the canonical text rule's
+# change, and the committed entry, its assignment, the suffixes the source
+# gains and the derived clause are held. (The windows-runtime job's modules
+# still collect as before, so THAT JOB'S FLOOR IS UNTOUCHED AT 277.) EVERY
+# OTHER MODULE IS UNMOVED, measured rather than assumed: a fresh collection of
+# this tree, as a normal user, gives 5237 across 131 modules, which is the
+# 5065 across 130 that these rows recorded before, plus the new module's 170,
+# plus the two. The module-floor sum rises by 155 to 4775 and the aggregate
+# follows to 4783, keeping the same 8 above it; band(n) 4559 -> 4714, and the
+# working room below the floor 437 -> 454. THE SLACK THE BANDS GRANT moves by
+# 17, the new module sitting 17 above its band. NO SKIP IS ADDED where the
+# census runs. The rows below are these.
+#
 # (rows below):
 #
-#     collected across tests/     5065   (130 modules)
-#     sum of the module floors    4620
-#     band(5065) = ceil(0.9*n)    4559
-#     MINIMUM_COLLECTED           4628
+#     collected across tests/     5237   (131 modules)
+#     sum of the module floors    4775
+#     band(5237) = ceil(0.9*n)    4714
+#     MINIMUM_COLLECTED           4783
 #     above the module sum          8
-#     below what collects         437
+#     below what collects         454
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2188,7 +2217,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 445 in total, and the aggregate refuses
+# per-module bands already grant 462 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2457,7 +2486,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4628
+MINIMUM_COLLECTED = 4783
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2574,6 +2603,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
     "tests/test_windows_payload.py",
+    "tests/test_windows_installer.py",
     "tests/test_architecture_change_record.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",

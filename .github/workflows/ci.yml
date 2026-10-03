@@ -426,8 +426,9 @@ jobs:
 
   # PR-18: the Windows basic-user runtime, on a Windows host. RUNTIME
   # VALIDATION ONLY -- no release publication, no installer, no signing, no
-  # MSI, no ForgeSetup.exe; those belong to the later distribution tranche
-  # (A-020). The Linux census declares the Windows-hosted tests' skips by
+  # MSI, no ForgeSetup.exe; the installer is built and exercised by the
+  # windows-installer and windows-install jobs below (A-020, A-042), not by
+  # this one. The Linux census declares the Windows-hosted tests' skips by
   # identity; this job is where they execute, and a skip HERE fails the job
   # -- the container-launch census applied again -- because a Windows job
   # that skipped every Windows test would be green over nothing. The
@@ -508,8 +509,9 @@ jobs:
   # commit. Both builds run on one runner, so this shows that the build is a
   # function of its pinned inputs on this image, not that a second machine
   # agrees. It builds no installer, publishes nothing and uploads no
-  # artifact. The payload's interpreter is not run here (Linux), and no CI job
-  # runs it yet.
+  # artifact. The payload's interpreter is not run here (Linux); the
+  # windows-installer job builds the installer from this payload, and the
+  # windows-install job runs the installed interpreter on Windows.
   windows-payload:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -574,3 +576,183 @@ jobs:
           PYTHONPATH="$GITHUB_WORKSPACE/first/src" python -m nornyx_forge.windows_payload verify payload-first
           PYTHONPATH="$GITHUB_WORKSPACE/second/src" python -m nornyx_forge.windows_payload verify payload-second
           python -c "import json; m = json.load(open('payload-first/forge-payload.json')); print('payload', m['payload_sha256'], len(m['files']), 'files', sum(f[1] for f in m['files']), 'bytes')"
+
+  # ForgeSetup.exe, built TWICE from two checkouts and compared byte for byte.
+  # Each build makes the payload (as windows-payload does), then wraps it with
+  # the NSIS the pins name (installer-tools.json): the two Ubuntu packages are
+  # fetched here by their pinned URLs, refused unless their size and SHA-256
+  # match, and installed; the builder then refuses a makensis whose binary, data
+  # directory or reported version differs. The second build uses another
+  # checkout path and another interpreter path. The job also builds four
+  # installers from tiny sealed payloads (a normal one, one for another version,
+  # one for the same version with other bytes, one whose paths would be too
+  # long), which the Windows job needs to exercise refusals that happen before
+  # anything is extracted, and uploads the first installer and those four as an
+  # artifact for the windows-install job. The installer is unsigned, and so is
+  # everything this job uploads: the artifact is TEST EVIDENCE built with NSIS
+  # 3.09, which upstream has since followed with security fixes, and runs of
+  # pull requests from forks build and upload it too. It is not a release
+  # channel and not a distributable (A-042). Both builds run on one runner
+  # image, so equal bytes show that the build is a function of its pinned
+  # inputs on this image, not that another machine agrees. The four small
+  # installers are built through --test-only-synthetic, which skips the
+  # comparison of the payload's copy of the repository with the commit (they
+  # are not a copy of it) and says so in their build records.
+  windows-installer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: first
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: second
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: Install the pinned installer
+        run: python -m pip install --require-hashes --no-deps -r first/scripts/windows_installer/build-tools.txt
+      - name: Fetch the pinned interpreter archive
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, urllib.request
+          pins = json.load(open("first/scripts/windows_installer/pins.json", encoding="utf-8"))
+          archive = pins["interpreter"]
+          with urllib.request.urlopen(archive["archive_url"], timeout=120) as response:
+              data = response.read()
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "python-embed.zip"), "wb") as handle:
+              handle.write(data)
+          digest = hashlib.sha256(data).hexdigest()
+          print(f"{archive['archive_url']}: sha256 {digest}")
+          if digest != archive["archive_sha256"]:
+              raise SystemExit(f"not the pinned archive: expected {archive['archive_sha256']}")
+          PY
+      - name: Fetch and install the pinned makensis packages
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, subprocess, urllib.request
+          tools = json.load(open("first/scripts/windows_installer/installer-tools.json", encoding="utf-8"))
+          paths = []
+          for package in tools["makensis"]["packages"]:
+              with urllib.request.urlopen(package["url"], timeout=120) as response:
+                  data = response.read()
+              digest = hashlib.sha256(data).hexdigest()
+              print(f"{package['url']}: {len(data)} bytes, sha256 {digest}")
+              if len(data) != package["size"] or digest != package["sha256"]:
+                  raise SystemExit(f"not the pinned package {package['name']}: expected "
+                                   f"{package['size']} bytes and {package['sha256']}")
+              path = os.path.join(os.environ["RUNNER_TEMP"], package["url"].rsplit("/", 1)[1])
+              with open(path, "wb") as handle:
+                  handle.write(data)
+              paths.append(path)
+          subprocess.run(["sudo", "dpkg", "-i", *paths], check=True)
+          PY
+      - name: Build the payload from the first checkout
+        run: |
+          sha=$(python -c "import json; print(json.load(open('first/scripts/windows_installer/pins.json', encoding='utf-8'))['interpreter']['archive_sha256'])")
+          python first/scripts/build_windows_bundle.py --dist "$RUNNER_TEMP/payload-first" \
+            --python-embed "$RUNNER_TEMP/python-embed.zip" --python-embed-sha256 "$sha"
+      - name: Build the payload again from the second checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/second-python"
+          sha=$(python -c "import json; print(json.load(open('second/scripts/windows_installer/pins.json', encoding='utf-8'))['interpreter']['archive_sha256'])")
+          "$RUNNER_TEMP/second-python/bin/python" second/scripts/build_windows_bundle.py \
+            --dist "$RUNNER_TEMP/payload-second" \
+            --python-embed "$RUNNER_TEMP/python-embed.zip" --python-embed-sha256 "$sha"
+          cmp "$RUNNER_TEMP/payload-first/forge-payload.json" "$RUNNER_TEMP/payload-second/forge-payload.json"
+      - name: Build ForgeSetup.exe from the first payload
+        run: python first/scripts/build_windows_installer.py --payload "$RUNNER_TEMP/payload-first" --out "$RUNNER_TEMP/setup-first"
+      - name: Build ForgeSetup.exe again from the second checkout and payload
+        run: |
+          "$RUNNER_TEMP/second-python/bin/python" second/scripts/build_windows_installer.py \
+            --payload "$RUNNER_TEMP/payload-second" --out "$RUNNER_TEMP/setup-second"
+      - name: Compare the two installers byte for byte
+        run: |
+          cd "$RUNNER_TEMP"
+          cmp setup-first/ForgeSetup.exe setup-second/ForgeSetup.exe
+          cmp setup-first/ForgeSetup.exe.sha256 setup-second/ForgeSetup.exe.sha256
+          cmp setup-first/ForgeSetup.build.json setup-second/ForgeSetup.build.json
+          cat setup-first/ForgeSetup.exe.sha256
+          python -c "import json; r = json.load(open('setup-first/ForgeSetup.build.json')); print('installer', r['installer']['size'], 'bytes; payload', r['payload']['sha256'], r['payload']['files'], 'files; makensis warnings', r['makensis_warnings'])"
+      - name: Build the small installers that exercise the refusals
+        run: |
+          embed="$RUNNER_TEMP/python-embed.zip"
+          variants="$RUNNER_TEMP/artifact/variants"
+          build_variant() {
+            name="$1"; shift
+            python first/scripts/windows_installer/synthetic_payload.py --dest "$RUNNER_TEMP/synthetic-$name" --embed-zip "$embed" --label "$name" "$@"
+            python first/scripts/build_windows_installer.py --payload "$RUNNER_TEMP/synthetic-$name" --out "$variants/$name" --test-only-synthetic
+          }
+          build_variant small
+          build_variant other --version 0.0.2
+          build_variant same-version --same-version-as "$RUNNER_TEMP/payload-first"
+          build_variant long --long-version --long-path
+          mkdir -p "$RUNNER_TEMP/artifact/forge-setup"
+          cp "$RUNNER_TEMP"/setup-first/* "$RUNNER_TEMP/artifact/forge-setup/"
+          ls -l "$RUNNER_TEMP"/artifact/forge-setup "$variants"/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: forge-setup
+          path: ${{ runner.temp }}/artifact
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: error
+
+  # ForgeSetup.exe on a Windows host, as a standard user. The artifact is the
+  # one the windows-installer job built; its digests are checked against its
+  # build record first. The elevated run is the runner's own administrator
+  # account, and the installer must refuse it. The standard-user run is a local
+  # account the job creates in the Users group alone: it provokes the refusals
+  # (a long path, a moved local application data shell folder, a foreign folder, a
+  # junction, an unfinished install, an existing shortcut, a shortcut that
+  # cannot be written), installs the real installer into an existing empty
+  # folder and into an absent one, checks the receipt, the shortcut, the ACL of
+  # what the installer made, the registry and the folders an installer could
+  # leave state in, runs the same payload again, tries another version and
+  # other bytes under the same version, starts the runtime from the shortcut's
+  # own command line, joins it, stops it and starts it again, and finally
+  # installs with no git and no Python on PATH. This is a run on a GitHub-hosted image by a freshly created
+  # account, not on a clean accepted machine: nothing here observes a UAC
+  # prompt, SmartScreen or Smart App Control, a double-click, a browser opening
+  # or network traffic (A-042).
+  windows-install:
+    needs: windows-installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: forge-setup
+          path: ${{ runner.temp }}/forge-setup-artifact
+      - name: The artifact is the one its build record names
+        run: |
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"]) / "forge-setup-artifact"
+          folders = [root / "forge-setup", *sorted((root / "variants").iterdir())]
+          assert len(folders) == 5, folders
+          for folder in folders:
+              exe = folder / "ForgeSetup.exe"
+              digest = hashlib.sha256(exe.read_bytes()).hexdigest()
+              recorded = json.loads((folder / "ForgeSetup.build.json").read_text(encoding="utf-8"))
+              listed = (folder / "ForgeSetup.exe.sha256").read_text(encoding="utf-8").split()[0]
+              print(f"{folder.name}: {exe.stat().st_size} bytes, sha256 {digest}")
+              assert digest == recorded["installer"]["sha256"] == listed, folder
+          PY
+      - name: An elevated run is refused
+        run: python scripts/windows_installer/standard_user_checks.py elevated --artifact "$RUNNER_TEMP/forge-setup-artifact" --work "$RUNNER_TEMP/elevated-work"
+      - name: Install, launch, stop and reopen as a standard user
+        run: |
+          python_exe=$(python -c "import sys; print(sys.executable)")
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows_installer/run_as_standard_user.ps1 \
+            -Python "$python_exe" -Checkout "$GITHUB_WORKSPACE" -ArtifactSource "$RUNNER_TEMP/forge-setup-artifact"
