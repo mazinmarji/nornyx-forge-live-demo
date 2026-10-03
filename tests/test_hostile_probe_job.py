@@ -54,6 +54,8 @@ CENSUS = ROOT / "scripts" / "check_test_coverage.py"
 #: The job this module holds. Checked against the contract below, so this name
 #: cannot drift from the one the gate uses.
 JOB = "hostile-probe"
+#: The last name on the gate's remote-CI line, so that a test can widen the line.
+GATED_LAST = "nsis-smoke-windows"
 #: The assumption that states what the job runs, cited by its title: its number
 #: appears only in its own heading.
 TITLE = (
@@ -160,12 +162,139 @@ def test_every_remote_result_the_closure_gate_names_is_defined_by_the_workflow()
     assert missing_remote_results(contract, orphaned) == [f"job {JOB}"]
     # NEGATIVE: the names come from the contract. One more name there is one
     # more result the workflow must define.
-    widened = _once(contract, f"strict-authorization, {JOB})", f"strict-authorization, {JOB}, "
-                    "a-job-nobody-defined)")
+    widened = _once(contract, f"{GATED_LAST})", f"{GATED_LAST}, a-job-nobody-defined)")
     assert missing_remote_results(widened, workflow) == ["job a-job-nobody-defined"]
     extended = _once(contract, "3.10 / 3.11 / 3.12 / 3.13,", "3.10 / 3.11 / 3.12 / 3.13 / 3.99,")
     assert missing_remote_results(extended, workflow) == [
         "a matrix over 3.10 / 3.11 / 3.12 / 3.13 / 3.99"]
+
+
+# --------------------------------------------------------------------------
+# The other direction: every job of the workflow, against the gate's line
+# --------------------------------------------------------------------------
+
+#: The jobs of the workflow that the gate's remote-CI line does not name, each
+#: with why. A job that is neither named by the line nor here is a result that
+#: can fail beside a passing gate, which is the shape the NSIS jobs had when
+#: they were added: a failed or cancelled build next to a closed gate. Adding a
+#: job to the workflow therefore asks for a decision, in the contract or here.
+#: `windows-runtime` and `windows-payload` are listed because the line did not
+#: name them when it was written; whether it should is a separate decision.
+OUTSIDE_THE_GATE = {
+    "nsis-source-corroboration": "it runs only when the workflow is dispatched",
+    "windows-runtime": "not named when the line was written",
+    "windows-payload": "not named when the line was written",
+}
+#: Of those, the ones that must say so with an `if`, so the reason is checked.
+DISPATCH_ONLY = frozenset({"nsis-source-corroboration"})
+
+
+def _needs(job: dict) -> list:
+    needs = job.get("needs") or []
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def gate_workflow_problems(contract: str, workflow_text: str) -> list[str]:
+    """Where the workflow's jobs and the gate's remote-CI line disagree, either way round.
+
+    A named job is also refused when it can be skipped (an `if`), when its
+    failure does not fail the run (`continue-on-error`), or when it needs a job
+    the line does not name, because a job whose needed job fails is skipped,
+    not failed.
+    """
+    interpreters, names = remote_ci_results(contract)
+    jobs = _load(workflow_text).get("jobs") or {}
+    gated = set(names) | set(_matrix_holders(jobs, interpreters))
+    problems = []
+    for name in jobs:
+        if name not in gated and name not in OUTSIDE_THE_GATE:
+            problems.append(f"job {name} is neither named by the gate nor declared outside it")
+    for name in OUTSIDE_THE_GATE:
+        if name not in jobs:
+            problems.append(f"{name} is declared outside the gate and is not a job")
+        elif name in gated:
+            problems.append(f"{name} is declared outside the gate and is named by it")
+    for name in sorted(gated):
+        job = jobs.get(name)
+        if not isinstance(job, dict):
+            continue
+        if "if" in job:
+            problems.append(f"job {name} is named by the gate and carries an `if`, so it can be skipped")
+        if job.get("continue-on-error") not in (None, False):
+            problems.append(f"job {name} is named by the gate and continues on error")
+        for need in _needs(job):
+            if need not in gated:
+                problems.append(f"job {name} needs {need}, which the gate does not name")
+    for name in sorted(DISPATCH_ONLY):
+        job = jobs.get(name)
+        if isinstance(job, dict) and "workflow_dispatch" not in str(job.get("if", "")):
+            problems.append(f"{name} is declared dispatch-only and its `if` does not say so")
+    return problems
+
+
+def _without_name(contract: str, name: str) -> str:
+    """The contract with one name removed from the gate's remote-CI line."""
+    found = re.search(r"Remote CI \(([^)]*)\)", contract)
+    items = [item.strip() for item in found.group(1).split(",")]
+    items.remove(name)
+    return contract[:found.start(1)] + ", ".join(items) + contract[found.end(1):]
+
+
+def test_every_job_of_the_workflow_is_named_by_the_closure_gate_or_declared_outside_it(monkeypatch):
+    contract = CONTRACT.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert gate_workflow_problems(contract, workflow) == []
+
+    # NEGATIVE: each NSIS job dropped from the line. The first job also leaves
+    # the two that need it pointing at a job the line does not name.
+    dropped = {
+        "nsis-toolchain": {
+            "job nsis-toolchain is neither named by the gate nor declared outside it",
+            "job nsis-toolchain-verify needs nsis-toolchain, which the gate does not name",
+            "job nsis-smoke-build needs nsis-toolchain, which the gate does not name"},
+        "nsis-toolchain-verify": {
+            "job nsis-toolchain-verify is neither named by the gate nor declared outside it"},
+        "nsis-smoke-build": {
+            "job nsis-smoke-build is neither named by the gate nor declared outside it",
+            "job nsis-smoke-windows needs nsis-smoke-build, which the gate does not name"},
+        "nsis-smoke-windows": {
+            "job nsis-smoke-windows is neither named by the gate nor declared outside it"},
+    }
+    for name, expected in dropped.items():
+        problems = gate_workflow_problems(_without_name(contract, name), workflow)
+        assert len(problems) == len(expected) and set(problems) == expected, (name, problems)
+    # NEGATIVE: a job added to the workflow that nobody decided about.
+    added = workflow.rstrip("\n") + "\n\n  brand-new-job:\n    runs-on: ubuntu-24.04\n    steps: []\n"
+    assert gate_workflow_problems(contract, added) == [
+        "job brand-new-job is neither named by the gate nor declared outside it"]
+    # NEGATIVE: a named job that can be skipped, one that cannot fail the run,
+    # and one that needs a job the line does not name.
+    skippable = _once(workflow, "  nsis-toolchain-verify:\n",
+                      "  nsis-toolchain-verify:\n    if: always()\n")
+    assert gate_workflow_problems(contract, skippable) == [
+        "job nsis-toolchain-verify is named by the gate and carries an `if`, so it can be skipped"]
+    forgiving = _once(workflow, "  nsis-smoke-build:\n",
+                      "  nsis-smoke-build:\n    continue-on-error: true\n")
+    assert gate_workflow_problems(contract, forgiving) == [
+        "job nsis-smoke-build is named by the gate and continues on error"]
+    dependent = _once(workflow, "  nsis-smoke-windows:\n    needs: nsis-smoke-build\n",
+                      "  nsis-smoke-windows:\n    needs: [nsis-smoke-build, windows-payload]\n")
+    assert gate_workflow_problems(contract, dependent) == [
+        "job nsis-smoke-windows needs windows-payload, which the gate does not name"]
+    # NEGATIVE: the declared exceptions are held to the workflow too. The
+    # dispatch-only job loses its `if`; the line comes to name a job declared
+    # outside it; a declared job is not in the workflow.
+    always = _once(workflow, "    if: github.event_name == 'workflow_dispatch'\n", "")
+    assert gate_workflow_problems(contract, always) == [
+        "nsis-source-corroboration is declared dispatch-only and its `if` does not say so"]
+    named = _once(contract, f"{GATED_LAST})", f"{GATED_LAST}, nsis-source-corroboration)")
+    assert gate_workflow_problems(named, workflow) == [
+        "nsis-source-corroboration is declared outside the gate and is named by it",
+        "job nsis-source-corroboration is named by the gate and carries an `if`, so it can be "
+        "skipped"]
+    monkeypatch.setitem(OUTSIDE_THE_GATE, "a-job-that-left", "gone")
+    assert gate_workflow_problems(contract, workflow) == [
+        "a-job-that-left is declared outside the gate and is not a job"]
 
 
 # --------------------------------------------------------------------------

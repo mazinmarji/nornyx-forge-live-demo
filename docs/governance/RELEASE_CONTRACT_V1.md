@@ -120,7 +120,9 @@ declares the repository finished.
 
     Remote CI (3.10 / 3.11 / 3.12 / 3.13,
       container-launch, demo-contract,
-      strict-authorization, hostile-probe)      PASS
+      strict-authorization, hostile-probe,
+      nsis-toolchain, nsis-toolchain-verify,
+      nsis-smoke-build, nsis-smoke-windows)     PASS
 
     Exact candidate head frozen                 review/candidate-<sha7>
     ------------------------------------------------------------------

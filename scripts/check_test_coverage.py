@@ -525,6 +525,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # removal no test sees is possible for any guard those runs did not
     # remove). 167 collected at introduction, floor at band(167) = 151.
     "tests/test_windows_payload.py": 151,
+    # The NSIS compiler's pins and build: the pin file and the package lock
+    # (one case for each field), the archive and package fetches, the refusal
+    # of each hostile archive member, the container command, the script that
+    # runs inside the container over stand-in tools, the comparison of two
+    # builds, the source against the upstream Git tree, the smoke installer, the
+    # structure of the four new CI jobs, and the wording of the documents.
+    # 195 collected at introduction, floor at band(195) = 176.
+    "tests/test_nsis_toolchain.py": 177,
+    # The tool that wrote the package lock: Debian's version order, the
+    # relationship grammar, the dependency closure and the signed chain from the
+    # release file to a package's hash. 48 collected at introduction, floor at
+    # band(48) = 44.
+    "tests/test_resolve_nsis_debs.py": 44,
     # The architecture change record, derived from the architecture
     # contract's changes: entries: the derivation over synthetic contracts
     # with one named refusal per malformed shape, the vocabulary and the YAML
@@ -533,7 +546,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # key, derived claim and the canonical form, and the tool end to end in a
     # copy of the repository. 252 collected at introduction, floor at
     # band(252) = 227.
-    "tests/test_architecture_change_record.py": 227,
+    "tests/test_architecture_change_record.py": 229,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -973,8 +986,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # against the workflow, the job's shape, and its step executed against
     # synthetic repositories, and against this tree with pytest
     # intercepted. 52 collected at introduction, floor at
-    # band(52) = 47.
-    "tests/test_hostile_probe_job.py": 47,
+    # band(52) = 47; the test that reads every job of the workflow against
+    # the gate's line makes it 53, floor band(53) = 48.
+    "tests/test_hostile_probe_job.py": 48,
     "tests/test_approval_authentication.py": 44,
     "tests/test_killed_by_validation.py": 8,
     "tests/test_failure_attribution.py": 9,
@@ -1959,14 +1973,39 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 386 -> 402. THE SLACK THE BANDS GRANT moves 394 -> 410: the new module sits
 # 16 above its band. NO SKIP IS ADDED where the census runs.
 #
+# THE NSIS TOOLCHAIN ADDS TWO MODULES AND MOVES ONE.
+# tests/test_nsis_toolchain.py is new at 196 collected, floor band(196) = 177:
+# the pin file and the package lock, the archive and package fetches, the
+# refusal of each hostile archive member, the container command, the script that
+# runs inside the container over stand-in tools, the comparison of two builds,
+# the source against the upstream Git tree, the smoke installer, the structure of
+# the five new CI jobs, and the wording of the documents.
+# tests/test_resolve_nsis_debs.py is new at 48, floor band(48) = 44: the
+# tool that wrote the package lock. THE MODULE THAT MOVES is
+# tests/test_architecture_change_record.py, 254 (was 252), floor band(254) = 229
+# (was 227): the two tests that pin the declared canonical text rule change.
+# tests/test_hostile_probe_job.py moves too, 52 -> 53, floor 47 -> 48: the test that
+# reads every job of the workflow against the closure gate's remote-CI line, in both
+# directions. The NSIS module's 196 includes the test that the line names the four
+# NSIS jobs.
+# The windows-runtime job's modules still collect as before, so THAT JOB'S FLOOR IS
+# UNTOUCHED AT 277. EVERY OTHER MODULE IS UNMOVED, measured rather than assumed:
+# a fresh collection of this tree, as a normal user, gives 5312 across 132
+# modules, which is the 5065 across 130 that these rows recorded before plus
+# the new modules' 196 and 48 and the four tests that moved. The module-floor sum rises by 224 to 4844 and the
+# aggregate follows to 4852, keeping the same 8 above it; band(n) 4559 -> 4781,
+# and the working room below the floor 437 -> 460. THE SLACK THE BANDS GRANT
+# moves by 23, the new modules sitting 19 and 4 above their bands. NO SKIP
+# IS ADDED where the census runs. The rows below are these.
+#
 # (rows below):
 #
-#     collected across tests/     5065   (130 modules)
-#     sum of the module floors    4620
-#     band(5065) = ceil(0.9*n)    4559
-#     MINIMUM_COLLECTED           4628
+#     collected across tests/     5312   (132 modules)
+#     sum of the module floors    4844
+#     band(5312) = ceil(0.9*n)    4781
+#     MINIMUM_COLLECTED           4852
 #     above the module sum          8
-#     below what collects         437
+#     below what collects         460
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2188,7 +2227,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 445 in total, and the aggregate refuses
+# per-module bands already grant 468 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2457,7 +2496,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4628
+MINIMUM_COLLECTED = 4852
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2574,6 +2613,8 @@ REQUIRED_MODULES = (
     "tests/test_windows_runtime.py",
     "tests/test_windows_host_runtime.py",
     "tests/test_windows_payload.py",
+    "tests/test_nsis_toolchain.py",
+    "tests/test_resolve_nsis_debs.py",
     "tests/test_architecture_change_record.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",

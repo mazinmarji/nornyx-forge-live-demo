@@ -2,6 +2,40 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The installer compiler is built from pinned source (A-042). NSIS 3.11 and
+  3.12 fixed two local privilege escalations in the plug-in directory handling
+  of installers run as SYSTEM, in the stub and plug-ins an installer carries,
+  and no Ubuntu series packages a version with either fix. A new
+  `scripts/windows_installer/build_nsis_toolchain.py` builds NSIS 3.13 from the
+  upstream source archive in the Ubuntu 24.04 image pinned by digest, with no
+  network, over 66 packages pinned by size and SHA-256 in
+  `nsis-build-debs.json` (written by `resolve_nsis_debs.py` from a signed
+  archive snapshot). The source pin in `nsis-toolchain.json` is a
+  trust-on-first-use ceiling, not authenticated upstream provenance: no
+  upstream cryptographic release signature is available to Forge, and the
+  SHA-256 establishes exact byte identity, not publisher identity; SourceForge's
+  size and MD5 and the agreement with the upstream Git tree are corroboration
+  and consistency checks. Five new CI jobs build it twice on separate runners,
+  compare the bytes and the pinned output digests (measured in CI run 37122873329),
+  and run a small installer built with it on Windows. The
+  archive is refused on a wrong size, hash or MD5, and on any link, device or
+  out-of-root member, before anything is written. The compile runs as an
+  unprivileged user with no capability, what the container wrote is read by
+  lstat and copied by the host before it is uploaded, and the smoke installer is
+  compiled inside the pinned image with no network. The canonical text rule
+  (`CANONICAL_TEXT_SUFFIXES` in `src/nornyx_forge/governed_subject.py`, a
+  boundary path outside the toolchain's own files) now names `.nsi`, `.nsh` and
+  `.ps1`, so the smoke installer's source is hashed as LF text like the rest. No
+  file at the base had those suffixes, so no existing digest changes (measured,
+  A-042); the touch is declared as the change `architecture.canonical_text_rule`
+  in the architecture contract and appears in the derived change record. The
+  release closure gate now names the four NSIS jobs that report per commit
+  (`nsis-toolchain`, `nsis-toolchain-verify`, `nsis-smoke-build` and
+  `nsis-smoke-windows`), so a failed or cancelled build cannot stand beside a
+  passing gate; a test now also requires every job of the workflow to be named
+  by the gate or declared outside it, and refuses a named job that can be
+  skipped. No installer is built or changed here.
+
 - The architecture gate reads its contract and its modules one way (A-041).
   `scripts/check_architecture.py` looks modules up by id and by name, and
   layers by id, and it built each index from a list, which keeps the last
