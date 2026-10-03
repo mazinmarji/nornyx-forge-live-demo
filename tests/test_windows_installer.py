@@ -337,6 +337,17 @@ def test_the_installers_sources_are_under_the_canonical_text_rule_and_written_ca
                     f"{path.name}:{node.lineno} leaves line endings to the platform")
 
 
+def test_the_new_canonical_suffixes_are_used_only_by_the_installers_own_sources():
+    """The boundary touch of the canonical text rule changes how a file of those
+    suffixes is hashed. At the base no tracked file had one (A-042 gives the
+    measurement); here, every tracked file that has one is the installer's own."""
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,  # noqa: S603, S607
+                             timeout=120, check=True).stdout.decode("utf-8").split("\0")
+    users = sorted(name for name in tracked if name.endswith((".nsi", ".nsh", ".ps1")))
+    assert users == ["scripts/windows_installer/forge-setup.nsi",
+                     "scripts/windows_installer/run_as_standard_user.ps1"], users
+
+
 def test_the_installer_files_are_lf_utf8_with_a_final_newline():
     for path in (NSI, TOOLS, ROOT / "scripts" / "windows_installer" / "installer_contract.py",
                  ROOT / "scripts" / "windows_installer" / "standard_user_checks.py",

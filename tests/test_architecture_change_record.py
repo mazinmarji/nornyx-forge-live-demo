@@ -693,6 +693,69 @@ def test_the_windows_payload_entry_is_declared_as_committed():
     assert set(entry["scope"]) <= _declared_ids(document["architecture"])
 
 
+CANONICAL_TEXT_CHANGE = "architecture.canonical_text_rule"
+
+
+def test_the_canonical_text_rule_touch_is_declared_as_committed():
+    """The boundary touch of `src/nornyx_forge/governed_subject.py` is named by
+    a declared change, whole, as committed: the three suffixes it adds, at
+    architecture impact none (no module, dependency or layer moves) and
+    security impact minor. Approving or closing it changes the entry on
+    purpose, and this test with it."""
+    document = _document()
+    [entry] = [item for item in document["changes"] if item["id"] == CANONICAL_TEXT_CHANGE]
+    assert entry == {
+        "schema": "nornyx.change.v1",
+        "id": CANONICAL_TEXT_CHANGE,
+        "type": "architecture_change",
+        "purpose": "Name .nsi, .nsh and .ps1 in CANONICAL_TEXT_SUFFIXES of "
+                   "nornyx_forge.governed_subject, so the Windows installer's sources are "
+                   "governed as LF text.",
+        "status": "proposed",
+        "transition": {"from": "draft", "to": "proposed",
+                       "evidence": ["architecture_conformance_report"]},
+        "scope": ["component.governed_subject", "module.governed_subject"],
+        "excluded_scope": [],
+        "risk_tier": "medium",
+        "blast_radius": "component",
+        "reversibility": "reversible",
+        "rollback_required": False,
+        "rollback_plan_artifact": None,
+        "irreversible_authority": None,
+        "impacts": {"security": "minor", "architecture": "none", "data": "none",
+                    "dependency": "none", "operational": "none"},
+        "required_controls": ["architecture_conformance_policy", "separation_of_duties_policy"],
+        "required_evidence": ["architecture_conformance_report", "independent_review_record"],
+        "approver_roles": ["architecture_reviewer"],
+        "approval_ids": ["ArchitectureAuthority"],
+        "separation_of_duties": {"author_role": "repository_maintainer",
+                                 "approver_role": "architecture_reviewer", "disjoint": True},
+        "exceptions": [],
+    }
+    assert set(entry["scope"]) <= _declared_ids(document["architecture"])
+    [assignment] = [item for item in document["separation_of_duties"]["assignments"]
+                    if item["subject"] == CANONICAL_TEXT_CHANGE]
+    assert assignment["evidence_producers"] == ["tool:check_architecture",
+                                                "tool:in_session_inspectors"]
+    assert assignment["require_evidence_independence"] is True
+
+
+def test_the_declared_canonical_text_touch_is_what_the_source_changes():
+    """The entry names the suffixes the source gains. The source's tuple holds
+    exactly those three beyond the base list, and the entry's purpose names the
+    same three, so a fourth suffix added later is not covered by it."""
+    from nornyx_forge.governed_subject import CANONICAL_TEXT_SUFFIXES  # noqa: PLC0415
+
+    base = {".py", ".pyi", ".md", ".toml", ".yml", ".yaml", ".json", ".cfg", ".ini", ".txt",
+            ".sh", ".nyx", ".gitignore", ".gitattributes", ".dockerignore", ".js", ".mjs",
+            ".cjs", ".ts", ".html", ".htm", ".css", ".svg", ".xml", ".sql", ".env", ".lock",
+            ".rst", ".csv"}
+    assert set(CANONICAL_TEXT_SUFFIXES) - base == {".nsi", ".nsh", ".ps1"}
+    assert base <= set(CANONICAL_TEXT_SUFFIXES), "no suffix of the base list was dropped"
+    [entry] = [item for item in _document()["changes"] if item["id"] == CANONICAL_TEXT_CHANGE]
+    assert all(suffix in entry["purpose"] for suffix in (".nsi", ".nsh", ".ps1"))
+
+
 def test_the_windows_payload_assignment_is_declared_as_committed():
     """The separation-of-duties assignment that names the entry, whole. Its
     producers are those of the entry's evidence, as for the existing
@@ -745,15 +808,17 @@ def test_the_committed_record_is_what_the_contract_derives():
 
 
 def test_the_committed_record_states_the_review_record_clause_it_derives():
-    """The clause the record derives for the committed contract: both entries
+    """The clause the record derives for the committed contract: all three entries
     name ArchitectureAuthority, which requires the independent review record,
-    and both list it among their own required evidence."""
+    and all list it among their own required evidence."""
     statement = json.loads(RECORD.read_text(encoding="utf-8"))["statement"]
     assert statement.endswith(
         " Entries naming an approval that requires independent_review_record: "
         "architecture.nornyx_forge_demo names ArchitectureAuthority and lists it among its "
         "own required evidence; architecture.windows_payload_module names "
-        "ArchitectureAuthority and lists it among its own required evidence. Whether "
+        "ArchitectureAuthority and lists it among its own required evidence; "
+        "architecture.canonical_text_rule names ArchitectureAuthority and lists it among "
+        "its own required evidence. Whether "
         "a passing independent_review_record exists is not shown here.")
 
 
@@ -1019,7 +1084,7 @@ def test_the_tool_writes_every_key_and_the_derived_claims(tmp_path):
 
 
 BREAKAGES = {
-    "duplicate-id": "repeats the change id 'architecture.windows_payload_module'",
+    "duplicate-id": "repeats the change id 'architecture.canonical_text_rule'",
     "yaml-error": "the contract is not parseable YAML",
     "repeated-changes-key": "found duplicate key 'changes'",
     "status-a-list": "which is not a nornyx.change.v1 status",

@@ -6131,6 +6131,34 @@ person who runs Setup, which can already write the folders below.
 | The build tool and the runner image | at build | pinned packages, binary and data-tree digests, reported version | the image behind `ubuntu-24.04` changes under the label; its libraries are not pinned; NSIS 3.09 is older than the fixes named above |
 | CI artifacts | after the build | a three-day retention; digests checked against the build record by the next job | unsigned test artifacts, produced for pull requests from forks too; not a release channel |
 
+**Boundary touch: the canonical text rule.** This change edits one path outside
+the installer's own files, `src/nornyx_forge/governed_subject.py`, which decides
+how governed files are hashed. `CANONICAL_TEXT_SUFFIXES` gains `.nsi`, `.nsh`
+and `.ps1` (five lines added, one removed), so the installer's sources are
+hashed as LF text like the `.sh` beside them (`.gitattributes` keeps them LF on
+every checkout) instead of raw. The first CI run needed it: the governed-text
+test refused `forge-setup.nsi` and `run_as_standard_user.ps1` as governed text
+outside the rule. It is named here, in the architecture contract's declared
+change `architecture.canonical_text_rule` (architecture impact none, security
+impact minor, proposed, with the same approval and separation of duties as the
+other entries, which the change record derives from), and in the change record.
+The alternative, renaming the two files with a `.txt` suffix, was not taken.
+**No existing digest changes.** Measured on 2026-10-03 on main at
+`0a274a7`, the base of this change:
+
+```
+git ls-tree -r --name-only 0a274a7 | grep -c -i -E '\.(nsi|nsh|ps1)$'
+0
+```
+
+none of the 342 tracked paths has one of the three suffixes, in any letter case,
+so no file that was hashed before is hashed differently now. At the head the
+same command lists exactly the installer's two sources
+(`tests/test_windows_installer.py` holds that). What the touch does change: a
+governed file with one of the suffixes that carries CR bytes is now refused by
+the subject observer instead of hashed raw. Not established: the effect on a
+checkout that rewrites line endings outside what `.gitattributes` governs.
+
 **Determinism, exactly.** The executable is a function of the payload's bytes
 and times (its identity), the script, the generated includes, and the pinned
 `makensis`; the build reads no clock and passes `makensis` a fixed

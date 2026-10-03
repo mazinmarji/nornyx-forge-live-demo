@@ -22,8 +22,13 @@
   uninstaller and warns when Git for Windows is missing. It is not an MSI and
   has no service. For the real installer the build also compares every file of
   the payload's copy of the repository, and the version, with the commit's.
-  The canonical text rule (`CANONICAL_TEXT_SUFFIXES`) now names `.nsi`, `.nsh`
-  and `.ps1`, so the installer's sources are hashed as LF text like the rest.
+  The canonical text rule (`CANONICAL_TEXT_SUFFIXES` in
+  `src/nornyx_forge/governed_subject.py`, a boundary path outside the
+  installer's own files) now names `.nsi`, `.nsh` and `.ps1`, so the installer's
+  sources are hashed as LF text like the rest. No file at the base had those
+  suffixes, so no existing digest changes (measured, A-042); the touch is
+  declared as the change `architecture.canonical_text_rule` in the architecture
+  contract and appears in the derived change record.
   Two new CI jobs: `windows-installer` builds it twice from two checkouts and
   compares the bytes; `windows-install` installs (into an existing empty
   folder and into an absent one), provokes the refusals, launches, stops and

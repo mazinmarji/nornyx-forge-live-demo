@@ -1,7 +1,7 @@
 {
   "authenticated_inspections": {},
-  "generated_at": "2026-10-03T10:59:50Z",
-  "governed_input_digest": "sha256:270239f30f997de38b0c3668bf2a1794abe4226132617ab0c45c34d0d3bcab2d",
+  "generated_at": "2026-10-03T12:45:08Z",
+  "governed_input_digest": "sha256:b9a307d87665ae37d649c21e15065401f1202b379b9b7a3f80beb8e249f756f2",
   "human_review": "not_performed",
   "reviewer_type": "read_only_ai_inspector",
   "reviewers": [],
