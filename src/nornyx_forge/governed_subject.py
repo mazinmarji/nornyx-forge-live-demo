@@ -82,11 +82,15 @@ NEVER_GOVERNED_SUFFIXES = (".pyc", ".pyo")
 #: CR bytes on a Windows checkout. The digest then differed from a Linux
 #: checkout of the identical commit — the exact defect the canonical rule
 #: exists to prevent, surviving in the files the list did not enumerate.
+#: Extended again for the Windows installer's own sources: the NSIS script
+#: (`.nsi`, and the `.nsh` includes it reads) and the PowerShell script
+#: (`.ps1`) are governed text, and `.gitattributes` keeps them LF on every
+#: checkout, like the `.sh` beside them.
 CANONICAL_TEXT_SUFFIXES = (
     ".py", ".pyi", ".md", ".toml", ".yml", ".yaml", ".json", ".cfg", ".ini",
     ".txt", ".sh", ".nyx", ".gitignore", ".gitattributes", ".dockerignore",
     ".js", ".mjs", ".cjs", ".ts", ".html", ".htm", ".css", ".svg", ".xml",
-    ".sql", ".env", ".lock", ".rst", ".csv",
+    ".sql", ".env", ".lock", ".rst", ".csv", ".nsi", ".nsh", ".ps1",
 )
 CANONICAL_TEXT_NAMES = ("Dockerfile", ".gitignore", ".gitattributes", "Makefile")
 

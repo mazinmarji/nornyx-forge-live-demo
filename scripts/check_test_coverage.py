@@ -532,8 +532,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # after compiling, and that the same inputs give the same bytes), the
     # driver's pure parts, and the structure of the `windows-installer` and
     # `windows-install` jobs, with a named refusal for each guard a mutation
-    # sweep removed. 163 collected, floor at band(163) = 147.
-    "tests/test_windows_installer.py": 147,
+    # sweep removed. 169 collected, floor at band(169) = 153.
+    "tests/test_windows_installer.py": 153,
     # The architecture change record, derived from the architecture
     # contract's changes: entries: the derivation over synthetic contracts
     # with one named refusal per malformed shape, the vocabulary and the YAML
@@ -1969,26 +1969,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 16 above its band. NO SKIP IS ADDED where the census runs.
 #
 # FORGESETUP.EXE ADDS ONE MODULE AND MOVES NONE.
-# tests/test_windows_installer.py is new at 163 collected, floor band(163) =
-# 147: the installer script read as source, the generated file list and
+# tests/test_windows_installer.py is new at 169 collected, floor band(169) =
+# 153: the installer script read as source, the generated file list and
 # receipt, the builder over a stand-in compiler, the driver's pure parts and
 # the structure of the two new CI jobs. NO EXISTING MODULE CHANGED ITS TESTS
 # (the windows-runtime job's modules still collect as before, so THAT JOB'S
 # FLOOR IS UNTOUCHED AT 277). EVERY OTHER MODULE IS UNMOVED, measured rather
-# than assumed: a fresh collection of this tree, as a normal user, gives 5228
+# than assumed: a fresh collection of this tree, as a normal user, gives 5234
 # across 131 modules, which is the 5065 across 130 that these rows recorded
-# before plus the new module's 163. The module-floor sum rises by 147 to 4767
-# and the aggregate follows to 4775, keeping the same 8 above it; band(n)
-# 4559 -> 4706, and the working room below the floor 437 -> 453. THE SLACK THE
+# before plus the new module's 169. The module-floor sum rises by 153 to 4773
+# and the aggregate follows to 4781, keeping the same 8 above it; band(n)
+# 4559 -> 4711, and the working room below the floor 437 -> 453. THE SLACK THE
 # BANDS GRANT moves by 16, the new module sitting 16 above its band. NO SKIP
 # IS ADDED where the census runs. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5228   (131 modules)
-#     sum of the module floors    4767
-#     band(5228) = ceil(0.9*n)    4706
-#     MINIMUM_COLLECTED           4775
+#     collected across tests/     5234   (131 modules)
+#     sum of the module floors    4773
+#     band(5234) = ceil(0.9*n)    4711
+#     MINIMUM_COLLECTED           4781
 #     above the module sum          8
 #     below what collects         453
 #
@@ -2481,7 +2481,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4775
+MINIMUM_COLLECTED = 4781
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

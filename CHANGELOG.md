@@ -22,6 +22,8 @@
   uninstaller and warns when Git for Windows is missing. It is not an MSI and
   has no service. For the real installer the build also compares every file of
   the payload's copy of the repository, and the version, with the commit's.
+  The canonical text rule (`CANONICAL_TEXT_SUFFIXES`) now names `.nsi`, `.nsh`
+  and `.ps1`, so the installer's sources are hashed as LF text like the rest.
   Two new CI jobs: `windows-installer` builds it twice from two checkouts and
   compares the bytes; `windows-install` installs (into an existing empty
   folder and into an absent one), provokes the refusals, launches, stops and

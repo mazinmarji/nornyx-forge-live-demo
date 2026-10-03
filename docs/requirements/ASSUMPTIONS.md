@@ -6092,7 +6092,13 @@ folder it cannot write to, which fails the install after the folder is in
 place and writes no receipt); installs the real installer into an existing
 empty folder and into an absent one; checks the receipt, the shortcut's
 target, arguments and working folder, the ACL of the version folder and of a
-file in it (and of the root where the installer made it), the registry places
+file in it (and of the root where the installer made it) -- no principal beyond
+SYSTEM, Administrators and the user, and the same access as a control made by a
+plain mkdir or copy by the same user in the same parent; the explicit-versus-
+inherited mark is not judged, because the first CI run showed every object the
+installer made carrying explicit ACEs and only that control can say whose doing
+that is, and the check is shown able to fail on a folder with an extra ACE
+planted on it -- the registry places
 an installer registers itself in (`Uninstall` and `App Paths` as subkeys,
 `Run`, `RunOnce` and the user's `Environment` as values) and the machine
 `PATH`, and the folders an installer could leave state in; runs the same

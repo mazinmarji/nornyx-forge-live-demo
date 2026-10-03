@@ -104,9 +104,15 @@ def parse_icacls(output: str, path: str) -> list[tuple[str, str]]:
 
 
 def acl_problems(aces: list[tuple[str, str]], *, computer: str, user: str) -> list[str]:
-    """Why a folder's ACL shows the installer adding something: a principal
-    beyond SYSTEM, Administrators and the user, or an ACE that is not
-    inherited from the profile above it."""
+    """Why an ACL names someone the installer should not have granted
+    anything: a principal beyond SYSTEM, Administrators and the user, or no
+    ACE at all (a path that does not exist prints none).
+
+    WHAT THIS DOES NOT JUDGE: whether an ACE is inherited. On the CI runner the
+    objects the installer makes show their ACEs as explicit ((OI)(CI)(F) with no
+    (I)); whether that is the installer's doing or the way this profile's
+    parent hands its ACEs on is decided by `acl_differences` against a control
+    made the plain way in the same parent, never by the presence of "(I)"."""
     allowed = {"nt authority\\system", "builtin\\administrators",
                f"{computer}\\{user}".casefold()}
     problems = []
@@ -115,9 +121,22 @@ def acl_problems(aces: list[tuple[str, str]], *, computer: str, user: str) -> li
     for principal, flags in aces:
         if principal.casefold() not in allowed:
             problems.append(f"{principal} holds {flags}")
-        if "(I)" not in flags:
-            problems.append(f"{principal}'s ACE {flags} is explicit, not inherited")
     return problems
+
+
+def acl_signature(aces: list[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+    """The access an ACL grants: principal and rights with their inheritance
+    flags, without the (I) mark that says only where the ACE came from."""
+    return frozenset((principal.casefold(), flags.replace("(I)", "")) for principal, flags in aces)
+
+
+def acl_differences(subject: list[tuple[str, str]], control: list[tuple[str, str]]) -> list[str]:
+    """What the installer's object grants that a control made by a plain
+    mkdir or copy, by the same user in the same parent, does not, and what the
+    control grants that the installer's object does not."""
+    made, plain = acl_signature(subject), acl_signature(control)
+    return ([f"only on the installer's object: {who} {flags}" for who, flags in sorted(made - plain)]
+            + [f"only on the control: {who} {flags}" for who, flags in sorted(plain - made)])
 
 
 def listing_problems(before: dict[str, set[str]], after: dict[str, set[str]]) -> list[str]:
@@ -342,13 +361,58 @@ def redirected_local_appdata(target: str):
             winreg.SetValueEx(key, "Local AppData", 0, kind, old)
 
 
-def icacls_problems(path: Path, *, computer: str, user: str) -> list[str]:
-    """The ACL of one path, judged: SYSTEM, Administrators and the user only,
-    every ACE inherited. An empty listing is a problem, so a path that does
-    not exist cannot pass."""
+def aces_of(path: Path) -> tuple[list[tuple[str, str]], str]:
+    """(ACEs, raw `icacls` text) of one path."""
     completed = subprocess.run(["icacls", str(path)], capture_output=True, timeout=60)
     listing = completed.stdout.decode("utf-8", "replace")
-    return acl_problems(parse_icacls(listing, str(path)), computer=computer, user=user)
+    return parse_icacls(listing, str(path)), listing
+
+
+def acl_check(path: Path, *, computer: str, user: str, label: str) -> list[str]:
+    """The installer's object judged against a control: SYSTEM, Administrators
+    and the user only, and the same access as a plain mkdir (for a folder) or
+    copy (for a file) made by this user in the same parent, which is removed
+    again. The raw ACLs of the parent, the control and the object are printed,
+    so a failure shows its own cause. An empty listing is a problem, so a path
+    that does not exist cannot pass."""
+    parent = path.parent
+    control = parent / (".acl-control-dir" if path.is_dir() else ".acl-control-file")
+    if path.is_dir():
+        control.mkdir()
+    else:
+        shutil.copyfile(path, control)
+    try:
+        made, made_raw = aces_of(path)
+        plain, plain_raw = aces_of(control)
+        _parent_aces, parent_raw = aces_of(parent)
+    finally:
+        if control.is_dir():
+            control.rmdir()
+        else:
+            control.unlink(missing_ok=True)
+    print(f"  [acl {label}] parent {parent}:\n{parent_raw.rstrip()}\n"
+          f"  [acl {label}] control, made the plain way beside it:\n{plain_raw.rstrip()}\n"
+          f"  [acl {label}] the installer's object {path}:\n{made_raw.rstrip()}", flush=True)
+    return acl_problems(made, computer=computer, user=user) + acl_differences(made, plain)
+
+
+def planted_acl_problems(work: Path, *, computer: str, user: str) -> list[str]:
+    """The ACL check on an object that really does carry an extra ACE (the
+    Users group granted read on a folder made the plain way): it must find
+    something. Proof that `acl_check` can fail on this host's own `icacls`."""
+    base = work / "acl-plant"
+    shutil.rmtree(base, ignore_errors=True)
+    plain, planted = base / "plain", base / "planted"
+    plain.mkdir(parents=True)
+    planted.mkdir()
+    try:
+        subprocess.run(["icacls", str(planted), "/grant", "BUILTIN\\Users:(OI)(CI)(R)"],
+                       check=True, capture_output=True, timeout=60)
+        made, _raw = aces_of(planted)
+        control, _raw = aces_of(plain)
+        return acl_problems(made, computer=computer, user=user) + acl_differences(made, control)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def refused(exe: Path, work: Path, tag: str, code: int) -> tuple[list[str], str]:
@@ -383,6 +447,8 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     before_listing, before_registry = watched_listing(profile), registry_state()
     expect(registry_problems(before_registry) == [],
            f"the registry census read what it is meant to read {registry_problems(before_registry)}")
+    planted = planted_acl_problems(work, computer=computer, user=user)
+    expect(bool(planted), f"the ACL check finds an extra ACE planted on a folder it is shown {planted}")
 
     # --- refusals, each from a tiny sealed payload, each leaving nothing
     problems, _log = refused(variants["long"] / "ForgeSetup.exe", work, "long",
@@ -408,7 +474,7 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
 
     programs.mkdir(parents=True, exist_ok=True)
     root.mkdir()
-    (root / "stranger.txt").write_text("not forge's\n", encoding="utf-8")
+    (root / "stranger.txt").write_text("not forge's\n", encoding="utf-8", newline="")
     problems, _log = refused(small / "ForgeSetup.exe", work, "stranger", codes["EXIT_NOT_FORGE"])
     expect(not problems and sorted(os.listdir(root)) == ["stranger.txt"],
            f"a non-empty folder without a receipt is not Forge's and is left alone {problems}")
@@ -429,7 +495,7 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
                                                       False)):
         root.mkdir()
         if receipt:
-            (root / contract.RECEIPT_NAME).write_text("{}\n", encoding="utf-8")
+            (root / contract.RECEIPT_NAME).write_text("{}\n", encoding="utf-8", newline="")
         (root / partial).mkdir()
         problems, _log = refused(small / "ForgeSetup.exe", work, "unfinished",
                                  codes["EXIT_UNFINISHED"])
@@ -439,7 +505,7 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
 
     for label in ("a file", "a folder"):
         if label == "a file":
-            shortcut_path.write_text("not the installer's\n", encoding="utf-8")
+            shortcut_path.write_text("not the installer's\n", encoding="utf-8", newline="")
         else:
             shortcut_path.unlink()
             shortcut_path.mkdir()
@@ -563,8 +629,9 @@ def check_install(tag: str, exe: Path, work: Path, manifest: dict, *, folder: Pa
                f"[{tag}] the shortcut starts the embedded interpreter in the install root {found}")
     judged = [folder, folder / "forge-payload.json"] + ([root] if root_created else [])
     for path in judged:
-        acl = icacls_problems(path, computer=computer, user=user)
-        expect(not acl, f"[{tag}] the installer added no ACE to {path.name} {acl}")
+        acl = acl_check(path, computer=computer, user=user, label=f"{tag} {path.name}")
+        expect(not acl, f"[{tag}] {path.name} grants no one anything that a plain mkdir or "
+                        f"copy beside it does not {acl}")
     after_listing, after_registry = watched_listing(profile), registry_state()
     listed = listing_problems(before_listing, after_listing)
     expect(not listed, f"[{tag}] only the install folder and the shortcut were added {listed}")

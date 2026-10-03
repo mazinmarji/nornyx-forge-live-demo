@@ -299,6 +299,44 @@ def test_no_line_of_the_script_ends_in_a_backslash():
         assert not line.rstrip("\r").endswith("\\"), f"line {number} ends in a backslash"
 
 
+def test_the_installers_sources_are_under_the_canonical_text_rule_and_written_canonically():
+    """CLASS (found by CI, not by the fast checks): a governed text file whose
+    suffix the canonical rule does not name is hashed raw, so its digest depends
+    on the checkout's line endings; and a writer that leaves line endings to the
+    platform makes a file CRLF on Windows. Both are held for everything this
+    change adds under scripts/."""
+    from nornyx_forge.governed_subject import (  # noqa: PLC0415
+        CANONICAL_TEXT_SUFFIXES,
+        is_declared_text,
+    )
+
+    for suffix in (".nsi", ".nsh", ".ps1"):
+        assert suffix in CANONICAL_TEXT_SUFFIXES, suffix
+    added = sorted(path for path in (ROOT / "scripts" / "windows_installer").iterdir()
+                   if path.is_file()) + [ROOT / "scripts" / "build_windows_installer.py"]
+    assert len(added) >= 8
+    for path in added:
+        relative = path.relative_to(ROOT).as_posix()
+        assert is_declared_text(relative) or b"\0" in path.read_bytes(), (
+            f"{relative} is text outside the canonical text rule")
+    import ast  # noqa: PLC0415
+
+    for path in added:
+        if path.suffix != ".py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            mode = node.args[0] if node.args else None
+            literal = mode.value if isinstance(mode, ast.Constant) else ""
+            opens_text_for_writing = (
+                node.func.attr == "open" and isinstance(literal, str)
+                and any(flag in literal for flag in "wax+") and "b" not in literal)
+            if node.func.attr == "write_text" or opens_text_for_writing:
+                assert any(keyword.arg == "newline" for keyword in node.keywords), (
+                    f"{path.name}:{node.lineno} leaves line endings to the platform")
+
+
 def test_the_installer_files_are_lf_utf8_with_a_final_newline():
     for path in (NSI, TOOLS, ROOT / "scripts" / "windows_installer" / "installer_contract.py",
                  ROOT / "scripts" / "windows_installer" / "standard_user_checks.py",
@@ -1094,15 +1132,61 @@ def test_the_acl_of_a_folder_the_installer_added_nothing_to_is_accepted():
 @pytest.mark.parametrize("extra, expect", [
     ("BUILTIN\\Users:(I)(OI)(CI)(RX)", "BUILTIN\\Users"),
     ("Everyone:(OI)(CI)(F)", "Everyone"),
-    ("RUNNER\\forgeci:(OI)(CI)(F)", "explicit"),
 ])
-def test_an_ace_the_installer_would_have_added_is_named(extra: str, expect: str):
+def test_a_principal_the_installer_would_have_granted_is_named(extra: str, expect: str):
     path = "C:\\x\\Nornyx Forge"
     aces = driver.parse_icacls(ICACLS.replace("C:\\Users\\forgeci\\AppData\\Local\\Programs\\"
                                               "Nornyx Forge", path) + "    " + extra + "\n", path)
     problems = driver.acl_problems(aces, computer="RUNNER", user="forgeci")
     assert any(expect in problem for problem in problems), problems
     assert driver.acl_problems([], computer="RUNNER", user="forgeci")
+
+
+# What the CI run measured (windows-latest, a freshly created standard user): the
+# folder the installer made, the file extracted into it and the root all showed
+# SYSTEM, Administrators and the user with full control, (OI)(CI) on folders, and
+# NO (I) mark. The first check read "no (I)" as "the installer added an ACE".
+EXPLICIT_FOLDER = [("NT AUTHORITY\\SYSTEM", "(OI)(CI)(F)"), ("BUILTIN\\Administrators", "(OI)(CI)(F)"),
+                   ("RUNNER\\forgeci", "(OI)(CI)(F)")]
+INHERITED_FOLDER = [(who, "(I)" + flags) for who, flags in EXPLICIT_FOLDER]
+
+
+def test_explicit_and_inherited_marks_on_the_same_access_are_one_access():
+    """The invariant is the access an ACL grants, compared with a control made
+    the plain way in the same parent: a control that shows the same explicit
+    shape cannot make the installer's object differ from it."""
+    assert driver.acl_problems(EXPLICIT_FOLDER, computer="RUNNER", user="forgeci") == []
+    assert driver.acl_signature(EXPLICIT_FOLDER) == driver.acl_signature(INHERITED_FOLDER)
+    assert driver.acl_differences(EXPLICIT_FOLDER, INHERITED_FOLDER) == []
+    assert driver.acl_differences(EXPLICIT_FOLDER, EXPLICIT_FOLDER) == []
+
+
+@pytest.mark.parametrize("planted, expect", [
+    (EXPLICIT_FOLDER + [("BUILTIN\\Users", "(OI)(CI)(R)")], "only on the installer's object: "
+                                                              "builtin\\users"),
+    ([(who, "(OI)(CI)(M)" if who.endswith("forgeci") else flags)
+      for who, flags in EXPLICIT_FOLDER], "only on the installer's object: runner\\forgeci"),
+    (EXPLICIT_FOLDER[:2], "only on the control: runner\\forgeci"),
+    ([(who, flags.replace("(OI)(CI)", "")) for who, flags in EXPLICIT_FOLDER],
+     "only on the installer's object"),
+], ids=["extra-principal", "other-rights", "missing-principal", "other-inheritance-flags"])
+def test_a_planted_difference_from_the_control_is_found(planted, expect):
+    differences = driver.acl_differences(planted, INHERITED_FOLDER)
+    assert any(expect in found for found in differences), differences
+
+
+def test_the_driver_proves_its_acl_check_can_fail_on_the_hosts_own_icacls():
+    source = (ROOT / "scripts/windows_installer/standard_user_checks.py").read_text(encoding="utf-8")
+    body = source[source.index("def planted_acl_problems"):source.index("def refused")]
+    assert '"/grant", "BUILTIN\\\\Users:(OI)(CI)(R)"' in body
+    assert "acl_differences(made, control)" in body and "acl_problems(made" in body
+    assert "planted = planted_acl_problems(" in source and "expect(bool(planted)" in source
+    check = source[source.index("def acl_check"):source.index("def planted_acl_problems")]
+    assert "shutil.copyfile(path, control)" in check and "control.mkdir()" in check, (
+        "a plain copy and a plain mkdir are the controls")
+    assert "parent_raw" in check and "plain_raw" in check, "the raw ACLs are printed for diagnosis"
+    assert "made, made_raw = aces_of(path)" in check and "plain, plain_raw = aces_of(control)" in check, (
+        "the object is read from the object and the control from the control")
 
 
 def test_the_watched_listings_name_what_an_install_may_add_and_refuse_the_rest():
@@ -1189,7 +1273,7 @@ def test_the_driver_judges_the_acl_of_what_the_installer_made_not_of_what_it_mad
     source = (ROOT / "scripts/windows_installer/standard_user_checks.py").read_text(encoding="utf-8")
     body = source[source.index("def check_install"):source.index("def launch_checks")]
     assert "judged = [folder, folder / \"forge-payload.json\"] + ([root] if root_created else [])" in body
-    assert "icacls_problems(path" in body
+    assert "acl_check(path" in body
     assert "root.mkdir()" not in body, "the driver's own folder is not the thing under test"
 
 
