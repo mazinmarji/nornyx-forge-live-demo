@@ -538,6 +538,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # release file to a package's hash. 48 collected at introduction, floor at
     # band(48) = 44.
     "tests/test_resolve_nsis_debs.py": 44,
+    # ForgeSetup.exe: the installer script read as source (its exit codes,
+    # variables, elevation check, target, forbidden instructions and one started
+    # process), the file list and the receipt it generates, the builder over a
+    # synthetic repository, a stand-in compiler tree and a stand-in for `docker
+    # run` (the toolchain pins and the tree it refuses, the container it gives
+    # the compiler, what it refuses after compiling, and that the same inputs
+    # give the same bytes), the driver's pure parts, and the structure of the
+    # `windows-installer` and `windows-install` jobs. 204 collected at
+    # introduction, floor at band(204) = 184.
+    "tests/test_windows_installer.py": 184,
     # The architecture change record, derived from the architecture
     # contract's changes: entries: the derivation over synthetic contracts
     # with one named refusal per malformed shape, the vocabulary and the YAML
@@ -1996,16 +2006,34 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # aggregate follows to 4852, keeping the same 8 above it; band(n) 4559 -> 4781,
 # and the working room below the floor 437 -> 460. THE SLACK THE BANDS GRANT
 # moves by 23, the new modules sitting 19 and 4 above their bands. NO SKIP
-# IS ADDED where the census runs. The rows below are these.
+# IS ADDED where the census runs.
+#
+# FORGESETUP.EXE ADDS ONE MODULE AND MOVES NONE.
+# tests/test_windows_installer.py is new at 204 collected, floor band(204) =
+# 184: the installer script read as source, the generated file list and
+# receipt, the builder over a stand-in compiler tree and a stand-in for `docker
+# run`, the driver's pure parts and the structure of the two new CI jobs.
+# tests/test_hostile_probe_job.py stays at 53 (its two-way test gains cases
+# for the two new jobs inside one test) and tests/test_nsis_toolchain.py stays
+# at 196 (one slice of a document test was bounded). The windows-runtime job's
+# modules still collect as before, so THAT JOB'S FLOOR IS UNTOUCHED AT 277.
+# EVERY OTHER MODULE IS UNMOVED, measured rather than assumed: a fresh
+# collection of this tree, as a normal user, gives 5516 across 133 modules,
+# which is the 5312 across 132 that these rows recorded before plus the new
+# module's 204. The module-floor sum rises by 184 to 5028 and the aggregate
+# follows to 5036, keeping the same 8 above it; band(n) 4781 -> 4965, and the
+# working room below the floor 460 -> 480. THE SLACK THE BANDS GRANT moves by
+# 20, the new module sitting 20 above its band. NO SKIP IS ADDED where the
+# census runs. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5312   (132 modules)
-#     sum of the module floors    4844
-#     band(5312) = ceil(0.9*n)    4781
-#     MINIMUM_COLLECTED           4852
+#     collected across tests/     5516   (133 modules)
+#     sum of the module floors    5028
+#     band(5516) = ceil(0.9*n)    4965
+#     MINIMUM_COLLECTED           5036
 #     above the module sum          8
-#     below what collects         460
+#     below what collects         480
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2227,7 +2255,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 468 in total, and the aggregate refuses
+# per-module bands already grant 488 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2496,7 +2524,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 4852
+MINIMUM_COLLECTED = 5036
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2615,6 +2643,7 @@ REQUIRED_MODULES = (
     "tests/test_windows_payload.py",
     "tests/test_nsis_toolchain.py",
     "tests/test_resolve_nsis_debs.py",
+    "tests/test_windows_installer.py",
     "tests/test_architecture_change_record.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",

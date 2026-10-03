@@ -55,7 +55,7 @@ CENSUS = ROOT / "scripts" / "check_test_coverage.py"
 #: cannot drift from the one the gate uses.
 JOB = "hostile-probe"
 #: The last name on the gate's remote-CI line, so that a test can widen the line.
-GATED_LAST = "nsis-smoke-windows"
+GATED_LAST = "windows-install"
 #: The assumption that states what the job runs, cited by its title: its number
 #: appears only in its own heading.
 TITLE = (
@@ -245,15 +245,21 @@ def test_every_job_of_the_workflow_is_named_by_the_closure_gate_or_declared_outs
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert gate_workflow_problems(contract, workflow) == []
 
-    # NEGATIVE: each NSIS job dropped from the line. The first job also leaves
-    # the two that need it pointing at a job the line does not name.
+    # NEGATIVE: each NSIS and installer job dropped from the line. A job that
+    # others need also leaves them pointing at a job the line does not name.
     dropped = {
         "nsis-toolchain": {
             "job nsis-toolchain is neither named by the gate nor declared outside it",
             "job nsis-toolchain-verify needs nsis-toolchain, which the gate does not name",
             "job nsis-smoke-build needs nsis-toolchain, which the gate does not name"},
         "nsis-toolchain-verify": {
-            "job nsis-toolchain-verify is neither named by the gate nor declared outside it"},
+            "job nsis-toolchain-verify is neither named by the gate nor declared outside it",
+            "job windows-installer needs nsis-toolchain-verify, which the gate does not name"},
+        "windows-installer": {
+            "job windows-installer is neither named by the gate nor declared outside it",
+            "job windows-install needs windows-installer, which the gate does not name"},
+        "windows-install": {
+            "job windows-install is neither named by the gate nor declared outside it"},
         "nsis-smoke-build": {
             "job nsis-smoke-build is neither named by the gate nor declared outside it",
             "job nsis-smoke-windows needs nsis-smoke-build, which the gate does not name"},

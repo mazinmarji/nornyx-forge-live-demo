@@ -732,26 +732,44 @@ def check_executable(path: Path) -> None:
 _WARNING_LINE = re.compile(r"^\s*warning\b|^\d+ warnings?:", re.IGNORECASE | re.MULTILINE)
 
 
-def smoke_argv(pins: dict, *, tree: Path, nsi: Path, out_dir: Path, command: list[str],
-               docker: str = "docker") -> list[str]:
-    """The `docker run` that runs the built compiler: the pinned image, no network, no
-    capability, the compiler tree read-only, the script read-only, and one writable
-    folder for the installer it makes. NSISDIR and the configuration are fixed
-    (makensis otherwise takes both from outside the tree it was pinned as)."""
-    for path in (tree, nsi, out_dir):
+def compiler_argv(pins: dict, *, tree: Path, mounts: list[tuple[Path, str, bool]],
+                  command: list[str], epoch: int, docker: str = "docker") -> list[str]:
+    """The `docker run` that runs the built compiler, for every consumer of the tree:
+    the pinned image, no network, no capability, no way to gain one, a read-only root,
+    the compiler tree read-only at `/nsis`, and the caller's `mounts` (host folder or
+    file, container path, read-only or not). NSISDIR and the configuration are fixed
+    (makensis otherwise takes both from outside the tree it was pinned as), and so is
+    the rest of the environment; `epoch` is the SOURCE_DATE_EPOCH the caller decides.
+    The image is never pulled here (`--pull never`): the caller pulls it by digest
+    beforehand, so a missing image is a refusal, not a download. On a POSIX host a
+    path holding the `:` that `-v` splits on is refused, for every mount."""
+    for path in (tree, *(host for host, _, _ in mounts)):
         if not path.is_absolute():
             raise ToolchainError(f"{path} is not absolute, so docker would take it for a volume")
+        if os.name != "nt" and ":" in str(path):
+            raise ToolchainError(f"{path} holds a ':', which docker -v would split on")
     user = f"{os.getuid()}:{os.getgid()}" if hasattr(os, "getuid") else "65534:65534"
     environment = {"HOME": "/tmp", "NSISDIR": "/nsis", "LC_ALL": "C.UTF-8", "TZ": "UTC",
-                   "SOURCE_DATE_EPOCH": str(pins["build"]["source_date_epoch"])}
-    argv = [docker, "run", "--rm", "--network", "none", "--cap-drop", "ALL",
+                   "SOURCE_DATE_EPOCH": str(epoch)}
+    argv = [docker, "run", "--rm", "--pull", "never", "--network", "none", "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges", "--user", user, "--read-only",
             "--tmpfs", "/tmp"]
     for variable in sorted(environment):
         argv += ["-e", f"{variable}={environment[variable]}"]
-    for mount in (f"{tree}:/nsis:ro", f"{nsi}:/work/nsis-smoke.nsi:ro", f"{out_dir}:/smoke"):
-        argv += ["-v", mount]
+    argv += ["-v", f"{tree}:/nsis:ro"]
+    for host, target, read_only in mounts:
+        argv += ["-v", f"{host}:{target}" + (":ro" if read_only else "")]
     return [*argv, pins["container"]["image"], *command]
+
+
+def smoke_argv(pins: dict, *, tree: Path, nsi: Path, out_dir: Path, command: list[str],
+               docker: str = "docker") -> list[str]:
+    """The `docker run` that runs the built compiler for the smoke installer: the
+    script read-only, and one writable folder for the installer it makes."""
+    return compiler_argv(pins, tree=tree, mounts=[(nsi, "/work/nsis-smoke.nsi", True),
+                                                  (out_dir, "/smoke", False)],
+                         command=command, epoch=pins["build"]["source_date_epoch"],
+                         docker=docker)
 
 
 def compile_smoke(tree: Path, pins: dict, out: Path, *, nsi: Path = SMOKE_SCRIPT,

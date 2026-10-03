@@ -2,6 +2,40 @@
 
 ## Unreleased — hardening from adversarial review
 
+- `ForgeSetup.exe`, an unsigned per-user Windows installer for the
+  deterministic payload (A-043). Built by `scripts/build_windows_installer.py`
+  from a clean commit with the NSIS 3.13 tree built from pinned source (A-042):
+  the builder refuses toolchain pins without pinned outputs and a compiler tree
+  whose compiler or tree digest is not the pinned output, and runs the compiler
+  inside the pinned image with no network and no capability, the tree, script
+  and payload read-only (the same container definition as the toolchain's smoke
+  compile, now `compiler_argv`). The script selects `Target x86-unicode`. It
+  refuses to run elevated and reads its token to do so; installs into
+  `%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>` by extracting into
+  a `.partial` folder, verifying it with the payload's own interpreter against
+  the identity baked into the executable, and then renaming it; writes one
+  Start-menu shortcut that starts the embedded interpreter with bytecode writing
+  off, and `install-receipt.json`, which may not name anything the installer
+  does not own; verifies the same payload when run again; and refuses another
+  version, a folder that is not its own, an unfinished earlier install and a
+  Start-menu shortcut that already exists. It deletes nothing and replaces no
+  existing folder, file or shortcut (a race between a check and the write is
+  the limit), appends only to a log a caller names, writes no registry value,
+  changes no `PATH`, registers no uninstaller and warns when Git for Windows is
+  missing. It is not an MSI and has no service. For the real installer the
+  build also compares every file of the payload's copy of the repository, and
+  the version, with the commit's. Two new CI jobs, both named by the release
+  closure gate: `windows-installer` runs after `nsis-toolchain-verify`, builds
+  it twice from two checkouts and compares the bytes; `windows-install`
+  installs (into an existing empty folder and into an absent one), provokes the
+  refusals, launches, stops and reopens it on Windows as a standard user. What
+  CI builds is test evidence, not a release. BLOCKING UNKNOWN: the script has
+  not been compiled with NSIS 3.13 anywhere yet, so acceptance and merge are
+  withheld until `windows-installer` and `windows-install` pass on the exact
+  commit to be merged (neither is a required status check of the branch, A-043).
+  Not established beyond that: the installer on a clean machine, SmartScreen and
+  Smart App Control, and a double-click.
+
 - The installer compiler is built from pinned source (A-042). NSIS 3.11 and
   3.12 fixed two local privilege escalations in the plug-in directory handling
   of installers run as SYSTEM, in the stub and plug-ins an installer carries,

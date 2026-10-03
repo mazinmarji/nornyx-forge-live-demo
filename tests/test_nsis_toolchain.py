@@ -1540,7 +1540,7 @@ def _documents() -> dict[str, str]:
     module = ast.get_docstring(ast.parse((INSTALLER / "build_nsis_toolchain.py").read_text(
         encoding="utf-8")))
     return {
-        "A-042": _between(assumptions, "## A-042 ", None),
+        "A-042": _between(assumptions, "## A-042 ", "\n## A-043 "),
         "the pin file's note": PINS["note"],
         "the builder's docstring": module,
         "the README paragraph": _between(readme, "**The installer compiler is built from pinned "
