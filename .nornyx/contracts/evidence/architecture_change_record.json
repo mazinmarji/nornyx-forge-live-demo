@@ -21,8 +21,8 @@
       "type": "architecture_change"
     }
   ],
-  "generated_at": "2026-10-03T08:25:21Z",
-  "governed_input_digest": "sha256:49ef3c6acd4b611784162c1bc4b4867cc090b209b36bfd0340467d69e8d14912",
+  "generated_at": "2026-10-03T09:36:32Z",
+  "governed_input_digest": "sha256:dc9559c4d6ddcdab08b59970ae4238cfd23da296d95d521bef8a9baea0d0602d",
   "highest_declared_architecture_impact": "minor",
   "highest_open_declared_architecture_impact": "minor",
   "impact_rule": "highest_declared_architecture_impact is the highest impacts.architecture (none < minor < major < critical) over every changes: entry of the architecture contract, whatever its status, and none when the contract declares no entry. highest_open_declared_architecture_impact is the same maximum over the entries whose status is not terminal; terminal means that Nornyx's change lifecycle has no transition out of the status, which is true of closed only. Both values describe the contract's register of declared changes, not the impact of the commit that carries this record. Each entry's status and impact are what its author declared; this record reports them and verifies neither.",

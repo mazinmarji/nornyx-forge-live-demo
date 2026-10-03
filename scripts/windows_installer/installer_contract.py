@@ -172,8 +172,9 @@ def check_receipt(text: str, manifest: dict | None = None) -> list[str]:
         problems.append("root_created is not a boolean")
     if receipt["registry"] != []:
         problems.append("the installer writes no registry value, and the receipt lists some")
-    if receipt["prerequisites"].get("git") not in ("found", "not found") or set(
-            receipt["prerequisites"]) != {"git"}:
+    prerequisites = receipt["prerequisites"]
+    if not (isinstance(prerequisites, dict) and set(prerequisites) == {"git"}
+            and prerequisites["git"] in ("found", "not found")):
         problems.append("prerequisites is not exactly the git advisory")
     versions = receipt["versions"]
     version_fields = {"directory", "version", "source_commit", "payload_sha256"}

@@ -26,6 +26,7 @@ are reached only by `main`.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -58,21 +59,21 @@ WATCHED = {
     "AppData/Roaming/Microsoft/Windows/Start Menu/Programs": {contract.SHORTCUT_NAME},
 }
 #: Registry places an installer registers itself in; each must be unchanged.
-REGISTRY_WATCH = (
-    r"Environment",
-    r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    r"Software\Microsoft\Windows\CurrentVersion\App Paths",
-    r"Software\Microsoft\Windows\CurrentVersion\Run",
-)
+#: "values" are read as named values (Environment, Run and RunOnce hold values,
+#: and a `Run` entry is a value); "subkeys" as key names (Uninstall and App
+#: Paths register one subkey per program).
+REGISTRY_WATCH = {
+    r"Environment": "values",
+    r"Software\Microsoft\Windows\CurrentVersion\Uninstall": "subkeys",
+    r"Software\Microsoft\Windows\CurrentVersion\App Paths": "subkeys",
+    r"Software\Microsoft\Windows\CurrentVersion\Run": "values",
+    r"Software\Microsoft\Windows\CurrentVersion\RunOnce": "values",
+}
 
 #: Exit codes this driver does not provoke, and why. Each stays a property of
 #: the script's text until a real machine shows it.
 UNEXERCISED = {
-    "EXIT_FAILED": "a failure part-way (the rename, the shortcut, the receipt) needs a fault "
-                   "injected into Windows",
     "EXIT_ELEVATION_UNKNOWN": "a process whose token cannot be read cannot be produced here",
-    "EXIT_LOCATION": "a location outside the profile, or a UNC spelling, needs the account's "
-                     "shell folders redirected",
 }
 
 FAILURES: list[str] = []
@@ -137,14 +138,44 @@ def listing_problems(before: dict[str, set[str]], after: dict[str, set[str]]) ->
 
 
 def tree_state(root: Path) -> dict[str, tuple[int, int]]:
-    """Every file under `root` as relative path -> (size, mtime in ns)."""
+    """Every file under `root` as relative path -> (size, mtime in ns), and
+    every folder as "relative path/" -> (0, 0): a folder's own time moves with
+    its children and is not compared, but a folder that appears or goes does
+    change the state (an empty `.partial` folder is a difference)."""
     state = {}
-    for directory, _subdirectories, files in os.walk(root):
+    for directory, subdirectories, files in os.walk(root):
+        for name in subdirectories:
+            state[(Path(directory) / name).relative_to(root).as_posix() + "/"] = (0, 0)
         for name in files:
             path = Path(directory) / name
             status = path.lstat()
             state[path.relative_to(root).as_posix()] = (status.st_size, status.st_mtime_ns)
     return state
+
+
+def refusal_problems(got: int, log: str, wanted: int) -> list[str]:
+    """Why a run is not the installer's refusal with exit code `wanted`: another
+    exit code, or a log that does not carry the installer's own line for it. A
+    process that never ran the script (or a code from somewhere else) cannot
+    produce that line."""
+    problems = []
+    if got != wanted:
+        problems.append(f"exit code {got}, not {wanted}")
+    if f"refused ({wanted}):" not in log:
+        problems.append(f"the log has no 'refused ({wanted}):' line: {log.strip()[:200]!r}")
+    return problems
+
+
+def registry_problems(state: dict[str, object]) -> list[str]:
+    """Why a registry census cannot be trusted to see a change: the places
+    that always hold something (the user's Environment, the machine PATH) read
+    as empty, which is what an unreadable key looks like."""
+    problems = []
+    if not state.get("HKCU Environment"):
+        problems.append("HKCU Environment read as empty")
+    if not state.get("HKLM PATH"):
+        problems.append("HKLM PATH read as empty")
+    return problems
 
 
 def path_without(names: tuple[str, ...], path_value: str) -> str:
@@ -222,8 +253,8 @@ def registry_state() -> dict[str, object]:
         "HKLM PATH": (read(winreg.HKEY_LOCAL_MACHINE,
                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
                            True) or {}).get("Path")}
-    for key in REGISTRY_WATCH:
-        state["HKCU " + key] = read(winreg.HKEY_CURRENT_USER, key, key == "Environment")
+    for key, kind in REGISTRY_WATCH.items():
+        state["HKCU " + key] = read(winreg.HKEY_CURRENT_USER, key, kind == "values")
     return state
 
 
@@ -283,10 +314,47 @@ def mode_elevated(artifact: Path, work: Path) -> None:
     root = install_root()
     expect(not root.exists(), "no install folder exists before the elevated run")
     code, log = run_setup(artifact / "forge-setup" / "ForgeSetup.exe", work, "elevated")
-    expect(code == codes["EXIT_ELEVATED"], f"an elevated run exits {codes['EXIT_ELEVATED']}"
-           f" (got {code})")
+    problems = refusal_problems(code, log, codes["EXIT_ELEVATED"])
+    expect(not problems, f"an elevated run is refused by the installer's own line {problems}")
     expect("without 'Run as administrator'" in log, "the refusal explains itself in the log")
     expect(not root.exists(), "the elevated run created no install folder")
+
+
+USER_SHELL_FOLDERS = r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders"
+START_MENU_PROGRAMS = ("Microsoft", "Windows", "Start Menu", "Programs")
+
+
+@contextlib.contextmanager
+def redirected_local_appdata(target: str):
+    """Point this account's own `Local AppData` shell folder at `target` for the
+    length of the `with`, then put the old value back. A standard user may write
+    its own HKCU; the installer reads the folder through the shell, not through
+    the environment variable."""
+    import winreg  # noqa: PLC0415 - Windows only
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, USER_SHELL_FOLDERS, 0,
+                        winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+        old, kind = winreg.QueryValueEx(key, "Local AppData")
+        winreg.SetValueEx(key, "Local AppData", 0, winreg.REG_EXPAND_SZ, target)
+        try:
+            yield
+        finally:
+            winreg.SetValueEx(key, "Local AppData", 0, kind, old)
+
+
+def icacls_problems(path: Path, *, computer: str, user: str) -> list[str]:
+    """The ACL of one path, judged: SYSTEM, Administrators and the user only,
+    every ACE inherited. An empty listing is a problem, so a path that does
+    not exist cannot pass."""
+    completed = subprocess.run(["icacls", str(path)], capture_output=True, timeout=60)
+    listing = completed.stdout.decode("utf-8", "replace")
+    return acl_problems(parse_icacls(listing, str(path)), computer=computer, user=user)
+
+
+def refused(exe: Path, work: Path, tag: str, code: int) -> tuple[list[str], str]:
+    """Run an installer that must refuse with `code`: (problems, log)."""
+    got, log = run_setup(exe, work, tag)
+    return refusal_problems(got, log, code), log
 
 
 def mode_standard_user(artifact: Path, work: Path) -> None:
@@ -297,107 +365,135 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     user, computer = os.environ["USERNAME"], os.environ["COMPUTERNAME"]
     real_dir = artifact / "forge-setup"
     real_exe = real_dir / "ForgeSetup.exe"
-    real_record = build_record(real_dir)
-    manifest = manifest_of(real_record)
+    manifest = manifest_of(build_record(real_dir))
     variants = {name: artifact / "variants" / name for name in
                 ("small", "other", "same-version", "long")}
+    small = variants["small"]
+    small_manifest = manifest_of(build_record(small))
     root = install_root()
     programs = root.parent
     folder = root / contract.version_directory(manifest)
+    start_menu = Path(os.environ["APPDATA"]).joinpath(*START_MENU_PROGRAMS)
+    shortcut_path = start_menu / contract.SHORTCUT_NAME
 
     expect(not is_admin(), f"this process is not elevated (user {user})")
     expect(not root.exists(), "no install folder exists before the run")
+    expect(not shortcut_path.exists(), "no Start-menu shortcut of the installer's name exists "
+                                       "before the run")
     before_listing, before_registry = watched_listing(profile), registry_state()
+    expect(registry_problems(before_registry) == [],
+           f"the registry census read what it is meant to read {registry_problems(before_registry)}")
 
     # --- refusals, each from a tiny sealed payload, each leaving nothing
-    code, log = run_setup(variants["long"] / "ForgeSetup.exe", work, "long")
-    expect(code == codes["EXIT_TOO_LONG"] and not root.exists(),
-           f"a path that would reach 260 characters is refused ({codes['EXIT_TOO_LONG']}), "
-           "and nothing is created")
+    problems, _log = refused(variants["long"] / "ForgeSetup.exe", work, "long",
+                             codes["EXIT_TOO_LONG"])
+    expect(not problems and not root.exists(),
+           f"paths of 297 characters (the boundary at 259 is not run) are refused {problems}")
 
-    small = variants["small"]
-    small_manifest = manifest_of(build_record(small))
+    outside = work / "redirected-appdata"
+    for label, target in (("a location outside the profile", str(outside)),
+                          ("a UNC location", r"\\forge-ci-unreachable\share\AppData\Local")):
+        try:
+            with redirected_local_appdata(target):
+                problems, _log = refused(small / "ForgeSetup.exe", work, "location",
+                                         codes["EXIT_LOCATION"])
+        finally:
+            for leftover in (root, outside):
+                if leftover.exists():
+                    shutil.rmtree(leftover)
+            shortcut_path.unlink(missing_ok=True)
+        expect(not problems, f"{label} (the account's Local AppData shell folder moved) is "
+                             f"refused {problems}")
+    expect(not outside.exists() and not root.exists(), "the location refusals created nothing")
+
     programs.mkdir(parents=True, exist_ok=True)
     root.mkdir()
     (root / "stranger.txt").write_text("not forge's\n", encoding="utf-8")
-    code, _log = run_setup(small / "ForgeSetup.exe", work, "stranger")
-    expect(code == codes["EXIT_NOT_FORGE"] and sorted(os.listdir(root)) == ["stranger.txt"],
-           f"a non-empty folder without a receipt is not Forge's ({codes['EXIT_NOT_FORGE']}) "
-           "and is left alone")
+    problems, _log = refused(small / "ForgeSetup.exe", work, "stranger", codes["EXIT_NOT_FORGE"])
+    expect(not problems and sorted(os.listdir(root)) == ["stranger.txt"],
+           f"a non-empty folder without a receipt is not Forge's and is left alone {problems}")
     shutil.rmtree(root)
 
     target = work / "junction-target"
     target.mkdir()
     subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(root), str(target)], check=True,
                    capture_output=True, timeout=60)
-    code, _log = run_setup(small / "ForgeSetup.exe", work, "junction")
-    expect(code == codes["EXIT_LINK"] and os.listdir(target) == [],
-           f"a junction at the install folder is refused ({codes['EXIT_LINK']}) and its target "
-           "is untouched")
+    problems, _log = refused(small / "ForgeSetup.exe", work, "junction", codes["EXIT_LINK"])
+    expect(not problems and os.listdir(target) == [],
+           f"a junction at the install folder is refused and its target is untouched {problems}")
     os.rmdir(root)
     shutil.rmtree(target)
 
-    root.mkdir()
-    (root / contract.RECEIPT_NAME).write_text("{}\n", encoding="utf-8")
-    (root / (contract.version_directory(small_manifest) + contract.PARTIAL_SUFFIX)).mkdir()
-    code, _log = run_setup(small / "ForgeSetup.exe", work, "unfinished")
-    expect(code == codes["EXIT_UNFINISHED"],
-           f"an unfinished earlier install is refused ({codes['EXIT_UNFINISHED']})")
+    partial = contract.version_directory(small_manifest) + contract.PARTIAL_SUFFIX
+    for label, receipt in (("with a receipt", True), ("with no receipt (a failed first install)",
+                                                      False)):
+        root.mkdir()
+        if receipt:
+            (root / contract.RECEIPT_NAME).write_text("{}\n", encoding="utf-8")
+        (root / partial).mkdir()
+        problems, _log = refused(small / "ForgeSetup.exe", work, "unfinished",
+                                 codes["EXIT_UNFINISHED"])
+        expect(not problems and (root / partial).is_dir(),
+               f"an unfinished earlier install {label} is refused and left in place {problems}")
+        shutil.rmtree(root)
+
+    for label in ("a file", "a folder"):
+        if label == "a file":
+            shortcut_path.write_text("not the installer's\n", encoding="utf-8")
+        else:
+            shortcut_path.unlink()
+            shortcut_path.mkdir()
+        problems, _log = refused(small / "ForgeSetup.exe", work, "shortcut-exists",
+                                 codes["EXIT_SHORTCUT_EXISTS"])
+        expect(not problems and not root.exists(),
+               f"{label} already named like the shortcut is refused and nothing is installed "
+               f"{problems}")
+        if label == "a file":
+            expect(shortcut_path.read_text(encoding="utf-8") == "not the installer's\n",
+                   "the file named like the shortcut is unchanged")
+    shortcut_path.rmdir()
+
+    # --- a failure after the folder is in place: the shortcut cannot be written
+    subprocess.run(["icacls", str(start_menu), "/deny", f"{user}:(WD,AD)"], check=True,
+                   capture_output=True, timeout=60)
+    try:
+        problems, _log = refused(small / "ForgeSetup.exe", work, "shortcut-fails",
+                                 codes["EXIT_FAILED"])
+    finally:
+        subprocess.run(["icacls", str(start_menu), "/remove:d", user], check=True,
+                       capture_output=True, timeout=60)
+    small_folder = root / contract.version_directory(small_manifest)
+    expect(not problems and small_folder.is_dir() and not (root / contract.RECEIPT_NAME).exists()
+           and not shortcut_path.exists(),
+           f"a shortcut that cannot be written fails the install (17), keeps that code, writes "
+           f"no receipt and leaves the verified folder in place {problems}")
     shutil.rmtree(root)
 
-    # --- the real install, into an existing EMPTY folder
+    # --- the real installer, into an existing EMPTY folder and into an ABSENT one
     root.mkdir()
-    code, log = run_setup(real_exe, work, "install")
-    if not expect(code == 0, f"the real installer exits 0 (got {code})"):
+    check_install("install-empty-root", real_exe, work, manifest, folder=folder, root=root,
+                  shortcut_path=shortcut_path, profile=profile, user=user, computer=computer,
+                  root_created=False, before_listing=before_listing,
+                  before_registry=before_registry)
+    if not folder.is_dir():
         return
-    expect(folder.is_dir() and (folder / "forge-payload.json").is_file(),
-           "the verified payload folder is in place")
-    expect(not (root / (folder.name + contract.PARTIAL_SUFFIX)).exists(),
-           "no .partial folder remains")
-    receipt_path = root / contract.RECEIPT_NAME
-    receipt = receipt_path.read_text(encoding="utf-8")
-    problems = contract.check_receipt(receipt, manifest)
-    expect(not problems, f"the receipt is the installer's and names exactly this payload {problems}")
-    parsed = json.loads(receipt)
-    expect(parsed["root_created"] is False, "the receipt says the (pre-existing, empty) root "
-                                            "folder was not created by the installer")
-    expect(parsed["prerequisites"]["git"] == "found", "git on PATH is reported found")
-    expect(verify_installed(folder, manifest["payload_sha256"]) == 0,
-           "the installed copy verifies, from outside, against the expected identity")
-    shortcut_path = (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu"
-                     / "Programs" / contract.SHORTCUT_NAME)
-    expect(shortcut_path.is_file(), "the per-user Start-menu shortcut exists")
-    if shortcut_path.is_file():
-        found = read_shortcut(shortcut_path)
-        wanted = contract.shortcut_expectation(manifest, install_root=str(root),
-                                               profile=str(profile))
-        expect({k: found[k].casefold() for k in wanted} == {k: v.casefold()
-                                                            for k, v in wanted.items()},
-               f"the shortcut starts the embedded interpreter in the install root {found}")
-    icacls = subprocess.run(["icacls", str(root)], capture_output=True, timeout=60)
-    listing = icacls.stdout.decode("utf-8", "replace")
-    expect(not (acl := acl_problems(parse_icacls(listing, str(root)), computer=computer,
-                                    user=user)), f"the installer added no ACE {acl}")
-    after_listing, after_registry = watched_listing(profile), registry_state()
-    expect(not (listed := listing_problems(before_listing, after_listing)),
-           f"only the install folder and the shortcut were added {listed}")
-    expect(after_registry == before_registry,
-           "no registry value changed (PATH, Uninstall, App Paths, Run)")
 
     # --- the existing-install rule
+    receipt_path = root / contract.RECEIPT_NAME
     state, kept_receipt = tree_state(root), receipt_path.read_bytes()
     code, log = run_setup(real_exe, work, "again")
     expect(code == 0 and "already installed" in log, "the same payload again verifies and "
-                                                      "exits 0")
+                                                      "exits 0, by its own log")
     expect(tree_state(root) == state and receipt_path.read_bytes() == kept_receipt,
-           "the second run changed no file, size or time")
-    code, _log = run_setup(variants["other"] / "ForgeSetup.exe", work, "other")
-    expect(code == codes["EXIT_OTHER_VERSION"] and tree_state(root) == state,
-           f"another version is refused ({codes['EXIT_OTHER_VERSION']}) and nothing changes")
-    code, _log = run_setup(variants["same-version"] / "ForgeSetup.exe", work, "same-version")
-    expect(code == codes["EXIT_DOES_NOT_VERIFY"] and tree_state(root) == state,
-           f"other bytes under the same version are refused ({codes['EXIT_DOES_NOT_VERIFY']}) "
-           "and nothing changes")
+           "the second run changed no file, size, time or folder")
+    problems, _log = refused(variants["other"] / "ForgeSetup.exe", work, "other",
+                             codes["EXIT_OTHER_VERSION"])
+    expect(not problems and tree_state(root) == state,
+           f"another version is refused and nothing changes {problems}")
+    problems, _log = refused(variants["same-version"] / "ForgeSetup.exe", work, "same-version",
+                             codes["EXIT_DOES_NOT_VERIFY"])
+    expect(not problems and tree_state(root) == state,
+           f"other bytes under the same version are refused and nothing changes {problems}")
 
     # --- launch, stop, reopen, from the shortcut's own command line
     launch_checks(bundle, work, folder, read_shortcut(shortcut_path), manifest)
@@ -405,18 +501,75 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
            "the installed copy still verifies after being run (the shortcut starts the "
            "interpreter with bytecode writing off)")
 
-    # --- git absent: a fresh install from a tiny payload, with no git and no Python on PATH
+    # --- the real installer again, now into an ABSENT folder
     shutil.rmtree(root)
     shortcut_path.unlink()
+    check_install("install-absent-root", real_exe, work, manifest, folder=folder, root=root,
+                  shortcut_path=shortcut_path, profile=profile, user=user, computer=computer,
+                  root_created=True, before_listing=before_listing,
+                  before_registry=before_registry)
+
+    # --- git absent: a fresh install from a tiny payload, with no git and no Python on PATH
+    shutil.rmtree(root)
+    shortcut_path.unlink(missing_ok=True)
     lean = {**os.environ, "PATH": path_without(("git.exe", "python.exe"), os.environ["PATH"])}
-    code, _log = run_setup(small / "ForgeSetup.exe", work, "no-git", env=lean)
-    expect(code == 0, "an install with no git and no Python on PATH succeeds (git is advisory; "
-                      "only the embedded interpreter runs)")
+    code, log = run_setup(small / "ForgeSetup.exe", work, "no-git", env=lean)
+    expect(code == 0 and f"installed {contract.version_directory(small_manifest)}" in log,
+           "an install with no git and no Python on PATH succeeds, by its own log (git is "
+           "advisory; only the embedded interpreter runs)")
     absent = (root / contract.RECEIPT_NAME).read_text(encoding="utf-8") if code == 0 else "{}"
     expect(not contract.check_receipt(absent, small_manifest)
            and json.loads(absent)["prerequisites"]["git"] == "not found"
            and json.loads(absent)["root_created"] is True,
            "the receipt records git as not found and the root as created")
+
+
+def check_install(tag: str, exe: Path, work: Path, manifest: dict, *, folder: Path, root: Path,
+                  shortcut_path: Path, profile: Path, user: str, computer: str,
+                  root_created: bool, before_listing: dict, before_registry: dict) -> None:
+    """One install of the real installer and everything it must have done. The
+    ACL of the install ROOT is judged only where the installer made it
+    (`root_created`); otherwise the driver made it and it says nothing."""
+    expect(not folder.exists() and not shortcut_path.exists(),
+           f"[{tag}] neither the version folder nor the shortcut exists before the run")
+    code, log = run_setup(exe, work, tag)
+    if not expect(code == 0 and f"installed {folder.name}" in log,
+                  f"[{tag}] the real installer exits 0 and its own log says it installed "
+                  f"(got {code})"):
+        return
+    expect(folder.is_dir() and (folder / "forge-payload.json").is_file(),
+           f"[{tag}] the verified payload folder is in place")
+    expect(not (root / (folder.name + contract.PARTIAL_SUFFIX)).exists(),
+           f"[{tag}] no .partial folder remains")
+    receipt_path = root / contract.RECEIPT_NAME
+    receipt = receipt_path.read_text(encoding="utf-8")
+    problems = contract.check_receipt(receipt, manifest)
+    expect(not problems, f"[{tag}] the receipt is the installer's and names exactly this "
+                         f"payload {problems}")
+    parsed = json.loads(receipt)
+    expect(parsed["root_created"] is root_created,
+           f"[{tag}] the receipt says the root folder was {'' if root_created else 'not '}"
+           "created by the installer")
+    expect(parsed["prerequisites"]["git"] == "found", f"[{tag}] git on PATH is reported found")
+    expect(verify_installed(folder, manifest["payload_sha256"]) == 0,
+           f"[{tag}] the installed copy verifies, from outside, against the expected identity")
+    expect(shortcut_path.is_file(), f"[{tag}] the per-user Start-menu shortcut exists")
+    if shortcut_path.is_file():
+        found = read_shortcut(shortcut_path)
+        wanted = contract.shortcut_expectation(manifest, install_root=str(root),
+                                               profile=str(profile))
+        expect({k: found[k].casefold() for k in wanted} == {k: v.casefold()
+                                                            for k, v in wanted.items()},
+               f"[{tag}] the shortcut starts the embedded interpreter in the install root {found}")
+    judged = [folder, folder / "forge-payload.json"] + ([root] if root_created else [])
+    for path in judged:
+        acl = icacls_problems(path, computer=computer, user=user)
+        expect(not acl, f"[{tag}] the installer added no ACE to {path.name} {acl}")
+    after_listing, after_registry = watched_listing(profile), registry_state()
+    listed = listing_problems(before_listing, after_listing)
+    expect(not listed, f"[{tag}] only the install folder and the shortcut were added {listed}")
+    expect(after_registry == before_registry,
+           f"[{tag}] no registry value changed (PATH, Uninstall, App Paths, Run, RunOnce)")
 
 
 def launch_checks(bundle, work: Path, folder: Path, shortcut: dict, manifest: dict) -> None:

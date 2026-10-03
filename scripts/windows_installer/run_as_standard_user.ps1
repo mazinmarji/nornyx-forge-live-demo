@@ -42,10 +42,22 @@ $err = "$share\work\driver.err"
 $process = Start-Process -FilePath $Python `
   -ArgumentList @("-B", "`"$driver`"", "standard-user", "--artifact", "`"$share\artifact`"", "--work", "`"$share\work`"") `
   -Credential $credential -LoadUserProfile -WorkingDirectory "$share\work" `
-  -RedirectStandardOutput $out -RedirectStandardError $err -Wait -PassThru
+  -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
+# The wait switch of Start-Process waits for the whole process tree, so a driver
+# that crashed and left a child running would hold this step until the job's limit.
+# The wait is bounded here instead: past the limit the tree is killed, the
+# output so far is printed, and the step fails with 124.
+$null = $process.Handle
+$limitMilliseconds = 40 * 60 * 1000
+$finished = $process.WaitForExit($limitMilliseconds)
+if (-not $finished) {
+  & taskkill /T /F /PID $process.Id | Out-Null
+  Write-Host "---- the driver did not finish within 40 minutes and its process tree was killed"
+}
 Write-Host "---- driver output"
 if (Test-Path $out) { Get-Content $out | Write-Host }
 Write-Host "---- driver errors"
 if (Test-Path $err) { Get-Content $err | Write-Host }
+if (-not $finished) { exit 124 }
 Write-Host "---- driver exit code $($process.ExitCode)"
 exit $process.ExitCode

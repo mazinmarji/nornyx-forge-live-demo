@@ -588,9 +588,16 @@ jobs:
   # one for the same version with other bytes, one whose paths would be too
   # long), which the Windows job needs to exercise refusals that happen before
   # anything is extracted, and uploads the first installer and those four as an
-  # artifact for the windows-install job. The installer is unsigned. Both builds
-  # run on one runner image, so equal bytes show that the build is a function of
-  # its pinned inputs on this image, not that another machine agrees (A-042).
+  # artifact for the windows-install job. The installer is unsigned, and so is
+  # everything this job uploads: the artifact is TEST EVIDENCE built with NSIS
+  # 3.09, which upstream has since followed with security fixes, and runs of
+  # pull requests from forks build and upload it too. It is not a release
+  # channel and not a distributable (A-042). Both builds run on one runner
+  # image, so equal bytes show that the build is a function of its pinned
+  # inputs on this image, not that another machine agrees. The four small
+  # installers are built through --test-only-synthetic, which skips the
+  # comparison of the payload's copy of the repository with the commit (they
+  # are not a copy of it) and says so in their build records.
   windows-installer:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -677,7 +684,7 @@ jobs:
           build_variant() {
             name="$1"; shift
             python first/scripts/windows_installer/synthetic_payload.py --dest "$RUNNER_TEMP/synthetic-$name" --embed-zip "$embed" --label "$name" "$@"
-            python first/scripts/build_windows_installer.py --payload "$RUNNER_TEMP/synthetic-$name" --out "$variants/$name"
+            python first/scripts/build_windows_installer.py --payload "$RUNNER_TEMP/synthetic-$name" --out "$variants/$name" --test-only-synthetic
           }
           build_variant small
           build_variant other --version 0.0.2
@@ -698,13 +705,16 @@ jobs:
   # one the windows-installer job built; its digests are checked against its
   # build record first. The elevated run is the runner's own administrator
   # account, and the installer must refuse it. The standard-user run is a local
-  # account the job creates in the Users group alone: it installs into an empty
-  # per-user folder, checks the receipt, the shortcut, the folder's ACL, the
-  # registry and the folders an installer could leave state in, runs the same
-  # payload again, tries another version and other bytes under the same
-  # version, starts the runtime from the shortcut's own command line, joins it,
-  # stops it and starts it again, and finally installs with no git and no
-  # Python on PATH. This is a run on a GitHub-hosted image by a freshly created
+  # account the job creates in the Users group alone: it provokes the refusals
+  # (a long path, a moved local application data shell folder, a foreign folder, a
+  # junction, an unfinished install, an existing shortcut, a shortcut that
+  # cannot be written), installs the real installer into an existing empty
+  # folder and into an absent one, checks the receipt, the shortcut, the ACL of
+  # what the installer made, the registry and the folders an installer could
+  # leave state in, runs the same payload again, tries another version and
+  # other bytes under the same version, starts the runtime from the shortcut's
+  # own command line, joins it, stops it and starts it again, and finally
+  # installs with no git and no Python on PATH. This is a run on a GitHub-hosted image by a freshly created
   # account, not on a clean accepted machine: nothing here observes a UAC
   # prompt, SmartScreen or Smart App Control, a double-click, a browser opening
   # or network traffic (A-042).

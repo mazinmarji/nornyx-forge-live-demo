@@ -163,7 +163,8 @@ def test_the_elevation_check_comes_first_and_reads_the_token():
     text = _nsi()
     init = text[text.index("Function .onInit"):text.index("Function .onInstFailed")]
     calls = re.findall(r"^  Call (\w+)$", init, re.M)
-    assert calls == ["RefuseElevated", "CheckLocation", "CheckPathBudget", "DecideExisting"], calls
+    assert calls == ["RefuseElevated", "CheckLocation", "CheckPathBudget", "DecideExisting",
+                     "CheckShortcutFree"], calls
     for instruction in ("CreateDirectory", "SetOutPath", "File ", "Rename", "CreateShortcut",
                         "FileOpen", "nsExec"):
         assert instruction not in init, f".onInit does {instruction} before the checks finish"
@@ -178,6 +179,82 @@ def test_the_elevation_check_comes_first_and_reads_the_token():
                      r"\$\{EXIT_ELEVATED\}", body), "an elevated token or an administrator refuses"
     assert "${EXIT_ELEVATED}" in body
     assert re.search(r"RequestExecutionLevel user\b", text)
+
+
+def _function(name: str) -> str:
+    """One function's or the section's instructions, comments removed."""
+    code = "\n".join(_code_lines(_nsi()))
+    start = code.index(name)
+    ends = [end for end in (code.find(marker, start + 1) for marker in ("\nFunction ", "\nSection "))
+            if end != -1]
+    return code[start:min(ends)] if ends else code[start:]
+
+
+def test_every_errors_test_follows_a_clear_and_one_straight_run_of_instructions():
+    """CLASS: the error flag is sticky. FindNext sets it at the end of every
+    listing, so an empty-folder listing left it set and the next `${If}
+    ${Errors}` read it, which refused every install into an existing empty
+    folder. Every test of the flag must be preceded by ClearErrors with only
+    straight-line instructions between (no call, no branch, no other test)."""
+    lines = _code_lines(_nsi())
+    tests = [i for i, line in enumerate(lines) if "${Errors}" in line]
+    assert len(tests) >= 5, "the script tests the error flag in several places"
+    for index in tests:
+        back = index - 1
+        while back >= 0 and lines[back] != "ClearErrors":
+            line = lines[back]
+            straight = not (line.startswith("${") or line.startswith("Call ")
+                            or line.startswith("Function ") or line.startswith("Section")
+                            or line.startswith("!insertmacro")) or line.startswith("${GetOptions}")
+            assert straight, f"line {index}: {lines[index]!r} reads a flag that {line!r} may have set"
+            back -= 1
+        assert back >= 0 and index - back <= 4, (
+            f"{lines[index]!r} is not preceded by ClearErrors and at most two instructions")
+
+
+def test_a_failure_callback_keeps_the_specific_exit_code():
+    callback = _function("Function .onInstFailed")
+    assert "GetErrorLevel $0" in callback and "${If} $0 = -1" in callback
+    assert callback.index("${If} $0 = -1") < callback.index("SetErrorLevel ${EXIT_FAILED}")
+    assert callback.count("SetErrorLevel") == 1, "17 only when none was set"
+
+
+def test_the_unfinished_install_is_named_before_the_folder_is_judged_by_its_receipt():
+    body = _function("Function DecideExisting")
+    check = ('Push "$Partial"\nCall AttrOf\nPop $0\n${If} $0 <> -1\n'
+             '!insertmacro Refuse ${EXIT_UNFINISHED}')
+    assert body.count(check) == 1
+    assert body.index(check) < body.index("FindFirst") < body.index("install-receipt.json"), (
+        "a failed first install leaves a .partial folder and no receipt")
+    listing = body[body.index("FindFirst"):body.index("${DoWhile}")]
+    assert '${If} $3 == ""' in listing and "${EXIT_NOT_FORGE}" in listing, (
+        "a folder that cannot be listed is a refusal, not an empty folder")
+    assert "FindClose $2\nClearErrors" in body, "FindNext leaves the flag set at the end of a list"
+
+
+def test_the_log_is_appended_to_not_overwritten():
+    log = _function("Function WriteLog")
+    assert log.index('FileOpen $1 "$LogPath" a') < log.index("FileSeek $1 0 END") < log.index(
+        "FileWrite")
+
+
+def test_a_shortcut_that_exists_is_refused_not_replaced():
+    body = _function("Function CheckShortcutFree")
+    assert body.startswith('Function CheckShortcutFree\nPush "$SMPROGRAMS\\Nornyx Forge.lnk"\n'
+                           "Call AttrOf\nPop $0\n${If} $0 <> -1\n"), (
+        "any kind of entry of that name, a folder included")
+    assert "${EXIT_SHORTCUT_EXISTS}" in body
+    section = _function("Section ")
+    assert section.count("CreateShortcut") == 1
+    assert 'CreateShortcut "$SMPROGRAMS\\Nornyx Forge.lnk" ' in section, (
+        "the name checked is the name written")
+
+
+def test_the_path_budget_counts_files_and_folders_by_their_own_limits():
+    body = _function("Function CheckPathBudget")
+    assert "${LONGEST_RELATIVE}" in body and "${LONGEST_DIRECTORY}" in body
+    assert "\n${If} $0 > 259\n" in body and "\n${If} $1 > 247\n" in body, (
+        "CreateDirectory refuses 248 characters, a file path 260")
 
 
 def test_the_plugins_are_reserved_before_the_payload_and_the_payload_is_extracted_last():
@@ -201,7 +278,7 @@ def test_the_installer_uses_none_of_what_it_must_never_use():
                       "RequestExecutionLevel admin", "RequestExecutionLevel highest",
                       "EnVar", "AddEnv", "$PATH", "SendMessage"):
         assert forbidden not in code, f"the script uses {forbidden}"
-    for required in ("AllowSkipFiles off", "CRCCheck on", "Unicode true",
+    for required in ("AllowSkipFiles off", "SetOverwrite off", "CRCCheck on", "Unicode true",
                      "SetShellVarContext current"):
         assert required in code, f"the script lacks {required}"
 
@@ -358,6 +435,10 @@ def test_a_receipt_that_names_a_state_class_it_does_not_own_is_refused(tmp_path:
     (lambda r: r.update(registry=[{"key": "HKCU\\x"}]), "registry"),
     (lambda r: r.update(root_created="yes"), "boolean"),
     (lambda r: r["prerequisites"].update(python="found"), "prerequisites"),
+    (lambda r: r.update(prerequisites=["git"]), "prerequisites"),
+    (lambda r: r.update(prerequisites="found"), "prerequisites"),
+    (lambda r: r.update(prerequisites=None), "prerequisites"),
+    (lambda r: r["prerequisites"].update(git=["found"]), "prerequisites"),
     (lambda r: r["created"].append({"kind": "file", "path": "/etc/x"}), "not a path inside"),
     (lambda r: r["created"].append({"kind": "file", "path": "C:/x"}), "not a path inside"),
     (lambda r: r["created"].append({"kind": "file", "path": "a/../../x"}), "not a path inside"),
@@ -475,6 +556,8 @@ class _Fixture:
         files = {
             "pyproject.toml": b'[project]\nname = "x"\nversion = "1.2.3"\n',
             "src/nornyx_forge/__init__.py": b"", "src/nornyx_forge/windows_payload.py": b"# s\n",
+            "src/nornyx_forge/windows_launch.py": b"#\n", "README.md": b"readme\n",
+            "BRD.md": b"brd\n", ".nornyx/contracts/c.nyx": b"contract\n",
             "scripts/build_windows_bundle.py": b"# stand-in\n",
             "scripts/build_windows_installer.py": b"# stand-in\n",
             "scripts/windows_installer/installer_contract.py": b"# stand-in\n",
@@ -543,21 +626,22 @@ class _Fixture:
 
     def payload(self, name: str = "payload", *, version: str = "1.2.3", extra: dict | None = None,
                 drop: tuple[str, ...] = (), **override) -> Path:
-        """A sealed payload tied to this commit, its pins and its lock."""
+        """A sealed payload tied to this commit, its pins and its lock: the
+        commit's own copy set (as the payload builder copies it) plus the
+        interpreter, the launcher and the marker. `extra` adds or replaces a
+        file; `drop` removes one."""
         commit = self.git("rev-parse", "HEAD").strip()
         lock = (self.repo / "scripts/windows_installer/lock.txt").read_bytes()
-        files = {"python/python.exe": b"MZ", "python/pythonw.exe": b"MZ",
-                 "forge-bundle.json": b"{}\n", "Forge.cmd": b"@echo off\n",
-                 "src/nornyx_forge/__init__.py": b"", "src/nornyx_forge/windows_launch.py": b"#\n",
-                 "src/nornyx_forge/windows_payload.py": b"# s\n", "README.md": b"r\n",
-                 **(extra or {})}
         root = self.tmp / name
+        bundle.copy_tree(self.repo, root, commit)
+        files = {"python/python.exe": b"MZ", "python/pythonw.exe": b"MZ",
+                 "forge-bundle.json": b"{}\n", "Forge.cmd": b"@echo off\n", **(extra or {})}
         for relative, data in files.items():
-            if relative in drop:
-                continue
             path = root.joinpath(*relative.split("/"))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+        for relative in drop:
+            (root / relative).unlink()
         fields = {"version": version, "source_commit": commit, "source_date_epoch": COMMITTED,
                   "target": "cp313-win_amd64", "lock_sha256": hashlib.sha256(lock).hexdigest(),
                   "installer": {"name": "uv", "version": "0.0.0"},
@@ -617,6 +701,8 @@ def test_the_compiler_is_given_a_fixed_command_and_a_fixed_environment(
     assert call["defines"]["PAYLOAD_SHA256"] == sealed["payload_sha256"]
     assert call["defines"]["LONGEST_RELATIVE"] == str(max(
         len(entry[0]) for entry in sealed["files"]))
+    assert call["defines"]["LONGEST_DIRECTORY"] == str(max(
+        len(entry[0].rpartition("/")[0]) for entry in sealed["files"]))
     assert (stage / "files.nsh").read_text(encoding="utf-8") == contract.files_nsh(
         sealed["files"], tmp_path / "payload", manifest_name=PAYLOAD_MANIFEST)
     assert (stage / "receipt.nsh").read_text(encoding="utf-8") == contract.receipt_nsh(sealed)
@@ -681,6 +767,79 @@ def test_a_payload_without_what_the_installer_starts_and_verifies_with_is_refuse
         fixture.build(payload)
 
 
+@pytest.mark.parametrize("change, message", [
+    ({"src/nornyx_forge/windows_payload.py": b"# changed, and resealed\n"},
+     r"changed: src/nornyx_forge/windows_payload.py"),
+    ({"README.md": b"changed\n"}, r"changed: README.md"),
+    ({".nornyx/contracts/c.nyx": b"another contract\n"}, r"changed: .nornyx/contracts/c.nyx"),
+    ({"src/nornyx_forge/extra.py": b"print(1)\n"}, r"not in the commit: src/nornyx_forge/extra.py"),
+    ({".nornyx/extra.txt": b"x\n"}, r"not in the commit: .nornyx/extra.txt"),
+], ids=["source", "readme", "contract", "extra-source", "extra-contract"])
+def test_a_payload_whose_copy_of_the_repository_is_not_the_commits_is_refused(
+        tmp_path: Path, change: dict, message: str):
+    """Sealed correctly, verifying, tied to this commit by every manifest field,
+    and still not the commit's bytes: only the file comparison sees it."""
+    fixture = _Fixture(tmp_path)
+    with pytest.raises(installer.InstallerError, match=message):
+        fixture.build(fixture.payload(extra=change))
+
+
+def test_a_committed_file_missing_from_the_payload_or_a_version_of_another_commit_is_refused(
+        tmp_path: Path):
+    fixture = _Fixture(tmp_path)
+    with pytest.raises(installer.InstallerError, match="missing: BRD.md"):
+        fixture.build(fixture.payload("payload-missing", drop=("BRD.md",)))
+    with pytest.raises(installer.InstallerError, match="version is '9.9.9'"):
+        fixture.build(fixture.payload("payload-version", version="9.9.9"), "out-version")
+
+
+def test_files_outside_the_copy_set_are_not_compared_and_the_record_says_so(tmp_path: Path):
+    """`pylib/` and `python/` have no counterpart in the commit; the record
+    lists them as not compared instead of implying they were."""
+    fixture = _Fixture(tmp_path)
+    record = fixture.build(fixture.payload(extra={"pylib/dep/__init__.py": b"x = 1\n"}))
+    payload = record["payload"]
+    assert payload["payload_kind"] == "commit-payload"
+    assert "every copy-set file's bytes" in payload["compared_with_the_commit"]
+    assert "version" in payload["compared_with_the_commit"]
+    assert payload["not_compared_with_the_commit"] == ["pylib", "python"]
+
+
+def test_the_synthetic_path_is_explicit_and_labelled_and_the_default_refuses_what_it_admits(
+        tmp_path: Path):
+    """A tiny test payload that is not a copy of the repository: refused by
+    default, built through the test-only path, and labelled as such."""
+    fixture = _Fixture(tmp_path)
+    tiny = fixture.payload("tiny", extra={"README.md": b"not the commit's readme\n"})
+    with pytest.raises(installer.InstallerError, match="not the commit's"):
+        fixture.build(tiny)
+    record = fixture.build(tiny, "out-synthetic", synthetic=True)
+    assert record["payload"]["payload_kind"] == "synthetic-test-payload"
+    assert "the copy set" in record["payload"]["not_compared_with_the_commit"]
+    assert "every copy-set file's bytes" not in record["payload"]["compared_with_the_commit"]
+
+
+def test_the_command_line_has_the_test_only_flag_and_it_reaches_the_build(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    fixture = _Fixture(tmp_path)
+    monkeypatch.setattr(installer, "ROOT", fixture.repo)
+    tiny = fixture.payload("tiny", extra={"README.md": b"not the commit's readme\n"})
+    common = ["--payload", str(tiny), "--makensis", str(fixture.makensis),
+              "--nsis-dir", str(fixture.nsis_dir)]
+    assert installer.main([*common, "--out", str(tmp_path / "out-a")]) == 1
+    assert installer.main([*common, "--out", str(tmp_path / "out-b"),
+                           "--test-only-synthetic"]) == 0
+
+
+def test_the_longest_folder_is_counted_in_utf16_units_and_the_root_counts_as_zero(
+        tmp_path: Path):
+    flat = {"files": [["a.py", 1, "a" * 64]]}
+    assert installer.longest_directory(flat) == 0
+    deep = {"files": [["a.py", 1, "a" * 64], ["x/\U0001F600" * 3 + "/b.py", 1, "a" * 64]]}
+    assert installer.longest_directory(deep) == 3 * (len("x/") + 2), "two units per astral character"
+    assert installer.longest_directory({"files": [["d/e/f.py", 1, "a" * 64]]}) == len("d/e")
+
+
 def test_a_payload_folder_the_script_cannot_name_plainly_is_refused(tmp_path: Path):
     fixture = _Fixture(tmp_path)
     payload = fixture.payload("a payload")
@@ -691,20 +850,21 @@ def test_a_payload_folder_the_script_cannot_name_plainly_is_refused(tmp_path: Pa
 def test_an_uncommitted_edit_to_the_script_or_the_pins_is_refused_even_under_an_index_flag(
         tmp_path: Path):
     fixture = _Fixture(tmp_path)
+    payload = fixture.payload()
     nsi = fixture.repo / "scripts/windows_installer/forge-setup.nsi"
     nsi.write_bytes(nsi.read_bytes() + b"; edited\n")
     with pytest.raises(installer.InstallerError, match="working tree differs"):
-        fixture.build()
+        fixture.build(payload)
     fixture.git("update-index", "--assume-unchanged", "scripts/windows_installer/forge-setup.nsi")
     with pytest.raises(installer.InstallerError, match="is not the file .* holds"):
-        fixture.build()
+        fixture.build(payload)
     tools = fixture.repo / "scripts/windows_installer/installer-tools.json"
     nsi.write_bytes(NSI.read_bytes())
     fixture.git("update-index", "--no-assume-unchanged", "scripts/windows_installer/forge-setup.nsi")
     fixture.git("update-index", "--skip-worktree", "scripts/windows_installer/installer-tools.json")
     tools.write_text(json.dumps(fixture.tools(binary_sha256="0" * 64)), encoding="utf-8")
     with pytest.raises(installer.InstallerError, match="is not the file .* holds"):
-        fixture.build()
+        fixture.build(payload)
 
 
 def test_the_script_the_compiler_reads_is_the_commits_not_the_working_trees(tmp_path: Path):
@@ -977,7 +1137,60 @@ def test_the_tree_state_sees_a_changed_byte_a_new_file_and_a_touched_time(tmp_pa
     os.utime(tmp_path / "d" / "a", ns=(1, 1))
     assert driver.tree_state(tmp_path) != base
     (tmp_path / "d" / "b").write_bytes(b"")
-    assert len(driver.tree_state(tmp_path)) == 2
+    assert len(driver.tree_state(tmp_path)) == 3, "the folder, and two files"
+
+
+def test_an_empty_folder_that_appears_changes_the_tree_state(tmp_path: Path):
+    """An empty `.partial` folder used to pass "nothing changes"."""
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "a").write_bytes(b"1")
+    base = driver.tree_state(tmp_path)
+    (tmp_path / "d" / "empty.partial").mkdir()
+    assert driver.tree_state(tmp_path) != base
+    assert "d/empty.partial/" in driver.tree_state(tmp_path)
+
+
+@pytest.mark.parametrize("got, log, problem", [
+    (0, "refused (14): x", "exit code 0, not 14"),
+    (13, "refused (14): x", "exit code 13, not 14"),
+    (14, "", "no 'refused (14):' line"),
+    (14, "refused (13): x", "no 'refused (14):' line"),
+    (14, "installed 1.2.3", "no 'refused (14):' line"),
+])
+def test_a_refusal_needs_both_the_exit_code_and_the_installers_own_line(got, log, problem):
+    """An exit code alone is not a refusal: any program can exit 14, and a
+    program that never ran the script leaves no line."""
+    assert any(problem in found for found in driver.refusal_problems(got, log, 14))
+    assert driver.refusal_problems(14, "refused (14): the folder is not Forge's", 14) == []
+
+
+def test_a_registry_census_that_read_nothing_is_not_trusted():
+    assert driver.registry_problems({"HKCU Environment": {"TEMP": "x"}, "HKLM PATH": "C:\\"}) == []
+    assert driver.registry_problems({"HKCU Environment": {}, "HKLM PATH": "C:\\"})
+    assert driver.registry_problems({"HKCU Environment": None, "HKLM PATH": "C:\\"})
+    assert driver.registry_problems({"HKCU Environment": {"TEMP": "x"}, "HKLM PATH": None})
+
+
+def test_the_registry_places_are_read_as_what_they_hold():
+    """A `Run` entry is a VALUE; reading the key as subkeys saw none."""
+    kinds = driver.REGISTRY_WATCH
+    run = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    assert kinds[run] == "values" and kinds[run + "Once"] == "values"
+    assert kinds["Environment"] == "values"
+    assert kinds[r"Software\Microsoft\Windows\CurrentVersion\Uninstall"] == "subkeys"
+    assert kinds[r"Software\Microsoft\Windows\CurrentVersion\App Paths"] == "subkeys"
+
+
+def test_only_the_unreadable_token_is_left_unprovoked():
+    assert set(driver.UNEXERCISED) == {"EXIT_ELEVATION_UNKNOWN"}
+
+
+def test_the_driver_judges_the_acl_of_what_the_installer_made_not_of_what_it_made_itself():
+    source = (ROOT / "scripts/windows_installer/standard_user_checks.py").read_text(encoding="utf-8")
+    body = source[source.index("def check_install"):source.index("def launch_checks")]
+    assert "judged = [folder, folder / \"forge-payload.json\"] + ([root] if root_created else [])" in body
+    assert "icacls_problems(path" in body
+    assert "root.mkdir()" not in body, "the driver's own folder is not the thing under test"
 
 
 def test_the_path_without_git_or_python_keeps_everything_else(tmp_path: Path):
@@ -1090,6 +1303,10 @@ def test_the_build_job_builds_twice_compares_and_uploads_what_the_windows_job_do
     for variant in ("small", "other --version 0.0.2", "same-version --same-version-as",
                     "long --long-version --long-path"):
         assert f"build_variant {variant}" in variants, variant
+    assert '--out "$variants/$name" --test-only-synthetic' in variants, (
+        "the small installers are labelled synthetic in their records")
+    real = steps["Build ForgeSetup.exe from the first payload"]
+    assert "--test-only-synthetic" not in real and "--test-only-synthetic" not in compare
 
 
 def test_the_windows_job_checks_the_artifact_then_refuses_elevated_then_runs_as_a_standard_user():
@@ -1111,6 +1328,9 @@ def test_the_windows_job_checks_the_artifact_then_refuses_elevated_then_runs_as_
     assert "is an administrator; the account must be a standard user" in script
     assert "exit $process.ExitCode" in script
     assert "SilentlyContinue" not in script and "-ErrorAction" not in script
+    assert "-Wait" not in script, "Start-Process -Wait waits on the whole process tree"
+    assert "WaitForExit($limitMilliseconds)" in script and "taskkill /T /F /PID" in script
+    assert "exit 124" in script and "40 * 60 * 1000" in script
 
 
 def test_the_standard_user_script_names_every_path_the_driver_reads():
@@ -1156,9 +1376,14 @@ def _assumption(number: str) -> str:
 
 def test_the_assumption_states_what_is_not_established_and_claims_none_of_what_it_denies():
     section = _assumption("A-042")
-    lowered = section.casefold()
+    lowered = " ".join(section.split()).casefold()
     for stated in ("unsigned", "not an msi", "per-user", "tamper-evident", "not established",
-                   "smartscreen", "smart app control", "requireadministrator"):
+                   "smartscreen", "smart app control", "requireadministrator",
+                   "test evidence only", "not a distributable and not a release candidate",
+                   "3.11 and 3.12", "mitigation", "does not eliminate", "$pluginsdir",
+                   "(typically downloads)", "dll", "$smprograms", "not a release channel",
+                   "fork", "user shell folders", "token's profile path", "`..` spelling",
+                   "pylib/", "--test-only-synthetic", "297"):
         assert stated in lowered, stated
     for claim in (r"\bis signed\b", r"\bsigned installer\b(?<!unsigned installer)",
                   r"auto-?update(?!s? (?:is|are) not)", r"\bruns as a service\b",
@@ -1169,6 +1394,37 @@ def test_the_assumption_states_what_is_not_established_and_claims_none_of_what_i
                 f"{match.group(0)!r} claimed in A-042: {lowered[match.start()-60:match.end()+40]!r}")
     for code in contract.exit_codes(_nsi()):
         assert code not in section, "the exit-code table lives in the script, once"
+
+
+#: Sentences that were claims the code did not keep. Each is checked against
+#: every text that speaks of the installer.
+RETIRED_CLAIMS = ("overwrites nothing", "overwrites and deletes nothing",
+                  "nothing is ever overwritten", "never overwrites", "never overwritten",
+                  "its last step", "the build reads the exit", "paths of 260 characters",
+                  "the driver cannot provoke them", "size and time are not measured",
+                  "installed size and install time")
+
+
+def test_no_text_makes_a_claim_the_installer_does_not_keep():
+    """The installer replaces nothing it has not checked for, deletes nothing, and
+    appends to one named log; it does not claim more. These phrases were
+    claims that the code or the measurements contradicted."""
+    texts = {
+        "README": (ROOT / "README.md").read_text(encoding="utf-8"),
+        "CHANGELOG": (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split("\n## 0.3.0")[0],
+        "VALIDATION": (ROOT / "docs/VALIDATION.md").read_text(encoding="utf-8"),
+        "A-042": _assumption("A-042"), "script": _nsi(),
+        "builder": (ROOT / "scripts/build_windows_installer.py").read_text(encoding="utf-8"),
+        "driver": (ROOT / "scripts/windows_installer/standard_user_checks.py").read_text(
+            encoding="utf-8"),
+        "workflow": WORKFLOW.read_text(encoding="utf-8"),
+    }
+    for name, text in texts.items():
+        flat = " ".join(text.split()).casefold()
+        for claim in RETIRED_CLAIMS:
+            assert claim not in flat, f"{name} says {claim!r}"
+    script = " ".join(_nsi().split())
+    assert "the build, the tests and the CI driver read it" not in script
 
 
 def test_the_readme_and_validation_no_longer_say_the_installer_does_not_exist():

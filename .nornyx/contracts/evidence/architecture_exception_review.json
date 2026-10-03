@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-03T08:25:21Z",
-  "governed_input_digest": "sha256:49ef3c6acd4b611784162c1bc4b4867cc090b209b36bfd0340467d69e8d14912",
+  "generated_at": "2026-10-03T09:36:32Z",
+  "governed_input_digest": "sha256:dc9559c4d6ddcdab08b59970ae4238cfd23da296d95d521bef8a9baea0d0602d",
   "open_exceptions": [],
   "schema": "nornyx.forge.exception_review_record.v1",
   "statement": "No architecture exceptions were requested or granted.",

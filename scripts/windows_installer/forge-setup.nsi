@@ -11,25 +11,33 @@
 ;   2. fixes the location: %LOCALAPPDATA%\Programs\Nornyx Forge, whatever /D= says;
 ;      refuses a UNC or \\?\ spelling, a location outside the profile
 ;      directory, a reparse point below the profile directory, and a location
-;      whose longest payload path would reach 260 characters;
-;   3. applies the existing-install rule: an empty or absent folder is a fresh
-;      install; a non-empty folder without install-receipt.json is not this
-;      installer's (exit 13); an unfinished earlier install is refused (14);
-;      the same payload already installed is verified and left alone (exit 0);
-;      any other payload in the same version directory fails verification (16);
-;      another version is refused (18). Nothing is ever overwritten or deleted;
+;      whose longest payload file path would reach 260 characters or whose
+;      longest payload folder path would reach 248 (what CreateDirectory takes);
+;   3. applies the existing-install rule: an unfinished earlier install
+;      (<version>+<commit12>.partial) is refused first (14); an empty or absent
+;      folder is a fresh install; a non-empty folder without
+;      install-receipt.json is not this installer's (13); the same payload
+;      already installed is verified and left alone (exit 0); any other payload
+;      in the same version directory fails verification (16); another version
+;      is refused (18); an existing Start-menu shortcut of the same name is
+;      refused (20). This installer deletes nothing and replaces no existing
+;      folder, file or shortcut; the one file it appends to is the log a caller
+;      names with /LOG=;
 ;   4. extracts into <version>+<commit12>.partial, verifies it with the
 ;      payload's own standard-library verifier against the identity baked into
 ;      THIS executable, then renames it to <version>+<commit12>;
 ;   5. writes one per-user Start-menu shortcut, then install-receipt.json last.
 ;
-; WHAT IT NEVER DOES: write outside the install folder and the shortcut; write
-; the registry; change PATH; register an uninstaller; run another installer;
-; download anything; create or touch the person's project, ~\.nornyx*, the
-; CrewAI storage locations or any provider's configuration.
+; WHAT IT NEVER DOES: write outside the install folder, the shortcut and the
+; /LOG= file; write the registry; change PATH; register an uninstaller; run
+; another installer; download anything; create or touch the person's project,
+; ~\.nornyx*, the CrewAI storage locations or any provider's configuration.
+; (NSIS itself, and the plug-ins this script loads, extract into $PLUGINSDIR
+; under %TEMP% before any of this runs: see A-042.)
 ;
-; EXIT CODES. One table, here; the build, the tests and the CI driver read it
-; from this file.
+; EXIT CODES. One table, here. The CI driver and the tests read it from this
+; file; the build does not. A code a refusal sets stays the exit code: the
+; install-failed callback sets 17 only when no code was set.
 !define EXIT_ELEVATED        10
 !define EXIT_LOCATION        11
 !define EXIT_LINK            12
@@ -40,6 +48,7 @@
 !define EXIT_FAILED          17
 !define EXIT_OTHER_VERSION   18
 !define EXIT_ELEVATION_UNKNOWN 19
+!define EXIT_SHORTCUT_EXISTS 20
 
 !ifndef VERSION
   !error "VERSION is not defined: this script is compiled by build_windows_installer.py"
@@ -52,6 +61,9 @@
 !endif
 !ifndef LONGEST_RELATIVE
   !error "LONGEST_RELATIVE is not defined"
+!endif
+!ifndef LONGEST_DIRECTORY
+  !error "LONGEST_DIRECTORY is not defined"
 !endif
 !ifndef VI_VERSION
   !error "VI_VERSION is not defined"
@@ -69,6 +81,7 @@ SetDatablockOptimize off
 RequestExecutionLevel user
 CRCCheck on
 AllowSkipFiles off
+SetOverwrite off
 OutFile "${OUT_FILE}"
 Name "Nornyx Forge"
 Caption "Nornyx Forge ${VERSION} setup"
@@ -126,6 +139,8 @@ Var HasEntries
 !macroend
 
 ; The opt-in log: /LOG=<absolute path> on the command line. Appends one line.
+; FileOpen "a" opens for writing at the start in NSIS, so the append is a seek
+; to the end.
 Function WriteLog
   Exch $0
   Push $1
@@ -133,6 +148,7 @@ Function WriteLog
     ClearErrors
     FileOpen $1 "$LogPath" a
     ${IfNot} ${Errors}
+      FileSeek $1 0 END
       FileWrite $1 "$0$\r$\n"
       FileClose $1
     ${EndIf}
@@ -199,7 +215,7 @@ Function CheckNoLinks
       ${If} $Attr <> -1
         IntOp $Attr $Attr & 0x400
         ${If} $Attr <> 0
-          !insertmacro Refuse ${EXIT_LINK} "$LinkPrefix is a link (a junction or symbolic link), and Forge does not install through links. Nothing was installed."
+          !insertmacro Refuse ${EXIT_LINK} "$LinkPrefix is a link (a junction or symbolic link), and Forge does not install through links. No payload file was installed."
         ${EndIf}
       ${EndIf}
     ${EndIf}
@@ -227,16 +243,32 @@ Function CheckLocation
   Call CheckNoLinks
 FunctionEnd
 
-; The longest path this install creates is the longest payload path inside
-; the .partial folder. Windows refuses a path of 260 characters or more
-; unless long paths are enabled machine-wide, which this installer does not
-; ask for.
+; The longest paths this install creates are the longest payload file path and
+; the longest payload folder path inside the .partial folder. Windows refuses
+; a file path of 260 characters or more, and CreateDirectory a folder path of
+; 248 or more, unless long paths are enabled machine-wide, which this
+; installer does not ask for.
 Function CheckPathBudget
   StrLen $0 "$Partial"
   IntOp $0 $0 + 1
+  IntOp $1 $0 + ${LONGEST_DIRECTORY}
   IntOp $0 $0 + ${LONGEST_RELATIVE}
   ${If} $0 > 259
-    !insertmacro Refuse ${EXIT_TOO_LONG} "Installing under $INSTDIR would create paths of up to $0 characters, and Windows allows 259. Nothing was installed."
+    !insertmacro Refuse ${EXIT_TOO_LONG} "Installing under $INSTDIR would create file paths of up to $0 characters, and Windows allows 259. Nothing was installed."
+  ${EndIf}
+  ${If} $1 > 247
+    !insertmacro Refuse ${EXIT_TOO_LONG} "Installing under $INSTDIR would create folder paths of up to $1 characters, and Windows allows 247. Nothing was installed."
+  ${EndIf}
+FunctionEnd
+
+; A Start-menu shortcut of this name that Setup did not write is not Setup's to
+; replace: CreateShortcut would replace it without a word.
+Function CheckShortcutFree
+  Push "$SMPROGRAMS\Nornyx Forge.lnk"
+  Call AttrOf
+  Pop $0
+  ${If} $0 <> -1
+    !insertmacro Refuse ${EXIT_SHORTCUT_EXISTS} "$SMPROGRAMS\Nornyx Forge.lnk already exists and Setup does not replace it. Remove or rename it and run Setup again. Nothing was installed."
   ${EndIf}
 FunctionEnd
 
@@ -274,8 +306,24 @@ Function DecideExisting
     !insertmacro Refuse ${EXIT_NOT_FORGE} "$INSTDIR exists and is not a folder, so it is not Forge's. Nothing was installed or changed."
   ${EndIf}
   StrCpy $RootCreated "false"
+  ; An unfinished earlier install is named as such first, with or without a
+  ; receipt: a failed first install leaves a .partial folder and no receipt.
+  Push "$Partial"
+  Call AttrOf
+  Pop $0
+  ${If} $0 <> -1
+    !insertmacro Refuse ${EXIT_UNFINISHED} "An earlier install did not finish: $Partial is still there. Setup does not delete anything. Remove that folder and run Setup again."
+  ${EndIf}
+  ; FindFirst on an existing folder finds at least "." and "..". It finds
+  ; nothing only when the folder cannot be listed, which is a refusal and not
+  ; an empty folder. FindNext sets the error flag at the end of every listing,
+  ; so the flag is cleared when the listing is done.
   StrCpy $HasEntries 0
+  ClearErrors
   FindFirst $2 $3 "$INSTDIR\*.*"
+  ${If} $3 == ""
+    !insertmacro Refuse ${EXIT_NOT_FORGE} "$INSTDIR exists but cannot be listed, so Setup cannot tell whether it is empty. Nothing was installed or changed."
+  ${EndIf}
   ${DoWhile} $3 != ""
     ${If} $3 != "."
     ${AndIf} $3 != ".."
@@ -285,6 +333,7 @@ Function DecideExisting
     FindNext $2 $3
   ${Loop}
   FindClose $2
+  ClearErrors
   ${If} $HasEntries = 0
     Return
   ${EndIf}
@@ -297,12 +346,6 @@ Function DecideExisting
   IntOp $1 $0 & 0x410
   ${If} $1 <> 0
     !insertmacro Refuse ${EXIT_NOT_FORGE} "$INSTDIR\install-receipt.json is not a plain file. Nothing was installed or changed."
-  ${EndIf}
-  Push "$Partial"
-  Call AttrOf
-  Pop $0
-  ${If} $0 <> -1
-    !insertmacro Refuse ${EXIT_UNFINISHED} "An earlier install did not finish: $Partial is still there. Setup does not delete anything. Remove that folder and run Setup again."
   ${EndIf}
   Push "$INSTDIR\$VerDir"
   Call AttrOf
@@ -343,13 +386,21 @@ Function .onInit
   Call CheckLocation
   Call CheckPathBudget
   Call DecideExisting
+  Call CheckShortcutFree
 FunctionEnd
 
+; A refusal in the Section has already set its own exit code; this callback
+; only gives a failure that set none (an extraction that could not write a
+; file) the generic one.
 Function .onInstFailed
-  SetErrorLevel ${EXIT_FAILED}
+  GetErrorLevel $0
+  ${If} $0 = -1
+    SetErrorLevel ${EXIT_FAILED}
+  ${EndIf}
 FunctionEnd
 
 Section "Install"
+  ClearErrors
   CreateDirectory "$INSTDIR"
   ${If} ${Errors}
     !insertmacro Refuse ${EXIT_FAILED} "Setup could not create $INSTDIR. Nothing was installed."

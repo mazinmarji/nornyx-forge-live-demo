@@ -12,7 +12,13 @@ WHAT THE BUILD REFUSES, before any executable exists:
   file whose bytes differ from the commit's (as the payload builder does);
 * a payload folder that does not verify against its own manifest, or whose
   manifest is not this commit's: the source commit, the lock's digest, the
-  installer and the interpreter must each equal what the commit pins;
+  installer and the interpreter must each equal what the commit pins, and every
+  copy-set file (the repository's own files in the payload) and the version
+  must equal the commit's. `pylib/` and `python/` are NOT compared with
+  anything the commit holds; the payload's identity, the lock digest and the
+  interpreter archive digest are what hold them. The tiny test payloads of
+  CI's refusal checks are built through `--test-only-synthetic`, which skips
+  the copy-set comparison and says so in the build record;
 * a payload whose files and folders do not all carry the commit's time (the
   installer stores each file's time, so a disturbed copy would change the
   bytes);
@@ -242,6 +248,47 @@ def check_payload(repo_root: Path, commit: str, payload: Path) -> dict:
     return manifest
 
 
+def check_copy_set(repo_root: Path, commit: str, manifest: dict) -> None:
+    """The payload's copy of the repository IS the commit's: every tracked
+    file of the copy set (`BUNDLE_TREE`, minus the excluded names) is in the
+    payload with the commit's bytes, the payload holds no other file under
+    those roots, and the payload's version is `pyproject.toml`'s at the
+    commit. What this does NOT compare: `pylib/` and `python/`, which the
+    commit cannot reproduce without the network; they are held by the payload's
+    own identity, the lock digest and the interpreter archive digest the
+    manifest records and `check_payload` compares."""
+    roots = bundle.bundle_manifest()
+    listing = bundle._git(repo_root, "ls-tree", "-r", "-z", "--full-tree", commit, "--", *roots)
+    paths, objects = [], []
+    for record in listing.split(b"\0"):
+        if not record:
+            continue
+        meta, _, raw_path = record.partition(b"\t")
+        path = raw_path.decode("utf-8", "surrogateescape")
+        if bundle.EXCLUDED_NAMES.intersection(path.split("/")):
+            continue
+        paths.append(path)
+        objects.append(meta.split(b" ")[2])
+    committed = {path: (len(data), hashlib.sha256(data).hexdigest())
+                 for path, data in zip(paths, bundle._read_blobs(repo_root, objects))}
+    payload = {entry[0]: (entry[1], entry[2]) for entry in manifest["files"]
+               if any(entry[0] == root or entry[0].startswith(root + "/") for root in roots)}
+    problems = [f"missing: {path}" for path in committed if path not in payload]
+    problems += [f"changed: {path}" for path in committed
+                 if path in payload and payload[path] != committed[path]]
+    problems += [f"not in the commit: {path}" for path in payload if path not in committed]
+    if problems:
+        problems.sort()
+        raise InstallerError(f"the payload's copy of the repository is not the commit's: "
+                             f"{'; '.join(problems[:20])}"
+                             + (f"; and {len(problems) - 20} more" if len(problems) > 20 else ""))
+    pyproject = bundle.tomllib.loads(
+        bundle._git_blob(repo_root, commit, "pyproject.toml").decode("utf-8"))
+    if pyproject["project"]["version"] != manifest["version"]:
+        raise InstallerError(f"the payload's version is {manifest['version']!r}, but the "
+                             f"commit's pyproject.toml says {pyproject['project']['version']!r}")
+
+
 def vi_version(version: str) -> str:
     """VIProductVersion takes four numbers: the first three of the version,
     then 0. A version without three leading numbers is 0.0.0.0 (the full
@@ -257,6 +304,13 @@ def longest_relative(manifest: dict) -> int:
     (Windows' unit): the manifest's entries and the manifest itself."""
     paths = [entry[0] for entry in manifest["files"]] + [PAYLOAD_MANIFEST]
     return max(len(path.encode("utf-16-le")) // 2 for path in paths)
+
+
+def longest_directory(manifest: dict) -> int:
+    """The longest relative folder path the installer creates (0 for the
+    payload root), in UTF-16 code units: every folder that holds an entry."""
+    folders = [entry[0].rpartition("/")[0] for entry in manifest["files"]]
+    return max(len(folder.encode("utf-16-le")) // 2 for folder in folders)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +341,7 @@ def compile_installer(makensis: str, stage_dir: Path, out_file: Path, manifest: 
         "VERSION": manifest["version"], "COMMIT12": manifest["source_commit"][:12],
         "PAYLOAD_SHA256": manifest["payload_sha256"],
         "LONGEST_RELATIVE": str(longest_relative(manifest)),
+        "LONGEST_DIRECTORY": str(longest_directory(manifest)),
         "VI_VERSION": vi_version(manifest["version"]), "STAGE_DIR": stage_dir.as_posix(),
         "OUT_FILE": out_file.as_posix(),
     }
@@ -330,8 +385,12 @@ def check_executable(path: Path, manifest: dict) -> None:
 
 
 def build(repo_root: Path, payload: Path, out_dir: Path, *, makensis: str = "makensis",
-          nsis_dir: Path = Path("/usr/share/nsis")) -> dict:
-    """The whole build; returns the build record it wrote."""
+          nsis_dir: Path = Path("/usr/share/nsis"), synthetic: bool = False) -> dict:
+    """The whole build; returns the build record it wrote. `synthetic` is the
+    explicit TEST-ONLY path for the tiny sealed payloads that exercise the
+    installer's refusals: it skips the comparison of the payload's copy of the
+    repository with the commit (those payloads are not a copy of it), and the
+    record says so in `payload_kind`."""
     payload = payload.resolve()
     if out_dir.exists() and any(out_dir.iterdir()):
         raise InstallerError(f"{out_dir} already holds files; an installer is built into an "
@@ -352,6 +411,8 @@ def build(repo_root: Path, payload: Path, out_dir: Path, *, makensis: str = "mak
     except ValueError as error:
         raise InstallerError(f"{TOOLS_PATH} is not JSON: {error}") from None
     manifest = check_payload(repo_root, commit, payload)
+    if not synthetic:
+        check_copy_set(repo_root, commit, manifest)
     toolchain = check_toolchain(tools, makensis, nsis_dir)
     with tempfile.TemporaryDirectory(prefix="forge-setup-") as scratch_name:
         scratch = Path(scratch_name)
@@ -366,7 +427,17 @@ def build(repo_root: Path, payload: Path, out_dir: Path, *, makensis: str = "mak
                           "size": built.stat().st_size},
             "payload": {"sha256": manifest["payload_sha256"], "version": manifest["version"],
                         "source_commit": manifest["source_commit"],
-                        "files": len(manifest["files"]) + 1},
+                        "files": len(manifest["files"]) + 1,
+                        "payload_kind": "synthetic-test-payload" if synthetic else "commit-payload",
+                        "compared_with_the_commit": (
+                            ["lock digest", "installer and interpreter pins", "target", "time"]
+                            if synthetic else
+                            ["every copy-set file's bytes", "the set of copy-set files",
+                             "version", "lock digest", "installer and interpreter pins",
+                             "target", "time"]),
+                        "not_compared_with_the_commit": (
+                            ["the copy set", "pylib", "python"] if synthetic
+                            else ["pylib", "python"])},
             "inputs": {name: hashlib.sha1(  # noqa: S324 - git's blob id, not a security claim
                 b"blob %d\0" % len(blob) + blob).hexdigest() for name, blob in blobs.items()},
             "tool": toolchain,
@@ -393,10 +464,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True, help="an empty or absent folder")
     parser.add_argument("--makensis", default="makensis")
     parser.add_argument("--nsis-dir", type=Path, default=Path("/usr/share/nsis"))
+    parser.add_argument("--test-only-synthetic", action="store_true",
+                        help="the payload is a tiny sealed test payload, not a copy of this "
+                             "commit's repository; the build record says so")
     arguments = parser.parse_args(argv)
     try:
         record = build(ROOT, arguments.payload, arguments.out, makensis=arguments.makensis,
-                       nsis_dir=arguments.nsis_dir)
+                       nsis_dir=arguments.nsis_dir, synthetic=arguments.test_only_synthetic)
     except InstallerError as error:
         print(f"installer refused: {error}", file=sys.stderr)
         return 1

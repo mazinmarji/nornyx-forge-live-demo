@@ -149,7 +149,12 @@ clean commit by `scripts/build_windows_installer.py` with NSIS 3.09 as pinned in
 packages by their pinned hashes, then the build refuses a `makensis` whose
 binary or data directory differs). It is not an MSI, registers no service and
 no uninstaller, updates nothing by itself and writes no registry value.
-Windows may show a SmartScreen warning for a downloaded copy, and Smart App
+**What CI builds is test evidence, not a release:** the compiler is NSIS 3.09,
+which upstream has since followed with fixes for local privilege escalation
+(the move to 3.12 or later is a separate change), refusing to run elevated
+mitigates those and does not remove them, and the artifacts of CI runs, those
+of pull requests from forks included, are unsigned test artifacts and not a
+distribution channel. Windows may show a SmartScreen warning for a downloaded copy, and Smart App
 Control, where it is enforced, may block it. It refuses to run elevated, so
 run it without "Run as administrator". It installs into
 `%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>`: it extracts into
@@ -158,8 +163,10 @@ identity baked into the installer, and only then renames it; it writes one
 Start-menu shortcut that starts the embedded interpreter with bytecode writing
 off, and `install-receipt.json`, which lists only what it created. Run again,
 the same payload is verified and left alone; another version, a folder that is
-not Setup's and an unfinished earlier install are refused, and nothing is ever
-overwritten or deleted. Git for Windows must be installed: Setup warns if it
+not Setup's, an unfinished earlier install and a Start-menu shortcut that is
+already there are refused. It deletes nothing and replaces no existing folder,
+file or shortcut (a race between its check and its write is the limit, A-042);
+the one file it appends to is the log a caller names with `/LOG=`. Git for Windows must be installed: Setup warns if it
 finds none, and Forge refuses to start without it. Exit codes are defined in
 `scripts/windows_installer/forge-setup.nsi`. CI builds the installer twice and
 compares the bytes (`windows-installer`), then installs, launches, stops and
