@@ -450,8 +450,9 @@ criteria for generated application subjects.
 MSI is not the current target. A folder plus `Forge.cmd` remains the interim v1
 delivery.
 
-**Scope.** This records the already-decided distribution direction only. It does
-not implement packaging, signing, release CI, or the installer.
+**Scope.** This records the distribution direction only. It does not implement
+packaging, signing or release CI; the payload is A-040 and the installer is
+A-042.
 
 **Serves.** programme traceability for the post-PR-18 Windows distribution work.
 
@@ -5960,3 +5961,170 @@ agentic flow, governance, persistence, and UI.", which the gate's
 dependency, layer and process rules check, by keeping its reading of the
 contract and of the source tree a single reading. No functional BRD
 requirement is implemented.
+
+## A-042 ForgeSetup.exe is an unsigned, per-user installer that never overwrites, and what it protects is bounded
+
+**Assumption.** The Windows delivery is `ForgeSetup.exe`, built by
+`scripts/build_windows_installer.py` from the deterministic payload of A-040
+with the NSIS script `scripts/windows_installer/forge-setup.nsi`. It is
+unsigned. It is not an MSI, it registers no service, it updates nothing by
+itself, and it has no uninstaller. Windows may show a SmartScreen warning for
+a downloaded copy, and Smart App Control, where it is enforced, may block it.
+Nothing here claims otherwise.
+
+**What it does.**
+
+- **It refuses to run elevated.** It reads its own token (`TokenElevation`)
+  and asks `IsUserAnAdmin`; an elevated process, an administrator whose
+  token is never filtered, and a process whose token cannot be read are all
+  refused, the last because an installer that cannot tell fails closed. It
+  requests `asInvoker` (the build refuses an executable carrying
+  `requireAdministrator`, `highestAvailable` or `uiAccess="true"`), so a
+  standard user is never prompted. It must refuse because it runs the
+  payload's own interpreter as its last step (below): an elevated installer
+  would run files a same-user process can write.
+- **It installs per user, in one place.** The location is
+  `%LOCALAPPDATA%\Programs\Nornyx Forge`, whatever `/D=` says. A UNC or
+  `\\?\` spelling, a location outside the profile directory, a reparse point
+  (junction or symbolic link) on the way below the profile directory, and a
+  location where the longest payload path would reach 260 characters are each
+  refused by name. It writes nothing under `Program Files`, `ProgramData` or
+  `HKLM`, writes no registry value, changes no `PATH`, and registers no
+  uninstaller.
+- **It applies one rule to what is already there, and deletes nothing.**
+  An absent or empty folder is a fresh install. A non-empty folder with no
+  `install-receipt.json` is not its own and is left alone. An unfinished
+  earlier install (`<version>+<commit12>.partial`) is refused and left in
+  place. The same version directory is verified, with its own interpreter,
+  against the identity baked into the executable: the same payload exits 0,
+  anything else under that name fails the verification and is refused.
+  Another version is refused: upgrade and repair wait for an installer state
+  model. Setup deletes nothing and overwrites nothing; a failed install
+  leaves its folder for a person to inspect.
+- **It extracts, verifies, then renames.** The payload is extracted into
+  `<version>+<commit12>.partial` (one `File` per manifest entry, in
+  manifest order), verified there by `python -B -I -m
+  nornyx_forge.windows_payload verify <folder> --expect <identity>` using the
+  folder's own interpreter, and only then renamed to `<version>+<commit12>`.
+  A folder that has the final name has therefore verified. The check is
+  tamper-evident, not tamper-proof: it detects corruption and naive
+  modification and is not a signature (A-040).
+- **It writes a shortcut and then a receipt.** One Start-menu shortcut
+  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Nornyx Forge.lnk`, a
+  shortcut of that name is replaced) starts the embedded `pythonw.exe` with
+  bytecode writing off (`-B`), so running Forge leaves the installed folder
+  verifiable, with the install root as its working folder, so CrewAI's
+  working-folder-named storage does not change from one version to the next.
+  `install-receipt.json` is written last and lists exactly what the
+  installer created, by relative path. By schema it may not name the
+  person's project, Forge's runtime and seal directories, the trust stores,
+  CrewAI's storage or a provider's configuration home (the checker refuses
+  each), so a later uninstall or repair that acts on the receipt cannot reach
+  them. A receipt written but not read back by anything yet is not an
+  uninstaller.
+- **Git for Windows is a prerequisite, with a warning.** The installer looks
+  for `git.exe` and, if it finds none, says so and records `git: not found`
+  in the receipt. The look is advisory (it searches the installer's own and
+  the current folder before `PATH`); the authority is the runtime, which
+  refuses to start without git, by name.
+- **Exit codes** are defined once, in the script's `!define EXIT_*` lines; the
+  tests, the build record and the Windows job read them from there.
+
+**What binds a build to its source.** The build refuses anything but a clean
+commit, a builder, script, contract or pin file that differs from the
+commit's blob, a payload that does not verify against its own manifest, a
+payload whose source commit, lock digest, installer, interpreter, target and
+time are not what the commit pins, a payload with a file or folder that does
+not carry the commit's time, and a `makensis` whose binary SHA-256, data
+directory (stubs, plug-ins, includes) tree digest or reported version differs
+from `installer-tools.json`. The tool is the Ubuntu 24.04 `nsis` 3.09-4ubuntu1
+and `nsis-common` packages, fetched by CI from their pinned URLs and refused
+unless their size and SHA-256 match (the hashes are those of the signed
+archive index). After compiling, the build checks that the file is a PE with
+an `asInvoker` manifest and no privilege request, with the version, commit and
+payload identity in its version-information resource. `ForgeSetup.build.json`
+binds the executable's digest to the payload identity, the commit, the script
+and the tool; it carries no clock and no path, and it is operator evidence
+about one artifact, not governance evidence and not a signature.
+
+**What CI establishes, and what it does not.** The `windows-installer` job
+builds the payload and the installer twice from two checkouts (another
+checkout path, another interpreter path) and compares the bytes of the
+executable, its digest and its record. The `windows-install` job downloads
+the first build's artifact on `windows-latest`, checks it against its record,
+and runs `scripts/windows_installer/standard_user_checks.py`: as the
+runner's administrator (the installer must refuse and leave nothing), then as
+a local account created in the Users group alone (install into an empty
+folder; the receipt; the shortcut's target, arguments and working folder; no
+explicit or foreign ACE on the folder; no change to the registry places an
+installer registers itself in or to `PATH`; only the install folder and the
+shortcut added to the folders an installer could leave state in, and none of
+the state-class names present; the same payload again; another version; other
+bytes under the same version; a junction at the install folder; a folder
+holding files that are not Forge's; an unfinished earlier install; paths that
+would reach 260 characters; starting the runtime from the shortcut's own
+command line, joining it, stopping it, starting it again and verifying the
+folder is still the payload; and an install with no git and no Python on
+`PATH`). The refusals are exercised with installers built from tiny sealed
+payloads, because each happens before anything is extracted.
+
+**The threat model, by location.** "Same user" means a process running as the
+person who runs Setup, which can already write the folders below.
+
+| Adversary-controlled location | Used when | Bound by | Limit |
+|---|---|---|---|
+| The downloaded `ForgeSetup.exe` | before it runs | the build record and `.sha256`, which CI compares with the artifact | unsigned: whoever replaces the file replaces the identity it carries; the installed copy's check protects against corruption, not against a different installer |
+| The command line (`/D=`, `/S`, `/LOG=`, `/NCRC`) | at start | `/D=` is overwritten in `.onInit`; `/NCRC` skips only NSIS's own checksum, and the payload's identity check follows regardless; `/LOG=` is an opt-in path the caller chose and Setup appends to | the log is written wherever the caller points it |
+| `%LOCALAPPDATA%` and the profile directory (the shell folders) | at start | must be a plain drive path inside the profile directory | both come from the same source; a same-user process that redirects both defeats the comparison and gains nothing it did not have |
+| Folders on the way to the root, below the profile | at start, and after the root is created | each existing folder is refused if it is a reparse point | no held handle: a link created between the check and the write is followed (same user) |
+| The root's existing contents | at start | the rule above; a receipt only marks a folder as Setup's | the receipt is not authenticated; a same-user writer can forge one, or replace an installed folder and its interpreter together |
+| `<version>+<commit12>.partial` during extraction | extraction to verification | must not exist beforehand; verified before it gets its final name | the verifier is not race-free; a same-user process writing during the window is detected only if it leaves a difference |
+| The extracted `python.exe` and verifier | the verification step | the verification runs from the folder just extracted | it executes code from the folder it is checking, as the same user; that is why Setup refuses to run elevated |
+| `PATH`, the installer's folder and the current folder | the git look | none | advisory; the runtime's own refusal is the authority |
+| The Start-menu shortcut | install | absolute targets inside the verified folder, started with `-B` | a shortcut of that name is replaced; a same-user process can edit it |
+| The receipt | install end | relative paths only; the checker refuses every state-class name | unauthenticated; written last, so a crash leaves no receipt and the folder is then refused as not Setup's |
+| The process token | at start | `TokenElevation`, `IsUserAnAdmin`, fail closed | an administrator with UAC off is refused too; a non-elevated process of any other kind is accepted |
+| The build tool and the runner image | at build | pinned packages, binary and data-tree digests, reported version | the image behind `ubuntu-24.04` changes under the label; its libraries are not pinned |
+
+**Determinism, exactly.** The executable is a function of the payload's bytes
+and times (its identity), the script, the two generated includes, and the
+pinned `makensis`; the build reads no clock and passes `makensis` a fixed
+environment. That `makensis` produces the same bytes for the same inputs is
+expected of it (it stores each file's time, which the payload fixes) and is
+measured by CI's two builds per commit on one image, not by anything run on
+a development host: no downloaded binary is run there. Not established: any
+other `makensis`, any other image, or that a second machine agrees.
+
+**Not established.**
+
+- The script had not been compiled before CI compiled it, and its
+  behaviour on Windows had not been observed before the `windows-install`
+  job ran it. Both are that job's and the first CI run's evidence, per
+  commit. Only the script's text, its generated includes, the builder and the
+  job structure are held by `tests/test_windows_installer.py` on every
+  Linux run.
+- A run on a clean accepted machine by a person: whether a default UAC
+  configuration shows no prompt for a standard account; SmartScreen and Smart
+  App Control behaviour on a downloaded unsigned copy and on unsigned wheel
+  libraries; the shortcut being double-clicked; the browser opening;
+  that Setup makes no network connection; behaviour with a roaming or
+  redirected profile (a location outside the profile directory is refused);
+  Windows on Arm; a language other than English; 8.3 short-name spellings of
+  the install folder.
+- The refusals for a location outside the profile, for an unreadable token and
+  for a failure part-way through an install are held by the script's text
+  only; the driver cannot provoke them.
+- The installer's size and the time it takes to install are not measured; they
+  are of the order of the payload (hundreds of megabytes) and CrewAI's import
+  tree causes that (A-040).
+- An install that fails after the rename (the shortcut or the receipt) leaves
+  a folder without a receipt, which a later run refuses as not Setup's; a
+  person removes it by hand. No uninstaller, repair or upgrade exists.
+- The installed Forge is started by the shortcut with `-B`; `Forge.cmd`, which
+  stays in the payload for the smoke and for manual use, starts the
+  interpreter without it and so unseals the folder. Nothing verifies the
+  folder at launch yet.
+
+**Serves.** A-020's EXE-first direction. It relies on A-040 for the payload and
+its self-check, and on A-017's amendment for CI being the operator who fetches
+the pinned interpreter archive.

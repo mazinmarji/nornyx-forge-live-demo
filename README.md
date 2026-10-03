@@ -96,8 +96,9 @@ python scripts/validate_repository.py
 
 ## Windows folder bundle (interim basic-user delivery)
 
-The interim Windows delivery is a folder and `Forge.cmd` (A-020; the eventual
-target is `ForgeSetup.exe`, which does not exist yet). A person double-clicks
+The interim Windows delivery is a folder and `Forge.cmd` (A-020; the target is
+`ForgeSetup.exe`, which carries the same payload and is described below, A-042).
+A person double-clicks
 `Forge.cmd`; the runtime starts under their profile's `ForgeProject`, opens
 their default browser on the local onboarding page once the server has
 answered for itself, and stops from the page's "Stop Forge" button. A second
@@ -138,9 +139,33 @@ checks a copy: a folder that verifies holds exactly the listed files, byte
 for byte. That detects corruption and naive modification; it is not a
 signature and not tamper-proofing. Running the folder writes bytecode into
 it, which `verify` refuses, so add `--smoke` to the build only for operator
-evidence: a smoked folder is no longer the payload. The installer that is to
-carry this payload does not exist yet, and nothing runs this check at launch
-yet.
+evidence: a smoked folder is no longer the payload. Nothing runs this check at
+launch; the installer below runs it once, at install.
+
+**`ForgeSetup.exe` (A-042, which states what it protects and what it does
+not).** It is an unsigned, per-user installer for that payload, built from a
+clean commit by `scripts/build_windows_installer.py` with NSIS 3.09 as pinned in
+`scripts/windows_installer/installer-tools.json` (CI installs the two Ubuntu
+packages by their pinned hashes, then the build refuses a `makensis` whose
+binary or data directory differs). It is not an MSI, registers no service and
+no uninstaller, updates nothing by itself and writes no registry value.
+Windows may show a SmartScreen warning for a downloaded copy, and Smart App
+Control, where it is enforced, may block it. It refuses to run elevated, so
+run it without "Run as administrator". It installs into
+`%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>`: it extracts into
+a `.partial` folder, verifies it with the payload's own interpreter against the
+identity baked into the installer, and only then renames it; it writes one
+Start-menu shortcut that starts the embedded interpreter with bytecode writing
+off, and `install-receipt.json`, which lists only what it created. Run again,
+the same payload is verified and left alone; another version, a folder that is
+not Setup's and an unfinished earlier install are refused, and nothing is ever
+overwritten or deleted. Git for Windows must be installed: Setup warns if it
+finds none, and Forge refuses to start without it. Exit codes are defined in
+`scripts/windows_installer/forge-setup.nsi`. CI builds the installer twice and
+compares the bytes (`windows-installer`), then installs, launches, stops and
+reopens it on Windows as a standard user (`windows-install`); nothing observes
+the installer on a clean machine, a double-click, the browser opening, or
+network traffic.
 
 `--smoke` reports `pass` only when every observation its contract names
 succeeded -- the launcher returned exit code 0 within its timeout; the

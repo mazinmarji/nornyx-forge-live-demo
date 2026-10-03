@@ -96,7 +96,8 @@ release CI, packaging, signing and the installer for the distribution
 tranche; nothing in the repository reserved runtime validation. A Windows job
 that runs four test modules and publishes nothing is runtime validation, so
 one was added; it is not a release pipeline and does not build
-`ForgeSetup.exe`.
+`ForgeSetup.exe`. The installer is built and exercised by two further jobs,
+`windows-installer` and `windows-install` (A-042, and the section below).
 
 Proof matrix. "Established" means a test that runs on every commit holds it;
 "Windows-hosted" means the `windows-runtime` job and a Windows workstation
@@ -558,7 +559,23 @@ case-sensitive file system.
 | a name Windows cannot hold (paths and directories folded for case, file-versus-directory, device names, characters, UTF-16 length), bytecode in any case, an empty directory, a link, a reparse point (a constructed status), a hard link (the manifest included) and a FIFO, also one swapped in after the walk, are refused, at the build and at every check | established on Linux | the name-rule, collision, link, seal and copy tests |
 | a changed (past the first MiB too), missing, unlisted or renamed file, a lying size, an edited manifest, and a resealed folder against an expected identity are refused by name | established | the verifier tests |
 | the verifier loads the standard library only | established | `test_the_verifier_loads_the_standard_library_only` |
-| the folder's imports on Windows; the verifier's tests on Windows; the check at launch; the installer | not established | none yet |
+| the verifier's own tests on Windows; the check at launch | not established | none yet |
+
+## ForgeSetup.exe (A-042)
+
+What holds the installer. "Linux tests" are `tests/test_windows_installer.py`, which runs in every census job without network access and never compiles or runs NSIS. "CI" is the `windows-installer` job (Linux, pinned `makensis`) and the `windows-install` job (`windows-latest`, an elevated run and a run as a local standard user). "Measured by CI" means measured on a GitHub-hosted image for that commit; it is not a run on a clean accepted machine by a person.
+
+| Property | Status | Evidence |
+|---|---|---|
+| the script defines each exit code once and uses it; every variable is declared and used; the elevation check comes first, reads the token and fails closed; the installer uses no registry, no `PATH`, no machine-wide location, no uninstaller and no deletion; the only process it starts is the payload's own interpreter running the payload's verifier against the identity baked in | established from the script's text only (a line present is not an effect) | `test_the_exit_codes_are_defined_once_and_used_both_ways`, `test_every_variable_is_declared_and_used_and_every_use_is_declared`, `test_the_elevation_check_comes_first_and_reads_the_token`, `test_the_installer_uses_none_of_what_it_must_never_use`, `test_the_only_process_it_starts_is_the_payloads_own_verifier_against_the_baked_identity` |
+| the file list extracts every manifest entry once, to where it is read from, in manifest order, and nothing else; every name the payload rule admits survives the script's string syntax | established | the file-list tests |
+| the receipt the installer writes is valid, names exactly the installed payload, and may not name a state class the installer does not own | established | the receipt tests |
+| the build refuses an unverified, touched or foreign payload, an unpinned `makensis` (binary, data directory, version), an uncommitted script, and an executable that asks for privilege or lacks its identity; the same inputs give the same bytes | established over a stand-in compiler | the builder tests |
+| the script compiles with the pinned NSIS; two builds from two checkouts are byte-identical | measured by CI, per commit | `windows-installer`: `cmp` of the executable, its digest and its record |
+| an elevated run is refused and leaves nothing; a standard user installs without a prompt; the receipt, the shortcut, the folder's ACL, the registry places and the folders an installer could leave state in are as stated; the existing-install rule; the refusals (a junction, a foreign folder, an unfinished install, paths of 260 characters); launch, join, stop and relaunch from the shortcut's command line; an install with no git and no Python on `PATH` | measured by CI, per commit, on a hosted image | `windows-install` (`standard_user_checks.py`) |
+| the structure of both jobs: pinned actions, no optional step, the order of the steps, the artifact they share | established | the job-structure tests |
+| a location outside the profile, an unreadable token and a failure part-way through an install | the script's text only; the driver cannot provoke them | `standard_user_checks.UNEXERCISED` |
+| a default UAC configuration; SmartScreen and Smart App Control; a double-click; the browser opening; no network traffic during install; a roaming or redirected profile; Windows on Arm; installed size and install time | not established | none yet |
 
 ## Requires a normal internet-connected machine or GitHub Actions
 

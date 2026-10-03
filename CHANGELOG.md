@@ -2,6 +2,28 @@
 
 ## Unreleased — hardening from adversarial review
 
+- `ForgeSetup.exe`, an unsigned per-user Windows installer for the
+  deterministic payload (A-042). Built by `scripts/build_windows_installer.py`
+  from a clean commit with the NSIS the pins name
+  (`scripts/windows_installer/installer-tools.json`: two Ubuntu packages, by
+  URL, size and SHA-256, then a `makensis` whose binary, data directory and
+  version the build checks). It refuses to run elevated and reads its token to
+  do so; installs into `%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>`
+  by extracting into a `.partial` folder, verifying it with the payload's own
+  interpreter against the identity baked into the executable, and then
+  renaming it; writes one Start-menu shortcut that starts the embedded
+  interpreter with bytecode writing off, and `install-receipt.json`, which may
+  not name anything the installer does not own; verifies the same payload when
+  run again; and refuses another version, a folder that is not its own and an
+  unfinished earlier install. It overwrites and deletes nothing, writes no
+  registry value, changes no `PATH`, registers no uninstaller and warns when
+  Git for Windows is missing. It is not an MSI and has no service. Two new CI
+  jobs: `windows-installer` builds it twice from two checkouts and compares
+  the bytes; `windows-install` installs, launches, stops and reopens it on
+  Windows as a standard user. Not established: that two builds agree until CI
+  has run them, the installer on a clean machine, SmartScreen and Smart App
+  Control, and a double-click.
+
 - The architecture gate reads its contract and its modules one way (A-041).
   `scripts/check_architecture.py` looks modules up by id and by name, and
   layers by id, and it built each index from a list, which keeps the last
