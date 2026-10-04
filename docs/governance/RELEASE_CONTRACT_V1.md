@@ -122,7 +122,8 @@ declares the repository finished.
       container-launch, demo-contract,
       strict-authorization, hostile-probe,
       nsis-toolchain, nsis-toolchain-verify,
-      nsis-smoke-build, nsis-smoke-windows)     PASS
+      nsis-smoke-build, nsis-smoke-windows,
+      windows-installer, windows-install)       PASS
 
     Exact candidate head frozen                 review/candidate-<sha7>
     ------------------------------------------------------------------

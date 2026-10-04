@@ -96,8 +96,9 @@ python scripts/validate_repository.py
 
 ## Windows folder bundle (interim basic-user delivery)
 
-The interim Windows delivery is a folder and `Forge.cmd` (A-020; the eventual
-target is `ForgeSetup.exe`, which does not exist yet). A person double-clicks
+The interim Windows delivery is a folder and `Forge.cmd` (A-020; the target is
+`ForgeSetup.exe`, which carries the same payload and is described below, A-043).
+A person double-clicks
 `Forge.cmd`; the runtime starts under their profile's `ForgeProject`, opens
 their default browser on the local onboarding page once the server has
 answered for itself, and stops from the page's "Stop Forge" button. A second
@@ -138,9 +139,42 @@ checks a copy: a folder that verifies holds exactly the listed files, byte
 for byte. That detects corruption and naive modification; it is not a
 signature and not tamper-proofing. Running the folder writes bytecode into
 it, which `verify` refuses, so add `--smoke` to the build only for operator
-evidence: a smoked folder is no longer the payload. The installer that is to
-carry this payload does not exist yet, and nothing runs this check at launch
-yet.
+evidence: a smoked folder is no longer the payload. Nothing runs this check at
+launch; the installer below runs it once, at install.
+
+**`ForgeSetup.exe` (A-043, which states what it protects and what it does
+not).** It is an unsigned, per-user installer for that payload, built from a
+clean commit by `scripts/build_windows_installer.py` with the NSIS 3.13 compiler
+of the next paragraph: CI hands the builder the compiler tree that the
+`nsis-toolchain` jobs built and `nsis-toolchain-verify` compared, the builder
+refuses a tree whose compiler or tree digest is not the pinned output, and it
+runs the compiler inside the pinned image with no network and no capability,
+the script and the payload read-only. It is not an MSI, registers no service and
+no uninstaller, updates nothing by itself and writes no registry value.
+**What CI builds is test evidence, not a release:** the artifacts of CI runs,
+those of pull requests from forks included, are unsigned test artifacts and not
+a distribution channel, and no release process makes one a candidate. Refusing
+to run elevated mitigates the local privilege escalations that NSIS 3.11 and
+3.12 fixed in the stub and plug-ins and does not remove them, which is why the
+compiler is the release that carries those fixes. Windows may show a SmartScreen warning for a downloaded copy, and Smart App
+Control, where it is enforced, may block it. It refuses to run elevated, so
+run it without "Run as administrator". It installs into
+`%LOCALAPPDATA%\Programs\Nornyx Forge\<version>+<commit12>`: it extracts into
+a `.partial` folder, verifies it with the payload's own interpreter against the
+identity baked into the installer, and only then renames it; it writes one
+Start-menu shortcut that starts the embedded interpreter with bytecode writing
+off, and `install-receipt.json`, which lists only what it created. Run again,
+the same payload is verified and left alone; another version, a folder that is
+not Setup's, an unfinished earlier install and a Start-menu shortcut that is
+already there are refused. It deletes nothing and replaces no existing folder,
+file or shortcut (a race between its check and its write is the limit, A-043);
+the one file it appends to is the log a caller names with `/LOG=`. Git for Windows must be installed: Setup warns if it
+finds none, and Forge refuses to start without it. Exit codes are defined in
+`scripts/windows_installer/forge-setup.nsi`. CI builds the installer twice and
+compares the bytes (`windows-installer`), then installs, launches, stops and
+reopens it on Windows as a standard user (`windows-install`); nothing observes
+the installer on a clean machine, a double-click, the browser opening, or
+network traffic.
 
 **The installer compiler is built from pinned source (A-042, which states what
 is and is not covered).** `scripts/windows_installer/build_nsis_toolchain.py`
