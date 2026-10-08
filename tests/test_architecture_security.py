@@ -954,6 +954,208 @@ def test_a_source_file_in_a_cache_directory_is_read_like_any_other(tmp_path: Pat
     assert "store.cpython-313.pyc" not in joined, joined
 
 
+# --------------------------------------------------------------------------
+# Letter case: a suffix and `__init__` in any case are what Windows imports
+# --------------------------------------------------------------------------
+
+#: An import of `demo_app.evil` from the HTTP surface that runs on Windows only,
+#: so that a gate run on Linux is the only reader that could see it.
+_WINDOWS_ONLY_IMPORT = '\nimport sys\nif sys.platform == "win32":\n    import demo_app.evil\n'
+
+#: label -> (the files in their canonical spelling, the same files in another
+#: spelling, text appended to the HTTP surface, the canonical verdict).
+#: CPython 3.13 on Windows takes every right-hand spelling for its left-hand
+#: one: a suffix and `__init__` match in any letter case there, and the
+#: interpreter writes its bytecode cache into an existing `__PYCACHE__`. A gate
+#: run on Linux must therefore say of each what it says of the canonical file,
+#: and the canonical verdict is pinned so that no row can pass by both sides
+#: passing. Measured under the checker before this change: ten second
+#: spellings passed at exit 0 where the first is refused, two were refused
+#: where the first passes, three were refused with fewer violations, and one,
+#: the tagged cache as `.PYC`, agreed; it stays as the guard that folding
+#: refuses nothing the exact spelling does not.
+CASE_SPELLINGS = {
+    "a source module as .PY": (
+        {"src/demo_app/evil.py": "import subprocess\n"},
+        {"src/demo_app/evil.PY": "import subprocess\n"}, _WINDOWS_ONLY_IMPORT, 2,
+    ),
+    "a source module as .Py": (
+        {"src/demo_app/evil.py": "import subprocess\n"},
+        {"src/demo_app/evil.Py": "import subprocess\n"}, _WINDOWS_ONLY_IMPORT, 2,
+    ),
+    "a source module as .pY": (
+        {"src/demo_app/evil.py": "import subprocess\n"},
+        {"src/demo_app/evil.pY": "import subprocess\n"}, _WINDOWS_ONLY_IMPORT, 2,
+    ),
+    "a package __init__ as __INIT__.PY": (
+        {"src/demo_app/evil/__init__.py": "import subprocess\n"},
+        {"src/demo_app/evil/__INIT__.PY": "import subprocess\n"}, _WINDOWS_ONLY_IMPORT, 2,
+    ),
+    "an inert package __init__ as __Init__.py": (
+        {"src/demo_app/evil/__init__.py": '"""inert"""\n'},
+        {"src/demo_app/evil/__Init__.py": '"""inert"""\n'}, "", 0,
+    ),
+    "sourceless bytecode as .PYC": (
+        {"src/demo_app/helper.pyc": ""}, {"src/demo_app/helper.PYC": ""}, "", 2,
+    ),
+    "optimized bytecode as .Pyo": (
+        {"src/demo_app/helper.pyo": ""}, {"src/demo_app/helper.Pyo": ""}, "", 2,
+    ),
+    "a windowed source as .PYW": (
+        {"src/demo_app/helper.pyw": ""}, {"src/demo_app/helper.PYW": ""}, "", 2,
+    ),
+    "a Windows extension module as .PYD": (
+        {"src/demo_app/helper.pyd": ""}, {"src/demo_app/helper.PYD": ""}, "", 2,
+    ),
+    "a POSIX extension module as .SO": (
+        {"src/demo_app/helper.cpython-313-x86_64-linux-gnu.so": ""},
+        {"src/demo_app/helper.cpython-313-x86_64-linux-gnu.SO": ""}, "", 2,
+    ),
+    "untagged bytecode in a cache directory as .PYC": (
+        {"src/demo_app/__pycache__/evil.pyc": ""},
+        {"src/demo_app/__pycache__/evil.PYC": ""}, "", 2,
+    ),
+    "a tagged cache as .PYC": (
+        {"src/demo_app/__pycache__/store.cpython-313.pyc": ""},
+        {"src/demo_app/__pycache__/store.cpython-313.PYC": ""}, "", 0,
+    ),
+    "a tagged cache in __PYCACHE__": (
+        {"src/demo_app/__pycache__/store.cpython-313.pyc": ""},
+        {"src/demo_app/__PYCACHE__/store.cpython-313.pyc": ""}, "", 0,
+    ),
+    "a top-level package marked as __INIT__.PY": (
+        {"src/extpkg/__init__.py": "", "src/extpkg/payload.py": "import subprocess\n"},
+        {"src/extpkg/__INIT__.PY": "", "src/extpkg/payload.py": "import subprocess\n"},
+        "\nimport extpkg.payload\n", 2,
+    ),
+    "a package __init__ as __INIT__.PY handing out a process": (
+        {"src/nornyx_forge/capkg/__init__.py": "from ._run import runner\n",
+         "src/nornyx_forge/capkg/_run.py": "import subprocess\nrunner = subprocess.run\n"},
+        {"src/nornyx_forge/capkg/__INIT__.PY": "from ._run import runner\n",
+         "src/nornyx_forge/capkg/_run.py": "import subprocess\nrunner = subprocess.run\n"},
+        "\nfrom nornyx_forge.capkg import runner\n", 2,
+    ),
+    "a package __init__ as __Init__.py handing out a process": (
+        {"src/nornyx_forge/capkg/__init__.py": "from ._run import runner\n",
+         "src/nornyx_forge/capkg/_run.py": "import subprocess\nrunner = subprocess.run\n"},
+        {"src/nornyx_forge/capkg/__Init__.py": "from ._run import runner\n",
+         "src/nornyx_forge/capkg/_run.py": "import subprocess\nrunner = subprocess.run\n"},
+        "\nfrom nornyx_forge.capkg import runner\n", 2,
+    ),
+}
+
+
+def _planted(base: Path, files: dict, appended: str) -> Path:
+    """A copy of the tree with `files` written and `appended` added to main.py."""
+    workspace = _forge_tree(base)
+    for relative, text in files.items():
+        (workspace / relative).parent.mkdir(parents=True, exist_ok=True)
+        (workspace / relative).write_text(text, encoding="utf-8")
+    if appended:
+        main = workspace / "src/demo_app/main.py"
+        main.write_text(main.read_text(encoding="utf-8") + appended, encoding="utf-8")
+    return workspace
+
+
+@pytest.mark.parametrize("label", sorted(CASE_SPELLINGS))
+def test_letter_case_never_changes_what_discovery_decides(tmp_path: Path, label: str):
+    """A file Windows imports as another is judged as that file, case aside.
+
+    Measured before this change, the rows' second spellings: a source module
+    or a package `__init__` with a suffix in upper or mixed case was neither
+    read nor refused, and the HTTP surface imported it, on Windows only, with
+    the gate at exit 0; bytecode, a `.pyw` and extension modules in upper case
+    passed unrefused; an inert `__Init__.py` was refused as an undeclared
+    module; a tagged cache in `__PYCACHE__` was refused as bytecode; and a
+    process re-exported through such a package's `__init__`, and an import of
+    a top-level package marked so, went unreported beside refusals that the
+    tree drew anyway. The
+    violations are compared with letter case folded, because the only
+    difference they may carry is the spelling of the file they name.
+    """
+    canonical, variant, appended, verdict = CASE_SPELLINGS[label]
+    expected = _gate(_planted(tmp_path / "canonical", canonical, appended))
+    measured = _gate(_planted(tmp_path / "variant", variant, appended))
+    assert expected[0] == verdict, expected
+    assert measured[0] == expected[0], (measured, expected)
+    assert sorted(v.casefold() for v in measured[1]) == sorted(
+        v.casefold() for v in expected[1]
+    ), (measured, expected)
+
+
+def _holds_two_spellings(directory: Path) -> bool:
+    """Whether this directory can hold two names that differ only in letter case."""
+    probe = directory / "case-probe"
+    probe.write_text("", encoding="utf-8")
+    try:
+        return not (directory / "CASE-PROBE").exists()
+    finally:
+        probe.unlink()
+
+
+@pytest.mark.parametrize("spelling", ["store.PY", "Store.py"])
+def test_two_files_one_letter_case_apart_are_one_name_and_refused(
+        tmp_path: Path, spelling: str):
+    """`store.py` beside `store.PY` or `Store.py`: Windows cannot hold both, Linux can.
+
+    Which one Python imports then depends on the platform: Windows has only
+    one of them, and Linux imports `store.py` as `demo_app.store` and
+    `Store.py` as `demo_app.Store`, and never imports `store.PY`. The gate
+    does not choose; it refuses the pair. The `store.PY` pair passed at exit 0
+    before this change, because discovery never saw the second file. A
+    directory that cannot hold both is the measured reason the pair cannot
+    arise there, and the test says so rather than skipping.
+    """
+    workspace = _forge_tree(tmp_path)
+    directory = workspace / "src/demo_app"
+    if not _holds_two_spellings(directory):
+        (directory / spelling).write_text("import subprocess\n", encoding="utf-8")
+        same = [p.name for p in directory.iterdir() if p.name.casefold() == "store.py"]
+        assert same == ["store.py"], same
+        return
+    (directory / spelling).write_text("import subprocess\n", encoding="utf-8")
+    code, violations = _gate(workspace)
+    assert code == 2, violations
+    assert (
+        f"src/demo_app/{spelling} and src/demo_app/store.py are both the module "
+        "demo_app.store"
+    ) in "\n".join(violations), violations
+
+
+@pytest.mark.parametrize("spelling", ["helper.py", "helper.PY"])
+def test_a_declared_module_is_read_whatever_the_case_of_its_suffix(
+        tmp_path: Path, spelling: str):
+    """A process handed out by a declared adapter, in any spelling, is still seen.
+
+    The capability table walked the tree a second time, with a glob that
+    matches `.py` exactly on Linux, so a declared adapter written as
+    `helper.PY` -- one Windows imports -- handed `subprocess.run` to an
+    application module unseen, even once discovery read the file.
+    """
+    workspace = _forge_tree(tmp_path)
+    (workspace / "src/nornyx_forge" / spelling).write_text(
+        "import subprocess\n\nrunner = subprocess.run\n", encoding="utf-8"
+    )
+    (workspace / "src/nornyx_forge/layer_probe.py").write_text(
+        "from nornyx_forge.helper import runner\n\nrunner(['true'])\n", encoding="utf-8"
+    )
+    contract = workspace / CONTRACT
+    document = yaml.safe_load(contract.read_text(encoding="utf-8"))
+    modules = document["architecture"]["modules"]
+    modules.append({"id": "module.helper", "name": "nornyx_forge.helper",
+                    "component": "component.worker_adapter", "layer": "layer.adapter",
+                    "depends_on": []})
+    modules.append(dict(_PROBE, depends_on=["module.helper"]))
+    contract.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    code, violations = _gate(workspace)
+    assert code == 2, violations
+    assert violations == [
+        "src/nornyx_forge/layer_probe.py acquires process-execution capability "
+        "re-exported by a first-party module (nornyx_forge.helper.runner) outside "
+        "a declared adapter"
+    ], violations
+
+
 #: The deciding line of each refusal, and the same line deciding nothing.
 _REFUSALS = {
     "    for value, count in repeated.items():\n": "    for value, count in ():\n",
