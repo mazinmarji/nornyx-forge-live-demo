@@ -1159,7 +1159,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # strings, six layers under the process rule, two bounded quotes, three
     # module ids, a link under the source tree, and a source in a cache
     # directory. Floor at band(66) = 60.
-    "tests/test_architecture_security.py": 60,
+    # Raised 60 -> 78 for letter case in discovery (A-041, amendment) -- 20
+    # new collected (86 total): sixteen file spellings judged as their
+    # lower-case spelling is, two files one letter case apart, and a declared
+    # adapter read in either case of its suffix. Floor at band(86) = 78.
+    "tests/test_architecture_security.py": 78,
     "tests/test_authority_config.py": 12,
     "tests/test_brd_evidence_shape.py": 9,
     "tests/test_capability_binding.py": 9,
@@ -2024,16 +2028,31 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # follows to 5036, keeping the same 8 above it; band(n) 4781 -> 4965, and the
 # working room below the floor 460 -> 480. THE SLACK THE BANDS GRANT moves by
 # 20, the new module sitting 20 above its band. NO SKIP IS ADDED where the
-# census runs. The rows below are these.
+# census runs. Its rows are superseded by the paragraph below.
+#
+# LETTER CASE IN DISCOVERY ADDS TWENTY TESTS AND NO MODULE (A-041,
+# amendment). tests/test_architecture_security.py collects 66 -> 86 (floor
+# band(66) = 60 -> band(86) = 78). EVERY OTHER MODULE IS UNMOVED, measured
+# rather than assumed: fresh collections of the parent and of this tree, as a
+# normal user, differ in that module alone (5516 across 133 modules become
+# 5536 across 133), so the CHANGELOG and assumptions entries entered no
+# document sweep. The module-floor sum rises by 18 to 5046 and the aggregate
+# follows to 5054, keeping the same 8 above it; band(n) 4965 -> 4983, and the
+# working room below the floor 480 -> 482. THE SLACK THE BANDS GRANT moves
+# 488 -> 490: the module sits 8 above its band where it sat 6. NO SKIP IS ADDED where
+# the census runs: the one test that needs a directory able to hold two
+# spellings asserts the aliasing instead where it cannot, and skips nowhere.
+# The windows-runtime job's floor is untouched at 277, because that job runs
+# seven named modules and this is not one of them. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5516   (133 modules)
-#     sum of the module floors    5028
-#     band(5516) = ceil(0.9*n)    4965
-#     MINIMUM_COLLECTED           5036
+#     collected across tests/     5536   (133 modules)
+#     sum of the module floors    5046
+#     band(5536) = ceil(0.9*n)    4983
+#     MINIMUM_COLLECTED           5054
 #     above the module sum          8
-#     below what collects         480
+#     below what collects         482
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2255,7 +2274,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 488 in total, and the aggregate refuses
+# per-module bands already grant 490 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2524,7 +2543,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5036
+MINIMUM_COLLECTED = 5054
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

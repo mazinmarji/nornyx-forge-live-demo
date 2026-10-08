@@ -5831,7 +5831,8 @@ violation:
   case being its package, such as `demo_app/store.py` beside
   `demo_app/store/__init__.py`, `demo_app/Store/__init__.py` or
   `demo_app/store/__Init__.py`; and it refuses a `.pyw`, `.pyc`, `.pyo`,
-  `.pyd` or `.so` file, which Python can import and this gate cannot
+  `.pyd` or `.so` file, its suffix in any letter case (see the amendment
+  below), which Python can import and this gate cannot
   read, except interpreter-tagged bytecode in a `__pycache__` directory,
   such as `store.cpython-313.pyc`, which only caches a source beside it (a
   `.py` or an untagged `.pyc` there is importable, as
@@ -5955,6 +5956,57 @@ the five repeats passes again
    build their own indexes and rely on the gate refusing first. What
    `nornyx check` does was measured for the shapes named above, at 1.11.0,
    and for nothing else.
+
+**Amendment (letter case).** Discovery compared suffixes exactly, so the
+statement above that it refuses those suffixes, and the reading of every
+`.py` file, held only for lower-case suffixes. CPython on Windows matches a
+file's suffix and a package's `__init__` in any letter case and a module
+name exactly. Measured with CPython 3.13.15 on Windows 11, `PYTHONCASEOK`
+unset: `evil.PY` and `evil.Py` import as `evil`, `win.PYW` as `win`, a
+sourceless `byte.PYC` as `byte`; `__INIT__.PY` and `__Init__.py` each make
+their directory a regular package; `evil.py` does not import as `Evil`; and
+the interpreter wrote `m.cpython-313.pyc` into an existing `__PYCACHE__`
+directory. On Linux, with the same version, none of those suffix spellings
+imports, and both `__init__` spellings leave a namespace package. So a Linux
+CI run passed `src/demo_app/evil.PY` beside an import of `demo_app.evil`
+that runs on Windows only, at exit 0. The rule now is the one
+`_is_package_init` in `scripts/check_architecture.py` states: every comparison
+of a suffix, of `__init__`, or of the `__pycache__` a cache file sits in folds
+letter case, and no comparison of a dotted name does. The capability table
+reads the files discovery found rather than walking the tree again with a
+case-sensitive glob, and a package's `__init__` in any letter case anchors
+the relative imports inside it. Two files one letter case apart, such as
+`store.py` beside `store.PY` or `Store.py`, are refused as one name, as
+before for the second pair. Under the checker before this change, of the
+sixteen trees of
+`test_letter_case_never_changes_what_discovery_decides`, ten other spellings
+passed at exit 0 where the lower-case spelling is refused, two were refused
+where it passes (an inert `__Init__.py`, and a tagged cache in
+`__PYCACHE__`), three were refused with fewer violations, and one agreed.
+The other tests are
+`test_two_files_one_letter_case_apart_are_one_name_and_refused` and
+`test_a_declared_module_is_read_whatever_the_case_of_its_suffix`.
+
+What the amendment does NOT establish:
+
+1. **`PYTHONCASEOK` is not modelled.** With it set, CPython on Windows also
+   matches a module name in any letter case: measured, `evil.py` imports as
+   `Evil`, and `import SUBPROCESS` loads the standard library's
+   `subprocess.py` and its `run`, which no dependency or process rule of
+   this gate recognises; `-I` ignores the variable. It is read from the
+   interpreter's environment, not from the source tree, and whoever sets it
+   can set `PYTHONPATH` too, so the gate's claim is about the tree under
+   CPython's default import rules.
+2. **macOS and case-sensitive Windows directories were not measured.** From
+   CPython's source, macOS matches the suffix exactly unless `PYTHONCASEOK`
+   is set, and a Windows directory made case-sensitive matches as Linux
+   does. Folding there reads or refuses a file Python would not import,
+   which is the fail-closed direction.
+3. **Two of the ten mutants are killed by the violations alone.** Taking the
+   fold out of the relative-import anchor, or out of the first-party package
+   set, changes the violations of a tree and not its exit code, because each
+   tree that separates them is refused for an undeclared module anyway. The
+   other eight change an exit code.
 
 **Serves.** BRD-004's "Architecture separates API, application services,
 agentic flow, governance, persistence, and UI.", which the gate's

@@ -377,8 +377,28 @@ def _computed_dynamic_imports(path: Path, relative: str) -> list[str]:
     return unknown
 
 
+def _is_package_init(path: Path) -> bool:
+    """`__init__.py` in any letter case, which is what Windows imports as the package.
+
+    LETTER CASE, ONE RULE FOR EVERY FILE-NAME COMPARISON IN THIS GATE. CPython
+    on Windows matches a file's suffix and a package's `__init__` without
+    regard to letter case, and a module or package NAME exactly: measured with
+    CPython 3.13, `evil.PY` and `evil.Py` import as `evil`, `__INIT__.PY` and
+    `__Init__.py` make their directory a regular package, and `evil.py` does not
+    import as `Evil`. Linux matches all of them exactly. So a comparison of a
+    suffix, of `__init__`, or of the `__pycache__` a cache file sits in folds
+    case, and a comparison of a dotted name does not, which keeps every file
+    Windows can import inside what this gate reads while Linux CI runs it.
+    `PYTHONCASEOK` relaxes the name too, and is outside this gate: see
+    `_discovered_modules`.
+    """
+    return path.name.casefold() == "__init__.py"
+
+
 FIRST_PARTY_PACKAGES = {
-    entry.name for entry in SOURCE_ROOT.iterdir() if (entry / "__init__.py").exists()
+    entry.name
+    for entry in SOURCE_ROOT.iterdir()
+    if entry.is_dir() and any(_is_package_init(child) for child in entry.iterdir())
 }
 
 #: How a value from the contract is quoted in a violation: bounded, because
@@ -713,6 +733,18 @@ def _discovered_modules() -> dict[str, Path]:
     taken for a non-module. (The gate before that version found the module
     through the path the link gave it.) Any symbolic link or junction under
     `src` is a violation, wherever it points.
+
+    A SUFFIX IN ANY LETTER CASE IS THE SUFFIX. `evil.PY` is read as the module
+    `evil` and `evil.PYC` is refused, because Windows imports both (measured;
+    see `_is_package_init`), and `evil.py` beside `evil.PY`, which only a
+    case-sensitive directory can hold, is two files for one name and is
+    refused like `Foo.py` beside `foo.py`. A name is never folded: `Evil` and
+    `evil` stay two names, which is what an import without `PYTHONCASEOK`
+    distinguishes. `PYTHONCASEOK` is NOT modelled. It is read from the
+    interpreter's environment, not from this tree, and relaxes every name an
+    import compares, the standard library's included; whoever sets it can set
+    `PYTHONPATH` as well, so this gate's claim is about the source tree under
+    CPython's default import rules.
     """
     found: dict[str, Path] = {}
     seen: dict[str, Path] = {}
@@ -727,6 +759,13 @@ def _discovered_modules() -> dict[str, Path]:
             continue
         if not path.is_file():
             continue
+        # LETTER CASE IS FOLDED FOR EVERY SUFFIX AND FOR THE CACHE DIRECTORY
+        # (see `_is_package_init`). These three tests compared exactly, so on
+        # Windows `src/demo_app/evil.PY` -- which Python imports as
+        # `demo_app.evil` -- was neither read nor refused, `evil.PYC` was not
+        # refused, and the import of either was taken for a non-module: a
+        # Windows-only conditional import passed while Linux CI was green.
+        suffix = path.suffix.casefold()
         # Bytecode the interpreter caches carries its tag in the name
         # (`store.cpython-313.pyc`), which no import can name, so it only
         # caches a source beside it. Anything else in a cache directory is
@@ -735,19 +774,19 @@ def _discovered_modules() -> dict[str, Path]:
         # untagged `name.pyc`, as a sourceless module -- measured by an
         # in-session review, which this gate let through before this change.
         if (
-            "__pycache__" in relative.parts
-            and path.suffix in (".pyc", ".pyo")
+            "__pycache__" in (part.casefold() for part in relative.parts)
+            and suffix in (".pyc", ".pyo")
             and "." in path.stem
         ):
             continue
-        if path.name.endswith(_UNREADABLE_MODULE_SUFFIXES):
+        if path.name.casefold().endswith(_UNREADABLE_MODULE_SUFFIXES):
             violations.append(
                 f"{path.relative_to(ROOT).as_posix()} is a module Python can import "
                 "that this gate cannot read as source, so the code it runs would "
                 "never be checked"
             )
             continue
-        if path.suffix != ".py":
+        if suffix != ".py":
             continue
         parts = list(relative.with_suffix("").parts)
         if parts[-1].casefold() == "__init__":
@@ -771,7 +810,7 @@ def _is_inert_package_init(path: Path) -> bool:
     real dependency edges, so the moment one stops being inert it has to be
     declared like any other module.
     """
-    if path.name != "__init__.py":
+    if not _is_package_init(path):
         return False
     for node in ast.parse(path.read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
@@ -1423,18 +1462,16 @@ def _first_party_capability_exports() -> dict[str, set[str]]:
     re-exports C is an ordinary package layout, and a single pass in the wrong
     order would report A as clean.
     """
-    sources: dict[str, tuple[Path, str]] = {}
-    for candidate in SOURCE_ROOT.rglob("*.py"):
-        name = (
-            str(candidate.relative_to(SOURCE_ROOT))
-            .replace("\\", "/")
-            .removesuffix(".py")
-            .replace("/", ".")
-        )
-        sources[name.removesuffix(".__init__")] = (
-            candidate,
-            str(candidate.relative_to(ROOT)).replace("\\", "/"),
-        )
+    # THE FILES DISCOVERY FOUND, under the names it gave them, and no second
+    # walk. This was `SOURCE_ROOT.rglob("*.py")` with its own name-building,
+    # which on Linux matches the suffix exactly, so a re-export in
+    # `helper.PY` or a package's `__init__.PY` -- each imported on Windows --
+    # never entered this table and the capability it handed out was
+    # invisible; it also stripped only a lower-case `.__init__`.
+    sources: dict[str, tuple[Path, str]] = {
+        name: (path, path.relative_to(ROOT).as_posix())
+        for name, path in discovered.items()
+    }
 
     exports = {
         name: _exported_capability_names(path, relative, name)
@@ -1475,7 +1512,7 @@ def _containing_package(dotted: str, path: Path) -> str:
     `nornyx_forge._helper` to `nornyx_forge._helper._deep` -- a module that does
     not exist, so the capability arriving through it becomes invisible.
     """
-    if path.name == "__init__.py":
+    if _is_package_init(path):
         return dotted
     return dotted.rsplit(".", 1)[0] if "." in dotted else ""
 

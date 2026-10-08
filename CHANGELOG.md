@@ -2,6 +2,22 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The architecture gate folds letter case where Windows' import system does
+  (A-041, amendment). Discovery compared file suffixes exactly, while CPython
+  on Windows imports `evil.PY` as `evil`, a `.PYW` and a sourceless `.PYC`
+  too, and takes `__INIT__.PY` for a package's `__init__`. So on Linux CI the
+  gate neither read nor refused `src/demo_app/evil.PY`, and passed it at exit
+  0 beside an import of `demo_app.evil` that runs on Windows only; upper-case
+  bytecode, `.pyw` and extension modules passed unrefused the same way. Every
+  comparison of a suffix, of `__init__` or of the `__pycache__` directory now
+  folds case, and no comparison of a module name does, because Windows
+  matches names exactly unless `PYTHONCASEOK` is set, which the gate does not
+  model. The capability table reads the files discovery found instead of a
+  second case-sensitive walk, and `store.py` beside `store.PY` is refused as
+  two files for one name. Two over-refusals go with it: an inert `__Init__.py`
+  and a tagged cache in `__PYCACHE__` now pass, as their lower-case spellings
+  do.
+
 - `ForgeSetup.exe`, an unsigned per-user Windows installer for the
   deterministic payload (A-043). Built by `scripts/build_windows_installer.py`
   from a clean commit with the NSIS 3.13 tree built from pinned source (A-042):
