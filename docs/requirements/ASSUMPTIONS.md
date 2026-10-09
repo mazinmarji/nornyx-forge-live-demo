@@ -6560,3 +6560,356 @@ only.
 its self-check, on A-042 for the compiler, and on A-017's amendment for CI being
 the operator who fetches the pinned interpreter archive. No functional BRD
 requirement is implemented.
+
+## A-044 No uninstall or repair path of the Windows install silently destroys the person's state: none exists, and the paths that do exist are bounded and announced
+
+**Measured on Windows once, on an earlier head; not on this one.** The scenario
+ran on Windows once, on the head before this one (the `windows-install` job on
+`ffa393b`). All 21 comparisons of the specimen held: nothing planted was
+removed, added or changed by the 13 replayed refusals, a fresh install, the same
+payload again, a failed install, the removal of Setup's own artifacts that the messages direct, or Setup again.
+The only failed observations were one driver expectation, in both of its passes:
+the words of the refusal for a Local AppData folder moved to a network path. The
+installer refused and left the specimen alone; the driver expected the
+network-spelling refusal and the installer printed the drive-path one, which the
+driver now expects. The head to be merged needs its own run; until the
+`windows-install` job passes on it, that half of this claim is a measurement of
+an earlier head, not of this one (below).
+
+**The claim.** No uninstall path and no repair path of the Windows install
+silently destroys governed user state or provider state. It is a claim about
+paths that exist, and it holds in two different ways. For the installer it holds
+because there is no uninstaller and no repair: the script registers none, writes
+no registry value (so no Add/Remove Programs entry exists), refuses another
+version and offers no upgrade, and removes nothing (the script contains no
+deletion). For the product's own reset and restoration paths it holds because
+each is bounded to the store it resets, is started by a person or is recorded
+as a failure, and reports that it ran. This claim does not make an uninstaller safe: any future
+uninstaller, repair or upgrade is a new path, and it must be added to the census
+and to the scenario below before it can borrow this statement.
+
+**What the claim covers about removal.** It covers what Setup does and the removal of its own artifacts:
+the install folder it made, the unfinished-install folder and the folder of a
+failed install, which the messages tell a person to remove. No message names the
+shortcut Setup wrote, and in the one path where Setup fails after creating it
+and before the receipt is written, the message names only the install folder
+and the shortcut is left behind (the known limit in the table below).
+Where Setup refuses because a path is not its own (a non-empty install folder
+with no receipt; a shortcut or other entry of its name that it did not write),
+the message names the path and tells the person to move, rename or remove it
+themselves. What the person then does with a path that was never Setup's is the
+person's own choice and outside this claim.
+
+**What the state is, defined from the code and not from a list.**
+
+- *Governed user state* is what Forge keeps for the person and for its own
+  governance, in places the code names. The project folder the launchers pass
+  (`--project-dir "%USERPROFILE%\ForgeProject"`, in the shortcut and in
+  `Forge.cmd`) holds the capsule store (`capsule\`: `capsule.json`,
+  `experience.json`, the store marker and the store's own git repository), what a
+  provider built beside it, and, under a governed subject's root (the project
+  folder, for a build over the person's project), the build evidence in
+  `.nornyx\runs`, the Nornyx runtime lock in `.nornyx\runtime` and the approval
+  ledger (`DEFAULT_APPROVAL_LEDGER`). The seals (`DEFAULT_SEAL_DIR`) hold what
+  Forge last wrote to each capsule. The trust stores (`DEFAULT_TRUST_STORE`,
+  `DEFAULT_REVIEWER_STORE`) hold who may approve and who may inspect, and sit
+  outside the working tree on purpose. The runtime directory
+  (`DEFAULT_RUNTIME_DIR`) holds each project's record, lock and log and the
+  launch-failure trail. The capsule store holds its own git repository (`.git`),
+  its marker (`.forge-capsule`) and its seal marker (`.forge-seal`); the
+  ledger keeps a high-water mark beside it (`.highwater`).
+- *Provider state* is what a provider or CrewAI keeps in the person's profile
+  and Forge does not own: a provider's configuration home (`~\.claude`,
+  `~\.codex`), `~\.config`, CrewAI's home folder (`~\.crewai`) and CrewAI's
+  storage (`%LOCALAPPDATA%\CrewAI`, named for the working folder, which is why
+  the shortcut starts in the install root).
+  No code of Forge's own names these (a search of `src/` finds none); a provider's
+  command-line tool manages its own home, and CrewAI, running inside the runtime,
+  manages its own storage. The registry is outside both: the product
+  contains no registry code (a search of `src/` for `winreg`, `HKEY_` and
+  `reg.exe` finds none), the installer writes none, and the driver compares the
+  places an installer registers itself in before and after.
+- The receipt's schema refuses to name any of these (`FORBIDDEN_RECEIPT_NAMES`),
+  the driver watches the same classes (`STATE_NAMES`), and the *state specimen*
+  (`installer_contract.state_specimen`) plants a labelled stand-in at each of
+  them. A test holds the specimen two ways round against the locations above, so
+  a move or an addition of one of those locations is a red test. Another test DERIVES the
+  names the code classifies as protected state (those two lists and the roots
+  the driver observes, and a search of the scripts and the product for any other
+  list of provider homes) and requires each to be planted, and its removal alone
+  to be reported by the driver, and each planted name to be classified
+  (`test_every_name_the_code_classifies_as_protected_state_is_planted_and_its_deletion_is_seen`,
+  `test_every_name_the_specimen_plants_is_classified_as_protected_state`,
+  `test_every_list_that_names_provider_homes_is_a_source_of_the_derivation`). The
+  specimen's files are stand-ins with labelled bytes, not the files the product
+  keeps.
+
+**The paths, each with what it can remove and whether it says so.**
+
+| Path | Can it remove the person's state? | Silent? |
+|---|---|---|
+| Setup, a fresh install | No. It creates the install folder, an unfinished-install folder beside the versions, one shortcut and the receipt, and appends to the file a caller names with `/LOG=`. The script contains no deletion, one `Rename` (its own verified folder), and no `System::Call` that reaches a delete. | Not applicable |
+| Setup run again with the same payload | No. It verifies the installed folder with its own interpreter and exits 0 with "Nothing was changed." | Not applicable |
+| Setup with another version, other bytes under the same version, a folder that is not its own, an unfinished earlier install, or a shortcut that exists | No. Each is a refusal with its own exit code and message, and the refusals that leave a folder behind say that Setup deletes nothing. There is no upgrade and no repair. That is the script's text, held by the census; which of these the scenario replays with the specimen planted is stated under "How it is held" and "Not established". | Not applicable |
+| An install that fails after the folder is in place | No. It leaves the folder, writes no receipt and tells the person to remove the install folder, which was empty or absent when Setup began and holds only what Setup wrote. | Not applicable |
+| The removal the messages tell a person to make of what Setup made: the receipt-backed install folder; the unfinished-install folder (named for the version, so presumably an earlier Setup's; the script cannot tell who made a folder of that name); the folder of a failed install (empty or absent when Setup began). No message names the shortcut Setup wrote | Only the installer's own files. The install folder holds exactly what the receipt lists (the version folder and the receipt), and the receipt names the shortcut as its one entry outside the folder; the folder of a failed install holds only what Setup wrote. Nothing in the project, the seals, the trust stores, the runtime directory or a provider's home is under it. A person removes it; Setup does not. **Known limit, one path: where the receipt cannot be written (not run on Windows), Setup has already created its shortcut and the message names only the install folder, so a person who follows it leaves a stale shortcut (a leftover; nothing is destroyed). The next Setup run refuses because that shortcut exists and says to remove or rename it. It is recorded as a limit and a candidate improvement; the installer is unchanged here.** | The person did it |
+| The move, rename or removal the messages tell a person to make of a path that was there before Setup and that Setup refused to touch: a non-empty install folder with no receipt ("Move or remove that folder"), a Start-menu shortcut or other entry of Setup's name ("Remove or rename it") | Outside this claim. Setup does not own it, does not touch it and removes nothing; the message names the path and tells the person to move or rename it, and what the person then does with it is the person's own choice. | The person did it |
+| Add/Remove Programs | There is no entry and no uninstaller to run. | Not applicable |
+| Forge stopped (the runtime's exit) | No. It rewrites its own runtime record to `stopped`, releases its lock without removing the lock file, appends to its log, and removes a session file only if that same run created it (only with an explicit `--session-file`, which the shipped launchers never pass). It removes no record, lock, log, seal or project file. | Not applicable |
+| Restoring the sealed authority (`/api/journey/restore`, and the same restoration after a build in which a provider moved the store) | It can remove what the seal does not know inside the capsule store (`git reset --hard` to the sealed revision, `git clean`, and a rebuild around the sealed bytes when the repository is gone). It puts back what Forge last wrote, and rewrites its own seal and nothing else beside the capsule (the seal is one file in the seal directory, replaced in place). | No. The route is a human act (a declared non-human is refused), or the build is recorded as a failure that says the authority was restored from the seal; the record names the revision and byte differences and the page shows the restoration. It does not list each file it removed. |
+| `nornyx-forge provision-ledger --reset-replay-history` | It discards the approval ledger's replay history and its mark on purpose: every outstanding grant is refused afterwards and a new human approval is required. | No. It runs only with its own flag, a plain `provision-ledger` leaves an existing ledger, its mark and every other file under the root byte for byte as they are, and the command reports `"action": "reset"`. It is an operator command in the payload and is not reachable from the Start-menu shortcut. |
+| The demonstration run's reset of its own run stream | It removes and rewrites `evidence/runtime/events.jsonl`, its mark and the report under the root it was given. | Not applicable: it is regenerated each run, it is not the person's state, and the shortcut does not reach it. |
+| The payload builder's pruning | It removes files from the builder's own output tree. | Not applicable: it is build tooling run on the builder's machine (A-040), not by the installed product. |
+
+**How it is held, and by what.**
+
+- *The script, by a default-deny tripwire.* The census reads the installer
+  script's instructions and allows each in exactly one of two ways: its verb is
+  one of 14 inert ones (`INERT_VERBS`: compile-time metadata, declarations
+  and one pause, none of which writes a variable, names a path
+  used at run time, branches at run time or acts on the machine), or its verb and its exact
+  arguments are an entry of a reviewed table (`ALLOWED_INSTRUCTIONS`: 332
+  instructions in 203 forms), as many times as listed. There is no third
+  category: no verb is benign whatever its arguments (`StrCpy`, `Push`, `Pop`,
+  `IntOp`, `Call`, the `${If}` family and every directive are in the table, not
+  exempt from it), the plug-in calls are in the table with their exact arguments,
+  and a verb that is in neither place is refused
+  (`test_the_script_changes_only_what_the_census_names_and_nothing_else`,
+  `test_the_inert_verbs_are_inert_and_the_table_holds_no_inert_verb`,
+  `test_every_plug_in_call_is_one_exact_form_the_exact_number_of_times`). The
+  Win32 functions `System::Call` may reach are also checked by name
+  (`test_the_only_win32_functions_the_script_can_reach_read_a_token_or_an_attribute`),
+  and the script has one install section, no uninstall section and one page
+  (`test_the_script_has_one_install_section_no_uninstall_section_and_one_page`).
+  41 planted instructions and 13 changes to instructions the script has are each
+  refused by the same check that passes the real script: a deletion, a move, a
+  registry write, an uninstaller, a second verifier run, a destructive verifier
+  command, other execution and download plug-ins, a Win32 delete, a setting
+  changed, the shortcut's command line changed, a verb or a destination hidden in
+  a define, and a destination variable pointed at state
+  (`StrCpy $Partial "$PROFILE\.codex"`, `StrCpy $INSTDIR "$PROFILE"`, a `Push`, an
+  `IntOp`, a `ReadEnvStr`, an `ExpandEnvStrings`)
+  (`test_the_census_refuses_each_planted_instruction_the_real_script_does_not_have`,
+  `test_the_census_refuses_each_change_to_an_instruction_the_real_script_has`).
+  **What it is not.** It is a tripwire over the script's text, not a proof about
+  the script or the product. It compares the multiset of instructions, so it does
+  not see ORDER or the NESTING of functions and branches (a `${EndIf}` moved, an
+  allowed `Push` placed before a different `Call`), it does not follow DATA FLOW (what a variable holds when an
+  allowed instruction reads it), and it does not model NSIS itself, the plug-ins'
+  internals, or what the shell constants (`$PROFILE`, `$LOCALAPPDATA`,
+  `$SMPROGRAMS`) expand to on a given machine. A line that is absent is not an
+  effect. The one nesting it does check is conditional compilation, which is
+  never inert: a conditional decides which instructions are compiled, so
+  `!ifndef`, `!error` and `!endif` are in the table, and `_depth_problems` allows
+  only build guards (an `!ifndef` with an `!error` inside, and nothing else inside). An instruction wrapped in a conditional, a new `!ifdef`
+  block, an `!else`, or a guard's `!endif` moved down over instructions (which
+  keeps every form and count) is refused
+  (`test_the_census_refuses_a_conditional_that_changes_what_is_compiled`). The
+  control that remains is a person reading the diff of the table, which every
+  change to an instruction forces.
+- *The refusals, by a list compared with the script both ways.* Every refusal in the script is listed once,
+  with its exit code and the words of its message, and each says whether the
+  scenario replays it with the specimen planted, whether it is run only in the
+  elevated mode, or that it is not run and why. 13 of the script's 24 refusals
+  are replayed with the specimen planted; the other 11 are not, and ten of those
+  are not provoked at all. Being listed is not being run: the list is what keeps
+  the count honest
+  (`test_every_refusal_the_script_has_is_listed_once_and_says_whether_it_is_replayed`).
+  A refusal added, removed or reworded is a red test until it is listed. The ways
+  out of the script are counted as well: `Abort` in one macro, one `Quit`, and the
+  three places an exit code is set
+  (`test_every_other_way_the_script_leaves_is_the_two_it_is_known_to_have`).
+- *The specimen, derived from the product and held two ways round against it.*
+  `test_every_governed_location_the_product_names_is_in_the_specimen_and_the_other_way_round`
+  holds the locations the product's constants name. Beside it, the product is RUN
+  in a scratch folder and what it leaves on disk is listed: every top-level entry
+  of a real capsule store (its git repository, its marker, its seal marker, its
+  authority files), every kind of file in its seal directory and every file beside
+  a provisioned approval ledger (the ledger and its high-water mark) must have a
+  representative in the specimen
+  (`test_everything_the_product_itself_leaves_on_disk_is_in_the_specimen`). The
+  names the code classifies as protected state are derived from its own lists, as
+  described above.
+- *The scenario, on Windows.* `standard_user_checks.state_survival` plants the
+  specimen in the standard user's profile and compares all of it (the bytes and
+  time of every file and the presence of every folder) after every run it makes. First it
+  replays ten of the refusals Setup makes before it extracts anything
+  (`refusal_runs`, with the specimen planted: a path too long, a location outside
+  the profile, a Local AppData folder moved to a network path (the shell resolves
+  it to nothing and the drive-path check refuses it), a file where the install
+  folder goes, a folder
+  that holds files and no receipt, a folder where the receipt goes, a file where
+  the version folder goes, a junction at the install folder, an unfinished earlier
+  install with and without a receipt, and a shortcut name that is taken by a file
+  and by a folder). Then: a fresh install, the same payload again, another version
+  refused, other bytes under the same version refused, the removal the messages
+  direct, Setup again, an unfinished install refused, a failed install, and the
+  advised removal followed by a new install. The first install and the run again
+  use the real installer; the reinstall, the failed install and its recovery, and
+  the replayed refusals use the tiny sealed payloads the refusal checks use (the
+  script is the same, and extracting the whole payload again adds time, not
+  coverage). Each run says WHICH refusal it is, by words of the script's own
+  message, because several refusals share an exit code. The first pass of the same
+  refusals, in a clean profile, still judges what a refusal leaves of the
+  installer's own folders. The scenario's own logic is run on every Linux run
+  against a stand-in for the installer that follows the script's order of
+  decisions and says the script's own messages
+  (`test_the_scenario_passes_an_installer_that_leaves_the_specimen_alone`), and
+  against the same stand-in made to delete one provider file in one run at a time,
+  for every run the scenario makes, which the comparison made right after that run
+  must report
+  (`test_the_scenario_fails_when_an_installer_destroys_a_provider_file_in_any_one_run`);
+  the refusals the scenario asks a run to be are read from that run and must be
+  exactly the ones the list marks as replayed with the specimen planted
+  (`test_the_scenario_replays_exactly_the_refusals_the_list_says_it_does`), the
+  stand-in prints for every run the refusal the real installer printed on Windows
+  (`test_the_stand_in_prints_the_refusal_windows_printed_for_every_run`), a run
+  forced to print another refusal of the same exit code is reported as failed
+  (`test_a_refusal_that_shares_the_exit_code_of_the_expected_one_is_not_accepted`), every
+  run it makes is in the table those tests use
+  (`test_every_run_of_the_scenario_is_in_the_table_of_steps`), and its structure is
+  read as well
+  (`test_the_scenario_compares_the_whole_specimen_after_every_run_it_makes`). That
+  shows each comparison is live and each refusal listed as replayed is run, not
+  that the real installer leaves the specimen alone: that effect is the
+  `windows-install` job's.
+  After the shortcut's launch, stop and relaunch, the driver also checks that the
+  install folder holds only the version folder and the receipt. The removals the
+  scenario makes in its steps called the advised removal are of Setup's own
+  artifacts only: the install folder after the driver has checked that it holds
+  exactly what the receipt lists, and the folder of the failed install; it also
+  removes the shortcut Setup wrote, which no message names, as a person removing
+  everything Setup made would. Between refusal cases the driver also removes the fixtures it
+  planted to provoke a refusal (a foreign folder, a file or folder named like the
+  shortcut, an unfinished-install folder); those are its own test fixtures, cleaned
+  up so the next case can run, not a removal a message advised and not the
+  specimen.
+- *The product's own paths.* The restoration rewrites its own seal and nothing else beside the capsule,
+  on both routes. Its own seal is checked explicitly (the same place, the same
+  fields, the same store, the sealed authority bytes, the revision the store
+  stands at); everything else under the scratch root is compared in bytes, size,
+  time, mode and folders (the capsule's own files by their bytes), a second
+  project's seal and the seal directory's listing included; and the project is itself a git repository whose index, refs,
+  HEAD, objects and folders are compared separately
+  (`test_restoring_the_capsule_rewrites_its_own_seal_and_nothing_else_beside_it`,
+  `test_the_restoration_check_sees_a_change_beside_the_capsule_and_beside_the_seal`,
+  `test_the_own_seal_check_refuses_a_seal_that_is_not_the_permitted_rewrite`,
+  `test_the_restoration_check_sees_a_change_to_the_enclosing_repository`), and
+  keeps history when
+  it can (`test_restoration_keeps_history_when_the_worker_left_an_extra_file`);
+  the ledger reset runs only with its flag, rewrites only the ledger and its mark,
+  and reports it, and a plain run changes or adds no file under the root
+  (`test_the_ledger_is_reset_only_when_asked_and_the_command_says_it_did`,
+  `test_provisioning_is_idempotent_and_never_clears_what_was_spent`); the runtime
+  leaves a session file it did not create
+  (`test_a_pre_existing_session_file_is_left_as_found_and_the_person_is_told`,
+  `test_placing_a_session_file_refuses_one_already_there_and_leaves_it_as_found`).
+
+**Not established, and what stands in for it.**
+
+- That the installer, on Windows, leaves the specimen alone on the head to be
+  merged. The scenario ran on Windows once, on the head before this one (21
+  comparisons of the specimen, all unchanged; one driver expectation corrected,
+  see the top of this record); the `windows-install` job on the exact commit to
+  be merged is what measures this head, on one hosted image, as one freshly
+  created account. Until it passes, the claim for the installer rests on that
+  earlier run, on the script's text, which the census holds, and on A-043's
+  earlier measurements that the installer added only its folder and its
+  shortcut.
+- Refusals that the scenario does not run against the specimen: 13 of the
+  script's 24 refusals are replayed with the specimen planted, and these 11 are
+  not. The list is compared with the script both ways, so these are all of them; for each, the claim rests on the script's
+  text, which the census holds (the script contains no deletion, so a refusal removes
+  nothing and leaves whatever was on disk, what Setup itself had written
+  included), and is not a claim about those paths beyond that.
+  - `installs for the signed-in user only` is run by the driver in its elevated
+    mode, as the runner's administrator, which is another account and does not
+    plant the specimen. It is the first check of start-up, and the script reads no
+    folder of the profile before it refuses.
+  - `could not read this process's token` and `could not read this process's
+    elevation`: a process whose token or elevation cannot be read cannot be
+    produced on the runner (the driver declares this).
+  - `is a network or extended-length path`: moving the account's Local AppData
+    folder to a network path makes the shell resolve it to nothing, so the
+    location becomes a bare `\Programs\Nornyx Forge` and the drive-path check
+    refuses first (measured on Windows); no folder the driver can set gives the
+    network or extended-length spelling.
+  - `would create folder paths of up to`: the one over-long payload the build
+    makes is refused by the file-path check, which runs first.
+  - `exists but cannot be listed`: it needs an install folder the account may see
+    but not list, and the driver sets no such permission on it.
+  - `Setup could not create`: it needs the folder above the install folder to
+    refuse a new folder after every check has passed, and the driver denies no
+    write there.
+  - `already exists. Setup does not delete anything`: reached only if the
+    unfinished-install folder appears between the start-up check and the section,
+    a race the driver cannot time.
+  - `do not verify against the payload it carries`: reached only if the extraction
+    produces files that do not verify, and the build verifies the payload it embeds.
+  - `could not move the verified folder`: it needs the rename of the verified
+    folder to fail five times in a row, which the driver cannot cause.
+  - `could not write install-receipt.json`: it needs the receipt to fail to write
+    after the shortcut was written, which the driver cannot cause. In that path
+    the shortcut already exists and the message names only the install folder,
+    so a person who follows it leaves a stale shortcut (the known limit in the
+    table above).
+  - The callback that gives a failed extraction (a file that could not be written)
+    the generic exit code is not a refusal and is not run.
+- What the census cannot see: order, the nesting of branches and data flow of the
+  script's instructions, NSIS itself, the plug-ins' internals, and what the shell
+  constants expand to on a given machine (see "What it is not" above). It is a
+  tripwire; the evidence about the installer's effect is the `windows-install`
+  scenario, which has run on Windows once, on an earlier head.
+- State the product can leave and the specimen does not plant:
+  `action_approvals.sqlite3-journal` (SQLite's rollback journal exists only
+  inside a write transaction; the ledger's journal mode is `delete`),
+  `objects, refs and hooks of the capsule store's real git repository` (only a
+  representative repository is planted: its HEAD, config, one ref and one object,
+  so removing only a part the specimen does not hold would be unseen), and
+  `a runtime session file` (written only when `--session-file` is passed, which
+  the shipped launchers never do). Anything else under the project folder is what
+  a provider built there and is covered as the project folder.
+- Known limit, one path: where the receipt cannot be written (not run on Windows), Setup has already created its shortcut and the message names only the install folder, so a person who follows it leaves a stale shortcut (a leftover; nothing is destroyed). The next Setup run refuses because that shortcut exists and says to remove or rename it. It is recorded as a limit and a candidate improvement; the installer is unchanged here. The scenario starts from a successful, receipt-backed install
+  and removes the shortcut itself, so it does not measure this path.
+- That the shipped runtime, started against the specimen, deletes none of it. The
+  launch checks run the runtime in a scratch profile, not in the profile that
+  holds the specimen; its exit is held by the code and the tests above.
+- The registry. The driver compares the places an installer registers itself in;
+  it plants no registry value of the person's, and a value outside those places
+  is not watched. The claim for the registry rests on the absence of registry
+  code in the installer and in the product.
+- `--project-dir` and `--runtime-dir` take any absolute path. The shipped
+  launchers pass fixed profile paths, so nothing the person's work produces is
+  kept under the install folder. A runtime started by hand with its project
+  folder inside the install folder would keep state there, and the removal the
+  messages direct would remove it; the runtime's fence refuses a runtime
+  directory inside the project or the seals, not a project inside the bundle.
+- The `/LOG=` file. A caller may name any path, an existing file included, and
+  Setup appends one line per event to it (A-043).
+- A person who removes more than the install folder, or who removes it while
+  Forge is running. Neither is measured. Nor is what a person does with a path
+  Setup refused because it was not Setup's (a non-empty install folder with no
+  receipt, a shortcut of Setup's name that it did not write): that move, rename
+  or removal is the person's own and outside this claim.
+- A roaming or redirected profile, Windows on Arm, a language other than English,
+  and a profile whose project folder is a link.
+- Provider-owned state. Forge starts a provider's command-line tool, which
+  manages its own home; what a provider does there is not an install or removal
+  path and is the subject of the confinement measurements, not of this claim. On
+  the restoration's route that keeps history, a commit the capsule repository
+  made after the sealed revision becomes unreachable, not erased.
+- The downloaded installer is unsigned (A-043); nothing here changes that.
+
+**Review history and the complexity alarm.** This claim took three review rounds
+in one structural class: the census, or the specimen, was not complete (a plug-in
+call exempt because of its name; a provider home classified as state but not
+planted; the capsule store's git repository unplanted and `StrCpy` exempt
+whatever its arguments). The repository's complexity alarm fired at that point,
+and the response was to simplify rather than to add a fourth special case: the
+census became one default-deny table with a short inert list, and the specimen
+requirement is derived by running the product and from the code's own lists
+instead of being picked.
+
+**Serves.** A-043, which this extends; A-029 for the restoration and the seal;
+A-040 for the folder the receipt describes. No functional BRD requirement is
+implemented.

@@ -548,6 +548,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # `windows-installer` and `windows-install` jobs. 204 collected at
     # introduction, floor at band(204) = 184.
     "tests/test_windows_installer.py": 184,
+    # What an install, a removal and a re-run leave alone (A-044): the installer
+    # script's default-deny census of the script's instructions (a tripwire, not a
+    # proof: an inert verb or an exact entry of a reviewed table, and
+    # fifty-four planted instructions and changes it must refuse), the closed
+    # list of every refusal the script has, the names the code classifies as
+    # protected state derived and each required to be planted, the state specimen
+    # held two ways round
+    # against the locations the product names, the driver's pure parts, its
+    # state-survival scenario run over a stand-in installer that damages one run at
+    # a time, the capsule restoration's bound, the ledger reset's
+    # flag, and the text about it. 182 collected, floor at band(182) = 164.
+    "tests/test_install_state_guarantee.py": 164,
     # The architecture change record, derived from the architecture
     # contract's changes: entries: the derivation over synthetic contracts
     # with one named refusal per malformed shape, the vocabulary and the YAML
@@ -2043,16 +2055,36 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the census runs: the one test that needs a directory able to hold two
 # spellings asserts the aliasing instead where it cannot, and skips nowhere.
 # The windows-runtime job's floor is untouched at 277, because that job runs
-# seven named modules and this is not one of them. The rows below are these.
+# seven named modules and this is not one of them. Its rows are superseded by the paragraph below.
+#
+# THE STATE GUARANTEE ADDS ONE MODULE AND MOVES NONE.
+# tests/test_install_state_guarantee.py is new at 182 collected, floor band(182) =
+# 164: the installer script's default-deny census of what it can change (an inert
+# verb or an exact entry of a reviewed table, and fifty-four planted instructions
+# and changes it must refuse), the closed list of every refusal the script has, the names the code
+# classifies as protected state derived and each required to be planted, the
+# state specimen
+# against the locations the product names, the driver's pure parts, its
+# state-survival scenario run over a stand-in installer that damages one run at a
+# time, the capsule restoration's bound, the ledger reset's flag, and the text
+# about it (A-044).
+# tests/test_windows_installer.py stays at 204 and every other module is
+# unmoved, measured rather than assumed: a fresh collection of this tree, as a
+# normal user, gives 5718 across 134 modules, which is the 5536 across 133 that
+# these rows recorded before plus the new module's 182. The module-floor sum
+# rises by 164 to 5210 and the aggregate follows to 5218, keeping the same 8
+# above it; band(n) 4983 -> 5147, and the working room below the floor 482 ->
+# 500. THE SLACK THE BANDS GRANT moves by 18, 490 -> 508, the new module sitting
+# 18 above its band. NO SKIP IS ADDED where the census runs. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5536   (133 modules)
-#     sum of the module floors    5046
-#     band(5536) = ceil(0.9*n)    4983
-#     MINIMUM_COLLECTED           5054
+#     collected across tests/     5718   (134 modules)
+#     sum of the module floors    5210
+#     band(5718) = ceil(0.9*n)    5147
+#     MINIMUM_COLLECTED           5218
 #     above the module sum          8
-#     below what collects         482
+#     below what collects         500
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2274,7 +2306,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 490 in total, and the aggregate refuses
+# per-module bands already grant 508 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2543,7 +2575,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5054
+MINIMUM_COLLECTED = 5218
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2663,6 +2695,7 @@ REQUIRED_MODULES = (
     "tests/test_nsis_toolchain.py",
     "tests/test_resolve_nsis_debs.py",
     "tests/test_windows_installer.py",
+    "tests/test_install_state_guarantee.py",
     "tests/test_architecture_change_record.py",
     "tests/test_actor_declaration_boundary.py",
     "tests/test_control_plane_session.py",

@@ -39,6 +39,79 @@ FORBIDDEN_RECEIPT_NAMES = (
     ".claude", ".codex", "capsule", "seals", "trusted_approvers", "forge_reviewer_trust",
 )
 
+#: A SPECIMEN OF THE STATE THE INSTALLER MUST LEAVE ALONE, as profile-relative
+#: POSIX paths and the bytes planted at each. The Windows driver seeds it into
+#: the standard user's profile before it runs the installer through every
+#: path it can provoke (a fresh install, the same payload again, the
+#: refusals it can provoke, a failed install, and the removal the installer's own
+#: messages tell a person to make), and compares it after each. It has three parts, because the claim
+#: has three parts:
+#:
+#: * governed user state: what Forge keeps for the person and for its own
+#:   governance (the project and its capsule store, the approval ledger, build
+#:   evidence, the runtime lock, record and log, the seals, the trust stores);
+#: * provider state: what a provider or CrewAI keeps in the person's profile and
+#:   Forge does not own;
+#: * neighbours: another program's folder beside the install root and another
+#:   Start-menu entry, which an install or a removal of the install root must
+#:   not touch either.
+#:
+#: The bytes are labelled specimens, never credentials. A Linux test holds the
+#: governed part two ways round against the locations the product itself names
+#: (`DEFAULT_SEAL_DIR`, `DEFAULT_RUNTIME_DIR`, the two trust stores, the
+#: approval ledger's default path, the capsule store's files, the project folder
+#: the launchers pass), so a location the product moves or adds is a red test
+#: here and not a silent gap.
+SPECIMEN_LABEL = b"forge install-state specimen: leave this file exactly as it is\n"
+GOVERNED_STATE = (
+    "ForgeProject/capsule/.forge-capsule",
+    "ForgeProject/capsule/.forge-seal",
+    "ForgeProject/capsule/.git/HEAD",
+    "ForgeProject/capsule/.git/config",
+    "ForgeProject/capsule/.git/refs/heads/main",
+    "ForgeProject/capsule/.git/objects/ab/specimen-object",
+    "ForgeProject/capsule/capsule.json",
+    "ForgeProject/capsule/experience.json",
+    "ForgeProject/app/main.py",
+    "ForgeProject/evidence/runtime/action_approvals.sqlite3",
+    "ForgeProject/evidence/runtime/action_approvals.sqlite3.highwater",
+    "ForgeProject/.nornyx/runs/build-evidence-report.json",
+    "ForgeProject/.nornyx/runtime/nornyx.agentic_network.lock",
+    ".nornyx/forge/seals/specimen-project.json",
+    ".nornyx/forge/runtime/0123456789abcdef.json",
+    ".nornyx/forge/runtime/0123456789abcdef.lock",
+    ".nornyx/forge/runtime/0123456789abcdef.log",
+    ".nornyx/forge/runtime/launch-failures.log",
+    ".nornyx/forge_reviewer_trust.json",
+    ".nornyx-forge/trusted_approvers.json",
+)
+PROVIDER_STATE = (
+    ".claude/settings.json",
+    ".codex/config.toml",
+    ".config/crewai/settings.json",
+    ".crewai/storage/specimen.db",
+    "AppData/Local/CrewAI/Nornyx Forge/storage.db",
+)
+NEIGHBOURS = (
+    "AppData/Local/Programs/Neighbour App/neighbour.txt",
+    "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Neighbour.lnk",
+)
+#: The folders and files the driver lists and hashes, profile-relative. Each
+#: specimen path lies under one, and each one holds at least one specimen path.
+STATE_ROOTS = (
+    "ForgeProject", ".nornyx", ".nornyx-forge", ".claude", ".codex", ".config", ".crewai",
+    "AppData/Local/CrewAI", "AppData/Local/Programs/Neighbour App",
+    "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Neighbour.lnk",
+)
+
+
+def state_specimen() -> dict[str, bytes]:
+    """Every specimen path with its planted bytes. A path is named in the bytes,
+    so two files never hold the same content and a swap is a difference."""
+    return {relative: SPECIMEN_LABEL + relative.encode("utf-8") + b"\n"
+            for relative in (*GOVERNED_STATE, *PROVIDER_STATE, *NEIGHBOURS)}
+
+
 #: The receipt's lines, with the two values only the installer's run knows.
 GIT_TOKEN = "$GitState"
 ROOT_TOKEN = "$RootCreated"

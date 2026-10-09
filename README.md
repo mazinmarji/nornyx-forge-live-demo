@@ -168,7 +168,14 @@ the same payload is verified and left alone; another version, a folder that is
 not Setup's, an unfinished earlier install and a Start-menu shortcut that is
 already there are refused. It deletes nothing and replaces no existing folder,
 file or shortcut (a race between its check and its write is the limit, A-043);
-the one file it appends to is the log a caller names with `/LOG=`. Git for Windows must be installed: Setup warns if it
+the one file it appends to is the log a caller names with `/LOG=`. It has no
+uninstaller and no repair, so no path of it removes the person's project, seals,
+trust stores or runtime records, or anything a provider or CrewAI keeps; the
+removal of its own artifacts that its messages tell a person to make touches only
+those; where it refuses because a path is not its own, the message tells the person
+to move or rename it, which is the person's choice and outside the claim (A-044,
+which also states what only CI measures and what is not established). Git for
+Windows must be installed: Setup warns if it
 finds none, and Forge refuses to start without it. Exit codes are defined in
 `scripts/windows_installer/forge-setup.nsi`. CI builds the installer twice and
 compares the bytes (`windows-installer`), then installs, launches, stops and

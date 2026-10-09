@@ -18,6 +18,56 @@
   and a tagged cache in `__PYCACHE__` now pass, as their lower-case spellings
   do.
 
+- No uninstall or repair path of the Windows install silently destroys the
+  person's state (A-044). The installer has no uninstaller and no repair, and
+  this adds the evidence for that, not a feature. A new
+  `tests/test_install_state_guarantee.py` replaces the installer script's name
+  deny-list with a default-deny census, a tripwire over the script's text and not
+  a proof: an instruction is allowed only if its verb is one of 14 inert ones or
+  its verb and exact arguments are an entry of a reviewed table (332
+  instructions, 203 forms), so `StrCpy`, `Push`, `Call`, the plug-in calls, every
+  directive and the build guards are pinned, a conditional that changes what is
+  compiled is refused, and an unknown verb fails. It does not see order, the
+  nesting of branches or data flow (A-044). 41 planted instructions and 13 changes to
+  existing ones are each refused, among them a variable pointed at a provider's
+  home. Every refusal the script has is listed once; 13 of the script's 24 refusals
+  are replayed with the specimen planted, and the other 11 are not (the list
+  says why). A state specimen in
+  `installer_contract.py` (the project and its capsule store with its git
+  repository and seal marker, the approval ledger and its high-water mark, build
+  evidence, the seals, the trust stores, the runtime record, lock and log, a
+  provider's home, CrewAI's home folder and storage, and a neighbouring program
+  and Start-menu entry) is held two ways round against the locations the product
+  names; the product is run to list what it leaves on disk, and the names the
+  code classifies as protected state are derived from its own lists, each of which
+  must be planted with its removal alone seen. The Windows driver plants it in the
+  standard user's profile and compares every file's bytes and time, and the
+  presence of every folder, after each of
+  the thirteen refusals it replays, a fresh install, the same payload again, a
+  failed install, and the removal of its own artifacts that the installer's messages tell a
+  person to make (where Setup refuses because a path is not its own, the message
+  tells the person to move or rename it, and what they do then is outside the
+  claim). One path is a known limit: where the receipt cannot be written, Setup has
+  already created its shortcut and the message names only the install folder, so
+  a person who follows it leaves a stale shortcut (a leftover; nothing is
+  destroyed; the next Setup run refuses on it and says to remove or rename it);
+  it is recorded and not fixed here, the installer is unchanged. The scenario
+  also checks that running Forge leaves the install folder holding only the
+  version folder and the receipt. The capsule restoration is pinned so that it
+  rewrites its own seal and nothing else beside the capsule, on both routes (the
+  seal checked explicitly, and the rest of the scratch root compared in bytes,
+  time, mode and folders), and the operator's ledger reset so that it runs only
+  with its flag, rewrites only the ledger and its mark, and says `reset`. The scenario ran on Windows once, on the
+  head before this one: all 21 comparisons of the specimen held, and one driver
+  expectation (the words of the refusal for a Local AppData folder moved to a
+  network path) was corrected; the head to be merged needs its own
+  `windows-install` run. The eleven refusals the driver does not replay
+  against the specimen (ten it does not run and one it runs only as the
+  administrator), the registry, the shipped runtime against the specimen, and a
+  roaming profile are not established (A-044). The review of this change took
+  three rounds in one class (the census or the specimen not complete); the
+  complexity alarm fired and the response was this simplification.
+
 - `ForgeSetup.exe`, an unsigned per-user Windows installer for the
   deterministic payload (A-043). Built by `scripts/build_windows_installer.py`
   from a clean commit with the NSIS 3.13 tree built from pinned source (A-042):
