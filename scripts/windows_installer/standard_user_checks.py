@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -34,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -172,16 +174,73 @@ def tree_state(root: Path) -> dict[str, tuple[int, int]]:
     return state
 
 
-def refusal_problems(got: int, log: str, wanted: int) -> list[str]:
+def seed_state(profile: Path) -> list[str]:
+    """Plant the state specimen (`installer_contract.state_specimen`) in
+    `profile`. Returns the reasons it could not: a specimen root that is already
+    there is not planted over, because a change to something that was not the
+    specimen would prove nothing about it."""
+    problems = [f"{root} already exists" for root in contract.STATE_ROOTS
+                if profile.joinpath(*root.split("/")).exists()]
+    if problems:
+        return problems
+    for relative, data in contract.state_specimen().items():
+        path = profile.joinpath(*relative.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return []
+
+
+def state_snapshot(profile: Path) -> dict[str, tuple]:
+    """Everything under the specimen's roots as profile-relative path -> ("file",
+    sha256 of its bytes, its time in ns), ("dir",) or ("link", its target). A
+    folder's own time moves with its children and is not compared; a file's
+    bytes AND time are, so a file rewritten with the same bytes is a
+    difference."""
+    state: dict[str, tuple] = {}
+    for root in contract.STATE_ROOTS:
+        top = profile.joinpath(*root.split("/"))
+        if not top.exists() and not top.is_symlink():
+            continue
+        entries = [top]
+        for directory, subdirectories, files in os.walk(top):
+            entries += [Path(directory) / name for name in subdirectories + files]
+        for path in entries:
+            relative = path.relative_to(profile).as_posix()
+            if path.is_symlink():
+                state[relative] = ("link", os.readlink(path))
+            elif path.is_dir():
+                state[relative + "/"] = ("dir",)
+            else:
+                state[relative] = ("file", hashlib.sha256(path.read_bytes()).hexdigest(),
+                                   path.lstat().st_mtime_ns)
+    return state
+
+
+def state_changes(before: dict[str, tuple], after: dict[str, tuple]) -> list[str]:
+    """Every difference between two snapshots: what was removed, what appeared,
+    and what changed in bytes or in time. Empty means nothing moved."""
+    changes = [f"removed: {name}" for name in sorted(before.keys() - after.keys())]
+    changes += [f"added: {name}" for name in sorted(after.keys() - before.keys())]
+    for name in sorted(before.keys() & after.keys()):
+        if before[name] != after[name]:
+            changes.append(f"changed: {name}")
+    return changes
+
+
+def refusal_problems(got: int, log: str, wanted: int, fragment: str = "") -> list[str]:
     """Why a run is not the installer's refusal with exit code `wanted`: another
     exit code, or a log that does not carry the installer's own line for it. A
     process that never ran the script (or a code from somewhere else) cannot
-    produce that line."""
+    produce that line. Several refusals share a code, so `fragment` (words of
+    the script's message, with no variable in them) names WHICH refusal the run
+    must be."""
     problems = []
     if got != wanted:
         problems.append(f"exit code {got}, not {wanted}")
     if f"refused ({wanted}):" not in log:
         problems.append(f"the log has no 'refused ({wanted}):' line: {log.strip()[:200]!r}")
+    elif fragment and fragment not in log:
+        problems.append(f"the refusal is not the one that says {fragment!r}: {log.strip()[:200]!r}")
     return problems
 
 
@@ -333,7 +392,8 @@ def mode_elevated(artifact: Path, work: Path) -> None:
     root = install_root()
     expect(not root.exists(), "no install folder exists before the elevated run")
     code, log = run_setup(artifact / "forge-setup" / "ForgeSetup.exe", work, "elevated")
-    problems = refusal_problems(code, log, codes["EXIT_ELEVATED"])
+    problems = refusal_problems(code, log, codes["EXIT_ELEVATED"],
+                                "installs for the signed-in user only")
     expect(not problems, f"an elevated run is refused by the installer's own line {problems}")
     expect("without 'Run as administrator'" in log, "the refusal explains itself in the log")
     expect(not root.exists(), "the elevated run created no install folder")
@@ -415,10 +475,160 @@ def planted_acl_problems(work: Path, *, computer: str, user: str) -> list[str]:
         shutil.rmtree(base, ignore_errors=True)
 
 
-def refused(exe: Path, work: Path, tag: str, code: int) -> tuple[list[str], str]:
-    """Run an installer that must refuse with `code`: (problems, log)."""
+def refused(exe: Path, work: Path, tag: str, code: int,
+            fragment: str = "") -> tuple[list[str], str]:
+    """Run an installer that must refuse with `code` (and, when `fragment` is
+    given, with the refusal that says it): (problems, log)."""
     got, log = run_setup(exe, work, tag)
-    return refusal_problems(got, log, code), log
+    return refusal_problems(got, log, code, fragment), log
+
+
+def make_junction(link: Path, target: Path) -> None:
+    subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(link), str(target)], check=True,
+                   capture_output=True, timeout=60)
+
+
+def remove_junction(link: Path) -> None:
+    os.rmdir(link)
+
+
+def refusal_runs(work: Path, *, variants: dict[str, Path], codes: dict[str, int], root: Path,
+                 shortcut_path: Path, small_manifest: dict, prefix: str = "",
+                 after: Callable[[str], None] | None = None) -> None:
+    """Every refusal Setup makes before it extracts anything, each from a tiny
+    sealed payload (or the one whose paths are too long), in a profile with no
+    install: a path too long, a location outside the profile or on a network,
+    a folder that is not Forge's in each of the three ways it can be not
+    Forge's, a junction, an unfinished earlier install with and without a
+    receipt, and a shortcut name that is taken. Each run says WHICH refusal it
+    is (`fragment`), so two refusals that share an exit code are not mistaken
+    for one another.
+
+    Run twice. `mode_standard_user` runs it first in a clean profile to judge
+    what a refusal leaves of the installer's own folders. `state_survival` runs
+    it again with the person's state planted and calls `after(label)` right
+    after every run, so each refusal is judged against the specimen; a
+    refusal that is not in this function is not replayed there. The folders and
+    files it plants to provoke a refusal are the driver's own fixtures, removed
+    between cases so the next can run: that is not a removal a message advised."""
+    small, long_payload = variants["small"] / "ForgeSetup.exe", variants["long"] / "ForgeSetup.exe"
+    scope = "[state] " if prefix else ""
+    programs, outside = root.parent, work / "redirected-appdata"
+    version = contract.version_directory(small_manifest)
+    receipt_name = contract.RECEIPT_NAME
+    after = after or (lambda _label: None)
+
+    def run(name: str, exe: Path, code: int, fragment: str) -> list[str]:
+        problems, _log = refused(exe, work, prefix + name, code, fragment)
+        return problems
+
+    problems = run("long", long_payload, codes["EXIT_TOO_LONG"], "would create file paths of up to")
+    expect(not problems and not root.exists(),
+           f"{scope}paths of 297 characters (the boundary at 259 is not run) are refused {problems}")
+    after("paths of 297 characters were refused")
+
+    # Each case expects the ONE refusal the real installer printed when this was
+    # first run on Windows. A Local AppData folder moved to a network path is
+    # resolved by the shell to nothing, so the location is a bare
+    # `\Programs\Nornyx Forge` and the drive-path check refuses it; the
+    # network spelling is a different refusal of the same exit code and is not
+    # what this provokes.
+    for name, label, target, fragment in (
+            ("location-outside", "a location outside the profile", str(outside),
+             "is outside your profile folder"),
+            ("location-unc", "a UNC location", r"\\forge-ci-unreachable\share\AppData\Local",
+             "is not a plain drive path")):
+        try:
+            with redirected_local_appdata(target):
+                problems = run(name, small, codes["EXIT_LOCATION"], fragment)
+        finally:
+            for leftover in (root, outside):
+                if leftover.exists():
+                    shutil.rmtree(leftover)
+            shortcut_path.unlink(missing_ok=True)
+        expect(not problems, f"{scope}{label} (the account's Local AppData shell folder moved) is "
+                             f"refused {problems}")
+        after(f"{label} was refused")
+    expect(not outside.exists() and not root.exists(),
+           f"{scope}the location refusals created nothing")
+
+    programs.mkdir(parents=True, exist_ok=True)
+    root.mkdir()
+    (root / "stranger.txt").write_text("not forge's\n", encoding="utf-8", newline="")
+    problems = run("stranger", small, codes["EXIT_NOT_FORGE"],
+                   "so it is not a Forge install this setup made")
+    expect(not problems and sorted(os.listdir(root)) == ["stranger.txt"],
+           f"{scope}a non-empty folder without a receipt is not Forge's and is left alone {problems}")
+    after("a folder that is not Forge's was refused")
+    shutil.rmtree(root)
+
+    root.write_text("not a folder\n", encoding="utf-8", newline="")
+    problems = run("not-a-folder", small, codes["EXIT_NOT_FORGE"], "exists and is not a folder")
+    expect(not problems and root.read_text(encoding="utf-8") == "not a folder\n",
+           f"{scope}a file where the install folder goes is refused and left alone {problems}")
+    after("a file where the install folder goes was refused")
+    root.unlink()
+
+    root.mkdir()
+    (root / receipt_name).mkdir()
+    problems = run("receipt-folder", small, codes["EXIT_NOT_FORGE"], "is not a plain file")
+    expect(not problems and os.listdir(root) == [receipt_name] and (root / receipt_name).is_dir(),
+           f"{scope}a folder where the receipt goes is refused and left alone {problems}")
+    after("a folder where the receipt goes was refused")
+    shutil.rmtree(root)
+
+    root.mkdir()
+    (root / receipt_name).write_text("{}\n", encoding="utf-8", newline="")
+    (root / version).write_text("not a folder\n", encoding="utf-8", newline="")
+    problems = run("version-file", small, codes["EXIT_DOES_NOT_VERIFY"], "is not a plain folder")
+    expect(not problems and (root / version).is_file(),
+           f"{scope}a file where the version folder goes is refused and left alone {problems}")
+    after("a file where the version folder goes was refused")
+    shutil.rmtree(root)
+
+    target = work / "junction-target"
+    target.mkdir(parents=True, exist_ok=True)
+    make_junction(root, target)
+    problems = run("junction", small, codes["EXIT_LINK"],
+                   "is a link (a junction or symbolic link)")
+    expect(not problems and os.listdir(target) == [],
+           f"{scope}a junction at the install folder is refused and its target is untouched "
+           f"{problems}")
+    after("a junction at the install folder was refused")
+    remove_junction(root)
+    shutil.rmtree(target)
+
+    partial = version + contract.PARTIAL_SUFFIX
+    for name, label, receipt in (("partial-receipt", "with a receipt", True),
+                                 ("partial-bare", "with no receipt (a failed first install)",
+                                  False)):
+        root.mkdir()
+        if receipt:
+            (root / receipt_name).write_text("{}\n", encoding="utf-8", newline="")
+        (root / partial).mkdir()
+        problems = run(name, small, codes["EXIT_UNFINISHED"], "An earlier install did not finish")
+        expect(not problems and (root / partial).is_dir(),
+               f"{scope}an unfinished earlier install {label} is refused and left in place "
+               f"{problems}")
+        after(f"an unfinished earlier install {label} was refused")
+        shutil.rmtree(root)
+
+    for name, label in (("shortcut-file", "a file"), ("shortcut-folder", "a folder")):
+        if label == "a file":
+            shortcut_path.write_text("not the installer's\n", encoding="utf-8", newline="")
+        else:
+            shortcut_path.unlink()
+            shortcut_path.mkdir()
+        problems = run(name, small, codes["EXIT_SHORTCUT_EXISTS"],
+                       "already exists and Setup does not replace it")
+        expect(not problems and not root.exists(),
+               f"{scope}{label} already named like the shortcut is refused and nothing is "
+               f"installed {problems}")
+        if label == "a file":
+            expect(shortcut_path.read_text(encoding="utf-8") == "not the installer's\n",
+                   f"{scope}the file named like the shortcut is unchanged")
+        after(f"{label} already named like the shortcut was refused")
+    shortcut_path.rmdir()
 
 
 def mode_standard_user(artifact: Path, work: Path) -> None:
@@ -435,7 +645,6 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     small = variants["small"]
     small_manifest = manifest_of(build_record(small))
     root = install_root()
-    programs = root.parent
     folder = root / contract.version_directory(manifest)
     start_menu = Path(os.environ["APPDATA"]).joinpath(*START_MENU_PROGRAMS)
     shortcut_path = start_menu / contract.SHORTCUT_NAME
@@ -450,81 +659,17 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     planted = planted_acl_problems(work, computer=computer, user=user)
     expect(bool(planted), f"the ACL check finds an extra ACE planted on a folder it is shown {planted}")
 
-    # --- refusals, each from a tiny sealed payload, each leaving nothing
-    problems, _log = refused(variants["long"] / "ForgeSetup.exe", work, "long",
-                             codes["EXIT_TOO_LONG"])
-    expect(not problems and not root.exists(),
-           f"paths of 297 characters (the boundary at 259 is not run) are refused {problems}")
-
-    outside = work / "redirected-appdata"
-    for label, target in (("a location outside the profile", str(outside)),
-                          ("a UNC location", r"\\forge-ci-unreachable\share\AppData\Local")):
-        try:
-            with redirected_local_appdata(target):
-                problems, _log = refused(small / "ForgeSetup.exe", work, "location",
-                                         codes["EXIT_LOCATION"])
-        finally:
-            for leftover in (root, outside):
-                if leftover.exists():
-                    shutil.rmtree(leftover)
-            shortcut_path.unlink(missing_ok=True)
-        expect(not problems, f"{label} (the account's Local AppData shell folder moved) is "
-                             f"refused {problems}")
-    expect(not outside.exists() and not root.exists(), "the location refusals created nothing")
-
-    programs.mkdir(parents=True, exist_ok=True)
-    root.mkdir()
-    (root / "stranger.txt").write_text("not forge's\n", encoding="utf-8", newline="")
-    problems, _log = refused(small / "ForgeSetup.exe", work, "stranger", codes["EXIT_NOT_FORGE"])
-    expect(not problems and sorted(os.listdir(root)) == ["stranger.txt"],
-           f"a non-empty folder without a receipt is not Forge's and is left alone {problems}")
-    shutil.rmtree(root)
-
-    target = work / "junction-target"
-    target.mkdir()
-    subprocess.run(["cmd.exe", "/c", "mklink", "/J", str(root), str(target)], check=True,
-                   capture_output=True, timeout=60)
-    problems, _log = refused(small / "ForgeSetup.exe", work, "junction", codes["EXIT_LINK"])
-    expect(not problems and os.listdir(target) == [],
-           f"a junction at the install folder is refused and its target is untouched {problems}")
-    os.rmdir(root)
-    shutil.rmtree(target)
-
-    partial = contract.version_directory(small_manifest) + contract.PARTIAL_SUFFIX
-    for label, receipt in (("with a receipt", True), ("with no receipt (a failed first install)",
-                                                      False)):
-        root.mkdir()
-        if receipt:
-            (root / contract.RECEIPT_NAME).write_text("{}\n", encoding="utf-8", newline="")
-        (root / partial).mkdir()
-        problems, _log = refused(small / "ForgeSetup.exe", work, "unfinished",
-                                 codes["EXIT_UNFINISHED"])
-        expect(not problems and (root / partial).is_dir(),
-               f"an unfinished earlier install {label} is refused and left in place {problems}")
-        shutil.rmtree(root)
-
-    for label in ("a file", "a folder"):
-        if label == "a file":
-            shortcut_path.write_text("not the installer's\n", encoding="utf-8", newline="")
-        else:
-            shortcut_path.unlink()
-            shortcut_path.mkdir()
-        problems, _log = refused(small / "ForgeSetup.exe", work, "shortcut-exists",
-                                 codes["EXIT_SHORTCUT_EXISTS"])
-        expect(not problems and not root.exists(),
-               f"{label} already named like the shortcut is refused and nothing is installed "
-               f"{problems}")
-        if label == "a file":
-            expect(shortcut_path.read_text(encoding="utf-8") == "not the installer's\n",
-                   "the file named like the shortcut is unchanged")
-    shortcut_path.rmdir()
+    # --- refusals, each from a tiny sealed payload, each leaving nothing (state_survival
+    # replays every one of them with the person's state planted)
+    refusal_runs(work, variants=variants, codes=codes, root=root,
+                 shortcut_path=shortcut_path, small_manifest=small_manifest)
 
     # --- a failure after the folder is in place: the shortcut cannot be written
     subprocess.run(["icacls", str(start_menu), "/deny", f"{user}:(WD,AD)"], check=True,
                    capture_output=True, timeout=60)
     try:
         problems, _log = refused(small / "ForgeSetup.exe", work, "shortcut-fails",
-                                 codes["EXIT_FAILED"])
+                                 codes["EXIT_FAILED"], "could not create the Start-menu shortcut")
     finally:
         subprocess.run(["icacls", str(start_menu), "/remove:d", user], check=True,
                        capture_output=True, timeout=60)
@@ -553,11 +698,12 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     expect(tree_state(root) == state and receipt_path.read_bytes() == kept_receipt,
            "the second run changed no file, size, time or folder")
     problems, _log = refused(variants["other"] / "ForgeSetup.exe", work, "other",
-                             codes["EXIT_OTHER_VERSION"])
+                             codes["EXIT_OTHER_VERSION"], "Another version of Forge is installed")
     expect(not problems and tree_state(root) == state,
            f"another version is refused and nothing changes {problems}")
     problems, _log = refused(variants["same-version"] / "ForgeSetup.exe", work, "same-version",
-                             codes["EXIT_DOES_NOT_VERIFY"])
+                             codes["EXIT_DOES_NOT_VERIFY"],
+                             "is not the payload this Setup carries")
     expect(not problems and tree_state(root) == state,
            f"other bytes under the same version are refused and nothing changes {problems}")
 
@@ -566,6 +712,9 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
     expect(verify_installed(folder, manifest["payload_sha256"]) == 0,
            "the installed copy still verifies after being run (the shortcut starts the "
            "interpreter with bytecode writing off)")
+    expect(sorted(os.listdir(root)) == sorted([folder.name, contract.RECEIPT_NAME]),
+           "running Forge from the shortcut left the install root holding only the version "
+           "folder and the receipt: nothing the person's work produces is kept there")
 
     # --- the real installer again, now into an ABSENT folder
     shutil.rmtree(root)
@@ -588,6 +737,11 @@ def mode_standard_user(artifact: Path, work: Path) -> None:
            and json.loads(absent)["prerequisites"]["git"] == "not found"
            and json.loads(absent)["root_created"] is True,
            "the receipt records git as not found and the root as created")
+
+    # --- the person's state, through every path that exists
+    state_survival(work, profile=profile, user=user, real_exe=real_exe, variants=variants,
+                   manifest=manifest, small_manifest=small_manifest, codes=codes, root=root,
+                   shortcut_path=shortcut_path, start_menu=start_menu)
 
 
 def check_install(tag: str, exe: Path, work: Path, manifest: dict, *, folder: Path, root: Path,
@@ -741,6 +895,123 @@ def launch_checks(bundle, work: Path, folder: Path, shortcut: dict, manifest: di
         time.sleep(0.5)
     expect(not processes_under(folder, "pythonw.exe"),
            "the second instance stopped too and no pythonw.exe remains")
+
+
+def state_survival(work: Path, *, profile: Path, user: str, real_exe: Path,
+                   variants: dict[str, Path], manifest: dict, small_manifest: dict,
+                   codes: dict[str, int], root: Path, shortcut_path: Path,
+                   start_menu: Path) -> None:
+    """The person's state must survive the paths the installer leaves open that this
+    can provoke.
+
+    Neither an uninstaller nor a repair exists: the script registers no
+    uninstaller, refuses another version and offers no repair. What a person can
+    do is run Setup again, meet a refusal, or do what a refusal says (remove the
+    install folder, then run Setup again). This plants the state specimen
+    (`installer_contract.state_specimen`: governed state, provider state and
+    neighbours) and runs each of those, comparing the whole specimen with the
+    plant after every one. "Survives" is bytes AND time of every file and the
+    set of folders, not the presence of a name. The refusals made before
+    anything is extracted are replayed here by `refusal_runs`; those that need
+    an install in place, and the failed install, are run below. A refusal the
+    script has that no run here provokes is listed, with the reason, in A-044.
+
+    WHAT IT IS NOT: the shipped runtime is not run against this specimen
+    (`launch_checks` runs it in a scratch profile), the registry is judged by
+    `check_install`'s census and not here, and the specimen's bytes are labelled
+    stand-ins for the files the product keeps, not those files.
+    """
+    folder = root / contract.version_directory(manifest)
+    small = variants["small"]
+    if root.exists():
+        shutil.rmtree(root)
+    shortcut_path.unlink(missing_ok=True)
+    planted = seed_state(profile)
+    if not expect(not planted, f"[state] the specimen is planted in a profile that held none "
+                               f"of it {planted}"):
+        return
+    baseline = state_snapshot(profile)
+    expect(len(baseline) >= len(contract.state_specimen()),
+           "[state] the snapshot sees every planted file")
+
+    def unchanged(label: str) -> None:
+        changes = state_changes(baseline, state_snapshot(profile))
+        expect(not changes, f"[state] after {label}, the governed state, the provider state "
+                            f"and the neighbours are exactly as planted {changes}")
+
+    # Every refusal Setup makes before it extracts anything, with the specimen
+    # planted and compared after each.
+    refusal_runs(work, variants=variants, codes=codes, root=root, shortcut_path=shortcut_path,
+                 small_manifest=small_manifest, prefix="state-", after=unchanged)
+
+    code, log = run_setup(real_exe, work, "state-install")
+    installed = expect(code == 0 and f"installed {folder.name}" in log,
+                       f"[state] a fresh install succeeds (got {code})")
+    unchanged("a fresh install")
+    if not installed:
+        return
+
+    code, log = run_setup(real_exe, work, "state-again")
+    expect(code == 0 and "already installed" in log,
+           "[state] the same payload run again verifies and exits 0, by its own log")
+    unchanged("the same payload run again")
+    problems, _log = refused(variants["other"] / "ForgeSetup.exe", work, "state-other",
+                             codes["EXIT_OTHER_VERSION"], "Another version of Forge is installed")
+    expect(not problems, f"[state] another version is refused {problems}")
+    unchanged("another version was refused")
+    problems, _log = refused(variants["same-version"] / "ForgeSetup.exe", work,
+                             "state-same-version", codes["EXIT_DOES_NOT_VERIFY"],
+                             "is not the payload this Setup carries")
+    expect(not problems, f"[state] other bytes under the same version are refused {problems}")
+    unchanged("other bytes under the same version were refused")
+
+    # The removal a refusal message tells a person to make: the install folder,
+    # which holds what the receipt lists and nothing else. No message names the
+    # shortcut Setup wrote; it is removed here as a person removing everything
+    # Setup made would remove it.
+    receipt = json.loads((root / contract.RECEIPT_NAME).read_text(encoding="utf-8"))
+    owned = sorted(item["path"] for item in receipt["created"] if item["kind"] != "shortcut")
+    expect(sorted(os.listdir(root)) == owned,
+           f"[state] the install folder holds exactly what the receipt lists {owned}")
+    shutil.rmtree(root)
+    shortcut_path.unlink(missing_ok=True)
+    unchanged("the install folder and the shortcut were removed, as the refusal messages say")
+    # From here the tiny sealed payload stands in for the real one: the script is
+    # the same and an extraction of the whole payload adds minutes, not coverage.
+    code, log = run_setup(small / "ForgeSetup.exe", work, "state-reinstall")
+    expect(code == 0 and f"installed {contract.version_directory(small_manifest)}" in log,
+           f"[state] Setup run again after that removal installs (got {code})")
+    unchanged("Setup was run again after that removal")
+
+    # An unfinished earlier install, left in place and refused.
+    shutil.rmtree(root)
+    shortcut_path.unlink(missing_ok=True)
+    partial = root / (folder.name + contract.PARTIAL_SUFFIX)
+    partial.mkdir(parents=True)
+    problems, _log = refused(real_exe, work, "state-unfinished", codes["EXIT_UNFINISHED"],
+                             "An earlier install did not finish")
+    expect(not problems and partial.is_dir(),
+           f"[state] an unfinished earlier install is refused and left in place {problems}")
+    unchanged("an unfinished earlier install was refused")
+    shutil.rmtree(root)
+
+    # A failed install (the shortcut cannot be written), the removal that is
+    # advised for it, and Setup run again.
+    subprocess.run(["icacls", str(start_menu), "/deny", f"{user}:(WD,AD)"], check=True,
+                   capture_output=True, timeout=60)
+    try:
+        problems, _log = refused(small / "ForgeSetup.exe", work, "state-failed",
+                                 codes["EXIT_FAILED"], "could not create the Start-menu shortcut")
+    finally:
+        subprocess.run(["icacls", str(start_menu), "/remove:d", user], check=True,
+                       capture_output=True, timeout=60)
+    expect(not problems, f"[state] a shortcut that cannot be written fails the install {problems}")
+    unchanged("an install that failed after the folder was in place")
+    shutil.rmtree(root)
+    code, log = run_setup(small / "ForgeSetup.exe", work, "state-recovered")
+    expect(code == 0 and f"installed {contract.version_directory(small_manifest)}" in log,
+           f"[state] Setup run again after the advised removal installs (got {code})")
+    unchanged("the advised removal and a new install")
 
 
 def main(argv: list[str] | None = None) -> int:
