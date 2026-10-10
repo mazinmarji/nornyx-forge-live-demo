@@ -616,7 +616,7 @@ jobs:
         run: python scripts/windows_installer/build_nsis_toolchain.py build --work "$RUNNER_TEMP/nsis-work" --out "$RUNNER_TEMP/nsis-out"
       - name: Copy the output to a folder this job owns, and describe it
         run: python scripts/windows_installer/build_nsis_toolchain.py describe --from "$RUNNER_TEMP/nsis-out" --to "$RUNNER_TEMP/nsis-artifact"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nsis-toolchain-${{ matrix.leg }}
           path: ${{ runner.temp }}/nsis-artifact
@@ -686,7 +686,7 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/leg-a/nsis/Bin/makensis"
           python scripts/windows_installer/build_nsis_toolchain.py compile-smoke --tree "$RUNNER_TEMP/leg-a/nsis" --out "$RUNNER_TEMP/smoke/nsis-smoke.exe"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nsis-smoke
           path: ${{ runner.temp }}/smoke
@@ -846,7 +846,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/artifact/forge-setup"
           cp "$RUNNER_TEMP"/setup-first/* "$RUNNER_TEMP/artifact/forge-setup/"
           ls -l "$RUNNER_TEMP"/artifact/forge-setup "$variants"/*
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: forge-setup
           path: ${{ runner.temp }}/artifact
