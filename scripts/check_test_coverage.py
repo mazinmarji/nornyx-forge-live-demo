@@ -808,8 +808,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # and a guard that refuses non-loopback use of the socket entry points it
     # names, in the test's own process. 7 -> 9 for A-045, floor band(9) = 9:
     # the journey with confirmed requirements reaching GOVERN, and the same
-    # journey refused for a single untested requirement.
-    "tests/test_simulated_journey.py": 9,
+    # journey refused for a single untested requirement. 9 -> 13 for A-046,
+    # floor band(13) = 12: the native memory store refused in-process (the
+    # specimen live, the flow built without importing it, the journey to
+    # GOVERN) and a CrewAI initialisation failure reported by name. None of
+    # them skips on any platform, and the module joins the windows-runtime
+    # job.
+    "tests/test_simulated_journey.py": 12,
     # A-045's one requirement-identity rule: 26 collected at introduction,
     # floor at band(26) = 24. Forge's derived BRD against Forge's own
     # verifier, the negatives that keep traceability (an untested confirmed
@@ -2094,17 +2099,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 26 to 5236 and the aggregate follows to 5244, keeping the same 8 above it;
 # band(n) 5147 -> 5172, and the working room below the floor 500 -> 502. THE
 # SLACK THE BANDS GRANT moves by 2, 508 -> 510, the new module sitting 2 above
-# its band and the journey module on its own. NO SKIP IS ADDED. The rows below
-# are these.
+# its band and the journey module on its own. NO SKIP IS ADDED.
+#
+# A-046 MOVES ONE MODULE: tests/test_simulated_journey.py collects 9 -> 13
+# (floor band(9) = 9 -> band(13) = 12), measured from a fresh collection, and
+# no other module moves. 5750 collect across 135 modules. The module-floor sum
+# rises by 3 to 5239 and the aggregate follows to 5247, keeping the same 8
+# above it; band(n) 5172 -> 5175, and the working room below the floor 502 ->
+# 503. THE SLACK THE BANDS GRANT moves by 1, 510 -> 511, the journey module now
+# sitting 1 above its band. NO SKIP IS ADDED. The module joins the
+# windows-runtime job, whose floor moves 277 -> 290: its eight modules collect
+# 7/13/14/15/23/54/73/97 (sum 296, floor 296 - 7 + 1). The rows below are
+# these.
 #
 # (rows below):
 #
-#     collected across tests/     5746   (135 modules)
-#     sum of the module floors    5236
-#     band(5746) = ceil(0.9*n)    5172
-#     MINIMUM_COLLECTED           5244
+#     collected across tests/     5750   (135 modules)
+#     sum of the module floors    5239
+#     band(5750) = ceil(0.9*n)    5175
+#     MINIMUM_COLLECTED           5247
 #     above the module sum          8
-#     below what collects         502
+#     below what collects         503
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2326,7 +2341,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 510 in total, and the aggregate refuses
+# per-module bands already grant 511 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2595,7 +2610,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5244
+MINIMUM_COLLECTED = 5247
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

@@ -466,9 +466,19 @@ jobs:
       # a plain external overlay admitted -- is observable only here. Junctions
       # need no privilege, so nothing in it skips on this host; off Windows
       # every test in it is a declared skip in the census.
-      - name: Windows runtime, bundle builder, launch, provider and control-plane tests, with no skips
+      # tests/test_simulated_journey.py joins for A-046: the G1 simulated
+      # journey -- the shipped composition, the real development flow's CrewAI
+      # kickoff and the real trusted verifier -- failed on a Windows host
+      # whose Application Control policy refused the native library of
+      # CrewAI's memory store, while it passed on Linux, and no Windows job
+      # ran it. It carries the journey with and without confirmed
+      # requirements, the blocked memory store reproduced in-process, and a
+      # CrewAI initialisation failure reported by name. Nothing in it skips on
+      # any platform. The runner has no Smart App Control, so the blocked
+      # store is measured here by the specimen, not by the host's policy.
+      - name: Windows runtime, bundle builder, launch, provider, control-plane and simulated-journey tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -479,14 +489,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 277:
-              print("the windows job collected fewer than 277 tests. Its seven modules "
-                    "carry 283 here (7/14/15/23/54/73/97), so this floor is 283 - 7 + 1, "
+          if len(cases) < 290:
+              print("the windows job collected fewer than 290 tests. Its eight modules "
+                    "carry 296 here (7/13/14/15/23/54/73/97), so this floor is 296 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these seven -- the five "
-                    "smallest carry 113 -- so two whole modules could vanish beneath "
+                    "floor of 60 is clear of any FIVE of these eight -- the five smallest "
+                    "carry 72 -- so three whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

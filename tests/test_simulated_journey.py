@@ -47,6 +47,7 @@ import ipaddress
 import json
 import socket
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -338,14 +339,15 @@ def _simulated_eligibility(provider: str, platform: str) -> GovernedEligibility:
 
 
 def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvider | None,
-          requirements: list[dict[str, str]] | None = None) -> Journey:
+          requirements: list[dict[str, str]] | None = None, flows: int = 1) -> Journey:
     """Start Forge and walk the journey to the end of the build.
 
     Everything asserted here holds on every run whatever the provider does,
     so a deviation anywhere before the build fails the test at that step.
     `requirements`, when given, are proposed and confirmed after the intent
     as the capsule's `requirements` field, the shape the BRD derivation
-    renders under a section heading.
+    renders under a section heading. `flows` is how many flows the build
+    must construct: one, or none where constructing it fails.
     """
     run = Journey(base, provider)
     run.project.mkdir(parents=True)
@@ -353,8 +355,9 @@ def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvid
     run.attempts = _forbid_network(monkeypatch)
     # CrewAI's own switch for its package-index check, which GitHub Actions'
     # `CI=true` also turns off: the journey must not need the network. And
-    # CrewAI's storage directory, so the kickoff's memory store is written
-    # here rather than under the user's data directory.
+    # CrewAI's storage directory, so anything CrewAI stores is written here
+    # rather than under the user's data directory -- the development flow
+    # creates no memory store there (A-046), and the main test holds that.
     monkeypatch.setenv("CREWAI_DISABLE_VERSION_CHECK", "true")
     monkeypatch.setenv("CREWAI_STORAGE_DIR", str(base / "crewai-storage"))
     clock = _clock()
@@ -455,7 +458,7 @@ def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvid
         threading.Event().wait(0.05)
     else:
         raise AssertionError("the build never reported a terminal state")
-    assert len(run.flows) == 1, "the build did not construct exactly one flow"
+    assert len(run.flows) == flows, f"the build did not construct exactly {flows} flow(s)"
     return run
 
 
@@ -501,8 +504,8 @@ def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
     assert RuntimeAuthorityConfig().execution_backend == "crewai"
     assert result["execution_backend"] == "crewai_flow"
     assert run.reached == [] and run.attempts == []
-    assert (tmp_path / "crewai-storage" / "memory").is_dir(), (
-        "the kickoff's memory store was not kept in the test's directory")
+    assert flow.memory is None and not (tmp_path / "crewai-storage" / "memory").exists(), (
+        "the development flow created a CrewAI memory store, which it never uses (A-046)")
 
     # The simulated act: five calls in order over the project, two files
     # written, byte-identical to the generator's rendering of the BRD, and
@@ -780,6 +783,131 @@ def test_without_the_seam_the_real_provider_is_reached_and_the_build_stops(
     assert "the build did not complete" in persisted["history"][-1]["detail"]
     assert not (run.project / "src").exists() and not (run.project / "tests").exists()
     assert run.attempts == []
+
+
+# ---------------------------------------------------------------------------
+# The flow's CrewAI initialisation (A-046)
+# ---------------------------------------------------------------------------
+
+#: The words Windows gave when Smart App Control, in enforcement, refused the
+#: unsigned native library of the vector store CrewAI's memory imports.
+BLOCKED_NATIVE_LIBRARY = (
+    "DLL load failed while importing _lancedb: An Application Control policy has "
+    "blocked this file.")
+
+
+class _BlockedNativeMemoryStore:
+    """An import system in which the memory store's native library cannot
+    load, as an Application Control policy left it on a Windows host. Every
+    attempt to import `lancedb` is recorded and refused with the error that
+    host gave. It changes no security setting anywhere: it is the refusal,
+    reproduced inside this process."""
+
+    def __init__(self) -> None:
+        self.attempts: list[str] = []
+
+    def find_spec(self, name: str, path: Any = None, target: Any = None) -> None:
+        if name == "lancedb" or name.startswith("lancedb."):
+            self.attempts.append(name)
+            raise ImportError(BLOCKED_NATIVE_LIBRARY, name=name)
+        return None
+
+
+def _block_native_memory_store(monkeypatch: pytest.MonkeyPatch) -> _BlockedNativeMemoryStore:
+    blocker = _BlockedNativeMemoryStore()
+    for name in list(sys.modules):
+        if name == "lancedb" or name.startswith("lancedb.") or name.startswith(
+                "crewai.memory.storage.lancedb"):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [blocker, *sys.meta_path])
+    return blocker
+
+
+def test_the_blocker_refuses_the_native_memory_store_it_stands_in_for(
+        monkeypatch: pytest.MonkeyPatch):
+    """The specimen is live: with it installed, CrewAI's own memory store
+    cannot be imported, with the host's words, and the attempt is recorded.
+    A test below that sees no attempt saw a flow that never tried."""
+    blocker = _block_native_memory_store(monkeypatch)
+    with pytest.raises(ImportError, match="Application Control policy has blocked"):
+        __import__("crewai.memory.storage.lancedb_storage")
+    assert blocker.attempts == ["lancedb"]
+
+
+def test_the_development_flow_creates_no_memory_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Forge's flow never recalls or remembers, so it declares no CrewAI
+    memory and the native store is never imported -- where it cannot load,
+    the flow is built all the same, with nothing swallowed to get there."""
+    monkeypatch.setenv("CREWAI_STORAGE_DIR", str(tmp_path / "crewai-storage"))
+    blocker = _block_native_memory_store(monkeypatch)
+    flow = DevelopmentFlow(tmp_path, worker_mode="claude-code", repo_mode="greenfield",
+                           provider=PROVIDER)
+    assert flow.memory is None
+    assert blocker.attempts == []
+    assert "requirements" in flow._methods, "the flow's methods were not registered"
+    assert not (tmp_path / "crewai-storage" / "memory").exists()
+
+
+def test_the_journey_reaches_govern_where_the_native_memory_store_cannot_load(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The Windows failure, reproduced deterministically on every platform:
+    the memory store's native library refuses to load, as Smart App Control
+    refused it. The build used to fail as "'requirements'", because the
+    flow's initialisation raised, was swallowed, and the kickoff then found
+    no methods. The same journey now runs the CrewAI kickoff to GOVERN on the
+    configured backend without the store ever being imported; the real
+    provider is not reached, nothing leaves the host, and READY is refused."""
+    blocker = _block_native_memory_store(monkeypatch)
+    run = _walk(monkeypatch, tmp_path, SimulatedProvider())
+    status = run.status
+    assert status["status"] == "finished" and status["accepted"] is True, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "GOVERN", "status": "active"}
+    assert status["result"]["execution_backend"] == "crewai_flow"
+    assert blocker.attempts == []
+    flow = run.flows[0][0]
+    assert flow.memory is None and not (tmp_path / "crewai-storage" / "memory").exists()
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "governance_validation" in refused["refused"]
+    assert run.reached == [] and run.attempts == []
+
+
+def test_a_crewai_initialisation_failure_is_named_and_the_build_stops(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The failure is reported, never swallowed. Whatever CrewAI's own
+    initialisation raises, the flow is not built: the build fails before any
+    worker runs, the person reads which component failed and why -- in
+    place of the bare "'requirements'" a swallowed failure used to surface
+    as -- and the lifecycle records a failed BUILD. Nothing is retried on
+    another backend, and READY stays refused."""
+    from crewai.flow.flow import Flow
+
+    def refuse(self: Any, *_args: Any, **_kwargs: Any) -> None:
+        raise ImportError(BLOCKED_NATIVE_LIBRARY, name="lancedb")
+
+    monkeypatch.setattr(Flow, "_flow_post_init", refuse)
+    with pytest.raises(Exception) as raised:
+        DevelopmentFlow(tmp_path / "direct", worker_mode="claude-code", repo_mode="greenfield",
+                        provider=PROVIDER)
+    assert type(raised.value).__name__ == "FlowInitializationError", raised.value
+    assert isinstance(raised.value.__cause__, ImportError)
+
+    provider = SimulatedProvider()
+    run = _walk(monkeypatch, tmp_path / "journey", provider, flows=0)
+    status = run.status
+    assert status["status"] == "failed", status
+    error = status["error"]
+    assert error.startswith("CrewAI could not initialise the development flow"), error
+    assert f"ImportError: {BLOCKED_NATIVE_LIBRARY}" in error, error
+    assert "Application Control" in error and "does not bypass" in error, error
+    assert error != "'requirements'"
+    assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
+    assert run.flows == [] and provider.calls == []
+    persisted = run.store().load_experience()
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}
+    assert "the build did not complete" in persisted["history"][-1]["detail"]
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "failed at BUILD; retry it" in refused["refused"]
+    assert run.reached == [] and run.attempts == []
 
 
 def test_the_network_guard_refuses_what_it_is_shown(monkeypatch: pytest.MonkeyPatch):

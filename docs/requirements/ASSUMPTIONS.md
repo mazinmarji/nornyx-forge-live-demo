@@ -5116,8 +5116,9 @@ by name (A-045).
    GitHub-hosted runners. With neither set, a kickoff may query the package
    index, and this test does not measure that.
 8. **Importing CrewAI creates files under the user's home directory**, as any
-   module that imports it does; the flow's own memory store is kept in the
-   test's temporary directory through `CREWAI_STORAGE_DIR`.
+   module that imports it does. The flow creates no memory store (A-046), and
+   the main test holds that none appears in the test's temporary directory,
+   where `CREWAI_STORAGE_DIR` points anything CrewAI would store.
 
 **Serves.** BRD-004's "Tests run without network access" and BRD-005's
 "`pytest` passes"; A-018's discipline that a simulated path stays distinct
@@ -7005,3 +7006,81 @@ same statements and no assumption.
 **Serves.** BRD-F-005 and CLAUDE.md's "Preserve traceability from BRD IDs to
 code, tests, and evidence"; A-035, whose journey now also runs with confirmed
 requirements; A-019, whose self-contained verifier this keeps self-contained.
+
+## A-046 The development flow creates no CrewAI memory store, and a failure to initialise it is reported by name
+
+**The defect.** A CrewAI Flow that declares no memory has a long-term
+`Memory` created during its initialisation, and that store imports the native
+`lancedb` vector store. On a Windows host with Smart App Control in
+enforcement, the policy refused that unsigned library ("DLL load failed while
+importing _lancedb: An Application Control policy has blocked this file").
+`DevelopmentFlow.__init__` wrapped CrewAI's initialisation in
+`except Exception: pass`, so the failure was dropped, the flow's methods were
+never registered, the kickoff failed with `KeyError: 'requirements'`, and the
+build reported the bare error "'requirements'". On that host six of the seven
+G1 journey tests failed while they passed on Linux, and no Windows CI job ran
+the journey.
+
+**What changed.**
+
+1. **No memory store.** Nothing in Forge reads or writes CrewAI memory: the
+   development flow neither recalls nor remembers. `DevelopmentFlow` sets
+   `_skip_auto_memory`, CrewAI's own switch, which its internal flows use, so
+   no `Memory` is created and the native store is never imported.
+2. **No swallowed failure.** A failure of CrewAI's initialisation now raises
+   `FlowInitializationError`, chained to the original exception and naming
+   it: "CrewAI could not initialise the development flow (ImportError: ...).
+   Nothing was built. ... Forge does not bypass or change such a policy." The
+   build fails before any worker runs, the person reads that message rather
+   than "'requirements'", and nothing is retried on another backend.
+3. **Windows CI runs the journey.** `tests/test_simulated_journey.py` joins
+   the `windows-runtime` job, which fails on any skip.
+
+**How it is shown.** The blocked library is reproduced inside the test
+process: an import-system entry refuses every import of `lancedb` with the
+host's words and records the attempt
+(`test_the_blocker_refuses_the_native_memory_store_it_stands_in_for` shows it
+live). With it in place, the flow is built with no attempt to import the store
+(`test_the_development_flow_creates_no_memory_store`) and the journey runs the
+CrewAI kickoff to GOVERN on the configured backend
+(`test_the_journey_reaches_govern_where_the_native_memory_store_cannot_load`);
+before the change the same test failed with "'requirements'". A CrewAI
+initialisation failure injected at CrewAI's own initialisation stops the build
+with the named error, constructs no flow, calls no worker and records a failed
+BUILD (`test_a_crewai_initialisation_failure_is_named_and_the_build_stops`);
+before the change the flow was built and the build failed as "'requirements'".
+The main journey test now holds that no memory store is created. The real
+provider tripwire and the network guard stay in force in every one of them,
+and READY stays refused; no authority boundary moves.
+
+**What it does NOT establish.**
+
+1. **That the host policy was measured.** GitHub's Windows runners have no
+   Smart App Control, so the CI job measures the journey on Windows and the
+   blocked library through the specimen, not through the policy itself. The
+   policy's decision for a file is not stable either: on the host where the
+   block was observed, the same unsigned file, unchanged, loaded later the
+   same day with the policy still in enforcement. Nothing here depends on that
+   decision, and no security setting was changed to obtain any result.
+2. **That `lancedb` leaves the Windows payload.** `crewai==1.15.4` declares
+   `lancedb` a required dependency, and the payload lock is compiled from the
+   `demo` extra, so the library still ships. Removing it would mean shipping
+   CrewAI with an unsatisfied declared dependency or changing the CrewAI pin;
+   that is a packaging decision this change does not make. The development
+   flow no longer imports it.
+3. **That every CrewAI flow in Forge is free of it.** The demonstration
+   application's `CustomerCaseFlow` still lets CrewAI create its memory store
+   and still drops a failure of CrewAI's initialisation; this change is
+   bounded to the development flow that the G1 journey runs.
+4. **That nothing else CrewAI loads can be refused.** Only the memory store's
+   library is shown absent from the flow's path; any other native library
+   CrewAI imports on initialisation or kickoff is outside this measurement,
+   and a refusal of one now surfaces as the named error above.
+5. **A safe generated application**, exactly as A-045 states: the runtime
+   action boundary still classifies an action by the risk level its caller
+   declares, which is an unresolved safety limitation.
+
+**Serves.** A-035, whose journey this makes reproducible on the Windows-first
+target; CLAUDE.md's "configured execution path runs successfully, with the
+observed backend matching the selected backend"; and the repository's rule
+that a run never silently downgrades under an unchanged label.

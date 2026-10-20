@@ -2,6 +2,24 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The development flow creates no CrewAI memory store, and a failure to
+  initialise it is reported by name (A-046). CrewAI created a long-term
+  `Memory`, backed by the native `lancedb` store, for every flow declaring
+  none; on a Windows host whose Smart App Control refused that unsigned
+  library, `DevelopmentFlow.__init__` swallowed the failure and the build
+  failed as "'requirements'". Forge never uses CrewAI memory, so the flow
+  opts out with CrewAI's own switch and the store is never imported; a
+  failure of CrewAI's initialisation now raises `FlowInitializationError`
+  naming the cause, before any worker runs, with no fallback. No security
+  setting is changed or bypassed. `tests/test_simulated_journey.py` gains
+  the blocked library reproduced in-process (the journey reaches GOVERN) and
+  an initialisation failure reported by name, and joins the
+  `windows-runtime` job (floor 277 -> 290). Not changed: `lancedb` still
+  ships in the Windows payload, because `crewai==1.15.4` requires it, and the
+  demonstration application's `CustomerCaseFlow` still creates its memory
+  store. Not established: a safe generated application; the caller-declared
+  risk label limitation in the entry below stands.
+
 - A build from confirmed requirements is no longer refused by Forge's own
   acceptance profile (A-045). The BRD derived from a capsule with confirmed
   requirements puts them under `## BRD-002 Functional requirements`; the

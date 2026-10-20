@@ -182,8 +182,27 @@ def compose_repair_goal(attempt: int, gates: list[GateResult]) -> str:
     return _within(goal, COMPOSED_GOAL_MAX_CHARACTERS, keep="head")
 
 
+class FlowInitializationError(RuntimeError):
+    """CrewAI could not initialise the development flow; nothing was built.
+
+    Raised from `DevelopmentFlow.__init__` with the original failure as its
+    cause and named in its message, so the person reads which component
+    failed and why rather than a symptom it caused later (A-046).
+    """
+
+
 class DevelopmentFlow(Flow):  # type: ignore[misc]
     """CrewAI Flow coordinating bounded Claude Code workers and hard gates."""
+
+    #: NO CREWAI MEMORY (A-046). A CrewAI Flow that declares no memory gets a
+    #: long-term `Memory` created during its initialisation, backed by the
+    #: native `lancedb` vector store. This flow never recalls or remembers --
+    #: nothing in Forge reads or writes CrewAI memory -- so it opts out with
+    #: CrewAI's own switch, the one CrewAI's internal flows use, and the store
+    #: is never imported. On a Windows host whose Application Control policy
+    #: refused that unsigned native library, the store's import was the whole
+    #: of what stopped the flow; the policy is left exactly as it is.
+    _skip_auto_memory: bool = True
 
     def __init__(
         self,
@@ -195,10 +214,23 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         target_repo: str | None = None,
         provider: str | None = None,
     ) -> None:
+        # A failure here is REPORTED, never swallowed (A-046). It used to be
+        # dropped by `except Exception: pass`, which left a flow with no
+        # registered methods; the kickoff then failed with `KeyError:
+        # 'requirements'` and the person read "'requirements'". Nothing is
+        # retried on another backend either: a run that silently swaps its
+        # driver under an unchanged label is the downgrade this repository
+        # forbids.
         try:
             super().__init__()
-        except Exception:
-            pass
+        except Exception as exc:
+            raise FlowInitializationError(
+                "CrewAI could not initialise the development flow "
+                f"({type(exc).__name__}: {exc}). Nothing was built. The cause is in "
+                "CrewAI or a library it loads; on Windows, an Application Control "
+                "policy such as Smart App Control can refuse an unsigned native "
+                "library, and Forge does not bypass or change such a policy."
+            ) from exc
         self.config = config if config is not None else RuntimeAuthorityConfig()
         if worker_mode not in {"deterministic", "claude-code", "in-session"}:
             raise ValueError(f"unsupported worker mode: {worker_mode}")
