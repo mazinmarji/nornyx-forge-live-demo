@@ -822,6 +822,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # disagreed on, the verifier's verbatim copy of the rule held identical,
     # and the derivation refusing a rendering that reads back differently.
     "tests/test_requirement_identity.py": 24,
+    # A-047's operation classification: 39 collected at introduction, floor
+    # at band(39) = 36. A bulk deletion and an external send labelled low or
+    # medium withheld; the first measured cases; no downgrade by relabelling,
+    # in the flow and at the boundary; unregistered, misspelled and
+    # non-string operations refused; an inconsistent operation and capability
+    # refused without spending the grant; the low-impact action still running;
+    # the registry closed and self-consistent; classification not permission.
+    "tests/test_operation_classification.py": 36,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2112,14 +2120,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 7/13/14/15/23/54/73/97 (sum 296, floor 296 - 7 + 1). The rows below are
 # these.
 #
+# A-047 ADDS ONE MODULE AND MOVES NONE: tests/test_operation_classification.py
+# collects 39 (floor band(39) = 36), measured from a fresh collection; the
+# five modules whose tests now name a registered operation keep their counts.
+# 5789 collect across 136 modules. The module-floor sum rises by 36 to 5275
+# and the aggregate follows to 5283, keeping the same 8 above it; band(n)
+# 5175 -> 5211, and the working room below the floor 503 -> 506. THE SLACK
+# THE BANDS GRANT moves by 3, 511 -> 514, the new module sitting 3 above its
+# band. NO SKIP IS ADDED, and the module is not one of the windows-runtime
+# job's. The rows below are these.
+#
 # (rows below):
 #
-#     collected across tests/     5750   (135 modules)
-#     sum of the module floors    5239
-#     band(5750) = ceil(0.9*n)    5175
-#     MINIMUM_COLLECTED           5247
+#     collected across tests/     5789   (136 modules)
+#     sum of the module floors    5275
+#     band(5789) = ceil(0.9*n)    5211
+#     MINIMUM_COLLECTED           5283
 #     above the module sum          8
-#     below what collects         503
+#     below what collects         506
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2341,7 +2359,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 511 in total, and the aggregate refuses
+# per-module bands already grant 514 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2610,7 +2628,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5247
+MINIMUM_COLLECTED = 5283
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2742,6 +2760,7 @@ REQUIRED_MODULES = (
     "tests/test_basic_user_journey.py",
     "tests/test_simulated_journey.py",
     "tests/test_requirement_identity.py",
+    "tests/test_operation_classification.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

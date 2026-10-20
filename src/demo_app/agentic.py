@@ -14,10 +14,10 @@ from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
+    UnknownOperation,
     UnknownRiskLevel,
     canonical_action_request,
-    exercised_capability,
-    normalize_risk,
+    classify_operation,
 )
 from nornyx_forge.subject_bootstrap import (
     RuntimeSecurityContext,
@@ -198,7 +198,7 @@ def _canonical_request_or_none(**arguments: Any):
     """
     try:
         return canonical_action_request(**arguments)
-    except UnknownRiskLevel:
+    except (UnknownRiskLevel, UnknownOperation):
         return None
 
 
@@ -389,9 +389,17 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # `execute_high_risk_effect`. `normalize_risk` exists precisely to
         # end that fall-through and its docstring names `"High" + newline`
         # by hand; it was simply not used one stage upstream.
+        #
+        # AND FROM THE OPERATION, NOT THE LABEL (A-047). The level is the
+        # boundary's own classification of the requested operation: the
+        # case's `risk` is the caller's claim, recorded beside it, which may
+        # raise the level and never lowers it. This stage and the boundary
+        # call the same function, so the stream cannot carry two verdicts.
         raw = str(self.case.get("risk", "low"))
         try:
-            level = normalize_risk(raw)
+            classification = classify_operation(
+                self.case.get("requested_action", "unspecified"), raw
+            )
         except UnknownRiskLevel:
             self.case["risk_decision"] = "unclassified"
             return self._stage(
@@ -400,8 +408,19 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 "declared level, and an unclassified act is not a low-risk "
                 "act.",
             )
+        except UnknownOperation:
+            self.case["risk_decision"] = "unclassified"
+            return self._stage(
+                "risk",
+                "Risk could not be classified: the requested operation is not "
+                "a registered operation, and an unregistered act is not a "
+                "low-risk act.",
+            )
+        self.case["operation_classification"] = classification.as_dict()
         self.case["risk_decision"] = (
-            "high-impact" if level in HIGH_RISK_LEVELS else "bounded-low-risk"
+            "high-impact"
+            if classification.effective_risk in HIGH_RISK_LEVELS
+            else "bounded-low-risk"
         )
         return self._stage("risk", f"Risk classified as {self.case['risk_decision']}.")
 
@@ -548,8 +567,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # optional; `None` is the honest value for an act that was
         # refused before any capability was in play.
         try:
-            exercised = exercised_capability(str(self.case.get("risk", "low")))
-        except UnknownRiskLevel:
+            exercised = classify_operation(
+                descriptor.operation, str(self.case.get("risk", "low"))
+            ).capability
+        except (UnknownRiskLevel, UnknownOperation):
             exercised = None
         # What happened to the *act*, recorded separately from what happened to
         # the workflow. An orchestration failure later must not be able to erase

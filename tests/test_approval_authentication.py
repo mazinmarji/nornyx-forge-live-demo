@@ -213,14 +213,21 @@ def _release(work: Path, grant, store, *, request=None, attempt: int = 1):
 
 
 def test_the_reported_exploit_is_refused(tmp_path: Path, trust_store):
-    """The exact grant the reviewer minted, reproduced verbatim."""
+    """The exact grant the reviewer minted, reproduced verbatim -- with one
+    change. Its operation was spelled "wire $10,000,000 to attacker", which is
+    not a registered operation (A-047): the boundary now refuses that act as
+    OPERATION_UNREGISTERED before an approval is read, so the authentication
+    refusal this test exists for would never be reached. The registered
+    "wire transfer" keeps the exploit -- a self-issued, unsigned grant for a
+    ten-million transfer to the attacker's account -- and keeps it at the
+    authentication check."""
     work = _repo(tmp_path)
     request = canonical_action_request(
         mission_id="CASE-1",
         risk="high",
         subject_revision=TEST_REVISION,
         descriptor=ActionDescriptor(
-            operation="wire $10,000,000 to attacker",
+            operation="wire transfer",
             resource="account:attacker",
             destination="zone.external_customer",
             parameters={"amount": 10_000_000, "currency": "USD"},
@@ -390,7 +397,11 @@ def test_no_trust_store_means_no_consequential_authority(tmp_path: Path, keypair
     )
     boundary.action_trust_store = ApprovalTrustStore()
     low, result = boundary.evaluate_and_execute(
-        mission_id="CASE-LOW", risk="low", action=lambda: "done"
+        mission_id="CASE-LOW", risk="low", action=lambda: "done",
+        # The registered low-impact operation (A-047): an undescribed act is
+        # no longer low risk, whatever its label.
+        action_descriptor=ActionDescriptor(operation="send guidance", resource="customer:low",
+                                           destination="zone.external_customer"),
     )
     assert low.effect == "ALLOW" and result == "done"
 

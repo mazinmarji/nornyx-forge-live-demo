@@ -21,10 +21,17 @@ from nornyx_forge.governed_subject import (
 )
 from nornyx_forge.nornyx_runtime import (
     GOVERNANCE_INTEGRITY_COMPROMISED,
+    ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
     RuntimeContext,
 )
+
+#: The demonstration's registered low-impact operation (A-047). A low-risk
+#: act is one whose OPERATION is low impact; the label alone no longer makes
+#: an undescribed act low risk.
+LOW_IMPACT = ActionDescriptor(operation="send guidance", resource="customer:test",
+                              destination="zone.external_customer")
 
 
 def test_strict_boundary_refuses_instead_of_crashing(tmp_path: Path) -> None:
@@ -55,7 +62,8 @@ def test_fallback_boundary_denies_high_risk_without_executing(tmp_path: Path) ->
 def test_fallback_boundary_allows_low_risk(tmp_path: Path) -> None:
     boundary = _fallback_boundary(tmp_path)
     decision, result = boundary.evaluate_and_execute(
-        mission_id="TEST-LOW", risk="low", action=lambda: "done"
+        mission_id="TEST-LOW", risk="low", action=lambda: "done",
+        action_descriptor=LOW_IMPACT,
     )
     assert decision.effect == "ALLOW"
     assert result == "done"
@@ -375,7 +383,8 @@ def test_high_risk_runs_only_with_an_action_specific_approval(tmp_path: Path) ->
 def test_low_risk_needs_no_action_approval(tmp_path: Path) -> None:
     boundary = _permissive_boundary(tmp_path)
     decision, result = boundary.evaluate_and_execute(
-        mission_id="TEST-LOW-OFFICIAL", risk="low", action=lambda: "done"
+        mission_id="TEST-LOW-OFFICIAL", risk="low", action=lambda: "done",
+        action_descriptor=LOW_IMPACT,
     )
     assert decision.effect == "ALLOW"
     assert result == "done"

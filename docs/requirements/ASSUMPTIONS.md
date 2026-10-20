@@ -7002,6 +7002,10 @@ same statements and no assumption.
    communication declared `low` is allowed. That is an unresolved safety
    limitation; no generated-application safety boundary is claimed until an
    operation-based classification exists and is independently tested.
+   *Amended by A-047:* the demonstration's action boundary now classifies by
+   the registered operation, so that downgrade is closed there. The boundary
+   is not an independently validated runtime boundary for a generated
+   application, and none is claimed.
 
 **Serves.** BRD-F-005 and CLAUDE.md's "Preserve traceability from BRD IDs to
 code, tests, and evidence"; A-035, whose journey now also runs with confirmed
@@ -7076,11 +7080,129 @@ and READY stays refused; no authority boundary moves.
    library is shown absent from the flow's path; any other native library
    CrewAI imports on initialisation or kickoff is outside this measurement,
    and a refusal of one now surfaces as the named error above.
-5. **A safe generated application**, exactly as A-045 states: the runtime
-   action boundary still classifies an action by the risk level its caller
-   declares, which is an unresolved safety limitation.
+5. **A safe generated application**, exactly as A-045 states. *Amended by
+   A-047:* the demonstration's action boundary now classifies by the
+   registered operation rather than the caller's label; it is not an
+   independently validated runtime boundary for a generated application.
 
 **Serves.** A-035, whose journey this makes reproducible on the Windows-first
 target; CLAUDE.md's "configured execution path runs successfully, with the
 observed backend matching the selected backend"; and the repository's rule
 that a run never silently downgrades under an unchanged label.
+
+## A-047 The demonstration's action boundary classifies an act by its registered operation; a caller's risk label may raise the requirement and never lower it
+
+**The defect.** `NornyxActionBoundary.evaluate_and_execute` took an act's
+risk level from the label its caller declared, and the demonstration's HTTP surface takes
+that level from the request body (`CaseInput.risk`). So a case asking to
+"delete all service requests", or to send an external email, labelled `low`
+was released as "Declared low-risk demonstration capability", while the same
+case labelled `high` or `critical` was refused for want of a human approval.
+The verdict followed a word the caller chose. The executed callable is the
+demonstration's local no-op, so nothing was deleted or sent, but the
+authorization decision and its evidence said ALLOW.
+
+**The repair.**
+
+1. **A trusted operation registry.** `nornyx_runtime.OPERATION_REGISTRY` is a
+   closed, read-only table of the operations this demonstration knows. Each
+   entry names its consequence, the risk level that consequence carries and
+   the capability it exercises; an entry whose capability and risk disagree
+   cannot be constructed. One operation is low impact: `send guidance`, the
+   demonstration's local guidance note. The others -- `issue refund`,
+   `refund`, `wire transfer`, `close account`, `delete all service requests`
+   (critical) and `send external email` -- are consequential, and so is
+   `execute_high_risk_action`, the description the boundary gives an act whose
+   caller described nothing.
+2. **Classification from the operation.** `classify_operation(operation,
+   declared_risk)` returns the operation's classification. The effective level
+   is the higher of the registered level and the declared label: the label is
+   an untrusted claim that is recorded and may raise the level (stricter
+   handling), and never lowers it. An operation that is not exactly a
+   registered one -- free text, a different spelling, padded, a non-string --
+   raises `UnknownOperation`. There is no alias, case folding, trimming or
+   prefix match.
+3. **The boundary authorizes the operation's level.** `evaluate_and_execute`
+   classifies the operation the act is described by -- the descriptor that the
+   canonical request and any approval bind to -- immediately after the
+   existing refusal of an unrecognised label, and before either authorization
+   path. An unregistered operation is refused with `OPERATION_UNREGISTERED`,
+   with no callback run and no approval read. Otherwise the effective level
+   replaces the label for everything after it: the capability exercised, the
+   canonical request, the approval requirement, the integrity-refusal record
+   and the fallback's verdict. `canonical_action_request` derives the
+   capability the same way, so the request a caller pre-computes is the one the
+   boundary compares, whatever label it declares; a supplied request that claims
+   the low-risk capability for a consequential operation does not describe the
+   execution and is refused as `REQUEST_CONTEXT_MISMATCH` before any grant is
+   read or spent.
+4. **The demonstration flow uses the same function.** `CustomerCaseFlow`'s risk
+   stage, the capability it records and the action request it reports all come
+   from `classify_operation`, and the case carries the classification beside
+   the caller's label (`operation_classification`). An unregistered operation
+   is `unclassified` in the stage record and refused by the boundary.
+
+**Classification is not authorization.** A classification decides what an act
+is, which capability it exercises and therefore which approval it needs. It
+releases nothing. A registered consequential act still needs an
+action-specific human approval bound to its exact request, that approval is
+still consumed at most once, and the demonstration's fallback still denies
+every consequential act. `test_classification_is_not_permission` holds a
+correctly classified bulk deletion withheld without an approval and with an
+approval bound to a different resource.
+
+**What is unchanged.** Action-specific human approvals; the descriptor and
+request digest binding; the request-context comparison; approval
+authentication and its trust domain; at-most-once consumption and replay
+refusal; the integrity refusal and its record; the evidence ledger and its
+validation; the refusal of an unrecognised label (`RISK_LEVEL_UNKNOWN`); the
+two-tier authorization model (`medium` stays with `low`). The existing suites
+that hold them pass, with these edits, each asserting the same property as
+before: low-risk calls that described no operation now pass the registered
+`send guidance` descriptor (`tests/test_governance_failure.py`, two tests;
+`tests/test_approval_authentication.py`, one); cases whose operation was the
+unregistered `"a"` now request `send guidance`
+(`tests/test_untrusted_text.py`, two tests;
+`tests/test_governance_integrity_authority.py`, two); the self-issued-grant
+exploit is spelled with the registered `wire transfer`, so it still reaches the
+authentication refusal it pins; and the two rows of
+`tests/test_capability_binding.py` that pinned the downgrade itself -- a refund
+labelled `medium` or `low`, executed -- now expect it withheld and recorded as
+`execute_high_risk_effect`.
+
+**How it is shown.** `tests/test_operation_classification.py`: a bulk deletion
+and an external send declared `low` or `medium` are not released; the four
+synthetic cases the defect was first measured with are none of them released;
+for every consequential operation, relabelling from critical to low leaves the
+required capability `execute_high_risk_effect` and the refusal unchanged; at
+the boundary a refund labelled `low` without an approval is withheld, and a
+grant bound to its canonical request is honoured once and refused on replay;
+unregistered, misspelled, padded and non-string operations are refused; an
+act described by nothing is consequential; an inconsistent operation and
+capability is refused without spending the grant; the registered low-impact
+action still runs at `low` and `medium`, a label of `high` raises it, and the
+demonstration scenarios still pass; the registry is read-only and
+self-consistent; denials run no callable, spend no approval and record no
+`action_executed` event.
+
+**What it does NOT establish.**
+
+1. **A runtime boundary for a generated application.** This closes the label
+   downgrade for the demonstration's action boundary. The boundary is not an
+   independently validated runtime boundary for a generated application, a
+   generated application does not inherit the registry, and no completed
+   generated-application safety boundary is claimed.
+2. **That a registered name describes the act.** The registry classifies an
+   operation by its name; the callable that runs is supplied separately and is
+   the demonstration's local no-op. Binding a name to the code that performs it
+   is outside this change.
+3. **Coverage beyond the demonstration.** Operations outside the registry are
+   refused, not classified; widening the registry is a reviewed change to this
+   file, and nothing here is a general policy framework.
+4. **That the HTTP surface offers structured operations.** The page still takes
+   free text; an unregistered text is refused with the registered names in the
+   reason.
+
+**Serves.** BRD-F-004 ("High-risk external actions must be refused in
+autonomous-demo mode") for acts whose caller labels them otherwise; A-045 and
+A-046's statement of this limitation, which this narrows to what remains.

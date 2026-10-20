@@ -96,6 +96,22 @@ Consequences when no human approval record exists:
 The fallback is a cooperative control, not the official Nornyx authorization
 path. Do not describe fallback decisions as Nornyx runtime authorization.
 
+## What an act is, and who says so
+
+The action boundary classifies an act by its registered operation
+(`OPERATION_REGISTRY`, A-047), never by the risk label its caller declares. A
+label is an untrusted claim: it may raise the requirement and never lowers it,
+and an operation that is not registered is refused. This closes, for the
+demonstration's action boundary, the downgrade in which a destructive or
+external act labelled `low` was released.
+
+Two limits travel with that sentence. Classification is not authorization: a
+correctly classified consequential act still needs its action-specific human
+approval, and the fallback still denies it. And this is the demonstration's
+action boundary, not an independently validated runtime boundary for a
+generated application: a generated application does not inherit the registry,
+and no generated-application safety boundary is claimed.
+
 ## Evaluation instant
 
 Temporal validity is evaluated at `runtime_as_of()`, which returns the real
