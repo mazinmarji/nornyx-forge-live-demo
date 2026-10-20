@@ -193,7 +193,7 @@ CORPUS = [
     "## BRD-002: Colon\n\nText.\n",
     "## BRD-001 Twice\n\nOne.\n\n### BRD-001 Again\n\nTwo.\n",
     "## BRD-001 Purpose\r\n\r\nWindows line endings.\r\n",
-    "## BRD-001 Purpose\n\nText ## BRD-009 Hidden\n\nInjected.\n",
+    "## BRD-001 Purpose\n\nText\u2028## BRD-009 Hidden\n\nInjected.\n",
     "##\nBRD-009 Split\n\nText.\n",
     "# BRD-001 Title level\n\nText.\n",
     "## Purpose\n\nNo identifier at all.\n",
@@ -229,7 +229,7 @@ def test_the_derivation_reads_back_as_exactly_the_confirmed_identities():
 
 
 @pytest.mark.parametrize("text", [
-    "Agents work. ## BRD-999 Injected requirement",
+    "Agents work.\u2028## BRD-999 Injected requirement",
     "Agents work.\x85### BRD-F-999 Injected requirement",
 ])
 def test_a_rendering_that_would_read_back_differently_is_refused(text: str):
