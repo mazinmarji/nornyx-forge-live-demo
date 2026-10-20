@@ -14,6 +14,17 @@ against it: every confirmed requirement becomes a leaf heading the parser
 reads back, so what the flow will build from is provably what the human
 confirmed -- not a paraphrase, not a superset.
 
+THE IDENTITIES ARE CHECKED, NOT ASSUMED (A-045). Before it returns, the
+derivation reads its own rendering through `brd_requirement_identity`, the
+one rule the parser and the acceptance verifier also apply, and refuses a
+rendering whose requirements are not exactly `BRD-001` and one `BRD-F-NNN`
+per confirmed row, whose only section is the `BRD-002` heading above those
+rows, or that holds any malformed identifier heading. So the BRD a basic
+user's confirmation produces is one the verifier can accept, and a confirmed
+text that would change what a reader takes as a requirement -- a line
+separator `str.splitlines` honours, say -- is refused here rather than
+built from.
+
 `layer.domain`: mappings and strings in, one string out. Writing the file
 is the caller's act.
 """
@@ -21,6 +32,8 @@ is the caller's act.
 from __future__ import annotations
 
 from typing import Any, Mapping
+
+from .requirements import brd_requirement_identity
 
 
 class BrdAuthoringError(Exception):
@@ -81,7 +94,21 @@ def brd_from_capsule(document: Mapping[str, Any]) -> str:
                 ),
                 "",
             ])
-    return "\n".join(lines)
+    rendered = "\n".join(lines)
+    identity = brd_requirement_identity(rendered)
+    expected = ["BRD-001", *(f"BRD-F-{index:03d}" for index in range(1, len(requirements) + 1))]
+    if (
+        [entry["id"] for entry in identity["requirements"]] != expected
+        or identity["sections"] != (["BRD-002"] if requirements else [])
+        or identity["malformed"]
+    ):
+        raise BrdAuthoringError(
+            "the derived BRD does not read back, under the requirement-identity "
+            "rule, as exactly the confirmed intent and requirements; a confirmed "
+            "text changes which headings a reader takes as requirements, so it is "
+            "refused rather than rendered"
+        )
+    return rendered
 
 
 def confirmed_requirement_texts(document: Mapping[str, Any]) -> tuple[str, ...]:

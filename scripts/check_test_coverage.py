@@ -806,8 +806,17 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # provider adapter path, which does not run, and the eligibility verdict
     # simulated; three defects the verifier must refuse; the seam removed;
     # and a guard that refuses non-loopback use of the socket entry points it
-    # names, in the test's own process.
-    "tests/test_simulated_journey.py": 7,
+    # names, in the test's own process. 7 -> 9 for A-045, floor band(9) = 9:
+    # the journey with confirmed requirements reaching GOVERN, and the same
+    # journey refused for a single untested requirement.
+    "tests/test_simulated_journey.py": 9,
+    # A-045's one requirement-identity rule: 26 collected at introduction,
+    # floor at band(26) = 24. Forge's derived BRD against Forge's own
+    # verifier, the negatives that keep traceability (an untested confirmed
+    # requirement and an untested purpose refused), the shapes the old rules
+    # disagreed on, the verifier's verbatim copy of the rule held identical,
+    # and the derivation refusing a rendering that reads back differently.
+    "tests/test_requirement_identity.py": 24,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2075,16 +2084,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # rises by 164 to 5210 and the aggregate follows to 5218, keeping the same 8
 # above it; band(n) 4983 -> 5147, and the working room below the floor 482 ->
 # 500. THE SLACK THE BANDS GRANT moves by 18, 490 -> 508, the new module sitting
-# 18 above its band. NO SKIP IS ADDED where the census runs. The rows below are these.
+# 18 above its band. NO SKIP IS ADDED where the census runs.
+#
+# A-045 ADDS ONE MODULE AND MOVES ONE, measured from fresh collections of the
+# base and of this tree, which differ only in these two modules:
+# tests/test_requirement_identity.py collects 26 (floor band(26) = 24) and
+# tests/test_simulated_journey.py collects 7 -> 9 (floor band(7) = 7 ->
+# band(9) = 9). 5746 collect across 135 modules. The module-floor sum rises by
+# 26 to 5236 and the aggregate follows to 5244, keeping the same 8 above it;
+# band(n) 5147 -> 5172, and the working room below the floor 500 -> 502. THE
+# SLACK THE BANDS GRANT moves by 2, 508 -> 510, the new module sitting 2 above
+# its band and the journey module on its own. NO SKIP IS ADDED. The rows below
+# are these.
 #
 # (rows below):
 #
-#     collected across tests/     5718   (134 modules)
-#     sum of the module floors    5210
-#     band(5718) = ceil(0.9*n)    5147
-#     MINIMUM_COLLECTED           5218
+#     collected across tests/     5746   (135 modules)
+#     sum of the module floors    5236
+#     band(5746) = ceil(0.9*n)    5172
+#     MINIMUM_COLLECTED           5244
 #     above the module sum          8
-#     below what collects         500
+#     below what collects         502
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2306,7 +2326,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 508 in total, and the aggregate refuses
+# per-module bands already grant 510 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2575,7 +2595,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5218
+MINIMUM_COLLECTED = 5244
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2706,6 +2726,7 @@ REQUIRED_MODULES = (
     "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
     "tests/test_simulated_journey.py",
+    "tests/test_requirement_identity.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

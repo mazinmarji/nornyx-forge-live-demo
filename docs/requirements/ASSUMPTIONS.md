@@ -5058,6 +5058,12 @@ each refused by the verifier's own gates while the provider reports success.
 `test_without_the_seam_the_real_provider_is_reached_and_the_build_stops`
 removes the simulated provider and measures the real routed worker being
 reached and the build stopping.
+`test_the_journey_with_confirmed_requirements_reaches_govern` walks the same
+path with the capsule's `requirements` field confirmed, so the derived BRD
+carries a requirements section, and reaches GOVERN; and
+`test_a_confirmed_requirement_the_provider_left_untested_is_refused` shows a
+build whose provider tested every confirmed requirement but the last refused
+by name (A-045).
 
 **What it does NOT establish.**
 
@@ -6913,3 +6919,89 @@ instead of being picked.
 **Serves.** A-043, which this extends; A-029 for the restoration and the seal;
 A-040 for the folder the receipt describes. No functional BRD requirement is
 implemented.
+
+## A-045 One requirement-identity rule decides which BRD headings are requirements, for the derivation, the parser and the verifier
+
+**The defect.** Three readers of one BRD held three rules. The derivation
+(`brd_from_capsule`) renders a capsule's confirmed requirements under a
+section heading, `## BRD-002 Functional requirements`, with each requirement
+as a `### BRD-F-NNN` heading beneath it. The parser the flow builds from
+(`parse_brd`) skipped a heading with an empty body, so it never read
+`BRD-002` as a requirement. The trusted greenfield verifier counted every
+`BRD-*` heading of levels 2 to 6 as a requirement and required a test to name
+each one. So every build from confirmed structured requirements was refused
+with "tests do not reference BRD-002", whatever was built, and only an
+intent-only capsule could reach GOVERN. The rules disagreed on other shapes
+too: an identifier heading at level 4 to 6 (folded into its parent's statement
+by the parser, demanded by the verifier), an untitled one or one whose
+identifier runs into punctuation (ignored by the parser, demanded by the
+verifier), a duplicated identifier (two requirements in the parser, one in the
+verifier), and a line separator that `str.splitlines` honours and a multi-line
+regular expression does not.
+
+**The rule.** `nornyx_forge.requirements.brd_requirement_identity` is the one
+definition. An identifier heading is a level 2 to 6 heading whose text begins
+with `BRD-` followed by upper-case letters, digits or hyphens; its body runs to
+the next identifier heading at any level or the next heading at its own level
+or above; its statement is the body's non-blank lines. It is a REQUIREMENT if
+its identifier is well formed (`BRD-` and hyphen-separated groups of upper-case
+letters and digits), is followed by whitespace and a title, is carried by no
+other heading, and its statement is non-empty. It is a SECTION if it is well
+formed with an empty statement and at least one requirement beneath it. Anything
+else is MALFORMED, with a reason. `parse_brd` returns exactly the requirements,
+in document order, and reports each malformed heading as an assumption. The
+derivation reads its own rendering back through the rule and refuses one whose
+requirements are not exactly `BRD-001` and one `BRD-F-NNN` per confirmed row,
+whose only section is not `BRD-002` (when there are rows), or that holds a
+malformed heading. The verifier requires a test to name every requirement and
+refuses every malformed heading by name ("BRD.md heading BRD-002 is neither a
+requirement nor a section: ...").
+
+**Why the verifier carries a copy.** The verifier executes from a
+digest-verified snapshot under isolated Python and imports no first-party code
+(A-019), so it cannot import the parser's module. It carries the function
+verbatim, and `test_the_verifier_carries_the_rule_verbatim` compares the two
+sources character for character; `test_every_reader_takes_the_same_identities`
+runs both over a corpus of the shapes above. The architecture contract records
+the derivation's new dependency on the BRD parsing component.
+
+**What is not weakened, and how that is shown.** Every requirement with a
+statement still needs a test that names it: the verifier refuses a derived BRD
+whose tests omit one confirmed requirement, or the purpose requirement, by name
+(`test_a_confirmed_requirement_no_test_names_is_still_refused`), and the
+requirements-bearing journey refuses a build whose provider left the last
+confirmed requirement untested, naming that requirement and no section
+(`test_a_confirmed_requirement_the_provider_left_untested_is_refused`). Every
+identifier heading the old verifier demanded a reference for is still either
+demanded or refused, with one exception, which is the repair: a well-formed
+SECTION with requirements beneath it states nothing, so no test can trace to
+it, and it is no longer demanded. Shapes the old verifier accepted once a test
+merely named the identifier -- an empty identifier heading with nothing beneath
+it, an untitled or punctuated one, a malformed identifier, a duplicate -- are
+now refused, whatever the tests say. The profile's gate set and its other six
+checks are unchanged. Over Forge's own `BRD.md`, the only BRD-bearing document
+in the repository, the old and new parsers read the same requirements with the
+same statements and no assumption.
+
+**What it does NOT establish.**
+
+1. **That a test which names a requirement tests it.** Traceability is a
+   reference check, as before; the test-execution gate runs the tests, and
+   neither reads what a test means.
+2. **Markdown semantics.** The rule reads ATX headings by line. A heading
+   inside a fenced code block is a heading to it, as it was to both earlier
+   readers, and Setext headings are not headings to it.
+3. **That a statement is the confirmed text.** The derivation's new check is on
+   identities. That each statement reads back as the confirmed text is held, as
+   before, by `tests/test_brd_authoring.py`'s round trip against the parser.
+4. **A safe generated application.** A build that reaches GOVERN has passed the
+   greenfield profile and nothing more (A-035, A-032). The runtime action
+   boundary still classifies an action by the risk level its caller declares,
+   not by the operation it performs, so a destructive operation or an external
+   communication declared `low` is allowed. That is an unresolved safety
+   limitation; no generated-application safety boundary is claimed until an
+   operation-based classification exists and is independently tested.
+
+**Serves.** BRD-F-005 and CLAUDE.md's "Preserve traceability from BRD IDs to
+code, tests, and evidence"; A-035, whose journey now also runs with confirmed
+requirements; A-019, whose self-contained verifier this keeps self-contained.

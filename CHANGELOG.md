@@ -2,6 +2,27 @@
 
 ## Unreleased — hardening from adversarial review
 
+- A build from confirmed requirements is no longer refused by Forge's own
+  acceptance profile (A-045). The BRD derived from a capsule with confirmed
+  requirements puts them under `## BRD-002 Functional requirements`; the
+  flow's parser read that empty section heading as no requirement, while the
+  greenfield verifier counted every `BRD-*` heading and refused every such
+  build with "tests do not reference BRD-002". One rule,
+  `requirements.brd_requirement_identity`, now decides which headings are
+  requirements, which are sections (no statement, requirements beneath) and
+  which are malformed; the parser reads through it, the derivation checks its
+  own rendering against it, and the self-contained verifier carries it
+  verbatim, held identical by test. Nothing traced before goes untraced except
+  a section, which states nothing: every requirement still needs a test that
+  names it, and an empty, untitled, punctuated, malformed or duplicated
+  identifier heading, which the old verifier accepted once a test named it,
+  is now refused. The simulated journey gains a requirements-bearing run that
+  reaches GOVERN and one that is refused for a single untested requirement.
+  Not established: a safe generated application. The runtime action boundary
+  still classifies an action by the risk level its caller declares, so a
+  destructive operation or an external communication declared `low` is
+  allowed; that is an unresolved safety limitation.
+
 - The architecture gate folds letter case where Windows' import system does
   (A-041, amendment). Discovery compared file suffixes exactly, while CPython
   on Windows imports `evil.PY` as `evil`, a `.PYW` and a sourceless `.PYC`

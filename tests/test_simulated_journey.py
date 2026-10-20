@@ -80,6 +80,16 @@ from nornyx_forge.subject_bootstrap import resolve_packaged_root
 #: The page's actor: `actor()` in `_PAGE` always declares a human.
 HUMAN = {"kind": "human", "ident": "casey"}
 NEED = "Build a customer support portal."
+#: Confirmed requirements for the requirements-bearing journey (A-045): the
+#: capsule's `requirements` field, which the derivation renders under a
+#: `## BRD-002 Functional requirements` section. Forge's own synthetic
+#: specimen, not anyone's product.
+REQUIREMENTS = [
+    {"id": "RQ-1", "text": "A support agent opens a case with a title and a priority."},
+    {"id": "RQ-2", "text": "A support agent assigns a case to a colleague."},
+    {"id": "RQ-3", "text": "A support agent moves a case from open to resolved."},
+    {"id": "RQ-4", "text": "A support agent sees the cases grouped by priority."},
+]
 PROVIDER = "codex"
 #: The shipped composition answers only a loopback Host, and the redeem
 #: route requires an Origin that names it.
@@ -113,7 +123,8 @@ def simulated_application(requirements: dict[str, str], defect: str | None = Non
     names the id and asserts the statement. `defect` makes the negative
     specimens: `absent` writes nothing, `untraced` writes tests that name no
     requirement, `failing` serves the wrong statements so the tests fail
-    when they are run.
+    when they are run, and `omit-last` writes no test for the last
+    requirement -- every other one is tested and passes.
     """
     if defect == "absent":
         return {}
@@ -137,11 +148,14 @@ def simulated_application(requirements: dict[str, str], defect: str | None = Non
             f"    assert len(REQUIREMENTS) == {len(served)}\n"
         )
     else:
+        tested = list(requirements.items())
+        if defect == "omit-last":
+            tested = tested[:-1]
         tests = "from simulated_app import requirement\n" + "".join(
             f"\n\ndef test_{ident.lower().replace('-', '_')}():\n"
             f"    # {ident}\n"
             f"    assert requirement({ident!r}) == {text!r}\n"
-            for ident, text in requirements.items()
+            for ident, text in tested
         )
     return {"src/simulated_app.py": source, "tests/test_simulated_app.py": tests}
 
@@ -323,11 +337,15 @@ def _simulated_eligibility(provider: str, platform: str) -> GovernedEligibility:
                                confinement="simulated", reason=SIMULATED_ELIGIBILITY)
 
 
-def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvider | None) -> Journey:
+def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvider | None,
+          requirements: list[dict[str, str]] | None = None) -> Journey:
     """Start Forge and walk the journey to the end of the build.
 
     Everything asserted here holds on every run whatever the provider does,
     so a deviation anywhere before the build fails the test at that step.
+    `requirements`, when given, are proposed and confirmed after the intent
+    as the capsule's `requirements` field, the shape the BRD derivation
+    renders under a section heading.
     """
     run = Journey(base, provider)
     run.project.mkdir(parents=True)
@@ -380,14 +398,23 @@ def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvid
     assert _call(client, "POST", "/api/proposals/P-1/confirm", 200, "confirm the intent",
                  json={"actor": HUMAN}) == {"proposal_id": "P-1", "status": "confirmed"}
 
+    expected_authority: dict[str, Any] = {"project_name": "Support Portal", "intent": NEED}
+    if requirements:
+        assert _call(client, "POST", "/api/proposals", 200, "state the requirements", json={
+            "field": "requirements", "value": requirements, "actor": HUMAN}) == {
+                "proposal_id": "P-2", "status": "open"}
+        _call(client, "POST", "/api/proposals/P-2/confirm", 200, "confirm the requirements",
+              json={"actor": HUMAN})
+        expected_authority["requirements"] = requirements
+
     # Select a provider. The verdict the surface serves is the seam's.
+    provider_proposal = "P-3" if requirements else "P-2"
     assert _call(client, "POST", "/api/proposals", 200, "choose the provider", json={
-        "field": "provider", "value": {"name": PROVIDER}, "actor": HUMAN})["proposal_id"] == "P-2"
-    _call(client, "POST", "/api/proposals/P-2/confirm", 200, "confirm the provider",
+        "field": "provider", "value": {"name": PROVIDER}, "actor": HUMAN})["proposal_id"] == provider_proposal
+    _call(client, "POST", f"/api/proposals/{provider_proposal}/confirm", 200, "confirm the provider",
           json={"actor": HUMAN})
     chosen = run.state("provider chosen")
-    assert chosen["authoritative"] == {"project_name": "Support Portal", "intent": NEED,
-                                       "provider": {"name": PROVIDER}}
+    assert chosen["authoritative"] == {**expected_authority, "provider": {"name": PROVIDER}}
     assert chosen["provider_eligibility"] == _simulated_eligibility(
         PROVIDER, onboarding_app.served_platform()).as_dict()
     assert chosen["experience"]["stage"] == "DISCOVER"
@@ -613,6 +640,81 @@ def test_two_runs_of_the_simulated_journey_record_the_same_outcome(
     assert one["generated"] and one["views"]
     for key in one:
         assert one[key] == two[key], f"the two runs recorded different {key}"
+
+
+def test_the_journey_with_confirmed_requirements_reaches_govern(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The requirements-bearing journey (A-045). The same path with the
+    capsule's `requirements` field confirmed: the derived BRD carries the
+    requirements under its `## BRD-002 Functional requirements` section, the
+    flow builds from exactly the confirmed identities, the simulated provider
+    tests each one, and the real verifier accepts -- where it used to refuse
+    every such build with "tests do not reference BRD-002", a section heading
+    that states nothing and that the flow's own parser never read as a
+    requirement."""
+    provider = SimulatedProvider()
+    run = _walk(monkeypatch, tmp_path, provider, requirements=REQUIREMENTS)
+    status, project = run.status, run.project
+    assert status["status"] == "finished" and status["accepted"] is True, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "GOVERN", "status": "active"}
+    result = status["result"]
+
+    expected = ["BRD-001", *(f"BRD-F-{index:03d}" for index in range(1, len(REQUIREMENTS) + 1))]
+    assert "## BRD-002 Functional requirements" in (project / "BRD.md").read_text(
+        encoding="utf-8").splitlines()
+    model = parse_brd(project / "BRD.md")
+    assert [item.id for item in model.requirements] == expected
+    assert [item.statement for item in model.requirements] == [
+        NEED, *(row["text"] for row in REQUIREMENTS)]
+    assert model.assumptions == ()
+    assert result["requirements"] == expected
+    assert provider.written == simulated_application(
+        {item.id: item.statement for item in model.requirements})
+    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == [
+        *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
+        *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
+        ("build-evidence-ledger-valid-before-verdict", True)]
+    traceability = next(gate for gate in result["gates"]
+                        if gate["name"] == "greenfield:requirements-traceability")
+    assert traceability["detail"] == f"tests reference all {len(expected)} BRD requirement headings"
+
+    persisted = run.store().load_experience()
+    assert _events(persisted) == [
+        ("started", "DISCOVER", "casey", "human"),
+        ("advanced", "CONFIRM", "casey", "human"),
+        ("advanced", "BUILD", "casey", "human"),
+        ("advanced", "TEST", "forge-onboarding", "system"),
+        ("advanced", "GOVERN", "forge-onboarding", "system"),
+    ]
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "governance_validation" in refused["refused"]
+    assert run.store().load_experience() == persisted, "a refused READY moved the lifecycle"
+    assert run.reached == [] and run.attempts == []
+
+
+def test_a_confirmed_requirement_the_provider_left_untested_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The negative of the journey above: the provider reports success and
+    tests every confirmed requirement but the last. The verifier refuses the
+    build, naming that requirement and nothing else -- not the section
+    heading above it -- and the lifecycle records a failed BUILD."""
+    monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "0")
+    provider = SimulatedProvider("omit-last")
+    run = _walk(monkeypatch, tmp_path, provider, requirements=REQUIREMENTS)
+    status = run.status
+    assert status["status"] == "finished" and status["accepted"] is False, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
+    result = status["result"]
+    failed = {gate["name"]: gate["detail"] for gate in result["gates"] if not gate["passed"]}
+    assert list(failed) == ["greenfield:requirements-traceability", "greenfield:test-execution"]
+    last = f"BRD-F-{len(REQUIREMENTS):03d}"
+    assert f"tests do not reference {last}" in failed["greenfield:requirements-traceability"]
+    assert failed["greenfield:requirements-traceability"] == f"tests do not reference {last}"
+    persisted = run.store().load_experience()
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, persisted["evidence"]
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "failed at BUILD; retry it" in refused["refused"]
+    assert run.reached == [] and run.attempts == []
 
 
 @pytest.mark.parametrize("defect, refused_by", [
