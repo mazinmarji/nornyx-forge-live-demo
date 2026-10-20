@@ -614,7 +614,9 @@ def classify_operation(operation: object, declared_risk: object) -> OperationCla
     label always give the same classification.
     """
     declared = normalize_risk(declared_risk)
-    if not isinstance(operation, str) or operation not in OPERATION_REGISTRY:
+    # EXACTLY `str`, not an instance of it: a subclass can redefine equality
+    # and hashing and so match a registered key it does not spell.
+    if type(operation) is not str or operation not in OPERATION_REGISTRY:
         shown = repr(operation)
         if len(shown) > 120:
             shown = shown[:117] + "..."
@@ -3465,6 +3467,7 @@ class NornyxActionBoundary:
         action_request: ActionRequest | None = None,
         action_descriptor: ActionDescriptor | None = None,
         attempt: int = 1,
+        classification: OperationClassification | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = normalize_risk(risk) in HIGH_RISK_LEVELS
@@ -3762,6 +3765,7 @@ class NornyxActionBoundary:
                     authentication_evidence=authentication_evidence,
                     release_failure=release_failure,
                     effect_withheld=effect_withheld,
+                    classification=classification,
                 )
                 raise
             recorder.record_observation(
@@ -3822,6 +3826,7 @@ class NornyxActionBoundary:
             release_reason=release_reason,
             authentication_evidence=authentication_evidence,
             effect_withheld=effect_withheld,
+            classification=classification,
         )
         if withheld:
             return RuntimeDecision(
@@ -3857,6 +3862,7 @@ class NornyxActionBoundary:
         authentication_evidence,
         release_failure: str = "",
         effect_withheld: dict | None = None,
+        classification: OperationClassification | None = None,
     ) -> dict:
         """Write the event stream and the report. The ONLY place either is written.
 
@@ -3880,6 +3886,11 @@ class NornyxActionBoundary:
                 "action_binding": release_reason,
                 "approval_authentication": authentication_evidence,
             }
+            if classification is not None:
+                # What the act IS and what its caller CLAIMED, side by side
+                # (A-047). The effective level is what was authorized; the
+                # declared label is kept so an attempted downgrade is visible.
+                report["operation_classification"] = classification.as_dict()
             if effect_withheld is not None:
                 # The counterpart to `effect_release`. Recorded here because
                 # Nornyx's observation vocabulary has no term for withholding
@@ -4037,6 +4048,7 @@ class NornyxActionBoundary:
                 action_request=action_request,
                 action_descriptor=action_descriptor,
                 attempt=attempt,
+                classification=classification,
             )
             return decision, result
         if not self.allow_fallback:

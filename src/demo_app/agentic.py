@@ -461,7 +461,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # already knows, so it derives those itself: a caller cannot name someone
         # else's mission and have an approval validated against the name it gave.
         descriptor = ActionDescriptor(
-            operation=str(self.case.get("requested_action", "unspecified")),
+            # THE VALUE THE RISK STAGE CLASSIFIED, unchanged. `str()` here
+            # turned a non-string the stage had refused into the registered
+            # name it renders as, and the boundary released it (A-047 review).
+            operation=self.case.get("requested_action", "unspecified"),
             resource=str(self.case.get("customer", "unknown")),
             destination=EXTERNAL_TRUST_ZONE,
             parameters={

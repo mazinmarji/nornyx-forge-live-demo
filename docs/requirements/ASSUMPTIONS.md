@@ -7185,6 +7185,18 @@ demonstration scenarios still pass; the registry is read-only and
 self-consistent; denials run no callable, spend no approval and record no
 `action_executed` event.
 
+**Review of the first head.** The independent review of the first head found
+two defects, each repaired with a test that failed before the repair. The risk
+stage refused a non-string operation that renders as a registered name, and the
+execution stage then `str()`-ed it into the descriptor, so the boundary saw
+`send guidance` and released it: the descriptor now carries the value the stage
+classified, unchanged, and only an exact `str` can name a registered operation
+(a subclass can redefine equality and hashing). And the authorizing path
+replaced the declared label with the effective level and recorded neither, so
+an attempted downgrade left no trace in its report: the report now carries the
+classification, declared label included
+(`test_the_official_path_records_the_declared_label_beside_the_classification`).
+
 **What it does NOT establish.**
 
 1. **A runtime boundary for a generated application.** This closes the label

@@ -364,3 +364,67 @@ def test_classification_is_not_permission(tmp_path: Path):
         )
         assert decision.effect == "DENY", decision
     assert executed == []
+
+
+# ---------------------------------------------------------------------------
+# Review findings on the first head (Codex, P2 x2)
+# ---------------------------------------------------------------------------
+
+class _NamedLikeARegisteredOperation:
+    """Not a string, but renders as one: `str()` of it is a registered name."""
+
+    def __str__(self) -> str:
+        return LOW_IMPACT
+
+
+class _StrSubclass(str):
+    """A string subclass that claims equality with the low-impact operation."""
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return hash(LOW_IMPACT)
+
+
+@pytest.mark.parametrize("operation", [_NamedLikeARegisteredOperation(),
+                                       _StrSubclass("delete everything")],
+                         ids=["renders-as-registered", "str-subclass"])
+def test_an_operation_that_only_renders_as_registered_is_refused(tmp_path: Path, operation):
+    """FIRST-HEAD FINDING 1. The risk stage refused a non-string operation,
+    and the execution stage then `str()`-ed the same value into the
+    descriptor, so the boundary saw `send guidance` and released it. The
+    value the stage classified is the value the boundary classifies, and only
+    an exact `str` can name a registered operation."""
+    case = _run(tmp_path, operation, "low")
+    _assert_not_released(case, tmp_path)
+    assert case["decision"]["code"] == "OPERATION_UNREGISTERED", case["decision"]
+    assert case["risk_decision"] == "unclassified"
+
+
+def test_the_official_path_records_the_declared_label_beside_the_classification(tmp_path: Path):
+    """FIRST-HEAD FINDING 2. On the authorizing path the boundary replaced the
+    declared label with the effective level and recorded neither the label
+    nor the classification, so a bulk deletion submitted as `low` was audited
+    only as `critical` and the attempted downgrade left no trace. The report
+    now carries the classification, declared label included, on a refusal and
+    on a release alike."""
+    boundary = _permissive_boundary(tmp_path, as_of=NOW)
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-AUDIT", risk="low", action=lambda: "ran",
+        action_descriptor=ActionDescriptor(operation=BULK_DELETE, resource="tracker:all",
+                                           destination="zone.external_customer"),
+    )
+    assert decision.effect == "DENY"
+    recorded = decision.evidence.get("operation_classification")
+    assert recorded == {"operation": BULK_DELETE, "consequence": "destructive_bulk_deletion",
+                        "registered_risk": "critical", "declared_risk": "low",
+                        "effective_risk": "critical",
+                        "capability": "execute_high_risk_effect"}, decision.evidence
+    allowed, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-AUDIT-LOW", risk="medium", action=lambda: "ran",
+        action_descriptor=ActionDescriptor(operation=LOW_IMPACT, resource="customer:a",
+                                           destination="zone.external_customer"),
+    )
+    assert allowed.effect == "ALLOW"
+    assert allowed.evidence["operation_classification"]["declared_risk"] == "medium"
