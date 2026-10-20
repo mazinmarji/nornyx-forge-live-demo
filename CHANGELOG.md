@@ -2,6 +2,45 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The development flow creates no CrewAI memory store, and a failure to
+  initialise it is reported by name (A-046). CrewAI created a long-term
+  `Memory`, backed by the native `lancedb` store, for every flow declaring
+  none; on a Windows host whose Smart App Control refused that unsigned
+  library, `DevelopmentFlow.__init__` swallowed the failure and the build
+  failed as "'requirements'". Forge never uses CrewAI memory, so the flow
+  opts out with CrewAI's own switch and the store is never imported; a
+  failure of CrewAI's initialisation now raises `FlowInitializationError`
+  naming the cause, before any worker runs, with no fallback. No security
+  setting is changed or bypassed. `tests/test_simulated_journey.py` gains
+  the blocked library reproduced in-process (the journey reaches GOVERN) and
+  an initialisation failure reported by name, and joins the
+  `windows-runtime` job (floor 277 -> 290). Not changed: `lancedb` still
+  ships in the Windows payload, because `crewai==1.15.4` requires it, and the
+  demonstration application's `CustomerCaseFlow` still creates its memory
+  store. Not established: a safe generated application; the caller-declared
+  risk label limitation in the entry below stands.
+
+- A build from confirmed requirements is no longer refused by Forge's own
+  acceptance profile (A-045). The BRD derived from a capsule with confirmed
+  requirements puts them under `## BRD-002 Functional requirements`; the
+  flow's parser read that empty section heading as no requirement, while the
+  greenfield verifier counted every `BRD-*` heading and refused every such
+  build with "tests do not reference BRD-002". One rule,
+  `requirements.brd_requirement_identity`, now decides which headings are
+  requirements, which are sections (no statement, requirements beneath) and
+  which are malformed; the parser reads through it, the derivation checks its
+  own rendering against it, and the self-contained verifier carries it
+  verbatim, held identical by test. Nothing traced before goes untraced except
+  a section, which states nothing: every requirement still needs a test that
+  names it, and an empty, untitled, punctuated, malformed or duplicated
+  identifier heading, which the old verifier accepted once a test named it,
+  is now refused. The simulated journey gains a requirements-bearing run that
+  reaches GOVERN and one that is refused for a single untested requirement.
+  Not established: a safe generated application. The runtime action boundary
+  still classifies an action by the risk level its caller declares, so a
+  destructive operation or an external communication declared `low` is
+  allowed; that is an unresolved safety limitation.
+
 - The architecture gate folds letter case where Windows' import system does
   (A-041, amendment). Discovery compared file suffixes exactly, while CPython
   on Windows imports `evil.PY` as `evil`, a `.PYW` and a sourceless `.PYC`

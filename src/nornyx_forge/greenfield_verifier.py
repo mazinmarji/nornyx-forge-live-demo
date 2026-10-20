@@ -991,6 +991,111 @@ def _side_effect_module(path: Path, root: Path) -> bool:
     )
 
 
+#: THE REQUIREMENT-IDENTITY RULE, carried verbatim (A-045). This verifier imports
+#: no first-party code, so the function below is a COPY of
+#: `nornyx_forge.requirements.brd_requirement_identity`, which `parse_brd` and
+#: the BRD derivation use. `test_the_verifier_carries_the_rule_verbatim` holds
+#: the two sources identical character for character: change the rule there and
+#: copy it here in the same commit, or the suite fails.
+def brd_requirement_identity(text: str) -> dict[str, list[Any]]:
+    """THE requirement-identity rule: which BRD headings are requirements.
+
+    One definition for every reader of a BRD (A-045). `parse_brd` reads
+    requirements through it, `brd_authoring` checks its own rendering
+    against it, and the trusted greenfield verifier, which imports no
+    first-party code, carries this function verbatim, held identical by
+    `tests/test_requirement_identity.py`.
+
+    Lines are `str.splitlines()` lines. An IDENTIFIER HEADING is a level 2
+    to 6 heading whose text begins with `BRD-` followed by upper-case
+    letters, digits or hyphens. Its BODY is the lines after it up to the
+    next identifier heading at any level or the next heading at its own or
+    a higher level; a deeper heading without an identifier is body text. Its
+    STATEMENT is the body's non-blank lines, stripped of a bullet marker and
+    joined by single spaces. Each identifier heading is exactly one of:
+
+    - a REQUIREMENT: its identifier is `BRD-` and hyphen-separated groups of
+      upper-case letters and digits, followed by whitespace and a title; no
+      other identifier heading carries the same identifier; and its
+      statement is non-empty;
+    - a SECTION: the same, with an empty statement and at least one
+      requirement among the identifier headings nested beneath it; it
+      states nothing, so nothing traces to it;
+    - MALFORMED: anything else, with the reason. A malformed heading is
+      never dropped silently: the parser reports it and the verifier
+      refuses the BRD.
+
+    Returns plain data, in document order: `requirements` (id, level, title,
+    statement), `sections` (ids) and `malformed` (id, reason).
+    """
+    import re
+
+    identifier_heading = re.compile(r"^(#{2,6})\s+(BRD-[A-Z0-9-]+)\b(.*)$")
+    other_heading = re.compile(r"^(#{1,6})\s+.+?\s*$")
+    well_formed = re.compile(r"^BRD-[A-Z0-9]+(?:-[A-Z0-9]+)*$")
+    bullet = re.compile(r"^\s*[-*]\s+(.+?)\s*$")
+
+    lines = text.splitlines()
+    headings: list[tuple[int, int, str | None, str]] = []
+    for index, line in enumerate(lines):
+        match = identifier_heading.match(line)
+        if match:
+            headings.append((index, len(match.group(1)), match.group(2), match.group(3)))
+            continue
+        match = other_heading.match(line)
+        if match:
+            headings.append((index, len(match.group(1)), None, ""))
+
+    counts: dict[str, int] = {}
+    for _index, _level, ident, _rest in headings:
+        if ident is not None:
+            counts[ident] = counts.get(ident, 0) + 1
+
+    entries: list[dict[str, Any]] = []
+    for position, (index, level, ident, rest) in enumerate(headings):
+        if ident is None:
+            continue
+        body_end = len(lines)
+        nested: list[str] = []
+        for later_index, later_level, later_ident, _rest in headings[position + 1:]:
+            if later_level <= level:
+                body_end = min(body_end, later_index)
+                break
+            if later_ident is not None:
+                body_end = min(body_end, later_index)
+                nested.append(later_ident)
+        parts = []
+        for line in lines[index + 1:body_end]:
+            match = bullet.match(line)
+            part = (match.group(1) if match else line).strip()
+            if part:
+                parts.append(part)
+        title = rest.strip()
+        reason = None
+        if not well_formed.match(ident) or not rest[:1].isspace() or not title:
+            reason = "it is not an identifier followed by a space and a title"
+        elif counts[ident] > 1:
+            reason = "its identifier names more than one heading"
+        entries.append({"id": ident, "level": level, "title": title,
+                        "statement": " ".join(parts), "nested": nested, "reason": reason})
+
+    requirement_ids = {entry["id"] for entry in entries
+                       if entry["reason"] is None and entry["statement"]}
+    result: dict[str, list[Any]] = {"requirements": [], "sections": [], "malformed": []}
+    for entry in entries:
+        if entry["reason"] is None and entry["statement"]:
+            result["requirements"].append({key: entry[key] for key in
+                                           ("id", "level", "title", "statement")})
+        elif entry["reason"] is None and requirement_ids.intersection(entry["nested"]):
+            result["sections"].append(entry["id"])
+        else:
+            result["malformed"].append({
+                "id": entry["id"],
+                "reason": entry["reason"] or "it has no statement and no requirement beneath it",
+            })
+    return result
+
+
 def _gate(identifier: str, problems: list[str], success: str) -> dict[str, Any]:
     unique = list(dict.fromkeys(problems))
     detail = success if not unique else "; ".join(unique[:20])
@@ -1500,9 +1605,13 @@ def verify(
         if path == brd:
             try:
                 brd_text = data.decode("utf-8")
-                requirement_ids = sorted(
-                    set(re.findall(r"(?m)^#{2,6}\s+(BRD-[A-Z0-9-]+)\b", brd_text))
-                )
+                identity = brd_requirement_identity(brd_text)
+                requirement_ids = sorted(entry["id"] for entry in identity["requirements"])
+                for entry in identity["malformed"]:
+                    traceability.append(
+                        f"BRD.md heading {entry['id']} is neither a requirement nor a "
+                        f"section: {entry['reason']}"
+                    )
             except UnicodeError as exc:
                 traceability.append(f"BRD.md cannot be inspected: {exc}")
 
