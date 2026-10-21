@@ -24,7 +24,12 @@
   page composes them reach GOVERN in the simulated journey, and the same rows
   with one untested are refused at the build. Removing the last row leaves the
   propose button available while requirements are confirmed, as "Propose
-  removing all requirements", so a confirmed set can be cleared from the page. This is a requirements-entry
+  removing all requirements", so a confirmed set can be cleared from the page.
+  A new row takes the smallest unused number within the schema's bound
+  (RQ-1 to RQ-999999, the capsule's `REQUIREMENT_NUMBER_LIMIT`, written into
+  the page), not one past the largest, so a set holding RQ-999999 no longer
+  makes the page generate an id the schema refuses; with every number taken,
+  the page says so and adds no row. This is a requirements-entry
   affordance, not a completed basic-user acceptance, and no
   generated-application safety boundary is claimed.
 

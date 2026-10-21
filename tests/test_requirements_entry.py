@@ -216,6 +216,66 @@ def test_a_set_an_api_caller_composed_wrongly_is_explained(value, row, explains:
     assert explains in refusal.explanation and reason in refusal.reason, refusal
 
 
+# ---------------------------------------------------------------------------
+# A new row's number: the smallest unused one the schema admits
+# ---------------------------------------------------------------------------
+#
+# Codex P2 4336275226 on 89bf16a: the page numbered a new row max+1, so a
+# confirmed set holding RQ-999999 -- valid, and reachable through the API --
+# made "Add a requirement" generate RQ-1000000, which the capsule's schema
+# refuses, and every proposal of the edited set failed with no way to change
+# the number on the page. The rule is now the smallest unused number from 1 to
+# the schema's own bound, in the page and in the server's refusal alike.
+
+def _capsule():
+    from nornyx_forge import capsule  # noqa: PLC0415 - resolved per test, red first
+
+    return capsule
+
+
+def smallest_unused_requirement_id(used):
+    return brd_authoring.smallest_unused_requirement_id(used)
+
+
+def test_the_bound_is_the_capsule_schemas_own():
+    """One bound, read from the schema's constant, that the schema itself
+    admits and the next number past it does not."""
+    capsule = _capsule()
+    limit = capsule.REQUIREMENT_NUMBER_LIMIT
+    assert limit == 999_999
+    assert capsule.AUTHORITATIVE_FIELDS["requirements"]([{"id": f"RQ-{limit}", "text": "x"}]) is None
+    with pytest.raises(capsule.CapsuleValidationError, match="must match RQ-"):
+        capsule.AUTHORITATIVE_FIELDS["requirements"]([{"id": f"RQ-{limit + 1}", "text": "x"}])
+
+
+@pytest.mark.parametrize("used, chosen", [
+    ([], "RQ-1"),
+    (["RQ-1", "RQ-2", "RQ-3"], "RQ-4"),
+    (["RQ-1", "RQ-999999"], "RQ-2"),
+    (["RQ-999999"], "RQ-1"),
+    (["RQ-1", "RQ-2", "RQ-4", "RQ-7"], "RQ-3"),
+    (["RQ-2", "RQ-3"], "RQ-1"),
+    # A number held under another spelling is taken: a new row never repeats it.
+    (["RQ-01", "RQ-2"], "RQ-3"),
+    (["RQ-0", "RQ-1"], "RQ-2"),
+])
+def test_a_new_row_takes_the_smallest_unused_number_in_range(used, chosen):
+    assert smallest_unused_requirement_id(used) == chosen
+    capsule = _capsule()
+    rows = [{"id": ident, "text": f"Requirement {n}."} for n, ident in enumerate([*used, chosen])]
+    assert capsule.AUTHORITATIVE_FIELDS["requirements"](rows) is None, "the chosen id is refused"
+
+
+def test_an_exhausted_range_yields_no_number():
+    """Every number from 1 to the bound in use: there is no id to give, and
+    none past the bound is invented. One number free: it is that one."""
+    limit = _capsule().REQUIREMENT_NUMBER_LIMIT
+    used = [f"RQ-{n}" for n in range(1, limit + 1)]
+    assert smallest_unused_requirement_id(used) is None
+    assert smallest_unused_requirement_id(used[:-1]) == f"RQ-{limit}"
+    assert smallest_unused_requirement_id(used[1:]) == "RQ-1"
+
+
 def test_the_refusal_body_carries_the_reason_where_clients_already_read_it():
     body = proposal_entry_refusal("requirements", _rows("Opens a case.", "")).as_body()
     assert body == {
@@ -330,6 +390,27 @@ def test_the_intent_only_path_answers_exactly_as_before(client: TestClient):
     assert derived.status_code == 200 and set(derived.json()) == {"written", "bytes"}
 
 
+def test_a_set_holding_rq_999999_takes_a_new_row_the_schema_accepts(client: TestClient):
+    """The finding's own case, through the routes the page calls. A confirmed
+    set holding RQ-999999 gains a row numbered by the rule (RQ-1), and the
+    edited set is proposed (200). The id the old rule generated, RQ-1000000,
+    is refused, and the refusal now names the number to use instead."""
+    held = [{"id": "RQ-999999", "text": "A support agent exports the cases."}]
+    assert _propose(client, "intent", NEED).status_code == 200
+    assert _confirm(client, "P-1").status_code == 200
+    assert _propose(client, "requirements", held).status_code == 200
+    assert _confirm(client, "P-2").status_code == 200
+    chosen = smallest_unused_requirement_id([row["id"] for row in held])
+    assert chosen == "RQ-1"
+    edited = [*held, {"id": chosen, "text": "A support agent opens a case."}]
+    assert _propose(client, "requirements", edited).json() == {"proposal_id": "P-3", "status": "open"}
+    overflow = [*held, {"id": "RQ-1000000", "text": "A support agent opens a case."}]
+    refused = _propose(client, "requirements", overflow)
+    assert refused.status_code == 422 and refused.json()["row"] == "row 2"
+    assert "RQ-1000000" in refused.json()["explanation"]
+    assert "Number it RQ-1" in refused.json()["explanation"]
+
+
 def test_an_empty_set_clears_the_confirmed_requirements_through_the_same_path(client: TestClient):
     """Removing every requirement is a proposal like any other: `[]` passes the
     rule, is confirmed by the human, and the BRD derived afterwards carries no
@@ -423,16 +504,45 @@ def test_removing_the_last_row_still_lets_a_confirmed_set_be_cleared(page):
     assert rendered.rstrip().endswith("rowsChanged();\n}")
 
 
+def test_the_page_numbers_a_new_row_within_the_schemas_range(page):
+    """The page's chooser is the server's rule: the bound is the capsule's
+    constant, written into the page when it is served; the number is the
+    smallest unused one from 1 to that bound, by numeric value; and with every
+    number taken the page says so in plain words and adds no row -- it never
+    invents an id the schema refuses. No JavaScript executes here, so the
+    chooser is pinned on its source; `smallest_unused_requirement_id` is the
+    same rule in the domain, and the tests above execute it."""
+    markup, script, _parsed = page
+    limit = _capsule().REQUIREMENT_NUMBER_LIMIT
+    assert f"const REQUIREMENT_NUMBER_LIMIT = {limit};" in script
+    assert "__REQUIREMENT_NUMBER_LIMIT__" not in markup
+    assert "Math.max" not in script, "the max+1 rule is still on the page"
+    chooser = script[script.index("function smallestUnusedRequirementNumber("):]
+    chooser = chooser[:chooser.index("\n}") + 2]
+    assert "new Set(rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10)))" in chooser
+    assert "for(let n = 1; n <= REQUIREMENT_NUMBER_LIMIT; n++){ if(!used.has(n)){ return n; } }" in chooser
+    assert chooser.rstrip().endswith("return null;\n}")
+    adder = script[script.index("function addRequirementFromButton("):]
+    adder = adder[:adder.index("\n}") + 2]
+    assert adder.index("if(number === null)") < adder.index("addRequirementRow(")
+    refusal = adder[adder.index("if(number === null)"):adder.index("addRequirementRow(")]
+    assert "return;" in refusal and "is in use" in refusal and "showNotice(" in refusal
+    tag, attrs = page[2].by_id("b_rq_add")
+    assert attrs.get("onclick") == "addRequirementFromButton()"
+
+
 def test_the_page_proposes_the_existing_field_through_the_existing_route(page):
     """The composition: each row is `{id, text}`, ids `RQ-<n>` that a row
-    keeps while it is edited, and a new row takes the next unused number;
-    the value goes to `/api/proposals` as the `requirements` field, the
-    same route, field and confirmation an API caller uses."""
+    keeps while it is edited, and a new row takes the smallest unused number
+    in the schema's range; the value goes to `/api/proposals` as the
+    `requirements` field, the same route, field and confirmation an API
+    caller uses."""
     _markup, script, _parsed = page
     assert ('call("/api/proposals", {field: "requirements", value: requirementRows(), '
             "actor: actor()})") in script
     assert "({id: item.dataset.rqid, text: item.querySelector(\"input\").value})" in script
-    assert 'item.dataset.rqid = id || ("RQ-" + nextRequirementNumber())' in script
+    assert "item.dataset.rqid = id;" in script
+    assert 'addRequirementRow("RQ-" + number, "")' in script
     # Ids are the page's; nothing in the composition reads a stage or a gate.
     composition = script[script.index("function requirementRows("):]
     composition = composition[:composition.index("\n}") + 2]

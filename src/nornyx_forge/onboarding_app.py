@@ -140,6 +140,7 @@ from pydantic import BaseModel
 from .brd_authoring import BrdAuthoringError, brd_from_capsule, proposal_entry_refusal
 from .capsule import (
     PROVIDERS,
+    REQUIREMENT_NUMBER_LIMIT,
     Actor,
     CapsuleError,
     CapsuleTamperError,
@@ -1253,7 +1254,7 @@ this page, are the authority.</p>
 <fieldset><legend>List what the application must do (optional)</legend>
  <p id="rq_hint">One requirement per row, each on one line. The rows are proposed together, and nothing is authoritative until you confirm the proposal.</p>
  <ol id="rq_rows" aria-describedby="rq_hint"></ol>
- <button type="button" id="b_rq_add" onclick="addRequirementRow(null, '').focus()">Add a requirement</button>
+ <button type="button" id="b_rq_add" onclick="addRequirementFromButton()">Add a requirement</button>
  <button type="button" id="b_rq_propose" onclick="proposeRequirements()" disabled>Propose requirements</button></fieldset>
 <fieldset><legend>3 · Choose your engineering agent</legend>
  <select id="provider"></select>
@@ -1314,6 +1315,10 @@ async function call(url, body){
 // technical reason beneath, and the row it names is marked and focused; any
 // other refusal is shown as before. The notice is a live region (role=alert),
 // so either is announced. The server decides both sentences; the page renders.
+function showNotice(message){
+  clearRowErrors();
+  document.getElementById("notice").textContent = message;
+}
 function showRefusal(data){
   const notice = document.getElementById("notice");
   notice.replaceChildren();
@@ -1338,13 +1343,30 @@ function showRefusal(data){
 // APIs and textContent, like the proposal rows below (F15).
 let rowsEdited = false;
 const rowItems = () => Array.from(document.getElementById("rq_rows").children);
-function nextRequirementNumber(){
-  const used = rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10));
-  return used.length ? Math.max(...used) + 1 : 1;
+// A new row's number: the smallest from 1 to the capsule schema's bound that no
+// row holds, compared by number -- the rule the server states as
+// brd_authoring.smallest_unused_requirement_id. The bound is the capsule's own
+// constant, written into this page when it is served, so the page never
+// generates an id the schema refuses (Codex P2 4336275226).
+const REQUIREMENT_NUMBER_LIMIT = __REQUIREMENT_NUMBER_LIMIT__;
+function smallestUnusedRequirementNumber(){
+  const used = new Set(rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10)));
+  for(let n = 1; n <= REQUIREMENT_NUMBER_LIMIT; n++){ if(!used.has(n)){ return n; } }
+  return null;
+}
+function addRequirementFromButton(){
+  const number = smallestUnusedRequirementNumber();
+  if(number === null){
+    showNotice("Every requirement number from RQ-1 to RQ-" + REQUIREMENT_NUMBER_LIMIT
+               + " is in use, so no row was added. Remove a requirement first.");
+    return;
+  }
+  rowsEdited = true;
+  addRequirementRow("RQ-" + number, "").focus();
 }
 function addRequirementRow(id, value){
   const item = document.createElement("li");
-  item.dataset.rqid = id || ("RQ-" + nextRequirementNumber());
+  item.dataset.rqid = id;
   const label = document.createElement("label");
   const input = document.createElement("input");
   input.type = "text";
@@ -1365,7 +1387,6 @@ function addRequirementRow(id, value){
   input.setAttribute("aria-describedby", error.id);
   item.append(label, input, document.createTextNode(" "), remove, error);
   document.getElementById("rq_rows").append(item);
-  rowsEdited = rowsEdited || id === null;
   rowsChanged();
   return input;
 }
@@ -1574,3 +1595,6 @@ window.addEventListener("beforeunload", (event) => {
 boot();
 </script>
 """
+# The schema's bound on requirement numbers, written into the page so its
+# row chooser and the capsule cannot disagree (A-048, Codex P2 4336275226).
+_PAGE = _PAGE.replace("__REQUIREMENT_NUMBER_LIMIT__", str(REQUIREMENT_NUMBER_LIMIT))

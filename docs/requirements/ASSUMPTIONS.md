@@ -7405,6 +7405,37 @@ or not the person has edited the rows. Red first on `70473ae`, the parent of
 the repair: the page test fails, and its control -- the empty set clearing a
 confirmed one through the API, which the server already allowed -- passes.
 
+**Review of the fourth head.** The Codex review of `89bf16a` found one defect:
+the page numbered a new row one past the largest number in use, so a confirmed
+set holding `RQ-999999` -- valid, and reachable through the API -- made "Add a
+requirement" generate `RQ-1000000`, which the capsule's schema refuses (one to
+six digits), and every proposal of the edited set failed with no way to change
+the number on the page. A new row now takes the smallest number from 1 to
+`capsule.REQUIREMENT_NUMBER_LIMIT` (999999, the schema's bound) that no row
+holds, compared by number, so a number held under another spelling (`RQ-01`)
+is taken. The bound is written into the page from that constant when it is
+served, so the page and the schema cannot disagree on it. With every number
+taken, the page says so in plain words and adds no row; it never generates an
+id the schema refuses. `brd_authoring.smallest_unused_requirement_id` states
+the same rule in the domain, where the tests execute it (including an
+exhausted range), and the refusal of an out-of-range id now names the number
+to use. Red first on `89bf16a` with only the test module edited: the twelve new
+cases and the edited composition pin fail.
+
+The builder's check for other values the page generates that the schema or the
+server refuses found none: a row's text, the need, the name and the project
+fields are typed by the person, not generated, and the provider options come
+from the server. Typed values the server refuses are, for the record: a row
+over 2000 characters or a need over 4000, and control characters, each refused
+when proposed with a plain explanation; a name outside the actor rule, which
+refuses every proposal with the capsule's own reason and no explanation, and a
+project id or name outside theirs -- the last two belong to the page's existing
+fields, not to this change. The server sets no limit on the number of rows. One
+difference in the rule remains and refuses nothing: the schema's `\d` admits a
+non-ASCII decimal digit (`RQ-٣`), which the domain rule counts as number 3 and
+the page does not, so the page may number a new row `RQ-3` beside it; both are
+accepted.
+
 **What it does NOT establish.**
 
 1. **A browser's behaviour.** No JavaScript executes in this change's

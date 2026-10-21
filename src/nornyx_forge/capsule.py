@@ -94,6 +94,10 @@ PROVIDERS = ("codex", "claude")
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@ -]{0,119}$")
 _ISO_AT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
 _REQUIREMENT_ID = re.compile(r"^RQ-\d{1,6}$")
+#: The largest requirement number `_REQUIREMENT_ID` admits: one to six digits.
+#: The onboarding page numbers a new requirement row within it, and the BRD
+#: derivation's entry rule names a free number within it (A-048).
+REQUIREMENT_NUMBER_LIMIT = 999_999
 _DECISION_ID = re.compile(r"^DC-\d{1,6}$")
 #: Relative, forward-slash, .nyx, and no traversal. The dot is permitted in
 #: names but ".." as a path SEGMENT is refused below, which is the property;

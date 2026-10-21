@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from .capsule import AUTHORITATIVE_FIELDS, CapsuleValidationError
+from .capsule import AUTHORITATIVE_FIELDS, REQUIREMENT_NUMBER_LIMIT, CapsuleValidationError
 from .requirements import brd_requirement_identity
 
 
@@ -244,6 +244,25 @@ def _intent_refusal(value: Any) -> EntryRefusal | None:
     return EntryRefusal("intent", fault, reason)
 
 
+def smallest_unused_requirement_id(used: Any) -> str | None:
+    """The id a new requirement row takes: `RQ-<n>` for the smallest n from 1 to
+    `REQUIREMENT_NUMBER_LIMIT` that no id in `used` holds, compared by number so
+    a number held under another spelling (RQ-01) is taken; or None when every
+    number in that range is held. Never an id the capsule's schema refuses.
+
+    The onboarding page applies the same rule to its rows (A-048); this is the
+    rule as the domain states it, and the refusal of an out-of-range id names
+    the number it gives."""
+    taken: set[int] = set()
+    for ident in used or ():
+        if isinstance(ident, str) and ident.startswith("RQ-") and ident[3:].isdecimal():
+            taken.add(int(ident[3:]))
+    for number in range(1, REQUIREMENT_NUMBER_LIMIT + 1):
+        if number not in taken:
+            return f"RQ-{number}"
+    return None
+
+
 def _normalised(text: str) -> str:
     return " ".join(text.split()).casefold()
 
@@ -266,8 +285,13 @@ def _schema_row_refusal(value: list[Any]) -> EntryRefusal | None:
             if "exactly {id, text}" in reason:
                 explanation = f"{who} could not be read: each row needs exactly an id and a text."
             elif "must match RQ-" in reason:
-                explanation = (f"{who} is numbered {ident!r}. Requirement numbers look like"
-                               f" RQ-{index}.")
+                free = smallest_unused_requirement_id(
+                    [row.get("id") for row in value if isinstance(row, dict)])
+                explanation = (f"{who} is numbered {ident!r}, outside the numbers a requirement"
+                               f" can have (RQ-1 to RQ-{REQUIREMENT_NUMBER_LIMIT}). "
+                               + (f"Number it {free}, the smallest number not in use."
+                                  if free is not None else
+                                  "Every number is in use; remove a requirement first."))
             elif "is duplicated" in reason:
                 explanation = (f"Two rows have the same number, {ident}. Give each row its"
                                " own number.")
