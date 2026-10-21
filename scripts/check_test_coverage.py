@@ -846,8 +846,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # empty, non-strings), a 5000-digit id refused with 422 through the route,
     # and the faulty row located in about n log n rows rather than n(n+1)/2.
     # 71 -> 72 for the same round, floor band(72) = 65: a valid set validated
-    # once, where every proposal had checked n(n+1)/2 rows.
-    "tests/test_requirements_entry.py": 65,
+    # once, where every proposal had checked n(n+1)/2 rows. 72 -> 152 for the
+    # fourth review, floor band(152) = 137: the line-boundary set held equal
+    # to splitlines()'s by enumeration; each of its ten characters trailing,
+    # leading and in the middle of an intent and of a row, refused with 422
+    # (60); fifteen texts each refused or read back exactly; the round trip
+    # through the routes; and three confirmed texts the derivation refuses.
+    "tests/test_requirements_entry.py": 137,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2206,16 +2211,19 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 7 above its band. It then added one, 71 -> 72 (floor 64 ->
 # 65): 5887 collect, the sum rises by 1 to 5363 and the aggregate follows to
 # 5371, band(n) 5298 -> 5299, the working room stays 516, and the slack stays
-# 524. The rows below are these.
+# 524. The fourth review round added eighty, 72 -> 152 (floor 65 -> 137): 5967
+# collect, the sum rises by 72 to 5435 and the aggregate follows to 5443,
+# band(n) 5299 -> 5371, the working room 516 -> 524, and the slack 524 -> 532,
+# the module now 15 above its band. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5887   (137 modules)
-#     sum of the module floors    5363
-#     band(5887) = ceil(0.9*n)    5299
-#     MINIMUM_COLLECTED           5371
+#     collected across tests/     5967   (137 modules)
+#     sum of the module floors    5435
+#     band(5967) = ceil(0.9*n)    5371
+#     MINIMUM_COLLECTED           5443
 #     above the module sum          8
-#     below what collects         516
+#     below what collects         524
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2437,7 +2445,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 524 in total, and the aggregate refuses
+# per-module bands already grant 532 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2706,7 +2714,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5371
+MINIMUM_COLLECTED = 5443
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

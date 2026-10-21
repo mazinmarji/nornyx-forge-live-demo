@@ -32,7 +32,10 @@
   the page says so and adds no row. Only an id suffix of one to six ASCII
   digits counts as a number, on the page and on the server, so an id of
   thousands of digits is refused with 422 rather than raising, and the row at
-  fault is located by bisection rather than by validating every prefix. This is a requirements-entry
+  fault is located by bisection rather than by validating every prefix. Line
+  boundaries are tested directly against the set `str.splitlines()` honours,
+  and the BRD derivation refuses any confirmed text it would read back as
+  other words (a trailing boundary, padding, a leading list mark). This is a requirements-entry
   affordance, not a completed basic-user acceptance, and no
   generated-application safety boundary is claimed.
 

@@ -157,7 +157,7 @@ def test_a_line_boundary_the_derivation_does_not_name_is_still_one(separator: st
     document sees two lines where the user typed one field. The line rule
     is the reader's, not the two characters the derivation spells."""
     refusal = proposal_entry_refusal("intent", f"A tracker{separator}that lists requests")
-    _assert_refusal(refusal, row=None, explains="one line", reason="line boundary")
+    _assert_refusal(refusal, row=None, explains="one line", reason="back as")
 
 
 @pytest.mark.parametrize("value, explains, reason", [
@@ -186,7 +186,7 @@ def test_a_single_line_need_and_every_other_field_pass_unchanged():
     ("Assigns\x1b a case", "character", "requirement RQ-2 text contains control characters"),
     ("Assigns a case.\nAnd closes it.", "one line", HEADING_GRAMMAR),
     ("# Assigns a case", "“#”", HEADING_GRAMMAR),
-    ("Assigns a case\u2028to a colleague", "one line", "line boundary"),
+    ("Assigns a case\u2028to a colleague", "one line", "back as"),
 ])
 def test_a_malformed_row_is_refused_and_named(text: str, explains: str, reason: str):
     rows = _rows("Opens a case.", text, "Resolves a case.")
@@ -275,6 +275,130 @@ def test_an_exhausted_range_yields_no_number():
     assert smallest_unused_requirement_id(used) is None
     assert smallest_unused_requirement_id(used[:-1]) == f"RQ-{limit}"
     assert smallest_unused_requirement_id(used[1:]) == "RQ-1"
+
+
+# ---------------------------------------------------------------------------
+# What is confirmed is what the document reads back (Codex P2 4338765174)
+# ---------------------------------------------------------------------------
+#
+# The line rule counted str.splitlines() lines, and one boundary at the end of
+# a text leaves one line: "x" + U+2028 was accepted, and the document then read
+# the statement back without it. The parser also strips a line and drops a
+# leading list mark, so a padded or "- "-led text was accepted and read back as
+# a different statement. Boundaries are now tested directly, against the exact
+# set splitlines() honours, and the derivation itself compares each statement
+# it reads back with the confirmed text. The characters are built from their
+# code points so that no editor or shell can turn an escape into a raw one.
+
+#: The code points str.splitlines() ends a line at.
+BOUNDARY_CODES = (0x0A, 0x0D, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85, 0x2028, 0x2029)
+
+
+def test_the_line_boundaries_are_exactly_the_ones_splitlines_honours():
+    honoured = {chr(code) for code in range(0x110000)
+                if len(("a" + chr(code) + "b").splitlines()) > 1}
+    assert honoured == {chr(code) for code in BOUNDARY_CODES}
+    assert set(brd_authoring.LINE_BOUNDARIES) == honoured
+
+
+@pytest.mark.parametrize("field", ["intent", "requirements"])
+@pytest.mark.parametrize("where", ["trailing", "leading", "middle"])
+@pytest.mark.parametrize("code", BOUNDARY_CODES, ids=lambda code: f"U+{code:04X}")
+def test_a_line_boundary_anywhere_is_refused_with_422(client: TestClient, field: str, where: str,
+                                                      code: int):
+    boundary = chr(code)
+    text = {"trailing": "A support agent opens a case." + boundary,
+            "leading": boundary + "A support agent opens a case.",
+            "middle": "A support agent opens" + boundary + "a case."}[where]
+    value = text if field == "intent" else [{"id": "RQ-1", "text": text}]
+    response = _propose(client, field, value)
+    assert response.status_code == 422, (field, where, f"U+{code:04X}", response.text[:200])
+    body = response.json()
+    assert "one line" in body["explanation"], body["explanation"]
+    assert body["row"] == (None if field == "intent" else "RQ-1")
+    assert _state(client)["proposals"] == []
+
+
+#: Texts that look plausible to type or paste. Each one the rule accepts must
+#: read back from the derived document exactly as confirmed.
+ROUND_TRIP_CANDIDATES = (
+    "A support agent opens a case.",
+    "A support agent opens a case with a title, a priority -- and a due date.",
+    "Ein Supportmitarbeiter " + chr(0xF6) + "ffnet einen Fall.",
+    "A support agent opens  a case.",
+    "A support agent	opens a case.",
+    "A support agent opens a case. ",
+    " A support agent opens a case.",
+    "A support agent opens a case.	",
+    chr(0xA0) + "A support agent opens a case.",
+    "- A support agent opens a case.",
+    "* A support agent opens a case.",
+    "  - A support agent opens a case.",
+    "-A support agent opens a case.",
+    "A support agent opens a case - quickly.",
+    "1. A support agent opens a case.",
+)
+
+
+def _read_back(intent: str, texts: list[str]) -> list[str]:
+    rendered = brd_from_capsule({"authoritative": {
+        "project_name": "Support Portal", "intent": intent,
+        "requirements": [{"id": f"RQ-{n}", "text": t} for n, t in enumerate(texts, start=1)]}})
+    return [entry["statement"] for entry in
+            brd_authoring.brd_requirement_identity(rendered)["requirements"]]
+
+
+@pytest.mark.parametrize("text", ROUND_TRIP_CANDIDATES)
+def test_every_accepted_text_reads_back_exactly_as_confirmed(text: str):
+    """For the intent and for a row: either the rule refuses the text, in plain
+    words, or the derived document reads it back unchanged."""
+    as_row = proposal_entry_refusal("requirements", [{"id": "RQ-1", "text": text}])
+    if as_row is None:
+        assert _read_back(NEED, [text]) == [NEED, text]
+    else:
+        assert as_row.row == "RQ-1" and as_row.explanation
+    as_intent = proposal_entry_refusal("intent", text)
+    if as_intent is None:
+        assert _read_back(text, []) == [text]
+    else:
+        assert as_intent.explanation
+
+
+def test_confirmed_rows_read_back_exactly_through_the_routes(client: TestClient, tmp_path: Path):
+    """The round trip the page's ordinary path takes: rows proposed and
+    confirmed through the routes, the BRD derived by the route, and the
+    statements the build's parser reads equal to the confirmed texts."""
+    from nornyx_forge.requirements import parse_brd  # noqa: PLC0415
+
+    accepted, seen = [], set()
+    for t in ROUND_TRIP_CANDIDATES:
+        key = " ".join(t.split()).casefold()  # the repeated-row rule's own comparison
+        if key not in seen and proposal_entry_refusal("requirements", [{"id": "RQ-1", "text": t}]) is None:
+            accepted.append(t)
+            seen.add(key)
+    assert len(accepted) >= 5, accepted
+    rows = [{"id": f"RQ-{n}", "text": t} for n, t in enumerate(accepted, start=1)]
+    assert _propose(client, "intent", NEED).status_code == 200
+    assert _confirm(client, "P-1").status_code == 200
+    assert _propose(client, "requirements", rows).status_code == 200
+    assert _confirm(client, "P-2").status_code == 200
+    derived = client.post("/api/brd")
+    assert derived.status_code == 200, derived.text
+    model = parse_brd(Path(derived.json()["written"]))
+    confirmed = _state(client)["authoritative"]
+    assert [item.statement for item in model.requirements] == [
+        confirmed["intent"], *(row["text"] for row in confirmed["requirements"])]
+
+
+@pytest.mark.parametrize("text", ["- A support agent opens a case.", "A support agent opens a case. ",
+                                  "A support agent opens a case." + chr(0x2028)])
+def test_the_derivation_refuses_a_confirmed_text_it_would_read_back_differently(text: str):
+    """A value confirmed before this rule existed -- or by any other path --
+    is refused by the derivation itself, not rendered into a document that
+    builds from something else."""
+    with pytest.raises(BrdAuthoringError, match="back as"):
+        brd_from_capsule({"authoritative": {"project_name": "Support Portal", "intent": NEED,
+                                            "requirements": [{"id": "RQ-1", "text": text}]}})
 
 
 # Codex P2 4337040952 on e19eaa1: the chooser converted any decimal suffix with

@@ -7450,7 +7450,43 @@ n; it bisects now, about n log n, with the schema's own words for the row at
 fault. The same loop also ran for every valid set -- the page's ordinary
 proposal -- so a proposal of 4000 valid rows took 9.7 s at `e19eaa1` on the
 builder's host, against 0.07 s now that a valid set is validated once; a second
-test holds that path. Red first on `e19eaa1` with only the test module edited: the two
+test holds that path.
+
+**Review of the seventh head.** The Codex review of `6bd8c1d` found one defect:
+the line rule counted the lines `str.splitlines()` makes, and one boundary at
+the end of a text leaves one line, so an intent or a row ending in U+0085,
+U+2028 or U+2029 was accepted, and the document then read the statement back
+without it. The builder's check of the class found the reader changes more than
+line boundaries: it strips each line and drops a leading "- " or "* " list mark,
+so a padded or list-marked text was accepted and read back as other words; and
+the derivation's own read-back compared only identifiers, so it passed all of
+them. Repaired:
+
+1. `brd_authoring.LINE_BOUNDARIES` is the set of characters `splitlines()` ends
+   a line at, tested directly at any position; a test enumerates every code
+   point and holds the set equal to the reader's. It is the one definition: the
+   page judges no text, so it holds no copy.
+2. `brd_from_capsule` compares each statement it reads back with the confirmed
+   text it rendered and refuses any difference, so a confirmed value that would
+   build from other words -- one confirmed before this rule, or by another path
+   -- is refused at the derivation.
+3. The proposal-time rule says which: a line break (the six C0 boundaries were
+   already refused as control characters, and are now explained as the line
+   breaks they are), a leading or trailing blank, or a leading list mark.
+
+Every text the rule accepts reads back unchanged; tests hold it for fifteen
+candidate texts and through the routes. Red first on `6bd8c1d` with only the
+test module edited: 54 of the 80 new cases fail.
+
+The builder's audit of checks in the touched files that infer a property from a
+count or a split: the line count above and the identifier-only read-back were
+repaired. Left as is: the repeated-row comparison (whitespace-collapsed, by
+design), the emptiness test (`strip()`, by design), the bisection (it infers
+the faulty row from which prefixes the schema refuses, which holds because the
+schema stops at the first fault in order, and a test holds the reason), and the
+capsule's single-line rule for the project name, which tests `\n` only -- a name
+with another boundary splits the document's title; the project name is not
+requirement text and its field predates this change. Red first on `e19eaa1` with only the test module edited: the two
 oversized and non-ASCII suffixes, the 500, the quadratic count and the page's
 pattern fail; the ten other suffixes, which the old rule already ignored, pass.
 

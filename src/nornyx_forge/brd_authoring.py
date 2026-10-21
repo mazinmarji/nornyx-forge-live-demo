@@ -43,6 +43,26 @@ class BrdAuthoringError(Exception):
     """A capsule state this derivation refuses."""
 
 
+#: The characters `str.splitlines()` ends a line at -- the reader's rule, as a
+#: set, so a text is tested for them directly rather than by counting the lines
+#: a split makes: one boundary at the end of a text leaves one line, and the
+#: count missed it (Codex P2 4338765174). Built from
+#: code points; the test enumerates every code point against splitlines().
+#: The page holds no copy: it sends what the person typed, and only the
+#: server judges a text.
+LINE_BOUNDARIES = frozenset(chr(code) for code in (
+    0x0A, 0x0D, 0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x85, 0x2028, 0x2029))
+
+
+def holds_line_boundary(text: str) -> bool:
+    """Whether `text` holds any character `str.splitlines()` ends a line at."""
+    return any(character in LINE_BOUNDARIES for character in text)
+
+
+def _shown(text: str, limit: int = 60) -> str:
+    return repr(text) if len(text) <= limit else repr(text[:limit]) + f"... ({len(text)} characters)"
+
+
 def _confirmed(document: Mapping[str, Any], field: str) -> Any:
     if not isinstance(document, Mapping):
         raise BrdAuthoringError("a BRD is derived from a capsule document")
@@ -111,6 +131,22 @@ def brd_from_capsule(document: Mapping[str, Any]) -> str:
             "text changes which headings a reader takes as requirements, so it is "
             "refused rather than rendered"
         )
+    # THE STATEMENTS, NOT ONLY THE IDENTITIES. The reader strips each line,
+    # joins lines, and drops a leading list mark, so a confirmed text with a
+    # trailing line boundary, padding or a "- " in front was read back as other
+    # words than the human confirmed -- and the identity check above, which
+    # compares only ids, passed it (Codex P2 4338765174). Each statement is
+    # now compared with the confirmed text it renders.
+    confirmed = [intent, *(row["text"] for row in requirements)]
+    read_back = [entry["statement"] for entry in identity["requirements"]]
+    for index, (wanted, got) in enumerate(zip(confirmed, read_back)):
+        if wanted != got:
+            label = "the confirmed intent" if index == 0 else f"requirement {requirements[index - 1]['id']}"
+            raise BrdAuthoringError(
+                f"the derived BRD reads {label} back as {_shown(got)}, not as confirmed "
+                f"({_shown(wanted)}); a document that builds from other words than the "
+                "human confirmed is refused rather than rendered"
+            )
     return rendered
 
 
@@ -193,22 +229,36 @@ def _derivation_refusal(intent: str, rows: list[dict[str, Any]]) -> str | None:
     return None
 
 
+_LINE_FAULT = ("{who} is written over more than one line. Write it as one line;"
+               " a line break you cannot see counts too.")
+
+
 def _text_fault(text: str, who: str, grammar_reason: str | None) -> str | None:
-    """A plain explanation of why `text` cannot be rendered, or None."""
-    if "\n" in text or "\r" in text or len(text.splitlines()) > 1:
-        return (f"{who} is written over more than one line. Write it as one line;"
-                " a line break you cannot see counts too.")
+    """A plain explanation of why `text` cannot be rendered, or would not read
+    back as written, or None. Each property is tested directly."""
+    if holds_line_boundary(text):
+        return _LINE_FAULT.format(who=who)
     if text.lstrip().startswith("#"):
         return (f"{who} starts with “#”, which the requirements document keeps for"
                 " its own section titles. Remove the “#” at the start.")
+    if text != text.strip():
+        return (f"{who} begins or ends with a space or another blank character, which"
+                " the requirements document does not keep. Remove it.")
+    if text[:1] in ("-", "*") and text[1:2].isspace():
+        return (f"{who} starts with “{text[0]}” and a space, which the requirements"
+                " document reads as a list mark and drops. Remove the mark, or start"
+                " the sentence differently.")
     if grammar_reason is not None:
         return (f"{who} cannot be written into the requirements document as it"
                 " stands. Rephrase it as one plain sentence.")
     return None
 
 
-def _schema_explanation(reason: str, who: str, limit: int) -> str:
-    """The capsule's field-schema refusal, in plain words."""
+def _schema_explanation(reason: str, who: str, limit: int, text: Any = None) -> str:
+    """The capsule's field-schema refusal, in plain words. A control character
+    that is also a line boundary is explained as the line break it is."""
+    if "control characters" in reason and isinstance(text, str) and holds_line_boundary(text):
+        return _LINE_FAULT.format(who=who)
     if "must be a string" in reason:
         return f"{who} could not be read as text. Enter it as words."
     if "must not be empty" in reason:
@@ -228,7 +278,7 @@ def _intent_refusal(value: Any) -> EntryRefusal | None:
         AUTHORITATIVE_FIELDS["intent"](value)
     except CapsuleValidationError as error:
         reason = str(error)
-        explanation = _schema_explanation(reason, who, 4000)
+        explanation = _schema_explanation(reason, who, 4000, value)
         if "must not be empty" in reason:
             explanation = f"{who} is empty. Write what you need, in one line."
         return EntryRefusal("intent", explanation, reason)
@@ -327,7 +377,8 @@ def _schema_row_refusal(value: list[Any]) -> EntryRefusal | None:
             explanation = (f"{who} is empty. Write what the application must do, or"
                            " remove the row.")
         else:
-            explanation = _schema_explanation(reason, who, 2000)
+            explanation = _schema_explanation(
+                reason, who, 2000, row.get("text") if isinstance(row, dict) else None)
         return EntryRefusal("requirements", explanation, reason, named)
     return None
 
