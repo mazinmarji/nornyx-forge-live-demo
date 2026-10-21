@@ -840,7 +840,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # takes the classification from the boundary's decision only -- a reused
     # case, an injected classification (two ways), an injected effective
     # level, and every flow-computed field discarded from the input.
-    "tests/test_operation_classification.py": 51,
+    # 56 -> 63 for the fourth review round, floor band(63) = 57: an
+    # unregistered operation meets the integrity gate first (unobserved and
+    # compromised, both paths), the registry refusal unchanged under intact
+    # integrity (both paths), and the governance-unavailable refusal kept.
+    "tests/test_operation_classification.py": 57,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2148,17 +2152,20 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 508, and the slack 515 -> 516, the module sitting 5 above its band. The third round added five, 51 -> 56
 # (floor 46 -> 51): 5806 collect, the sum rises by 5 to 5290 and the
 # aggregate follows to 5298, band(n) 5221 -> 5226, the working room stays 508,
-# and the slack stays 516, the module still 5 above its band. The rows below
-# are these.
+# and the slack stays 516, the module still 5 above its band. The fourth round
+# added seven, 56 -> 63 (floor 51 -> 57): 5813 collect, the sum rises by 6 to
+# 5296 and the aggregate follows to 5304, band(n) 5226 -> 5232, the working
+# room 508 -> 509, and the slack 516 -> 517, the module now 6 above its band.
+# The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5806   (136 modules)
-#     sum of the module floors    5290
-#     band(5806) = ceil(0.9*n)    5226
-#     MINIMUM_COLLECTED           5298
+#     collected across tests/     5813   (136 modules)
+#     sum of the module floors    5296
+#     band(5813) = ceil(0.9*n)    5232
+#     MINIMUM_COLLECTED           5304
 #     above the module sum          8
-#     below what collects         508
+#     below what collects         509
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2380,7 +2387,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 516 in total, and the aggregate refuses
+# per-module bands already grant 517 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2649,7 +2656,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5298
+MINIMUM_COLLECTED = 5304
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

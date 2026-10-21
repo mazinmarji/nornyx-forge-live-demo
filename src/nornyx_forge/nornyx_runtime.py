@@ -3337,6 +3337,7 @@ class NornyxActionBoundary:
         attempt: int,
         action_approval: dict | None,
         classification: OperationClassification | None = None,
+        operation_registered: bool = True,
     ) -> "RuntimeDecision | None":
         """The refusal a compromised governance state requires, or None.
 
@@ -3410,6 +3411,9 @@ class NornyxActionBoundary:
                 "operation_classification": (
                     classification.as_dict() if classification is not None else None
                 ),
+                # False when the act names no registered operation: the gate
+                # still runs for it, ahead of the registry refusal (A-047).
+                "operation_registered": operation_registered,
                 "attempt": attempt,
                 "code": GOVERNANCE_INTEGRITY_COMPROMISED,
                 "reason": reason,
@@ -4012,8 +4016,20 @@ class NornyxActionBoundary:
         # Then: WHAT IS THIS ACT? (A-047) Classified from the operation the
         # act is described by -- the same description the canonical request
         # and any approval bind to -- never from the caller's label, which
-        # may only raise the level. Refused here, ahead of both paths, so an
-        # unregistered act runs no callback and consumes no approval.
+        # may only raise the level.
+        #
+        # THE REFUSAL ORDER (A-047, as reviewed): (1) an unrecognised label,
+        # above; (2) governance unavailable -- no authorizer and the fallback
+        # disabled -- raises; (3) the integrity gate, with its
+        # refused_action_attempt record; (4) an unregistered operation; then
+        # each path's own gates: capability and zone crossing, subject,
+        # request context and the approval on the authorizing path, the
+        # consequential-act denial on the fallback. (2) and (3) ran for every
+        # act before A-047 whatever it described, so an unregistered act must
+        # not skip them: for a registered act they run where they always
+        # did, inside each path; for an unregistered one they run here,
+        # ahead of its refusal. No callback runs and no approval is read on
+        # any refused path.
         described = action_descriptor or (
             action_request.action if action_request is not None else None
         )
@@ -4023,6 +4039,17 @@ class NornyxActionBoundary:
                 risk,
             )
         except UnknownOperation as exc:
+            if self.authorizer is None and not self.allow_fallback:
+                raise NornyxRuntimeUnavailable(
+                    self.load_error or "Nornyx runtime unavailable"
+                ) from None
+            integrity_refusal = self._integrity_refusal(
+                mission_id=mission_id, risk=risk, attempt=attempt,
+                action_approval=action_approval, classification=None,
+                operation_registered=False,
+            )
+            if integrity_refusal is not None:
+                return integrity_refusal, None
             return (
                 RuntimeDecision(
                     effect="DENY",

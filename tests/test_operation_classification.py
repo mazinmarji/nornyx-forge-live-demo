@@ -644,3 +644,76 @@ def test_the_flow_discards_every_field_it_computes_from_its_input(tmp_path: Path
         assert name not in flow.case, name
     assert flow.case["action_status"] == "not_reached"
     assert flow.case["orchestration_status"] == "not_started"
+
+
+# ---------------------------------------------------------------------------
+# The integrity gate runs before the registry refusal (review of a2a0f55, P2).
+# Before A-047 the integrity gate ran for every act whatever it described;
+# the registry refusal must not skip it, nor the governance-unavailable raise.
+# ---------------------------------------------------------------------------
+
+_UNREGISTERED = ActionDescriptor(operation="erase everything", resource="tracker:all",
+                                 destination="zone.external_customer")
+
+
+def _boundary_with_integrity(root: Path, path: str, integrity: str):
+    boundary = _fallback(root) if path == "fallback" else _permissive_boundary(root, as_of=NOW)
+    boundary.governance_integrity = None if integrity == "unobserved" else _compromised()
+    return boundary
+
+
+@pytest.mark.parametrize("integrity", ["unobserved", "compromised"])
+@pytest.mark.parametrize("path", ["fallback", "official"])
+def test_an_unregistered_operation_meets_the_integrity_gate_first(tmp_path: Path, path, integrity):
+    """RED BEFORE THE REPAIR: OPERATION_UNREGISTERED came back and no
+    refused_action_attempt record was written."""
+    boundary = _boundary_with_integrity(tmp_path, path, integrity)
+    executed: list[str] = []
+    grant_for = _request(BULK_DELETE, "execute_high_risk_effect", mission="CASE-INT-UNREG")
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-INT-UNREG", risk="low",
+        action=lambda: executed.append("ran") or "ran",
+        action_approval=signed_grant(grant_for, approval_id="ACT-INT-UNREG"),
+        action_descriptor=_UNREGISTERED)
+    assert decision.effect == "DENY" and decision.code == "GOVERNANCE_INTEGRITY_COMPROMISED", decision
+    assert executed == []
+    assert decision.evidence["operation_classification"] is None
+    assert decision.evidence["operation_registered"] is False
+    assert decision.evidence["risk"] == "low"
+    records = _refusal_records(tmp_path)
+    assert records and records[-1]["operation_classification"] is None
+    assert records[-1]["operation_registered"] is False and records[-1]["approval_consumed"] is False
+    if path == "official":
+        claimed, reason = boundary.approval_ledger.consume(
+            "ACT-INT-UNREG", grant_for.digest, at=NOW, grant_issued_at=GRANT_ISSUED)
+        assert claimed is True, f"a refused path spent the approval: {reason}"
+
+
+@pytest.mark.parametrize("path", ["fallback", "official"])
+def test_an_unregistered_operation_under_intact_integrity_is_still_the_registry_refusal(
+        tmp_path: Path, path: str):
+    boundary = _fallback(tmp_path) if path == "fallback" else _permissive_boundary(tmp_path, as_of=NOW)
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-INTACT-UNREG", risk="low", action=lambda: "ran",
+        action_descriptor=_UNREGISTERED)
+    assert decision.code == "OPERATION_UNREGISTERED", decision
+    assert _refusal_records(tmp_path) == []
+
+
+def test_an_unregistered_operation_still_meets_the_governance_unavailable_refusal(tmp_path: Path):
+    """RED BEFORE THE REPAIR: with no authorizer and the fallback disabled the
+    boundary refuses every act by raising; the registry refusal returned first."""
+    from nornyx_forge.nornyx_runtime import (  # noqa: PLC0415
+        NornyxActionBoundary,
+        NornyxRuntimeUnavailable,
+    )
+
+    # Constructed with the fallback allowed (a disallowed one refuses to
+    # construct without a runtime lock), then disallowed: no authorizer
+    # loaded and no fallback is the state every act must be refused in.
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    boundary.allow_fallback = False
+    assert boundary.authorizer is None
+    with pytest.raises(NornyxRuntimeUnavailable):
+        boundary.evaluate_and_execute(mission_id="CASE-UNAVAILABLE", risk="low",
+                                      action=lambda: "ran", action_descriptor=_UNREGISTERED)

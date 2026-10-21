@@ -7232,6 +7232,39 @@ there; `status`, `proposal`, `framework` and `observed_execution_backend` are
 overwritten by every run. No code reads an effective level from the case, and a
 test holds that a caller's `effective_risk` changes nothing.
 
+**The refusal order, and what A-047 must not skip.** The review of the fifth
+head found that the unregistered-operation refusal returned before the
+integrity gate, so an unregistered act against a compromised or unobserved
+governance state got only `OPERATION_UNREGISTERED` and no
+`refused_action_attempt` record -- while before A-047 that gate ran for every
+act, whatever it described. The order of `evaluate_and_execute`'s refusals is
+now, and each was checked against the order before A-047:
+
+1. A label outside the vocabulary: `RISK_LEVEL_UNKNOWN`. First, as before
+   A-047; it writes no record, as before.
+2. Governance unavailable -- no authorizer and the fallback disabled: the
+   boundary raises `NornyxRuntimeUnavailable`, for every act, as before.
+3. The integrity gate: `GOVERNANCE_INTEGRITY_COMPROMISED`, with its
+   `refused_action_attempt` record, for every act, as before. The record now
+   carries the declared label, the classification (null for an unregistered
+   operation) and `operation_registered`.
+4. An unregistered operation: `OPERATION_UNREGISTERED` (new in A-047). It
+   writes no record and no Nornyx event stream, as the label refusal in step 1
+   does not: no capability is evaluated for it.
+5. Each path's own gates, unchanged and in their old order. On the
+   authorizing path: the capability and the zone crossing; then, for a
+   consequential act, the subject (`SUBJECT_UNVERIFIED`), the request context
+   (`REQUEST_CONTEXT_MISMATCH`), and the approval's authentication, binding
+   and single-use consumption. On the fallback: the consequential-act denial
+   (`HUMAN_APPROVAL_REQUIRED`).
+
+For a registered operation, steps 2 and 3 run where they always did, inside
+each path. For an unregistered one, they run ahead of its refusal. No callback
+runs and no approval is read on any refused path. The one deliberate
+difference from before A-047: an act whose label is low and whose operation is
+consequential now meets step 5's consequential gates, which it used to skip --
+the repair itself.
+
 **What it does NOT establish.**
 
 1. **A runtime boundary for a generated application.** This closes the label
