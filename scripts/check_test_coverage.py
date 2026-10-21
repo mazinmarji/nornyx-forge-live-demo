@@ -845,7 +845,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # digits, seven digits, non-ASCII and non-decimal digits, signed, spaced,
     # empty, non-strings), a 5000-digit id refused with 422 through the route,
     # and the faulty row located in about n log n rows rather than n(n+1)/2.
-    "tests/test_requirements_entry.py": 64,
+    # 71 -> 72 for the same round, floor band(72) = 65: a valid set validated
+    # once, where every proposal had checked n(n+1)/2 rows.
+    "tests/test_requirements_entry.py": 65,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2201,14 +2203,17 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # The third review round added fourteen, 57 -> 71 (floor 52 -> 64): 5886
 # collect, the sum rises by 12 to 5362 and the aggregate follows to 5370,
 # band(n) 5285 -> 5298, the working room 514 -> 516, and the slack 522 -> 524,
-# the module now 7 above its band. The rows below are these.
+# the module now 7 above its band. It then added one, 71 -> 72 (floor 64 ->
+# 65): 5887 collect, the sum rises by 1 to 5363 and the aggregate follows to
+# 5371, band(n) 5298 -> 5299, the working room stays 516, and the slack stays
+# 524. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5886   (137 modules)
-#     sum of the module floors    5362
-#     band(5886) = ceil(0.9*n)    5298
-#     MINIMUM_COLLECTED           5370
+#     collected across tests/     5887   (137 modules)
+#     sum of the module floors    5363
+#     band(5887) = ceil(0.9*n)    5299
+#     MINIMUM_COLLECTED           5371
 #     above the module sum          8
 #     below what collects         516
 #
@@ -2701,7 +2706,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5370
+MINIMUM_COLLECTED = 5371
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

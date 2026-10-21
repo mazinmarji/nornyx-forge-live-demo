@@ -333,6 +333,28 @@ def test_naming_the_faulty_row_is_not_quadratic_in_the_rows(monkeypatch):
     assert seen["rows"] <= count * (math.ceil(math.log2(count)) + 2), seen["rows"]
 
 
+def test_a_valid_set_is_validated_once_not_prefix_by_prefix(monkeypatch):
+    """The same exposure on the common path: before afc0aa2 the prefix loop ran
+    for EVERY requirements proposal, valid ones included, so the page's
+    ordinary proposal of n rows checked n(n+1)/2 rows (4000 rows took 9.7 s at
+    e19eaa1 and 0.07 s at afc0aa2 on the builder's host). A valid set is now
+    validated once, then judged row by row for the derivation and the
+    repeated-row rule, each linear in the rows."""
+    validate = brd_authoring.AUTHORITATIVE_FIELDS["requirements"]
+    seen = {"rows": 0}
+
+    def counting(value):
+        seen["rows"] += len(value) if isinstance(value, list) else 1
+        return validate(value)
+
+    monkeypatch.setattr(brd_authoring, "AUTHORITATIVE_FIELDS",
+                        {**brd_authoring.AUTHORITATIVE_FIELDS, "requirements": counting})
+    count = 2000
+    rows = [{"id": f"RQ-{n}", "text": f"Requirement number {n}."} for n in range(1, count + 1)]
+    assert proposal_entry_refusal("requirements", rows) is None
+    assert seen["rows"] <= 2 * count, seen["rows"]
+
+
 def test_the_refusal_body_carries_the_reason_where_clients_already_read_it():
     body = proposal_entry_refusal("requirements", _rows("Opens a case.", "")).as_body()
     assert body == {

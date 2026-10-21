@@ -7447,7 +7447,10 @@ which shows only its first characters and its length. The builder's check with
 it found a second exposure of the same reach: the refusal located its row by
 validating every prefix of the set, n(n+1)/2 rows for n rows, and a request sets
 n; it bisects now, about n log n, with the schema's own words for the row at
-fault. Red first on `e19eaa1` with only the test module edited: the two
+fault. The same loop also ran for every valid set -- the page's ordinary
+proposal -- so a proposal of 4000 valid rows took 9.7 s at `e19eaa1` on the
+builder's host, against 0.07 s now that a valid set is validated once; a second
+test holds that path. Red first on `e19eaa1` with only the test module edited: the two
 oversized and non-ASCII suffixes, the 500, the quadratic count and the page's
 pattern fail; the ten other suffixes, which the old rule already ignored, pass.
 
