@@ -132,13 +132,13 @@ def confirmed_requirement_texts(document: Mapping[str, Any]) -> tuple[str, ...]:
 # refused, in the parser's terms. `proposal_entry_refusal` asks the same
 # derivation, and the capsule's own field schema, at the door -- before
 # anything is stored -- and says what to change in plain words, with the
-# technical reason verbatim beneath. It refuses nothing the derivation or
-# the capsule would accept, with two exceptions it names: a row that repeats
-# another, and a line boundary `str.splitlines` honours that the derivation
-# does not spell, both refused because a reader of the rendered document
-# would see something other than what the user entered. It authorizes
-# nothing: a value that passes is still only a proposal, and only a human
-# confirmation moves it.
+# technical reason beneath, quoting the derivation's own words. It refuses
+# nothing the derivation or the capsule would accept, with two exceptions it
+# names: a row that repeats another, which would be built and tested as two
+# requirements; and a line boundary `str.splitlines` honours that the
+# derivation does not spell, which a reader of the rendered document would
+# read as a second line. It authorizes nothing: a value that passes is still
+# only a proposal, and only a human confirmation moves it.
 
 #: The fields a basic user enters as text; every other field passes untouched.
 ENTRY_FIELDS = ("intent", "requirements")
@@ -154,8 +154,10 @@ class EntryRefusal:
 
     `explanation` is for the person at the page: what is wrong and what to
     change, without the parser's vocabulary. `reason` is the technical
-    refusal, verbatim -- the derivation's or the capsule's own words where
-    they refuse it, this module's where it does. `row` names the requirement
+    refusal: the capsule's own words where its schema refuses the value; the
+    derivation's own words, quoted verbatim after `DERIVATION_WOULD_REFUSE`,
+    where it would refuse the value once confirmed; this module's where it
+    refuses on its own account. `row` names the requirement
     at fault (its id, or "row <n>" when the row has no usable id), or is
     None when the fault is the whole value."""
 
@@ -171,14 +173,22 @@ class EntryRefusal:
                 "field": self.field, "row": self.row}
 
 
+#: What the derivation's own words are quoted after. They are written for a
+#: CONFIRMED capsule ("the confirmed intent collides ..."), and at a proposal
+#: nothing is confirmed, so they are not returned bare: bare, they would state
+#: something the record does not hold.
+DERIVATION_WOULD_REFUSE = "once confirmed, the BRD derivation would refuse this: "
+
+
 def _derivation_refusal(intent: str, rows: list[dict[str, Any]]) -> str | None:
-    """The derivation's own refusal of this content, verbatim, or None."""
+    """The derivation's own refusal of this content, quoted verbatim after
+    `DERIVATION_WOULD_REFUSE`, or None."""
     probe = {"authoritative": {"project_name": _PROBE_NAME, "intent": intent,
                                "requirements": rows}}
     try:
         brd_from_capsule(probe)
     except BrdAuthoringError as error:
-        return str(error)
+        return DERIVATION_WOULD_REFUSE + str(error)
     return None
 
 

@@ -686,7 +686,7 @@ def create_app(
     def create_proposal(payload: ProposalPayload):
         """Stores a proposal. An intent or a set of requirement rows that the
         BRD derivation or the capsule would refuse is refused HERE, before it
-        is stored, with a plain-language explanation beside the verbatim
+        is stored, with a plain-language explanation beside the technical
         reason (A-048); a value that passes is stored exactly as before."""
         current = store()
         with store_lock:

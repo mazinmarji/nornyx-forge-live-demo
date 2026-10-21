@@ -14,7 +14,8 @@
   set of rows is proposed, and again before an open one is confirmed, and also
   refuses an empty row, a row repeating another and an invisible line break.
   A refusal is 422, stores nothing, and carries `explanation` (what to change)
-  beside `refused` (the technical reason, verbatim); the page shows both and
+  beside `refused` (the technical reason, the derivation's own words quoted
+  verbatim); the page shows both and
   marks and focuses the row at fault. Deliberately changed for API callers:
   a multi-line or `#`-led intent is refused at the proposal (422) instead of
   being accepted (200) and refused at the BRD (409). Unchanged: the capsule's

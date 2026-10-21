@@ -7327,10 +7327,14 @@ proposal; an empty row was refused with the capsule's reason alone.
    for a proposal stored before this change or by a path other than that
    route; the capsule's own refusals (an invalid or non-human actor, a missing
    or resolved proposal) keep their place ahead of it. A refusal is 422 and
-   stores nothing. Its body keeps `refused`, the verbatim technical reason --
-   the derivation's or the capsule's own words where they refuse it -- and
-   adds `explanation` (plain language: what is wrong and what to change),
-   `field`, and `row` (the requirement at fault, or null).
+   stores nothing. Its body keeps `refused`, the technical reason: the
+   capsule's own words where its schema refuses the value, and the
+   derivation's own words, quoted verbatim after "once confirmed, the BRD
+   derivation would refuse this: ", where it would refuse the value once
+   confirmed. They are not returned bare because they speak of "the
+   confirmed intent", and at a proposal nothing is confirmed. The body adds
+   `explanation` (plain language: what is wrong and what to change), `field`,
+   and `row` (the requirement at fault, or null).
 3. **Requirement rows on the page.** A row editor on the existing onboarding
    page, built with the DOM APIs and `textContent` the page already uses (F15).
    A person adds a row, types in it, removes it, and proposes the set; the
@@ -7366,7 +7370,7 @@ gate and the token's handling. No dependency, framework or build step is
 added.
 
 **Tests.** `tests/test_requirements_entry.py` holds the rule (the defect's
-own input refused with the derivation's reason verbatim; each refusal kind
+own input refused with the derivation's reason quoted verbatim; each refusal kind
 explained without the parser terms the module lists); the doors (nothing stored on a
 refused proposal; a proposal stored before this run refused at
 confirmation); that a confirmed set is unchanged by a second proposal and

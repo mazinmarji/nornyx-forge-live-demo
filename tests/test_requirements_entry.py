@@ -126,14 +126,17 @@ def _assert_refusal(refusal, *, row: str | None, explains: str,
 # ---------------------------------------------------------------------------
 
 def test_a_multi_line_need_is_refused_with_the_derivations_own_reason():
-    """The defect's own input. The reason is the derivation's, verbatim --
-    the same words `POST /api/brd` used to return after confirmation."""
+    """The defect's own input. The reason quotes the derivation verbatim --
+    the same words `POST /api/brd` used to return after confirmation -- after
+    a prefix saying when they would apply: the derivation speaks of "the
+    confirmed intent", and at a proposal nothing is confirmed yet."""
     value = "I need a tracker.\n- It lists requests.\n- It exports them."
     with pytest.raises(BrdAuthoringError) as derived:
         brd_from_capsule({"authoritative": {"project_name": "P", "intent": value}})
     refusal = proposal_entry_refusal("intent", value)
     _assert_refusal(refusal, row=None, explains="one line", reason=HEADING_GRAMMAR)
-    assert refusal.reason == str(derived.value)
+    assert refusal.reason == brd_authoring.DERIVATION_WOULD_REFUSE + str(derived.value)
+    assert refusal.reason.startswith("once confirmed, the BRD derivation would refuse this: ")
     assert "requirement" in refusal.explanation and "row" in refusal.explanation
 
 
