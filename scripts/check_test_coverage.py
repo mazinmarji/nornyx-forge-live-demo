@@ -836,7 +836,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # recorded beside the classification on every refusal and evidence path
     # (integrity refusal on both paths and unobserved, unregistered operation,
     # unknown label, context mismatch, the fallback verdict, the flow stream).
-    "tests/test_operation_classification.py": 46,
+    # 51 -> 56 for the third review round, floor band(56) = 51: evidence
+    # takes the classification from the boundary's decision only -- a reused
+    # case, an injected classification (two ways), an injected effective
+    # level, and every flow-computed field discarded from the input.
+    "tests/test_operation_classification.py": 51,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2141,15 +2145,18 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module sitting 4 above its band. The second review round added nine,
 # 42 -> 51 (floor 38 -> 46): 5801 collect, the sum rises by 8 to 5285 and the
 # aggregate follows to 5293, band(n) 5213 -> 5221, the working room 507 ->
-# 508, and the slack 515 -> 516, the module sitting 5 above its band. The
-# rows below are these.
+# 508, and the slack 515 -> 516, the module sitting 5 above its band. The third round added five, 51 -> 56
+# (floor 46 -> 51): 5806 collect, the sum rises by 5 to 5290 and the
+# aggregate follows to 5298, band(n) 5221 -> 5226, the working room stays 508,
+# and the slack stays 516, the module still 5 above its band. The rows below
+# are these.
 #
 # (rows below):
 #
-#     collected across tests/     5801   (136 modules)
-#     sum of the module floors    5285
-#     band(5801) = ceil(0.9*n)    5221
-#     MINIMUM_COLLECTED           5293
+#     collected across tests/     5806   (136 modules)
+#     sum of the module floors    5290
+#     band(5806) = ceil(0.9*n)    5226
+#     MINIMUM_COLLECTED           5298
 #     above the module sum          8
 #     below what collects         508
 #
@@ -2642,7 +2649,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5293
+MINIMUM_COLLECTED = 5298
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

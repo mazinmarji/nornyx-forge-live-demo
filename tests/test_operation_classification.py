@@ -548,3 +548,99 @@ def test_the_flow_records_the_declared_label_in_its_stream(tmp_path: Path):
     assert fields["declared_risk"] == "low", prevented[0]
     assert fields["operation_classification"] == _CLASSIFIED_DELETE_LOW
     assert case["operation_classification"] == _CLASSIFIED_DELETE_LOW
+
+
+# ---------------------------------------------------------------------------
+# Evidence takes the classification from the boundary's decision only
+# (review of 63b4166, P2: a reused case or a caller-supplied key reached the
+# stream record). A field the flow or the boundary computes is never input.
+# ---------------------------------------------------------------------------
+
+_FAKE_LOW = {"operation": LOW_IMPACT, "consequence": "local_guidance_note",
+             "registered_risk": "low", "declared_risk": "low", "effective_risk": "low",
+             "capability": "execute_low_risk_action"}
+
+
+def _run_dict(root: Path, case: dict) -> dict:
+    from demo_app.agentic import application_security_context, run_case  # noqa: PLC0415
+
+    return run_case(case, root=root, worker_mode="deterministic", config=DEMO,
+                    security_context=application_security_context())
+
+
+def _last_action_record(root: Path) -> dict:
+    stream = [json.loads(line) for line in (root / "evidence/runtime/events.jsonl")
+              .read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [row for row in stream if row["event_type"] in ("action_executed", "action_prevented")]
+    assert rows, stream
+    return rows[-1].get("fields", rows[-1])
+
+
+def test_a_reused_case_does_not_carry_its_classification_into_a_refusal(tmp_path: Path):
+    """RED BEFORE THE REPAIR: the second run's refusal recorded the first
+    run's `send guidance` classification for an unregistered operation."""
+    case = {"id": "CASE-REUSED", "customer": "c", "summary": "s", "risk": "low",
+            "requested_action": LOW_IMPACT}
+    first = _run_dict(tmp_path / "first", case)
+    assert first["action_status"] == "executed" and first["operation_classification"]
+    case["requested_action"] = "erase everything"
+    second = _run_dict(tmp_path / "second", case)
+    assert second["decision"]["code"] == "OPERATION_UNREGISTERED"
+    assert second["operation_classification"] is None
+    assert "action_request" not in second, "the first run's action request survived"
+    record = _last_action_record(tmp_path / "second")
+    assert record["operation_classification"] is None, record
+
+
+@pytest.mark.parametrize("operation, code, expected", [
+    ("erase everything", "OPERATION_UNREGISTERED", None),
+    (BULK_DELETE, "HUMAN_APPROVAL_REQUIRED", "critical"),
+])
+def test_an_injected_classification_is_ignored(tmp_path: Path, operation, code, expected):
+    """RED BEFORE THE REPAIR for the unregistered operation: the caller's
+    `operation_classification` reached the stream record."""
+    case = {"id": "CASE-INJECTED", "customer": "c", "summary": "s", "risk": "low",
+            "requested_action": operation, "operation_classification": dict(_FAKE_LOW)}
+    result = _run_dict(tmp_path, case)
+    assert result["decision"]["code"] == code and result["action_status"] == "prevented"
+    record = _last_action_record(tmp_path)
+    recorded = record["operation_classification"]
+    if expected is None:
+        assert recorded is None and result["operation_classification"] is None, record
+    else:
+        assert recorded["effective_risk"] == expected and recorded["declared_risk"] == "low"
+        assert result["operation_classification"] == recorded
+
+
+def test_an_injected_effective_level_has_no_path_in(tmp_path: Path):
+    """No code reads an effective level from the case; this holds that it
+    stays so -- the caller's `effective_risk` changes nothing."""
+    case = {"id": "CASE-EFFECTIVE", "customer": "c", "summary": "s", "risk": "low",
+            "requested_action": BULK_DELETE, "effective_risk": "low", "risk_decision": "bounded-low-risk"}
+    result = _run_dict(tmp_path, case)
+    assert result["decision"]["code"] == "HUMAN_APPROVAL_REQUIRED"
+    assert result["risk_decision"] == "high-impact"
+    assert _last_action_record(tmp_path)["operation_classification"]["effective_risk"] == "critical"
+
+
+def test_the_flow_discards_every_field_it_computes_from_its_input(tmp_path: Path):
+    """RED BEFORE THE REPAIR: a case arriving with a previous run's verdict
+    kept it until the stage that recomputes it ran -- and kept it for good
+    where that stage never ran."""
+    from demo_app.agentic import (  # noqa: PLC0415
+        FLOW_COMPUTED_FIELDS,
+        CustomerCaseFlow,
+        application_security_context,
+    )
+
+    carried = {name: "carried-over" for name in FLOW_COMPUTED_FIELDS}
+    carried.update({"id": "CASE-CARRIED", "customer": "c", "summary": "s", "risk": "low",
+                    "requested_action": LOW_IMPACT, "action_status": "executed",
+                    "orchestration_status": "completed"})
+    flow = CustomerCaseFlow(carried, root=tmp_path, worker_mode="deterministic",
+                            allow_policy_fallback=True,
+                            security_context=application_security_context())
+    for name in FLOW_COMPUTED_FIELDS:
+        assert name not in flow.case, name
+    assert flow.case["action_status"] == "not_reached"
+    assert flow.case["orchestration_status"] == "not_started"

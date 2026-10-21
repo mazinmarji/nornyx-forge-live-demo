@@ -7200,8 +7200,8 @@ classification, declared label included
 **Review of the second head: the claim on every path.** The review of the
 second head found the same omission on another path: an integrity refusal
 recorded only the effective level, because the label was replaced before the
-refusal was built. Every refusal and evidence path was then checked in turn,
-and each now records the caller's claim beside what was authorized, one test per path:
+refusal was built. Every decision path of `evaluate_and_execute` and the
+flow's action records were then checked in turn, and each now records the caller's claim beside what was authorized, one test per path:
 the integrity refusal on the fallback and the authorizing path and with no
 observation at all (`operation_classification` in the decision and in the
 written refusal record); the unregistered-operation and unknown-label refusals,
@@ -7210,6 +7210,23 @@ context-mismatch refusal and every other withheld or released decision of the
 authorizing path, through its report; the fallback's verdict; and the
 demonstration flow's `action_executed` and `action_prevented` records, which
 carry `declared_risk` and the classification beside the capability.
+
+**Review of the fourth head: evidence takes the boundary's classification
+only.** The flow's stream records took the classification from the case
+dictionary, which the risk stage filled only on success: a case reused from an
+earlier run, or one whose caller put an `operation_classification` key in it,
+recorded that classification beside the refusal of an unregistered operation.
+The records now take the classification -- and the capability -- from the
+boundary's decision for this request, which carries it on every path and
+carries `null` for an unregistered operation or an unknown label; the case's
+field is overwritten from the same place. The class was checked across every
+field the flow or its boundary computes and a case could carry in
+(`FLOW_COMPUTED_FIELDS`: the classification, the risk stage's verdict, the
+action request, the decision, the boundary's evidence, the governance mode, the
+execution result and the evidence report): all are discarded on construction,
+and the action and orchestration statuses are reset to their not-yet-run
+values. No code reads an effective level from the case, and a test holds that a
+caller's `effective_risk` changes nothing.
 
 **What it does NOT establish.**
 
