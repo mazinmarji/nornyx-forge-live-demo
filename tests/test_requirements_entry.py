@@ -35,6 +35,7 @@ are stated once in A-048.
 from __future__ import annotations
 
 import html.parser
+import math
 import re
 from pathlib import Path
 
@@ -274,6 +275,62 @@ def test_an_exhausted_range_yields_no_number():
     assert smallest_unused_requirement_id(used) is None
     assert smallest_unused_requirement_id(used[:-1]) == f"RQ-{limit}"
     assert smallest_unused_requirement_id(used[1:]) == "RQ-1"
+
+
+# Codex P2 4337040952 on e19eaa1: the chooser converted any decimal suffix with
+# int(), so an id with more digits than Python's int-string limit -- which the
+# schema refuses, and which the refusal path then handed to the chooser --
+# raised ValueError and the route answered 500 instead of 422. Only a suffix
+# of the schema's own shape, one to six ASCII digits, holds a number now.
+
+@pytest.mark.parametrize("ignored", [
+    "RQ-" + "9" * 5000,         # past Python's int-string conversion limit
+    "RQ-1234567",                # seven digits: outside the schema
+    "RQ-\u0663",                 # a non-ASCII decimal digit: the page ignores it too
+    "RQ-\u00b2",                 # a superscript: a digit, not decimal
+    "RQ-", "RQ-1a", "rq-1", "RQ-+1", "RQ- 1", None, 5, ["RQ-1"],
+])
+def test_the_chooser_ignores_what_does_not_have_the_schemas_shape(ignored):
+    assert smallest_unused_requirement_id([ignored, "RQ-1", "RQ-2"]) == "RQ-3"
+
+
+def test_a_5000_digit_id_is_refused_with_422_not_a_server_error(app):
+    """The finding's own input through the route: the capsule's schema refuses
+    the id, and the refusal -- which names a free number -- is a 422 with a
+    plain explanation, not an unhandled error."""
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers["Authorization"] = f"Bearer {app.state.session.token}"
+    assert client.post("/api/project", json={
+        "project_id": "proj-1", "project_name": "Support Portal", "actor": HUMAN}).status_code == 200
+    huge = "RQ-" + "1" * 5000
+    response = _propose(client, "requirements", [{"id": huge, "text": "A support agent opens a case."}])
+    assert response.status_code == 422, (response.status_code, response.text[:300])
+    body = response.json()
+    assert body["row"] == "row 1" and "Number it RQ-1" in body["explanation"]
+    assert _state(client)["proposals"] == []
+
+
+def test_naming_the_faulty_row_is_not_quadratic_in_the_rows(monkeypatch):
+    """A builder's check with the finding above: the refusal located its row
+    by validating every prefix of the set, n(n+1)/2 rows for n, and the server
+    sets no limit on the rows a request carries. It bisects now, about n log n,
+    with the capsule's own words for the row at fault."""
+    validate = brd_authoring.AUTHORITATIVE_FIELDS["requirements"]
+    seen = {"rows": 0}
+
+    def counting(value):
+        seen["rows"] += len(value) if isinstance(value, list) else 1
+        return validate(value)
+
+    monkeypatch.setattr(brd_authoring, "AUTHORITATIVE_FIELDS",
+                        {**brd_authoring.AUTHORITATIVE_FIELDS, "requirements": counting})
+    count = 2000
+    rows = [{"id": f"RQ-{n}", "text": f"Requirement number {n}."} for n in range(1, count)]
+    rows.append({"id": "RQ-1", "text": "A repeated number."})
+    refusal = proposal_entry_refusal("requirements", rows)
+    assert refusal is not None and refusal.row == "RQ-1"
+    assert refusal.reason == "requirement id RQ-1 is duplicated"
+    assert seen["rows"] <= count * (math.ceil(math.log2(count)) + 2), seen["rows"]
 
 
 def test_the_refusal_body_carries_the_reason_where_clients_already_read_it():
@@ -519,7 +576,11 @@ def test_the_page_numbers_a_new_row_within_the_schemas_range(page):
     assert "Math.max" not in script, "the max+1 rule is still on the page"
     chooser = script[script.index("function smallestUnusedRequirementNumber("):]
     chooser = chooser[:chooser.index("\n}") + 2]
-    assert "new Set(rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10)))" in chooser
+    # Only an ASCII suffix of one to six digits holds a number: the same shape
+    # as the domain rule, so the page and the server agree on what is taken.
+    assert "const held = item.dataset.rqid.match(/^RQ-([0-9]{1,6})$/);" in chooser
+    assert "if(held){ used.add(Number(held[1])); }" in chooser
+    assert "parseInt" not in chooser
     assert "for(let n = 1; n <= REQUIREMENT_NUMBER_LIMIT; n++){ if(!used.has(n)){ return n; } }" in chooser
     assert chooser.rstrip().endswith("return null;\n}")
     adder = script[script.index("function addRequirementFromButton("):]

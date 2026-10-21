@@ -29,7 +29,10 @@
   (RQ-1 to RQ-999999, the capsule's `REQUIREMENT_NUMBER_LIMIT`, written into
   the page), not one past the largest, so a set holding RQ-999999 no longer
   makes the page generate an id the schema refuses; with every number taken,
-  the page says so and adds no row. This is a requirements-entry
+  the page says so and adds no row. Only an id suffix of one to six ASCII
+  digits counts as a number, on the page and on the server, so an id of
+  thousands of digits is refused with 422 rather than raising, and the row at
+  fault is located by bisection rather than by validating every prefix. This is a requirements-entry
   affordance, not a completed basic-user acceptance, and no
   generated-application safety boundary is claimed.
 

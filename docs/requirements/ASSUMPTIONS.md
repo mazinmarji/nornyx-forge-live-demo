@@ -7430,11 +7430,40 @@ over 2000 characters or a need over 4000, and control characters, each refused
 when proposed with a plain explanation; a name outside the actor rule, which
 refuses every proposal with the capsule's own reason and no explanation, and a
 project id or name outside theirs -- the last two belong to the page's existing
-fields, not to this change. The server sets no limit on the number of rows. One
-difference in the rule remains and refuses nothing: the schema's `\d` admits a
-non-ASCII decimal digit (`RQ-٣`), which the domain rule counts as number 3 and
-the page does not, so the page may number a new row `RQ-3` beside it; both are
-accepted.
+fields, not to this change. The server sets no limit on the number of rows.
+
+**Review of the fifth head.** The Codex review of `e19eaa1` found one defect:
+`smallest_unused_requirement_id` converted any decimal suffix with `int()`, so
+an id with more digits than Python's integer-string conversion limit -- which
+the schema refuses, and whose refusal then called the chooser to name a free
+number -- raised `ValueError`, and `POST /api/proposals` answered 500 instead of
+422. Only a suffix of the schema's own width, one to six ASCII digits, now holds
+a number, and nothing else is converted; the page reads a row's id with the same
+pattern, so the page and the server agree. A suffix in non-ASCII decimal digits
+(`RQ-` and U+0663, which the schema's `\d` admits) holds no number on either
+side: neither counts it, and either may give `RQ-3` beside it, and both ids are
+accepted. A 5000-digit id is now refused with 422 and the plain explanation,
+which shows only its first characters and its length. The builder's check with
+it found a second exposure of the same reach: the refusal located its row by
+validating every prefix of the set, n(n+1)/2 rows for n rows, and a request sets
+n; it bisects now, about n log n, with the schema's own words for the row at
+fault. Red first on `e19eaa1` with only the test module edited: the two
+oversized and non-ASCII suffixes, the 500, the quadratic count and the page's
+pattern fail; the ten other suffixes, which the old rule already ignored, pass.
+
+The builder then checked each `int(`, numeric parse and length-sensitive
+operation that request input reaches in `capsule.py`, `brd_authoring.py` and
+`onboarding_app.py`. `capsule.py` converts nothing to a number; its length
+checks follow its type checks and bound the texts before any later use.
+`brd_authoring.py`'s one `int()` is now on one to six ASCII digits; its other
+operations on request text (line splitting, the duplicate comparison, the
+derivation) run only after the schema has bounded that text, and the chooser's
+loop ends at the first free number. `onboarding_app.py` converts nothing on the
+server; the page's `Number()` takes one to six ASCII digits. Request bodies that
+cannot be parsed -- an integer of 5000 digits, nesting 100000 deep -- are
+refused by the framework with 400 before any route runs, as before this change;
+an oversized intent, row text, actor ident or field name is refused with 422,
+and an oversized proposal id with 409.
 
 **What it does NOT establish.**
 

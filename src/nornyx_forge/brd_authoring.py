@@ -31,6 +31,7 @@ is the caller's act.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -244,6 +245,14 @@ def _intent_refusal(value: Any) -> EntryRefusal | None:
     return EntryRefusal("intent", fault, reason)
 
 
+#: The shape of a requirement number the rule counts: one to six ASCII digits,
+#: the schema's own width. Any other suffix -- longer, empty, signed, spaced or
+#: non-ASCII -- holds no number here, as it holds none on the page, and is never
+#: converted with int(), so a suffix of thousands of digits cannot raise
+#: (Codex P2 4337040952).
+_REQUIREMENT_NUMBER = re.compile(r"RQ-([0-9]{1,6})")
+
+
 def smallest_unused_requirement_id(used: Any) -> str | None:
     """The id a new requirement row takes: `RQ-<n>` for the smallest n from 1 to
     `REQUIREMENT_NUMBER_LIMIT` that no id in `used` holds, compared by number so
@@ -255,8 +264,9 @@ def smallest_unused_requirement_id(used: Any) -> str | None:
     the number it gives."""
     taken: set[int] = set()
     for ident in used or ():
-        if isinstance(ident, str) and ident.startswith("RQ-") and ident[3:].isdecimal():
-            taken.add(int(ident[3:]))
+        held = _REQUIREMENT_NUMBER.fullmatch(ident) if isinstance(ident, str) else None
+        if held is not None:
+            taken.add(int(held.group(1)))
     for number in range(1, REQUIREMENT_NUMBER_LIMIT + 1):
         if number not in taken:
             return f"RQ-{number}"
@@ -268,39 +278,57 @@ def _normalised(text: str) -> str:
 
 
 def _schema_row_refusal(value: list[Any]) -> EntryRefusal | None:
-    """The capsule's schema, row by row, so a refusal names the row it is
-    about: the first prefix the schema refuses ends at the faulty row."""
+    """The capsule's schema, so a refusal names the row it is about, in the
+    schema's own words. The schema refuses a prefix of the rows exactly when the
+    prefix holds the faulty row, so the shortest refused prefix ends at it; it
+    is found by bisection, about n log n rows checked for n rows, where trying
+    every prefix checked n(n+1)/2 -- and a request sets the n."""
     validate = AUTHORITATIVE_FIELDS["requirements"]
-    for index in range(1, len(value) + 1):
+    try:
+        validate(value)
+        return None
+    except CapsuleValidationError:
+        pass
+    low, high = 1, len(value)
+    while low < high:
+        middle = (low + high) // 2
         try:
-            validate(value[:index])
-        except CapsuleValidationError as error:
-            reason = str(error)
-            row = value[index - 1]
-            ident = row.get("id") if isinstance(row, dict) else None
-            usable = (isinstance(ident, str) and ident in reason
-                      and "must match RQ-" not in reason)
-            named = ident if usable else f"row {index}"
-            who = f"Requirement {named}" if named == ident else f"Requirement row {index}"
-            if "exactly {id, text}" in reason:
-                explanation = f"{who} could not be read: each row needs exactly an id and a text."
-            elif "must match RQ-" in reason:
-                free = smallest_unused_requirement_id(
-                    [row.get("id") for row in value if isinstance(row, dict)])
-                explanation = (f"{who} is numbered {ident!r}, outside the numbers a requirement"
-                               f" can have (RQ-1 to RQ-{REQUIREMENT_NUMBER_LIMIT}). "
-                               + (f"Number it {free}, the smallest number not in use."
-                                  if free is not None else
-                                  "Every number is in use; remove a requirement first."))
-            elif "is duplicated" in reason:
-                explanation = (f"Two rows have the same number, {ident}. Give each row its"
-                               " own number.")
-            elif "must not be empty" in reason:
-                explanation = (f"{who} is empty. Write what the application must do, or"
-                               " remove the row.")
-            else:
-                explanation = _schema_explanation(reason, who, 2000)
-            return EntryRefusal("requirements", explanation, reason, named)
+            validate(value[:middle])
+            low = middle + 1
+        except CapsuleValidationError:
+            high = middle
+    index = high
+    try:
+        validate(value[:index])
+    except CapsuleValidationError as error:
+        reason = str(error)
+        row = value[index - 1]
+        ident = row.get("id") if isinstance(row, dict) else None
+        usable = (isinstance(ident, str) and ident in reason
+                  and "must match RQ-" not in reason)
+        named = ident if usable else f"row {index}"
+        who = f"Requirement {named}" if named == ident else f"Requirement row {index}"
+        if "exactly {id, text}" in reason:
+            explanation = f"{who} could not be read: each row needs exactly an id and a text."
+        elif "must match RQ-" in reason:
+            free = smallest_unused_requirement_id(
+                [row.get("id") for row in value if isinstance(row, dict)])
+            shown = (repr(ident) if not isinstance(ident, str) or len(ident) <= 24
+                     else f"'{ident[:12]}...' ({len(ident)} characters)")
+            explanation = (f"{who} is numbered {shown}, outside the numbers a requirement"
+                           f" can have (RQ-1 to RQ-{REQUIREMENT_NUMBER_LIMIT}). "
+                           + (f"Number it {free}, the smallest number not in use."
+                              if free is not None else
+                              "Every number is in use; remove a requirement first."))
+        elif "is duplicated" in reason:
+            explanation = (f"Two rows have the same number, {ident}. Give each row its"
+                           " own number.")
+        elif "must not be empty" in reason:
+            explanation = (f"{who} is empty. Write what the application must do, or"
+                           " remove the row.")
+        else:
+            explanation = _schema_explanation(reason, who, 2000)
+        return EntryRefusal("requirements", explanation, reason, named)
     return None
 
 

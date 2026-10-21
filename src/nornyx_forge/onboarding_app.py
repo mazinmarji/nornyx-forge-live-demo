@@ -1350,7 +1350,13 @@ const rowItems = () => Array.from(document.getElementById("rq_rows").children);
 // generates an id the schema refuses (Codex P2 4336275226).
 const REQUIREMENT_NUMBER_LIMIT = __REQUIREMENT_NUMBER_LIMIT__;
 function smallestUnusedRequirementNumber(){
-  const used = new Set(rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10)));
+  // Only one to six ASCII digits hold a number, as in the domain rule; any
+  // other suffix holds none on either side (Codex P2 4337040952).
+  const used = new Set();
+  for(const item of rowItems()){
+    const held = item.dataset.rqid.match(/^RQ-([0-9]{1,6})$/);
+    if(held){ used.add(Number(held[1])); }
+  }
   for(let n = 1; n <= REQUIREMENT_NUMBER_LIMIT; n++){ if(!used.has(n)){ return n; } }
   return null;
 }
