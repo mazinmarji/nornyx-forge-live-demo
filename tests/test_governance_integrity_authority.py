@@ -826,7 +826,7 @@ def test_a_refusal_that_cannot_be_recorded_is_still_returned(tmp_path: Path):
 
     flow = CustomerCaseFlow(
         {"id": "CASE-REC", "customer": "Amina", "risk": "low", "summary": "s",
-         "requested_action": "a"},
+         "requested_action": "send guidance"},
         root=tmp_path, worker_mode="deterministic", allow_policy_fallback=True,
         security_context=application_security_context(),
     )
@@ -849,7 +849,7 @@ def test_a_recordable_refusal_says_nothing_about_recording(tmp_path: Path):
 
     flow = CustomerCaseFlow(
         {"id": "CASE-REC-OK", "customer": "Amina", "risk": "low", "summary": "s",
-         "requested_action": "a"},
+         "requested_action": "send guidance"},
         root=tmp_path, worker_mode="deterministic", allow_policy_fallback=True,
         security_context=application_security_context(),
     )

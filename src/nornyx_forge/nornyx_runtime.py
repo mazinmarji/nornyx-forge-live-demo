@@ -10,6 +10,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable
 
 from . import __version__
@@ -483,6 +484,159 @@ def exercised_capability(risk: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Operation classification (A-047)
+#
+# WHAT AN ACT IS, decided from what it does. The boundary used to authorize
+# the risk level its CALLER declared, and the demonstration's HTTP surface
+# takes that level from the request body: "delete all service requests" and
+# an external send were released when labelled `low`, as "Declared low-risk
+# demonstration capability", and refused when labelled `high`. The level now
+# comes from a trusted, closed registry of the operations this demonstration
+# knows. A declared label is an UNTRUSTED CLAIM: it is recorded, and it may
+# raise the level (stricter handling), never lower it. An operation the
+# registry does not define is refused before anything runs.
+#
+# CLASSIFICATION IS NOT AUTHORIZATION. Classifying an act decides which
+# capability it exercises and therefore which approval it needs. It releases
+# nothing: the boundary still authorizes, a consequential act still needs an
+# action-specific approval bound to its exact request, and the demonstration
+# fallback still denies every consequential act.
+#
+# SCOPE, stated rather than implied. The registry covers this demonstration's
+# operations and nothing else. It is not a policy framework, and a generated
+# application does not inherit it: this is the demonstration's action
+# boundary, not an independently validated runtime boundary for a generated
+# application.
+# ---------------------------------------------------------------------------
+
+
+class UnknownOperation(ValueError):
+    """An operation the trusted registry does not define."""
+
+
+#: Distinct from RISK_LEVEL_UNKNOWN: there the caller's LABEL is outside the
+#: vocabulary; here the ACT itself is one nobody has classified.
+OPERATION_UNREGISTERED = "OPERATION_UNREGISTERED"
+
+#: The operation the boundary describes an act by when its caller supplied no
+#: descriptor (`_canonical_action_request`). An act described by nothing is
+#: not a low-risk act, so it is registered as an unspecified consequential one.
+UNDESCRIBED_OPERATION = "execute_high_risk_action"
+
+#: Ascending. A declared label may move the effective level up this order only.
+_RISK_ORDER = ("low", "medium", "high", "critical")
+
+
+@dataclass(frozen=True)
+class RegisteredOperation:
+    """One trusted operation: what it does and what that consequence requires.
+
+    `capability` is stated, not computed, and checked against the risk on
+    construction, so an entry whose capability and risk disagree cannot exist.
+    """
+
+    operation: str
+    consequence: str
+    risk: str
+    capability: str
+
+    def __post_init__(self) -> None:
+        if not self.operation or self.operation != self.operation.strip():
+            raise ValueError(f"registered operation {self.operation!r} is not canonical")
+        if normalize_risk(self.risk) != self.risk:
+            raise ValueError(f"registered risk {self.risk!r} is not canonical")
+        if exercised_capability(self.risk) != self.capability:
+            raise ValueError(
+                f"registered operation {self.operation!r} names capability "
+                f"{self.capability!r}, but risk {self.risk!r} exercises "
+                f"{exercised_capability(self.risk)!r}"
+            )
+
+
+#: THE TRUSTED OPERATION REGISTRY: closed, read-only and exact. No alias, no
+#: case folding, no whitespace trimming and no prefix match: an operation is
+#: registered by exactly one spelling, and any other spelling is unregistered.
+#: One low-impact operation exists -- the demonstration's local guidance note,
+#: whose callable writes nothing outside the process. Every other entry is
+#: consequential and needs an action-specific human approval.
+OPERATION_REGISTRY: Mapping[str, RegisteredOperation] = MappingProxyType({
+    entry.operation: entry
+    for entry in (
+        RegisteredOperation("send guidance", "local_guidance_note", "low",
+                            "execute_low_risk_action"),
+        RegisteredOperation("issue refund", "financial_transfer", "high",
+                            "execute_high_risk_effect"),
+        RegisteredOperation("refund", "financial_transfer", "high",
+                            "execute_high_risk_effect"),
+        RegisteredOperation("wire transfer", "financial_transfer", "high",
+                            "execute_high_risk_effect"),
+        RegisteredOperation("close account", "destructive_account_change", "high",
+                            "execute_high_risk_effect"),
+        RegisteredOperation("delete all service requests", "destructive_bulk_deletion",
+                            "critical", "execute_high_risk_effect"),
+        RegisteredOperation("send external email", "external_transmission", "high",
+                            "execute_high_risk_effect"),
+        RegisteredOperation(UNDESCRIBED_OPERATION, "unspecified_consequential", "high",
+                            "execute_high_risk_effect"),
+    )
+})
+
+
+@dataclass(frozen=True)
+class OperationClassification:
+    """What an act IS. It carries no decision: classification is not permission."""
+
+    operation: str
+    consequence: str
+    registered_risk: str
+    declared_risk: str
+    effective_risk: str
+    capability: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "operation": self.operation,
+            "consequence": self.consequence,
+            "registered_risk": self.registered_risk,
+            "declared_risk": self.declared_risk,
+            "effective_risk": self.effective_risk,
+            "capability": self.capability,
+        }
+
+
+def classify_operation(operation: object, declared_risk: object) -> OperationClassification:
+    """Classify an act from its registered operation; the label may only raise it.
+
+    Raises `UnknownRiskLevel` for a label outside the vocabulary, as before,
+    and `UnknownOperation` for anything that is not exactly a registered
+    operation -- including a non-string. Deterministic: the same operation and
+    label always give the same classification.
+    """
+    declared = normalize_risk(declared_risk)
+    # EXACTLY `str`, not an instance of it: a subclass can redefine equality
+    # and hashing and so match a registered key it does not spell.
+    if type(operation) is not str or operation not in OPERATION_REGISTRY:
+        shown = repr(operation)
+        if len(shown) > 120:
+            shown = shown[:117] + "..."
+        raise UnknownOperation(
+            f"operation {shown} is not a registered operation; the registered "
+            f"operations are {sorted(OPERATION_REGISTRY)}. An unregistered act "
+            "is not a low-risk act, so it is refused rather than guessed at."
+        )
+    entry = OPERATION_REGISTRY[operation]
+    effective = max(declared, entry.risk, key=_RISK_ORDER.index)
+    return OperationClassification(
+        operation=entry.operation,
+        consequence=entry.consequence,
+        registered_risk=entry.risk,
+        declared_risk=declared,
+        effective_risk=effective,
+        capability=exercised_capability(effective),
+    )
+
+
 def canonical_action_request(
     *,
     mission_id: str,
@@ -497,10 +651,16 @@ def canonical_action_request(
 
     Public so a caller can report or pre-compute exactly what the runtime will
     bind an approval to, without that computation being what the runtime trusts.
+
+    The capability follows the OPERATION's classification (A-047), exactly as
+    the boundary derives it, so the request a caller pre-computes is the one
+    the boundary will compare -- whatever label `risk` declares. Raises
+    `UnknownOperation` for an unregistered operation, which has no request.
     """
+    operation = descriptor.operation if descriptor is not None else UNDESCRIBED_OPERATION
     return _canonical_action_request(
         mission_id=mission_id,
-        capability=exercised_capability(risk),
+        capability=classify_operation(operation, risk).capability,
         subject_revision=subject_revision,
         descriptor=descriptor,
         subject_scope_id=subject_scope_id,
@@ -3176,6 +3336,8 @@ class NornyxActionBoundary:
         risk: str,
         attempt: int,
         action_approval: dict | None,
+        classification: OperationClassification | None = None,
+        operation_registered: bool = True,
     ) -> "RuntimeDecision | None":
         """The refusal a compromised governance state requires, or None.
 
@@ -3244,6 +3406,14 @@ class NornyxActionBoundary:
                 "schema": "nornyx.forge.refused_action_attempt.v1",
                 "mission_id": mission_id,
                 "risk": normalize_risk(risk),
+                # The caller's claim beside what was authorized (A-047), so a
+                # downgrade attempted against a compromised runtime is visible.
+                "operation_classification": (
+                    classification.as_dict() if classification is not None else None
+                ),
+                # False when the act names no registered operation: the gate
+                # still runs for it, ahead of the registry refusal (A-047).
+                "operation_registered": operation_registered,
                 "attempt": attempt,
                 "code": GOVERNANCE_INTEGRITY_COMPROMISED,
                 "reason": reason,
@@ -3307,6 +3477,7 @@ class NornyxActionBoundary:
         action_request: ActionRequest | None = None,
         action_descriptor: ActionDescriptor | None = None,
         attempt: int = 1,
+        classification: OperationClassification | None = None,
     ) -> RuntimeDecision:
         assert self.authorizer is not None and self.context is not None
         high_risk = normalize_risk(risk) in HIGH_RISK_LEVELS
@@ -3346,7 +3517,7 @@ class NornyxActionBoundary:
         # low-risk act, it simply has less to release.
         refusal = self._integrity_refusal(
             mission_id=mission_id, risk=risk, attempt=attempt,
-            action_approval=action_approval,
+            action_approval=action_approval, classification=classification,
         )
         if refusal is not None:
             return refusal
@@ -3604,6 +3775,7 @@ class NornyxActionBoundary:
                     authentication_evidence=authentication_evidence,
                     release_failure=release_failure,
                     effect_withheld=effect_withheld,
+                    classification=classification,
                 )
                 raise
             recorder.record_observation(
@@ -3664,6 +3836,7 @@ class NornyxActionBoundary:
             release_reason=release_reason,
             authentication_evidence=authentication_evidence,
             effect_withheld=effect_withheld,
+            classification=classification,
         )
         if withheld:
             return RuntimeDecision(
@@ -3699,6 +3872,7 @@ class NornyxActionBoundary:
         authentication_evidence,
         release_failure: str = "",
         effect_withheld: dict | None = None,
+        classification: OperationClassification | None = None,
     ) -> dict:
         """Write the event stream and the report. The ONLY place either is written.
 
@@ -3722,6 +3896,11 @@ class NornyxActionBoundary:
                 "action_binding": release_reason,
                 "approval_authentication": authentication_evidence,
             }
+            if classification is not None:
+                # What the act IS and what its caller CLAIMED, side by side
+                # (A-047). The effective level is what was authorized; the
+                # declared label is kept so an attempted downgrade is visible.
+                report["operation_classification"] = classification.as_dict()
             if effect_withheld is not None:
                 # The counterpart to `effect_release`. Recorded here because
                 # Nornyx's observation vocabulary has no term for withholding
@@ -3826,10 +4005,72 @@ class NornyxActionBoundary:
                         "status": "refused",
                         "risk_level_declared": risk if isinstance(risk, str) else repr(risk),
                         "risk_vocabulary": sorted(RISK_LEVELS),
+                        # Stated, not omitted: the label is outside the
+                        # vocabulary, so no classification was computed.
+                        "operation_classification": None,
                     },
                 ),
                 None,
             )
+
+        # Then: WHAT IS THIS ACT? (A-047) Classified from the operation the
+        # act is described by -- the same description the canonical request
+        # and any approval bind to -- never from the caller's label, which
+        # may only raise the level.
+        #
+        # THE REFUSAL ORDER (A-047, as reviewed): (1) an unrecognised label,
+        # above; (2) governance unavailable -- no authorizer and the fallback
+        # disabled -- raises; (3) the integrity gate, with its
+        # refused_action_attempt record; (4) an unregistered operation; then
+        # each path's own gates: capability and zone crossing, subject,
+        # request context and the approval on the authorizing path, the
+        # consequential-act denial on the fallback. (2) and (3) ran for every
+        # act before A-047 whatever it described, so an unregistered act must
+        # not skip them: for a registered act they run where they always
+        # did, inside each path; for an unregistered one they run here,
+        # ahead of its refusal. No refused path runs a callback or spends an
+        # approval, and none before the approval gate authenticates one: the
+        # integrity record notes only whether one was presented.
+        described = action_descriptor or (
+            action_request.action if action_request is not None else None
+        )
+        try:
+            classification = classify_operation(
+                described.operation if described is not None else UNDESCRIBED_OPERATION,
+                risk,
+            )
+        except UnknownOperation as exc:
+            if self.authorizer is None and not self.allow_fallback:
+                raise NornyxRuntimeUnavailable(
+                    self.load_error or "Nornyx runtime unavailable"
+                ) from None
+            integrity_refusal = self._integrity_refusal(
+                mission_id=mission_id, risk=risk, attempt=attempt,
+                action_approval=action_approval, classification=None,
+                operation_registered=False,
+            )
+            if integrity_refusal is not None:
+                return integrity_refusal, None
+            return (
+                RuntimeDecision(
+                    effect="DENY",
+                    code=OPERATION_UNREGISTERED,
+                    reason=str(exc),
+                    source="nornyx.agentic" if self.authorizer else "deterministic_fallback",
+                    evidence={
+                        "status": "refused",
+                        "risk_level_declared": normalize_risk(risk),
+                        "registered_operations": sorted(OPERATION_REGISTRY),
+                        # Stated, not omitted: an unregistered act has no
+                        # classification to record.
+                        "operation_classification": None,
+                    },
+                ),
+                None,
+            )
+        # From here on the boundary authorizes the OPERATION's level. The
+        # declared label survives only in the classification record.
+        risk = classification.effective_risk
 
         if self.authorizer is not None:
             result: str | None = None
@@ -3847,6 +4088,7 @@ class NornyxActionBoundary:
                 action_request=action_request,
                 action_descriptor=action_descriptor,
                 attempt=attempt,
+                classification=classification,
             )
             return decision, result
         if not self.allow_fallback:
@@ -3867,7 +4109,7 @@ class NornyxActionBoundary:
         # state was compromised as well.
         refusal = self._integrity_refusal(
             mission_id=mission_id, risk=risk, attempt=attempt,
-            action_approval=action_approval,
+            action_approval=action_approval, classification=classification,
         )
         if refusal is not None:
             return refusal, None
@@ -3881,15 +4123,17 @@ class NornyxActionBoundary:
                 "HUMAN_APPROVAL_REQUIRED",
                 "Autonomous demonstration mode cannot grant human production approval.",
                 "deterministic_fallback",
-                {"status": "fallback", "load_error": self.load_error},
+                {"status": "fallback", "load_error": self.load_error,
+                 "operation_classification": classification.as_dict()},
             )
             return decision, None
         result = action()
         decision = RuntimeDecision(
             "ALLOW",
             "ALLOWED",
-            "Declared low-risk demonstration capability.",
+            "Registered low-impact demonstration operation.",
             "deterministic_fallback",
-            {"status": "fallback", "load_error": self.load_error},
+            {"status": "fallback", "load_error": self.load_error,
+             "operation_classification": classification.as_dict()},
         )
         return decision, result

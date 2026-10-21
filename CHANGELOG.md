@@ -2,6 +2,28 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The demonstration's action boundary classifies an act by its registered
+  operation, not by the risk label its caller declares (A-047). A case asking
+  to "delete all service requests", or to send an external email, labelled
+  `low` was released as "Declared low-risk demonstration capability"; the
+  same case labelled `high` was refused. `OPERATION_REGISTRY` is now a closed,
+  read-only table of the demonstration's operations, and `classify_operation`
+  derives the effective level from it: a label is an untrusted claim that may
+  raise the level and never lowers it, and an unregistered, misspelled or
+  non-string operation is refused as `OPERATION_UNREGISTERED` before anything
+  runs. The capability, the canonical request an approval binds to and the
+  approval requirement all follow the operation. Classification is not
+  authorization: a consequential act still needs its action-specific approval,
+  and the fallback still denies it. Approvals, digest binding, consumption,
+  replay refusal and evidence are unchanged. Existing tests in five modules
+  that relied on a label or an unregistered operation now name a registered
+  one, and the two `tests/test_capability_binding.py` rows that pinned the
+  downgrade (a refund labelled `medium` or `low`, executed) now expect it
+  withheld. The label
+  downgrade is closed for the demonstration action boundary only: this is not
+  an independently validated runtime boundary for a generated application, and
+  no generated-application safety boundary is claimed.
+
 - The development flow creates no CrewAI memory store, and a failure to
   initialise it is reported by name (A-046). CrewAI created a long-term
   `Memory`, backed by the native `lancedb` store, for every flow declaring

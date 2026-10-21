@@ -25,6 +25,7 @@ from nornyx_forge.nornyx_runtime import (
     ActionRequest,
     canonical_attempt_id,
     canonical_request_id,
+    classify_operation,
     exercised_capability,
 )
 
@@ -191,9 +192,11 @@ def _drive(src: Path, risk: str, approve: str) -> dict:
         ("high", "grant", "executed"),
         # The shipped default: the same act, withheld for want of an approval.
         ("high", "none", "prevented"),
-        # The documented two-tier mapping, recorded the same way.
-        ("medium", "none", "executed"),
-        ("low", "none", "executed"),
+        # A refund relabelled medium or low (A-047): the requirement is the
+        # OPERATION's, so the same capability is recorded and the effect is
+        # withheld. These two rows pinned the label downgrade until A-047.
+        ("medium", "none", "prevented"),
+        ("low", "none", "prevented"),
     ],
     ids=["high released", "high withheld", "medium", "low"],
 )
@@ -210,10 +213,12 @@ def test_the_recorded_capability_is_the_one_the_act_exercised(
     observed = _drive(SRC, risk, approve)
     assert observed["action_status"] == expect_status, observed
     recorded = {entry["capability"] for entry in observed["capabilities"]}
-    assert recorded == {exercised_capability(risk)}, (
-        "a " + risk + "-risk act whose effect was " + observed["action_status"]
+    exercised = classify_operation("issue refund", risk).capability
+    assert exercised == "execute_high_risk_effect"
+    assert recorded == {exercised}, (
+        "a refund labelled " + risk + " whose effect was " + observed["action_status"]
         + " was recorded against " + repr(sorted(recorded)) + ", and the "
-        "capability such an act exercises is " + repr(exercised_capability(risk))
+        "capability a refund exercises is " + repr(exercised)
     )
 
 

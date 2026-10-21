@@ -643,7 +643,7 @@ def test_the_recognised_levels_are_unaffected(tmp_path: Path):
                             ("high", "prevented"), ("critical", "prevented")):
         case = run_case(
             {"id": "CASE-OK", "customer": "Amina", "risk": label,
-             "summary": "s", "requested_action": "a"},
+             "summary": "s", "requested_action": "send guidance"},
             root=tmp_path / label, worker_mode="deterministic",
             config=RuntimeAuthorityConfig(
                 policy_backend="deterministic_demo", execution_backend="sequential",
@@ -690,7 +690,7 @@ def test_the_risk_stage_and_the_boundary_agree(
 
     case = run_case(
         {"id": "CASE-AGREE", "customer": "Amina", "risk": label,
-         "summary": "s", "requested_action": "a"},
+         "summary": "s", "requested_action": "send guidance"},
         root=tmp_path, worker_mode="deterministic",
         config=RuntimeAuthorityConfig(
             policy_backend="deterministic_demo", execution_backend="sequential",

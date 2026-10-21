@@ -14,10 +14,10 @@ from nornyx_forge.nornyx_runtime import (
     ActionDescriptor,
     NornyxActionBoundary,
     NornyxRuntimeUnavailable,
+    UnknownOperation,
     UnknownRiskLevel,
     canonical_action_request,
-    exercised_capability,
-    normalize_risk,
+    classify_operation,
 )
 from nornyx_forge.subject_bootstrap import (
     RuntimeSecurityContext,
@@ -198,8 +198,31 @@ def _canonical_request_or_none(**arguments: Any):
     """
     try:
         return canonical_action_request(**arguments)
-    except UnknownRiskLevel:
+    except (UnknownRiskLevel, UnknownOperation):
         return None
+
+
+#: THE VERDICT FIELDS ARE NEVER INPUT (A-047 review): the fields that carry
+#: the boundary's or the risk stage's verdict about this request. A case dict
+#: reused from an earlier run, or built by a caller, could carry any of these
+#: in, and the flow used to keep whatever it found until the stage that
+#: recomputes a field ran -- for good, where that stage never ran. A refusal
+#: then recorded an earlier run's classification, or the caller's own. They
+#: are discarded on construction; `action_status` and `orchestration_status`
+#: are reset to their not-yet-run values. NOT in this list, deliberately:
+#: `timeline` and `limitations`, which ACCUMULATE across runs of one case
+#: (the recovery path reads the timeline), and `status`, `proposal`,
+#: `framework` and `observed_execution_backend`, which every run overwrites.
+FLOW_COMPUTED_FIELDS = (
+    "operation_classification",
+    "risk_decision",
+    "action_request",
+    "decision",
+    "nornyx_evidence",
+    "governance_mode",
+    "execution_result",
+    "evidence",
+)
 
 
 class CustomerCaseFlow(Flow):  # type: ignore[misc]
@@ -234,8 +257,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         self.worker_mode = worker_mode
         self.mission_id = case.get("mission_id") or f"CASE-{uuid.uuid4().hex[:10]}"
         self.case["mission_id"] = self.mission_id
-        self.case.setdefault("orchestration_status", "not_started")
-        self.case.setdefault("action_status", "not_reached")
+        for computed in FLOW_COMPUTED_FIELDS:
+            self.case.pop(computed, None)
+        self.case["orchestration_status"] = "not_started"
+        self.case["action_status"] = "not_reached"
         # Which attempt at this mission's consequential action this run is. A
         # retry is a new attempt needing its own approval; it is not a second
         # release of the previous one.
@@ -389,9 +414,17 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # `execute_high_risk_effect`. `normalize_risk` exists precisely to
         # end that fall-through and its docstring names `"High" + newline`
         # by hand; it was simply not used one stage upstream.
+        #
+        # AND FROM THE OPERATION, NOT THE LABEL (A-047). The level is the
+        # boundary's own classification of the requested operation: the
+        # case's `risk` is the caller's claim, recorded beside it, which may
+        # raise the level and never lowers it. This stage and the boundary
+        # call the same function, so the stream cannot carry two verdicts.
         raw = str(self.case.get("risk", "low"))
         try:
-            level = normalize_risk(raw)
+            classification = classify_operation(
+                self.case.get("requested_action", "unspecified"), raw
+            )
         except UnknownRiskLevel:
             self.case["risk_decision"] = "unclassified"
             return self._stage(
@@ -400,8 +433,20 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 "declared level, and an unclassified act is not a low-risk "
                 "act.",
             )
+        except UnknownOperation:
+            self.case["risk_decision"] = "unclassified"
+            return self._stage(
+                "risk",
+                "Risk could not be classified: the requested operation is not "
+                "a registered operation, and an unregistered act is not a "
+                "low-risk act.",
+            )
+        # The stage's verdict only. The classification EVIDENCE records is the
+        # boundary's own, taken from its decision for this request.
         self.case["risk_decision"] = (
-            "high-impact" if level in HIGH_RISK_LEVELS else "bounded-low-risk"
+            "high-impact"
+            if classification.effective_risk in HIGH_RISK_LEVELS
+            else "bounded-low-risk"
         )
         return self._stage("risk", f"Risk classified as {self.case['risk_decision']}.")
 
@@ -442,7 +487,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # already knows, so it derives those itself: a caller cannot name someone
         # else's mission and have an approval validated against the name it gave.
         descriptor = ActionDescriptor(
-            operation=str(self.case.get("requested_action", "unspecified")),
+            # THE VALUE THE RISK STAGE CLASSIFIED, unchanged. `str()` here
+            # turned a non-string the stage had refused into the registered
+            # name it renders as, and the boundary released it (A-047 review).
+            operation=self.case.get("requested_action", "unspecified"),
             resource=str(self.case.get("customer", "unknown")),
             destination=EXTERNAL_TRUST_ZONE,
             parameters={
@@ -499,7 +547,9 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
             descriptor=descriptor,
             attempt=self.attempt,
         )
-        if request is not None:
+        if request is None:
+            self.case.pop("action_request", None)
+        else:
             self.case["action_request"] = {
                 "request_id": request.request_id,
                 "attempt_id": request.attempt_id,
@@ -514,6 +564,17 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         }
         self.case["nornyx_evidence"] = decision.evidence
         self.case["governance_mode"] = self.boundary.mode
+        # THE BOUNDARY'S CLASSIFICATION, from its decision for this request
+        # and nowhere else (A-047 review): every decision path carries
+        # `operation_classification`, and an unregistered operation or an
+        # unknown label carries null. Never a case field, which a caller or
+        # an earlier run could have filled.
+        boundary_classification = (
+            decision.evidence.get("operation_classification")
+            if isinstance(decision.evidence, dict)
+            else None
+        )
+        self.case["operation_classification"] = boundary_classification
         # The capability the act EXERCISED, from the single derivation the
         # runtime authorizes against -- never from the branch we are in.
         #
@@ -547,10 +608,11 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
         # the refusal down with it. The ledger's `capability` is already
         # optional; `None` is the honest value for an act that was
         # refused before any capability was in play.
-        try:
-            exercised = exercised_capability(str(self.case.get("risk", "low")))
-        except UnknownRiskLevel:
-            exercised = None
+        exercised = (
+            boundary_classification.get("capability")
+            if isinstance(boundary_classification, dict)
+            else None
+        )
         # What happened to the *act*, recorded separately from what happened to
         # the workflow. An orchestration failure later must not be able to erase
         # the fact that an effect was released, and an effect being released must
@@ -567,6 +629,8 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 decision=decision.effect,
                 reason=decision.reason,
                 governance_source=decision.source,
+                declared_risk=str(self.case.get("risk", "low")),
+                operation_classification=boundary_classification,
             )
         else:
             self.case["execution_result"] = "Action did not execute."
@@ -579,6 +643,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 reason=decision.reason,
                 code=decision.code,
                 governance_source=decision.source,
+                # The caller's claim beside the classification (A-047), so the
+                # stream shows an attempted downgrade, not only its refusal.
+                declared_risk=str(self.case.get("risk", "low")),
+                operation_classification=boundary_classification,
             )
         return self._stage("execution", self.case["execution_result"])
 
