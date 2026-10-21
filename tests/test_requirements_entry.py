@@ -147,7 +147,7 @@ def test_a_need_the_heading_grammar_would_refuse_is_refused(value: str, explains
                     explains=explains, reason=HEADING_GRAMMAR)
 
 
-@pytest.mark.parametrize("separator", [" ", " ", "\x85"])
+@pytest.mark.parametrize("separator", ["\u2028", "\u2029", "\x85"])
 def test_a_line_boundary_the_derivation_does_not_name_is_still_one(separator: str):
     """`str.splitlines` ends a line at these, so a reader of the rendered
     document sees two lines where the user typed one field. The line rule
@@ -182,7 +182,7 @@ def test_a_single_line_need_and_every_other_field_pass_unchanged():
     ("Assigns\x1b a case", "character", "requirement RQ-2 text contains control characters"),
     ("Assigns a case.\nAnd closes it.", "one line", HEADING_GRAMMAR),
     ("# Assigns a case", "“#”", HEADING_GRAMMAR),
-    ("Assigns a case to a colleague", "one line", "line boundary"),
+    ("Assigns a case\u2028to a colleague", "one line", "line boundary"),
 ])
 def test_a_malformed_row_is_refused_and_named(text: str, explains: str, reason: str):
     rows = _rows("Opens a case.", text, "Resolves a case.")
@@ -430,6 +430,9 @@ def test_the_row_editor_changes_neither_the_csp_nor_the_page_technology(page):
     markup, script, _parsed = page
     assert f'content="{BASE_CSP}"' in markup
     assert "<script src" not in markup and "import " not in script
+    # A dynamic-evaluation call is not listed here: scripts/check_security.py
+    # refuses that spelling anywhere in the source, the page string included,
+    # and spelling it in this list would itself be a finding of that gate.
     for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write",
-                      "localStorage", "sessionStorage", "document.cookie", "eval(", "new Function"):
+                      "localStorage", "sessionStorage", "document.cookie", "new Function"):
         assert forbidden not in markup, forbidden
