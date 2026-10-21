@@ -7126,8 +7126,10 @@ authorization decision and its evidence said ALLOW.
    classifies the operation the act is described by -- the descriptor that the
    canonical request and any approval bind to -- immediately after the
    existing refusal of an unrecognised label, and before either authorization
-   path. An unregistered operation is refused with `OPERATION_UNREGISTERED`,
-   with no callback run and no approval read. Otherwise the effective level
+   path. An unregistered operation is refused with `OPERATION_UNREGISTERED`
+   once the governance-unavailable and integrity gates have passed (the
+   refusal order below), with no callback run and no approval authenticated
+   or spent. Otherwise the effective level
    replaces the label for everything after it: the capability exercised, the
    canonical request, the approval requirement, the integrity-refusal record
    and the fallback's verdict. `canonical_action_request` derives the
@@ -7259,8 +7261,11 @@ now, and each was checked against the order before A-047:
    (`HUMAN_APPROVAL_REQUIRED`).
 
 For a registered operation, steps 2 and 3 run where they always did, inside
-each path. For an unregistered one, they run ahead of its refusal. No callback
-runs and no approval is read on any refused path. The one deliberate
+each path. For an unregistered one, they run ahead of its refusal. No refused
+path runs a callback or spends an approval. Steps 1 to 4 authenticate no
+approval: the integrity record notes only whether one was presented. An
+approval is first read for its authority in step 5, on the authorizing path,
+where the approval gate is itself a refusal that reads it. The one deliberate
 difference from before A-047: an act whose label is low and whose operation is
 consequential now meets step 5's consequential gates, which it used to skip --
 the repair itself.

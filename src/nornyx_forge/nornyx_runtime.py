@@ -4028,8 +4028,9 @@ class NornyxActionBoundary:
         # act before A-047 whatever it described, so an unregistered act must
         # not skip them: for a registered act they run where they always
         # did, inside each path; for an unregistered one they run here,
-        # ahead of its refusal. No callback runs and no approval is read on
-        # any refused path.
+        # ahead of its refusal. No refused path runs a callback or spends an
+        # approval, and none before the approval gate authenticates one: the
+        # integrity record notes only whether one was presented.
         described = action_descriptor or (
             action_request.action if action_request is not None else None
         )
