@@ -330,6 +330,23 @@ def test_the_intent_only_path_answers_exactly_as_before(client: TestClient):
     assert derived.status_code == 200 and set(derived.json()) == {"written", "bytes"}
 
 
+def test_an_empty_set_clears_the_confirmed_requirements_through_the_same_path(client: TestClient):
+    """Removing every requirement is a proposal like any other: `[]` passes the
+    rule, is confirmed by the human, and the BRD derived afterwards carries no
+    requirements section. (A control: the server already allowed it.)"""
+    assert _propose(client, "intent", NEED).status_code == 200
+    assert _confirm(client, "P-1").status_code == 200
+    assert _propose(client, "requirements", ROWS).status_code == 200
+    assert _confirm(client, "P-2").status_code == 200
+    assert _propose(client, "requirements", []).json() == {"proposal_id": "P-3", "status": "open"}
+    assert _state(client)["authoritative"]["requirements"] == ROWS
+    assert _confirm(client, "P-3").status_code == 200
+    assert _state(client)["authoritative"]["requirements"] == []
+    derived = client.post("/api/brd")
+    assert derived.status_code == 200
+    assert "## BRD-002" not in Path(derived.json()["written"]).read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # The page: rows, composition, accessibility -- pinned on the served source
 # ---------------------------------------------------------------------------
@@ -384,6 +401,26 @@ def test_the_page_offers_requirement_rows(page):
     assert "function addRequirementRow(" in script
     assert 'remove.textContent = "Remove"' in script and "item.remove()" in script
     assert 'input.type = "text"' in script
+
+
+def test_removing_the_last_row_still_lets_a_confirmed_set_be_cleared(page):
+    """Codex P2 4335007103 on 2bf8a20: removing the last row disabled the only
+    control that proposes the set, so confirmed requirements could be cleared
+    through the API only. The button is disabled only when there is nothing
+    to propose -- no row and no confirmed requirement -- and, with no row left
+    over a confirmed set, it says what it proposes."""
+    _markup, script, _parsed = page
+    changed = script[script.index("function rowsChanged("):]
+    changed = changed[:changed.index("\n}") + 2]
+    assert "button.disabled = empty && confirmedRequirementCount === 0" in changed
+    assert '"Propose removing all requirements"' in changed
+    rendered = script[script.index("function renderRequirementRows("):]
+    rendered = rendered[:rendered.index("\n}") + 2]
+    # The count is the capsule's, refreshed whether or not the person has
+    # edited the rows, so the button follows what is confirmed.
+    assert rendered.index("confirmedRequirementCount = (confirmed || []).length") < rendered.index(
+        "if(!rowsEdited)")
+    assert rendered.rstrip().endswith("rowsChanged();\n}")
 
 
 def test_the_page_proposes_the_existing_field_through_the_existing_route(page):

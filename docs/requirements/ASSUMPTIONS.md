@@ -7393,6 +7393,18 @@ build. The eight-row journey to GOVERN fails on the base only because the
 rule it asks first does not exist there; through the API alone, the base
 already carried confirmed requirements to GOVERN (A-045).
 
+**Review of the first head.** The Codex review of `2bf8a20` found one defect:
+removing the last row disabled "Propose requirements", the only control that
+proposes the set, so a person could not clear confirmed requirements from the
+page -- only through the API -- though an empty set is valid and the section
+is optional. The button is now disabled only when there is nothing to propose
+(no row and no confirmed requirement); with no row left over a confirmed set
+it reads "Propose removing all requirements" and proposes `[]` through the
+same route, confirmed the same way. The confirmed count is refreshed whether
+or not the person has edited the rows. Red first on `70473ae`, the parent of
+the repair: the page test fails, and its control -- the empty set clearing a
+confirmed one through the API, which the server already allowed -- passes.
+
 **What it does NOT establish.**
 
 1. **A browser's behaviour.** No JavaScript executes in this change's

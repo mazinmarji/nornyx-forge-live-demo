@@ -1369,7 +1369,16 @@ function addRequirementRow(id, value){
   rowsChanged();
   return input;
 }
-function rowsChanged(){ document.getElementById("b_rq_propose").disabled = rowItems().length === 0; }
+// Disabled only when there is nothing to propose: no row, and nothing
+// confirmed to clear. With no row left over a confirmed set, the button
+// proposes the empty set, and says so (Codex P2 4335007103).
+let confirmedRequirementCount = 0;
+function rowsChanged(){
+  const button = document.getElementById("b_rq_propose");
+  const empty = rowItems().length === 0;
+  button.disabled = empty && confirmedRequirementCount === 0;
+  button.textContent = empty ? "Propose removing all requirements" : "Propose requirements";
+}
 function clearRowErrors(){
   for(const item of rowItems()){
     item.querySelector(".rq_error").textContent = "";
@@ -1382,10 +1391,12 @@ function requirementRows(){
 // Until the person edits a row, the editor shows what the capsule holds, so a
 // confirmed set can be edited and proposed again; after an edit it is theirs.
 function renderRequirementRows(confirmed){
-  if(rowsEdited){ return; }
-  document.getElementById("rq_rows").replaceChildren();
-  for(const row of (confirmed || [])){ addRequirementRow(row.id, row.text); }
-  rowsEdited = false;
+  confirmedRequirementCount = (confirmed || []).length;
+  if(!rowsEdited){
+    document.getElementById("rq_rows").replaceChildren();
+    for(const row of (confirmed || [])){ addRequirementRow(row.id, row.text); }
+    rowsEdited = false;
+  }
   rowsChanged();
 }
 function proposeRequirements(){ call("/api/proposals", {field: "requirements", value: requirementRows(), actor: actor()}); }

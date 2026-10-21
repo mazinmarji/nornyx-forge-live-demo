@@ -832,8 +832,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # doors storing nothing on refusal; a confirmed set unchanged by a second
     # proposal and named TAMPERED when edited on disk; the intent-only path
     # answering as before; and the page's row editor, composition and
-    # accessibility pinned on its served source, its CSP unchanged.
-    "tests/test_requirements_entry.py": 39,
+    # accessibility pinned on its served source, its CSP unchanged. 43 -> 45
+    # for the first review, floor band(45) = 41: removing the last row still
+    # lets a confirmed set be cleared from the page, and the empty set clears
+    # it through the same proposal and confirmation.
+    "tests/test_requirements_entry.py": 41,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2179,14 +2182,17 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # above its band and the journey module still 1 above its own. NO SKIP IS
 # ADDED. The journey module is one of the windows-runtime job's, whose floor
 # moves 290 -> 292: its eight modules collect 7/14/15/15/23/54/73/97 (sum
-# 298, floor 298 - 7 + 1). The rows below are these.
+# 298, floor 298 - 7 + 1). Its review round then added two, 43 -> 45 (floor
+# 39 -> 41): 5860 collect, the sum rises by 2 to 5339 and the aggregate
+# follows to 5347, band(n) 5273 -> 5274, the working room stays 513, and the
+# slack stays 521, the module still 4 above its band. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5858   (137 modules)
-#     sum of the module floors    5337
-#     band(5858) = ceil(0.9*n)    5273
-#     MINIMUM_COLLECTED           5345
+#     collected across tests/     5860   (137 modules)
+#     sum of the module floors    5339
+#     band(5860) = ceil(0.9*n)    5274
+#     MINIMUM_COLLECTED           5347
 #     above the module sum          8
 #     below what collects         513
 #
@@ -2679,7 +2685,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5345
+MINIMUM_COLLECTED = 5347
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

@@ -22,7 +22,9 @@
   schema and authority line, the derivation, the requirement-identity rule,
   every build gate, the CSP and the session gate. Eight rows composed as the
   page composes them reach GOVERN in the simulated journey, and the same rows
-  with one untested are refused at the build. This is a requirements-entry
+  with one untested are refused at the build. Removing the last row leaves the
+  propose button available while requirements are confirmed, as "Propose
+  removing all requirements", so a confirmed set can be cleared from the page. This is a requirements-entry
   affordance, not a completed basic-user acceptance, and no
   generated-application safety boundary is claimed.
 
