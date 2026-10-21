@@ -31,8 +31,10 @@ is the caller's act.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .capsule import AUTHORITATIVE_FIELDS, CapsuleValidationError
 from .requirements import brd_requirement_identity
 
 
@@ -118,3 +120,209 @@ def confirmed_requirement_texts(document: Mapping[str, Any]) -> tuple[str, ...]:
     statements = [intent] if isinstance(intent, str) else []
     statements.extend(row["text"] for row in rows)
     return tuple(statements)
+
+
+# ---------------------------------------------------------------------------
+# The same rules, asked when a basic user proposes (A-048)
+# ---------------------------------------------------------------------------
+#
+# WHY HERE. The derivation above is the rule a confirmed intent and confirmed
+# requirement rows must satisfy; asking it only at `POST /api/brd` meant a
+# multi-line need was proposed, confirmed into authority, and only then
+# refused, in the parser's terms. `proposal_entry_refusal` asks the same
+# derivation, and the capsule's own field schema, at the door -- before
+# anything is stored -- and says what to change in plain words, with the
+# technical reason verbatim beneath. It refuses nothing the derivation or
+# the capsule would accept, with two exceptions it names: a row that repeats
+# another, and a line boundary `str.splitlines` honours that the derivation
+# does not spell, both refused because a reader of the rendered document
+# would see something other than what the user entered. It authorizes
+# nothing: a value that passes is still only a proposal, and only a human
+# confirmation moves it.
+
+#: The fields a basic user enters as text; every other field passes untouched.
+ENTRY_FIELDS = ("intent", "requirements")
+#: Neutral stand-ins for the parts of a BRD a proposal does not supply, so the
+#: derivation judges the proposed value alone and not the confirmed state.
+_PROBE_NAME = "Project"
+_PROBE_INTENT = "Purpose."
+
+
+@dataclass(frozen=True)
+class EntryRefusal:
+    """Why a proposed intent or requirement set is refused, twice over.
+
+    `explanation` is for the person at the page: what is wrong and what to
+    change, without the parser's vocabulary. `reason` is the technical
+    refusal, verbatim -- the derivation's or the capsule's own words where
+    they refuse it, this module's where it does. `row` names the requirement
+    at fault (its id, or "row <n>" when the row has no usable id), or is
+    None when the fault is the whole value."""
+
+    field: str
+    explanation: str
+    reason: str
+    row: str | None = None
+
+    def as_body(self) -> dict[str, Any]:
+        """The refusal as the onboarding surface returns it. `refused` stays
+        the technical reason, where every existing client already reads one."""
+        return {"refused": self.reason, "explanation": self.explanation,
+                "field": self.field, "row": self.row}
+
+
+def _derivation_refusal(intent: str, rows: list[dict[str, Any]]) -> str | None:
+    """The derivation's own refusal of this content, verbatim, or None."""
+    probe = {"authoritative": {"project_name": _PROBE_NAME, "intent": intent,
+                               "requirements": rows}}
+    try:
+        brd_from_capsule(probe)
+    except BrdAuthoringError as error:
+        return str(error)
+    return None
+
+
+def _text_fault(text: str, who: str, grammar_reason: str | None) -> str | None:
+    """A plain explanation of why `text` cannot be rendered, or None."""
+    if "\n" in text or "\r" in text or len(text.splitlines()) > 1:
+        return (f"{who} is written over more than one line. Write it as one line;"
+                " a line break you cannot see counts too.")
+    if text.lstrip().startswith("#"):
+        return (f"{who} starts with “#”, which the requirements document keeps for"
+                " its own section titles. Remove the “#” at the start.")
+    if grammar_reason is not None:
+        return (f"{who} cannot be written into the requirements document as it"
+                " stands. Rephrase it as one plain sentence.")
+    return None
+
+
+def _schema_explanation(reason: str, who: str, limit: int) -> str:
+    """The capsule's field-schema refusal, in plain words."""
+    if "must be a string" in reason:
+        return f"{who} could not be read as text. Enter it as words."
+    if "must not be empty" in reason:
+        return f"{who} is empty. Write it, or remove it."
+    if "exceeds" in reason:
+        return (f"{who} is longer than {limit} characters. Shorten it, or split it"
+                " into more than one requirement.")
+    if "control characters" in reason:
+        return (f"{who} contains a control character that cannot be stored. Retype"
+                " it without special characters.")
+    return f"{who} cannot be stored as entered. Retype it as plain words."
+
+
+def _intent_refusal(value: Any) -> EntryRefusal | None:
+    who = "Your description of what you need"
+    try:
+        AUTHORITATIVE_FIELDS["intent"](value)
+    except CapsuleValidationError as error:
+        reason = str(error)
+        explanation = _schema_explanation(reason, who, 4000)
+        if "must not be empty" in reason:
+            explanation = f"{who} is empty. Write what you need, in one line."
+        return EntryRefusal("intent", explanation, reason)
+    grammar = _derivation_refusal(value, [])
+    fault = _text_fault(value, who, grammar)
+    if fault is None:
+        return None
+    if "more than one line" in fault:
+        fault += (" Put each separate thing the application must do in its own"
+                  " requirement row instead.")
+    reason = grammar or (
+        "the intent holds a line boundary str.splitlines honours, so a reader of "
+        "the derived BRD would read it as more than one line")
+    return EntryRefusal("intent", fault, reason)
+
+
+def _normalised(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _schema_row_refusal(value: list[Any]) -> EntryRefusal | None:
+    """The capsule's schema, row by row, so a refusal names the row it is
+    about: the first prefix the schema refuses ends at the faulty row."""
+    validate = AUTHORITATIVE_FIELDS["requirements"]
+    for index in range(1, len(value) + 1):
+        try:
+            validate(value[:index])
+        except CapsuleValidationError as error:
+            reason = str(error)
+            row = value[index - 1]
+            ident = row.get("id") if isinstance(row, dict) else None
+            usable = (isinstance(ident, str) and ident in reason
+                      and "must match RQ-" not in reason)
+            named = ident if usable else f"row {index}"
+            who = f"Requirement {named}" if named == ident else f"Requirement row {index}"
+            if "exactly {id, text}" in reason:
+                explanation = f"{who} could not be read: each row needs exactly an id and a text."
+            elif "must match RQ-" in reason:
+                explanation = (f"{who} is numbered {ident!r}. Requirement numbers look like"
+                               f" RQ-{index}.")
+            elif "is duplicated" in reason:
+                explanation = (f"Two rows have the same number, {ident}. Give each row its"
+                               " own number.")
+            elif "must not be empty" in reason:
+                explanation = (f"{who} is empty. Write what the application must do, or"
+                               " remove the row.")
+            else:
+                explanation = _schema_explanation(reason, who, 2000)
+            return EntryRefusal("requirements", explanation, reason, named)
+    return None
+
+
+def _requirements_refusal(value: Any) -> EntryRefusal | None:
+    if not isinstance(value, list):
+        try:
+            AUTHORITATIVE_FIELDS["requirements"](value)
+        except CapsuleValidationError as error:
+            return EntryRefusal(
+                "requirements",
+                "The requirements could not be read as a list of rows. Enter each"
+                " requirement in its own row.", str(error))
+        return None
+    schema = _schema_row_refusal(value)
+    if schema is not None:
+        return schema
+    seen: dict[str, str] = {}
+    for row in value:
+        key = _normalised(row["text"])
+        if key in seen:
+            return EntryRefusal(
+                "requirements",
+                f"Requirement {row['id']} says the same as requirement {seen[key]}."
+                " Remove one of them, or change one so each says something different.",
+                f"requirement {row['id']} repeats requirement {seen[key]}: one statement"
+                " twice would be built and tested as two requirements",
+                row["id"])
+        seen[key] = row["id"]
+    for row in value:
+        grammar = _derivation_refusal(_PROBE_INTENT, [row])
+        fault = _text_fault(row["text"], f"Requirement {row['id']}", grammar)
+        if fault is not None:
+            if "more than one line" in fault:
+                fault += " If it says two things, split it into two rows."
+            reason = grammar or (
+                f"requirement {row['id']} holds a line boundary str.splitlines honours,"
+                " so a reader of the derived BRD would read it as more than one line")
+            return EntryRefusal("requirements", fault, reason, row["id"])
+    # The rows one by one are not the rows together: the derivation also reads
+    # the whole rendering back under the requirement-identity rule.
+    together = _derivation_refusal(_PROBE_INTENT, list(value))
+    if together is not None:
+        return EntryRefusal(
+            "requirements",
+            "These requirements cannot be written into the requirements document"
+            " together. Check that each row is one plain sentence.", together)
+    return None
+
+
+def proposal_entry_refusal(field: str, value: Any) -> EntryRefusal | None:
+    """Why a proposed `intent` or `requirements` value would be refused --
+    by the capsule's field schema now, or by the BRD derivation once it was
+    confirmed -- or None. Every other field returns None: its rules are the
+    capsule's, unchanged."""
+    if field == "intent":
+        return _intent_refusal(value)
+    if field == "requirements":
+        return _requirements_refusal(value)
+    return None

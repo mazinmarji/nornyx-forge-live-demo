@@ -473,8 +473,10 @@ jobs:
       # CrewAI's memory store, while it passed on Linux, and no Windows job
       # ran it. It carries the journey with and without confirmed
       # requirements, the blocked memory store reproduced in-process, and a
-      # CrewAI initialisation failure reported by name. Nothing in it skips on
-      # any platform. The runner has no Smart App Control, so the blocked
+      # CrewAI initialisation failure reported by name, and (A-048) eight
+      # requirement rows composed as the onboarding page composes them, to
+      # GOVERN and, with one row left untested, refused at the build.
+      # Nothing in it skips on any platform. The runner has no Smart App Control, so the blocked
       # store is measured here by the specimen, not by the host's policy.
       - name: Windows runtime, bundle builder, launch, provider, control-plane and simulated-journey tests, with no skips
         run: |
@@ -489,9 +491,9 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 290:
-              print("the windows job collected fewer than 290 tests. Its eight modules "
-                    "carry 296 here (7/13/14/15/23/54/73/97), so this floor is 296 - 7 + 1, "
+          if len(cases) < 292:
+              print("the windows job collected fewer than 292 tests. Its eight modules "
+                    "carry 298 here (7/14/15/15/23/54/73/97), so this floor is 298 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "

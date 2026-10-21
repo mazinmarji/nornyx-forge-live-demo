@@ -137,7 +137,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from .brd_authoring import BrdAuthoringError, brd_from_capsule
+from .brd_authoring import BrdAuthoringError, brd_from_capsule, proposal_entry_refusal
 from .capsule import (
     PROVIDERS,
     Actor,
@@ -684,10 +684,19 @@ def create_app(
 
     @app.post("/api/proposals")
     def create_proposal(payload: ProposalPayload):
+        """Stores a proposal. An intent or a set of requirement rows that the
+        BRD derivation or the capsule would refuse is refused HERE, before it
+        is stored, with a plain-language explanation beside the verbatim
+        reason (A-048); a value that passes is stored exactly as before."""
         current = store()
         with store_lock:
             try:
                 document = project(current)
+                # The capsule's own first refusal keeps its place: the actor.
+                payload.actor.to_actor().validate()
+                early = proposal_entry_refusal(payload.field, payload.value)
+                if early is not None:
+                    return JSONResponse(status_code=422, content=early.as_body())
                 updated, proposal_id = propose(
                     document, payload.field, payload.value,
                     payload.actor.to_actor(), at(),
@@ -701,12 +710,27 @@ def create_app(
     def confirm_proposal(proposal_id: str, payload: ResolvePayload):
         """Confirms ONE proposal into the capsule's authority. This is not the
         lifecycle's CONFIRM: that is the separate scope confirmation below,
-        and nothing here touches the lifecycle."""
+        and nothing here touches the lifecycle.
+
+        An OPEN intent or requirements proposal that the BRD derivation would
+        refuse -- one stored before A-048, or by a path other than the route
+        above -- is refused here, before it reaches authority, in the same
+        words the proposal route uses. The capsule's own refusals (a
+        non-human actor, a missing or resolved proposal) keep their place
+        ahead of it."""
         current = store()
         with store_lock:
             try:
                 document = project(current)
-                updated = confirm(document, proposal_id, payload.actor.to_actor(), at())
+                actor = payload.actor.to_actor()
+                actor.validate()
+                pending = next((row for row in document.get("proposed", [])
+                                if row.get("proposal_id") == proposal_id), None)
+                if actor.kind == "human" and pending is not None and pending.get("status") == "open":
+                    early = proposal_entry_refusal(pending["field"], pending["value"])
+                    if early is not None:
+                        return JSONResponse(status_code=422, content=early.as_body())
+                updated = confirm(document, proposal_id, actor, at())
                 current.save(updated, f"capsule: confirm {proposal_id}")
             except CapsuleError as error:
                 return _refusal(error)
@@ -1223,8 +1247,14 @@ this page, are the authority.</p>
  <input id="pid" placeholder="project-id"> <input id="pname" placeholder="Project name">
  <button onclick="createProject()">Create</button></fieldset>
 <fieldset><legend>2 · Describe what you need</legend>
- <textarea id="need" rows="3" cols="50" placeholder="I need an application that..."></textarea>
+ <p id="need_hint">One line. List the separate things the application must do as requirements below.</p>
+ <textarea id="need" rows="3" cols="50" placeholder="I need an application that..." aria-describedby="need_hint"></textarea>
  <button onclick="proposeNeed()">Propose</button></fieldset>
+<fieldset><legend>List what the application must do (optional)</legend>
+ <p id="rq_hint">One requirement per row, each on one line. The rows are proposed together, and nothing is authoritative until you confirm the proposal.</p>
+ <ol id="rq_rows" aria-describedby="rq_hint"></ol>
+ <button type="button" id="b_rq_add" onclick="addRequirementRow(null, '').focus()">Add a requirement</button>
+ <button type="button" id="b_rq_propose" onclick="proposeRequirements()" disabled>Propose requirements</button></fieldset>
 <fieldset><legend>3 · Choose your engineering agent</legend>
  <select id="provider"></select>
  <button onclick="proposeProvider()">Propose</button></fieldset>
@@ -1245,7 +1275,7 @@ this page, are the authority.</p>
   <button id="b_ready" onclick="act('/api/journey/ready')">Mark ready</button>
   <button id="b_restore" onclick="act('/api/journey/restore')">Restore sealed authority</button>
  </div>
- <div id="notice"></div>
+ <div id="notice" role="alert"></div>
  <div>Build (this server session): <span id="build">—</span></div>
  <div>Authority: <span id="authority">—</span></div></fieldset>
 <fieldset><legend>Project state</legend><pre id="state">loading…</pre></fieldset>
@@ -1276,9 +1306,89 @@ async function call(url, body){
   const r = await authFetch(url, {method: "POST", headers: {"content-type": "application/json"},
                                   body: JSON.stringify(body)});
   const data = await r.json().catch(() => ({}));
-  text("notice", r.ok ? "" : ("Refused: " + (data.refused || JSON.stringify(data))));
+  clearRowErrors();
+  if(r.ok){ text("notice", ""); } else { showRefusal(data); }
   await refresh();
 }
+// A refusal that explains itself (A-048) is shown in plain words first and the
+// technical reason beneath, and the row it names is marked and focused; any
+// other refusal is shown as before. The notice is a live region (role=alert),
+// so either is announced. The server decides both sentences; the page renders.
+function showRefusal(data){
+  const notice = document.getElementById("notice");
+  notice.replaceChildren();
+  if(!data.explanation){ notice.textContent = "Refused: " + (data.refused || JSON.stringify(data)); return; }
+  const plain = document.createElement("p");
+  plain.textContent = data.explanation;
+  const technical = document.createElement("p");
+  technical.textContent = "Technical reason: " + (data.refused || "");
+  notice.append(plain, technical);
+  for(const item of rowItems()){
+    if(item.dataset.rqid !== data.row){ continue; }
+    const input = item.querySelector("input"), error = item.querySelector(".rq_error");
+    error.textContent = data.explanation;
+    input.setAttribute("aria-invalid", "true");
+    input.focus();
+  }
+}
+// The requirement rows (A-048). A draft on this page only: what the capsule
+// holds changes by a proposal and its confirmation, never by editing a row.
+// Each row keeps its id while it is edited or its neighbours are removed, and
+// a new row takes the next unused number, so RQ-3 stays RQ-3. Built with DOM
+// APIs and textContent, like the proposal rows below (F15).
+let rowsEdited = false;
+const rowItems = () => Array.from(document.getElementById("rq_rows").children);
+function nextRequirementNumber(){
+  const used = rowItems().map(item => parseInt(item.dataset.rqid.slice(3), 10));
+  return used.length ? Math.max(...used) + 1 : 1;
+}
+function addRequirementRow(id, value){
+  const item = document.createElement("li");
+  item.dataset.rqid = id || ("RQ-" + nextRequirementNumber());
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.size = 60;
+  input.value = value;
+  input.id = "rq_text_" + item.dataset.rqid;
+  label.htmlFor = input.id;
+  label.textContent = "Requirement " + item.dataset.rqid + " ";
+  input.addEventListener("input", () => { rowsEdited = true; });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Remove";
+  remove.setAttribute("aria-label", "Remove requirement " + item.dataset.rqid);
+  remove.addEventListener("click", () => { item.remove(); rowsEdited = true; rowsChanged(); });
+  const error = document.createElement("div");
+  error.className = "rq_error failed";
+  error.id = "rq_error_" + item.dataset.rqid;
+  input.setAttribute("aria-describedby", error.id);
+  item.append(label, input, document.createTextNode(" "), remove, error);
+  document.getElementById("rq_rows").append(item);
+  rowsEdited = rowsEdited || id === null;
+  rowsChanged();
+  return input;
+}
+function rowsChanged(){ document.getElementById("b_rq_propose").disabled = rowItems().length === 0; }
+function clearRowErrors(){
+  for(const item of rowItems()){
+    item.querySelector(".rq_error").textContent = "";
+    item.querySelector("input").removeAttribute("aria-invalid");
+  }
+}
+function requirementRows(){
+  return rowItems().map(item => ({id: item.dataset.rqid, text: item.querySelector("input").value}));
+}
+// Until the person edits a row, the editor shows what the capsule holds, so a
+// confirmed set can be edited and proposed again; after an edit it is theirs.
+function renderRequirementRows(confirmed){
+  if(rowsEdited){ return; }
+  document.getElementById("rq_rows").replaceChildren();
+  for(const row of (confirmed || [])){ addRequirementRow(row.id, row.text); }
+  rowsEdited = false;
+  rowsChanged();
+}
+function proposeRequirements(){ call("/api/proposals", {field: "requirements", value: requirementRows(), actor: actor()}); }
 function act(url){ call(url, {actor: actor()}); }
 function createProject(){ call("/api/project", {project_id: pid.value, project_name: pname.value, actor: actor()}); }
 function proposeNeed(){ call("/api/proposals", {field: "intent", value: need.value, actor: actor()}); }
@@ -1380,6 +1490,7 @@ async function refresh(){
   renderJourney(s);
   renderProviders(s.providers);
   renderProposals(s.proposals);
+  renderRequirementRows((s.authoritative || {}).requirements);
   await refreshBuild();
 }
 async function governance(){

@@ -91,6 +91,18 @@ REQUIREMENTS = [
     {"id": "RQ-3", "text": "A support agent moves a case from open to resolved."},
     {"id": "RQ-4", "text": "A support agent sees the cases grouped by priority."},
 ]
+#: Eight requirement rows as a basic user enters them on the page (A-048),
+#: one statement per row. Forge's own synthetic specimen, not anyone's product.
+PAGE_ROW_TEXTS = (
+    "A customer opens a support case with a subject and a description.",
+    "A support agent replies to a case.",
+    "A support agent closes a case once the customer confirms the fix.",
+    "A customer sees the status of their own cases.",
+    "A support lead sees the open cases grouped by age.",
+    "A support agent tags a case with a product area.",
+    "A support lead reassigns a case from one agent to another.",
+    "A customer rates the support received on a closed case.",
+)
 PROVIDER = "codex"
 #: The shipped composition answers only a loopback Host, and the redeem
 #: route requires an Origin that names it.
@@ -717,6 +729,66 @@ def test_a_confirmed_requirement_the_provider_left_untested_is_refused(
     assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, persisted["evidence"]
     refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
     assert "failed at BUILD; retry it" in refused["refused"]
+    assert run.reached == [] and run.attempts == []
+
+
+def page_rows(texts: tuple[str, ...]) -> list[dict[str, str]]:
+    """The `requirements` value the page composes from a fresh row editor:
+    each row `{id, text}`, numbered RQ-1, RQ-2, ... in the order entered.
+    `tests/test_requirements_entry.py` pins the page script that composes it."""
+    return [{"id": f"RQ-{index}", "text": text} for index, text in enumerate(texts, start=1)]
+
+
+def test_eight_rows_entered_on_the_page_reach_govern(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The requirement-rows journey (A-048). Eight rows, composed as the page composes
+    them and proposed through the route the page calls, pass the proposal-time
+    rule, are confirmed by the human, derive a BRD with one requirement per
+    row, are built from exactly those identities and tested one by one, and
+    the real verifier accepts: the lifecycle ends at GOVERN. Nothing about the
+    identity rule (A-045) or any gate differs from the four-row journey."""
+    from nornyx_forge.brd_authoring import proposal_entry_refusal  # noqa: PLC0415 - A-048
+
+    rows = page_rows(PAGE_ROW_TEXTS)
+    assert len(rows) == 8 and proposal_entry_refusal("requirements", rows) is None
+    provider = SimulatedProvider()
+    run = _walk(monkeypatch, tmp_path, provider, requirements=rows)
+    status, project = run.status, run.project
+    assert status["status"] == "finished" and status["accepted"] is True, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "GOVERN", "status": "active"}
+    expected = ["BRD-001", *(f"BRD-F-{index:03d}" for index in range(1, 9))]
+    model = parse_brd(project / "BRD.md")
+    assert [item.id for item in model.requirements] == expected
+    assert [item.statement for item in model.requirements] == [NEED, *PAGE_ROW_TEXTS]
+    result = status["result"]
+    assert result["requirements"] == expected
+    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == [
+        *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
+        *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
+        ("build-evidence-ledger-valid-before-verdict", True)]
+    traceability = next(gate for gate in result["gates"]
+                        if gate["name"] == "greenfield:requirements-traceability")
+    assert traceability["detail"] == "tests reference all 9 BRD requirement headings"
+    assert [event[1] for event in _events(run.store().load_experience())] == [
+        "DISCOVER", "CONFIRM", "BUILD", "TEST", "GOVERN"]
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "governance_validation" in refused["refused"]
+    assert run.reached == [] and run.attempts == []
+
+
+def test_eight_rows_with_one_left_untested_are_still_refused_at_build(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The negative: entering requirements on the page weakens no gate. The
+    provider tests every row but the last; the verifier names that row and
+    the lifecycle records a failed BUILD."""
+    monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "0")
+    run = _walk(monkeypatch, tmp_path, SimulatedProvider("omit-last"),
+                requirements=page_rows(PAGE_ROW_TEXTS))
+    status = run.status
+    assert status["status"] == "finished" and status["accepted"] is False, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
+    failed = {gate["name"]: gate["detail"] for gate in status["result"]["gates"] if not gate["passed"]}
+    assert failed["greenfield:requirements-traceability"] == "tests do not reference BRD-F-008"
     assert run.reached == [] and run.attempts == []
 
 

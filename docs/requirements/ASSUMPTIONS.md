@@ -7291,3 +7291,124 @@ the repair itself.
 **Serves.** BRD-F-004 ("High-risk external actions must be refused in
 autonomous-demo mode") for acts whose caller labels them otherwise; A-045 and
 A-046's statement of this limitation, which this narrows to what remains.
+
+## A-048 A basic user enters requirement rows on the onboarding page, and an entry the BRD derivation or the capsule would refuse is refused when it is proposed, in plain language
+
+**The defect.** The onboarding page had one textarea, for the intent. A need
+written over several lines -- the natural way to list what an application
+must do -- was accepted as a proposal and confirmed into the capsule's
+authority, and only then did `POST /api/brd` refuse it, in the parser's
+terms: "the confirmed intent collides with the BRD's heading grammar and
+cannot be rendered without changing what a parser would read back". The
+capsule's `requirements` field, which the derivation renders one row per
+requirement (A-045), was reachable through the API only. Measured at `3e47ad9`
+through the app: the multi-line proposal answered 200, its confirmation 200,
+and `POST /api/brd` 409; a requirement row holding a line break, a row
+starting with `#` and a row repeating another were each accepted as a
+proposal; an empty row was refused with the capsule's reason alone.
+
+**The repair.**
+
+1. **The rule, asked early.** `brd_authoring.proposal_entry_refusal(field,
+   value)` answers, for the `intent` and `requirements` fields, whether the
+   value would be refused, and why, or None. It asks the capsule's field
+   schema (`AUTHORITATIVE_FIELDS`) and the derivation itself
+   (`brd_from_capsule`, over a probe capsule whose other parts are fixed
+   neutral stand-ins, so the proposed value alone is judged), row by row and
+   then for the rows together. It refuses two things neither of those
+   refuses, and names them: a row whose words repeat an earlier row's,
+   ignoring letter case and spacing; and a line boundary `str.splitlines`
+   honours that the derivation does not spell (U+2028, U+2029, U+0085), which
+   a reader of the rendered document would read as a second line. Every
+   other field returns None and keeps the capsule's rules unchanged.
+2. **Two doors.** `POST /api/proposals` asks the rule after the capsule's
+   actor check and before anything is stored. `POST /api/proposals/{id}/confirm`
+   asks it for an OPEN intent or requirements proposal before confirming it,
+   for a proposal stored before this change or by a path other than that
+   route; the capsule's own refusals (an invalid or non-human actor, a missing
+   or resolved proposal) keep their place ahead of it. A refusal is 422 and
+   stores nothing. Its body keeps `refused`, the verbatim technical reason --
+   the derivation's or the capsule's own words where they refuse it -- and
+   adds `explanation` (plain language: what is wrong and what to change),
+   `field`, and `row` (the requirement at fault, or null).
+3. **Requirement rows on the page.** A row editor on the existing onboarding
+   page, built with the DOM APIs and `textContent` the page already uses (F15).
+   A person adds a row, types in it, removes it, and proposes the set; the
+   page sends `{field: "requirements", value: [{id, text}, ...]}` to
+   `/api/proposals`, the same route, field and human confirmation an API
+   caller uses, so there is no new path to authority. A row keeps its `RQ-<n>`
+   id while it is edited or its neighbours are removed, and a new row takes the
+   next unused number. Until the person edits a row, the editor shows the
+   confirmed requirements, so a confirmed set can be edited and proposed
+   again; editing a row changes nothing the capsule holds.
+4. **Accessibility basics.** Each row's input has a `<label for>`; the remove
+   button is named for its row; the editor's controls are native inputs and
+   buttons.
+   The notice is a live region (`role="alert"`). A refusal shows the
+   explanation first and "Technical reason: ..." beneath it; the row it names
+   gets `aria-invalid`, the explanation in an error element its input is
+   described by (`aria-describedby`), and focus.
+
+**What changes for an intent-only caller, deliberately.** An intent proposal
+the derivation would refuse -- more than one line, or starting with `#` --
+and one holding a line boundary named in item 1, is refused at the proposal
+with 422 where it was accepted with 200 and refused later at `POST /api/brd`.
+The 422 body of a refused intent or requirements proposal gains the three keys
+above; `refused` keeps its meaning. A single-line intent is proposed,
+confirmed and derived exactly as before, with the same answers.
+
+**Not changed.** The capsule's schema, `propose` and `confirm`; the authority
+line and its declared-human gate (A-030 still applies: the human actor is
+declared, not authenticated); the digest chain and the seal; the BRD
+derivation and the requirement-identity rule (A-045); every build gate and
+the acceptance verifier; the page's CSP, its local-only serving, the session
+gate and the token's handling. No dependency, framework or build step is
+added.
+
+**Tests.** `tests/test_requirements_entry.py` holds the rule (the defect's
+own input refused with the derivation's reason verbatim; each refusal kind
+explained without the parser terms the module lists); the doors (nothing stored on a
+refused proposal; a proposal stored before this run refused at
+confirmation); that a confirmed set is unchanged by a second proposal and
+named TAMPERED when edited on disk; that the intent-only path answers as
+before; and the page, pinned on its served source with the standard library's
+HTML parser -- the rows, the composition, labels, native controls, the live
+region, the plain-then-technical order, the CSP byte for byte.
+`tests/test_simulated_journey.py` adds eight rows composed
+as the page composes them, which reach GOVERN through the shipped composition
+with the real flow and the real verifier, and the same rows with the last left
+untested, which the verifier refuses at the build ("tests do not reference
+BRD-F-008"). That module is in the `windows-runtime` job, whose floor moves
+290 -> 292.
+
+Red first on `3e47ad9`, with only these 45 cases added: 40 fail. The 5 that
+pass are controls: the confirmed set unchanged by a second proposal, the
+on-disk edit named TAMPERED, the intent-only path, the CSP and page
+technology unchanged, and the eight rows with one untested refused at the
+build. The eight-row journey to GOVERN fails on the base only because the
+rule it asks first does not exist there; through the API alone, the base
+already carried confirmed requirements to GOVERN (A-045).
+
+**What it does NOT establish.**
+
+1. **A browser's behaviour.** No JavaScript executes in this change's
+   tests; the page is pinned on its source text, and the journey drives the
+   routes the page calls with the value the page composes. That a browser
+   renders, focuses and announces as written is not observed here, and no
+   assistive technology was run.
+2. **Every entry the build could later refuse.** The rule covers the intent
+   and the requirement rows as the derivation and the capsule judge them. A
+   project name starting with `#` is still refused only at `POST /api/brd`,
+   and nothing here judges whether a requirement is clear, testable or what
+   the person meant; two rows that say the same thing in different words are
+   not caught.
+3. **Completed basic-user acceptance.** This is a requirements-entry
+   affordance on the existing page. It is not a completed basic-user
+   acceptance of the onboarding journey, which still ends at GOVERN (A-032),
+   and the human actor is still declared rather than authenticated.
+4. **A generated application's safety.** No generated-application safety
+   boundary is claimed (A-047's limit stands).
+
+**Serves.** A-035's basic-user journey, which this lets carry confirmed
+requirements from the page; A-045, whose identity rule the rows feed and
+which is unchanged.
