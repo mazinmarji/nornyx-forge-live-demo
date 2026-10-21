@@ -7200,8 +7200,8 @@ classification, declared label included
 **Review of the second head: the claim on every path.** The review of the
 second head found the same omission on another path: an integrity refusal
 recorded only the effective level, because the label was replaced before the
-refusal was built. Every refusal and evidence path was then audited, and each
-now records the caller's claim beside what was authorized, one test per path:
+refusal was built. Every refusal and evidence path was then checked in turn,
+and each now records the caller's claim beside what was authorized, one test per path:
 the integrity refusal on the fallback and the authorizing path and with no
 observation at all (`operation_classification` in the decision and in the
 written refusal record); the unregistered-operation and unknown-label refusals,
