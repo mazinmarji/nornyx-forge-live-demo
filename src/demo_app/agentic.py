@@ -202,13 +202,17 @@ def _canonical_request_or_none(**arguments: Any):
         return None
 
 
-#: FIELDS THIS FLOW OR ITS BOUNDARY COMPUTES ARE NEVER INPUT (A-047 review).
-#: A case dict reused from an earlier run, or built by a caller, could carry
-#: any of these in, and the flow used to keep whatever it found until the
-#: stage that recomputes a field ran -- for good, where that stage never ran.
-#: A refusal then recorded an earlier run's classification, or the caller's
-#: own. They are discarded on construction; `action_status` and
-#: `orchestration_status` are reset to their not-yet-run values.
+#: THE VERDICT FIELDS ARE NEVER INPUT (A-047 review): the fields that carry
+#: the boundary's or the risk stage's verdict about this request. A case dict
+#: reused from an earlier run, or built by a caller, could carry any of these
+#: in, and the flow used to keep whatever it found until the stage that
+#: recomputes a field ran -- for good, where that stage never ran. A refusal
+#: then recorded an earlier run's classification, or the caller's own. They
+#: are discarded on construction; `action_status` and `orchestration_status`
+#: are reset to their not-yet-run values. NOT in this list, deliberately:
+#: `timeline` and `limitations`, which ACCUMULATE across runs of one case
+#: (the recovery path reads the timeline), and `status`, `proposal`,
+#: `framework` and `observed_execution_backend`, which every run overwrites.
 FLOW_COMPUTED_FIELDS = (
     "operation_classification",
     "risk_decision",

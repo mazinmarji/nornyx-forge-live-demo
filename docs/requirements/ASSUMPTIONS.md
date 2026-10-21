@@ -7219,14 +7219,18 @@ recorded that classification beside the refusal of an unregistered operation.
 The records now take the classification -- and the capability -- from the
 boundary's decision for this request, which carries it on every path and
 carries `null` for an unregistered operation or an unknown label; the case's
-field is overwritten from the same place. The class was checked across every
-field the flow or its boundary computes and a case could carry in
-(`FLOW_COMPUTED_FIELDS`: the classification, the risk stage's verdict, the
-action request, the decision, the boundary's evidence, the governance mode, the
-execution result and the evidence report): all are discarded on construction,
-and the action and orchestration statuses are reset to their not-yet-run
-values. No code reads an effective level from the case, and a test holds that a
-caller's `effective_risk` changes nothing.
+field is overwritten from the same place. The class was checked across the
+verdict fields, those that carry the boundary's or the risk stage's verdict
+about this request (`FLOW_COMPUTED_FIELDS`: the classification, the risk
+stage's verdict, the action request, the decision, the boundary's evidence,
+the governance mode, the execution result and the evidence report): all are
+discarded on construction, and the action and orchestration statuses are reset
+to their not-yet-run values. Not covered, deliberately: `timeline` and
+`limitations` accumulate across runs of one case (the recovery path reads the
+timeline), so a reused case still carries its earlier runs' stage records
+there; `status`, `proposal`, `framework` and `observed_execution_backend` are
+overwritten by every run. No code reads an effective level from the case, and a
+test holds that a caller's `effective_risk` changes nothing.
 
 **What it does NOT establish.**
 
