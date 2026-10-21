@@ -428,3 +428,123 @@ def test_the_official_path_records_the_declared_label_beside_the_classification(
     )
     assert allowed.effect == "ALLOW"
     assert allowed.evidence["operation_classification"]["declared_risk"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Every refusal and evidence path records the claim beside the classification
+# (review of 076ba1f, P2: the integrity refusal recorded only the effective
+# level). One test per path; each path is named in A-047's audit list.
+# ---------------------------------------------------------------------------
+
+def _compromised():
+    from nornyx_forge.governed_subject import (  # noqa: PLC0415
+        INTEGRITY_COMPROMISED,
+        GovernanceIntegrityState,
+    )
+    return GovernanceIntegrityState(status=INTEGRITY_COMPROMISED, verified_claims=8,
+                                    problems=("architecture_governance.nyx records X",))
+
+
+_DELETE = ActionDescriptor(operation=BULK_DELETE, resource="tracker:all",
+                           destination="zone.external_customer")
+_CLASSIFIED_DELETE_LOW = {"operation": BULK_DELETE, "consequence": "destructive_bulk_deletion",
+                          "registered_risk": "critical", "declared_risk": "low",
+                          "effective_risk": "critical", "capability": "execute_high_risk_effect"}
+
+
+def _refusal_records(root: Path) -> list[dict]:
+    return [json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted((root / "evidence/runtime/refused").glob("*.json"))]
+
+
+def _fallback(root: Path):
+    from test_governance_failure import _fallback_boundary  # noqa: PLC0415
+    return _fallback_boundary(root)
+
+
+@pytest.mark.parametrize("path", ["fallback", "official"])
+def test_an_integrity_refusal_records_the_declared_label(tmp_path: Path, path: str):
+    """RED BEFORE THE REPAIR: the record carried only the effective level."""
+    boundary = _fallback(tmp_path) if path == "fallback" else _permissive_boundary(tmp_path, as_of=NOW)
+    boundary.governance_integrity = _compromised()
+    executed: list[str] = []
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-INTEGRITY-LOW", risk="low",
+        action=lambda: executed.append("ran") or "ran", action_descriptor=_DELETE)
+    assert decision.effect == "DENY" and decision.code == "GOVERNANCE_INTEGRITY_COMPROMISED"
+    assert executed == []
+    assert decision.evidence["risk"] == "critical"
+    assert decision.evidence["operation_classification"] == _CLASSIFIED_DELETE_LOW, decision.evidence
+    records = _refusal_records(tmp_path)
+    assert records and records[-1]["operation_classification"] == _CLASSIFIED_DELETE_LOW
+
+
+def test_an_unobserved_integrity_refusal_records_the_declared_label(tmp_path: Path):
+    """The same refusal when nobody observed the governance state at all."""
+    from nornyx_forge.nornyx_runtime import NornyxActionBoundary  # noqa: PLC0415
+
+    boundary = NornyxActionBoundary(tmp_path, allow_fallback=True)
+    decision, _ = boundary.evaluate_and_execute(
+        mission_id="CASE-UNOBSERVED-LOW", risk="low", action=lambda: "ran",
+        action_descriptor=_DELETE)
+    assert decision.effect == "DENY", decision
+    assert decision.evidence["operation_classification"] == _CLASSIFIED_DELETE_LOW, decision.evidence
+
+
+def test_an_unregistered_operation_refusal_records_the_claim(tmp_path: Path):
+    """RED BEFORE THE REPAIR: the refusal named the label but said nothing of
+    a classification. There is none to give -- so it says so explicitly."""
+    decision, _ = _fallback(tmp_path).evaluate_and_execute(
+        mission_id="CASE-UNREG", risk="low", action=lambda: "ran",
+        action_descriptor=ActionDescriptor(operation="erase everything", resource="r",
+                                           destination="zone.external_customer"))
+    assert decision.code == "OPERATION_UNREGISTERED"
+    assert decision.evidence["risk_level_declared"] == "low"
+    assert "operation_classification" in decision.evidence
+    assert decision.evidence["operation_classification"] is None
+
+
+def test_an_unknown_label_refusal_records_the_claim(tmp_path: Path):
+    decision, _ = _fallback(tmp_path).evaluate_and_execute(
+        mission_id="CASE-BADLABEL", risk="negligible", action=lambda: "ran",
+        action_descriptor=_DELETE)
+    assert decision.code == "RISK_LEVEL_UNKNOWN"
+    assert decision.evidence["risk_level_declared"] == "negligible"
+    assert "operation_classification" in decision.evidence
+    assert decision.evidence["operation_classification"] is None
+
+
+def test_a_context_mismatch_refusal_records_the_declared_label(tmp_path: Path):
+    request = _request(BULK_DELETE, "execute_low_risk_action", mission="CASE-MISMATCH-AUDIT")
+    decision, _ = _permissive_boundary(tmp_path, as_of=NOW).evaluate_and_execute(
+        mission_id=request.mission_id, risk="low", action=lambda: "ran",
+        action_approval=signed_grant(request, approval_id="ACT-MISMATCH-AUDIT"),
+        action_request=request)
+    assert decision.code == "REQUEST_CONTEXT_MISMATCH"
+    recorded = decision.evidence["operation_classification"]
+    assert recorded["declared_risk"] == "low" and recorded["effective_risk"] == "critical"
+
+
+@pytest.mark.parametrize("operation, label, effect", [(BULK_DELETE, "low", "DENY"),
+                                                      (LOW_IMPACT, "medium", "ALLOW")])
+def test_the_fallback_verdict_records_the_declared_label(tmp_path: Path, operation, label, effect):
+    decision, _ = _fallback(tmp_path).evaluate_and_execute(
+        mission_id="CASE-FALLBACK-AUDIT", risk=label, action=lambda: "ran",
+        action_descriptor=ActionDescriptor(operation=operation, resource="r",
+                                           destination="zone.external_customer"))
+    assert decision.effect == effect
+    assert decision.evidence["operation_classification"]["declared_risk"] == label
+
+
+def test_the_flow_records_the_declared_label_in_its_stream(tmp_path: Path):
+    """RED BEFORE THE REPAIR: the stream's action record named the capability
+    and nothing of the claim it replaced."""
+    case = _run(tmp_path, BULK_DELETE, "low")
+    stream = [json.loads(line) for line in (tmp_path / "evidence/runtime/events.jsonl")
+              .read_text(encoding="utf-8").splitlines() if line.strip()]
+    prevented = [row for row in stream if row["event_type"] == "action_prevented"]
+    assert prevented, stream
+    fields = prevented[0].get("fields", prevented[0])
+    assert fields["declared_risk"] == "low", prevented[0]
+    assert fields["operation_classification"] == _CLASSIFIED_DELETE_LOW
+    assert case["operation_classification"] == _CLASSIFIED_DELETE_LOW

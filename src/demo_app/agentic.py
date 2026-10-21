@@ -591,6 +591,8 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 decision=decision.effect,
                 reason=decision.reason,
                 governance_source=decision.source,
+                declared_risk=str(self.case.get("risk", "low")),
+                operation_classification=self.case.get("operation_classification"),
             )
         else:
             self.case["execution_result"] = "Action did not execute."
@@ -603,6 +605,10 @@ class CustomerCaseFlow(Flow):  # type: ignore[misc]
                 reason=decision.reason,
                 code=decision.code,
                 governance_source=decision.source,
+                # The caller's claim beside the classification (A-047), so the
+                # stream shows an attempted downgrade, not only its refusal.
+                declared_risk=str(self.case.get("risk", "low")),
+                operation_classification=self.case.get("operation_classification"),
             )
         return self._stage("execution", self.case["execution_result"])
 

@@ -3336,6 +3336,7 @@ class NornyxActionBoundary:
         risk: str,
         attempt: int,
         action_approval: dict | None,
+        classification: OperationClassification | None = None,
     ) -> "RuntimeDecision | None":
         """The refusal a compromised governance state requires, or None.
 
@@ -3404,6 +3405,11 @@ class NornyxActionBoundary:
                 "schema": "nornyx.forge.refused_action_attempt.v1",
                 "mission_id": mission_id,
                 "risk": normalize_risk(risk),
+                # The caller's claim beside what was authorized (A-047), so a
+                # downgrade attempted against a compromised runtime is visible.
+                "operation_classification": (
+                    classification.as_dict() if classification is not None else None
+                ),
                 "attempt": attempt,
                 "code": GOVERNANCE_INTEGRITY_COMPROMISED,
                 "reason": reason,
@@ -3507,7 +3513,7 @@ class NornyxActionBoundary:
         # low-risk act, it simply has less to release.
         refusal = self._integrity_refusal(
             mission_id=mission_id, risk=risk, attempt=attempt,
-            action_approval=action_approval,
+            action_approval=action_approval, classification=classification,
         )
         if refusal is not None:
             return refusal
@@ -3995,6 +4001,9 @@ class NornyxActionBoundary:
                         "status": "refused",
                         "risk_level_declared": risk if isinstance(risk, str) else repr(risk),
                         "risk_vocabulary": sorted(RISK_LEVELS),
+                        # Stated, not omitted: the label is outside the
+                        # vocabulary, so no classification was computed.
+                        "operation_classification": None,
                     },
                 ),
                 None,
@@ -4024,6 +4033,9 @@ class NornyxActionBoundary:
                         "status": "refused",
                         "risk_level_declared": normalize_risk(risk),
                         "registered_operations": sorted(OPERATION_REGISTRY),
+                        # Stated, not omitted: an unregistered act has no
+                        # classification to record.
+                        "operation_classification": None,
                     },
                 ),
                 None,
@@ -4069,7 +4081,7 @@ class NornyxActionBoundary:
         # state was compromised as well.
         refusal = self._integrity_refusal(
             mission_id=mission_id, risk=risk, attempt=attempt,
-            action_approval=action_approval,
+            action_approval=action_approval, classification=classification,
         )
         if refusal is not None:
             return refusal, None

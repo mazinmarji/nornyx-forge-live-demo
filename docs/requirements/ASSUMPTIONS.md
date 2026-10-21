@@ -7197,6 +7197,20 @@ an attempted downgrade left no trace in its report: the report now carries the
 classification, declared label included
 (`test_the_official_path_records_the_declared_label_beside_the_classification`).
 
+**Review of the second head: the claim on every path.** The review of the
+second head found the same omission on another path: an integrity refusal
+recorded only the effective level, because the label was replaced before the
+refusal was built. Every refusal and evidence path was then audited, and each
+now records the caller's claim beside what was authorized, one test per path:
+the integrity refusal on the fallback and the authorizing path and with no
+observation at all (`operation_classification` in the decision and in the
+written refusal record); the unregistered-operation and unknown-label refusals,
+which state `operation_classification: null` because none exists; the
+context-mismatch refusal and every other withheld or released decision of the
+authorizing path, through its report; the fallback's verdict; and the
+demonstration flow's `action_executed` and `action_prevented` records, which
+carry `declared_risk` and the classification beside the capability.
+
 **What it does NOT establish.**
 
 1. **A runtime boundary for a generated application.** This closes the label
