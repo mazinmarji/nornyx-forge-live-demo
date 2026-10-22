@@ -631,6 +631,65 @@ def test_an_empty_set_clears_the_confirmed_requirements_through_the_same_path(cl
     assert "## BRD-002" not in Path(derived.json()["written"]).read_text(encoding="utf-8")
 
 
+def _confirmed_before_this_rule(tmp_path: Path, rows: list[dict[str, str]]) -> TestClient:
+    """A store whose confirmed set holds rows this rule now refuses, written
+    through the sealed store between two runs -- the way an earlier Forge, or
+    an API caller before this rule, would have left it -- and the second run
+    that serves it."""
+    from nornyx_forge.capsule import confirm  # noqa: PLC0415
+
+    first = authed_client(create_app(tmp_path / "capsule", CONTRACTS_DIR, clock=_clock(),
+                                     seal_dir=tmp_path / "seals"))
+    assert first.post("/api/project", json={
+        "project_id": "proj-1", "project_name": "Support Portal", "actor": HUMAN}).status_code == 200
+    store = CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals")
+    human = Actor(kind="human", ident="casey")
+    document = store.load()
+    for field, value in (("intent", NEED), ("requirements", rows)):
+        document, proposal_id = propose(document, field, value, human, "2026-10-21T00:00:00Z")
+        document = confirm(document, proposal_id, human, "2026-10-21T00:00:01Z")
+    store.save(document, "test: rows confirmed before this rule")
+    return authed_client(create_app(tmp_path / "capsule", CONTRACTS_DIR, clock=_clock(),
+                                    seal_dir=tmp_path / "seals"))
+
+
+@pytest.mark.parametrize("held", ["- A support agent assigns a case.", "A support agent assigns a case. "])
+def test_a_confirmed_row_this_rule_refuses_is_named_when_proposed_unchanged(tmp_path: Path, held: str):
+    """Codex P2 4350877316's scenario, server side: the confirmed set holds a
+    row this rule now refuses, and proposing the set unchanged -- what the
+    page does when the person presses Propose without editing -- is refused
+    with 422 naming that row and storing nothing."""
+    rows = [{"id": "RQ-1", "text": "A support agent opens a case."}, {"id": "RQ-2", "text": held}]
+    client = _confirmed_before_this_rule(tmp_path, rows)
+    before = _state(client)
+    assert before["authoritative"]["requirements"] == rows
+    response = _propose(client, "requirements", rows)
+    assert response.status_code == 422, response.text
+    assert response.json()["row"] == "RQ-2" and response.json()["explanation"]
+    assert _state(client)["proposals"] == before["proposals"]
+
+
+def test_a_project_holding_such_a_row_gets_out_by_editing_it_and_proposing(tmp_path: Path):
+    """The way out, from the page's routes: the BRD cannot be derived from the
+    held row; the person edits that row and proposes the set, which is
+    accepted, confirmed, and derives a BRD that reads back as confirmed."""
+    from nornyx_forge.requirements import parse_brd  # noqa: PLC0415
+
+    rows = [{"id": "RQ-1", "text": "A support agent opens a case."},
+            {"id": "RQ-2", "text": "- A support agent assigns a case."}]
+    client = _confirmed_before_this_rule(tmp_path, rows)
+    stuck = client.post("/api/brd")
+    assert stuck.status_code == 409 and "RQ-2" in stuck.json()["refused"]
+    edited = [rows[0], {"id": "RQ-2", "text": "A support agent assigns a case."}]
+    proposed = _propose(client, "requirements", edited)
+    assert proposed.status_code == 200, proposed.text
+    assert _confirm(client, proposed.json()["proposal_id"]).status_code == 200
+    derived = client.post("/api/brd")
+    assert derived.status_code == 200, derived.text
+    assert [item.statement for item in parse_brd(Path(derived.json()["written"])).requirements] == [
+        NEED, *(row["text"] for row in edited)]
+
+
 # ---------------------------------------------------------------------------
 # The page: rows, composition, accessibility -- pinned on the served source
 # ---------------------------------------------------------------------------
@@ -738,6 +797,37 @@ def test_the_page_numbers_a_new_row_within_the_schemas_range(page):
     assert attrs.get("onclick") == "addRequirementFromButton()"
 
 
+def test_a_refusal_of_the_editors_rows_survives_the_refresh_after_it(page):
+    """Codex P2 4350877316: proposing the untouched confirmed rows left the
+    editor marked as not edited, so the refresh that follows every call
+    rebuilt the rows from the capsule -- discarding the row the refusal had
+    marked, its message, aria-invalid, the focus, and the refused draft
+    itself. Proposing makes the rows the person's draft, which no refresh
+    replaces; the refusal is applied before the refresh and kept by it."""
+    _markup, script, _parsed = page
+    propose = script[script.index("function proposeRequirements("):]
+    propose = propose[:propose.index("\n}") + 2]
+    assert propose.index("rowsEdited = true;") < propose.index('call("/api/proposals"')
+    rendered = script[script.index("function renderRequirementRows("):]
+    rendered = rendered[:rendered.index("\n}") + 2]
+    assert "if(!rowsEdited){" in rendered and "replaceChildren()" in rendered
+    assert rendered.index("if(!rowsEdited){") < rendered.index("replaceChildren()")
+    called = script[script.index("async function call("):]
+    called = called[:called.index("\n}") + 2]
+    assert called.index("showRefusal(data, fromEditor === true)") < called.index("await refresh()")
+
+
+def test_only_the_editors_own_proposal_marks_the_editors_rows(page):
+    """A refusal of another call -- confirming an open proposal that names its
+    own RQ-2 -- is not about the rows in the editor, which may hold other
+    text under the same number; it is shown in the notice and marks no row."""
+    _markup, script, _parsed = page
+    shown = script[script.index("function showRefusal("):]
+    shown = shown[:shown.index("\n}") + 2]
+    assert shown.index("if(!fromEditor){ return; }") < shown.index("for(const item of rowItems())")
+    assert 'button.addEventListener("click", () => call(url, {actor: actor()}));' in script
+
+
 def test_the_page_proposes_the_existing_field_through_the_existing_route(page):
     """The composition: each row is `{id, text}`, ids `RQ-<n>` that a row
     keeps while it is edited, and a new row takes the smallest unused number
@@ -746,7 +836,7 @@ def test_the_page_proposes_the_existing_field_through_the_existing_route(page):
     caller uses."""
     _markup, script, _parsed = page
     assert ('call("/api/proposals", {field: "requirements", value: requirementRows(), '
-            "actor: actor()})") in script
+            "actor: actor()}, true)") in script
     assert "({id: item.dataset.rqid, text: item.querySelector(\"input\").value})" in script
     assert "item.dataset.rqid = id;" in script
     assert 'addRequirementRow("RQ-" + number, "")' in script

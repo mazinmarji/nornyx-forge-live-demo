@@ -1303,12 +1303,12 @@ function authFetch(url, opts){
   if(token){ headers["Authorization"] = "Bearer " + token; }
   return fetch(url, Object.assign({}, opts, {headers: headers, credentials: "omit"}));
 }
-async function call(url, body){
+async function call(url, body, fromEditor){
   const r = await authFetch(url, {method: "POST", headers: {"content-type": "application/json"},
                                   body: JSON.stringify(body)});
   const data = await r.json().catch(() => ({}));
   clearRowErrors();
-  if(r.ok){ text("notice", ""); } else { showRefusal(data); }
+  if(r.ok){ text("notice", ""); } else { showRefusal(data, fromEditor === true); }
   await refresh();
 }
 // A refusal that explains itself (A-048) is shown in plain words first and the
@@ -1319,7 +1319,7 @@ function showNotice(message){
   clearRowErrors();
   document.getElementById("notice").textContent = message;
 }
-function showRefusal(data){
+function showRefusal(data, fromEditor){
   const notice = document.getElementById("notice");
   notice.replaceChildren();
   if(!data.explanation){ notice.textContent = "Refused: " + (data.refused || JSON.stringify(data)); return; }
@@ -1328,6 +1328,10 @@ function showRefusal(data){
   const technical = document.createElement("p");
   technical.textContent = "Technical reason: " + (data.refused || "");
   notice.append(plain, technical);
+  // Only a refusal of the editor's own proposal is about the rows in it; a
+  // refusal of another call (confirming an open proposal) may name an RQ
+  // number the editor holds with other text (Codex P2 4350877316's audit).
+  if(!fromEditor){ return; }
   for(const item of rowItems()){
     if(item.dataset.rqid !== data.row){ continue; }
     const input = item.querySelector("input"), error = item.querySelector(".rq_error");
@@ -1426,7 +1430,14 @@ function renderRequirementRows(confirmed){
   }
   rowsChanged();
 }
-function proposeRequirements(){ call("/api/proposals", {field: "requirements", value: requirementRows(), actor: actor()}); }
+function proposeRequirements(){
+  // From here the rows are the person's draft, and no refresh replaces them:
+  // after a refusal, rebuilding them from the capsule discarded the row the
+  // refusal marked, its message, aria-invalid, the focus, and the refused
+  // text itself (Codex P2 4350877316). A row is edited and proposed again.
+  rowsEdited = true;
+  call("/api/proposals", {field: "requirements", value: requirementRows(), actor: actor()}, true);
+}
 function act(url){ call(url, {actor: actor()}); }
 function createProject(){ call("/api/project", {project_id: pid.value, project_name: pname.value, actor: actor()}); }
 function proposeNeed(){ call("/api/proposals", {field: "intent", value: need.value, actor: actor()}); }

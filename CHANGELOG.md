@@ -35,7 +35,10 @@
   fault is located by bisection rather than by validating every prefix. Line
   boundaries are tested directly against the set `str.splitlines()` honours,
   and the BRD derivation refuses any confirmed text it would read back as
-  other words (a trailing boundary, padding, a leading list mark). This is a requirements-entry
+  other words (a trailing boundary, padding, a leading list mark). After a
+  refusal of the rows, the page keeps them, the row named and focused, through
+  the refresh that follows; a confirmed row the rule now refuses is edited on
+  the page and proposed again. This is a requirements-entry
   affordance, not a completed basic-user acceptance, and no
   generated-application safety boundary is claimed.
 

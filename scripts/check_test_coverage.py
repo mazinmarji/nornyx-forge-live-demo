@@ -852,7 +852,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # leading and in the middle of an intent and of a row, refused with 422
     # (60); fifteen texts each refused or read back exactly; the round trip
     # through the routes; and three confirmed texts the derivation refuses.
-    "tests/test_requirements_entry.py": 137,
+    # 152 -> 157 for the fifth review, floor band(157) = 142: a confirmed row
+    # this rule refuses, named when proposed unchanged (two ways); the way out
+    # by editing it; and the editor's refusal kept across the refresh, marking
+    # only the editor's own proposal.
+    "tests/test_requirements_entry.py": 142,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2214,14 +2218,17 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 524. The fourth review round added eighty, 72 -> 152 (floor 65 -> 137): 5967
 # collect, the sum rises by 72 to 5435 and the aggregate follows to 5443,
 # band(n) 5299 -> 5371, the working room 516 -> 524, and the slack 524 -> 532,
-# the module now 15 above its band. The rows below are these.
+# the module now 15 above its band. The fifth added five, 152 -> 157 (floor
+# 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
+# follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
+# slack stays 532. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5967   (137 modules)
-#     sum of the module floors    5435
-#     band(5967) = ceil(0.9*n)    5371
-#     MINIMUM_COLLECTED           5443
+#     collected across tests/     5972   (137 modules)
+#     sum of the module floors    5440
+#     band(5972) = ceil(0.9*n)    5375
+#     MINIMUM_COLLECTED           5448
 #     above the module sum          8
 #     below what collects         524
 #
@@ -2714,7 +2721,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5443
+MINIMUM_COLLECTED = 5448
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

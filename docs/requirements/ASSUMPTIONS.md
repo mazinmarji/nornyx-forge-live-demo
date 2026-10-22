@@ -7486,7 +7486,34 @@ the faulty row from which prefixes the schema refuses, which holds because the
 schema stops at the first fault in order, and a test holds the reason), and the
 capsule's single-line rule for the project name, which tests `\n` only -- a name
 with another boundary splits the document's title; the project name is not
-requirement text and its field predates this change. Red first on `e19eaa1` with only the test module edited: the two
+requirement text and its field predates this change.
+
+**Review of the eighth head.** The Codex review of `97b09f4` found one defect in
+the page: when the confirmed set held a row this rule refuses, proposing the
+untouched rows left the editor marked as not edited, so the refresh that follows
+every call rebuilt the rows from the capsule, discarding the row the refusal had
+marked, its message, `aria-invalid`, the focus, and the refused draft itself.
+Proposing now makes the rows the person's draft, which no refresh replaces, and
+the refusal is applied before the refresh and kept by it. The builder's audit of
+the page's other `call()` and `refresh()` paths found one more: a refusal of
+another call -- confirming an open proposal that names its own `RQ-2` -- marked
+and focused the editor's `RQ-2`, which may hold other text; only the editor's
+own proposal now marks its rows. Left as is: an intent refusal is shown in the
+notice and leaves the need box untouched, which no refresh rewrites; the notice
+is replaced only by the next call's own result, and each call clears the row
+marks it no longer answers for; while a build runs, the page refreshes every two
+seconds and an editor nobody has edited is rebuilt each time, which moves focus
+out of it and carries no refusal state.
+
+**A project whose confirmed rows this rule now refuses** -- confirmed before it,
+or through another path -- gets out of that state from the page as follows.
+Deriving the BRD is refused, naming the row. Proposing the rows unchanged is
+refused with 422, naming the row, and the page keeps the rows with that row
+marked. The person edits the named row and proposes the set again, which is
+accepted, and confirms it. A test drives that path through the routes to a
+derived BRD that reads back as confirmed. Red first on `97b09f4` with only the
+test module edited: the three page tests fail; the three server cases, which
+the server already handled, pass. Red first on `e19eaa1` with only the test module edited: the two
 oversized and non-ASCII suffixes, the 500, the quadratic count and the page's
 pattern fail; the ten other suffixes, which the old rule already ignored, pass.
 
