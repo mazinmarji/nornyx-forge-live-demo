@@ -482,6 +482,7 @@ def test_a_snapshot_replaced_during_the_check_is_an_error(
         snapshot = Path(command[5])
         replacement = snapshot.with_name("replacement")
         replacement.write_bytes(snapshot.read_bytes())
+        os.chmod(snapshot, 0o600)  # Windows will not replace a read-only file
         os.replace(replacement, snapshot)
         return _completed("Nornyx check passed\n", text=False)
 
