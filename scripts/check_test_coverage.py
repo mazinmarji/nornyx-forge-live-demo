@@ -815,8 +815,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # them skips on any platform, and the module joins the windows-runtime
     # job. 13 -> 15 for A-048, floor band(15) = 14: eight requirement rows
     # composed as the onboarding page composes them reaching GOVERN, and the
-    # same rows refused at the build for one untested row.
-    "tests/test_simulated_journey.py": 14,
+    # same rows refused at the build for one untested row. 15 -> 19 for
+    # A-049, floor band(19) = 18: the eight rows refused at BUILD when the
+    # generated contract's nornyx check is refused, the contract is edited
+    # after generation or deleted, or the check cannot run. The journeys that
+    # reached GOVERN now reach READY in the same tests.
+    "tests/test_simulated_journey.py": 18,
+    # A-049's governance check of the generated contract: 23 collected at
+    # introduction, floor at band(23) = 21. The real nornyx CLI passing the
+    # contract Forge generated and the translator reading that as a passing
+    # governance validation; two contracts Nornyx refuses; no check run for a
+    # contract changed after generation, missing, a directory, a link,
+    # oversized, a build with no or a malformed recorded digest (six), or an
+    # interpreter inside the project; a check that cannot start, exits 0
+    # without Nornyx's verdict, exits 2 without a Nornyx error, times out or
+    # cannot execute, each an error and none a pass; the profile's two copies
+    # equal; and the translator's bootstrap copy equal to the parent's.
+    "tests/test_governance_contract_check.py": 21,
     # A-045's one requirement-identity rule: 26 collected at introduction,
     # floor at band(26) = 24. Forge's derived BRD against Forge's own
     # verifier, the negatives that keep traceability (an untested confirmed
@@ -2221,16 +2236,29 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 15 above its band. The fifth added five, 152 -> 157 (floor
 # 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
-# slack stays 532. The rows below are these.
+# slack stays 532.
+#
+# A-049 ADDS ONE MODULE AND MOVES ONE, measured from a fresh collection:
+# tests/test_governance_contract_check.py collects 23 (floor band(23) = 21)
+# and tests/test_simulated_journey.py collects 15 -> 19 (floor band(15) = 14
+# -> band(19) = 18). 5999 collect across 138 modules. The module-floor sum
+# rises by 25 to 5465 and the aggregate follows to 5473, keeping the same 8
+# above it; band(n) 5375 -> 5400, and the working room below the floor
+# 524 -> 526. THE SLACK THE BANDS GRANT moves by 2, 532 -> 534, the new
+# module sitting 2 above its band and the journey module still 1 above its
+# own. NO SKIP IS ADDED. The journey module is one of the windows-runtime
+# job's, whose floor moves 292 -> 296: its eight modules collect
+# 7/14/15/19/23/54/73/97 (sum 302, floor 302 - 7 + 1). The rows below are
+# these.
 #
 # (rows below):
 #
-#     collected across tests/     5972   (137 modules)
-#     sum of the module floors    5440
-#     band(5972) = ceil(0.9*n)    5375
-#     MINIMUM_COLLECTED           5448
+#     collected across tests/     5999   (138 modules)
+#     sum of the module floors    5465
+#     band(5999) = ceil(0.9*n)    5400
+#     MINIMUM_COLLECTED           5473
 #     above the module sum          8
-#     below what collects         524
+#     below what collects         526
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2452,7 +2480,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 532 in total, and the aggregate refuses
+# per-module bands already grant 534 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2721,7 +2749,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5448
+MINIMUM_COLLECTED = 5473
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2852,6 +2880,7 @@ REQUIRED_MODULES = (
     "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
     "tests/test_simulated_journey.py",
+    "tests/test_governance_contract_check.py",
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",

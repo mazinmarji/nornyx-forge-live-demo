@@ -33,7 +33,7 @@ from typing import Any
 
 PROFILE_DEFINITION = {
     "id": "nornyx.greenfield.python.v1",
-    "version": 3,
+    "version": 4,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -44,6 +44,14 @@ PROFILE_DEFINITION = {
         "test-execution",
     ],
     "execution": "bounded-static-inspection-and-isolated-tests",
+    # A-049: run by the trusted parent after this verifier, never here. Echoed
+    # so that the parent's comparison holds the whole profile.
+    "governance": {
+        "checks": ["nornyx-contract-check"],
+        "subject": ".nornyx/generated/brd_contract.nyx",
+        "binding": "sha256-recorded-at-generation",
+        "execution": "trusted-parent-isolated-nornyx-cli-on-private-snapshot",
+    },
 }
 
 IN_MEMORY_BOOTSTRAP = (

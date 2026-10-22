@@ -2,6 +2,24 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The greenfield acceptance profile runs the real `nornyx check` on the
+  contract each build generated, and only that check's pass is a governance
+  validation (A-049). READY needs one, and the profile ran no Nornyx gate, so
+  every greenfield build stopped at GOVERN with READY refused (A-032). The
+  flow now records the SHA-256 of `.nornyx/generated/brd_contract.nyx` when it
+  generates it; after the verifier, the gate `greenfield:nornyx-contract-check`
+  checks only bytes that still have that digest, copied to a private snapshot
+  and checked by the installed CLI's entry point under the trusted
+  interpreter with `-I`, and reads the verdict from Nornyx's own output, not
+  the exit status alone. A contract Nornyx refuses, one edited or deleted
+  after generation, and a check that cannot run each fail the build at BUILD
+  with no governance validation recorded, and READY stays refused. The
+  simulated journey -- intent only, four requirements, and eight page rows --
+  now reaches READY, marked by the human. The profile's definition gains a
+  `governance` entry (version 3 -> 4). Unchanged: the verifier's checks, the
+  `gate_results` rule, the requirement-identity rule, the action boundary and
+  provider eligibility. READY there is a lifecycle record over a simulated
+  provider's fixture, not a runnable application.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

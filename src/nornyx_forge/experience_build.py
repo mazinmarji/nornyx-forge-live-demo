@@ -7,9 +7,10 @@ whole discipline is REFUSING TO IMPROVE THE NEWS:
   * `flow_run.passed` is exactly the flow's own `accepted` flag;
   * `gate_results.passed` is True only when EVERY gate passed;
   * `governance_validation` is derived from the gates whose command is the
-    Nornyx CLI — and when no such gate ran (the CLI was absent), the evidence
-    is ABSENT, not passing. An environment that could not ask the governance
-    question produces no governance answer.
+    Nornyx CLI -- `nornyx` itself, or the CLI's entry point run by the trusted
+    interpreter the way the greenfield profile runs it (A-049) -- and when no
+    such gate ran, the evidence is ABSENT, not passing. A build that never
+    asked the governance question produces no governance answer.
 
 IT ALSO OWNS THE THREE EVIDENCE-REFERENCE FORMATS -- the scope binding, the
 flow run and the gate records -- as regular expressions beside the builders
@@ -40,6 +41,17 @@ from .experience import EvidenceRef
 #: exact command tuple it executed, so this decides on what ran rather than
 #: on how it was spelled.
 _NORNYX_EXECUTABLE = "nornyx"
+
+#: The greenfield governance check's command (A-049): the trusted
+#: interpreter, `-I -c`, this bootstrap, `check`, the private snapshot. A copy
+#: of `gates.NORNYX_CHECK_BOOTSTRAP`, because this module is
+#: `layer.application` and may not import `gates`; a test holds the two equal.
+#: Recognised only in exactly that shape, so a Python command running anything
+#: else -- or this bootstrap without `-I` -- is not a Nornyx gate.
+NORNYX_CHECK_BOOTSTRAP = (
+    "import sys;from nornyx.cli import main;"
+    "sys.argv=['nornyx']+sys.argv[1:];sys.exit(main())"
+)
 
 #: `RequirementsModel.source_digest`'s shape -- the flow's own statement of
 #: which BRD it parsed. MATCHED rather than trusted: a result carrying
@@ -249,13 +261,19 @@ def _parsed_brd_digest(data: Mapping[str, Any]) -> str | None:
 def _is_nornyx_gate(gate: Mapping[str, Any]) -> bool:
     """Did this gate execute the Nornyx CLI?
 
-    Decided from the recorded command vector's first element when present —
-    the thing that ran — with the display name accepted only as a fallback for
-    records that carry no command. A name-only decision would be a spelling
-    test; the command vector is what was actually executed.
+    Decided from the recorded command vector when present — the thing that
+    ran: `nornyx` as its first element, or exactly the greenfield profile's
+    trusted invocation of the CLI's entry point (A-049) — with the display
+    name accepted only as a fallback for records that carry no command. A
+    name-only decision would be a spelling test; the command vector is what
+    was actually executed. A greenfield check that never ran records no
+    command and a name that is not `nornyx ...`, so it is not a Nornyx gate.
     """
     command = gate.get("command")
     if isinstance(command, (list, tuple)) and command:
-        return str(command[0]) == _NORNYX_EXECUTABLE
+        if str(command[0]) == _NORNYX_EXECUTABLE:
+            return True
+        return len(command) == 6 and [str(part) for part in command[1:5]] == [
+            "-I", "-c", NORNYX_CHECK_BOOTSTRAP, "check"]
     name = gate.get("name")
     return isinstance(name, str) and name.startswith(_NORNYX_EXECUTABLE + " ")

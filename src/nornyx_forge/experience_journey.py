@@ -756,7 +756,10 @@ _NEXT_SCOPE_DRIFT = (
 #: and READY on paper and every one of them requires the kind that is missing.
 #: Round 2 set this sentence for the drift alone and left that reader the
 #: READY instruction, which is the same defect one branch to the left.
-#: Disclosed in A-032 beside the BUILD re-entry dead end.
+#: Disclosed in A-032 beside the BUILD re-entry dead end. Since A-049 the
+#: greenfield profile runs a Nornyx check, so its builds either record a
+#: passing validation or fail at BUILD; this reader remains for a build whose
+#: gate list carries no Nornyx gate at all.
 #:
 #: IT NAMES NO CAUSE, because there are four (an absent binding, a drifted
 #: one, a flow that parsed another BRD, and no governance validation at all)
@@ -912,8 +915,9 @@ def journey_view(
     # the blockers stops instructing an act nobody can perform in every case
     # this block refuses, including ones added after it was written. Round 2
     # set a flag on ONE of these two branches, and the other reader -- a build
-    # whose acceptance profile ran no Nornyx gate, which is the profile that
-    # ships -- was still told that marking ready was their act.
+    # whose acceptance profile ran no Nornyx gate, which was then the profile
+    # that shipped (A-049 has it run one since) -- was still told that marking
+    # ready was their act.
     ready_refusal: str | None = None
     if "READY" in allowed:
         if not any(ref.kind == "governance_validation" for ref in ready_evidence(experience)):
