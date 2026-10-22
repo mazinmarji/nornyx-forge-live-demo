@@ -57,6 +57,11 @@ NORNYX_CHECK_BOOTSTRAP = (
 #: A generated contract is a few kilobytes per requirement; a file this large
 #: is not one Forge generated, and is not read into memory to find that out.
 GOVERNANCE_CONTRACT_MAX_BYTES = 16 * 1024 * 1024
+#: The private snapshot's directory prefix and file name. `experience_build`
+#: holds a copy of both, and recognises a check only over a snapshot of this
+#: shape (Codex P2 4353133125 on `8ae32b3`).
+GOVERNANCE_SNAPSHOT_PREFIX = "nornyx-forge-governance-"
+GOVERNANCE_SNAPSHOT_NAME = "brd_contract.nyx"
 GOVERNANCE_CHECK_TIMEOUT_SECONDS = 120
 #: What Nornyx prints after its diagnostics when a contract passes.
 _NORNYX_PASSED_LINE = "Nornyx check passed"
@@ -603,6 +608,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             snapshot = Path(scratch) / "greenfield_verifier.py"
             snapshot.write_bytes(verifier_bytes)
             snapshot.chmod(0o444)
+            snapshot_status = os.lstat(snapshot)
             command = (
                 str(interpreter),
                 "-I",
@@ -642,7 +648,18 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
                 check=False,
                 timeout=120,
             )
-            snapshot_digest = _digest_file(snapshot)
+            # Read back through one descriptor, never by name (the class of
+            # Codex P1 4353133109, A-049): a pipe put in its place blocked
+            # this read with no timeout left to end it. Anything but the file
+            # written is no digest, which the identity check below refuses.
+            snapshot_bytes, snapshot_refusal = _read_inspected_file(
+                snapshot, snapshot_status, len(verifier_bytes)
+            )
+            snapshot_digest = (
+                "sha256:" + hashlib.sha256(snapshot_bytes).hexdigest()
+                if snapshot_bytes is not None
+                else f"unreadable: the snapshot {snapshot_refusal}"
+            )
             execution_origin = str(snapshot.resolve(strict=True))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return _closed_failure(
@@ -1109,16 +1126,9 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
             f"the generated build contract is larger than {GOVERNANCE_CONTRACT_MAX_BYTES} "
             "bytes, which no contract Forge generates is"
         )
-    try:
-        with open(contract, "rb") as stream:
-            data = stream.read(GOVERNANCE_CONTRACT_MAX_BYTES + 1)
-    except OSError as exc:
-        return not_run(f"the generated build contract cannot be read: {exc}")
-    if len(data) > GOVERNANCE_CONTRACT_MAX_BYTES:
-        return not_run(
-            f"the generated build contract is larger than {GOVERNANCE_CONTRACT_MAX_BYTES} "
-            "bytes, which no contract Forge generates is"
-        )
+    data, refusal = _read_inspected_file(contract, status, GOVERNANCE_CONTRACT_MAX_BYTES)
+    if data is None:
+        return not_run(f"the generated build contract {GENERATED_CONTRACT_PATH} {refusal}")
     found = "sha256:" + hashlib.sha256(data).hexdigest()
     if found != recorded:
         return not_run(
@@ -1154,10 +1164,11 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
         )
 
     try:
-        with tempfile.TemporaryDirectory(prefix="nornyx-forge-governance-") as scratch:
-            snapshot = Path(scratch) / "brd_contract.nyx"
+        with tempfile.TemporaryDirectory(prefix=GOVERNANCE_SNAPSHOT_PREFIX) as scratch:
+            snapshot = Path(scratch).resolve() / GOVERNANCE_SNAPSHOT_NAME
             snapshot.write_bytes(data)
             snapshot.chmod(0o444)
+            snapshot_status = os.lstat(snapshot)
             command = (
                 str(interpreter),
                 "-I",
@@ -1174,7 +1185,11 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
                 check=False,
                 timeout=GOVERNANCE_CHECK_TIMEOUT_SECONDS,
             )
-            checked = _digest_file(snapshot)
+            # Read back as the contract was read: the file that was written,
+            # through one descriptor, or nothing.
+            after, refusal = _read_inspected_file(
+                snapshot, snapshot_status, GOVERNANCE_CONTRACT_MAX_BYTES
+            )
     except subprocess.TimeoutExpired:
         return errored(
             f"it did not finish within {GOVERNANCE_CHECK_TIMEOUT_SECONDS} seconds", 124
@@ -1187,6 +1202,9 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
     stderr = _gate_text(completed.stderr, "stderr", codec)
     output = (stdout + stderr).strip()
     returncode = completed.returncode
+    if after is None:
+        return errored(f"the private snapshot {refusal} after the check", returncode)
+    checked = "sha256:" + hashlib.sha256(after).hexdigest()
     if checked != recorded:
         return errored("the private snapshot changed while it was checked", returncode, checked)
     verdict = None if stderr.strip() else _nornyx_verdict(stdout)
@@ -1223,6 +1241,63 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
         returncode,
         checked,
     )
+
+
+def _read_inspected_file(
+    path: Path, inspected: os.stat_result, limit: int
+) -> tuple[bytes | None, str]:
+    """The bytes of the file that was inspected, read through one descriptor.
+
+    Codex P1 4353133109 on `8ae32b3`: the path was inspected with `lstat` and
+    `resolve` and then opened by name, so a file put in its place in between
+    -- by a process the provider left running -- was read unexamined. A FIFO
+    blocked the read, before any timeout applied, for as long as nobody wrote
+    to it; a link was followed to whatever it named. Now the path is opened
+    without following a link where the platform can refuse one, and without
+    blocking where it can open a pipe that way, and what is judged is the
+    DESCRIPTOR: a regular file, the same device and inode that were
+    inspected, within the bound, read only from that descriptor. Windows has
+    neither flag; the identity comparison is what refuses a link there.
+
+    Returns the bytes and an empty reason, or `None` and the reason, worded
+    to follow the contract's path.
+    """
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        return None, f"is not a regular file inside the project ({exc.strerror or exc})"
+    try:
+        opened = os.fstat(descriptor)
+        if not _regular_file_mode(opened.st_mode):
+            return None, "is not a regular file inside the project"
+        if (opened.st_dev, opened.st_ino) != (inspected.st_dev, inspected.st_ino):
+            return None, "changed while it was inspected: the file opened is not the one inspected"
+        larger = (
+            f"is larger than {limit} bytes, which no contract Forge generates is"
+        )
+        if opened.st_size > limit:
+            return None, larger
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                return None, larger
+        return b"".join(chunks), ""
+    except OSError as exc:
+        return None, f"cannot be read: {exc}"
+    finally:
+        os.close(descriptor)
 
 
 def _regular_file_mode(mode: int) -> bool:

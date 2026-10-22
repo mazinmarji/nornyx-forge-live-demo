@@ -621,9 +621,21 @@ def _safe_bytes(path: Path, root: Path) -> tuple[bytes | None, str | None]:
         return None, f"file escaped the inspected subject before read: {relative}"
     descriptor: int | None = None
     try:
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        # O_NONBLOCK and the regular-file test on the DESCRIPTOR (Codex P1
+        # 4353133109's class, A-049): a pipe put in a listed file's place
+        # blocked this open until the parent's timeout killed the verifier.
+        # Windows has neither O_NOFOLLOW nor O_NONBLOCK; the identity
+        # comparison below is what holds there.
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            return None, f"file is not a regular file at read: {relative}"
         chunks: list[bytes] = []
         remaining = _MAX_FILE_BYTES + 1
         while remaining:

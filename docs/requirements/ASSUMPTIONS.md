@@ -7590,22 +7590,31 @@ and READY was refused with "requires evidence of kind
 **The repair.**
 
 - `DevelopmentFlow.requirements()` records the SHA-256 of the contract's bytes
-  as generation left them, before any worker runs: in the result as
+  as generation wrote them, before any worker runs: in the result as
   `generated_brd_contract_digest` and in the `requirements_normalized` ledger
-  event as `generated_contract_digest`.
+  event as `generated_contract_digest`. The digest is computed from the
+  renderer's text (`contract_generator.render_brd_contract`, the text the
+  generator writes as UTF-8 with no newline translation), not read back from
+  the path.
 - The greenfield profile declares a governance check
   (`GREENFIELD_PROFILE_DEFINITION["governance"]`, version 3 -> 4, in the
   parent and in the verifier's echoed copy), and the flow's greenfield
   acceptance runs it after the verifier on every acceptance pass:
   `gates.trusted_contract_check`, recorded as the gate
   `greenfield:nornyx-contract-check`.
-- The check reads the contract once, refuses anything that is not a regular
-  file at that path inside the project (a link, a directory, a path that
-  resolves elsewhere) or is larger than 16 MiB, and compares the digest of
-  what it read with the recorded one. Bytes changed or removed after
-  generation are not this build's contract: no check runs and the gate fails.
+- The check examines the contract (`lstat`, `resolve`), refuses anything that
+  is not a regular file at that path inside the project (a link, a
+  directory, a path that resolves elsewhere) or is larger than 16 MiB, and
+  then reads it through ONE descriptor: opened without following a link and
+  without blocking where the platform offers those flags, and judged as a
+  descriptor -- a regular file, the device and inode that were examined,
+  within the bound -- before anything is read from it. It compares the
+  digest of what it read with the recorded one. Bytes changed or removed
+  after generation are not this build's contract: no check runs and the gate
+  fails.
 - The bound bytes are copied to a private read-only snapshot in a temporary
-  directory outside the project, and the CLI's own entry point
+  directory outside the project (read back after the check through the same
+  descriptor rule), and the CLI's own entry point
   (`nornyx.cli:main`) checks the snapshot, run by the trusted interpreter
   with `-I` from that directory, in the constructed environment the verifier
   uses (no PATH, PYTHONPATH or PYTHONHOME), under a 120-second timeout. No
@@ -7616,10 +7625,15 @@ and READY was refused with "requires evidence of kind
   error-level diagnostic; anything else -- stderr, output that is not
   Nornyx's, an exit 0 without the pass line, a timeout, a failure to start --
   is an error. Only the pass passes.
-- `experience_build` recognises that exact command -- the interpreter, `-I`,
-  `-c`, the bootstrap, `check`, the snapshot -- as a Nornyx gate. It keeps a
-  copy of the bootstrap because the layering forbids it importing `gates`;
-  a test holds the two equal.
+- `experience_build` recognises that exact command as a Nornyx gate: a record
+  named `greenfield:nornyx-contract-check`, whose executable is the running
+  interpreter's absolute path, then `-I`, `-c`, the bootstrap and `check`,
+  and whose subject is an absolute `brd_contract.nyx` in a
+  `nornyx-forge-governance-` directory. It keeps copies of those constants
+  because the layering forbids it importing `gates`; a test holds them
+  equal. The rule for a non-greenfield gate is unchanged: a recorded
+  command whose first word is `nornyx`, as `default_gates` runs it through
+  PATH.
 
 **Fail closed, as measured.** A contract Nornyx refuses, one edited after
 generation into bytes Nornyx would pass, one deleted, and a check that
@@ -7631,11 +7645,12 @@ ran, there is none at all. A greenfield build therefore either records a
 passing governance validation at GOVERN or fails at BUILD, where `retry`
 applies.
 
-**Tests.** `tests/test_governance_contract_check.py` (23) holds the check
+**Tests.** `tests/test_governance_contract_check.py` (38) holds the check
 against the installed CLI: the pass and its translation, two refusals
 (`MISSING_PROJECT_NAME`, `PARSE_ERROR`), every not-run case above, six
-malformed recorded digests, an interpreter inside the project, and five ways
-the check errors without passing. `tests/test_simulated_journey.py` now
+malformed recorded digests, an interpreter inside the project, five ways
+the check errors without passing, and the first review's fifteen cases
+below. `tests/test_simulated_journey.py` now
 carries the intent-only journey, the four-requirement journey and the eight
 page rows to READY, marked by the human through `POST /api/journey/ready`,
 asserting the gate's command, its provenance and the GOVERN and READY
@@ -7650,6 +7665,45 @@ included). The 11 that pass are controls whose outcome this change must not
 move: determinism, the untested-requirement refusals, the verifier's own
 refusals, the real-provider tripwire, the memory-store specimen and the
 CrewAI initialisation failure.
+
+**Review of the first head.** The Codex review of `8ae32b3` found two
+defects.
+
+- **P1 (inline comment 4353133109).** The contract was examined by path and
+  then opened by path, so a file put in its place in between -- by a process
+  a provider left running -- was read unexamined: a FIFO blocked the read
+  before the timeout applied, and a link was followed. Repaired as above,
+  for the class and not only the line: every read by path of a file
+  something else could replace, in the files this change touches, now goes
+  through one judged descriptor -- the contract; the contract's snapshot,
+  read back after the check; the verifier's own snapshot, digested by the
+  parent after the verifier ran, where a pipe blocked acceptance with no
+  timeout left; and the verifier's reader of subject files, `_safe_bytes`,
+  which now opens without blocking and refuses a descriptor that is not a
+  regular file. The flow's digest, which was read back from the path right
+  after generation, is now computed from the rendered text. What holds per
+  platform: on POSIX, a link is refused at the open (`O_NOFOLLOW`) and a
+  pipe opens without blocking (`O_NONBLOCK`) and is refused at `fstat`; on
+  Windows neither flag exists, and the open follows a link, so what refuses
+  a replaced or linked file there is the descriptor's identity compared with
+  the `lstat`, with the size bound applied to the descriptor. No pipe
+  protection is claimed on Windows, where a pipe is not a file in the
+  project tree. Red first on `8ae32b3`, with only the two test files
+  changed, 16 of 57 fail: the pipe blocked the check; the link, the renamed
+  file and the replaced snapshot were read and passed; a pipe blocked the
+  verifier snapshot's digest and the verifier's reader; the rendered-digest
+  test cannot import the renderer; the translator's constants test and the
+  seven negatives below fail; and the journey's refused-contract case fails
+  at its seam, which replaces the renderer that does not exist there. The
+  grown file is refused there too, because the old reader bounded what it
+  read, and is kept as a control.
+- **P2 (inline comment 4353133125).** The translator's test was the trailing
+  five arguments, so `/bin/false`, a provider's executable or an empty
+  string in front of them made a passing record a passing governance
+  validation. Repaired as above, with seven negatives: another executable,
+  an empty one, a relative one, a relative snapshot, another snapshot name,
+  another snapshot directory and another gate name. Each was translated into
+  a passing governance validation on `8ae32b3`.
 
 **What changes for an intent-only build.** It reaches READY too: its
 generated contract carries one goal, BRD-001, and Nornyx passes it.
@@ -7674,9 +7728,18 @@ provider eligibility, and the default (non-greenfield) gates.
    and the entry point it imports; the CLI's own files are not digested.
 4. **A bounded check of hostile bytes.** The checked bytes are the ones Forge
    generated, so the CLI is not run on provider-authored input; it runs under
-   a timeout, not under the verifier's OS resource limits.
+   a timeout, not under the verifier's OS resource limits. The CLI opens the
+   snapshot by its own path; the snapshot sits in a private directory and is
+   compared before and after.
 5. **The provider's other writes.** The binding covers the contract file. It
    says nothing about any other file the provider changed.
+6. **The non-greenfield rule.** A gate whose recorded command begins with
+   `nornyx` is still a Nornyx gate, as before: `default_gates` runs the CLI
+   through PATH and records it that way. Which `nornyx` that was is not
+   established, and this change does not touch that path.
+7. **Pipe protection on Windows.** None is claimed: Windows has no
+   `O_NONBLOCK` or `O_NOFOLLOW`. What holds there is the descriptor's
+   identity and size, compared with what was examined.
 
 **Serves.** A-032's third stuck position, which this closes for greenfield
 builds; A-035's journey, which now reaches READY; and the

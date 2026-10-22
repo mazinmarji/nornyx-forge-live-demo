@@ -20,6 +20,8 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -286,18 +288,286 @@ def test_the_profile_declares_the_governance_check_in_both_copies():
     assert gate_module.GREENFIELD_GOVERNANCE_CHECK == "nornyx-contract-check"
 
 
+def _translated_kinds(gate: dict) -> set[str]:
+    return {ref.kind for ref in flow_evidence(
+        {"accepted": True, "execution_backend": "sequential", "gates": [gate]})}
+
+
 def test_the_translator_recognises_exactly_the_trusted_bootstrap():
     """`experience_build` may not import `gates` (the layering forbids it),
     so it keeps a copy of the bootstrap it recognises; the copy is this
     constant, and a Python command running anything else is not a Nornyx gate."""
     assert experience_build.NORNYX_CHECK_BOOTSTRAP == gate_module.NORNYX_CHECK_BOOTSTRAP
+    assert experience_build.GOVERNANCE_CHECK_GATE == f"greenfield:{gate_module.GREENFIELD_GOVERNANCE_CHECK}"
+    assert experience_build.GOVERNANCE_SNAPSHOT_PREFIX == gate_module.GOVERNANCE_SNAPSHOT_PREFIX
+    assert experience_build.GOVERNANCE_SNAPSHOT_NAME == gate_module.GOVERNANCE_SNAPSHOT_NAME
     trusted = {"name": "greenfield:nornyx-contract-check", "passed": True,
-               "command": [sys.executable, "-I", "-c", gate_module.NORNYX_CHECK_BOOTSTRAP,
-                           "check", "/private/brd_contract.nyx"]}
-    other = {**trusted, "command": [sys.executable, "-I", "-c", "print(1)", "check", "x"]}
-    unisolated = {**trusted, "command": [sys.executable, "-c", gate_module.NORNYX_CHECK_BOOTSTRAP,
-                                         "check", "x"]}
+               "command": _trusted_command()}
+    other = {**trusted, "command": [*trusted["command"][:3], "print(1)", *trusted["command"][4:]]}
+    unisolated = {**trusted, "command": [trusted["command"][0], "-c",
+                                         *trusted["command"][3:]]}
     for gate, expected in ((trusted, True), (other, False), (unisolated, False)):
-        refs = {ref.kind for ref in flow_evidence(
-            {"accepted": True, "execution_backend": "sequential", "gates": [gate]})}
-        assert ("governance_validation" in refs) is expected, gate["command"]
+        assert ("governance_validation" in _translated_kinds(gate)) is expected, gate["command"]
+
+
+def _trusted_command(snapshot: str | None = None) -> list[str]:
+    """The command `trusted_contract_check` records, with a snapshot of its shape."""
+    if snapshot is None:
+        snapshot = str(Path(tempfile.gettempdir()).resolve()
+                       / "nornyx-forge-governance-abc123" / "brd_contract.nyx")
+    return [os.path.abspath(sys.executable), "-I", "-c", gate_module.NORNYX_CHECK_BOOTSTRAP,
+            "check", snapshot]
+
+
+@pytest.mark.parametrize("change", [
+    "another executable", "an empty executable", "a relative executable",
+    "a relative snapshot", "another snapshot name", "another snapshot directory",
+    "another gate name",
+])
+def test_the_translator_refuses_the_bootstrap_under_any_other_executable_or_shape(change: str):
+    """Codex P2 4353133125 on `8ae32b3`. The trailing five arguments were the
+    whole test, so `/bin/false`, a provider's own executable or an empty
+    string in place of the trusted interpreter made a passing gate a passing
+    `governance_validation`. The interpreter that ran must be this one, the
+    snapshot must have the check's own shape, and the record must be the
+    greenfield check's."""
+    command = _trusted_command()
+    gate = {"name": "greenfield:nornyx-contract-check", "passed": True, "command": command}
+    if change == "another executable":
+        command[0] = str(Path(tempfile.gettempdir()).resolve() / "provider" / "python")
+    elif change == "an empty executable":
+        command[0] = ""
+    elif change == "a relative executable":
+        command[0] = "python"
+    elif change == "a relative snapshot":
+        command[5] = "nornyx-forge-governance-abc123/brd_contract.nyx"
+    elif change == "another snapshot name":
+        command[5] = str(Path(command[5]).with_name("other.nyx"))
+    elif change == "another snapshot directory":
+        command[5] = str(Path(command[5]).parent.with_name("elsewhere") / "brd_contract.nyx")
+    elif change == "another gate name":
+        gate["name"] = "review-worker:test-inspector"
+    assert "governance_validation" not in _translated_kinds(gate), change
+
+
+# ---------------------------------------------------------------------------
+# The contract replaced between inspection and reading (Codex P1 4353133109)
+# ---------------------------------------------------------------------------
+
+def _swap_after_inspection(monkeypatch: pytest.MonkeyPatch, contract: Path, swap) -> list[bool]:
+    """Run `swap` once, right after the check has inspected and resolved the
+    contract and before it reads it: the window a background process of the
+    provider's would use."""
+    swapped: list[bool] = []
+    resolve = Path.resolve
+
+    def resolve_then_swap(self: Path, *args, **kwargs):
+        resolved = resolve(self, *args, **kwargs)
+        if not swapped and self == contract:
+            swapped.append(True)
+            swap()
+        return resolved
+
+    monkeypatch.setattr(gate_module.Path, "resolve", resolve_then_swap)
+    return swapped
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+def test_a_pipe_swapped_in_after_inspection_is_refused_without_blocking(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A FIFO put in the contract's place after it was inspected blocked the
+    read, before the check's timeout applies, for as long as nobody wrote to
+    it. The opened descriptor is now what is checked: not a regular file, no
+    read, no wait."""
+    root, digest = _project(tmp_path)
+    contract = root / CONTRACT
+
+    def to_pipe():
+        contract.unlink()
+        os.mkfifo(contract)
+
+    swapped = _swap_after_inspection(monkeypatch, contract, to_pipe)
+    outcome: list = []
+    worker = threading.Thread(target=lambda: outcome.append(_check(root, digest)), daemon=True)
+    worker.start()
+    worker.join(20)
+    blocked = worker.is_alive()
+    if blocked:  # release the reader so the test process can finish
+        os.close(os.open(contract, os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(20)
+    assert swapped == [True]
+    assert not blocked, "the check blocked on a pipe swapped in after inspection"
+    _not_run(outcome[0])
+    assert "not a regular file" in outcome[0].detail
+
+
+def test_a_link_swapped_in_after_inspection_is_not_followed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A link put in the contract's place after it was inspected was
+    followed, so the bytes read were another file's, here a copy with the
+    same digest. What is read is now the file that was inspected, or
+    nothing."""
+    root, digest = _project(tmp_path)
+    contract = root / CONTRACT
+    elsewhere = tmp_path / "elsewhere.nyx"
+    elsewhere.write_bytes(contract.read_bytes())
+
+    def to_link():
+        contract.unlink()
+        try:
+            os.symlink(elsewhere, contract)
+        except (OSError, NotImplementedError) as exc:  # pragma: no cover - platform
+            pytest.skip(f"symbolic links unavailable here: {exc}")
+
+    swapped = _swap_after_inspection(monkeypatch, contract, to_link)
+    gate = _check(root, digest)
+    assert swapped == [True]
+    _not_run(gate)
+    # Refused at the open where the platform can refuse a link (O_NOFOLLOW),
+    # and by the descriptor's identity where it cannot (Windows).
+    expected = "not a regular file" if hasattr(os, "O_NOFOLLOW") else "changed while it was inspected"
+    assert expected in gate.detail
+
+
+def test_another_file_swapped_in_after_inspection_is_not_read(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A regular file renamed over the contract after it was inspected is a
+    different file: the descriptor's identity is compared with what was
+    inspected, so its size and bytes are never trusted."""
+    root, digest = _project(tmp_path)
+    contract = root / CONTRACT
+    replacement = contract.with_name("replacement.nyx")
+    replacement.write_bytes(contract.read_bytes())
+
+    swapped = _swap_after_inspection(monkeypatch, contract, lambda: os.replace(replacement, contract))
+    gate = _check(root, digest)
+    assert swapped == [True]
+    _not_run(gate)
+    assert "changed while it was inspected" in gate.detail
+
+
+def test_a_contract_grown_after_inspection_is_not_read(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The same file, grown past the bound after it was inspected: the size
+    the bound is applied to is the opened descriptor's, on every platform."""
+    root, digest = _project(tmp_path)
+    contract = root / CONTRACT
+
+    def grow():
+        with contract.open("ab") as stream:
+            stream.truncate(gate_module.GOVERNANCE_CONTRACT_MAX_BYTES + 1)
+
+    swapped = _swap_after_inspection(monkeypatch, contract, grow)
+    gate = _check(root, digest)
+    assert swapped == [True]
+    _not_run(gate)
+    assert "larger than" in gate.detail
+
+
+def _completed(stdout, *, text: bool):
+    return subprocess.CompletedProcess(args=(), returncode=0,
+                                       stdout=stdout if text else stdout.encode(),
+                                       stderr="" if text else b"")
+
+
+def test_a_snapshot_replaced_during_the_check_is_an_error(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The private snapshot is read back after the check the way the contract
+    is read before it: the file that was written, through one descriptor. A
+    snapshot replaced while the CLI ran -- here by a stand-in that answers as
+    Nornyx does -- is not what was checked."""
+    root, digest = _project(tmp_path)
+
+    def replace_snapshot(command, **_kwargs):
+        snapshot = Path(command[5])
+        replacement = snapshot.with_name("replacement")
+        replacement.write_bytes(snapshot.read_bytes())
+        os.replace(replacement, snapshot)
+        return _completed("Nornyx check passed\n", text=False)
+
+    monkeypatch.setattr(gate_module.subprocess, "run", replace_snapshot)
+    gate = _check(root, digest)
+    _errored(gate)
+    assert "the private snapshot changed while it was inspected" in gate.detail
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+def test_a_verifier_snapshot_swapped_for_a_pipe_does_not_block_the_parent(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The same class in the verifier's launcher: its snapshot was digested
+    by name after the run, with no timeout left, so a pipe in its place
+    blocked acceptance for good. It is now read through one descriptor and
+    never waited on; the run fails closed on the verifier's identity checks."""
+    root, _ = _project(tmp_path)
+
+    pipes: list[Path] = []
+
+    def swap_for_pipe(command, **_kwargs):
+        snapshot = Path(command[4])
+        snapshot.unlink()
+        os.mkfifo(snapshot)
+        pipes.append(snapshot)
+        return _completed("{}", text=True)
+
+    monkeypatch.setattr(gate_module.subprocess, "run", swap_for_pipe)
+    outcome: list = []
+    worker = threading.Thread(target=lambda: outcome.append(gate_module.trusted_greenfield_gates(root)),
+                              daemon=True)
+    worker.start()
+    worker.join(20)
+    blocked = worker.is_alive()
+    if blocked:  # release the reader so the test process can finish
+        os.close(os.open(pipes[0], os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(20)
+    assert not blocked, "the verifier launcher blocked on a pipe in its snapshot's place"
+    gates, _ = outcome[0]
+    assert [gate.passed for gate in gates] == [False]
+    assert gates[0].name == "greenfield:trusted-verifier-identity"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes are POSIX")
+def test_the_verifier_reader_refuses_a_pipe_without_blocking(tmp_path: Path):
+    """The verifier's own reader, `_safe_bytes`, on a pipe where a listed file
+    was: refused at the descriptor, not waited on until the parent's timeout."""
+    subject = tmp_path / "subject"
+    subject.mkdir()
+    pipe = subject / "module.py"
+    os.mkfifo(pipe)
+    outcome: list = []
+    worker = threading.Thread(target=lambda: outcome.append(greenfield_verifier._safe_bytes(pipe, subject)),
+                              daemon=True)
+    worker.start()
+    worker.join(20)
+    blocked = worker.is_alive()
+    if blocked:  # release the reader so the test process can finish
+        os.close(os.open(pipe, os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(20)
+    assert not blocked, "the verifier's reader blocked on a pipe"
+    data, problem = outcome[0]
+    assert data is None and "not a regular file" in problem
+
+
+def test_the_recorded_digest_is_of_the_rendered_contract_not_a_re_read(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The flow's binding is computed from the text generation wrote. Read
+    back from the path, bytes swapped in between were recorded as the
+    build's own, and then checked as if they were."""
+    from nornyx_forge import development_flow  # noqa: PLC0415 - A-049
+    from nornyx_forge.contract_generator import render_brd_contract  # noqa: PLC0415
+
+    root, _ = _project(tmp_path)
+    generate = development_flow.generate_brd_contract
+
+    def generate_then_swap(project: Path, model):
+        target = generate(project, model)
+        target.write_text(REFUSED, encoding="utf-8", newline="")
+        return target
+
+    monkeypatch.setattr(development_flow, "generate_brd_contract", generate_then_swap)
+    flow = development_flow.DevelopmentFlow(root, worker_mode="in-session", repo_mode="greenfield")
+    flow.requirements()
+    rendered = render_brd_contract(parse_brd(root / "BRD.md"))
+    assert flow.data["generated_brd_contract_digest"] == _digest(rendered.encode("utf-8"))
+    gate = _check(root, flow.data["generated_brd_contract_digest"])
+    _not_run(gate)
+    assert "changed after generation" in gate.detail

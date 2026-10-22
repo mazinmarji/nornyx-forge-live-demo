@@ -874,19 +874,16 @@ BROKEN_CHECK = "import sys;sys.stderr.write('the check could not start');sys.exi
 
 
 def _generate_a_refused_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The flow's own generator, followed by bytes Nornyx refuses. The flow
-    records the digest of what is on disk when generation returns, so the
-    binding holds and only the CLI's verdict can refuse the build."""
-    from nornyx_forge import development_flow  # noqa: PLC0415 - A-049
+    """A renderer that produces bytes Nornyx refuses, in both places the flow
+    asks it: the generator writes them and the flow records their digest, so
+    the binding holds and only the CLI's verdict can refuse the build."""
+    from nornyx_forge import contract_generator, development_flow  # noqa: PLC0415 - A-049
 
-    generate = development_flow.generate_brd_contract
+    def render_refused(_model: Any) -> str:
+        return REFUSED_CONTRACT
 
-    def generate_refused(root: Path, model: Any) -> Path:
-        target = generate(root, model)
-        target.write_text(REFUSED_CONTRACT, encoding="utf-8", newline="")
-        return target
-
-    monkeypatch.setattr(development_flow, "generate_brd_contract", generate_refused)
+    monkeypatch.setattr(contract_generator, "render_brd_contract", render_refused)
+    monkeypatch.setattr(development_flow, "render_brd_contract", render_refused)
 
 
 @pytest.mark.parametrize("case, outcome, says", [

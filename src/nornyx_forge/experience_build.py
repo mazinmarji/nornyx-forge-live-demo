@@ -30,7 +30,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import sys
+from pathlib import PurePath
 from typing import Any, Mapping, Sequence
 
 from .capsule import CapsuleValidationError
@@ -52,6 +55,12 @@ NORNYX_CHECK_BOOTSTRAP = (
     "import sys;from nornyx.cli import main;"
     "sys.argv=['nornyx']+sys.argv[1:];sys.exit(main())"
 )
+#: The rest of that shape, copied from `gates` for the same reason and held
+#: equal by the same test: the gate's name, and the snapshot's directory
+#: prefix and file name.
+GOVERNANCE_CHECK_GATE = "greenfield:nornyx-contract-check"
+GOVERNANCE_SNAPSHOT_PREFIX = "nornyx-forge-governance-"
+GOVERNANCE_SNAPSHOT_NAME = "brd_contract.nyx"
 
 #: `RequirementsModel.source_digest`'s shape -- the flow's own statement of
 #: which BRD it parsed. MATCHED rather than trusted: a result carrying
@@ -258,6 +267,35 @@ def _parsed_brd_digest(data: Mapping[str, Any]) -> str | None:
     return found.group(1) if found else None
 
 
+def _is_trusted_contract_check(name: Any, command: Sequence[Any]) -> bool:
+    """The greenfield check's exact invocation, and nothing that only ends like it.
+
+    Codex P2 4353133125 on `8ae32b3`: the trailing five arguments were the
+    whole test, so `/bin/false`, a provider's own executable or an empty
+    string in front of them made a passing record a passing governance
+    validation. All of it is held now: the record is the greenfield check's;
+    the executable is this process's own interpreter, by the absolute path
+    `gates` records it under; then `-I -c`, the bootstrap and `check`; and
+    the subject is an absolute snapshot of the check's own name, in a
+    directory of its own prefix. The translator runs in the process that ran
+    the flow, so the interpreter it compares with is the one that ran it.
+    """
+    if name != GOVERNANCE_CHECK_GATE or len(command) != 6:
+        return False
+    if not all(isinstance(part, str) for part in command):
+        return False
+    if command[0] != os.path.abspath(sys.executable):
+        return False
+    if list(command[1:5]) != ["-I", "-c", NORNYX_CHECK_BOOTSTRAP, "check"]:
+        return False
+    snapshot = PurePath(command[5])
+    return (
+        snapshot.is_absolute()
+        and snapshot.name == GOVERNANCE_SNAPSHOT_NAME
+        and snapshot.parent.name.startswith(GOVERNANCE_SNAPSHOT_PREFIX)
+    )
+
+
 def _is_nornyx_gate(gate: Mapping[str, Any]) -> bool:
     """Did this gate execute the Nornyx CLI?
 
@@ -273,7 +311,6 @@ def _is_nornyx_gate(gate: Mapping[str, Any]) -> bool:
     if isinstance(command, (list, tuple)) and command:
         if str(command[0]) == _NORNYX_EXECUTABLE:
             return True
-        return len(command) == 6 and [str(part) for part in command[1:5]] == [
-            "-I", "-c", NORNYX_CHECK_BOOTSTRAP, "check"]
+        return _is_trusted_contract_check(gate.get("name"), command)
     name = gate.get("name")
     return isinstance(name, str) and name.startswith(_NORNYX_EXECUTABLE + " ")

@@ -19,7 +19,13 @@
   `governance` entry (version 3 -> 4). Unchanged: the verifier's checks, the
   `gate_results` rule, the requirement-identity rule, the action boundary and
   provider eligibility. READY there is a lifecycle record over a simulated
-  provider's fixture, not a runnable application.
+  provider's fixture, not a runnable application. From the first review:
+  the contract, its snapshot, the verifier's snapshot and the verifier's
+  subject reader are each read through one descriptor judged against what
+  was examined (no link followed and no pipe waited on, where POSIX allows;
+  identity and size on Windows), the flow's digest is computed from the
+  rendered text, and the translator accepts the check only from this
+  interpreter, under its own gate name, over a snapshot of its own shape.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

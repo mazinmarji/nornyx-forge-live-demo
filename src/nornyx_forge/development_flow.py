@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .claude_worker import ClaudeCodeWorker
-from .contract_generator import generate_brd_contract
+from .contract_generator import generate_brd_contract, render_brd_contract
 from .evidence import EvidenceLedger
 from .gates import default_gates, trusted_contract_check, trusted_greenfield_gates
 from .governed_subject import RuntimeAuthorityConfig
@@ -277,9 +277,14 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         write_requirements_artifacts(self.root, model)
         generated_contract = generate_brd_contract(self.root, model)
         # THE BINDING THE GOVERNANCE CHECK NEEDS (A-049): the digest of the
-        # bytes as generation left them, read here, before any worker runs.
+        # bytes generation wrote -- `write_canonical_text` writes the rendered
+        # text as UTF-8 with no newline translation -- computed from the
+        # renderer, not read back from the path, which a process a provider
+        # left running from an earlier build could have replaced in between.
         # The greenfield profile checks only bytes that still have it.
-        contract_digest = "sha256:" + hashlib.sha256(generated_contract.read_bytes()).hexdigest()
+        contract_digest = "sha256:" + hashlib.sha256(
+            render_brd_contract(model).encode("utf-8")
+        ).hexdigest()
         self.data["requirements"] = [item.id for item in model.requirements]
         self.data["generated_brd_contract"] = str(generated_contract.relative_to(self.root))
         self.data["generated_brd_contract_digest"] = contract_digest
