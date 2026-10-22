@@ -813,8 +813,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # specimen live, the flow built without importing it, the journey to
     # GOVERN) and a CrewAI initialisation failure reported by name. None of
     # them skips on any platform, and the module joins the windows-runtime
-    # job.
-    "tests/test_simulated_journey.py": 12,
+    # job. 13 -> 15 for A-048, floor band(15) = 14: eight requirement rows
+    # composed as the onboarding page composes them reaching GOVERN, and the
+    # same rows refused at the build for one untested row.
+    "tests/test_simulated_journey.py": 14,
     # A-045's one requirement-identity rule: 26 collected at introduction,
     # floor at band(26) = 24. Forge's derived BRD against Forge's own
     # verifier, the negatives that keep traceability (an untested confirmed
@@ -822,6 +824,39 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # disagreed on, the verifier's verbatim copy of the rule held identical,
     # and the derivation refusing a rendering that reads back differently.
     "tests/test_requirement_identity.py": 24,
+    # A-048's requirement rows: 43 collected at introduction, floor at
+    # band(43) = 39. The proposal-time rule -- a multi-line or heading-shaped
+    # need, a line boundary the derivation does not spell, the capsule's own
+    # refusals, malformed, empty and repeated rows -- each refused with a
+    # plain explanation and the verbatim reason; the proposal and confirmation
+    # doors storing nothing on refusal; a confirmed set unchanged by a second
+    # proposal and named TAMPERED when edited on disk; the intent-only path
+    # answering as before; and the page's row editor, composition and
+    # accessibility pinned on its served source, its CSP unchanged. 43 -> 45
+    # for the first review, floor band(45) = 41: removing the last row still
+    # lets a confirmed set be cleared from the page, and the empty set clears
+    # it through the same proposal and confirmation. 45 -> 57 for the second
+    # review, floor band(57) = 52: a new row's number is the smallest unused one
+    # within the schema's own bound (the bound pinned to the schema, eight
+    # chooser cases including RQ-999999, gaps and another spelling, an
+    # exhausted range, the finding's case through the routes, and the page's
+    # chooser pinned on its source). 57 -> 71 for the third review, floor
+    # band(71) = 64: twelve suffixes the chooser must not count (thousands of
+    # digits, seven digits, non-ASCII and non-decimal digits, signed, spaced,
+    # empty, non-strings), a 5000-digit id refused with 422 through the route,
+    # and the faulty row located in about n log n rows rather than n(n+1)/2.
+    # 71 -> 72 for the same round, floor band(72) = 65: a valid set validated
+    # once, where every proposal had checked n(n+1)/2 rows. 72 -> 152 for the
+    # fourth review, floor band(152) = 137: the line-boundary set held equal
+    # to splitlines()'s by enumeration; each of its ten characters trailing,
+    # leading and in the middle of an intent and of a row, refused with 422
+    # (60); fifteen texts each refused or read back exactly; the round trip
+    # through the routes; and three confirmed texts the derivation refuses.
+    # 152 -> 157 for the fifth review, floor band(157) = 142: a confirmed row
+    # this rule refuses, named when proposed unchanged (two ways); the way out
+    # by editing it; and the editor's refusal kept across the refresh, marking
+    # only the editor's own proposal.
+    "tests/test_requirements_entry.py": 142,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2156,16 +2191,46 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # added seven, 56 -> 63 (floor 51 -> 57): 5813 collect, the sum rises by 6 to
 # 5296 and the aggregate follows to 5304, band(n) 5226 -> 5232, the working
 # room 508 -> 509, and the slack 516 -> 517, the module now 6 above its band.
-# The rows below are these.
+#
+# A-048 ADDS ONE MODULE AND MOVES ONE, measured from a fresh collection:
+# tests/test_requirements_entry.py collects 43 (floor band(43) = 39) and
+# tests/test_simulated_journey.py collects 13 -> 15 (floor band(13) = 12 ->
+# band(15) = 14). 5858 collect across 137 modules. The module-floor sum rises
+# by 41 to 5337 and the aggregate follows to 5345, keeping the same 8 above
+# it; band(n) 5232 -> 5273, and the working room below the floor 509 -> 513.
+# THE SLACK THE BANDS GRANT moves by 4, 517 -> 521, the new module sitting 4
+# above its band and the journey module still 1 above its own. NO SKIP IS
+# ADDED. The journey module is one of the windows-runtime job's, whose floor
+# moves 290 -> 292: its eight modules collect 7/14/15/15/23/54/73/97 (sum
+# 298, floor 298 - 7 + 1). Its review round then added two, 43 -> 45 (floor
+# 39 -> 41): 5860 collect, the sum rises by 2 to 5339 and the aggregate
+# follows to 5347, band(n) 5273 -> 5274, the working room stays 513, and the
+# slack stays 521, the module still 4 above its band. The second review round
+# added twelve, 45 -> 57 (floor 41 -> 52): 5872 collect, the sum rises by 11 to
+# 5350 and the aggregate follows to 5358, band(n) 5274 -> 5285, the working
+# room 513 -> 514, and the slack 521 -> 522, the module now 5 above its band.
+# The third review round added fourteen, 57 -> 71 (floor 52 -> 64): 5886
+# collect, the sum rises by 12 to 5362 and the aggregate follows to 5370,
+# band(n) 5285 -> 5298, the working room 514 -> 516, and the slack 522 -> 524,
+# the module now 7 above its band. It then added one, 71 -> 72 (floor 64 ->
+# 65): 5887 collect, the sum rises by 1 to 5363 and the aggregate follows to
+# 5371, band(n) 5298 -> 5299, the working room stays 516, and the slack stays
+# 524. The fourth review round added eighty, 72 -> 152 (floor 65 -> 137): 5967
+# collect, the sum rises by 72 to 5435 and the aggregate follows to 5443,
+# band(n) 5299 -> 5371, the working room 516 -> 524, and the slack 524 -> 532,
+# the module now 15 above its band. The fifth added five, 152 -> 157 (floor
+# 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
+# follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
+# slack stays 532. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5813   (136 modules)
-#     sum of the module floors    5296
-#     band(5813) = ceil(0.9*n)    5232
-#     MINIMUM_COLLECTED           5304
+#     collected across tests/     5972   (137 modules)
+#     sum of the module floors    5440
+#     band(5972) = ceil(0.9*n)    5375
+#     MINIMUM_COLLECTED           5448
 #     above the module sum          8
-#     below what collects         509
+#     below what collects         524
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2387,7 +2452,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 517 in total, and the aggregate refuses
+# per-module bands already grant 532 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2656,7 +2721,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5304
+MINIMUM_COLLECTED = 5448
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2789,6 +2854,7 @@ REQUIRED_MODULES = (
     "tests/test_simulated_journey.py",
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
+    "tests/test_requirements_entry.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

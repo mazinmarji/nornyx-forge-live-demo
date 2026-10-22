@@ -7291,3 +7291,266 @@ the repair itself.
 **Serves.** BRD-F-004 ("High-risk external actions must be refused in
 autonomous-demo mode") for acts whose caller labels them otherwise; A-045 and
 A-046's statement of this limitation, which this narrows to what remains.
+
+## A-048 A basic user enters requirement rows on the onboarding page, and an entry the BRD derivation or the capsule would refuse is refused when it is proposed, in plain language
+
+**The defect.** The onboarding page had one textarea, for the intent. A need
+written over several lines -- the natural way to list what an application
+must do -- was accepted as a proposal and confirmed into the capsule's
+authority, and only then did `POST /api/brd` refuse it, in the parser's
+terms: "the confirmed intent collides with the BRD's heading grammar and
+cannot be rendered without changing what a parser would read back". The
+capsule's `requirements` field, which the derivation renders one row per
+requirement (A-045), was reachable through the API only. Measured at `3e47ad9`
+through the app: the multi-line proposal answered 200, its confirmation 200,
+and `POST /api/brd` 409; a requirement row holding a line break, a row
+starting with `#` and a row repeating another were each accepted as a
+proposal; an empty row was refused with the capsule's reason alone.
+
+**The repair.**
+
+1. **The rule, asked early.** `brd_authoring.proposal_entry_refusal(field,
+   value)` answers, for the `intent` and `requirements` fields, whether the
+   value would be refused, and why, or None. It asks the capsule's field
+   schema (`AUTHORITATIVE_FIELDS`) and the derivation itself
+   (`brd_from_capsule`, over a probe capsule whose other parts are fixed
+   neutral stand-ins, so the proposed value alone is judged), row by row and
+   then for the rows together. It refuses two things neither of those
+   refuses, and names them: a row whose words repeat an earlier row's,
+   ignoring letter case and spacing; and a line boundary `str.splitlines`
+   honours that the derivation does not spell (U+2028, U+2029, U+0085), which
+   a reader of the rendered document would read as a second line. Every
+   other field returns None and keeps the capsule's rules unchanged.
+2. **Two doors.** `POST /api/proposals` asks the rule after the capsule's
+   actor check and before anything is stored. `POST /api/proposals/{id}/confirm`
+   asks it for an OPEN intent or requirements proposal before confirming it,
+   for a proposal stored before this change or by a path other than that
+   route; the capsule's own refusals (an invalid or non-human actor, a missing
+   or resolved proposal) keep their place ahead of it. A refusal is 422 and
+   stores nothing. Its body keeps `refused`, the technical reason: the
+   capsule's own words where its schema refuses the value, and the
+   derivation's own words, quoted verbatim after "once confirmed, the BRD
+   derivation would refuse this: ", where it would refuse the value once
+   confirmed. They are not returned bare because they speak of "the
+   confirmed intent", and at a proposal nothing is confirmed. The body adds
+   `explanation` (plain language: what is wrong and what to change), `field`,
+   and `row` (the requirement at fault, or null).
+3. **Requirement rows on the page.** A row editor on the existing onboarding
+   page, built with the DOM APIs and `textContent` the page already uses (F15).
+   A person adds a row, types in it, removes it, and proposes the set; the
+   page sends `{field: "requirements", value: [{id, text}, ...]}` to
+   `/api/proposals`, the same route, field and human confirmation an API
+   caller uses, so there is no new path to authority. A row keeps its `RQ-<n>`
+   id while it is edited or its neighbours are removed, and a new row takes the
+   next unused number. Until the person edits a row, the editor shows the
+   confirmed requirements, so a confirmed set can be edited and proposed
+   again; editing a row changes nothing the capsule holds.
+4. **Accessibility basics.** Each row's input has a `<label for>`; the remove
+   button is named for its row; the editor's controls are native inputs and
+   buttons.
+   The notice is a live region (`role="alert"`). A refusal shows the
+   explanation first and "Technical reason: ..." beneath it; the row it names
+   gets `aria-invalid`, the explanation in an error element its input is
+   described by (`aria-describedby`), and focus.
+
+**What changes for an intent-only caller, deliberately.** An intent proposal
+the derivation would refuse -- more than one line, or starting with `#` --
+and one holding a line boundary named in item 1, is refused at the proposal
+with 422 where it was accepted with 200 and refused later at `POST /api/brd`.
+The 422 body of a refused intent or requirements proposal gains the three keys
+above; `refused` keeps its meaning. A single-line intent is proposed,
+confirmed and derived exactly as before, with the same answers.
+
+**Not changed.** The capsule's schema, `propose` and `confirm`; the authority
+line and its declared-human gate (A-030 still applies: the human actor is
+declared, not authenticated); the digest chain and the seal; the BRD
+derivation and the requirement-identity rule (A-045); every build gate and
+the acceptance verifier; the page's CSP, its local-only serving, the session
+gate and the token's handling. No dependency, framework or build step is
+added.
+
+**Tests.** `tests/test_requirements_entry.py` holds the rule (the defect's
+own input refused with the derivation's reason quoted verbatim; each refusal kind
+explained without the parser terms the module lists); the doors (nothing stored on a
+refused proposal; a proposal stored before this run refused at
+confirmation); that a confirmed set is unchanged by a second proposal and
+named TAMPERED when edited on disk; that the intent-only path answers as
+before; and the page, pinned on its served source with the standard library's
+HTML parser -- the rows, the composition, labels, native controls, the live
+region, the plain-then-technical order, the CSP byte for byte.
+`tests/test_simulated_journey.py` adds eight rows composed
+as the page composes them, which reach GOVERN through the shipped composition
+with the real flow and the real verifier, and the same rows with the last left
+untested, which the verifier refuses at the build ("tests do not reference
+BRD-F-008"). That module is in the `windows-runtime` job, whose floor moves
+290 -> 292.
+
+Red first on `3e47ad9`, with only these 45 cases added: 40 fail. The 5 that
+pass are controls: the confirmed set unchanged by a second proposal, the
+on-disk edit named TAMPERED, the intent-only path, the CSP and page
+technology unchanged, and the eight rows with one untested refused at the
+build. The eight-row journey to GOVERN fails on the base only because the
+rule it asks first does not exist there; through the API alone, the base
+already carried confirmed requirements to GOVERN (A-045).
+
+**Review of the first head.** The Codex review of `2bf8a20` found one defect:
+removing the last row disabled "Propose requirements", the only control that
+proposes the set, so a person could not clear confirmed requirements from the
+page -- only through the API -- though an empty set is valid and the section
+is optional. The button is now disabled only when there is nothing to propose
+(no row and no confirmed requirement); with no row left over a confirmed set
+it reads "Propose removing all requirements" and proposes `[]` through the
+same route, confirmed the same way. The confirmed count is refreshed whether
+or not the person has edited the rows. Red first on `70473ae`, the parent of
+the repair: the page test fails, and its control -- the empty set clearing a
+confirmed one through the API, which the server already allowed -- passes.
+
+**Review of the fourth head.** The Codex review of `89bf16a` found one defect:
+the page numbered a new row one past the largest number in use, so a confirmed
+set holding `RQ-999999` -- valid, and reachable through the API -- made "Add a
+requirement" generate `RQ-1000000`, which the capsule's schema refuses (one to
+six digits), and every proposal of the edited set failed with no way to change
+the number on the page. A new row now takes the smallest number from 1 to
+`capsule.REQUIREMENT_NUMBER_LIMIT` (999999, the schema's bound) that no row
+holds, compared by number, so a number held under another spelling (`RQ-01`)
+is taken. The bound is written into the page from that constant when it is
+served, so the page and the schema cannot disagree on it. With every number
+taken, the page says so in plain words and adds no row; it never generates an
+id the schema refuses. `brd_authoring.smallest_unused_requirement_id` states
+the same rule in the domain, where the tests execute it (including an
+exhausted range), and the refusal of an out-of-range id now names the number
+to use. Red first on `89bf16a` with only the test module edited: the twelve new
+cases and the edited composition pin fail.
+
+The builder's check for other values the page generates that the schema or the
+server refuses found none: a row's text, the need, the name and the project
+fields are typed by the person, not generated, and the provider options come
+from the server. Typed values the server refuses are, for the record: a row
+over 2000 characters or a need over 4000, and control characters, each refused
+when proposed with a plain explanation; a name outside the actor rule, which
+refuses every proposal with the capsule's own reason and no explanation, and a
+project id or name outside theirs -- the last two belong to the page's existing
+fields, not to this change. The server sets no limit on the number of rows.
+
+**Review of the fifth head.** The Codex review of `e19eaa1` found one defect:
+`smallest_unused_requirement_id` converted any decimal suffix with `int()`, so
+an id with more digits than Python's integer-string conversion limit -- which
+the schema refuses, and whose refusal then called the chooser to name a free
+number -- raised `ValueError`, and `POST /api/proposals` answered 500 instead of
+422. Only a suffix of the schema's own width, one to six ASCII digits, now holds
+a number, and nothing else is converted; the page reads a row's id with the same
+pattern, so the page and the server agree. A suffix in non-ASCII decimal digits
+(`RQ-` and U+0663, which the schema's `\d` admits) holds no number on either
+side: neither counts it, and either may give `RQ-3` beside it, and both ids are
+accepted. A 5000-digit id is now refused with 422 and the plain explanation,
+which shows only its first characters and its length. The builder's check with
+it found a second exposure of the same reach: the refusal located its row by
+validating every prefix of the set, n(n+1)/2 rows for n rows, and a request sets
+n; it bisects now, about n log n, with the schema's own words for the row at
+fault. The same loop also ran for every valid set -- the page's ordinary
+proposal -- so a proposal of 4000 valid rows took 9.7 s at `e19eaa1` on the
+builder's host, against 0.07 s now that a valid set is validated once; a second
+test holds that path.
+
+**Review of the seventh head.** The Codex review of `6bd8c1d` found one defect:
+the line rule counted the lines `str.splitlines()` makes, and one boundary at
+the end of a text leaves one line, so an intent or a row ending in U+0085,
+U+2028 or U+2029 was accepted, and the document then read the statement back
+without it. The builder's check of the class found the reader changes more than
+line boundaries: it strips each line and drops a leading "- " or "* " list mark,
+so a padded or list-marked text was accepted and read back as other words; and
+the derivation's own read-back compared only identifiers, so it passed all of
+them. Repaired:
+
+1. `brd_authoring.LINE_BOUNDARIES` is the set of characters `splitlines()` ends
+   a line at, tested directly at any position; a test enumerates every code
+   point and holds the set equal to the reader's. It is the one definition: the
+   page judges no text, so it holds no copy.
+2. `brd_from_capsule` compares each statement it reads back with the confirmed
+   text it rendered and refuses any difference, so a confirmed value that would
+   build from other words -- one confirmed before this rule, or by another path
+   -- is refused at the derivation.
+3. The proposal-time rule says which: a line break (the six C0 boundaries were
+   already refused as control characters, and are now explained as the line
+   breaks they are), a leading or trailing blank, or a leading list mark.
+
+Every text the rule accepts reads back unchanged; tests hold it for fifteen
+candidate texts and through the routes. Red first on `6bd8c1d` with only the
+test module edited: 54 of the 80 new cases fail.
+
+The builder's audit of checks in the touched files that infer a property from a
+count or a split: the line count above and the identifier-only read-back were
+repaired. Left as is: the repeated-row comparison (whitespace-collapsed, by
+design), the emptiness test (`strip()`, by design), the bisection (it infers
+the faulty row from which prefixes the schema refuses, which holds because the
+schema stops at the first fault in order, and a test holds the reason), and the
+capsule's single-line rule for the project name, which tests `\n` only -- a name
+with another boundary splits the document's title; the project name is not
+requirement text and its field predates this change.
+
+**Review of the eighth head.** The Codex review of `97b09f4` found one defect in
+the page: when the confirmed set held a row this rule refuses, proposing the
+untouched rows left the editor marked as not edited, so the refresh that follows
+every call rebuilt the rows from the capsule, discarding the row the refusal had
+marked, its message, `aria-invalid`, the focus, and the refused draft itself.
+Proposing now makes the rows the person's draft, which no refresh replaces, and
+the refusal is applied before the refresh and kept by it. The builder's audit of
+the page's other `call()` and `refresh()` paths found one more: a refusal of
+another call -- confirming an open proposal that names its own `RQ-2` -- marked
+and focused the editor's `RQ-2`, which may hold other text; only the editor's
+own proposal now marks its rows. Left as is: an intent refusal is shown in the
+notice and leaves the need box untouched, which no refresh rewrites; the notice
+is replaced only by the next call's own result, and each call clears the row
+marks it no longer answers for; while a build runs, the page refreshes every two
+seconds and an editor nobody has edited is rebuilt each time, which moves focus
+out of it and carries no refusal state.
+
+**A project whose confirmed rows this rule now refuses** -- confirmed before it,
+or through another path -- gets out of that state from the page as follows.
+Deriving the BRD is refused, naming the row. Proposing the rows unchanged is
+refused with 422, naming the row, and the page keeps the rows with that row
+marked. The person edits the named row and proposes the set again, which is
+accepted, and confirms it. A test drives that path through the routes to a
+derived BRD that reads back as confirmed. Red first on `97b09f4` with only the
+test module edited: the three page tests fail; the three server cases, which
+the server already handled, pass. Red first on `e19eaa1` with only the test module edited: the two
+oversized and non-ASCII suffixes, the 500, the quadratic count and the page's
+pattern fail; the ten other suffixes, which the old rule already ignored, pass.
+
+The builder then checked each `int(`, numeric parse and length-sensitive
+operation that request input reaches in `capsule.py`, `brd_authoring.py` and
+`onboarding_app.py`. `capsule.py` converts nothing to a number; its length
+checks follow its type checks and bound the texts before any later use.
+`brd_authoring.py`'s one `int()` is now on one to six ASCII digits; its other
+operations on request text (line splitting, the duplicate comparison, the
+derivation) run only after the schema has bounded that text, and the chooser's
+loop ends at the first free number. `onboarding_app.py` converts nothing on the
+server; the page's `Number()` takes one to six ASCII digits. Request bodies that
+cannot be parsed -- an integer of 5000 digits, nesting 100000 deep -- are
+refused by the framework with 400 before any route runs, as before this change;
+an oversized intent, row text, actor ident or field name is refused with 422,
+and an oversized proposal id with 409.
+
+**What it does NOT establish.**
+
+1. **A browser's behaviour.** No JavaScript executes in this change's
+   tests; the page is pinned on its source text, and the journey drives the
+   routes the page calls with the value the page composes. That a browser
+   renders, focuses and announces as written is not observed here, and no
+   assistive technology was run.
+2. **Every entry the build could later refuse.** The rule covers the intent
+   and the requirement rows as the derivation and the capsule judge them. A
+   project name starting with `#` is still refused only at `POST /api/brd`,
+   and nothing here judges whether a requirement is clear, testable or what
+   the person meant; two rows that say the same thing in different words are
+   not caught.
+3. **Completed basic-user acceptance.** This is a requirements-entry
+   affordance on the existing page. It is not a completed basic-user
+   acceptance of the onboarding journey, which still ends at GOVERN (A-032),
+   and the human actor is still declared rather than authenticated.
+4. **A generated application's safety.** No generated-application safety
+   boundary is claimed (A-047's limit stands).
+
+**Serves.** A-035's basic-user journey, which this lets carry confirmed
+requirements from the page; A-045, whose identity rule the rows feed and
+which is unchanged.

@@ -2,6 +2,46 @@
 
 ## Unreleased — hardening from adversarial review
 
+- A basic user enters requirements as rows on the onboarding page, and an
+  entry that would be refused later is refused when it is proposed, in plain
+  language (A-048). The page had one textarea; a need written over several
+  lines was proposed, confirmed, and only then refused by `POST /api/brd` as
+  colliding with "the BRD's heading grammar". The page now has a row editor
+  -- labelled rows a person adds, edits and removes, proposed as the existing
+  `requirements` field through the existing `/api/proposals` route and
+  confirmed the same way. `brd_authoring.proposal_entry_refusal` asks the
+  capsule's field schema and the BRD derivation itself when an intent or a
+  set of rows is proposed, and again before an open one is confirmed, and also
+  refuses an empty row, a row repeating another and an invisible line break.
+  A refusal is 422, stores nothing, and carries `explanation` (what to change)
+  beside `refused` (the technical reason, the derivation's own words quoted
+  verbatim); the page shows both and
+  marks and focuses the row at fault. Deliberately changed for API callers:
+  a multi-line or `#`-led intent is refused at the proposal (422) instead of
+  being accepted (200) and refused at the BRD (409). Unchanged: the capsule's
+  schema and authority line, the derivation, the requirement-identity rule,
+  every build gate, the CSP and the session gate. Eight rows composed as the
+  page composes them reach GOVERN in the simulated journey, and the same rows
+  with one untested are refused at the build. Removing the last row leaves the
+  propose button available while requirements are confirmed, as "Propose
+  removing all requirements", so a confirmed set can be cleared from the page.
+  A new row takes the smallest unused number within the schema's bound
+  (RQ-1 to RQ-999999, the capsule's `REQUIREMENT_NUMBER_LIMIT`, written into
+  the page), not one past the largest, so a set holding RQ-999999 no longer
+  makes the page generate an id the schema refuses; with every number taken,
+  the page says so and adds no row. Only an id suffix of one to six ASCII
+  digits counts as a number, on the page and on the server, so an id of
+  thousands of digits is refused with 422 rather than raising, and the row at
+  fault is located by bisection rather than by validating every prefix. Line
+  boundaries are tested directly against the set `str.splitlines()` honours,
+  and the BRD derivation refuses any confirmed text it would read back as
+  other words (a trailing boundary, padding, a leading list mark). After a
+  refusal of the rows, the page keeps them, the row named and focused, through
+  the refresh that follows; a confirmed row the rule now refuses is edited on
+  the page and proposed again. This is a requirements-entry
+  affordance, not a completed basic-user acceptance, and no
+  generated-application safety boundary is claimed.
+
 - The demonstration's action boundary classifies an act by its registered
   operation, not by the risk label its caller declares (A-047). A case asking
   to "delete all service requests", or to send an external email, labelled
