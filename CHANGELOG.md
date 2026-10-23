@@ -11,13 +11,16 @@
   adds `attested_principal` to its runtime record: the principal it read from
   its own token, or `os.getuid()` elsewhere. The key is not served on
   `/api/runtime`, and a failed read never stops a launch. The producer's
-  `--owner-attestation-from-runtime-record` binds that attestation to the
-  measured surface's instance token and pid and to the v1 record's digest.
-  It holds the record open first, judges the channel and reads the bytes
-  through that one descriptor. It refuses a channel this principal can
-  write, owns anywhere on its path, or can override permissions on, and its
-  validator checks every field an attestation claims. On Windows, where no held descriptor can answer that, it refuses
-  every attestation. It records the result `trusted: false`. Nothing derives anything from it. Unchanged:
+  `--owner-attestation-from-runtime-record` ties that attestation to the
+  measured surface's instance token and pid and to the digest of the v1
+  measurement, reading the record through one held descriptor, and records
+  it with status `unverified` and `trusted: false`, always. A provider-side
+  principal cannot certify its own confinement, so the producer never emits
+  `bound` and asks no question of its own about the channel; binding is left
+  to measurement from outside, of the channel's ACLs and of refusal measured
+  from the provider principal. Its validator checks every field an
+  attestation claims and refuses any claim of `bound` or a cleared channel.
+  Nothing derives anything from it. Unchanged:
   `derive_principal_separation`, the translation, `PROVIDER_CONFINEMENT`,
   `CONFINEMENT_PROPERTIES`, the v1 producer's bytes, and every provider's
   eligibility. `separated` is still reached by no record any shipped producer

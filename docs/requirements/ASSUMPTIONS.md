@@ -4980,9 +4980,12 @@ only by adding a mechanism.
      compared: the producer records `comparison_withheld` and leaves the owner
      unread, so that too is `unknown`.
    So on Windows the producer can now answer `not_separated` honestly and still
-   never `separated`. The cross-user case is measured nowhere, and Forge's own
-   attestation of its principal (A-050) is recorded untrusted and decides
-   nothing.
+   never `separated`. The cross-user case is measured nowhere. Forge's own
+   attestation of its principal (A-050) is recorded with status `unverified`,
+   always, and decides nothing: a provider-side principal cannot certify its
+   own confinement, and binding requires measurement from
+   outside -- of the attestation channel's ACLs, and of refusal measured from
+   the provider principal.
 
    **POSIX: the identity reads, but the authority channels do not measure.**
    `/proc/<pid>` answers the owner's uid, so the comparison is available. The
@@ -7567,7 +7570,7 @@ and an oversized proposal id with 409.
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
 
-## A-050 On Windows the v2 producer reads the surface owner's token and can only show sameness, and Forge's attestation of its own principal is recorded untrusted
+## A-050 On Windows the v2 producer reads the surface owner's token and can only show sameness, and Forge's attestation of its own principal is recorded unverified
 
 Numbered A-050 because A-049 is taken by a concurrent pull request. This entry
 does not depend on it.
@@ -7607,32 +7610,15 @@ case where `not_separated` is the honest answer.
    name only, and the runtime starts as before.
 3. **The attestation.** With `--owner-attestation-from-runtime-record PATH`,
    the v2 record carries `separation_evidence.owner_principal_attestation`.
-   The record is OPENED AND HELD before anything is judged about it: one
+   The record is OPENED AND HELD before anything is checked about it: one
    descriptor for the file, and on POSIX one for its folder, which the file
-   is opened through. Every judgement goes through what is held, and the read
-   goes through the same descriptor. A judgement made of the path, followed by
-   an open, let a file swapped in for the judgement and swapped back before
-   the open pass every identity check while the verdict was about the
-   replacement (review finding, repaired with a test that swaps and restores
-   inside the judgement). It is `bound` only when all of the following hold:
+   is opened through. Every check goes through what is held, and the read
+   goes through the same descriptor. (A check made of the path followed by an
+   open let a file swapped in and swapped back pass every identity check; a
+   review found it, and a test swaps and restores around the read.) The
+   attested principal is RECORDED only when all of the following hold:
    - the path is a regular file, not a link, within a size bound, and the
      held descriptor's `fstat` shows the same file the name showed;
-   - the held file and the held folder are not found writable by this
-     principal, and no judgement of that is one this principal can reverse.
-     On Linux that is three questions, any one of which refuses:
-     - `os.access` on `/proc/self/fd/<fd>` for each, a path that resolves to
-       the open object itself;
-     - whether this principal (effective or real uid) owns the record, its
-       folder or any folder above it up to the root, walked through
-       descriptors. An owner can make a read-only file writable again, so
-       its `access` answer means nothing (review finding);
-     - whether it can override permissions: euid 0, or CAP_CHOWN,
-       CAP_DAC_OVERRIDE or CAP_FOWNER in `CapEff` from `/proc/self/status`.
-     A question that cannot be answered refuses. Elsewhere,
-     Windows above all, no descriptor-bound question exists here (no folder
-     can be held, and `os.access` reads only the read-only attribute), so the
-     answer is "could not be asked" and a Windows attestation is never
-     `bound`;
    - after the read, the descriptor's identity and size are unchanged and
      the name still names that file (in the held folder on POSIX; by path on
      Windows, where a held file cannot be renamed while it is open);
@@ -7642,44 +7628,56 @@ case where `not_separated` is the honest answer.
      measured;
    - it holds exactly one readable principal.
 
-   Each failure is a refusal by name, and a refused attestation carries no
-   principal. The attestation also records the SHA-256 of the runtime-record
-   bytes and of the v1 measurement: the v1 record without the two fields v2
-   drops, which is recomputable from the v2 record itself. There is no input
-   by which the probe states a principal. The producer's validator judges
-   every field an attestation claims, in every verdict (review finding):
+   Otherwise the refusal is recorded by name, with no principal. The
+   attestation also records the SHA-256 of the runtime-record bytes and of
+   the v1 measurement: the v1 record without the two fields v2 drops, which
+   is recomputable from the v2 record itself. There is no input by which the
+   probe states a principal.
+
+   **Its status is `unverified`, always, and no code path writes anything
+   else.** The producer never emits `bound`, and it asks no question of its
+   own about whether the channel is clear. The validator judges every field
+   an attestation claims (review finding):
+   - it refuses by name any `bound` or `channel_writable_by_this_principal`
+     key, and any status but `unverified`;
    - its keys, source and fixed limit text, and `trusted: false`;
    - each digest's shape, and that an instance appears only beside the
      record's digest;
    - against the v2 record, that the instance is the record's own surface's
      and the v1 digest is the record's own measurement;
-   - for a bound attestation, an instance, the record's digest, no refusal, a
-     channel found not writable and exactly the normalised principal;
-   - for a refused one, a non-empty refusal and no principal.
+   - with a principal recorded: an instance, the record's digest, no refusal
+     and exactly the normalised principal; without one, a non-empty refusal.
 
    The runtime digest is of a file the record does not carry, so only its
    shape can be held. The validator also refuses a record whose owner was
    read with a SID other than the probe's, distinct or not: the producer
    compares SIDs only for sameness.
 
-**The trust basis, and why the attestation is UNTRUSTED.** It is what Forge
-says about itself. That is worth exactly as much as the guarantee that nobody
-else wrote it, and nothing here measures that guarantee:
+**The principle, and why the attestation is UNVERIFIED.** A provider-side
+principal cannot certify its own confinement. The attestation is what Forge
+says about itself, and it is worth exactly as much as the guarantee that
+nobody else -- the provider principal above all -- could have written it.
+Nothing observed from the probe's side can supply that guarantee, because
+the probe IS the provider principal judging itself. This was measured, not
+assumed: an earlier head of this change judged the channel from the probe's
+side, and every way it cleared a channel was one the judged principal could
+reverse. Reviews found each of them in turn: a swap around the judgement,
+write access an owner could restore, and capabilities a process could raise
+back into effect. So the producer no longer asks.
 
-- the writability check is an inference about THIS principal's access to the
-  held objects. It can refuse a channel, and on Linux it can fail to find
-  one writable, but that is not a measurement of who else can write it. On
-  Windows it is not asked at all;
-- the channel's real ACL is not measured in this change.
+Binding requires measurement from OUTSIDE, which this change does not take:
+- of the attestation channel's ACLs, taken by a principal other than the
+  provider's;
+- of refusal, measured from the provider principal itself.
 
-So every attestation is `trusted: false`. Nothing derives anything from one:
+Until both exist the attestation is `unverified`, and nothing derives
+anything from it:
 - it feeds neither `owner_principal_read` nor `principal_distinct`;
 - the translation (`confinement_probe_from_surface_record`) does not read it;
-- a hand-written record whose attestation claims `trusted: true` translates
-  to the same outcome as the same record without it.
-
-It becomes evidence only when the channel it arrives through has a measured
-ACL. Until then it is captured for measurement and is not a measurement.
+- a hand-written record whose attestation claims `trusted: true`, `bound`
+  or another status translates to the same outcome as the same record
+  without it.
+It is captured for measurement and is not a measurement.
 
 **What this does NOT establish.**
 
@@ -7698,7 +7696,7 @@ ACL. Until then it is captured for measurement and is not a measurement.
 4. **Identity over time.** The owner is read by pid when the v2 record is
    produced. A pid reused between the v1 probe and the conversion would be
    read as the owner. The attestation's pid and instance binding narrows this,
-   and an untrusted attestation cannot close it.
+   and an unverified attestation cannot close it.
 5. **Eligibility.** No provider row moves. `PROVIDER_CONFINEMENT`,
    `CONFINEMENT_PROPERTIES`, `control_plane_authority_outcome` and
    `derive_principal_separation` are unchanged, and the v1 producer's bytes
