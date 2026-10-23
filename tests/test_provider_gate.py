@@ -390,9 +390,22 @@ def test_provider_args_powershell_would_read_as_a_parameter_name_are_refused(
         assert len(seams.calls) == 1 and result.returncode == 0
 
 
-def test_a_nul_and_an_over_long_line_are_refused_before_any_process(tmp_path, monkeypatch,
-                                                                    script, seams):
+def test_a_nul_an_over_long_line_and_trailing_whitespace_are_refused_before_any_process(
+        tmp_path, monkeypatch, script, seams):
+    """Trailing whitespace: measured through a real `powershell.exe -File`
+    (the Windows test below repeats it), a quoted value loses its last
+    character when that is whitespace; inside the value it survives."""
     _no_process(monkeypatch)
+    for last in ("\n", "\r", "\x0b", "\x0c", "\x85", "\xa0", "\u2028", "\u2029", "\u3000"):
+        for args in (("-p", "x" + last), ("x" + last,)):
+            trailing = provider_gate.launch_through_gate(
+                _launch(script), (CLAUDE_EXE, *args), role="builder", goal="g",
+                worker="Claude Code worker")
+            _refused(trailing)
+            assert "drops trailing whitespace" in trailing.output, (args, trailing.output)
+    inner = build_gate_argv(_launch(script), ("-p", "goal ends\n", "--allowedTools", "Read"),
+                            system_dir=SYSTEM)
+    assert provider_gate._argv_problem(inner) is None
     nul = provider_gate.launch_through_gate(
         _launch(script), (CLAUDE_EXE, "-p", "a\0b c"), role="builder", goal="g",
         worker="Claude Code worker")
@@ -634,7 +647,9 @@ TRANSPORT_CASES = {
                       "--max-turns", "30", "--allowedTools", "Read,Write"),
     "quotes": ("-p", 'say "hi" then \\"bye\\" and \\\\ end\\', "--allowedTools", 'Read,"Write"'),
     "trailing-backslash": ("-p", "C:\\path\\", "x"),
-    "newlines": ("-p", "a\r\nb\nc\rd\n"),
+    "newlines": ("-p", "a\r\nb\nc\rd"),
+    "newline-before-an-inner-quote": ("-p", "goal ends\n", "--allowedTools", "Read"),
+    "leading-whitespace": ("\nexec", "x"), "leading-ideographic-space": ("\u3000exec", "x"),
     "non-ascii": ("-p", "caf\u00e9 \u2019q\u201d \u05d0 \U0001F600 \u4e2d \u00fc"),
     "dash-inside-quoted": ("-Action", "Release", "-NoCredential"),
     "empty-argument": ("-p", "", "x"),
@@ -690,18 +705,19 @@ def test_the_vector_reaches_a_powershell_file_parameter_block_unchanged(tmp_path
 
 
 @windows_only
-def test_powershell_binds_the_refused_class_as_a_parameter_name(tmp_path):
-    """Why the refusal exists, measured: the same vector with an unquoted
-    `-NoCredential` as -ProviderArgs (which this module refuses to build) does
-    not deliver it as the value."""
+def test_powershell_alters_each_refused_class(tmp_path):
+    """Why the two transport refusals exist, measured: built anyway, an
+    unquoted `-NoCredential` as -ProviderArgs is not delivered as the value,
+    and a quoted value ending in a newline is delivered without it."""
     stub = _stub(tmp_path)
-    argv = build_gate_argv(_launch(stub), ("-NoCredential",),
-                           system_dir=provider_gate._system_directory())
-    assert argv[-1] == "-NoCredential"
-    assert provider_gate._argv_problem(argv) is not None
-    done = _powershell(argv)
-    delivered = done.returncode == 0 and _received(done.stdout)["ProviderArgs"] == "-NoCredential"
-    assert not delivered, "PowerShell delivered the unquoted value; the refusal is not needed"
+    system = provider_gate._system_directory()
+    for args in (("-NoCredential",), ("-p", "x\n")):
+        argv = build_gate_argv(_launch(stub), args, system_dir=system)
+        assert argv[-1] == subprocess.list2cmdline(args)
+        assert provider_gate._argv_problem(argv) is not None, args
+        done = _powershell(argv)
+        delivered = done.returncode == 0 and _received(done.stdout)["ProviderArgs"] == argv[-1]
+        assert not delivered, f"PowerShell delivered {argv[-1]!r}; the refusal is not needed"
 
 
 @windows_only

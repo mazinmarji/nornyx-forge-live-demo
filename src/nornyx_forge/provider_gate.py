@@ -41,6 +41,15 @@ exists, and each is reported as a `WorkerResult` in the Provider Contract's
     as a parameter, not as the value -- `-NoCredential` among them. No worker
     builds such a vector today, since every one carries a prompt with spaces;
     the class is refused rather than assumed absent;
+  * a `-ProviderArgs` value that ends in whitespace. Measured the same way,
+    and first by the windows-runtime CI job: a value ending in LF, CR, VT, FF,
+    U+0085, U+00A0, U+2028, U+2029, U+2003 or U+3000 arrived WITHOUT that
+    last character when the value was quoted on the command line, which it
+    is whenever it holds a space. The same characters inside the value, and
+    before an inner closing quote, arrived intact. The value ends in
+    whitespace only when the worker's LAST argument does and holds no space,
+    which no worker builds today; the class is refused rather than carried
+    altered;
   * no console. The gate reads its credential prompt from the console, so a
     process with no console input -- a pipe, a file, the NUL device, a service
     -- is refused rather than started to fail at the prompt;
@@ -310,6 +319,10 @@ def _argv_problem(argv: tuple[str, ...]) -> str | None:
     if not quoted and provider_args.startswith(POWERSHELL_DASHES):
         return (f"-ProviderArgs {provider_args!r} would reach PowerShell unquoted and "
                 "be read as a parameter name, not as the provider's arguments")
+    if provider_args[-1:].isspace():
+        return (f"-ProviderArgs ends in {provider_args[-1]!r}, and PowerShell drops "
+                "trailing whitespace from the value, so the provider would not "
+                "receive the arguments as built")
     length = len(subprocess.list2cmdline(argv)) + 1
     if length > WINDOWS_COMMAND_LINE_LIMIT:
         return (f"the command line is {length} characters with its terminator, over "

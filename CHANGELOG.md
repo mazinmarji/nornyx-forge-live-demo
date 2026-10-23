@@ -14,8 +14,8 @@
   `-ProviderArgs`. It refuses before any process exists when the script's
   bytes are not the pinned bytes, there is no console, a field is malformed,
   the vector holds a NUL or is too long, or `-ProviderArgs` would be read by
-  PowerShell as a parameter name (measured through a real `powershell.exe
-  -File`). The environment is constructed, not filtered, and carries no
+  PowerShell as a parameter name or ends in whitespace PowerShell drops (both
+  measured through a real `powershell.exe -File`). The environment is constructed, not filtered, and carries no
   credential; nothing is captured and no timeout applies. Every gate exit is
   a failed worker run, because no provider output reaches the workspace on
   this path. No claim of the gate's logon semantics, separation or

@@ -7584,22 +7584,35 @@ script that is not absolute, or a provider executable that is not an absolute
 Windows path, or either holding a NUL or a quote; a worker whose executable is
 not the gate's provider executable; a NUL anywhere in the vector; a command
 line over 32767 characters; a `-ProviderArgs` value PowerShell would read as a
-parameter name; no console; and a gate script whose bytes are not the pinned
+parameter name, or one that ends in whitespace; no console; and a gate script
+whose bytes are not the pinned
 bytes, or that is not one regular file. Each is a `WorkerResult` in the
 `error` class with returncode 2, the workers' own value for an invocation that
 could not be formed, and never an exception.
 
-**The parameter-name class, measured.** Through a real `powershell.exe -File`
-on a stub with the gate's parameter names, on a Windows 11 host: list2cmdline
-leaves a value with no space or tab unquoted, and an unquoted `-ProviderArgs`
-value beginning with `-`, U+2013, U+2014 or U+2015 is bound as a parameter
-name -- `-NoCredential` included -- rather than as the value; quoted values
-beginning with a dash, quotes, backslashes, CR, LF, tab, non-ASCII text and an
-8000-character prompt arrived unchanged. No worker builds the refused shape
-today, since every worker vector carries a prompt with spaces; it is refused
-rather than assumed absent. The windows-runtime job repeats the round trip and
-the misbinding (`test_the_vector_reaches_a_powershell_file_parameter_block_unchanged`,
-`test_powershell_binds_the_refused_class_as_a_parameter_name`).
+**The two transport classes, measured.** Through a real `powershell.exe
+-File` on a stub with the gate's parameter names, on a Windows 11 host:
+
+1. **A parameter name.** list2cmdline leaves a value with no space or tab
+   unquoted, and an unquoted `-ProviderArgs` value beginning with `-`,
+   U+2013, U+2014 or U+2015 is bound as a parameter name -- `-NoCredential`
+   included -- rather than as the value.
+2. **Trailing whitespace.** A quoted `-ProviderArgs` value -- one holding a
+   space -- that ends in LF, CR, VT, FF, U+0085, U+00A0, U+2028, U+2029,
+   U+2003 or U+3000 arrived without that last character. The windows-runtime
+   job found this first, on the first head of this change, through a
+   transport case whose prompt ended in a newline; the host measurement
+   above was taken after it. The same characters inside the value, at its
+   start, and before an inner closing quote arrived intact.
+
+Quoted values beginning with a dash, quotes, backslashes, CR, LF, tab,
+non-ASCII text and an 8000-character prompt arrived unchanged. No worker
+builds either refused shape today: every worker vector carries a prompt with
+spaces, and the value ends in whitespace only when the worker's last argument
+does and holds no space. Both are refused rather than assumed absent or
+carried altered. The windows-runtime job repeats the round trip and both
+alterations (`test_the_vector_reaches_a_powershell_file_parameter_block_unchanged`,
+`test_powershell_alters_each_refused_class`).
 
 **What the gate process gets.** Only `-Action Run`; nothing in the module
 spells another action or a switch. No credential: Forge holds none for this
