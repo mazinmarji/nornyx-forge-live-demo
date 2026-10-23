@@ -82,25 +82,25 @@ approvals:
     accountable_authority: architecture_owner
     revision_binding:
       kind: git
-      revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       exact: true
     invalidation_conditions: [revision_change, scope_change]
     expires_at: null
 
 governance_evidence:
   schema: nornyx.governance_evidence.v1
-  subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+  subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
   records:
     - id: architecture_conformance_report
       type: architecture_evidence
       schema_id: nornyx.architecture_evidence.v1
       producer: {id: tool:check_architecture, type: tool}
       artifact: evidence/architecture_conformance_report.json
-      content_hash: sha256:14600c6a74d8e3df5c36627e96664831d1de4ac4ba8289aef391939da8ed298a
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:1a376b070fdd1a72ec326368b6542b1b5aef3cd10af03095a078dc6b606f9345
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool: {name: check_architecture, version: "0.3.0"}
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: pass
       dependencies: []
     - id: independent_review_record
@@ -108,11 +108,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:in_session_inspectors, type: tool}
       artifact: evidence/architecture_independent_review.json
-      content_hash: sha256:98d8ea3fb47155adf75858acf585be4489f5fd3dfea12a9a151168b1ea1f3ccb
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:b8ac64f2832192b06b0f9d458e9b2b0f0460460fb6620c42c11c593c1291ee8c
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool: {name: in_session_inspectors, version: "0.3.0"}
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: observed
       dependencies: []
     - id: exception_review_record
@@ -120,11 +120,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_exception_review.json
-      content_hash: sha256:1cfa42227bb4ffccb6328e4d21808214f02363f1744534c4cd2d111cbf37c188
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:c28b512e703340324e4c5cf74e169003a05745fd785b75383b5a746fd2224b7e
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: pass
       dependencies: []
     - id: change_record
@@ -132,11 +132,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:forge_gates, type: tool}
       artifact: evidence/architecture_change_record.json
-      content_hash: sha256:a9030d90a7fd353ee96651e28cdd2f171bb73a161d5fa1b7cfd5124c360d259e
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:644659f5741505e129d52c3a2cfd237684b1bc60135d5b705eea0a776814623c
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool: {name: forge_gates, version: "0.3.0"}
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: pass
       dependencies: [architecture_conformance_report]
     - id: evidence_manifest
@@ -144,11 +144,11 @@ governance_evidence:
       schema_id: nornyx.governance_evidence.v1
       producer: {id: tool:refresh_governance_evidence, type: tool}
       artifact: evidence/architecture_evidence_manifest.json
-      content_hash: sha256:484cc28a74d5ffe935009fb23ded74c1a0f92b970014275595a206ece487479d
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:c736b79a1e8c5e230f39077272e0da9abec6806be18d5046e06e6949b262b1da
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool: {name: refresh_governance_evidence, version: "0.3.0"}
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: pass
       dependencies: [architecture_conformance_report, exception_review_record, change_record]
 
@@ -160,13 +160,13 @@ governance_evidence:
         id: system:autonomous_demonstration
         type: system
       artifact: evidence/architecture_approval_record.json
-      content_hash: sha256:0f6fc3ae8c02c6e9f0850f9f292486cb0de672860f0d0bd9fa8e609612d7f628
-      subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      content_hash: sha256:af718712704fc36d01bc14725114c3ed8ad73c8bd4da6016fc99eac5fe0be9ce
+      subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       tool:
         name: refresh_governance_evidence
         version: 0.3.0
-      generated_at: "2026-10-22T16:33:53Z"
-      expires_at: "2027-10-22T16:33:53Z"
+      generated_at: "2026-10-23T12:44:43Z"
+      expires_at: "2027-10-23T12:44:43Z"
       status: observed
       dependencies: []
     # <<< managed:approval_record
@@ -205,7 +205,7 @@ changes:
       disjoint: true
     revision_binding:
       kind: git
-      revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+      revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
       exact: true
       scope_hash: sha256:ab029a29f5f1e4876c22c29ae4579ce0360d30e648343ac52c5c2c4a804eb1ee
     approval_invalidated_on: [revision_change, scope_change]
@@ -313,6 +313,49 @@ changes:
       disjoint: true
     exceptions: []
 
+  # The opt-in provider start through the run-act gate enters the declared
+  # architecture: module.provider_gate in a new adapter component,
+  # component.provider_gate, depending on the shared models only; the two
+  # worker adapters, module.worker_adapter and module.codex_worker, and their
+  # components gain a dependency on it. Additions only, so the architecture
+  # impact is minor. The security impact is minor: the module starts a
+  # process, and the workers reach it only when a caller passes a launch;
+  # with none, the default, their path is unchanged. No data, dependency or
+  # operational change. Risk, approval, separation of duties and evidence are
+  # those of the Windows payload entry above, for the same reasons.
+  - schema: nornyx.change.v1
+    id: architecture.provider_gate_module
+    type: architecture_change
+    purpose: Declare nornyx_forge.provider_gate, the opt-in provider start through the hash-pinned run-act gate, as an adapter component the Claude and Codex worker adapters depend on.
+    status: proposed
+    transition:
+      from: draft
+      to: proposed
+      evidence: [architecture_conformance_report]
+    scope: [component.provider_gate, module.provider_gate, component.worker_adapter, module.worker_adapter, component.codex_worker, module.codex_worker]
+    excluded_scope: []
+    risk_tier: medium
+    blast_radius: component
+    reversibility: reversible
+    rollback_required: false
+    rollback_plan_artifact: null
+    irreversible_authority: null
+    impacts:
+      security: minor
+      architecture: minor
+      data: none
+      dependency: none
+      operational: none
+    required_controls: [architecture_conformance_policy, separation_of_duties_policy]
+    required_evidence: [architecture_conformance_report, independent_review_record]
+    approver_roles: [architecture_reviewer]
+    approval_ids: [ArchitectureAuthority]
+    separation_of_duties:
+      author_role: repository_maintainer
+      approver_role: architecture_reviewer
+      disjoint: true
+    exceptions: []
+
 separation_of_duties:
   schema: nornyx.separation_of_duties.v1
   assignments:
@@ -352,6 +395,18 @@ separation_of_duties:
       exception_requester: null
       exception_approver: null
 
+    # The provider gate module's change, with the producers of the assignments above.
+    - subject: architecture.provider_gate_module
+      risk_tier: medium
+      author: human:repository_maintainer
+      approvers: [human:architecture_reviewer]
+      evidence_producers: [tool:check_architecture, tool:in_session_inspectors]
+      require_evidence_independence: true
+      release_requester: null
+      final_release_approver: null
+      exception_requester: null
+      exception_approver: null
+
 exceptions:
   schema: nornyx.governance_exceptions.v1
   source: project_contract
@@ -359,7 +414,7 @@ exceptions:
 
 architecture:
   schema: nornyx.architecture.v1
-  subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
+  subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
   descriptions:
     - id: architecture.overview
       title: Nornyx Forge logical and security architecture
@@ -375,7 +430,7 @@ architecture:
   systems:
     - id: system.forge
       name: Nornyx Forge
-      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel, component.governed_subject, component.nornyx_cli, component.runtime_preparation, component.subject_observation, component.subject_bootstrap, component.app_launcher, component.forge_cli, component.forge_flow, component.forge_authoring, component.forge_probes, component.reviewer_trust, component.project_capsule, component.capsule_store, component.experience, component.experience_build, component.provider_contract, component.providers, component.codex_worker, component.governance_rendering, component.forge_onboarding, component.experience_sharing, component.brd_authoring, component.experience_journey, component.windows_runtime, component.control_plane_session]
+      components: [component.api, component.runtime, component.governance, component.evidence, component.persistence, component.worker_adapter, component.shared_kernel, component.governed_subject, component.nornyx_cli, component.runtime_preparation, component.subject_observation, component.subject_bootstrap, component.app_launcher, component.forge_cli, component.forge_flow, component.forge_authoring, component.forge_probes, component.reviewer_trust, component.project_capsule, component.capsule_store, component.experience, component.experience_build, component.provider_contract, component.providers, component.codex_worker, component.governance_rendering, component.forge_onboarding, component.experience_sharing, component.brd_authoring, component.experience_journey, component.windows_runtime, component.control_plane_session, component.provider_gate]
   components:
     - id: component.api
       name: FastAPI and dashboard boundary
@@ -437,7 +492,7 @@ architecture:
       bounded_context: context.operations
       canonical: true
       modules: [module.worker_adapter]
-      depends_on: [component.shared_kernel]
+      depends_on: [component.shared_kernel, component.provider_gate]
     - id: component.shared_kernel
       name: Dependency-free shared models and helpers
       system: system.forge
@@ -534,6 +589,18 @@ architecture:
       bounded_context: context.operations
       canonical: true
       modules: [module.codex_worker]
+      depends_on: [component.shared_kernel, component.provider_gate]
+    # The opt-in provider start through the hash-pinned run-act gate: a
+    # worker adapter hands it the vector it built, and it refuses or starts
+    # Windows PowerShell on the gate. It starts a process, so it is an
+    # adapter, and it depends on the shared models only.
+    - id: component.provider_gate
+      name: Opt-in provider start through the run-act gate
+      system: system.forge
+      layer: layer.adapter
+      bounded_context: context.operations
+      canonical: true
+      modules: [module.provider_gate]
       depends_on: [component.shared_kernel]
     # Business-language governance as a deterministic rendering of contract
     # facts, with round-trip closure guards. Pure domain: parsed mappings in,
@@ -808,6 +875,11 @@ architecture:
       name: nornyx_forge.codex_worker
       component: component.codex_worker
       layer: layer.adapter
+      depends_on: [module.shared_models, module.provider_gate]
+    - id: module.provider_gate
+      name: nornyx_forge.provider_gate
+      component: component.provider_gate
+      layer: layer.adapter
       depends_on: [module.shared_models]
     - id: module.governance_rendering
       name: nornyx_forge.governance_rendering
@@ -983,7 +1055,7 @@ architecture:
       name: nornyx_forge.claude_worker
       component: component.worker_adapter
       layer: layer.adapter
-      depends_on: [module.shared_models]
+      depends_on: [module.shared_models, module.provider_gate]
     - id: module.shared_models
       name: nornyx_forge.models
       component: component.shared_kernel
@@ -1074,9 +1146,9 @@ architecture_evidence:
     tool: scripts/check_architecture.py
     tool_version: "0.3.0"
     status: pass
-    subject_revision: git:97b09f4ff42709b572880c3a53de797d47fc732e
-    generated_at: "2026-10-22T16:33:53Z"
-    expires_at: "2027-10-22T16:33:53Z"
+    subject_revision: git:39067e7b0ff90bd07422e5b8d89c107f473262d0
+    generated_at: "2026-10-23T12:44:43Z"
+    expires_at: "2027-10-23T12:44:43Z"
     violations: []
     artifact: evidence/architecture_conformance_report.json
-    artifact_sha256: sha256:14600c6a74d8e3df5c36627e96664831d1de4ac4ba8289aef391939da8ed298a
+    artifact_sha256: sha256:1a376b070fdd1a72ec326368b6542b1b5aef3cd10af03095a078dc6b606f9345

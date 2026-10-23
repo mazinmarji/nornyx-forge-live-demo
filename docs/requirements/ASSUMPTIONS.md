@@ -7554,3 +7554,96 @@ and an oversized proposal id with 409.
 **Serves.** A-035's basic-user journey, which this lets carry confirmed
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
+
+## A-052 A worker may start its provider through the hash-pinned run-act gate, opt-in; the default start is unchanged, and the gate path is refused before any process when anything about it is wrong
+
+**What changed.** `claude_worker.ClaudeCodeWorker` and
+`codex_worker.CodexWorker` take an optional `launch` (default `None`). With
+`None` nothing in either worker changes: the same vector, `_provider_env()`,
+working directory, timeout and capture, and every test that pins today's
+argument vector and environment passes unmodified. With a
+`provider_gate.GateLaunch(gate_script, provider_exe, role, execution_policy)`
+the worker builds the vector it always builds, after the same executable and
+workspace checks, and hands it to `provider_gate.launch_through_gate`, which
+starts Windows PowerShell 5.1 on the gate script with exactly:
+
+    <system directory>\WindowsPowerShell\v1.0\powershell.exe -NoProfile
+      -ExecutionPolicy <policy> -File <gate script> -Action Run
+      -AuthorizedSha256 <PINNED_RUN_ACT_SHA256> -Role <role>
+      -ProviderExe <provider executable>
+      -ProviderArgs <subprocess.list2cmdline(the worker's arguments)>
+
+`PINNED_RUN_ACT_SHA256` is
+`8830b243ff911a5c1aaaa026cb30a259d8bfc070ae6e6753a2096f8b1c7441e1`, the SHA-256
+of the one gate script this path will start; it is a constant, not a setting.
+
+**What is refused, each before any process exists.** A launch that is not a
+`GateLaunch`; a host with no Windows system directory; an execution policy
+outside PowerShell's names; a role that is not a short identifier; a gate
+script that is not absolute, or a provider executable that is not an absolute
+Windows path, or either holding a NUL or a quote; a worker whose executable is
+not the gate's provider executable; a NUL anywhere in the vector; a command
+line over 32767 characters; a `-ProviderArgs` value PowerShell would read as a
+parameter name; no console; and a gate script whose bytes are not the pinned
+bytes, or that is not one regular file. Each is a `WorkerResult` in the
+`error` class with returncode 2, the workers' own value for an invocation that
+could not be formed, and never an exception.
+
+**The parameter-name class, measured.** Through a real `powershell.exe -File`
+on a stub with the gate's parameter names, on a Windows 11 host: list2cmdline
+leaves a value with no space or tab unquoted, and an unquoted `-ProviderArgs`
+value beginning with `-`, U+2013, U+2014 or U+2015 is bound as a parameter
+name -- `-NoCredential` included -- rather than as the value; quoted values
+beginning with a dash, quotes, backslashes, CR, LF, tab, non-ASCII text and an
+8000-character prompt arrived unchanged. No worker builds the refused shape
+today, since every worker vector carries a prompt with spaces; it is refused
+rather than assumed absent. The windows-runtime job repeats the round trip and
+the misbinding (`test_the_vector_reaches_a_powershell_file_parameter_block_unchanged`,
+`test_powershell_binds_the_refused_class_as_a_parameter_name`).
+
+**What the gate process gets.** Only `-Action Run`; nothing in the module
+spells another action or a switch. No credential: Forge holds none for this
+path. The environment is constructed -- `SystemRoot`, `windir`, `ComSpec` and
+`PATH` from the system directory the operating system reports
+(`GetSystemDirectoryW`), and a fixed list of ordinary names copied when
+present -- so no `FORGE_*` variable, provider key or provider home variable
+can pass. PowerShell is named by that system directory, never through PATH or
+`SystemRoot`. The console's streams are inherited and nothing is captured,
+because the gate prompts on the console; and there is no timeout, because
+killing the gate mid-cycle would leave its cycle open. The gate script is read
+and hashed through one handle that, on Windows, refuses writers, renames and
+deletion until the gate has exited.
+
+**Every gate exit is a failed worker run.** The gate gives the provider its
+own run directory and releases what it produced only after later actions this
+change never takes, so no provider output reaches the worker's workspace on
+this path. `success` is False for every exit code; the returncode is the
+gate's (0, 10 or 20, each with its meaning in the output; anything else named
+as not one of them), and the Provider Contract's `classify_result` maps each
+to `error`, unchanged.
+
+**What it does NOT establish.**
+
+1. **Anything about the gate's logon, separation or eligibility.** No claim
+   is made of how the gate logs the provider on, that the provider is
+   separated from Forge, or that any provider is eligible. Eligibility is
+   still decided by the Provider Contract's own table, which this change
+   neither reads nor changes; `test_eligibility_is_the_contracts_table_in_both_modes`
+   holds the verdicts equal in both modes.
+2. **A Forge build through the gate.** The gate path cannot produce a Forge
+   build until handing the workspace in and the output back exist, which is a
+   separate decision.
+3. **That the gate ran.** No gate script, provider or credential was run or
+   used. The Windows tests start a stub with the gate's parameter names only,
+   and measure transport: that the vector reaches a PowerShell 5.1 parameter
+   block as sent.
+4. **That a directory on the script's path cannot be replaced** between the
+   hash and PowerShell opening the file by path. The held handle covers the
+   file; the gate also checks its own SHA-256 against the pin it is given.
+5. **Wiring.** Nothing in Forge passes a `launch` today: no route, flow,
+   registry or runtime configuration selects the gate path.
+
+**Serves.** The Provider Contract's rule that failure is a `WorkerResult`,
+never an exception; A-027's rule that the provider environment carries no
+Forge secret, extended here to a constructed environment; and this
+repository's rule that a run is reported as what it is.

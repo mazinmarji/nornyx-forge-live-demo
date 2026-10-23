@@ -278,6 +278,22 @@ EXPECTED_SKIPS = {
         "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: _is_directory_entry sends the DIRECTORY rows down the identical branch and those execute on every platform, and all seven junction rows execute on a Windows workstation.",
     "tests/test_provider_authority_boundary.py::test_the_neutralisation_fails_closed_at_every_authority_shape":
         "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
+    # A-052's Windows transport and hold. Windows is the subject, as for the
+    # standing module's six above: a real Windows PowerShell 5.1, a Windows
+    # share mode and kernel32's console and system-directory reads. The
+    # windows-runtime job runs tests/test_provider_gate.py and refuses a skip.
+    "tests/test_provider_gate.py::test_the_vector_reaches_a_powershell_file_parameter_block_unchanged":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_powershell_binds_the_refused_class_as_a_parameter_name":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_held_script_refuses_writers_while_powershell_still_reads_it":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_whole_gate_path_runs_the_stub_through_each_worker":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_console_check_refuses_a_nul_device_and_a_pipe":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_system_directory_is_the_operating_systems_not_the_environments":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
     "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape":
         "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
 }
@@ -567,8 +583,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # separation-of-duties assignment and the record, verification of every
     # key, derived claim and the canonical form, and the tool end to end in a
     # copy of the repository. 252 collected at introduction, floor at
-    # band(252) = 227.
-    "tests/test_architecture_change_record.py": 229,
+    # band(252) = 227. 254 -> 256 for A-052, floor band(256) = 231: the
+    # provider gate module's change entry and assignment, whole, and its
+    # declared component, module and the two worker edges.
+    "tests/test_architecture_change_record.py": 231,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -880,6 +898,19 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # compromised, both paths), the registry refusal unchanged under intact
     # integrity (both paths), and the governance-unavailable refusal kept.
     "tests/test_operation_classification.py": 57,
+    # A-052's opt-in provider start through the run-act gate: 56 collected at
+    # introduction, floor at band(56) = 51. The pin and the exact vector for
+    # each worker against the vector it builds today; launch=None as today;
+    # every refusal before any process (the script's bytes and shape, no
+    # console, no system directory, each malformed field, a value PowerShell
+    # reads as a parameter name, a NUL, an over-long line); the constructed
+    # environment with no key name or value; the exit-code mapping; the
+    # script's hold; eligibility unchanged in both modes. Six are Windows's
+    # own -- the round trip through a real powershell.exe -File stub, the
+    # refused class misbound there, the held script, the console check and
+    # the system directory -- declared skips here and run, with no skip, in
+    # the windows-runtime job.
+    "tests/test_provider_gate.py": 51,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2221,16 +2252,30 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 15 above its band. The fifth added five, 152 -> 157 (floor
 # 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
-# slack stays 532. The rows below are these.
+# slack stays 532.
+#
+# A-052 ADDS ONE MODULE AND MOVES ONE, measured from a fresh collection:
+# tests/test_provider_gate.py collects 56 (floor band(56) = 51) and
+# tests/test_architecture_change_record.py collects 254 -> 256 (floor
+# band(254) = 229 -> band(256) = 231). 6030 collect across 138 modules. The
+# module-floor sum rises by 53 to 5493 and the aggregate follows to 5501,
+# keeping the same 8 above it; band(n) 5375 -> 5427, and the working room
+# below the floor 524 -> 529. THE SLACK THE BANDS GRANT moves by 5, 532 ->
+# 537, the new module sitting 5 above its band and the change-record module
+# still 25 above its own. SIX SKIPS ARE ADDED, declared by identity above:
+# the new module's Windows tests. The new module joins the windows-runtime
+# job, whose floor moves 292 -> 348: its nine modules collect
+# 7/14/15/15/23/54/56/73/97 (sum 354, floor 354 - 7 + 1). The rows below are
+# these.
 #
 # (rows below):
 #
-#     collected across tests/     5972   (137 modules)
-#     sum of the module floors    5440
-#     band(5972) = ceil(0.9*n)    5375
-#     MINIMUM_COLLECTED           5448
+#     collected across tests/     6030   (138 modules)
+#     sum of the module floors    5493
+#     band(6030) = ceil(0.9*n)    5427
+#     MINIMUM_COLLECTED           5501
 #     above the module sum          8
-#     below what collects         524
+#     below what collects         529
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2452,7 +2497,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 532 in total, and the aggregate refuses
+# per-module bands already grant 537 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2721,7 +2766,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5448
+MINIMUM_COLLECTED = 5501
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2855,6 +2900,8 @@ REQUIRED_MODULES = (
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",
+    # A-052: the opt-in provider start through the run-act gate.
+    "tests/test_provider_gate.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

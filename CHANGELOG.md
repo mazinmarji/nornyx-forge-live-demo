@@ -2,6 +2,27 @@
 
 ## Unreleased — hardening from adversarial review
 
+- A worker may start its provider through the hash-pinned run-act gate,
+  opt-in (A-052). `ClaudeCodeWorker` and `CodexWorker` take an optional
+  `launch`; with `None`, the default, nothing changes and every test pinning
+  today's vector and environment passes unmodified. With a
+  `provider_gate.GateLaunch` the worker's own vector is handed to the new
+  adapter module `nornyx_forge.provider_gate`, which starts Windows
+  PowerShell 5.1 by its system-directory path on the gate script with
+  `-Action Run`, the pinned SHA-256 as `-AuthorizedSha256`, the role, the
+  provider executable and `list2cmdline` of the worker's arguments as
+  `-ProviderArgs`. It refuses before any process exists when the script's
+  bytes are not the pinned bytes, there is no console, a field is malformed,
+  the vector holds a NUL or is too long, or `-ProviderArgs` would be read by
+  PowerShell as a parameter name (measured through a real `powershell.exe
+  -File`). The environment is constructed, not filtered, and carries no
+  credential; nothing is captured and no timeout applies. Every gate exit is
+  a failed worker run, because no provider output reaches the workspace on
+  this path. No claim of the gate's logon semantics, separation or
+  eligibility is made, and nothing in Forge passes a `launch` yet. The
+  architecture contract declares the module in a new adapter component the
+  two workers depend on; the windows-runtime job runs the new tests, and the
+  governed evidence is regenerated.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

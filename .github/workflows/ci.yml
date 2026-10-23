@@ -478,9 +478,18 @@ jobs:
       # GOVERN and, with one row left untested, refused at the build.
       # Nothing in it skips on any platform. The runner has no Smart App Control, so the blocked
       # store is measured here by the specimen, not by the host's policy.
-      - name: Windows runtime, bundle builder, launch, provider, control-plane and simulated-journey tests, with no skips
+      # tests/test_provider_gate.py joins for A-052: the opt-in provider start
+      # through the run-act gate. Here it round-trips the vector through a
+      # real Windows PowerShell 5.1 `-File` on a stub the test writes (the
+      # gate's parameter names only; no gate, no credential, no provider),
+      # shows PowerShell misbinding the class the module refuses, holds the
+      # script against writers while PowerShell reads it, and reads the
+      # console and system directory through kernel32. Transport only. Its
+      # other tests drive the same code with an injected runner on every
+      # platform, so nothing in it skips on this host.
+      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey and provider-gate tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -491,14 +500,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 292:
-              print("the windows job collected fewer than 292 tests. Its eight modules "
-                    "carry 298 here (7/14/15/15/23/54/73/97), so this floor is 298 - 7 + 1, "
+          if len(cases) < 348:
+              print("the windows job collected fewer than 348 tests. Its nine modules "
+                    "carry 354 here (7/14/15/15/23/54/56/73/97), so this floor is 354 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these eight -- the five smallest "
-                    "carry 72 -- so three whole modules could vanish beneath "
+                    "floor of 60 is clear of any FIVE of these nine -- the five smallest "
+                    "carry 74 -- so four whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "
