@@ -1,0 +1,38 @@
+"""The support-case register's own tests, written by a Forge test's simulated provider."""
+
+import pytest
+
+from app.__main__ import main
+from app.cases import CaseError, CaseRegister, requirement
+
+
+def test_a_case_opens_with_a_title_and_a_priority():
+    register = CaseRegister()
+    ident = register.open("Login fails", "normal")
+    assert register.case(ident) == {
+        "title": "Login fails", "priority": "normal", "owner": "", "state": "open"}
+
+
+def test_an_unknown_priority_is_refused():
+    with pytest.raises(CaseError):
+        CaseRegister().open("Login fails", "urgent")
+
+
+def test_a_resolved_case_cannot_be_resolved_again():
+    register = CaseRegister()
+    ident = register.open("Login fails", "low")
+    register.resolve(ident)
+    with pytest.raises(CaseError):
+        register.resolve(ident)
+
+
+def test_cases_are_grouped_by_priority():
+    register = CaseRegister()
+    first = register.open("One", "high")
+    second = register.open("Two", "low")
+    assert register.by_priority() == {"low": [second], "normal": [], "high": [first]}
+
+
+def test_the_self_test_passes():
+    assert main(["--self-test"]) == 0
+__REQUIREMENT_TESTS__

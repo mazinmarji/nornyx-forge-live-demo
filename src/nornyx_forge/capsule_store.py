@@ -141,14 +141,29 @@ from .capsule import (
     verify_integrity,
 )
 from .experience import validate_experience, verify_experience
+from .produced_app_manifest import pam_reference, validate_pam
 
 _CAPSULE_FILE = "capsule.json"
 _EXPERIENCE_FILE = "experience.json"
+#: The Produced Application Manifest (A-051): written by Forge alone, through
+#: `save_produced_application`, in the same commit as the accepted build's
+#: transition, and absent from every store whose build produced none.
+_PAM_FILE = "pam.json"
 #: The files that ARE the store's authority, in the order the seal records
 #: them. Nothing else in the directory is authority; anything else present is
-#: unexpected and fails the seal check.
-_AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
-_SEAL_SCHEMA = "nornyx.forge.capsule_seal.v1"
+#: unexpected and fails the seal check. An authority file that does not exist
+#: is sealed as `None`, so a store with no manifest is held to having none.
+_AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE, _PAM_FILE)
+#: Version 2 seals all three files and records the manifest's `pam/<sha256>`
+#: reference beside its bytes. Every seal this adapter writes is version 2.
+_SEAL_SCHEMA = "nornyx.forge.capsule_seal.v2"
+#: Version 1 sealed exactly the first two files, before the manifest existed.
+#: Such a seal is still READ, as sealing `pam.json` absent: refusing it would
+#: turn every store protected before this change into a tamper finding, and
+#: what it anchors is exactly what it always anchored. The next commit Forge
+#: makes in the store rewrites it as version 2.
+_SEAL_SCHEMA_V1 = "nornyx.forge.capsule_seal.v1"
+_SEAL_V1_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
 #: Committed into the store the first time Forge seals it, naming the seal.
 #: Its presence is what tells a later load that this store REQUIRES a seal:
 #: a protected store with no seal is a refusal, a store with neither is
@@ -1225,6 +1240,74 @@ class CapsuleStore:
         self.seal()
         return self.revision()
 
+    def save_produced_application(
+        self, state: Mapping[str, Any], manifest: str, message: str
+    ) -> str:
+        """Persist the accepted build's transition AND its manifest as ONE
+        commit, then hold the seal to the bytes Forge rendered (A-051).
+
+        THE ONLY WRITER OF `pam.json`. The development flow never writes it,
+        no route takes it from a request, and the provider's workspace copy
+        of the store is never read for it: the caller renders the manifest in
+        Forge's own process and hands the text here. Both are validated at the
+        door, as `save_experience` validates its state.
+
+        ONE COMMIT, so the store never holds an accepted transition without
+        its manifest or a manifest without its transition.
+
+        THE WRITE CHECK, after sealing. `seal` records the bytes it finds on
+        disk, so a process left running in the workspace that replaced either
+        file between the write and the seal would have its own bytes sealed as
+        Forge's. Comparing what was sealed with what was rendered closes that
+        window for these two files: a difference raises `CapsuleSealError`
+        carrying the seal THIS commit followed, so the caller's restoration
+        removes the commit and the manifest with it. It does not resist a
+        same-user process, which can rewrite the seal too (A-029).
+
+        A store with no seal directory is refused: a manifest is sealed or it
+        is not written.
+        """
+        if not isinstance(message, str) or not message.strip() or len(message) > 200:
+            raise CapsuleStoreError("a save needs a one-line reason under 200 chars")
+        validate_experience(state)
+        verify_experience(state)
+        validate_pam(manifest)
+        if self.seal_dir is None:
+            raise CapsuleStoreError(
+                "a produced-application manifest is written only into a sealed store")
+        if not (self.root / _MARKER_FILE).exists():
+            raise CapsuleStoreError(
+                f"{self.root} is not a capsule store this adapter initialized"
+            )
+        before = self.sealed()
+        if before is None:
+            raise CapsuleStoreError(
+                "a produced-application manifest is written only into a store that "
+                "already carries Forge's seal")
+        rendered = {_EXPERIENCE_FILE: canonical_json(state) + "\n", _PAM_FILE: manifest}
+        self._write_experience(state)
+        _write_fresh(self.root / _PAM_FILE, manifest)
+        _run_git(self.root, "add", "-A")
+        status = _run_git(self.root, "status", "--porcelain")
+        if not status.stdout.strip():
+            raise CapsuleStoreError(
+                "save_produced_application was asked to persist a state identical to "
+                "the current revision; a no-op commit would fabricate history"
+            )
+        self._mark_sealed()
+        _run_git(self.root, "add", "-A")
+        _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
+        sealed = self.seal()
+        if sealed is None:  # pragma: no cover - seal_dir is set, checked above
+            raise CapsuleStoreError("the store has no seal directory")
+        problems = [
+            f"the sealed {name} is not the one Forge rendered"
+            for name, text in rendered.items() if sealed.files.get(name) != text
+        ]
+        if problems:
+            raise CapsuleSealError(problems, before)
+        return self.revision()
+
     # -- the seal ------------------------------------------------------------
     def seal_ident(self) -> str:
         return hashlib.sha256(str(self.root.resolve()).encode("utf-8")).hexdigest()[:24]
@@ -1469,7 +1552,9 @@ class CapsuleStore:
         snapshot = self.snapshot()
         if path is None:
             return None
-        record = {"schema": _SEAL_SCHEMA, "store": str(self.root.resolve()), **snapshot.as_dict()}
+        manifest = snapshot.files.get(_PAM_FILE)
+        record = {"schema": _SEAL_SCHEMA, "store": str(self.root.resolve()), **snapshot.as_dict(),
+                  "pam": None if manifest is None else pam_reference(manifest)}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Written whole, then moved into place: a seal is never half a seal.
@@ -1498,12 +1583,38 @@ class CapsuleStore:
                 f"the authority seal at {path} is unreadable: {exc}; the store cannot be "
                 "held to its anchor"
             ) from exc
+        # TWO SCHEMAS ARE READ AND EACH HAS EXACTLY ONE SHAPE. A version-1
+        # seal with exactly the two files it ever sealed reads as sealing the
+        # manifest ABSENT -- the state such a store is in -- and a version-1
+        # seal naming any other file set is not one this adapter wrote. A
+        # version-2 seal names all three files and a `pam` reference that must
+        # be the digest of the manifest bytes it seals, so a seal whose two
+        # records of the manifest disagree is damaged, not trusted for either.
+        # That agreement is a consistency check on the seal file; the seal's
+        # trust is still Forge-owned persistence and nothing more (A-022).
+        if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+            raise CapsuleSealUnreadable(
+                f"the authority seal at {path} is not a seal this adapter wrote"
+            )
+        files = record["files"]
+        if record.get("schema") == _SEAL_SCHEMA_V1:
+            shaped = (set(record) == {"schema", "store", "revision", "files"}
+                      and set(files) == set(_SEAL_V1_FILES))
+            if shaped:
+                files = {**files, _PAM_FILE: None}
+        else:
+            manifest = files.get(_PAM_FILE)
+            shaped = (
+                record.get("schema") == _SEAL_SCHEMA
+                and set(record) == {"schema", "store", "revision", "files", "pam"}
+                and set(files) == set(_AUTHORITY_FILES)
+                and (manifest is None or isinstance(manifest, str))
+                and record["pam"] == (None if manifest is None else pam_reference(manifest))
+            )
         if (
-            not isinstance(record, dict)
-            or record.get("schema") != _SEAL_SCHEMA
+            not shaped
             or not isinstance(record.get("revision"), str)
-            or not isinstance(record.get("files"), dict)
-            or set(record["files"]) != set(_AUTHORITY_FILES)
+            or not all(text is None or isinstance(text, str) for text in files.values())
         ):
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} is not a seal this adapter wrote"
@@ -1513,7 +1624,8 @@ class CapsuleStore:
                 f"the authority seal at {path} names another store "
                 f"({str(record.get('store'))[:80]}); it does not anchor this one"
             )
-        return AuthoritySnapshot(revision=record["revision"], files=dict(record["files"]))
+        return AuthoritySnapshot(revision=record["revision"],
+                                 files={name: files[name] for name in _AUTHORITY_FILES})
 
     def seal_problems(self, snapshot: AuthoritySnapshot) -> list[str]:
         """Every way the store on disk differs from the snapshot: the revision,
@@ -1725,6 +1837,18 @@ class CapsuleStore:
             absent    experience.json gone   REFUSED             RETURNED
             absent    neither gone           RETURNED 'READY'    RETURNED
 
+        THE MANIFEST IS THE THIRD AUTHORITY FILE AND IS NEUTRALISED WITH THE
+        OTHER TWO, through `_AUTHORITY_FILES`, without a second edit here. Its
+        own route cannot fall open the same way, because the handoff gate
+        reads it only from a store that HAS a seal -- `sealed()` None is a
+        refusal there, never a legacy read -- so with the marker and the seal
+        both gone a readable `pam.json` licenses nothing:
+
+            marker    seal     pam.json     handoff gate
+            absent    gone     readable     REFUSED (no seal to hold it to)
+            present   gone     readable     REFUSED (CapsuleSealMissing)
+            present   sealed   readable     checked against the seal
+
         REMOVED, NOT TRUNCATED. Truncation follows what it finds: measured, a
         hardlink planted at `capsule.json` and truncated left a file OUTSIDE
         the store holding `''` with its link count still 2 -- the same write
@@ -1746,7 +1870,8 @@ class CapsuleStore:
         sentences denied. "If the neutralisation itself raises, it raises
         BEFORE anything else has been touched" is FALSE the moment the SECOND
         removal is the one that fails: `_AUTHORITY_FILES` is ordered
-        `(capsule.json, experience.json)`, so `capsule.json` is already gone.
+        `(capsule.json, experience.json, pam.json)`, so `capsule.json` is
+        already gone.
         Measured through the shipped `restore()` with `.git` destroyed, the
         marker deleted and one `attrib +R experience.json` -- no crash, no
         patching, no privilege:

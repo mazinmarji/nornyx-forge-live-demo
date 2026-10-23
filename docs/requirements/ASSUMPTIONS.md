@@ -7554,3 +7554,123 @@ and an oversized proposal id with 409.
 **Serves.** A-035's basic-user journey, which this lets carry confirmed
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
+
+## A-051 An accepted build's produced application is named by a Forge-written, sealed manifest, and the handoff is a separate gate that is never offered in simulation
+
+Numbering: A-049 and A-050 are taken by two open pull requests that have not
+merged; this entry takes the next free number so that the three can merge in
+any order.
+
+**Assumption.** What a governed build produced can be named, after it is
+accepted, by one manifest that Forge -- not the provider and not the
+development flow -- renders from its own records, and that the capsule store
+seals outside the project; and handing the result to a person can be a gate of
+its own, separate from READY, that re-verifies the manifest and the files
+before it offers anything.
+
+**What it is.**
+
+1. **The Produced Application Manifest (PAM),** `produced_app_manifest`.
+   `render_pam` is pure, so the manifest's digest -- `pam/<sha256>` -- is
+   computed from the text Forge rendered. It records the trusted verifier's
+   subject digest and every inspected file's SHA-256; the entry point
+   `app/__main__.py`; the dependency declaration, the Python standard library
+   only in version 1; the digest of the contract Forge renders from the
+   accepted BRD; the BRD's file digest and scope binding and the capsule's
+   chain tip; the provider and the Provider Contract's own eligibility row
+   for it; the verifier's identity and gate profile; and Forge's version and
+   revision. Its source is the trusted verifier record the flow returns in
+   memory, never `.nornyx/runs/build-summary.json`. `validate_pam` checks the
+   exact key set at every level, the canonical encoding, each digest's form,
+   the subject digest recomputed from the listed files, the application file
+   list derived from them, the BRD digest and the scope tip; it cannot check a
+   claim against the world, and the issuer and the gate do that.
+2. **Forge-only writing, bound to the seal.** `pam.json` is the store's third
+   authority file. The build thread issues it inside the post-build critical
+   section -- under the store lock, after the store has matched the seal taken
+   at BUILD -- and only for an accepted build the contract licenses to GOVERN,
+   and `CapsuleStore.save_produced_application` writes it in the same commit as
+   the GOVERN transition. After sealing, the sealed `pam.json` and
+   `experience.json` are compared with the bytes Forge rendered; a difference
+   is a tamper finding that removes the commit with the seal it followed, and
+   the build is recorded as a failure. The seal schema is version 2: it seals
+   the three files and records the manifest's `pam/<sha256>` beside its bytes,
+   and a seal whose two records of the manifest disagree is refused as not one
+   Forge wrote. A version-1 seal with exactly its two files is still read, as
+   sealing no manifest, so no store protected before this change becomes
+   TAMPERED; the next commit Forge makes rewrites it as version 2.
+3. **Issuance checks provenance, statically.** A manifest is issued only when
+   Forge's own read of the project reproduces the subject digest and file count
+   the verifier accepted, the verifier record names the trusted verifier and
+   profile, the BRD the verifier accepted is the BRD the scope confirmation
+   bound, and the static check finds nothing: `app/__main__.py` present and
+   parsing, every import outside `tests/` the standard library or the
+   application's own module (and in `tests/`, also `pytest`), no import of
+   `nornyx_forge` anywhere, no produced file shadowing it, and no
+   `__import__` or `import_module` call. A build it issues nothing for is
+   recorded exactly as before, and `GET /api/build` says why.
+4. **The handoff gate,** `produced_app_handoff.assess_readiness`. It loads the
+   manifest only from a store that passes `assert_sealed()` and carries a seal
+   -- a store with no seal is refused, never read as legacy -- takes it from
+   the seal, validates it, re-reads and re-hashes every produced file (a file
+   changed, removed or added is named), re-runs the static check, and offers
+   "Open application" only when the Provider Contract's unchanged
+   `governed_build_eligibility` makes the build's provider eligible, both in
+   the row the manifest recorded when it was issued and asked again now. The
+   row at issue is the contract's, not the verdict the build route was handed,
+   so a build made under an injected verdict records an ineligible row and is
+   never offered. `open_application_readiness` is the only production entry
+   and passes the contract's own decision. No route or page offers the action
+   in this change.
+5. **No produced code is executed.** The static check is `ast` over bytes;
+   nothing is imported, compiled to code or run, and no process is started on
+   a produced file -- a test records every child the issuer and the gate start
+   and finds only the store's `git`. Every produced file is read through one
+   descriptor, judged by that descriptor -- a regular file, the same file
+   `lstat` saw, within the verifier's bound, unchanged while it was read -- and
+   never by reopening its path.
+6. **The reference application exists only in tests.** A test-only simulated
+   provider writes Forge's own support-case specimen from templates under
+   `tests/specimens/produced_app/*.py.txt`, which pytest does not collect and
+   which neither the wheel, the bundle nor the container image contains; a
+   test holds that no shipped file names them. Shipped Forge never generates
+   it.
+
+**The claim, and its bound.** The PAM is written by Forge after the post-build
+seal check; its exact bytes are sealed outside the project, and the handoff
+gate re-verifies them and the produced files against it. This detects
+accidental change and change by a writer confined to the workspace. It does
+NOT resist a same-user process, which can rewrite the store and seal together
+or race the write; that needs provider confinement or an external anchor.
+Currency stays `not_independently_anchored`.
+
+**What it does NOT establish.**
+
+1. **A file digest is only as good as Forge's read.** A same-user process can
+   swap a file around that read -- the shape of P1 4356060742 -- and the held
+   descriptor narrows that window without closing it.
+2. **A runnable application.** The mechanism is exercised on a Forge-authored
+   reference app; it is not a provider build, not a runnable Forge-generated
+   application, and no produced code is executed. Whether `python -m app`
+   starts is not checked: the entry point is checked present and parsing only.
+3. **Any handoff today.** No provider is eligible on any platform, so the gate
+   offers nothing in the shipped product; its positive path is exercised only
+   at the unit level with a row and a verdict the test supplies.
+4. **A change to READY.** READY requires what it required before; the manifest
+   is not READY evidence, and a simulated READY is still not a runnable
+   application.
+5. **The `build_acceptance` ledger as an anchor.** It is provider-writable and
+   its chain is recomputable, so the manifest is not bound to it.
+6. **That the generated contract is the one the flow wrote.** The manifest's
+   contract digest is of the contract Forge renders from the accepted BRD; the
+   bytes at `.nornyx/generated/brd_contract.nyx` are not read.
+7. **That the standard-library list is every interpreter's.** The static check
+   uses the module names of the interpreter Forge runs on.
+8. **Windows coverage of the new tests.** The two new test modules run in the
+   Linux test jobs; the Windows runtime job runs a fixed module list that does
+   not yet name them.
+
+**Serves.** A-022 and A-029, whose seal and bound it extends to a third file
+without moving either; A-035, whose simulated journey it extends to an
+application with an entry point; and A-019, since the produced project is the
+verifier's subject and never its verifier.

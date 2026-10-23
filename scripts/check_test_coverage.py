@@ -857,6 +857,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # by editing it; and the editor's refusal kept across the refresh, marking
     # only the editor's own proposal.
     "tests/test_requirements_entry.py": 142,
+    # A-051's produced-application manifest, as pure domain: 46 collected at
+    # introduction, floor at band(46) = 42. Rendering and the reference
+    # computed from the rendered text, every field the validator refuses,
+    # the copies held equal to their owners, and the static entry-point and
+    # import check over bytes, running nothing.
+    "tests/test_produced_app_manifest.py": 42,
+    # A-051's store, build and handoff: 37 collected at introduction, floor at
+    # band(37) = 34. Seal v2 and v1 still read, the one commit and the write
+    # check, the reference journey and the two the static check
+    # refuses, issuance's refusals, the gate never offered in simulation, held
+    # descriptors, no process started, and the reference app unshipped.
+    "tests/test_produced_app_handoff.py": 34,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2221,16 +2233,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 15 above its band. The fifth added five, 152 -> 157 (floor
 # 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
-# slack stays 532. The rows below are these.
+# slack stays 532.
+#
+# A-051 ADDS TWO MODULES, measured from a fresh collection:
+# tests/test_produced_app_manifest.py collects 46 (floor band(46) = 42) and
+# tests/test_produced_app_handoff.py collects 37 (floor band(37) = 34). No other
+# module's count moves. 6055 collect across 139 modules; the module-floor sum
+# rises by 76 to 5516 and the aggregate follows to 5524, keeping the
+# same 8 above it; band(n) 5375 -> 5450, the working room below the floor
+# 524 -> 531, and the slack 532 -> 539. NO SKIP IS ADDED, and the
+# windows-runtime job's floor is untouched: it names neither new module. The
+# rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     5972   (137 modules)
-#     sum of the module floors    5440
-#     band(5972) = ceil(0.9*n)    5375
-#     MINIMUM_COLLECTED           5448
+#     collected across tests/     6055   (139 modules)
+#     sum of the module floors    5516
+#     band(6055) = ceil(0.9*n)    5450
+#     MINIMUM_COLLECTED           5524
 #     above the module sum          8
-#     below what collects         524
+#     below what collects         531
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2452,7 +2474,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 532 in total, and the aggregate refuses
+# per-module bands already grant 539 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2721,7 +2743,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5448
+MINIMUM_COLLECTED = 5524
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2855,6 +2877,8 @@ REQUIRED_MODULES = (
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",
+    "tests/test_produced_app_manifest.py",
+    "tests/test_produced_app_handoff.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

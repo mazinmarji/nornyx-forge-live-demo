@@ -2,6 +2,29 @@
 
 ## Unreleased — hardening from adversarial review
 
+- An accepted build's produced application is named by a Produced
+  Application Manifest that Forge writes and seals, and handing it to a person
+  is a separate gate that is never offered in simulation (A-051). The build
+  thread renders `pam.json` from Forge's own records -- the trusted verifier
+  record the flow returns in memory, the capsule and lifecycle sealed at
+  BUILD, the Provider Contract's own eligibility row, and the produced files
+  read through held descriptors -- under the store lock, after the seal check,
+  and saves it in the same commit as the GOVERN transition; the sealed bytes
+  are then compared with the rendered ones. It is the store's third authority
+  file: the seal schema moves to version 2, and a version-1 seal is still read
+  as sealing no manifest, so no protected store becomes TAMPERED. A static
+  check over the produced sources as bytes requires `app/__main__.py` present
+  and parsing, standard-library imports only, and no import of `nornyx_forge`;
+  nothing produced is executed. The "Open application" readiness check loads
+  the manifest only from a store that matches its seal, re-hashes every
+  produced file, and offers the action only when the unchanged
+  `governed_build_eligibility` makes the build's provider eligible; no
+  provider is, so it is never offered, and no route or page offers it yet.
+  READY is unchanged. The mechanism is exercised on a Forge-authored reference
+  app written by a test-only simulated provider; it is not a provider build,
+  not a runnable Forge-generated application, and no produced code is
+  executed.
+
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

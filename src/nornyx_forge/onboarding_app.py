@@ -183,6 +183,7 @@ from .experience_journey import (
 )
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
+from .produced_app_handoff import ManifestIssue, issue_manifest
 from .provider_contract import GovernedEligibility, governed_build_eligibility
 
 #: THE ONE PLACE THAT DECIDES WHICH PLATFORM WORD DESCRIBES THIS HOST.
@@ -1080,14 +1081,61 @@ def create_app(
                                       "build did not complete")]
                         else:
                             steps = list(build_outcome(lifecycle, result, at))
-                        for step, message in steps:
-                            current.save_experience(step, message)
-                            lifecycle = step
-                        outcome["lifecycle"] = {
-                            "recorded": True,
-                            "stage": lifecycle["stage"],
-                            "status": lifecycle["status"],
-                        }
+                        # THE PRODUCED-APPLICATION MANIFEST (A-051), for an
+                        # accepted build the contract licenses to GOVERN, and
+                        # only here: under the store lock, after the store has
+                        # just matched the seal taken at BUILD, rendered from
+                        # Forge's own records and saved IN THE SAME COMMIT as
+                        # the GOVERN transition. A build it is not issued for
+                        # is recorded exactly as before; READY is unchanged.
+                        final = steps[-1][0] if steps else None
+                        issued = None
+                        if (outcome.get("accepted") is True and final is not None
+                                and final["stage"] == "GOVERN" and final["status"] == "active"):
+                            # NEVER THE REASON A BUILD GOES UNRECORDED: an
+                            # issuance that raises issues nothing, says why, and
+                            # the transition is saved exactly as it was before.
+                            try:
+                                issued = issue_manifest(
+                                    project_root=project_dir, store_root=root, result=result,
+                                    document=app.state.sealed["document"], lifecycle=lifecycle,
+                                    sealed_revision=sealed_snapshot.revision,
+                                    platform=platform_word,
+                                )
+                            except Exception as error:  # noqa: BLE001 - recorded, not raised
+                                issued = ManifestIssue(None, (
+                                    "Forge could not issue the manifest: "
+                                    f"{type(error).__name__}: {str(error)[:300]}",))
+                            outcome["produced_application"] = issued.as_dict()
+                        try:
+                            for step, message in steps:
+                                if issued is not None and issued.text is not None and step is final:
+                                    current.save_produced_application(step, issued.text, message)
+                                else:
+                                    current.save_experience(step, message)
+                                lifecycle = step
+                        except CapsuleSealError as breach:
+                            # WHAT WAS SEALED IS NOT WHAT FORGE RENDERED: the
+                            # commit is removed with the seal it followed, and
+                            # the run is a failure that says so.
+                            restored(current, breach,
+                                     "the authority Forge sealed for the accepted build is "
+                                     "not what it rendered; the build is not recorded")
+                            lifecycle = current.load_experience()
+                            outcome["produced_application"] = {
+                                "manifest": None, "findings": list(breach.problems)}
+                            outcome["lifecycle"] = {
+                                "recorded": True,
+                                "stage": lifecycle["stage"],
+                                "status": lifecycle["status"],
+                                "authority": "restored from seal",
+                            }
+                        else:
+                            outcome["lifecycle"] = {
+                                "recorded": True,
+                                "stage": lifecycle["stage"],
+                                "status": lifecycle["status"],
+                            }
             except Exception as error:  # noqa: BLE001 - the record, not the run
                 outcome["lifecycle"] = {"recorded": False, "error": str(error)}
             finally:
