@@ -6613,7 +6613,9 @@ person's own choice and outside this claim.
   governance, in places the code names. The project folder the launchers pass
   (`--project-dir "%USERPROFILE%\ForgeProject"`, in the shortcut and in
   `Forge.cmd`) holds the capsule store (`capsule\`: `capsule.json`,
-  `experience.json`, the store marker and the store's own git repository), what a
+  `experience.json`, the produced-application manifest `pam.json` once an
+  accepted build has one (A-051), the store marker and the store's own git
+  repository), what a
   provider built beside it, and, under a governed subject's root (the project
   folder, for a build over the person's project), the build evidence in
   `.nornyx\runs`, the Nornyx runtime lock in `.nornyx\runtime` and the approval
@@ -7674,7 +7676,10 @@ Currency stays `not_independently_anchored`.
    check over the forms listed above, and no more. What code computes at run
    time -- a name assembled and looked up some other way, a code object, an
    encoded string -- is beyond any static scan, and this change does not try
-   to chase it. That the application runs without Forge is established only
+   to chase it. The name resolution is the verifier's own alias map, one per
+   file, built without regard to statement order or scope, so a name rebound
+   elsewhere in the file can resolve to something other than what runs at a
+   given call. That the application runs without Forge is established only
    at execution time, by running it from a copy in which Forge is not
    importable, and this change executes nothing.
 8. **That the standard-library list is every interpreter's.** The static check
