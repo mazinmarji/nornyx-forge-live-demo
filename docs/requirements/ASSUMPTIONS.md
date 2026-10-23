@@ -7601,6 +7601,21 @@ before it offers anything.
    Forge wrote. A version-1 seal with exactly its two files is still read, as
    sealing no manifest, so no store protected before this change becomes
    TAMPERED; the next commit Forge makes rewrites it as version 2.
+   **Every read of an authority file or of the seal fails closed.** The seal
+   check, the snapshot a seal is taken from, the seal record, both loads and
+   the handoff gate read through one bounded descriptor and treat bytes that
+   are not UTF-8 (UTF-16 included), a directory or link where the file
+   belongs, a file over the bound, and a file that vanishes or is replaced
+   between the look and the read as a finding -- a seal problem with a
+   snapshot to restore from, an unreadable seal, or the store's own refusal --
+   never as an exception; JSON with a repeated key is refused rather than
+   resolved. A byte-order mark, a NUL, a truncation or an empty file differ
+   from the sealed text, or are not one JSON document, and are refused the
+   same way. Before this, an undecodable or non-regular `capsule.json` or
+   `experience.json` raised out of the seal check exactly as `pam.json` did;
+   the rule covers all three (Codex P1 4362912628). The comparison keeps its
+   meaning: the sealed text is compared with the file's text, strictly
+   decoded, with the universal newlines `read_text` gave it.
 3. **Issuance checks provenance, statically.** A manifest is issued only when
    Forge's own read of the project reproduces the subject digest and file count
    the verifier accepted, the verifier record names the trusted verifier and

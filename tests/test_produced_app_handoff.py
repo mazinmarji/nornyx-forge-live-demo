@@ -734,6 +734,164 @@ def test_the_neutralisation_takes_the_manifest_with_the_other_authority(tmp_path
 
 
 # ---------------------------------------------------------------------------
+# Unreadable authority and seal bytes fail closed (Codex P1 4362912628 and
+# its class): every shape is a seal problem or a refusal, never an exception
+# ---------------------------------------------------------------------------
+
+SHAPES = ("invalid UTF-8", "UTF-8 BOM", "UTF-16", "NUL bytes", "truncated JSON",
+          "duplicate keys", "huge", "empty", "directory", "link", "vanishes")
+
+
+def _plant(path: Path, shape: str, monkeypatch: pytest.MonkeyPatch, limit_name: str,
+           outside: Path) -> None:
+    """Put `shape` where the file at `path` was. `limit_name` is the module
+    constant bounding a read of this kind of file, lowered here to just above
+    the original's size so a padded copy exceeds it. A link points at a copy
+    in `outside`, beyond the project."""
+    original = path.read_bytes()
+    if shape == "invalid UTF-8":
+        path.write_bytes(b"\xff\xfe\xfa" + original)
+    elif shape == "UTF-8 BOM":
+        path.write_bytes(b"\xef\xbb\xbf" + original)
+    elif shape == "UTF-16":
+        path.write_bytes(original.decode("utf-8").encode("utf-16"))
+    elif shape == "NUL bytes":
+        path.write_bytes(original[:-1] + b"\x00\n")
+    elif shape == "truncated JSON":
+        path.write_bytes(original[: len(original) // 2])
+    elif shape == "duplicate keys":
+        # The document's first key repeated ahead of the real one: a parser
+        # that keeps the last value reads the original document back unchanged.
+        first = sorted(json.loads(original))[0]
+        path.write_bytes(b'{' + json.dumps(first).encode() + b':null,' + original[1:])
+    elif shape == "huge":
+        monkeypatch.setattr(store_module, limit_name, len(original) + 8, raising=False)
+        path.write_bytes(original + b" " * 64)
+    elif shape == "empty":
+        path.write_bytes(b"")
+    elif shape == "directory":
+        path.unlink()
+        path.mkdir()
+    elif shape == "link":
+        outside.mkdir(parents=True, exist_ok=True)
+        copy = outside / path.name
+        copy.write_bytes(original)
+        path.unlink()
+        try:
+            os.symlink(copy, path)
+        except OSError:  # no privilege for a symlink on this host: a directory instead
+            path.mkdir()
+    elif shape == "vanishes":
+        # Removed between the check and the read, wherever the reader checks.
+        real_exists, real_open = Path.exists, os.open
+
+        def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+            if self == path and real_exists(self):
+                self.unlink()
+                return True
+            return real_exists(self, *args, **kwargs)
+
+        def opened(target: Any, flags: int, *args: Any) -> int:
+            if Path(target) == path and path.exists():
+                path.unlink()
+            return real_open(target, flags, *args)
+
+        monkeypatch.setattr(Path, "exists", exists)
+        monkeypatch.setattr(store_module.os, "open", opened)
+
+
+@pytest.mark.parametrize("name", ["pam.json", "capsule.json", "experience.json"])
+@pytest.mark.parametrize("shape", SHAPES)
+def test_an_unreadable_authority_file_is_a_seal_problem_and_restorable(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, shape: str):
+    """Every shape at every authority file is the ordinary refusal with a
+    snapshot to restore from -- never an exception out of the seal check -- and
+    the restore puts the sealed bytes back. The handoff gate refuses it too."""
+    store, project, _ = _handed_off(tmp_path)
+    sealed = store.sealed()
+    with monkeypatch.context() as patch:
+        _plant(store.root / name, shape, patch, "_AUTHORITY_READ_LIMIT", tmp_path / "outside")
+        with pytest.raises(CapsuleSealError) as refused:
+            store.load()
+        readiness = _assess(store, project)
+    assert any(name in problem for problem in refused.value.problems), refused.value.problems
+    assert readiness.offered is False and readiness.reasons[0].startswith(
+        "the authority store is not trusted"), readiness
+    store.restore(sealed)
+    assert store.seal_problems(store.sealed()) == []
+    assert _assess(store, project).offered is True
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_an_unreadable_seal_record_is_a_tamper_finding(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """The seal itself, in every shape: not a seal this adapter wrote, refused
+    as a finding on every route and at the handoff gate, never an exception."""
+    store, project, _ = _handed_off(tmp_path)
+    with monkeypatch.context() as patch:
+        _plant(store.seal_path(), shape, patch, "_SEAL_READ_LIMIT", tmp_path / "outside")
+        with pytest.raises(CapsuleSealUnreadable):
+            store.load()
+        readiness = _assess(store, project)
+    assert readiness.offered is False and readiness.reasons[0].startswith(
+        "the authority store is not trusted"), readiness
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_an_unreadable_authority_file_in_an_unsealed_store_is_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """A store with no seal (a domain store, or one from before sealing): the
+    load refuses by the store's own error, never an exception of another kind."""
+    store = CapsuleStore(tmp_path / "capsule")
+    store.initialize(create_document("proj-1", "Portal", CASEY, AT),
+                     experience=start_experience(CASEY, AT))
+    for name, load in (("capsule.json", store.load), ("experience.json", store.load_experience)):
+        with monkeypatch.context() as patch:
+            path = store.root / name
+            original = path.read_bytes()
+            _plant(path, shape, patch, "_AUTHORITY_READ_LIMIT", tmp_path / "outside")
+            with pytest.raises(CapsuleStoreError):
+                load()
+        if path.is_symlink():
+            path.unlink()
+        elif path.is_dir():
+            path.rmdir()
+        path.write_bytes(original)
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+def test_bytes_that_cannot_be_sealed_are_refused_and_the_commit_restorable(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):
+    """A lingering writer leaves `shape` at pam.json between Forge's commit and
+    its seal. Bytes the seal cannot represent are refused as the store's error,
+    bytes it can are not the rendered ones; either way the manifest's save
+    raises the restorable finding carrying the seal its commit followed."""
+    store = _store(tmp_path)
+    before = store.sealed()
+    _, _, text = _handed_off(tmp_path / "specimen")
+    real = CapsuleStore.seal
+    fired: list[str] = []
+    state = fail(store.load_experience(), SYSTEM_ACTOR, "x", AT)
+    with monkeypatch.context() as patch:
+
+        def seal(self: CapsuleStore):
+            if not fired and (self.root / "pam.json").exists():
+                fired.append(shape)
+                _plant(self.root / "pam.json", shape, patch, "_AUTHORITY_READ_LIMIT",
+                       tmp_path / "outside")
+            return real(self)
+
+        patch.setattr(CapsuleStore, "seal", seal)
+        with pytest.raises(CapsuleSealError) as raised:
+            store.save_produced_application(state, text, "reached GOVERN")
+    assert fired and raised.value.snapshot == before
+    assert any("pam.json" in problem for problem in raised.value.problems), raised.value.problems
+    store.restore(raised.value.snapshot)
+    assert store.seal_problems(store.sealed()) == []
+    assert store.sealed().files["pam.json"] is None
+
+
+# ---------------------------------------------------------------------------
 # Reading by held descriptor, and nothing executed
 # ---------------------------------------------------------------------------
 

@@ -12,7 +12,11 @@
   and saves it in the same commit as the GOVERN transition; the sealed bytes
   are then compared with the rendered ones. It is the store's third authority
   file: the seal schema moves to version 2, and a version-1 seal is still read
-  as sealing no manifest, so no protected store becomes TAMPERED. A static
+  as sealing no manifest, so no protected store becomes TAMPERED. Every read
+  of an authority file or of the seal now fails closed: undecodable, oversized,
+  non-regular or vanishing content is a seal finding or the store's refusal,
+  never an exception, for `capsule.json` and `experience.json` as much as for
+  `pam.json` (the same defect predated the manifest). A static
   check over the produced sources as bytes requires `app/__main__.py` present
   and parsing, standard-library imports only, no import of `nornyx_forge`, and
   no reference at all to a dynamic import or execution primitive (`__import__`,

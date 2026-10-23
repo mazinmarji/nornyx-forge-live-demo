@@ -1008,6 +1008,110 @@ def _write_fresh(path: Path, text: str) -> None:
         raise
 
 
+#: The largest authority file, and the largest seal record (which holds all
+#: three), that a read accepts. Far above anything Forge writes; a bound, so an
+#: oversized file is a finding rather than an unbounded read.
+_AUTHORITY_READ_LIMIT = 16 * 1024 * 1024
+_SEAL_READ_LIMIT = 4 * _AUTHORITY_READ_LIMIT
+
+
+def _authority_text(path: Path, limit: int) -> tuple[str | None, str | None]:
+    """The text of the authority file (or seal record) at `path`, read the way
+    every reader in this module reads one, failing closed (Codex P1 4362912628).
+
+    Returns `(text, None)`; `(None, None)` when nothing is at the name; or
+    `(None, problem)`. Never raises for what is on disk: a directory, a link or
+    another non-regular entry where the file belongs, a file over `limit`, a
+    file that vanishes or is replaced between the look and the read, and bytes
+    that are not UTF-8 are each a PROBLEM the caller reports through its own
+    refusal. Before this, `read_text` raised `UnicodeDecodeError`,
+    `IsADirectoryError` or `FileNotFoundError` straight out of the seal check
+    -- for `capsule.json` and `experience.json` as much as for `pam.json`.
+
+    One descriptor, judged by itself (the `read_held` discipline): `lstat`, an
+    open that does not follow a link where the platform can refuse one, and
+    `fstat` must be the same regular file. The text is decoded strictly and
+    then given universal newlines, which is exactly what `read_text` returned,
+    so every comparison the module already made keeps its meaning.
+    """
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"cannot be inspected ({type(exc).__name__})"
+    if not stat.S_ISREG(status.st_mode) or (
+            getattr(status, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+        return None, "is not a regular file"
+    if status.st_size > limit:
+        return None, f"is larger than {limit} bytes"
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_BINARY", 0))
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None, "vanished while it was read"
+    except OSError as exc:
+        return None, f"cannot be opened ({type(exc).__name__})"
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (
+                (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)):
+            return None, "changed while it was read"
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                return None, f"is larger than {limit} bytes"
+    except OSError as exc:
+        return None, f"cannot be read ({type(exc).__name__})"
+    finally:
+        os.close(descriptor)
+    try:
+        text = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "is not UTF-8 text"
+    return text.replace("\r\n", "\n").replace("\r", "\n"), None
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object whose keys are unique. A repeated key is refused rather
+    than resolved, because a parser that keeps the last value and one that
+    keeps the first would read two different documents from the same bytes."""
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("a key is repeated")
+    return dict(pairs)
+
+
+def _json_document(path: Path, limit: int | None = None) -> tuple[Any, str | None]:
+    """`_authority_text`, parsed as one JSON value with unique keys: `(value,
+    None)` or `(None, problem)`. Absence is a problem here; the callers that
+    allow it ask `_authority_text` themselves. The bound defaults to the
+    authority bound as it stands when called."""
+    text, problem = _authority_text(path, _AUTHORITY_READ_LIMIT if limit is None else limit)
+    if problem is not None:
+        return None, problem
+    if text is None:
+        return None, "is missing"
+    return _parsed_json(text)
+
+
+def _parsed_json(text: str) -> tuple[Any, str | None]:
+    """One JSON value with unique keys, or the problem. A byte-order mark,
+    a NUL, a truncation or trailing data are all `ValueError` here."""
+    try:
+        return json.loads(text, object_pairs_hook=_unique_object), None
+    except ValueError as exc:
+        return None, f"is not one JSON document ({str(exc)[:120]})"
+
+
 def _git_text(raw: bytes) -> str | None:
     """git's bytes as text, or None when they cannot be decoded.
 
@@ -1144,10 +1248,9 @@ class CapsuleStore:
         path = self.root / _CAPSULE_FILE
         if not path.exists():
             raise CapsuleStoreError(f"{self.root} contains no capsule document")
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise CapsuleStoreError(f"capsule document is unreadable: {exc}") from exc
+        document, problem = _json_document(path)
+        if problem is not None:
+            raise CapsuleStoreError(f"capsule document is unreadable: {problem}")
         validate_document(document)      # CapsuleValidationError on breach
         verify_integrity(document)       # CapsuleTamperError on breach
         return document
@@ -1206,10 +1309,9 @@ class CapsuleStore:
         path = self.root / _EXPERIENCE_FILE
         if not path.exists():
             raise CapsuleStoreError(f"{self.root} contains no experience state")
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise CapsuleStoreError(f"experience state is unreadable: {exc}") from exc
+        state, problem = _json_document(path)
+        if problem is not None:
+            raise CapsuleStoreError(f"experience state is unreadable: {problem}")
         validate_experience(state)
         verify_experience(state)
         return state
@@ -1297,7 +1399,13 @@ class CapsuleStore:
         self._mark_sealed()
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
-        sealed = self.seal()
+        try:
+            sealed = self.seal()
+        except CapsuleStoreError as exc:
+            # What a lingering writer left could not even be sealed: the same
+            # finding as bytes sealed in place of the rendered ones, restorable
+            # to the seal this commit followed.
+            raise CapsuleSealError([str(exc)], before) from exc
         if sealed is None:  # pragma: no cover - seal_dir is set, checked above
             raise CapsuleStoreError("the store has no seal directory")
         problems = [
@@ -1529,11 +1637,20 @@ class CapsuleStore:
             return
 
     def snapshot(self) -> AuthoritySnapshot:
-        """The authority as it stands on disk right now: HEAD and file bytes."""
+        """The authority as it stands on disk right now: HEAD and file bytes.
+
+        A file that cannot be read as an authority file is refused as the
+        store's error rather than raised as whatever the read hit: a seal is
+        never taken of bytes it cannot represent, and the newest commit then
+        stands unsealed, which the next load reads as a breach to restore."""
         files: dict[str, str | None] = {}
         for name in _AUTHORITY_FILES:
-            path = self.root / name
-            files[name] = path.read_text(encoding="utf-8") if path.exists() else None
+            text, problem = _authority_text(self.root / name, _AUTHORITY_READ_LIMIT)
+            if problem is not None:
+                raise CapsuleStoreError(
+                    f"{name} {problem}, so the store's authority cannot be sealed; the "
+                    "newest commit stands unsealed and will read as a breach until resealed")
+            files[name] = text
         return AuthoritySnapshot(revision=self.revision(), files=files)
 
     def seal(self) -> AuthoritySnapshot | None:
@@ -1574,15 +1691,17 @@ class CapsuleStore:
         """Forge's seal for this store, or None when no seal was ever written
         (a store from before sealing existed, or a domain-test store)."""
         path = self.seal_path()
-        if path is None or not path.exists():
+        if path is None:
             return None
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        text, problem = _authority_text(path, _SEAL_READ_LIMIT)
+        if text is None and problem is None:
+            return None
+        record, problem = (None, problem) if text is None else _parsed_json(text)
+        if problem is not None:
             raise CapsuleSealUnreadable(
-                f"the authority seal at {path} is unreadable: {exc}; the store cannot be "
-                "held to its anchor"
-            ) from exc
+                f"the authority seal at {path} is unreadable: it {problem}; the store "
+                "cannot be held to its anchor"
+            )
         # TWO SCHEMAS ARE READ AND EACH HAS EXACTLY ONE SHAPE. A version-1
         # seal with exactly the two files it ever sealed reads as sealing the
         # manifest ABSENT -- the state such a store is in -- and a version-1
@@ -1678,16 +1797,19 @@ class CapsuleStore:
         if not marker.exists():
             problems.append("the seal marker is missing")
         else:
-            try:
-                named = json.loads(marker.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                named = None
+            named, _unreadable = _json_document(marker)
             if not isinstance(named, dict) or named.get("seal") != self.seal_ident():
                 problems.append("the seal marker does not name this store's seal")
+        # EVERY READ HERE IS A FINDING OR A MATCH, NEVER AN EXCEPTION (Codex P1
+        # 4362912628): bytes that are not UTF-8, a directory or a link where
+        # the file belongs, an oversized file, a file that vanishes between
+        # the look and the read -- each is a problem naming the file, so the
+        # caller takes its ordinary refuse-and-restore path.
         for name, sealed_text in snapshot.files.items():
-            path = self.root / name
-            current = path.read_text(encoding="utf-8") if path.exists() else None
-            if current != sealed_text:
+            current, problem = _authority_text(self.root / name, _AUTHORITY_READ_LIMIT)
+            if problem is not None:
+                problems.append(f"{name} {problem}")
+            elif current != sealed_text:
                 problems.append(f"{name} differs from the sealed bytes")
         return problems
 
