@@ -648,7 +648,7 @@ TRANSPORT_CASES = {
 
 
 def _stub(tmp_path: Path) -> Path:
-    path = tmp_path / "stub gate ü" / "stub-gate.ps1"
+    path = tmp_path / "stub gate \u00fc" / "stub-gate.ps1"
     path.parent.mkdir()
     path.write_text(STUB, encoding="ascii", newline="\r\n")
     return path

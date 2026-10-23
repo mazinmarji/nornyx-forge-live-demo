@@ -156,7 +156,7 @@ GATE_ENVIRONMENT_INHERITED = (
 WINDOWS_COMMAND_LINE_LIMIT = 32767
 
 #: The characters PowerShell reads as the dash that opens a parameter name.
-POWERSHELL_DASHES = ("-", "–", "—", "―")
+POWERSHELL_DASHES = ("-", "\u2013", "\u2014", "\u2015")
 
 _ROLE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 
