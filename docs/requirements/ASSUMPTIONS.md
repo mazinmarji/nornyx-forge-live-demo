@@ -7615,7 +7615,20 @@ before it offers anything.
    `experience.json` raised out of the seal check exactly as `pam.json` did;
    the rule covers all three (Codex P1 4362912628). The comparison keeps its
    meaning: the sealed text is compared with the file's text, strictly
-   decoded, with the universal newlines `read_text` gave it.
+   decoded, with the universal newlines `read_text` gave it. JSON that parses
+   is still held value by value where Forge alone writes it. The seal record
+   must be exactly a seal this adapter writes: the revision a full commit,
+   the store a non-empty string, each sealed text absent or one JSON document
+   with unique keys, the manifest reference the digest of the sealed
+   manifest, and no `NaN`, `Infinity` or string that cannot be encoded as
+   UTF-8 anywhere in it -- an escaped lone surrogate parsed into the manifest
+   text used to raise out of the seal check, and one in the revision or a
+   sealed text used to raise out of a restoration (Codex P2 4363826001). The
+   manifest's own validation refuses the same values, and turns any type or
+   encoding error into its refusal. The capsule's and the lifecycle's values
+   are not held to the encoding rule: they arrive from requests, Forge writes
+   them escaped, and refusing one there would make a store Forge wrote
+   unreadable instead of refusing a damaged seal.
 3. **Issuance checks provenance, statically.** A manifest is issued only when
    Forge's own read of the project reproduces the subject digest and file count
    the verifier accepted, the verifier record names the trusted verifier and

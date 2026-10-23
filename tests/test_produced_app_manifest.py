@@ -210,6 +210,48 @@ def test_the_validator_refuses_bytes_that_are_not_the_canonical_text():
         assert label
 
 
+#: JSON that parses and holds a value of the wrong kind (Codex P2 4363826001
+#: and its class). Each is re-encoded canonically, so the refusal measured is
+#: the value's, not the encoding's; a surrogate travels as its `\u` escape.
+SEMANTIC = {
+    "a lone surrogate in a reason": _set(("provider", "eligibility", "reason"), "ok \ud800"),
+    "a reversed surrogate pair in a profile id": _set(("verifier", "gate_profile", "id"),
+                                                      "\udc00\ud800"),
+    "a lone surrogate in a listed path": lambda d: d["subject"]["files"].update(
+        {"app/\ud800.py": FILES["BRD.md"]}),
+    "a lone surrogate in the forge version": _set(("forge", "version"), "0.\ud800"),
+    "a lone surrogate in the store directory": _set(("store_directory", ), "cap\ud800"),
+    "NaN as the file count": _set(("subject", "file_count"), float("nan")),
+    "Infinity as the file count": _set(("subject", "file_count"), float("inf")),
+    "a huge integer as the file count": _set(("subject", "file_count"), 10 ** 400),
+    "NaN as eligible": _set(("provider", "eligibility", "eligible"), float("nan")),
+    "Infinity as a digest": _set(("verifier", "digest"), float("inf")),
+    "an empty platform": _set(("provider", "eligibility", "platform"), ""),
+    "an empty forge version": _set(("forge", "version"), ""),
+    "an empty gate profile id": _set(("verifier", "gate_profile", "id"), ""),
+    "a short file digest": _set(("subject", "files", "app/cases.py"), "sha256:abc"),
+    "a non-hex file digest": _set(("subject", "files", "app/cases.py"), "sha256:" + "z" * 64),
+    "an upper-case contract digest": _set(("generated_contract", "digest"),
+                                          "sha256:" + "A" * 64),
+    "null where a string belongs": _set(("forge", "version"), None),
+    "a number where a string belongs": _set(("provider", "eligibility", "platform"), 7),
+    "a list where an object belongs": _set(("provider", ), []),
+    "an object where a string belongs": _set(("store_directory", ), {}),
+    "a string where a bool belongs": _set(("provider", "eligibility", "eligible"), "true"),
+    "a list where a list of strings belongs": _set(("application", "files"), [[]]),
+    "an extra nested key": _set(("verifier", "gate_profile", "extra"), 1),
+    "a missing nested key": _drop(("capsule", "sealed_revision")),
+}
+
+
+@pytest.mark.parametrize("label", sorted(SEMANTIC))
+def test_the_validator_refuses_a_value_of_the_wrong_kind(label: str):
+    """Every cell is a `CapsuleValidationError`, never another exception."""
+    text = _rewritten(pam.render_pam(**_arguments()), SEMANTIC[label])
+    with pytest.raises(CapsuleValidationError):
+        pam.validate_pam(text)
+
+
 # ---------------------------------------------------------------------------
 # Equalities with the owners of the formats this module copies
 # ---------------------------------------------------------------------------

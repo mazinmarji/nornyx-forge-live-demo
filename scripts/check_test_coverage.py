@@ -857,18 +857,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # by editing it; and the editor's refusal kept across the refresh, marking
     # only the editor's own proposal.
     "tests/test_requirements_entry.py": 142,
-    # A-051's produced-application manifest, as pure domain: 85 collected at
-    # introduction, floor at band(85) = 77. Rendering and the reference
+    # A-051's produced-application manifest, as pure domain: 109 collected at
+    # introduction, floor at band(109) = 99. Rendering and the reference
     # computed from the rendered text, every field the validator refuses,
     # the copies held equal to their owners, and the static entry-point and
     # import check over bytes, running nothing.
-    "tests/test_produced_app_manifest.py": 77,
-    # A-051's store, build and handoff: 105 collected at introduction, floor at
-    # band(105) = 95. Seal v2 and v1 still read, the one commit and the write
+    "tests/test_produced_app_manifest.py": 99,
+    # A-051's store, build and handoff: 141 collected at introduction, floor at
+    # band(141) = 127. Seal v2 and v1 still read, the one commit and the write
     # check, the reference journey and the two the static check
     # refuses, issuance's refusals, the gate never offered in simulation, held
     # descriptors, no process started, and the reference app unshipped.
-    "tests/test_produced_app_handoff.py": 95,
+    "tests/test_produced_app_handoff.py": 127,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2236,23 +2236,23 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # slack stays 532.
 #
 # A-051 ADDS TWO MODULES, measured from a fresh collection:
-# tests/test_produced_app_manifest.py collects 85 (floor band(85) = 77) and
-# tests/test_produced_app_handoff.py collects 105 (floor band(105) = 95). No other
-# module's count moves. 6162 collect across 139 modules; the module-floor sum
-# rises by 172 to 5612 and the aggregate follows to 5620, keeping the
-# same 8 above it; band(n) 5375 -> 5546, the working room below the floor
-# 524 -> 542, and the slack 532 -> 550. NO SKIP IS ADDED, and the
+# tests/test_produced_app_manifest.py collects 109 (floor band(109) = 99) and
+# tests/test_produced_app_handoff.py collects 141 (floor band(141) = 127). No other
+# module's count moves. 6222 collect across 139 modules; the module-floor sum
+# rises by 226 to 5666 and the aggregate follows to 5674, keeping the
+# same 8 above it; band(n) 5375 -> 5600, the working room below the floor
+# 524 -> 548, and the slack 532 -> 556. NO SKIP IS ADDED, and the
 # windows-runtime job's floor is untouched: it names neither new module. The
 # rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6162   (139 modules)
-#     sum of the module floors    5612
-#     band(6162) = ceil(0.9*n)    5546
-#     MINIMUM_COLLECTED           5620
+#     collected across tests/     6222   (139 modules)
+#     sum of the module floors    5666
+#     band(6222) = ceil(0.9*n)    5600
+#     MINIMUM_COLLECTED           5674
 #     above the module sum          8
-#     below what collects         542
+#     below what collects         548
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2474,7 +2474,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 550 in total, and the aggregate refuses
+# per-module bands already grant 556 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2743,7 +2743,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5620
+MINIMUM_COLLECTED = 5674
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

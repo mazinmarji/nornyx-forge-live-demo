@@ -859,6 +859,101 @@ def test_an_unreadable_authority_file_in_an_unsealed_store_is_refused(
         path.write_bytes(original)
 
 
+#: A seal record that parses and holds a value of the wrong kind (Codex P2
+#: 4363826001 named the first). Each change is applied to the parsed record,
+#: which is written back with `\u` escapes, so a surrogate parses back intact.
+SEAL_VALUES = {
+    "a lone surrogate in the manifest": lambda r: r["files"].update(
+        {"pam.json": r["files"]["pam.json"][:-2] + "\ud800}\n"}),
+    "a reversed surrogate pair in the manifest": lambda r: r["files"].update(
+        {"pam.json": r["files"]["pam.json"][:-2] + "\udc00\ud800}\n"}),
+    "a lone surrogate in the sealed capsule": lambda r: r["files"].update(
+        {"capsule.json": r["files"]["capsule.json"][:-2] + "\ud800}\n"}),
+    "a lone surrogate in the revision": lambda r: r.update(revision="\ud800" * 40),
+    "a lone surrogate in the store": lambda r: r.update(store=r["store"] + "\ud800"),
+    "a non-hex revision": lambda r: r.update(revision="z" * 40),
+    "a short revision": lambda r: r.update(revision="abc"),
+    "an empty revision": lambda r: r.update(revision=""),
+    "a number as the revision": lambda r: r.update(revision=7),
+    "NaN as the revision": lambda r: r.update(revision=float("nan")),
+    "a huge integer as the revision": lambda r: r.update(revision=10 ** 400),
+    "null as the revision": lambda r: r.update(revision=None),
+    "a list as the revision": lambda r: r.update(revision=[]),
+    "a number as the store": lambda r: r.update(store=7),
+    "an empty store": lambda r: r.update(store=""),
+    "a number as a sealed file": lambda r: r["files"].update({"capsule.json": 7}),
+    "a list as a sealed file": lambda r: r["files"].update({"capsule.json": []}),
+    "an object as a sealed file": lambda r: r["files"].update({"capsule.json": {}}),
+    "an empty sealed file": lambda r: r["files"].update({"capsule.json": ""}),
+    "a sealed file that is not JSON": lambda r: r["files"].update({"experience.json": "{"}),
+    "a sealed file with a repeated key": lambda r: r["files"].update(
+        {"experience.json": '{"stage":"x",' + r["files"]["experience.json"][1:]}),
+    "a list as the files": lambda r: r.update(files=[]),
+    "null as the files": lambda r: r.update(files=None),
+    "a number as the manifest reference": lambda r: r.update(pam=7),
+    "Infinity as the manifest reference": lambda r: r.update(pam=float("inf")),
+    "an empty manifest reference": lambda r: r.update(pam=""),
+    "a non-hex manifest reference": lambda r: r.update(pam="pam/" + "z" * 64),
+    "an object as the manifest reference": lambda r: r.update(pam={}),
+    "a bool as the schema": lambda r: r.update(schema=True),
+    "NaN as the schema": lambda r: r.update(schema=float("nan")),
+    "an extra key": lambda r: r.update(extra=1),
+    "a missing key": lambda r: r.pop("revision"),
+    "an extra sealed file": lambda r: r["files"].update({"other.json": None}),
+    "a missing sealed file": lambda r: r["files"].pop("experience.json"),
+}
+
+
+@pytest.mark.parametrize("label", sorted(SEAL_VALUES))
+def test_a_seal_record_holding_a_value_of_the_wrong_kind_is_refused(tmp_path: Path, label: str):
+    """The seal parses and is still not one Forge wrote: `CapsuleSealUnreadable`
+    on the load path, and "not offered" at the handoff gate -- never an
+    exception of another kind from either."""
+    store, project, _ = _handed_off(tmp_path)
+    record = json.loads(store.seal_path().read_text(encoding="utf-8"))
+    SEAL_VALUES[label](record)
+    store.seal_path().write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n",
+                                 encoding="utf-8", newline="")
+    with pytest.raises(CapsuleSealUnreadable):
+        store.load()
+    readiness = _assess(store, project)
+    assert readiness.offered is False and readiness.reasons[0].startswith(
+        "the authority store is not trusted"), readiness
+
+
+def test_a_store_forge_wrote_with_an_escaped_surrogate_in_its_content_stays_readable(
+        tmp_path: Path):
+    """The strict value rule is the seal record's and the manifest's, not the
+    capsule's: a proposal whose text holds a lone surrogate is accepted by the
+    capsule, written escaped, sealed, and read back, so the rule refuses a
+    damaged seal without making a store Forge wrote unreadable."""
+    from nornyx_forge.capsule import propose
+
+    document = create_document("proj-1", "Portal", CASEY, AT)
+    document, _ = propose(document, "intent", "need \ud800", Actor("model", "m"), AT)
+    store = CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals")
+    store.initialize(document, experience=start_experience(CASEY, AT))
+    assert store.sealed() is not None
+    assert store.load()["proposed"] and store.seal_problems(store.sealed()) == []
+
+
+def test_a_manifest_holding_unencodable_text_is_not_offered(tmp_path: Path):
+    """A manifest sealed consistently -- committed, sealed by Forge's own
+    `seal()` -- whose reason field holds a lone surrogate: the gate refuses it
+    through the manifest's own validation, never offers it, never raises."""
+    store, project, text = _handed_off(tmp_path)
+    document = json.loads(text)
+    document["provider"]["eligibility"]["reason"] = "ok \ud800"
+    damaged = canonical_json(document) + "\n"
+    (store.root / "pam.json").write_text(damaged, encoding="utf-8", newline="")
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit",
+                    "--quiet", "-am", "damaged"], cwd=store.root, check=True)
+    store.seal()
+    readiness = _assess(store, project)
+    assert readiness.offered is False and readiness.reasons, readiness
+    assert readiness.reasons[0].startswith("produced-application manifest:"), readiness
+
+
 @pytest.mark.parametrize("shape", SHAPES)
 def test_bytes_that_cannot_be_sealed_are_refused_and_the_commit_restorable(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str):

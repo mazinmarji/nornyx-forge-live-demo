@@ -1103,13 +1103,96 @@ def _json_document(path: Path, limit: int | None = None) -> tuple[Any, str | Non
     return _parsed_json(text)
 
 
-def _parsed_json(text: str) -> tuple[Any, str | None]:
-    """One JSON value with unique keys, or the problem. A byte-order mark,
-    a NUL, a truncation or trailing data are all `ValueError` here."""
+def _no_constant(name: str) -> Any:
+    """`NaN`, `Infinity` and `-Infinity` are not JSON, and Forge never writes
+    them: a document carrying one is refused rather than read as a float."""
+    raise ValueError(f"{name} is not a JSON value")
+
+
+def _unencodable(value: Any) -> bool:
+    """Does any string in `value` -- a key or a value, at any depth -- fail to
+    encode as UTF-8? An escaped lone or reversed surrogate (`\\ud800`) parses
+    into exactly such a string, and every later use that encodes it raises
+    (Codex P2 4363826001)."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
+def _parsed_json(text: str, *, strict: bool = False) -> tuple[Any, str | None]:
+    """One JSON value with unique keys -- or the problem. A byte-order mark, a
+    NUL, a truncation, trailing data and an integer too long to convert are
+    all `ValueError` here.
+
+    `strict`, for the seal record Forge alone writes, also refuses `NaN` and
+    `Infinity` and any string, key or value, that cannot be encoded as UTF-8.
+    It is NOT applied to the capsule document or the lifecycle: their values
+    arrive from requests, Forge writes them escaped, and refusing one there
+    would make a store Forge wrote unreadable rather than refuse a forgery.
+    """
     try:
-        return json.loads(text, object_pairs_hook=_unique_object), None
-    except ValueError as exc:
+        value = json.loads(text, object_pairs_hook=_unique_object,
+                           **({"parse_constant": _no_constant} if strict else {}))
+    except (ValueError, RecursionError) as exc:
         return None, f"is not one JSON document ({str(exc)[:120]})"
+    if strict and _unencodable(value):
+        return None, "holds text that cannot be encoded as UTF-8"
+    return value, None
+
+
+_FULL_COMMIT = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+
+def _seal_record_shaped(record: Any) -> bool:
+    """Is `record` exactly a seal this adapter writes, value by value?
+
+    Two schemas, each with one shape. Version 1: exactly `schema`, `store`,
+    `revision` and `files`, the files exactly the first two. Version 2: those
+    and `pam`, the files exactly all three, and `pam` the reference of the
+    sealed manifest bytes (or None with no manifest). In both: the store a
+    non-empty string, the revision a full commit, and each sealed file None
+    or one JSON document with unique keys. The caller has parsed the record
+    strictly, so every string in it -- the sealed texts included -- is
+    encodable, and `pam_reference` and a restoration's writes cannot raise.
+    """
+    if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+        return False
+    files = record["files"]
+    if record.get("schema") == _SEAL_SCHEMA_V1:
+        if set(record) != {"schema", "store", "revision", "files"} or (
+                set(files) != set(_SEAL_V1_FILES)):
+            return False
+    elif record.get("schema") == _SEAL_SCHEMA:
+        if set(record) != {"schema", "store", "revision", "files", "pam"} or (
+                set(files) != set(_AUTHORITY_FILES)):
+            return False
+    else:
+        return False
+    if not isinstance(record["store"], str) or not record["store"]:
+        return False
+    if not isinstance(record["revision"], str) or not _FULL_COMMIT.match(record["revision"]):
+        return False
+    for text in files.values():
+        if text is None:
+            continue
+        if not isinstance(text, str) or _parsed_json(text)[1] is not None:
+            return False
+    if record["schema"] == _SEAL_SCHEMA:
+        manifest = files[_PAM_FILE]
+        if record["pam"] != (None if manifest is None else pam_reference(manifest)):
+            return False
+    return True
 
 
 def _git_text(raw: bytes) -> str | None:
@@ -1696,7 +1779,7 @@ class CapsuleStore:
         text, problem = _authority_text(path, _SEAL_READ_LIMIT)
         if text is None and problem is None:
             return None
-        record, problem = (None, problem) if text is None else _parsed_json(text)
+        record, problem = (None, problem) if text is None else _parsed_json(text, strict=True)
         if problem is not None:
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} is unreadable: it {problem}; the store "
@@ -1711,33 +1794,24 @@ class CapsuleStore:
         # records of the manifest disagree is damaged, not trusted for either.
         # That agreement is a consistency check on the seal file; the seal's
         # trust is still Forge-owned persistence and nothing more (A-022).
-        if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+        # EVERY VALUE IS CHECKED BEFORE IT IS USED (Codex P2 4363826001). The
+        # parse above already refused a string that cannot be encoded, so
+        # `pam_reference` and every later write of these texts can encode
+        # them; here each value must also be of its one kind: the revision a
+        # full commit, each sealed file absent or one JSON document. Anything
+        # this misses that still raises a type or encoding error is caught
+        # below and refused the same way, never let out of the seal check.
+        try:
+            shaped = _seal_record_shaped(record)
+        except (TypeError, ValueError, UnicodeError):
+            shaped = False
+        if not shaped:
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} is not a seal this adapter wrote"
             )
-        files = record["files"]
-        if record.get("schema") == _SEAL_SCHEMA_V1:
-            shaped = (set(record) == {"schema", "store", "revision", "files"}
-                      and set(files) == set(_SEAL_V1_FILES))
-            if shaped:
-                files = {**files, _PAM_FILE: None}
-        else:
-            manifest = files.get(_PAM_FILE)
-            shaped = (
-                record.get("schema") == _SEAL_SCHEMA
-                and set(record) == {"schema", "store", "revision", "files", "pam"}
-                and set(files) == set(_AUTHORITY_FILES)
-                and (manifest is None or isinstance(manifest, str))
-                and record["pam"] == (None if manifest is None else pam_reference(manifest))
-            )
-        if (
-            not shaped
-            or not isinstance(record.get("revision"), str)
-            or not all(text is None or isinstance(text, str) for text in files.values())
-        ):
-            raise CapsuleSealUnreadable(
-                f"the authority seal at {path} is not a seal this adapter wrote"
-            )
+        files = dict(record["files"])
+        if record["schema"] == _SEAL_SCHEMA_V1:
+            files[_PAM_FILE] = None
         if record.get("store") != str(self.root.resolve()):
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} names another store "

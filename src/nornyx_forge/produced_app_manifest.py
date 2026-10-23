@@ -229,13 +229,61 @@ def validate_pam(text: Any) -> dict[str, Any]:
 
     See the module docstring for the line between what this checks and what
     only the issuer and the gate can.
+
+    EVERY VALUE OF THE WRONG KIND IS A REFUSAL, NEVER ANOTHER EXCEPTION (Codex
+    P2 4363826001). The parse refuses `NaN`/`Infinity`, a repeated key, an
+    integer too long to convert, and any string -- key or value -- that cannot
+    be encoded as UTF-8, such as an escaped lone or reversed surrogate. A type
+    or encoding error that any later check still raises is turned into the
+    same refusal rather than let out.
     """
     if not isinstance(text, str) or len(text) > _TEXT_LIMIT:
         raise _refuse(f"the manifest must be text of at most {_TEXT_LIMIT} characters")
     try:
-        document = json.loads(text)
-    except ValueError as error:
+        document = json.loads(text, object_pairs_hook=_unique_object,
+                              parse_constant=_no_constant)
+    except (ValueError, RecursionError) as error:
         raise _refuse(f"the manifest is not JSON: {error}") from error
+    if _unencodable(document):
+        raise _refuse("the manifest holds text that cannot be encoded as UTF-8")
+    try:
+        return _validated(document, text)
+    except (TypeError, ValueError, UnicodeError) as error:
+        raise _refuse(f"a value is of the wrong kind ({type(error).__name__})") from error
+
+
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not a JSON value")
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("a key is repeated")
+    return dict(pairs)
+
+
+def _unencodable(value: Any) -> bool:
+    """Does any string in `value`, key or value at any depth, fail to encode
+    as UTF-8?"""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
+def _validated(document: Any, text: str) -> dict[str, Any]:
+    """`validate_pam` after the parse: each field of its one kind."""
     _keys(document, _TOP_KEYS, "the manifest")
     if canonical_json(document) + "\n" != text:
         raise _refuse("the manifest is not in its canonical encoding, so its digest "

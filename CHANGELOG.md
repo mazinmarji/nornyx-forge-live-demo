@@ -16,7 +16,11 @@
   of an authority file or of the seal now fails closed: undecodable, oversized,
   non-regular or vanishing content is a seal finding or the store's refusal,
   never an exception, for `capsule.json` and `experience.json` as much as for
-  `pam.json` (the same defect predated the manifest). A static
+  `pam.json` (the same defect predated the manifest). The seal record and the
+  manifest are also held value by value -- a full-commit revision, sealed
+  texts that are JSON, a matching manifest reference, and no `NaN`,
+  `Infinity` or unencodable string such as an escaped lone surrogate -- so a
+  damaged value is a refusal, never an exception. A static
   check over the produced sources as bytes requires `app/__main__.py` present
   and parsing, standard-library imports only, no import of `nornyx_forge`, and
   no reference at all to a dynamic import or execution primitive (`__import__`,
