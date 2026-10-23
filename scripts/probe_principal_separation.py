@@ -52,6 +52,7 @@ import os
 import re
 import stat
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -290,67 +291,146 @@ def record_digest(record: dict[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def _writable_by_this_principal(path: Path) -> bool | None:
-    """Whether THIS principal may write the record or replace it in its folder.
-
-    `os.access`, so INFERRED and one-sided: True refuses the attestation; False
-    proves nothing about the ACL (on Windows it reads only the read-only
-    attribute). None when it could not be asked."""
-    try:
-        return bool(os.access(path, os.W_OK) or os.access(path.parent, os.W_OK)
-                    or os.access(path.resolve().parent, os.W_OK))
-    except (OSError, ValueError, RuntimeError):
-        return None
-
-
 #: A runtime record is a few hundred bytes; anything past this is not one.
 RUNTIME_RECORD_LIMIT = 1 << 20
 
+#: The identity a held record must keep, compared field by field.
+_IDENTITY = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
+
 
 class _RecordChanged(Exception):
-    """The file checked is not the file read."""
+    """The file judged is not the file read, or the path no longer names it."""
 
 
-def _read_checked_file(path: Path, checked: os.stat_result) -> bytes:
-    """The bytes of the regular file at `path`, read through ONE descriptor
-    whose identity is `checked`: the `lstat` taken BEFORE the file was judged.
+@dataclass(frozen=True)
+class HeldRecord:
+    """The runtime record OPENED AND HELD before anything is judged about it.
 
-    A link or a non-regular file is refused, because Forge writes a regular
-    file and a link could send the read somewhere the writability check never
-    looked. Then one open -- `O_NOFOLLOW` and `O_NONBLOCK` where the platform
-    has them -- and an `fstat` whose device, inode, size and modification time
-    must equal `checked`'s, or the file was swapped after it was judged.
-    Raises `_RecordChanged` for that, `ValueError` for a link, a non-regular
-    file or an oversized one, and `OSError` for a failed read.
+    `fd` is the one descriptor every judgement and the read go through.
+    `dir_fd` is the record's folder, held the same way, where the platform can
+    open a directory (POSIX); it is None on Windows. `opened` is the `fstat` of
+    `fd`, taken once, which every later identity check compares against.
     """
-    if stat.S_ISLNK(checked.st_mode):
+
+    path: Path
+    name: str
+    fd: int
+    dir_fd: int | None
+    opened: os.stat_result
+
+
+def _same(a: os.stat_result, b: os.stat_result) -> bool:
+    return all(getattr(a, key) == getattr(b, key) for key in _IDENTITY)
+
+
+def _proc_fd(fd: int) -> str | None:
+    """`/proc/self/fd/<fd>` where it exists: a path that resolves to the OPEN
+    file itself, whatever the name it was opened by now points at."""
+    candidate = f"/proc/self/fd/{fd}"
+    return candidate if os.path.exists(candidate) else None
+
+
+def _writable_by_this_principal(held: HeldRecord) -> bool | None:
+    """Whether THIS principal may write the HELD record, or replace it in its
+    HELD folder. Asked of the descriptors, never of the path.
+
+    Linux: `os.access` on `/proc/self/fd/<fd>` for the file and for the folder.
+    That path resolves to the open file and the open folder themselves, so the
+    answer is about the objects read and not about whatever the name points at
+    meanwhile. It honours ACLs as `access(2)` does for the real uid. It is
+    still INFERRED and one-sided: True refuses the attestation, and False is
+    not a measured ACL.
+
+    Everywhere else -- Windows above all, where no folder can be held through
+    `os.open` and `os.access` reads only the read-only attribute -- there is no
+    descriptor-bound question to ask, so the answer is None and the
+    attestation is refused. A Windows attestation is never `bound` here.
+    """
+    if held.dir_fd is None:
+        return None
+    file_view, folder_view = _proc_fd(held.fd), _proc_fd(held.dir_fd)
+    if file_view is None or folder_view is None:
+        return None
+    try:
+        return bool(os.access(file_view, os.W_OK) or os.access(folder_view, os.W_OK))
+    except (OSError, ValueError):
+        return None
+
+
+def _hold_record(path: Path) -> HeldRecord:
+    """Open the record, and its folder where possible, BEFORE judging either.
+
+    The `lstat` refuses a link by name (Forge writes a regular file); the open
+    uses `O_NOFOLLOW` and `O_NONBLOCK` where the platform has them, and on
+    POSIX goes through the held folder (`dir_fd`), so the folder judged is the
+    folder the file was opened from. The held descriptor's own `fstat` must
+    show a regular file within the size bound and the identity the name had,
+    or the record is refused. Raises `ValueError` for a link, a non-regular
+    or oversized file, `_RecordChanged` for an identity mismatch, and `OSError`
+    for a failed open.
+    """
+    named = os.lstat(path)
+    if stat.S_ISLNK(named.st_mode):
         raise ValueError("the runtime record path is a link; only the file Forge wrote is read")
-    if not stat.S_ISREG(checked.st_mode):
+    # Refused before any open, too, so nothing but a regular file is ever
+    # opened; the held descriptor's own `fstat` is checked again below.
+    if not stat.S_ISREG(named.st_mode):
         raise ValueError("the runtime record path is not a regular file")
-    if checked.st_size > RUNTIME_RECORD_LIMIT:
+    if named.st_size > RUNTIME_RECORD_LIMIT:
         raise ValueError("the runtime record is larger than any runtime record")
     flags = os.O_RDONLY
-    for name in ("O_NOFOLLOW", "O_NONBLOCK", "O_BINARY"):
-        flags |= getattr(os, name, 0)
-    descriptor = os.open(path, flags)
+    for flag in ("O_NOFOLLOW", "O_NONBLOCK", "O_BINARY"):
+        flags |= getattr(os, flag, 0)
+    dir_fd: int | None = None
+    if os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY"):
+        dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        opened = os.fstat(descriptor)
-        identity = ("st_dev", "st_ino", "st_size", "st_mtime_ns")
-        if any(getattr(opened, key) != getattr(checked, key) for key in identity):
+        fd = (os.open(path.name, flags, dir_fd=dir_fd) if dir_fd is not None
+              else os.open(path, flags))
+    except BaseException:
+        if dir_fd is not None:
+            os.close(dir_fd)
+        raise
+    held = HeldRecord(path=path, name=path.name, fd=fd, dir_fd=dir_fd, opened=os.fstat(fd))
+    try:
+        if not stat.S_ISREG(held.opened.st_mode):
+            raise ValueError("the runtime record path is not a regular file")
+        if held.opened.st_size > RUNTIME_RECORD_LIMIT:
+            raise ValueError("the runtime record is larger than any runtime record")
+        if not _same(held.opened, named):
             raise _RecordChanged
-        chunks, total = [], 0
-        while True:
-            chunk = os.read(descriptor, 65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-            if total > checked.st_size:
-                raise _RecordChanged
-    finally:
-        os.close(descriptor)
+    except BaseException:
+        _release(held)
+        raise
+    return held
+
+
+def _release(held: HeldRecord) -> None:
+    os.close(held.fd)
+    if held.dir_fd is not None:
+        os.close(held.dir_fd)
+
+
+def _read_held(held: HeldRecord) -> bytes:
+    """Every byte of the held record, through its descriptor, and then a check
+    that the name still names it: in the held folder on POSIX, by path on
+    Windows (where the held file cannot be renamed while it is open)."""
+    os.lseek(held.fd, 0, os.SEEK_SET)
+    chunks, total = [], 0
+    while True:
+        chunk = os.read(held.fd, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > held.opened.st_size:
+            raise _RecordChanged
     data = b"".join(chunks)
-    if len(data) != checked.st_size:
+    if len(data) != held.opened.st_size or not _same(os.fstat(held.fd), held.opened):
+        raise _RecordChanged
+    named = (os.stat(held.name, dir_fd=held.dir_fd, follow_symlinks=False)
+             if held.dir_fd is not None else os.lstat(held.path))
+    if not _same(named, held.opened):
         raise _RecordChanged
     return data
 
@@ -370,7 +450,8 @@ def _attested_principal(value: Any) -> dict[str, Any] | None:
 
 
 def owner_attestation(runtime_record: Path, v1_record: dict[str, Any], *,
-                      writable: Callable[[Path], bool | None] = _writable_by_this_principal,
+                      writable: Callable[[HeldRecord], bool | None] = (
+                          _writable_by_this_principal),
                       ) -> dict[str, Any]:
     """What Forge said about its own principal, bound to this run. UNTRUSTED.
 
@@ -379,14 +460,18 @@ def owner_attestation(runtime_record: Path, v1_record: dict[str, Any], *,
     by which this caller states a principal: a self-report from the probe's
     side is not an input this function has.
 
-    BOUND, OR REFUSED BY NAME. It is `bound` only when the runtime record: is
-    a regular file, not a link, read through one descriptor as the same file
-    whose channel was judged; parses as a Forge runtime record; carries the
-    SAME instance token and pid as the surface the v1 record measured; carries
-    exactly one readable principal; and sits in a channel THIS principal is
-    not found able to write -- a channel the probe could write is one it could
-    have written the attestation into, which is the self-report again. Any
-    failure keeps the refusal and carries no principal.
+    BOUND, OR REFUSED BY NAME. The record is OPENED AND HELD first (with its
+    folder, on POSIX), and every judgement goes through what is held: it is a
+    regular file, not a link, within the size bound; its channel is judged on
+    the held descriptors; it is read through the same descriptor; and the
+    name still names that file afterwards. It is then `bound` only when it
+    parses as a Forge runtime record; carries the SAME instance token and pid
+    as the surface the v1 record measured; carries exactly one readable
+    principal; and was not found writable by THIS principal -- a channel the
+    probe could write is one it could have written the attestation into,
+    which is the self-report again. Any failure keeps the refusal and carries
+    no principal. On Windows no descriptor-bound writability question exists
+    here, so a Windows attestation is always refused (`_writable_by_this_principal`).
 
     `bound` IS NOT `trusted`. `trusted` is False in every attestation this
     producer emits, and the validator refuses any other value: the writability
@@ -405,25 +490,33 @@ def owner_attestation(runtime_record: Path, v1_record: dict[str, Any], *,
         return base | {"refusal": reason}
 
     path = Path(runtime_record)
+    # HELD FIRST, THEN JUDGED AND READ THROUGH WHAT IS HELD (Codex P2
+    # 4357318302). Judging the path and then opening it let a file swapped in
+    # for the judgement and swapped back before the open pass every identity
+    # check while the verdict was about the replacement.
     try:
-        checked = os.lstat(path)
-    except OSError as error:
-        return refused(f"the runtime record could not be read: {error.__class__.__name__}")
-    # JUDGED, THEN READ AS THE FILE THAT WAS JUDGED. The identity taken above,
-    # before the channel was asked about, is the one the read must find, so a
-    # file swapped in after the judgement is refused rather than bound.
-    channel = writable(path)
-    base["channel_writable_by_this_principal"] = channel
-    try:
-        data = _read_checked_file(path, checked)
+        held = _hold_record(path)
     except _RecordChanged:
-        return refused("the runtime record changed between its check and its read")
+        return refused("the runtime record changed while it was judged and read")
     except ValueError as error:
         return refused(str(error))
     except PermissionError:
         return refused("the runtime record was denied to this principal")
     except OSError as error:
         return refused(f"the runtime record could not be read: {error.__class__.__name__}")
+    try:
+        try:
+            channel = writable(held)
+        except Exception:  # noqa: BLE001 - a judgement that fails clears nothing
+            channel = None
+        base["channel_writable_by_this_principal"] = channel
+        data = _read_held(held)
+    except _RecordChanged:
+        return refused("the runtime record changed while it was judged and read")
+    except OSError as error:
+        return refused(f"the runtime record could not be read: {error.__class__.__name__}")
+    finally:
+        _release(held)
     base["runtime_record_sha256"] = "sha256:" + hashlib.sha256(data).hexdigest()
     try:
         record = json.loads(data.decode("utf-8"))

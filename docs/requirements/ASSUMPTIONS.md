@@ -7607,18 +7607,31 @@ case where `not_separated` is the honest answer.
    name only, and the runtime starts as before.
 3. **The attestation.** With `--owner-attestation-from-runtime-record PATH`,
    the v2 record carries `separation_evidence.owner_principal_attestation`.
-   It is `bound` only when all of the following hold:
-   - the path is a regular file, not a link, and the read goes through one
-     descriptor whose device, inode, size and modification time are the ones
-     taken before its channel was judged, so a file swapped in after the
-     judgement is refused;
+   The record is OPENED AND HELD before anything is judged about it: one
+   descriptor for the file, and on POSIX one for its folder, which the file
+   is opened through. Every judgement goes through what is held, and the read
+   goes through the same descriptor. A judgement made of the path, followed by
+   an open, let a file swapped in for the judgement and swapped back before
+   the open pass every identity check while the verdict was about the
+   replacement (review finding, repaired with a test that swaps and restores
+   inside the judgement). It is `bound` only when all of the following hold:
+   - the path is a regular file, not a link, within a size bound, and the
+     held descriptor's `fstat` shows the same file the name showed;
+   - the held file and the held folder are not found writable by this
+     principal. On Linux that is `os.access` on `/proc/self/fd/<fd>` for
+     each, a path that resolves to the open object itself. Elsewhere,
+     Windows above all, no descriptor-bound question exists here (no folder
+     can be held, and `os.access` reads only the read-only attribute), so the
+     answer is "could not be asked" and a Windows attestation is never
+     `bound`;
+   - after the read, the descriptor's identity and size are unchanged and
+     the name still names that file (in the held folder on POSIX; by path on
+     Windows, where a held file cannot be renamed while it is open);
    - the runtime record parses as a `nornyx.forge.windows_runtime.v1`
      record;
    - it carries the same instance token and pid as the surface the v1 record
      measured;
-   - it holds exactly one readable principal;
-   - this principal is not found able to write it or replace it in its
-     folder (`os.access`).
+   - it holds exactly one readable principal.
 
    Each failure is a refusal by name, and a refused attestation carries no
    principal. The attestation also records the SHA-256 of the runtime-record
@@ -7631,9 +7644,10 @@ case where `not_separated` is the honest answer.
 says about itself. That is worth exactly as much as the guarantee that nobody
 else wrote it, and nothing here measures that guarantee:
 
-- the writability check is an inference that can REFUSE a channel but never
-  clear one. On Windows `os.access` reads only the read-only attribute, not
-  the ACL;
+- the writability check is an inference about THIS principal's access to the
+  held objects. It can refuse a channel, and on Linux it can fail to find
+  one writable, but that is not a measurement of who else can write it. On
+  Windows it is not asked at all;
 - the channel's real ACL is not measured in this change.
 
 So every attestation is `trusted: false`. Nothing derives anything from one:

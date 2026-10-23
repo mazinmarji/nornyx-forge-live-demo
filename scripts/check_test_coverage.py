@@ -1131,14 +1131,14 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # stops the separation rule from being a function that returns `unknown`
     # unconditionally, and the adversarial negatives around it. Deleting it
     # would leave `derive_principal_separation` unexercised while the global
-    # floor absorbed the loss. The owner-principal cycle (A-050) added 60: the
+    # floor absorbed the loss. The owner-principal cycle (A-050) added 63: the
     # same-user owner read on the host the suite runs on (the token on the
     # hosted Windows runner), every failed token read an unread owner, a
     # different SID withheld rather than compared, and the owner attestation
-    # read as the one file it judged, bound, refused by name, never trusted
-    # and unable to move the word.
-    # 110 -> 170 collected, floor band(110) = 99 -> band(170) = 153.
-    "tests/test_principal_separation_v2.py": 153,
+    # held, judged and read through one descriptor, bound, refused by name,
+    # never trusted and unable to move the word.
+    # 110 -> 173 collected, floor band(110) = 99 -> band(173) = 156.
+    "tests/test_principal_separation_v2.py": 156,
     # The standing-obligation checker: 82 collected at introduction, 103 after
     # the in-session adversarial review round, 106 after the Codex review of
     # the merged head (the directory-link chain, the count-free output, the
@@ -2236,26 +2236,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # A-050, THE OWNER-PRINCIPAL CYCLE, MOVES TWO MODULES AND ADDS NONE, measured
 # from fresh collections of the base and of this tree, which differ only in
-# these two modules: tests/test_principal_separation_v2.py collects 110 -> 170
-# (floor band(110) = 99 -> band(170) = 153) and tests/test_windows_runtime.py
-# collects 97 -> 104 (floor band(97) = 88 -> band(104) = 94). 6039 collect
-# across 137 modules. The module-floor sum rises by 60 to 5500 and the
-# aggregate follows to 5508, keeping the same 8 above it; band(n) 5375 ->
-# 5436, and the working room below the floor 524 -> 531. THE SLACK THE BANDS
+# these two modules: tests/test_principal_separation_v2.py collects 110 -> 173
+# (floor band(110) = 99 -> band(173) = 156) and tests/test_windows_runtime.py
+# collects 97 -> 104 (floor band(97) = 88 -> band(104) = 94). 6042 collect
+# across 137 modules. The module-floor sum rises by 63 to 5503 and the
+# aggregate follows to 5511, keeping the same 8 above it; band(n) 5375 ->
+# 5438, and the working room below the floor 524 -> 531. THE SLACK THE BANDS
 # GRANT moves by 7, 532 -> 539: the v2 module now 17 above its band where it
 # was 11, and the runtime module 10 where it was 9. NO SKIP IS ADDED. The v2
 # module JOINS the windows-runtime job, so the same-user token read runs on a
 # real Windows host, and the runtime module is already one of the job's; its
-# floor moves 292 -> 469: its nine modules collect
-# 7/14/15/15/23/54/73/104/170 (sum 475, floor 475 - 7 + 1). The rows below
+# floor moves 292 -> 472: its nine modules collect
+# 7/14/15/15/23/54/73/104/173 (sum 478, floor 478 - 7 + 1). The rows below
 # are these.
 #
 # (rows below):
 #
-#     collected across tests/     6039   (137 modules)
-#     sum of the module floors    5500
-#     band(6039) = ceil(0.9*n)    5436
-#     MINIMUM_COLLECTED           5508
+#     collected across tests/     6042   (137 modules)
+#     sum of the module floors    5503
+#     band(6042) = ceil(0.9*n)    5438
+#     MINIMUM_COLLECTED           5511
 #     above the module sum          8
 #     below what collects         531
 #
@@ -2748,7 +2748,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5508
+MINIMUM_COLLECTED = 5511
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

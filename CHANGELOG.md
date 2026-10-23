@@ -13,8 +13,10 @@
   `/api/runtime`, and a failed read never stops a launch. The producer's
   `--owner-attestation-from-runtime-record` binds that attestation to the
   measured surface's instance token and pid and to the v1 record's digest.
-  It refuses a channel this principal can write, and records the result
-  `trusted: false`. Nothing derives anything from it. Unchanged:
+  It holds the record open first, judges the channel and reads the bytes
+  through that one descriptor, and refuses a channel this principal can
+  write. On Windows, where no held descriptor can answer that, it refuses
+  every attestation. It records the result `trusted: false`. Nothing derives anything from it. Unchanged:
   `derive_principal_separation`, the translation, `PROVIDER_CONFINEMENT`,
   `CONFINEMENT_PROPERTIES`, the v1 producer's bytes, and every provider's
   eligibility. `separated` is still reached by no record any shipped producer

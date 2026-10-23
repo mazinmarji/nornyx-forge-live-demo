@@ -890,13 +890,67 @@ def test_to_v2_records_the_attestation_and_derives_the_same_word(tmp_path, monke
 
 def test_an_attestation_from_a_channel_this_principal_can_write_is_refused(tmp_path):
     """The REAL check, not an injected one: a file this test just wrote is
-    writable by this principal, which could have written the attestation."""
+    writable by this principal, which could have written the attestation. On
+    Windows the check has no descriptor to ask and refuses outright."""
     attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"),
                                           _v1_qualifying())
     assert attestation["bound"] is False
-    assert attestation["channel_writable_by_this_principal"] is True
-    assert "writable by this principal" in attestation["refusal"]
     assert attestation["attested_principal"] is None
+    if sys.platform == "win32":
+        assert attestation["channel_writable_by_this_principal"] is None
+        assert "could not be asked" in attestation["refusal"]
+    else:
+        assert attestation["channel_writable_by_this_principal"] is True
+        assert "writable by this principal" in attestation["refusal"]
+
+
+def test_the_real_check_asks_the_held_descriptors_and_can_clear_only_on_posix(tmp_path):
+    """A record and folder this principal cannot write, judged for real.
+
+    On Linux the held descriptors are asked through `/proc/self/fd`, and a
+    read-only record in a read-only folder is not found writable, so it binds
+    -- unless this principal is root, which `access(2)` lets write anything.
+    On Windows no folder can be held and nothing is cleared: refused."""
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    path = _runtime_record(folder / "r.json")
+    os.chmod(path, 0o444)
+    os.chmod(folder, 0o555)
+    try:
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    finally:
+        os.chmod(folder, 0o755)
+        os.chmod(path, 0o644)
+    if sys.platform == "win32":
+        assert attestation["bound"] is False
+        assert attestation["channel_writable_by_this_principal"] is None
+    elif os.geteuid() == 0:
+        assert attestation["bound"] is False
+        assert attestation["channel_writable_by_this_principal"] is True
+    else:
+        assert attestation["bound"] is True, attestation
+        assert attestation["channel_writable_by_this_principal"] is False
+        assert attestation["trusted"] is False
+
+
+def test_the_judge_is_handed_the_descriptor_that_is_read(tmp_path):
+    """Every judgement goes through what is held: the descriptor the judge is
+    handed is the file whose bytes are bound, by identity and by content."""
+    path = _runtime_record(tmp_path / "r.json")
+    seen: list[tuple[int, int, bytes]] = []
+
+    def spy(held):
+        opened = os.fstat(held.fd)
+        os.lseek(held.fd, 0, os.SEEK_SET)
+        seen.append((opened.st_dev, opened.st_ino, os.read(held.fd, 1 << 20)))
+        return False
+
+    attestation = v2mod.owner_attestation(path, _v1_qualifying(), writable=spy)
+    named = os.stat(path)
+    assert attestation["bound"] is True, attestation
+    assert seen == [(named.st_dev, named.st_ino, path.read_bytes())]
+    assert attestation["runtime_record_sha256"] == (
+        "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest())
 
 
 @pytest.mark.parametrize("writable, words", [(True, "writable"), (None, "could not be asked")])
@@ -1020,20 +1074,29 @@ def test_the_cli_records_an_attestation_and_prints_the_same_word(tmp_path, monke
 
 def test_a_record_swapped_in_after_its_channel_was_judged_is_refused(tmp_path):
     """The file whose channel was judged must be the file whose bytes are
-    bound. Here the judgement itself swaps a different record onto the path,
-    as a racing writer would, and the read finds another file there."""
+    bound, and the name must still name it. Here the judgement itself swaps a
+    different record onto the path, as a racing writer would, and leaves it
+    there: the held file is read, and the name no longer names it. On Windows
+    the held file cannot be replaced at all, and the failed judgement clears
+    nothing."""
     path = _runtime_record(tmp_path / "r.json")
     replacement = _runtime_record(tmp_path / "other.json", attested={
         "platform": "win32", "sid": SID_A, "uid": None})
+    swapped: list[bool] = []
 
-    def judge_then_swap(target):
-        os.replace(replacement, target)
+    def judge_then_swap(held):
+        os.replace(replacement, held.path)
+        swapped.append(True)
         return False
 
     attestation = v2mod.owner_attestation(path, _v1_qualifying(), writable=judge_then_swap)
     assert attestation["bound"] is False, attestation
-    assert "changed between its check and its read" in attestation["refusal"]
     assert attestation["attested_principal"] is None
+    if swapped:
+        assert "changed while it was judged and read" in attestation["refusal"]
+    else:
+        assert sys.platform == "win32", "the swap failed off Windows"
+        assert "could not be asked" in attestation["refusal"], attestation
 
 
 def test_a_descriptor_that_is_not_the_checked_file_is_refused(tmp_path, monkeypatch):
@@ -1048,7 +1111,7 @@ def test_a_descriptor_that_is_not_the_checked_file_is_refused(tmp_path, monkeypa
     monkeypatch.setattr(v2mod.os, "fstat", other_file)
     attestation = v2mod.owner_attestation(path, _v1_qualifying(), writable=_unwritable)
     assert attestation["bound"] is False
-    assert "changed between its check and its read" in attestation["refusal"]
+    assert "changed while it was judged and read" in attestation["refusal"]
 
 
 def test_a_link_is_refused_without_being_followed(tmp_path, monkeypatch):
@@ -1078,3 +1141,55 @@ def test_a_directory_and_an_oversized_file_are_refused(tmp_path):
     big.write_bytes(b" " * (v2mod.RUNTIME_RECORD_LIMIT + 1))
     attestation = v2mod.owner_attestation(big, _v1_qualifying(), writable=_unwritable)
     assert attestation["bound"] is False and "larger than" in attestation["refusal"]
+
+
+def test_a_record_swapped_and_restored_around_its_judgement_is_judged_as_read(tmp_path):
+    """Codex P2 4357318302: the judgement must be about the file that is read.
+
+    The record at the path is one THIS principal can write. While its channel
+    is judged, another file -- one that looks unwritable -- is renamed into
+    its place, and the original is renamed back before anything else happens,
+    so the original's identity is restored exactly. A judgement made of the
+    PATH sees the replacement and clears the channel; a judgement made of the
+    held DESCRIPTOR sees the original and refuses it. The judge below answers
+    "writable" exactly when the object it was handed is the original.
+
+    On Windows the swap itself is refused while the record is held open (a
+    CRT descriptor shares no delete access, so the held file cannot be
+    renamed), and the judgement fails rather than clearing anything.
+    """
+    path = _runtime_record(tmp_path / "r.json")
+    locked = _runtime_record(tmp_path / "locked.json", attested={
+        "platform": "win32", "sid": SID_A, "uid": None})
+    aside = tmp_path / "aside.json"
+    original = path.read_bytes()
+    swapped: list[bool] = []
+
+    def judged_bytes(target):
+        if isinstance(target, (str, os.PathLike)):
+            return Path(target).read_bytes()
+        os.lseek(target.fd, 0, os.SEEK_SET)
+        data = os.read(target.fd, 1 << 20)
+        os.lseek(target.fd, 0, os.SEEK_SET)
+        return data
+
+    def swap_judge_restore(target):
+        os.replace(path, aside)
+        os.replace(locked, path)
+        swapped.append(True)
+        try:
+            return judged_bytes(target) == original
+        finally:
+            os.replace(path, locked)
+            os.replace(aside, path)
+
+    attestation = v2mod.owner_attestation(path, _v1_qualifying(), writable=swap_judge_restore)
+    assert attestation["bound"] is False, attestation
+    assert attestation["attested_principal"] is None
+    if swapped:
+        assert attestation["channel_writable_by_this_principal"] is True, attestation
+        assert "writable by this principal" in attestation["refusal"]
+    else:
+        assert sys.platform == "win32", "the swap failed off Windows"
+        assert "could not be asked" in attestation["refusal"], attestation
+    assert path.read_bytes() == original
