@@ -15,9 +15,11 @@
   as sealing no manifest, so no protected store becomes TAMPERED. A static
   check over the produced sources as bytes requires `app/__main__.py` present
   and parsing, standard-library imports only, no import of `nornyx_forge`, and
-  no dynamic import or execution primitive however it is bound. It is a
-  static check over those forms, not a guarantee that produced code cannot
-  reach Forge, and nothing produced is executed. The "Open application" readiness check loads
+  no reference at all to a dynamic import or execution primitive (`__import__`,
+  `eval`, `exec`, `compile`, `importlib`, `builtins` and the spellings A-051
+  lists), called or not. It is a static check over those spellings, not a
+  guarantee that produced code cannot reach Forge, and nothing produced is
+  executed. The "Open application" readiness check loads
   the manifest only from a store that matches its seal, re-hashes every
   produced file, and offers the action only when the unchanged
   `governed_build_eligibility` makes the build's provider eligible; no

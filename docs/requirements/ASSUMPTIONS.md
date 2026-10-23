@@ -7608,15 +7608,19 @@ before it offers anything.
    bound, and the static check finds nothing: `app/__main__.py` present and
    parsing, every import outside `tests/` the standard library or the
    application's own module (and in `tests/`, also `pytest`), no import of
-   `nornyx_forge` anywhere, no produced file shadowing it, and no call of a
-   dynamic primitive as a class -- `__import__`, `builtins.__import__`,
-   `importlib.__import__`, `importlib.import_module`, `eval`, `exec` and
-   `compile`, however the name is bound (imported under another name, assigned
-   to a local, or reached by `getattr` with a literal member), whatever the
-   argument -- and no `getattr` on `builtins` or `importlib`. Names are
-   resolved by the trusted verifier's own alias rule, copied and held equal by
-   a test. A build it issues nothing for is recorded exactly as before, and
-   `GET /api/build` says why.
+   `nornyx_forge` anywhere, no produced file shadowing it, and no reference
+   at all to a dynamic import or execution primitive, called or not. The rule
+   follows no binding; it refuses the spellings wherever they occur: the names
+   `__import__`, `eval`, `exec`, `compile`, `__builtins__`, `importlib` and
+   `builtins` in any position; any import of `importlib` or `builtins`
+   (submodules and aliases included) and any imported name or alias spelling
+   a primitive; the attributes `.__import__` and `.import_module` on
+   anything; a function, class or parameter name, a `global` or `nonlocal`,
+   or an exception or pattern capture spelling one; and a `getattr` whose
+   member is a string literal spelling one. It is conservative: a local that
+   merely shares one of those names is refused too. The same check runs at
+   issue and again at the handoff gate. A build it issues nothing for is
+   recorded exactly as before, and `GET /api/build` says why.
 4. **The handoff gate,** `produced_app_handoff.assess_readiness`. It loads the
    manifest only from a store that passes `assert_sealed()` and carries a seal
    -- a store with no seal is refused, never read as legacy -- takes it from
@@ -7673,13 +7677,12 @@ Currency stays `not_independently_anchored`.
    contract digest is of the contract Forge renders from the accepted BRD; the
    bytes at `.nornyx/generated/brd_contract.nyx` are not read.
 7. **That produced code cannot reach Forge.** The import scan is a static
-   check over the forms listed above, and no more. What code computes at run
-   time -- a name assembled and looked up some other way, a code object, an
-   encoded string -- is beyond any static scan, and this change does not try
-   to chase it. The name resolution is the verifier's own alias map, one per
-   file, built without regard to statement order or scope, so a name rebound
-   elsewhere in the file can resolve to something other than what runs at a
-   given call. That the application runs without Forge is established only
+   check over the spellings listed above, and no more. What code computes at
+   run time -- a name assembled and looked up some other way (a computed
+   `getattr`, `globals()`, `sys.modules`), a code object, an encoded string --
+   is beyond any static scan, and this change does not try to chase it. The
+   check is not a statement about runtime isolation. That the application
+   runs without Forge is established only
    at execution time, by running it from a copy in which Forge is not
    importable, and this change executes nothing.
 8. **That the standard-library list is every interpreter's.** The static check

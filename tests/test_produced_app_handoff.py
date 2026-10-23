@@ -148,12 +148,16 @@ def _injected(eligible: bool):
 # A sealed store carrying a manifest over a real project, built directly
 # ---------------------------------------------------------------------------
 
-def _handed_off(base: Path, *, eligible_row: bool = True) -> tuple[CapsuleStore, Path, str]:
+def _handed_off(base: Path, *, eligible_row: bool = True,
+                cases_suffix: str = "") -> tuple[CapsuleStore, Path, str]:
     """A project holding the reference application and a sealed store whose
     manifest lists it. The manifest is rendered by the domain's own renderer;
-    `eligible_row` is the row it records, which only a unit test may set."""
+    `eligible_row` is the row it records, which only a unit test may set, and
+    `cases_suffix` is appended to `app/cases.py` before the manifest lists it."""
     project = base / "project"
-    for relative, text in reference_application({"BRD-001": "Track support cases."}).items():
+    application = reference_application({"BRD-001": "Track support cases."})
+    application["app/cases.py"] += cases_suffix
+    for relative, text in application.items():
         (project / relative).parent.mkdir(parents=True, exist_ok=True)
         (project / relative).write_text(text, encoding="utf-8", newline="")
     (project / "BRD.md").write_text("# BRD\n\n## BRD-001 Cases\n\nTrack support cases.\n",
@@ -600,9 +604,38 @@ def test_a_third_party_import_is_refused_at_issue(tmp_path: Path):
                                "standard library nor the application's own module",)
 
 
+#: A reference to a dynamic primitive the alias tracking did not follow (Codex
+#: P2 4361814368): an annotated binding, used, then rebound to something
+#: harmless.
+ANNOTATED_PRIMITIVE = "\nimp: object = __import__\nimp('json')\nimp = len\n"
+
+
+def test_issuance_refuses_a_dynamic_primitive_however_it_is_bound(tmp_path: Path):
+    inputs = _issue_inputs(tmp_path)
+    path = inputs["project_root"] / "app" / "cases.py"
+    path.write_text(path.read_text(encoding="utf-8") + ANNOTATED_PRIMITIVE, encoding="utf-8")
+    files, _ = handoff.read_subject(inputs["project_root"])
+    digests = {p: "sha256:" + hashlib.sha256(d).hexdigest() for p, d in files.items()}
+    record = inputs["result"]["acceptance_provenance"]
+    record["subject"] = {**record["subject"], "digest": pam.subject_digest(digests)}
+    issued = handoff.issue_manifest(**inputs)
+    assert issued.text is None and issued.findings, issued
+    assert all("dynamic import or execution primitive" in f for f in issued.findings), issued
+
+
 # ---------------------------------------------------------------------------
 # The handoff gate
 # ---------------------------------------------------------------------------
+
+def test_the_gate_refuses_a_dynamic_primitive_however_it_is_bound(tmp_path: Path):
+    """The gate re-runs the static check on what it reads, so a manifest whose
+    listed files carry a primitive the issuer's check would now refuse is not
+    offered -- and the files are exactly the listed ones, so the refusal is the
+    primitive's and not a changed file's."""
+    store, project, _ = _handed_off(tmp_path, cases_suffix=ANNOTATED_PRIMITIVE)
+    readiness = _assess(store, project)
+    assert readiness.offered is False and readiness.reasons, readiness
+    assert all("dynamic import or execution primitive" in r for r in readiness.reasons), readiness
 
 def test_the_gate_offers_only_a_sealed_manifest_whose_files_and_provider_still_hold(
         tmp_path: Path):

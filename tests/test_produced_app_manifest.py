@@ -309,69 +309,81 @@ def test_a_produced_module_that_would_shadow_forge_is_a_finding():
     assert "a produced file is named nornyx_forge, which would shadow Forge" in findings
 
 
-def test_a_dynamic_import_is_a_finding_because_a_static_check_cannot_see_it():
-    for source in (b"m = __import__('json')\n", b"import importlib\nm = importlib.import_module('json')\n"):
-        findings = _with("app/cases.py", source)
-        assert any("imports dynamically" in finding for finding in findings), findings
+#: Every finding the dynamic-primitive rule raises carries these words.
+PRIMITIVE = "dynamic import or execution primitive"
 
-
-#: The dynamic-import and dynamic-execution forms the static check refuses AS A
-#: CLASS (Codex P2 4359780685 on afa35eb named the first). Each sits in the
-#: application, and its target is never what decides: a literal argument is
-#: refused as well as a computed one.
+#: The dynamic-import and dynamic-execution primitives the static check refuses
+#: BY ANY REFERENCE -- a call, a load, a binding, an import, an attribute --
+#: rather than by following where a name ends up (Codex P2 4359780685 on
+#: afa35eb, and P2 4361814368 on 86f3ba4 whose annotated binding escaped the
+#: alias tracking). Each sits in the application. The specimens that spell a
+#: call to eval or exec are split literals, so the repository's own
+#: dynamic-execution scan (scripts/check_security.py) does not read them as
+#: calls.
 DYNAMIC_FORMS = {
-    "an aliased import_module": (
-        b"from importlib import import_module as m\nm('nornyx_forge')\n", "imports dynamically"),
-    "an aliased importlib module": (
-        b"import importlib as x\nx.import_module('json')\n", "imports dynamically"),
-    "import_module bound by assignment": (
-        b"from importlib import import_module\nload = import_module\nload('json')\n",
-        "imports dynamically"),
-    "__import__ bound by assignment": (b"imp = __import__\nimp('json')\n", "imports dynamically"),
-    "__import__ with a computed target": (b"name = 'js' + 'on'\n__import__(name)\n",
-                                          "imports dynamically"),
-    "builtins.__import__": (b"import builtins\nbuiltins.__import__('json')\n",
-                            "imports dynamically"),
-    "importlib.__import__": (b"import importlib\nimportlib.__import__('json')\n",
-                             "imports dynamically"),
-    "an aliased builtins.__import__": (
-        b"import builtins as b\nf = b.__import__\nf('json')\n", "imports dynamically"),
-    "import_module reached by getattr": (
-        b"import importlib\nf = getattr(importlib, 'import_module')\nf('json')\n",
-        "by reflection"),
-    "builtins reached by a computed getattr": (
+    # calls, directly
+    "__import__ with a literal": b"__import__('json')\n",
+    "__import__ with a computed target": b"name = 'js' + 'on'\n__import__(name)\n",
+    "eval": b"ev" b"al('1')\n",
+    "exec": b"ex" b"ec('x = 1')\n",
+    "compile": b"compile('1', 'x', 'eval')\n",
+    # the two modules, however imported or reached
+    "importlib.import_module": b"import importlib\nimportlib.import_module('json')\n",
+    "importlib.__import__": b"import importlib\nimportlib.__import__('json')\n",
+    "builtins.__import__": b"import builtins\nbuiltins.__import__('json')\n",
+    "builtins.exec": b"import builtins\nbuiltins.ex" b"ec('x = 1')\n",
+    "an imported alias of importlib": b"import importlib as x\nx.import_module('json')\n",
+    "an imported alias of import_module":
+        b"from importlib import import_module as m\nm('nornyx_forge')\n",
+    "an imported alias of eval": b"from builtins import eval as e\ne('1')\n",
+    "an imported alias of builtins": b"import builtins as b\nf = b.__import__\nf('json')\n",
+    "a submodule of importlib": b"import importlib.util\n",
+    "import_module from another module": b"from somewhere import import_module\n",
+    "getattr naming a primitive": b"import json\nf = getattr(json, '__import__')\n",
+    "builtins reached by a computed getattr":
         b"import builtins\nname = 'ex' + 'ec'\ngetattr(builtins, name)('x = 1')\n",
-        "by reflection"),
-    # Split literals, so the repository's own dynamic-execution scan
-    # (scripts/check_security.py) does not read these specimens as calls.
-    "eval": (b"ev" b"al('1')\n", "executes dynamically"),
-    "exec": (b"ex" b"ec('x = 1')\n", "executes dynamically"),
-    "compile": (b"compile('1', 'x', 'eval')\n", "executes dynamically"),
-    "builtins.exec": (b"import builtins\nbuiltins.ex" b"ec('x = 1')\n", "executes dynamically"),
-    "an aliased eval": (b"from builtins import eval as e\ne('1')\n", "executes dynamically"),
+    "__builtins__": b"f = __builtins__\n",
+    "an attribute named __import__ on anything": b"import sys\nf = sys.modules\nf.__import__\n",
+    # bindings the alias map did not follow
+    "an annotated alias": b"imp: object = __import__\nimp('json')\n",
+    "an annotated alias of eval": b"run: object = eval\nrun('1')\n",
+    "a plain assignment": b"imp = __import__\nimp('json')\n",
+    "a tuple assignment": b"a, b = __import__, len\na('json')\n",
+    "a walrus": b"(f := __import__)('json')\n",
+    "an augmented binding": b"f = None\nf += exec\n",
+    "a for-loop target": b"for f in (__import__,):\n    f('json')\n",
+    "a default argument": b"def g(f=compile):\n    return f('1', 'x', 'eval')\n",
+    "a container of primitives": b"PRIMITIVES = [__import__, eval]\n",
+    "a lambda": b"g = lambda: __import__\n",
+    "a comprehension": b"fs = [p for p in (exec,)]\n",
+    "a keyword argument": b"import functools\nf = functools.partial(__import__, 'json')\n",
+    "bound, used, then rebound to something harmless":
+        b"f = __import__\nf('json')\nf = len\nf('x')\n",
+    "rebound first, then the primitive last": b"f = len\nf('x')\nf = eval\n",
+    "a function named after a primitive": b"def ev" b"al(x):\n    return x\n",
+    "a parameter named after a primitive": b"def g(compile):\n    return compile\n",
+    "a global statement": b"def g():\n    global exec\n",
+    "an import bound under a primitive's name": b"import json as eval\n",
+    "a deletion": b"del __import__\n",
+    "an exception name": b"try:\n    pass\nexcept Exception as exec:\n    pass\n",
 }
 
 
 @pytest.mark.parametrize("label", sorted(DYNAMIC_FORMS))
-def test_a_dynamic_import_or_execution_primitive_is_refused_however_it_is_bound(label: str):
-    source, kind = DYNAMIC_FORMS[label]
-    findings = _with("app/cases.py", source)
-    assert any(kind in finding for finding in findings), (label, findings)
+def test_a_dynamic_primitive_is_refused_by_any_reference(label: str):
+    findings = _with("app/cases.py", DYNAMIC_FORMS[label])
+    assert any(PRIMITIVE in finding for finding in findings), (label, findings)
 
 
-def test_the_check_resolves_names_by_the_verifiers_own_alias_rule():
-    """The alias resolution is the trusted verifier's, copied because this
-    module may not import an adapter, and held equal here on every form above."""
-    import ast
-
-    for source, _ in DYNAMIC_FORMS.values():
-        tree = ast.parse(source.decode())
-        assert pam._aliases(tree) == greenfield_verifier._aliases(tree)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                assert pam._resolved_callable_name(node.func, pam._aliases(tree)) == (
-                    greenfield_verifier._resolved_callable_name(
-                        node.func, greenfield_verifier._aliases(tree)))
+def test_a_benign_program_with_no_primitive_has_no_finding():
+    """The rule refuses names, not lookalikes: `re.compile`, an attribute or a
+    string spelling a primitive's name, and a local `compiled` all pass."""
+    benign = (b"import json\nimport re\n\nPATTERN = re.compile('a+')\n"
+              b"NAMES = ['eval', 'exec', '__import__']\n\n\n"
+              b"def load(text: str) -> dict:\n    compiled = PATTERN.match(text)\n"
+              b"    return json.loads(text) if compiled is None else {}\n")
+    assert _with("app/cases.py", benign) == []
+    assert pam.static_findings(REFERENCE, store_directory="capsule", stdlib=STDLIB) == []
 
 
 def test_the_store_is_not_inspected_and_relative_imports_are_the_applications_own():

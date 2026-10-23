@@ -336,134 +336,80 @@ def validate_pam(text: Any) -> dict[str, Any]:
 _TEST_ONLY_IMPORTS = frozenset({"pytest"})
 _FORGE_PACKAGE = "nornyx_forge"
 
-#: THE DYNAMIC PRIMITIVES, REFUSED AS A CLASS rather than by target. A call of
-#: one of these, however the name was bound -- imported under another name,
-#: assigned to a local, or reached by `getattr` with a literal member -- is a
-#: finding whatever its argument, because a static check cannot know what a
-#: dynamic import loads or what dynamic execution runs. The verifier refuses
-#: `eval`, `exec`, `__import__` and `importlib.import_module` the same way;
-#: this adds `compile` and the `__import__` spellings on `builtins` and
-#: `importlib`. Codex P2 4359780685 on afa35eb named the aliased form.
-_DYNAMIC_IMPORTERS = frozenset({
-    "__import__", "builtins.__import__", "importlib.__import__", "importlib.import_module",
+#: THE DYNAMIC PRIMITIVES, REFUSED BY ANY REFERENCE. A produced file may not
+#: mention them at all: not call them, load them, bind them, import them, take
+#: them as an attribute or name them in a `getattr` literal. The rule does not
+#: follow where a name ends up -- an alias map did, and an annotated binding
+#: walked straight past it (Codex P2 4361814368 on 86f3ba4, after P2 4359780685
+#: on afa35eb) -- so there is no binding form, statement order or scope for it
+#: to miss. It is conservative on purpose: a local that merely shares one of
+#: these names is refused too.
+#:
+#: Names: `__import__`, `eval`, `exec`, `compile`, `__builtins__`, and the two
+#: modules `importlib` and `builtins`, refused wherever they appear as a name.
+#: Imports: any import of `importlib` or `builtins` (a submodule included, and
+#: under any alias), and any imported name or alias spelling a primitive.
+#: Attributes: `.__import__` and `.import_module` on anything. Bindings that are
+#: not names in the tree -- a function, class or parameter name, a `global` or
+#: `nonlocal`, an exception or pattern capture -- spelling a primitive. And a
+#: `getattr` whose member is a string literal spelling one.
+_PRIMITIVE_NAMES = frozenset({
+    "__import__", "eval", "exec", "compile", "__builtins__", "importlib", "builtins",
 })
-_DYNAMIC_EXECUTION = frozenset({
-    "eval", "exec", "compile", "builtins.eval", "builtins.exec", "builtins.compile",
-})
-#: Modules whose members are reached by reflection only to escape the two sets
-#: above; any `getattr` on one is refused, whatever the member.
-_REFLECTED_MODULES = frozenset({"builtins", "importlib"})
+_PRIMITIVE_MODULES = frozenset({"importlib", "builtins"})
+_PRIMITIVE_MEMBERS = frozenset({"__import__", "import_module"})
+_PRIMITIVE_SPELLINGS = _PRIMITIVE_NAMES | _PRIMITIVE_MEMBERS
 
 
-# The trusted verifier's name-resolution rule, copied: `greenfield_verifier`
-# is an adapter executed by path, and this domain module may not import it.
-# `test_the_check_resolves_names_by_the_verifiers_own_alias_rule` holds the
-# copies equal to the originals on every form the check refuses.
+def _primitive_references(path: str, tree: ast.AST) -> list[str]:
+    """Every reference in one parsed file to a dynamic primitive, one finding per
+    line and spelling, in line order."""
+    found: set[tuple[int, str]] = set()
 
-def _call_name(node: ast.expr) -> str:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = _call_name(node.value)
-        return f"{parent}.{node.attr}" if parent else node.attr
-    return ""
+    def spelled(node: ast.AST, *names: str | None) -> None:
+        for name in names:
+            if name in _PRIMITIVE_SPELLINGS:
+                found.add((getattr(node, "lineno", 0), str(name)))
 
-
-def _aliases(tree: ast.AST) -> dict[str, str]:
-    aliases: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+        if isinstance(node, ast.Name):
+            if node.id in _PRIMITIVE_NAMES:
+                found.add((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _PRIMITIVE_MEMBERS:
+                found.add((node.lineno, "." + node.attr))
+        elif isinstance(node, ast.Import):
             for item in node.names:
-                aliases[item.asname or item.name.split(".", 1)[0]] = item.name
-        elif isinstance(node, ast.ImportFrom) and node.module:
+                if item.name.split(".")[0] in _PRIMITIVE_MODULES:
+                    found.add((node.lineno, item.name))
+                spelled(node, item.asname)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and (
+                    node.module.split(".")[0] in _PRIMITIVE_MODULES):
+                found.add((node.lineno, node.module))
             for item in node.names:
-                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        value = _resolved_call_name(node.value, aliases)
-        if value:
-            aliases[target.id] = value
-    return aliases
-
-
-def _resolved_call_name(node: ast.expr, aliases: dict[str, str]) -> str:
-    name = _call_name(node)
-    if not name:
-        return ""
-    first, separator, rest = name.partition(".")
-    resolved = aliases.get(first, first)
-    return resolved + (separator + rest if separator else "")
-
-
-def _static_string(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = _static_string(node.left)
-        right = _static_string(node.right)
-        return left + right if left is not None and right is not None else None
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
-        left = _static_string(node.left)
-        right = _static_string(node.right)
-        if left is not None and isinstance(node.right, ast.Constant):
-            count = node.right.value
-            if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 10_000:
-                return left * count
-        if right is not None and isinstance(node.left, ast.Constant):
-            count = node.left.value
-            if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 10_000:
-                return right * count
-    if isinstance(node, ast.JoinedStr):
-        pieces: list[str] = []
-        for value in node.values:
-            piece = _static_string(value)
-            if piece is None:
-                return None
-            pieces.append(piece)
-        return "".join(pieces)
-    return None
-
-
-def _resolved_callable_name(node: ast.expr, aliases: dict[str, str]) -> str:
-    name = _resolved_call_name(node, aliases)
-    if name:
-        return name
-    if not isinstance(node, ast.Call):
-        return ""
-    accessor = _resolved_call_name(node.func, aliases)
-    if accessor not in {"getattr", "builtins.getattr"} or len(node.args) < 2:
-        return ""
-    owner = _resolved_call_name(node.args[0], aliases)
-    member = _static_string(node.args[1])
-    if not owner or member is None:
-        return ""
-    return f"{owner}.{member}"
-
-
-def _dynamic_findings(path: str, node: ast.Call, aliases: dict[str, str]) -> list[str]:
-    """The dynamic primitives one call reaches, by the resolved name of what it
-    calls and, for `getattr`, of what it reflects on."""
-    findings: list[str] = []
-    resolved = _resolved_callable_name(node.func, aliases)
-    called = node.func
-    bare = (called.id if isinstance(called, ast.Name)
-            else called.attr if isinstance(called, ast.Attribute) else "")
-    if resolved in _DYNAMIC_IMPORTERS or bare in ("__import__", "import_module"):
-        findings.append(f"{path}:{node.lineno} imports dynamically ({resolved or bare}), "
-                        "which a static check cannot see")
-    elif resolved in _DYNAMIC_EXECUTION:
-        findings.append(f"{path}:{node.lineno} executes dynamically ({resolved}), "
-                        "which a static check cannot see")
-    if _resolved_call_name(node.func, aliases) in {"getattr", "builtins.getattr"} and node.args:
-        owner = _resolved_call_name(node.args[0], aliases).split(".")[0]
-        if owner in _REFLECTED_MODULES:
-            findings.append(f"{path}:{node.lineno} reaches {owner} by reflection, which a "
-                            "static check cannot see")
-    return findings
+                spelled(node, item.name, item.asname)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            spelled(node, node.name)
+        elif isinstance(node, ast.arg):
+            spelled(node, node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            spelled(node, *node.names)
+        elif isinstance(node, ast.ExceptHandler):
+            spelled(node, node.name)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            spelled(node, node.name)
+        elif isinstance(node, ast.MatchMapping):
+            spelled(node, node.rest)
+        elif isinstance(node, ast.Call):
+            called = node.func
+            callee = (called.id if isinstance(called, ast.Name)
+                      else called.attr if isinstance(called, ast.Attribute) else "")
+            if callee == "getattr" and len(node.args) > 1 and isinstance(
+                    node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                spelled(node, node.args[1].value)
+    return [f"{path}:{line} refers to {name}, a dynamic import or execution primitive, "
+            "which a static check cannot follow" for line, name in sorted(found)]
 
 
 def _module_name(segment: str) -> str:
@@ -507,15 +453,15 @@ def static_findings(
     no produced file is named so as to shadow it; outside `tests/` every
     import is the standard library (`stdlib`, supplied by the caller) or the
     application's own module, and in `tests/` the same plus `pytest`; and no
-    file calls a dynamic importer or a dynamic-execution primitive, or reaches
-    `builtins` or `importlib` by `getattr`, however the name is bound (see
-    `_DYNAMIC_IMPORTERS`). A relative import is the application's own by
-    construction.
+    file refers to a dynamic import or execution primitive in any of the forms
+    `_PRIMITIVE_NAMES` lists, whether or not it is called. A relative import is
+    the application's own by construction.
 
     A STATIC CHECK OVER THE FORMS LISTED, AND NO MORE (A-051). It is not a
     guarantee that produced code cannot reach Forge: what code computes at run
-    time -- a name built from pieces and looked up some other way, a code
-    object, an encoded string -- is beyond any static scan. That the
+    time -- a name built from pieces and looked up some other way (a computed
+    `getattr`, `globals()`, `sys.modules`), a code object, an encoded string --
+    is beyond any static scan. That the
     application runs without Forge is established only by running it from a
     copy in which Forge is not importable, which this change does not do: it
     executes nothing.
@@ -539,16 +485,13 @@ def static_findings(
             continue
         in_tests = path.split("/")[0] == "tests"
         permitted = allowed | _TEST_ONLY_IMPORTS if in_tests else allowed
-        aliases = _aliases(tree)
+        findings.extend(_primitive_references(path, tree))
         for node in ast.walk(tree):
             names: list[str] = []
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 names = [node.module]
-            elif isinstance(node, ast.Call):
-                findings.extend(_dynamic_findings(path, node, aliases))
-                continue
             for name in names:
                 top = name.split(".")[0]
                 if top == _FORGE_PACKAGE:
