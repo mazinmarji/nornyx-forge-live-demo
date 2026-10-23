@@ -26,7 +26,9 @@ import http.server
 import inspect
 import json
 import os
+import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -66,6 +68,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / ".nornyx" / "contracts"
 HUMAN = {"kind": "human", "ident": "casey"}
 MODEL = {"kind": "model", "ident": "builder-model"}
+_SID = re.compile(r"S-1-[0-9]+(?:-[0-9]+)+")
 
 
 # ---------------------------------------------------------------------------
@@ -3201,3 +3204,95 @@ def test_the_page_offers_the_stop_control_and_nothing_decides_by_it():
     assert '/api/runtime/stop' in _PAGE and 'id="b_stop"' in _PAGE
     script = _PAGE[_PAGE.index("<script>"):]
     assert "actor: actor()" in script.split("stopForge")[1][:400]
+
+
+# ---------------------------------------------------------------------------
+# The attested principal: Forge records who it runs as, decides nothing by it,
+# and starts whatever the read does (A-050)
+# ---------------------------------------------------------------------------
+
+def _this_users_sid() -> str:
+    """This process's SID, by `whoami /user` -- a second reader, independent
+    of the ctypes token read under test."""
+    completed = subprocess.run(["whoami.exe", "/user"], capture_output=True, text=True,
+                               check=True, timeout=60)
+    match = re.search(r"S-1-[0-9-]+", completed.stdout)
+    assert match, completed.stdout
+    return match.group(0)
+
+
+def test_the_runtime_record_attests_this_processs_own_principal_and_does_not_serve_it(
+        tmp_path: Path):
+    """The record carries the principal the runtime read from ITSELF -- its
+    own token user on Windows, `os.getuid()` elsewhere -- and `/api/runtime`
+    still answers the identity it always did, without it."""
+    run = Launch(tmp_path, _marker(tmp_path / "bundle"), browser=False).start()
+    ready = run.wait_for("ready")
+    attested = ready["attested_principal"]
+    assert attested["platform"] == sys.platform
+    if sys.platform == "win32":
+        assert attested["sid"] == _this_users_sid() and attested["uid"] is None, attested
+        assert attested["detail"] == "read by this process from its own token user"
+    else:
+        assert attested["uid"] == os.getuid() and attested["sid"] is None, attested
+        assert attested["detail"] == "read by this process from os.getuid()"
+    status, body = _get(ready["port"], "/api/runtime")
+    served = json.loads(body)
+    assert status == 200 and "attested_principal" not in served, served
+    log = run.paths.log.read_text(encoding="utf-8", errors="replace")
+    assert "attested_principal" not in log
+    if sys.platform == "win32":
+        assert attested["sid"] not in body.decode("utf-8") and attested["sid"] not in log
+    run.stop()
+    assert run.join() == 0
+    stopped = _settled(run.record())
+    assert stopped["status"] == "stopped" and stopped["attested_principal"] == attested
+
+
+class _Unspeakable(Exception):
+    def __str__(self) -> str:  # pragma: no cover - raised if anything formats it
+        raise RuntimeError("this error cannot be put into words")
+
+
+@pytest.mark.parametrize("failure", [PermissionError(5, "denied"), OSError("no token"),
+                                     _Unspeakable(), ValueError("not a SID")])
+def test_a_failing_principal_read_still_lets_the_runtime_start(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception):
+    """Fails closed to NO principal, by the failure's class name, and the
+    launch goes on exactly as it would have: ready, served, stopped."""
+    def failing() -> tuple[str | None, int | None]:
+        raise failure
+
+    monkeypatch.setattr(windows_runtime, "_own_principal_value", failing)
+    run = Launch(tmp_path, _marker(tmp_path / "bundle"), browser=False).start()
+    ready = run.wait_for("ready")
+    attested = ready["attested_principal"]
+    assert attested == {"platform": sys.platform, "sid": None, "uid": None,
+                        "detail": "this process's own principal could not be read: "
+                                  f"{type(failure).__name__}"}, attested
+    assert _get(ready["port"], "/api/runtime")[0] == 200
+    run.stop()
+    assert run.join() == 0
+    assert _settled(run.record())["status"] == "stopped"
+
+
+def test_a_token_read_that_is_not_a_sid_is_no_principal(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(windows_runtime.sys, "platform", "win32")
+    for answer in ("", "S-1-5", "not-a-sid", None, 7, "S-1-5-21-1-2\n"):
+        monkeypatch.setattr(windows_runtime, "_own_token_sid", lambda answer=answer: answer)
+        attested = windows_runtime._own_principal()
+        assert attested["sid"] is None and attested["uid"] is None, (answer, attested)
+        assert attested["detail"].endswith("could not be read: ValueError"), attested
+
+
+def test_the_token_read_off_windows_fails_closed_and_never_raises(
+        monkeypatch: pytest.MonkeyPatch):
+    """Running the Windows branch where there is no Windows: no principal,
+    and no exception into the launch."""
+    if sys.platform == "win32":
+        assert _SID.fullmatch(windows_runtime._own_token_sid())
+        return
+    monkeypatch.setattr(windows_runtime.sys, "platform", "win32")
+    attested = windows_runtime._own_principal()
+    assert attested["platform"] == "win32" and attested["sid"] is None, attested
+    assert attested["detail"].startswith("this process's own principal could not be read: ")

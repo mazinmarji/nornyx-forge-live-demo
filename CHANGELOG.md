@@ -2,6 +2,30 @@
 
 ## Unreleased — hardening from adversarial review
 
+- On Windows the v2 principal-separation producer reads the surface owner's
+  token user, and that read can only show the two principals to be the same
+  (A-050). A same-user run now derives `not_separated` where it derived
+  `unknown`. A denied, failed or unsupported read, or a value that is not a
+  SID, leaves the owner unread (`unknown`). A read naming a different SID is
+  withheld rather than compared, so it is `unknown` too. The Windows runtime
+  adds `attested_principal` to its runtime record: the principal it read from
+  its own token, or `os.getuid()` elsewhere. The key is not served on
+  `/api/runtime`, and a failed read never stops a launch. The producer's
+  `--owner-attestation-from-runtime-record` ties that attestation to the
+  measured surface's instance token and pid and to the digest of the v1
+  measurement, reading the record through one held descriptor, and records
+  it with status `unverified` and `trusted: false`, always. A provider-side
+  principal cannot certify its own confinement, so the producer never emits
+  `bound` and asks no question of its own about the channel; binding is left
+  to measurement from outside, of the channel's ACLs and of refusal measured
+  from the provider principal. Its validator checks every field an
+  attestation claims and refuses any claim of `bound` or a cleared channel.
+  Nothing derives anything from it. Unchanged:
+  `derive_principal_separation`, the translation, `PROVIDER_CONFINEMENT`,
+  `CONFINEMENT_PROPERTIES`, the v1 producer's bytes, and every provider's
+  eligibility. `separated` is still reached by no record any shipped producer
+  can take. `tests/test_principal_separation_v2.py` joins the windows-runtime
+  job.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

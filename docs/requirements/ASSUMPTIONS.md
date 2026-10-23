@@ -4964,13 +4964,28 @@ only by adding a mechanism.
    gap, which read as though POSIX were fine and Windows were the last step.
    Both are gaps, and stating one implied a closure the other does not have.
 
-   **Windows: the owner's identity cannot be read.** `owner_principal` records
-   `read: False` there. Reading an owner's token user needs `OpenProcess` +
-   `OpenProcessToken` + `GetTokenInformation`, and a confined Codex principal
-   is the caller most likely to be DENIED that -- an ACL fact this must not
-   convert into a separation claim. Shipping untested ctypes under the word the
-   whole criterion turns on would be the substitution this register refuses. An
-   unread owner is `unknown`.
+   **Windows: the owner's identity reads only as SAMENESS (amended by A-050).**
+   This paragraph said `owner_principal` records `read: False` on Windows,
+   because reading an owner's token user needs `OpenProcess` +
+   `OpenProcessToken` + `GetTokenInformation` and shipping that untested
+   would have been the substitution this register refuses. A-050 implements
+   the read and tests it on the hosted Windows runner. What is now true:
+   - a SAME-USER read succeeds there and yields `principal_distinct = False`,
+     so `not_separated`, where it used to yield `unknown`;
+   - a read that is DENIED -- which is what a confined Codex principal is
+     expected to get across users -- or that fails, is unsupported or returns
+     something that is not a SID, is an unread owner, so `unknown`. A
+     denial is an ACL fact and is never converted into a separation claim;
+   - a read that SUCCEEDS and names a DIFFERENT SID is WITHHELD rather than
+     compared: the producer records `comparison_withheld` and leaves the owner
+     unread, so that too is `unknown`.
+   So on Windows the producer can now answer `not_separated` honestly and still
+   never `separated`. The cross-user case is measured nowhere. Forge's own
+   attestation of its principal (A-050) is recorded with status `unverified`,
+   always, and decides nothing: a provider-side principal cannot certify its
+   own confinement, and binding requires measurement from
+   outside -- of the attestation channel's ACLs, and of refusal measured from
+   the provider principal.
 
    **POSIX: the identity reads, but the authority channels do not measure.**
    `/proc/<pid>` answers the owner's uid, so the comparison is available. The
@@ -7554,3 +7569,137 @@ and an oversized proposal id with 409.
 **Serves.** A-035's basic-user journey, which this lets carry confirmed
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
+
+## A-050 On Windows the v2 producer reads the surface owner's token and can only show sameness, and Forge's attestation of its own principal is recorded unverified
+
+Numbered A-050 because A-049 is taken by a concurrent pull request. This entry
+does not depend on it.
+
+**The gap.** A-034 limit 3 recorded that on Windows `owner_principal` in
+`scripts/probe_principal_separation.py` did not read the owner at all. It
+answered `read: False`, so every Windows v2 record derived `unknown`. That
+held even when the probe and the surface were plainly the same user, the one
+case where `not_separated` is the honest answer.
+
+**The change.**
+
+1. **The same-user read.** On Windows, `owner_principal` reads the surface
+   pid's token user: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`,
+   `OpenProcessToken(TOKEN_QUERY)`, `GetTokenInformation(TokenUser)` and
+   `ConvertSidToStringSidW`, through ctypes. It fails closed:
+   - a denial (`ERROR_ACCESS_DENIED`), any other failure, running off
+     Windows, or a value that is not a SID is an unread owner, so `unknown`;
+   - a successful read naming the probe's own SID is
+     `principal_distinct = False`, so `not_separated`;
+   - a successful read naming a DIFFERENT SID is withheld. The producer
+     records `comparison_withheld`, leaves `owner_principal_read` false, and
+     derives `unknown`. A cross-user token read that succeeds is a fact about
+     the owner's process ACL, not evidence of separation. Admitting that
+     comparison waits for the channel and run binding below to be measured,
+     and for a later change that says so.
+2. **The writer.** `nornyx_forge.windows_runtime` adds one key,
+   `attested_principal`, to the runtime record it writes when it starts. The
+   key holds what the runtime read from ITSELF: its own token user on
+   Windows (`OpenProcessToken(GetCurrentProcess())`), and `os.getuid()`
+   elsewhere. The change is additive only:
+   - `RUNTIME_SCHEMA`, `read_record`, the routes, the stop path, the lock
+     and liveness are unchanged;
+   - `/api/runtime` answers its separately built identity, without the key;
+   - nothing logs the record.
+   Any failure of the read records no principal, naming the failure by class
+   name only, and the runtime starts as before.
+3. **The attestation.** With `--owner-attestation-from-runtime-record PATH`,
+   the v2 record carries `separation_evidence.owner_principal_attestation`.
+   The record is OPENED AND HELD before anything is checked about it: one
+   descriptor for the file, and on POSIX one for its folder, which the file
+   is opened through. Every check goes through what is held, and the read
+   goes through the same descriptor. (A check made of the path followed by an
+   open let a file swapped in and swapped back pass every identity check; a
+   review found it, and a test swaps and restores around the read.) The
+   attested principal is RECORDED only when all of the following hold:
+   - the path is a regular file, not a link, within a size bound, and the
+     held descriptor's `fstat` shows the same file the name showed;
+   - after the read, the descriptor's identity and size are unchanged and
+     the name still names that file (in the held folder on POSIX; by path on
+     Windows, where a held file cannot be renamed while it is open);
+   - the runtime record parses as a `nornyx.forge.windows_runtime.v1`
+     record;
+   - it carries the same instance token and pid as the surface the v1 record
+     measured;
+   - it holds exactly one readable principal.
+
+   Otherwise the refusal is recorded by name, with no principal. The
+   attestation also records the SHA-256 of the runtime-record bytes and of
+   the v1 measurement: the v1 record without the two fields v2 drops, which
+   is recomputable from the v2 record itself. There is no input by which the
+   probe states a principal.
+
+   **Its status is `unverified`, always, and no code path writes anything
+   else.** The producer never emits `bound`, and it asks no question of its
+   own about whether the channel is clear. The validator judges every field
+   an attestation claims (review finding):
+   - it refuses by name any `bound` or `channel_writable_by_this_principal`
+     key, and any status but `unverified`;
+   - its keys, source and fixed limit text, and `trusted: false`;
+   - each digest's shape, and that an instance appears only beside the
+     record's digest;
+   - against the v2 record, that the instance is the record's own surface's
+     and the v1 digest is the record's own measurement;
+   - with a principal recorded: an instance, the record's digest, no refusal
+     and exactly the normalised principal; without one, a non-empty refusal.
+
+   The runtime digest is of a file the record does not carry, so only its
+   shape can be held. The validator also refuses a record whose owner was
+   read with a SID other than the probe's, distinct or not: the producer
+   compares SIDs only for sameness.
+
+**The principle, and why the attestation is UNVERIFIED.** A provider-side
+principal cannot certify its own confinement. The attestation is what Forge
+says about itself, and it is worth exactly as much as the guarantee that
+nobody else -- the provider principal above all -- could have written it.
+Nothing observed from the probe's side can supply that guarantee, because
+the probe IS the provider principal judging itself. This was measured, not
+assumed: an earlier head of this change judged the channel from the probe's
+side, and every way it cleared a channel was one the judged principal could
+reverse. Reviews found each of them in turn: a swap around the judgement,
+write access an owner could restore, and capabilities a process could raise
+back into effect. So the producer no longer asks.
+
+Binding requires measurement from OUTSIDE, which this change does not take:
+- of the attestation channel's ACLs, taken by a principal other than the
+  provider's;
+- of refusal, measured from the provider principal itself.
+
+Until both exist the attestation is `unverified`, and nothing derives
+anything from it:
+- it feeds neither `owner_principal_read` nor `principal_distinct`;
+- the translation (`confinement_probe_from_surface_record`) does not read it;
+- a hand-written record whose attestation claims `trusted: true`, `bound`
+  or another status translates to the same outcome as the same record
+  without it.
+It is captured for measurement and is not a measurement.
+
+**What this does NOT establish.**
+
+1. **`separated`.** No record any shipped producer can take on any platform
+   reaches it. A-034 limit 3's conclusion stands; only its Windows reason
+   changed.
+2. **A cross-user measurement.** The Windows read is exercised on the hosted
+   Windows runner against a same-user child process. A cross-user read, the
+   denial the design expects, and the attestation channel's ACL are measured
+   nowhere. The hosted runner is not the executor any provider would run on.
+3. **The attestation's channel.** In a separated arrangement the runtime
+   record is one of the closure channels (`runtime_record`), which the
+   confined principal must be measured unable to read. The record this change
+   writes therefore reaches such a principal only through a channel this
+   change does not define. Choosing and measuring that channel is later work.
+4. **Identity over time.** The owner is read by pid when the v2 record is
+   produced. A pid reused between the v1 probe and the conversion would be
+   read as the owner. The attestation's pid and instance binding narrows this,
+   and an unverified attestation cannot close it.
+5. **Eligibility.** No provider row moves. `PROVIDER_CONFINEMENT`,
+   `CONFINEMENT_PROPERTIES`, `control_plane_authority_outcome` and
+   `derive_principal_separation` are unchanged, and the v1 producer's bytes
+   are unchanged (`test_the_v1_producer_is_not_edited_by_this_slice`).
+
+**Serves.** A-034, whose limit 3 this amends for Windows.

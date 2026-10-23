@@ -21,15 +21,24 @@ refusals over an EMPTY artefact list and reach `separated`. The channel map is
 derived from artefacts now, the summary is only allowed to agree with them, and
 a `refused` counts only when its own detail evidences a denial.
 
+WHAT THE OWNER-PRINCIPAL CYCLE ADDED. On Windows the owner's principal is now
+read from its token, and on the hosted Windows runner this module reads a real
+same-user process that way: the one Windows measurement taken here, and it can
+only show the two principals to be the SAME. A different SID, a denied read and
+Forge's own attestation of its principal all leave the derivation at `unknown`.
+
 WHAT NONE OF THIS ESTABLISHES. No provider row moves, Codex is not eligible,
-and no Windows measurement is taken here.
+and no cross-user Windows measurement is taken anywhere.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat as stat_module
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +46,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+
+import probe_control_plane as v1mod  # noqa: E402
+import probe_principal_separation as v2mod  # noqa: E402
 
 from nornyx_forge.provider_contract import (  # noqa: E402
     AMBIGUOUS_REFUSAL_MARKERS,
@@ -638,3 +650,633 @@ def test_channels_from_artefacts_is_what_the_translation_uses():
     """No second copy of the channel rule anywhere."""
     record = v2_record()
     assert channels_from_artefacts(record) == QUALIFYING
+
+
+# ===========================================================================
+# The owner principal on Windows: a same-user read, failing closed.
+#
+# Every test here runs on both platforms with no skip. The host test reads a
+# real child process: through `/proc` on Linux and through the token on the
+# hosted Windows runner, where this module runs in the windows-runtime job.
+# The rest inject the token reader, so its failures are deterministic.
+# ===========================================================================
+
+SID_A = "S-1-5-21-1111111111-2222222222-3333333333-1001"
+SID_B = "S-1-5-21-1111111111-2222222222-3333333333-1002"
+
+
+def _qualifying_artefacts():
+    return [artefact(name, QUALIFYING[name]) for name in SEPARATION_REQUIRED_CHANNELS]
+
+
+def _reader(answer, calls):
+    """A token reader that records the pid it was asked for, then answers."""
+    def read(pid):
+        calls.append(pid)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+    return read
+
+
+def _v1_qualifying(sid=SID_A):
+    """The real v1 record, with qualifying artefacts and a Windows probe SID."""
+    record = json.loads(json.dumps(_c3_v1_record()))
+    record["artefacts"] = _qualifying_artefacts()
+    record["subject"]["principal"] = {"platform": "win32", "sid": sid, "uid": None}
+    return record
+
+
+@pytest.fixture
+def child():
+    """A real process of this same user, so its owner is this caller."""
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+    try:
+        yield process
+    finally:
+        process.kill()
+        process.wait(timeout=30)
+
+
+def test_the_same_user_owner_is_read_on_this_host_and_derives_not_separated(child):
+    """THE MEASUREMENT this cycle adds, taken on the host the suite runs on.
+
+    On the hosted Windows runner this is the ctypes token read of a real
+    process; on Linux it is `/proc`. Either way the owner is this same user,
+    so the honest answer is `not_separated` -- where Windows used to answer
+    `unknown` because it did not read at all.
+    """
+    owner = v2mod.owner_principal(child.pid, probe_pid=os.getpid())
+    assert owner["read"] is True, owner
+    if sys.platform == "win32":
+        assert v2mod.SID_SHAPE.fullmatch(owner["sid"]), owner
+        assert owner["uid"] is None
+    probe = v1mod._principal()
+    evidence = v2mod.separation_evidence(owner, probe, _qualifying_artefacts())
+    assert evidence["owner_principal_read"] is True
+    assert evidence["principal_distinct"] is False
+    assert evidence["comparison_withheld"] is None
+    assert derive(principal_distinct=evidence["principal_distinct"]) == "not_separated"
+
+
+def test_the_token_reader_answers_on_windows_and_refuses_everywhere_else():
+    if sys.platform == "win32":
+        sid = v2mod._windows_owner_sid(os.getpid())
+        assert v2mod.SID_SHAPE.fullmatch(sid)
+        assert sid == v1mod._principal()["sid"], "the token read and whoami disagree"
+    else:
+        with pytest.raises(OSError, match="only on Windows"):
+            v2mod._windows_owner_sid(os.getpid())
+
+
+def test_a_same_sid_token_read_is_not_separated(monkeypatch):
+    calls: list[int] = []
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_A, calls), raising=False)
+    owner = v2mod.owner_principal(4242, probe_pid=1, platform_name="win32")
+    assert owner["read"] is True and owner["sid"] == SID_A and calls == [4242], owner
+    evidence = v2mod.separation_evidence(owner, {"platform": "win32", "sid": SID_A},
+                                         _qualifying_artefacts())
+    assert evidence["principal_distinct"] is False
+    assert derive(principal_distinct=False) == "not_separated"
+
+
+@pytest.mark.parametrize("answer", [
+    PermissionError(5, "OpenProcess denied"),
+    OSError(87, "OpenProcess failed"),
+    OSError("the token read is available only on Windows"),
+    RuntimeError("anything else"),
+    None,
+    5,
+    "",
+    "not-a-sid",
+    "S-1-5",
+    SID_A + "\n",
+])
+def test_every_failed_token_read_is_an_unread_owner(monkeypatch, answer):
+    """Denied, failed, unsupported or malformed: unread, so `unknown`. The
+    reader WAS asked, which is what this cycle changes; its failure decides
+    nothing but that the owner is unread."""
+    calls: list[int] = []
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(answer, calls), raising=False)
+    owner = v2mod.owner_principal(4242, probe_pid=1, platform_name="win32")
+    assert calls == [4242], "the Windows token read was never attempted"
+    assert owner["read"] is False and owner["sid"] is None and owner["uid"] is None, owner
+    assert "never `separated`" in owner["detail"], owner
+    evidence = v2mod.separation_evidence(owner, {"platform": "win32", "sid": SID_A},
+                                         _qualifying_artefacts())
+    assert evidence["owner_principal_read"] is False and evidence["principal_distinct"] is None
+    assert derive(principal_distinct=None) == "unknown"
+
+
+def test_a_token_read_naming_a_different_sid_is_withheld_not_separated(monkeypatch):
+    """A cross-user read that SUCCEEDS is an ACL fact, not separation.
+
+    Every closure channel refused, the probe's SID read, the owner's SID read
+    and different: in this cycle that is still `unknown`, end to end. A
+    producer that compared it would derive `separated` from a token read alone.
+    """
+    calls: list[int] = []
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_B, calls), raising=False)
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    evidence = v2["separation_evidence"]
+    assert calls == [_c3_v1_record()["subject"]["surface"]["pid"]]
+    assert evidence["owner_principal"]["read"] is True
+    assert evidence["owner_principal_read"] is False
+    assert evidence["principal_distinct"] is None
+    assert "different SID" in evidence["comparison_withheld"]
+    assert v2mod.derived_word(v2) == "unknown"
+    assert e2e(v2).outcome == "inconclusive"
+
+
+def test_a_withheld_comparison_cannot_be_reasserted_past_the_validator(monkeypatch):
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_B, []), raising=False)
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    v2["separation_evidence"]["owner_principal_read"] = True
+    v2["separation_evidence"]["principal_distinct"] = True
+    with pytest.raises(ValueError, match="withheld"):
+        v2mod.validate_v2_record(v2)
+
+
+# ===========================================================================
+# The owner attestation: tied to the run, recorded, and always `unverified`.
+#
+# A provider-side principal cannot certify its own confinement, so the
+# producer never emits `bound`: binding is left to measurement from outside.
+# ===========================================================================
+
+def _runtime_record(path, *, instance=None, pid=None, attested=None, schema=None,
+                    drop=()):
+    surface = _c3_v1_record()["subject"]["surface"]
+    record = {
+        "schema": schema or "nornyx.forge.windows_runtime.v1",
+        "instance": surface["instance"] if instance is None else instance,
+        "pid": surface["pid"] if pid is None else pid,
+        "status": "ready", "port": surface["port"],
+        "attested_principal": ({"platform": "win32", "sid": SID_B, "uid": None,
+                                "detail": "read by this process from its own token user"}
+                               if attested is None else attested),
+    }
+    for key in drop:
+        record.pop(key)
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def _assert_unverified(attestation):
+    """The one status, and no field that claims an assurance."""
+    assert attestation["status"] == "unverified", attestation
+    assert attestation["trusted"] is False
+    for key in v2mod.RETIRED_ATTESTATION_KEYS:
+        assert key not in attestation, attestation
+    v2mod.validate_attestation(attestation)
+
+
+def _producer_record_with(attestation, v1_record, owner=None):
+    owner = owner or {"read": False, "platform": "win32", "sid": None, "uid": None,
+                      "detail": "denied"}
+    evidence = v2mod.separation_evidence(owner, v1_record["subject"]["principal"],
+                                         v1_record["artefacts"], attestation)
+    v2 = dict(v1_record, schema=CONTROL_PLANE_PROBE_V2_SCHEMA, separation_evidence=evidence)
+    v2.pop("principal_separated")
+    v2.pop("not_confinement_reason")
+    return v2
+
+
+def _recorded(tmp_path):
+    return v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), _v1_qualifying())
+
+
+def _recorded_record(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), v1_record)
+    assert attestation["attested_principal"] is not None
+    return _producer_record_with(attestation, v1_record)
+
+
+def _refused_record(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json", pid=1), v1_record)
+    assert attestation["attested_principal"] is None and attestation["instance"] is not None
+    return _producer_record_with(attestation, v1_record)
+
+
+def test_the_runtime_schema_restated_by_the_probe_is_the_runtimes_own():
+    from nornyx_forge import windows_runtime  # noqa: PLC0415
+
+    assert v2mod.RUNTIME_RECORD_SCHEMA == windows_runtime.RUNTIME_SCHEMA
+
+
+def test_an_attestation_tied_to_this_run_is_recorded_unverified_and_derives_unknown(
+        tmp_path, monkeypatch):
+    """Forge attests a DIFFERENT principal; the attestation is tied to this
+    run's instance, pid and v1 measurement; the owner's own token was denied;
+    every closure channel was measured refused. Recorded, `unverified`, and
+    the word is `unknown`."""
+    monkeypatch.setattr(v2mod, "_windows_owner_sid",
+                        _reader(PermissionError(5, "denied"), []), raising=False)
+    v1_record = _v1_qualifying(SID_A)
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), v1_record)
+    _assert_unverified(attestation)
+    assert attestation["refusal"] is None
+    assert attestation["attested_principal"]["sid"] == SID_B
+    assert attestation["v1_measurement_sha256"] == v2mod.measurement_digest(v1_record)
+    assert attestation["runtime_record_sha256"].startswith("sha256:")
+    owner = v2mod.owner_principal(v1_record["subject"]["surface"]["pid"], probe_pid=1,
+                                  platform_name="win32")
+    v2 = _producer_record_with(attestation, v1_record, owner)
+    v2mod.validate_v2_record(v2)
+    evidence = v2["separation_evidence"]
+    assert evidence["owner_principal_read"] is False and evidence["principal_distinct"] is None
+    assert v2mod.derived_word(v2) == "unknown"
+    assert e2e(v2).outcome == "inconclusive"
+
+
+def _restat(result, uid):
+    cls, (visible, hidden) = result.__reduce__()
+    visible = list(visible)
+    visible[4] = uid  # st_uid
+    return cls(visible, hidden)
+
+
+def test_the_former_bound_outcome_cannot_be_reached_with_every_clearing_check_satisfied(
+        tmp_path, monkeypatch):
+    """THE REGRESSION THE NARROWING PROMISED.
+
+    Every condition that ever cleared a channel is made true at once: the
+    record is tied to this run; it and its folder are read-only to this
+    principal; they and every folder above them are shown owned by another
+    principal; and the effective capabilities hold no override. At earlier
+    heads that combination produced `bound` (it was the Linux positive twin).
+    Now there is no judge to satisfy: the status is `unverified`, no key
+    claims a cleared channel, the producer takes no judge, and the code that
+    judged is gone."""
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    path = _runtime_record(folder / "r.json")
+    keys = {(os.stat(p).st_dev, os.stat(p).st_ino) for p in (path, *path.parents)}
+    foreign = (os.getuid() if hasattr(os, "getuid") else 0) + 4242
+    real = os.fstat
+
+    def fstat(descriptor):
+        result = real(descriptor)
+        if (result.st_dev, result.st_ino) in keys:
+            return _restat(result, foreign)
+        return result
+
+    monkeypatch.setattr(v2mod.os, "fstat", fstat)
+    monkeypatch.setattr(v2mod, "_read_proc_status",
+                        lambda: "CapEff:\t0000000000000000\n", raising=False)
+    os.chmod(path, 0o444)
+    os.chmod(folder, 0o555)
+    try:
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    finally:
+        os.chmod(folder, 0o755)
+        os.chmod(path, 0o644)
+    _assert_unverified(attestation)
+    assert attestation["attested_principal"] is not None and attestation["refusal"] is None
+    import inspect  # noqa: PLC0415
+
+    assert set(inspect.signature(v2mod.owner_attestation).parameters) == {
+        "runtime_record", "v1_record"}
+    # `_read_proc_status` is not in this list: the test itself set it above,
+    # so the earlier code paths would have found no override.
+    for retired in ("_writable_by_this_principal", "_owned_on_the_path",
+                    "_permission_override"):
+        assert not hasattr(v2mod, retired), retired
+
+
+@pytest.mark.parametrize("claim", [
+    {"bound": True},
+    {"bound": False},
+    {"channel_writable_by_this_principal": False},
+    {"channel_writable_by_this_principal": None},
+    {"status": "bound"},
+    {"status": "verified"},
+    {"status": None},
+])
+def test_any_record_claiming_bound_or_a_cleared_channel_is_refused(tmp_path, claim):
+    record = _recorded_record(tmp_path)
+    v2mod.validate_v2_record(record)
+    record["separation_evidence"]["owner_principal_attestation"].update(claim)
+    with pytest.raises(ValueError, match="never bound|status"):
+        v2mod.validate_v2_record(record)
+
+
+def test_the_attestation_feeds_no_field_the_derivation_reads(tmp_path):
+    v1_record = _v1_qualifying(SID_A)
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), v1_record)
+    assert attestation["attested_principal"] is not None
+    for owner in ({"read": False, "platform": "win32", "sid": None, "uid": None},
+                  {"read": True, "platform": "win32", "sid": SID_A, "uid": None}):
+        without = v2mod.separation_evidence(owner, v1_record["subject"]["principal"],
+                                            v1_record["artefacts"])
+        with_it = v2mod.separation_evidence(owner, v1_record["subject"]["principal"],
+                                            v1_record["artefacts"], attestation)
+        assert with_it.pop("owner_principal_attestation") == attestation
+        assert with_it == without
+
+
+def test_to_v2_records_the_attestation_and_derives_the_same_word(tmp_path, monkeypatch):
+    monkeypatch.setattr(v2mod, "_windows_owner_sid",
+                        _reader(PermissionError(5, "denied"), []), raising=False)
+    path = _runtime_record(tmp_path / "r.json")
+    with_it = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32",
+                          runtime_record=path)
+    without = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    _assert_unverified(with_it["separation_evidence"]["owner_principal_attestation"])
+    assert "owner_principal_attestation" not in without["separation_evidence"]
+    assert v2mod.derived_word(with_it) == v2mod.derived_word(without) == "unknown"
+
+
+@pytest.mark.parametrize("make, words", [
+    (lambda p: _runtime_record(p, drop=("instance",)), "no instance token"),
+    (lambda p: _runtime_record(p, instance=""), "no instance token"),
+    (lambda p: _runtime_record(p, instance="0" * 32), "not the measured surface's"),
+    (lambda p: _runtime_record(p, pid=1), "pid"),
+    (lambda p: _runtime_record(p, pid=True), "pid"),
+    (lambda p: _runtime_record(p, drop=("pid",)), "pid"),
+    (lambda p: _runtime_record(p, drop=("attested_principal",)), "attested principal"),
+    (lambda p: _runtime_record(p, attested={"platform": "win32", "sid": None, "uid": None}),
+     "attested principal"),
+    (lambda p: _runtime_record(p, attested={"platform": "win32", "sid": SID_B, "uid": 0}),
+     "attested principal"),
+    (lambda p: _runtime_record(p, attested={"platform": "win32", "sid": "S-1-x", "uid": None}),
+     "attested principal"),
+    (lambda p: _runtime_record(p, attested={"platform": "linux", "sid": None, "uid": True}),
+     "attested principal"),
+    (lambda p: _runtime_record(p, attested={"sid": SID_B, "uid": None}), "attested principal"),
+    (lambda p: _runtime_record(p, schema="nornyx.forge.windows_runtime.v0"), "not a"),
+    (lambda p: (p.write_text("{not json", encoding="utf-8"), p)[1], "not JSON"),
+    (lambda p: (p.write_bytes(b"\xff\xfe"), p)[1], "not JSON"),
+    (lambda p: (p.write_text("[]", encoding="utf-8"), p)[1], "not a"),
+    (lambda p: p / "absent.json", "could not be read"),
+])
+def test_an_attestation_not_tied_to_this_run_records_its_refusal(tmp_path, make, words):
+    attestation = v2mod.owner_attestation(make(tmp_path / "r.json"), _v1_qualifying())
+    _assert_unverified(attestation)
+    assert attestation["attested_principal"] is None, attestation
+    assert words in attestation["refusal"], attestation
+
+
+def test_a_v1_record_without_an_instance_cannot_be_tied_to_one(tmp_path):
+    v1_record = _v1_qualifying()
+    v1_record["subject"]["surface"]["instance"] = None
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json", instance="x"),
+                                          v1_record)
+    assert attestation["attested_principal"] is None
+    assert "no instance token to bind to" in attestation["refusal"]
+
+
+def test_the_attestation_takes_no_principal_and_no_judgement_from_its_caller():
+    import inspect  # noqa: PLC0415
+
+    params = set(inspect.signature(v2mod.owner_attestation).parameters)
+    assert params == {"runtime_record", "v1_record"}
+
+
+@pytest.mark.parametrize("mutate, words", [
+    (lambda a: a.update(trusted=True), "never trusted"),
+    (lambda a: a.update(trusted="false"), "never trusted"),
+    (lambda a: a.update(trusted=None), "never trusted"),
+    (lambda a: a.update(source="probe_self_report"), "refused"),
+    (lambda a: a.update(principal_distinct=True), "carries exactly"),
+    (lambda a: a.pop("limit"), "carries exactly"),
+    (lambda a: a.update(refusal="but refused"), "recorded attested principal"),
+    (lambda a: a.update(attested_principal=None), "carries its refusal"),
+    (lambda a: a.update(attested_principal={"platform": "win32", "sid": SID_B, "uid": None,
+                                            "extra": 1}), "recorded attested principal"),
+])
+def test_the_producer_refuses_an_attestation_it_would_never_write(tmp_path, mutate, words):
+    attestation = _recorded(tmp_path)
+    v2mod.validate_attestation(attestation)
+    mutate(attestation)
+    with pytest.raises(ValueError, match=words):
+        v2mod.validate_attestation(attestation)
+
+
+SHA_OTHER = "sha256:" + "0" * 64
+
+
+@pytest.mark.parametrize("make", [_recorded_record, _refused_record])
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(instance="0" * 32),
+    lambda a: a.update(instance=""),
+    lambda a: a.update(instance=7),
+    lambda a: a.update(runtime_record_sha256=SHA_OTHER[:-1]),
+    lambda a: a.update(runtime_record_sha256="SHA256:" + "0" * 64),
+    lambda a: a.update(runtime_record_sha256=None),
+    lambda a: a.update(v1_measurement_sha256=SHA_OTHER),
+    lambda a: a.update(v1_measurement_sha256="sha256:xyz"),
+    lambda a: a.update(limit="untrusted"),
+    lambda a: a.update(limit=v2mod.ATTESTATION_LIMIT + " "),
+    lambda a: a.update(refusal=""),
+    lambda a: a.update(status="unverified "),
+], ids=["instance-other", "instance-empty", "instance-int", "runtime-sha-short",
+        "runtime-sha-case", "runtime-sha-none", "v1-sha-other", "v1-sha-shape",
+        "limit-other", "limit-padded", "refusal-empty", "status-padded"])
+def test_every_claimed_field_is_validated(tmp_path, make, mutate):
+    """Codex P2 4357541667: a validator that accepts claimed fields it does not
+    check. A producer-made record validates; with any one claimed field
+    altered, with a principal recorded and with one refused, it is refused.
+    The v1 digest is recomputed from the v2 record itself, the instance is
+    held to the record's own surface, and the limit is the producer's text."""
+    record = make(tmp_path)
+    v2mod.validate_v2_record(record)
+    mutate(record["separation_evidence"]["owner_principal_attestation"])
+    with pytest.raises(ValueError):
+        v2mod.validate_v2_record(record)
+
+
+def test_an_attestation_refused_before_the_record_was_read_validates(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(tmp_path / "absent.json", v1_record)
+    assert attestation["runtime_record_sha256"] is None and attestation["instance"] is None
+    v2mod.validate_v2_record(_producer_record_with(attestation, v1_record))
+
+
+def test_the_v1_measurement_digest_is_recomputable_from_the_v2_record(tmp_path):
+    record = _recorded_record(tmp_path)
+    attestation = record["separation_evidence"]["owner_principal_attestation"]
+    assert attestation["v1_measurement_sha256"] == v2mod.measurement_digest(record)
+    record["coverage"] = "altered after the attestation was recorded"
+    with pytest.raises(ValueError, match="v1 measurement"):
+        v2mod.validate_v2_record(record)
+
+
+@pytest.mark.parametrize("owner_read, distinct", [(False, True), (False, None), (True, False)])
+def test_a_forged_trusted_attestation_cannot_move_the_translation(tmp_path, owner_read,
+                                                                   distinct):
+    """A hand-written record whose attestation says `trusted: true`, `bound`,
+    and names a different principal, beside every closure channel refused:
+    the translation never reads it, so the outcome is exactly the outcome of
+    the same record without it -- and never `denied`."""
+    forged = _recorded(tmp_path) | {"trusted": True, "bound": True, "status": "verified"}
+    plain = v2_record(owner_read=owner_read, distinct=distinct)
+    carrying = v2_record(owner_read=owner_read, distinct=distinct)
+    carrying["separation_evidence"]["owner_principal_attestation"] = forged
+    assert e2e(carrying).outcome == e2e(plain).outcome == "inconclusive"
+
+
+def test_the_cli_records_an_attestation_and_prints_the_same_word(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(v2mod, "owner_principal", lambda pid, **_: {
+        "read": False, "platform": "win32", "sid": None, "uid": None, "detail": "test"})
+    source = tmp_path / "v1.json"
+    source.write_text(json.dumps(_c3_v1_record()), encoding="utf-8")
+    out = tmp_path / "v2.json"
+    assert v2mod.main(["--from-v1-record", str(source), "--out", str(out)]) == 0
+    plain = capsys.readouterr().err
+    assert v2mod.main(["--from-v1-record", str(source), "--out", str(out),
+                       "--owner-attestation-from-runtime-record",
+                       str(_runtime_record(tmp_path / "r.json"))]) == 0
+    written = json.loads(out.read_text(encoding="utf-8"))
+    _assert_unverified(written["separation_evidence"]["owner_principal_attestation"])
+    # The real 2026-09-08 record observed a channel, so its word is
+    # `not_separated` with or without an attestation.
+    assert capsys.readouterr().err == plain == "derived principal_separated: not_separated\n"
+
+
+def test_a_record_claiming_distinct_windows_sids_is_refused_by_the_producer(monkeypatch):
+    """The producer's Windows invariant, checked on any record it validates:
+    two read SIDs are compared only for sameness, so a record saying the
+    owner was read with a SID other than the probe's -- distinct or not -- is
+    one this producer never writes."""
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_A, []))
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["owner_principal"]["sid"] = SID_B
+    v2["separation_evidence"]["principal_distinct"] = True
+    with pytest.raises(ValueError, match="sameness"):
+        v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["principal_distinct"] = False
+    with pytest.raises(ValueError, match="sameness"):
+        v2mod.validate_v2_record(v2)
+
+
+@pytest.mark.parametrize("value", [5, "", ["x"]])
+def test_a_withheld_comparison_must_be_a_reason_or_none(monkeypatch, value):
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_B, []))
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["comparison_withheld"] = value
+    with pytest.raises(ValueError, match="comparison_withheld"):
+        v2mod.validate_v2_record(v2)
+
+
+# ---------------------------------------------------------------------------
+# The descriptor handling: what is recorded is the file that was held.
+# ---------------------------------------------------------------------------
+
+def _around_the_read(monkeypatch, action):
+    """Run `action(held)` between holding the record and reading it, as a
+    racing writer would act."""
+    real = v2mod._read_held
+
+    def racing(held):
+        action(held)
+        return real(held)
+
+    monkeypatch.setattr(v2mod, "_read_held", racing)
+
+
+def test_a_record_swapped_in_after_it_was_held_is_refused(tmp_path, monkeypatch):
+    """The held file is read, and the name must still name it. A record
+    swapped onto the path after the hold, and left there, is refused. On
+    Windows the held file cannot be replaced at all, and the read fails."""
+    path = _runtime_record(tmp_path / "r.json")
+    replacement = _runtime_record(tmp_path / "other.json", attested={
+        "platform": "win32", "sid": SID_A, "uid": None})
+    swapped: list[bool] = []
+
+    def swap(held):
+        os.replace(replacement, held.path)
+        swapped.append(True)
+
+    _around_the_read(monkeypatch, swap)
+    attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    _assert_unverified(attestation)
+    assert attestation["attested_principal"] is None
+    if swapped:
+        assert "changed while it was checked and read" in attestation["refusal"]
+    else:
+        assert sys.platform == "win32"
+
+
+def test_the_bytes_recorded_are_the_held_files_even_across_a_swap_and_restore(
+        tmp_path, monkeypatch):
+    """Codex P2 4357318302: what is recorded must be the file that was held.
+    Another record is renamed into place and the original renamed back
+    before the read: the held descriptor still reads the original, so the
+    principal recorded is the original's. On Windows the swap is refused
+    while the record is held."""
+    path = _runtime_record(tmp_path / "r.json")
+    other = _runtime_record(tmp_path / "other.json", attested={
+        "platform": "win32", "sid": SID_A, "uid": None})
+    aside = tmp_path / "aside.json"
+    original = path.read_bytes()
+    swapped: list[bool] = []
+
+    def swap_and_restore(held):
+        try:
+            os.replace(path, aside)
+        except PermissionError:
+            return
+        os.replace(other, path)
+        os.replace(path, other)
+        os.replace(aside, path)
+        swapped.append(True)
+
+    _around_the_read(monkeypatch, swap_and_restore)
+    attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    _assert_unverified(attestation)
+    assert attestation["attested_principal"]["sid"] == SID_B, attestation
+    assert attestation["runtime_record_sha256"] == (
+        "sha256:" + hashlib.sha256(original).hexdigest())
+    assert swapped or sys.platform == "win32", "the swap failed off Windows"
+    assert path.read_bytes() == original
+
+
+def test_a_descriptor_that_is_not_the_checked_file_is_refused(tmp_path, monkeypatch):
+    path = _runtime_record(tmp_path / "r.json")
+    real = os.fstat
+
+    def other_file(descriptor):
+        values = list(real(descriptor))
+        values[1] += 1  # st_ino
+        return os.stat_result(values)
+
+    monkeypatch.setattr(v2mod.os, "fstat", other_file)
+    attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    assert attestation["attested_principal"] is None
+    assert "changed while it was checked and read" in attestation["refusal"]
+
+
+def test_a_link_is_refused_without_being_followed(tmp_path, monkeypatch):
+    """Forge writes a regular file, so a path that IS a link is refused --
+    shown by its `lstat`, so no link needs creating on a host that may not
+    allow one."""
+    path = _runtime_record(tmp_path / "r.json")
+    real = os.lstat
+
+    def as_link(target, *args, **kwargs):
+        values = list(real(target, *args, **kwargs))
+        values[0] = stat_module.S_IFLNK | 0o777
+        return os.stat_result(values)
+
+    monkeypatch.setattr(v2mod.os, "lstat", as_link)
+    attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    assert attestation["attested_principal"] is None and "is a link" in attestation["refusal"]
+
+
+def test_a_directory_and_an_oversized_file_are_refused(tmp_path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    attestation = v2mod.owner_attestation(folder, _v1_qualifying())
+    assert attestation["attested_principal"] is None
+    assert "not a regular file" in attestation["refusal"]
+    big = tmp_path / "big.json"
+    big.write_bytes(b" " * (v2mod.RUNTIME_RECORD_LIMIT + 1))
+    attestation = v2mod.owner_attestation(big, _v1_qualifying())
+    assert attestation["attested_principal"] is None and "larger than" in attestation["refusal"]

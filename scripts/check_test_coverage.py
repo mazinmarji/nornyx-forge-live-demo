@@ -633,8 +633,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # adversarial writer, must leave both two-channel waits taking another turn
     # rather than raising `TypeError: 'NoneType' object is not subscriptable`
     # -- which is what the windows-runtime job did on `main` at dabaade.
-    # 97 collected, floor at band(97) = 88.
-    "tests/test_windows_runtime.py": 88,
+    # 97 collected, floor at band(97) = 88. The owner-principal cycle (A-050)
+    # added SEVEN: the runtime record's self-attested principal, read from this
+    # process's own token or uid and never served on `/api/runtime`; a failed
+    # read, in four shapes, that still lets the runtime start; a token read
+    # that is not a SID; and the Windows branch failing closed off Windows.
+    # 104 collected, floor at band(104) = 94.
+    "tests/test_windows_runtime.py": 94,
     # Tranche G, what a self-declared actor establishes: 6 collected at
     # introduction, 7 after round 2, floor at band(7) = 7. Required rather than
     # absorbed into a neighbour's slack, because the property it holds IS a
@@ -1126,8 +1131,16 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # stops the separation rule from being a function that returns `unknown`
     # unconditionally, and the adversarial negatives around it. Deleting it
     # would leave `derive_principal_separation` unexercised while the global
-    # floor absorbed the loss.
-    "tests/test_principal_separation_v2.py": 99,
+    # floor absorbed the loss. The owner-principal cycle (A-050) added 94: the
+    # same-user owner read on the host the suite runs on (the token on the
+    # hosted Windows runner), every failed token read an unread owner, a
+    # different SID withheld rather than compared, and the owner attestation
+    # held and read through one descriptor, tied to the run or refused by
+    # name, every claimed field validated, always `unverified` and never
+    # `bound`,
+    # never trusted and unable to move the word.
+    # 110 -> 204 collected, floor band(110) = 99 -> band(204) = 184.
+    "tests/test_principal_separation_v2.py": 184,
     # The standing-obligation checker: 82 collected at introduction, 103 after
     # the in-session adversarial review round, 106 after the Codex review of
     # the merged head (the directory-link chain, the count-free output, the
@@ -2221,16 +2234,32 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 15 above its band. The fifth added five, 152 -> 157 (floor
 # 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
-# slack stays 532. The rows below are these.
+# slack stays 532.
+#
+# A-050, THE OWNER-PRINCIPAL CYCLE, MOVES TWO MODULES AND ADDS NONE, measured
+# from fresh collections of the base and of this tree, which differ only in
+# these two modules: tests/test_principal_separation_v2.py collects 110 -> 204
+# (floor band(110) = 99 -> band(204) = 184) and tests/test_windows_runtime.py
+# collects 97 -> 104 (floor band(97) = 88 -> band(104) = 94). 6073 collect
+# across 137 modules. The module-floor sum rises by 91 to 5531 and the
+# aggregate follows to 5539, keeping the same 8 above it; band(n) 5375 ->
+# 5466, and the working room below the floor 524 -> 534. THE SLACK THE BANDS
+# GRANT moves by 10, 532 -> 542: the v2 module now 20 above its band where it
+# was 11, and the runtime module 10 where it was 9. NO SKIP IS ADDED. The v2
+# module JOINS the windows-runtime job, so the same-user token read runs on a
+# real Windows host, and the runtime module is already one of the job's; its
+# floor moves 292 -> 503: its nine modules collect
+# 7/14/15/15/23/54/73/104/204 (sum 509, floor 509 - 7 + 1). The rows below
+# are these.
 #
 # (rows below):
 #
-#     collected across tests/     5972   (137 modules)
-#     sum of the module floors    5440
-#     band(5972) = ceil(0.9*n)    5375
-#     MINIMUM_COLLECTED           5448
+#     collected across tests/     6073   (137 modules)
+#     sum of the module floors    5531
+#     band(6073) = ceil(0.9*n)    5466
+#     MINIMUM_COLLECTED           5539
 #     above the module sum          8
-#     below what collects         524
+#     below what collects         534
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2452,7 +2481,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 532 in total, and the aggregate refuses
+# per-module bands already grant 542 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2721,7 +2750,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5448
+MINIMUM_COLLECTED = 5539
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
