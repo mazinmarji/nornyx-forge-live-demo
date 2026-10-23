@@ -68,6 +68,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import socket
@@ -941,6 +942,102 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+#: The shape of a string SID, so a value the token read hands back that is not
+#: one is a failed read rather than a recorded principal.
+_SID_SHAPE = re.compile(r"S-1-[0-9]+(?:-[0-9]+)+")
+
+
+def _own_token_sid() -> str:
+    """This process's own token user, as a string SID. Windows only; raises on
+    any failure, which `_own_principal` turns into an unread principal.
+
+    `OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY)`, then
+    `GetTokenInformation(TokenUser)` and `ConvertSidToStringSidW`. Its own
+    `WinDLL` instances, so the prototypes set here never alter the shared
+    `ctypes.windll` objects another module may have typed differently.
+    """
+    import ctypes  # noqa: PLC0415 - Windows only, and only at record creation
+    from ctypes import wintypes  # noqa: PLC0415
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                          ctypes.POINTER(wintypes.HANDLE)]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                             wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008,  # TOKEN_QUERY
+                                     ctypes.byref(token)):
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
+    try:
+        size = wintypes.DWORD(0)
+        advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))  # TokenUser
+        if not size.value:
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation gave no size")
+        buffer = ctypes.create_string_buffer(size.value)
+        if not advapi32.GetTokenInformation(token, 1, buffer, size, ctypes.byref(size)):
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
+        # TOKEN_USER begins with SID_AND_ATTRIBUTES, which begins with the PSID.
+        sid_pointer = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(sid_pointer, ctypes.byref(text)):
+            raise OSError(ctypes.get_last_error(), "ConvertSidToStringSidW failed")
+        try:
+            return str(text.value)
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _own_principal_value() -> tuple[str | None, int | None]:
+    """(sid, uid) of THIS process: the token user on Windows, `os.getuid()`
+    elsewhere. May raise; the caller fails it closed."""
+    if sys.platform == "win32":
+        sid = _own_token_sid()
+        if not isinstance(sid, str) or not _SID_SHAPE.fullmatch(sid):
+            raise ValueError("the token read returned something that is not a SID")
+        return sid, None
+    return None, int(os.getuid())
+
+
+def _own_principal() -> dict[str, Any]:
+    """The OS principal this runtime runs as, read by this process itself once,
+    when its runtime record is created. AN ATTESTATION, NOT A MEASUREMENT.
+
+    It is written into the runtime record so that a later reader can bind the
+    principal Forge says it runs as to this run's instance token. What that is
+    worth rests on who else can write the record, which is an ACL fact nothing
+    here measures; the v2 separation producer records it as untrusted and
+    derives nothing from it (A-050). It decides nothing in this module, and it
+    is not served: `/api/runtime` answers an identity built separately.
+
+    IT NEVER RAISES INTO THE LAUNCH. Any failure -- an unsupported platform, a
+    refused token, an unexpected value -- records no principal and says why, by
+    the failure's class name only, and the runtime starts as it would have.
+    """
+    entry: dict[str, Any] = {"platform": sys.platform, "sid": None, "uid": None}
+    try:
+        sid, uid = _own_principal_value()
+    except Exception as exc:  # noqa: BLE001 - an unread principal, never a failed launch
+        return entry | {"detail": "this process's own principal could not be read: "
+                                  f"{type(exc).__name__}"}
+    return entry | {"sid": sid, "uid": uid,
+                    "detail": ("read by this process from its own token user"
+                               if sid is not None else "read by this process from os.getuid()")}
+
+
 def _note_failure(runtime_dir: Path | None, text: str) -> None:
     """A diagnostic trail for launches that ended before a record existed."""
     if runtime_dir is None:
@@ -1416,6 +1513,9 @@ def _own_runtime(
         "url": url,
         # Informational. Liveness is the lock; identity is the token.
         "pid": os.getpid(),
+        # An attestation of the principal this process runs as, read by
+        # itself. Untrusted, and decides nothing here (A-050).
+        "attested_principal": _own_principal(),
         "python": str(identity.interpreter),
         "started_at": clock(),
         "ready_at": None,
