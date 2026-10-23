@@ -2,6 +2,30 @@
 
 ## Unreleased — hardening from adversarial review
 
+- A build renders a closed runtime operation contract,
+  `.nornyx/generated/runtime-contract.json`, and binds its digest; network
+  capability is refused statically outside an adapter and measured refused
+  while a subject's tests run (A-053). Operations are DECLARED by their exact
+  registered spelling for a requirement, and every field about one --
+  consequence, risk, capability, disposition -- comes from
+  `nornyx_runtime.OPERATION_REGISTRY`; nothing reads a row's words, and an
+  unregistered operation is refused. Every operation that needs an approval
+  is refused, and `destructive_bulk_deletion` and `external_transmission`
+  are refused whatever the table says, because no approval mechanism exists.
+  The shipped build declares nothing, so its table is empty. The test
+  executor's audit hook refuses and counts each socket connect, bind,
+  send-to and name lookup, loopback included, into its trusted record
+  (`network_refused`, result protocol v2, profile version 4); the verifier
+  refuses socket, mail, HTTP, XML-RPC, TLS and `asyncio` stream use outside
+  `adapters/`, `services/`, `tools/` and `workers/`. Forge's own reference
+  specimen, a notebook with two Forge-authored refusal rows and an embedded
+  boundary, passes through the real verifier with its one unguarded send
+  measured refused. Deliberately changed: a subject test can no longer use a
+  socket in the executor (on Windows that includes starting an `asyncio`
+  loop), and a subject module outside an adapter that imports a network
+  module is refused. The limit: a mechanism on Forge-authored specimens; not
+  a provider build; not a runnable Forge-generated application; the
+  audit-hook guard is a test mechanism, not confinement.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

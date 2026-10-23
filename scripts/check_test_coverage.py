@@ -880,6 +880,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # compromised, both paths), the registry refusal unchanged under intact
     # integrity (both paths), and the governance-unavailable refusal kept.
     "tests/test_operation_classification.py": 57,
+    # A-053's runtime operation contract: 54 collected at introduction, floor
+    # at band(54) = 49. Rendering deterministic and canonical; every field
+    # about an operation from the registry; only the low-impact operation
+    # permitted and the two always-refused consequences refused whatever the
+    # registry says; a row declaring nothing by its words; unregistered
+    # spellings, a lookalike string, foreign requirements and non-mapping
+    # declarations refused; the validator refusing every field that differs
+    # from Forge's rendering; and the build's empty table and its digest.
+    "tests/test_runtime_contract.py": 49,
+    # A-053's capability guard: 51 collected at introduction, floor at
+    # band(51) = 46. The executor refusing and counting each socket attempt
+    # (no loopback exemption, a swallowed refusal still counted), the count's
+    # shape trusted only when well-formed, the reference specimen through the
+    # real verifier with its one unguarded send measured refused, a weakened
+    # boundary failing the specimen's tests, and the static refusal of
+    # network capability outside an adapter, in sources and in tests.
+    "tests/test_capability_guard.py": 46,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2221,16 +2238,27 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the module now 15 above its band. The fifth added five, 152 -> 157 (floor
 # 137 -> 142): 5972 collect, the sum rises by 5 to 5440 and the aggregate
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
-# slack stays 532. The rows below are these.
+# slack stays 532.
+#
+# A-053 ADDS TWO MODULES, measured from a fresh collection:
+# tests/test_runtime_contract.py collects 54 (floor band(54) = 49) and
+# tests/test_capability_guard.py collects 51 (floor band(51) = 46). No other
+# module's count moves. 6077 collect across 139 modules; the module-floor sum
+# rises by 95 to 5535 and the aggregate follows to 5543, keeping the same 8
+# above it; band(n) 5375 -> 5470, the working room below the floor 524 -> 534,
+# and the slack 532 -> 542. NO SKIP IS ADDED. The guard module joins the
+# windows-runtime job, whose floor moves 292 -> 343: its nine modules collect
+# 7/14/15/15/23/51/54/73/97 (sum 349, floor 349 - 7 + 1). The rows below are
+# these.
 #
 # (rows below):
 #
-#     collected across tests/     5972   (137 modules)
-#     sum of the module floors    5440
-#     band(5972) = ceil(0.9*n)    5375
-#     MINIMUM_COLLECTED           5448
+#     collected across tests/     6077   (139 modules)
+#     sum of the module floors    5535
+#     band(6077) = ceil(0.9*n)    5470
+#     MINIMUM_COLLECTED           5543
 #     above the module sum          8
-#     below what collects         524
+#     below what collects         534
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2452,7 +2480,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 532 in total, and the aggregate refuses
+# per-module bands already grant 542 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2721,7 +2749,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5448
+MINIMUM_COLLECTED = 5543
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2855,6 +2883,8 @@ REQUIRED_MODULES = (
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",
+    "tests/test_runtime_contract.py",
+    "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

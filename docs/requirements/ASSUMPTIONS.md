@@ -7554,3 +7554,150 @@ and an oversized proposal id with 409.
 **Serves.** A-035's basic-user journey, which this lets carry confirmed
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
+
+## A-053 A build renders a closed runtime operation contract from declared operations, and network capability is refused statically and measured refused while a subject's tests run
+
+**Claim limit, stated first.** This is a mechanism on Forge-authored
+specimens; not a provider build; not a runnable Forge-generated application;
+the audit-hook guard is a test mechanism, not confinement. No produced
+application is built, launched or handed off by anything here, and no code
+runs that the test executor did not already run: the specimen's tests run
+through the existing trusted verifier and its existing executor, exactly as
+the simulated journey's application's tests do.
+
+**What changed.**
+
+1. **The runtime operation contract.**
+   `contract_generator.render_runtime_contract(model, declarations)` renders a
+   closed operation table as canonical JSON (sorted keys, two-space indent,
+   ASCII, LF, one final newline), and `generate_runtime_contract` writes those
+   exact bytes to `.nornyx/generated/runtime-contract.json`. Each entry holds
+   an operation, its consequence, its risk, the capability it exercises, the
+   BRD requirement it serves and its disposition. The contract also binds the
+   BRD (`source`, `source_digest`), the registry it was classified against
+   (`nornyx_runtime.OPERATION_REGISTRY` and a digest of its entries), the two
+   consequences that are always refused, and `unlisted_operation: refused`.
+2. **Declared, never inferred.** An operation enters the table only because a
+   caller declared it, by its exact registered spelling, for a requirement of
+   this BRD. Every other field comes from the registry (A-047). The renderer
+   never reads a requirement's title or statement, so a row whose words say
+   "delete" or "send" declares nothing, and a row whose words describe a note
+   but which declares an external send is recorded as `external_transmission`.
+   A declared operation the registry does not define -- another spelling,
+   padding, case, a string subclass, a non-string -- is refused with
+   `OPERATION_UNREGISTERED`; so is a requirement the BRD does not have, a
+   section, and declarations that are not a mapping.
+3. **Disposition.** `permitted` only for an operation whose registered
+   capability needs no approval and whose consequence is not
+   `destructive_bulk_deletion` or `external_transmission`; every other
+   operation is `refused_no_approval_mechanism`, because no approval mechanism
+   exists for a produced application. The two named consequences are refused
+   before the capability is read, so a registry that carried them as low risk
+   would still not release them. Today only `send guidance` is permitted.
+4. **The validator.** `validate_runtime_contract(text, model)` accepts a
+   contract only if it is byte for byte what Forge renders from the model and
+   the declarations read back from the contract's own entries. No field is
+   accepted unchecked: every consequence, risk, capability and disposition is
+   re-derived from the registry, the BRD binding from the model, the registry
+   binding from the registry, and an extra, missing, repeated, reordered or
+   reformatted field, a non-JSON constant or a non-text value changes the
+   text. A contract with an entry removed is still a rendering -- for fewer
+   declarations -- and is only stricter, since the removed operation becomes
+   unlisted and refused; what tells it from the build's own table is the
+   digest bound at generation, never this validator.
+5. **The build's binding.** The development flow renders the contract beside
+   `brd_contract.nyx` and records `generated_runtime_contract` and
+   `generated_runtime_contract_digest` -- the SHA-256 of the renderer's text,
+   not of bytes read back from the path -- in its data and in the
+   `requirements_normalized` ledger event. **The shipped build declares no
+   operation**: no confirmed field carries a declaration yet, so its contract
+   is the empty table and every operation is refused. Nothing yet re-reads
+   the recorded digest.
+6. **The executor's network guard.** The greenfield test executor's audit
+   hook refuses each `socket.connect` (also `connect_ex`), `socket.bind`,
+   `socket.sendto`, `socket.sendmsg`, `socket.getaddrinfo`,
+   `socket.gethostbyname` (also `gethostbyname_ex`), `socket.gethostbyaddr`
+   and `socket.getnameinfo` event while the subject's tests run, with
+   `PermissionError`, and COUNTS each refusal. The count is written by the
+   executor into its trusted completion record as `network_refused`, so an
+   attempted send is measured refused rather than asserted by the code that
+   attempted it, and a subject that catches the refusal is still counted.
+   There is no loopback exemption. The result protocol moves to
+   `nornyx.greenfield.pytest_result.v2`; the runner, the verifier and the
+   trusted parent each require the new key as a non-negative integer that is
+   not a boolean; the verifier records `network_guard:
+   executor-audit-hook-refusal-test-mechanism-not-os-confinement` in every
+   test-execution record and the parent requires it; and a passing test gate
+   whose subject attempted the network says how many attempts were refused.
+   The executor's source changes, so `GREENFIELD_TEST_EXECUTOR_DIGEST` (and
+   the runner's digest, which embeds it) change. The profile's version moves
+   3 -> 4 in the gate and its echo in the verifier.
+7. **The static refusal.** The verifier refuses network capability in any
+   module outside the explicit side-effect directories (`adapters/`,
+   `services/`, `tools/`, `workers/`) or suffixes, as it already refuses
+   process capability, under the `architecture-boundary` gate: importing
+   `socket`, `_socket`, `ssl`, `smtplib`, `ftplib`, `poplib`, `imaplib`,
+   `nntplib`, `telnetlib`, `http.client`, `http.server`, `urllib.request`,
+   `xmlrpc.client` or `xmlrpc.server`, `socketserver`,
+   `wsgiref.simple_server`, `asyncore`, `asynchat`, `smtpd`, `requests`,
+   `httpx`, `urllib3` or `aiohttp`, or `asyncio`'s stream helpers; by alias,
+   by `from` import, by a star import, by an attribute chain from an imported
+   name (`import urllib` then `urllib.request`), by plain assignment of one, by
+   `getattr` with a constant member, and by `sys.modules` with a constant
+   name. Only names an import bound are resolved, so a list called
+   `requests` or a parameter called `socket` is not network capability. Tests
+   are subject code: a test may call an adapter, never hold the capability.
+8. **Forge's own reference specimen.** `tests/runtime_boundary_specimen.py`
+   writes a small notebook application whose every state-changing request
+   goes through an embedded boundary that reads the Forge-rendered contract,
+   accepts only its exact shape, refuses an operation the table does not list
+   (`OPERATION_UNREGISTERED`), refuses every operation the table does not
+   permit, and refuses `destructive_bulk_deletion` and
+   `external_transmission` whatever the table says. Its one socket lives in
+   `app/adapters/outbound.py`. Its BRD carries two Forge-authored refusal
+   rows -- removing every note at once, and forwarding a note to an outside
+   address -- each declaring its operation by the registry's spelling. Run
+   through the real verifier, its six tests pass, the refused deletion leaves
+   every note and the refused forward sends nothing, and the executor's count
+   shows exactly one network attempt refused: the test that skips the
+   boundary and calls the adapter directly. Weaken the boundary and the
+   specimen's own tests fail the build; move the socket out of the adapter
+   and the static refusal fails it. The specimen is never shipped and nothing
+   under `src/` reads it.
+
+**Behaviour that changed for a subject.** A subject's tests can no longer
+open, bind or resolve any socket in the executor, loopback included. On
+Windows, `socket.socketpair` is built from a loopback bind and connect, so an
+`asyncio` event loop cannot start in a subject test there. A subject module
+outside an adapter that imports a network module is now refused before its
+tests run.
+
+**What it does NOT establish.**
+
+1. **Confinement.** A Python audit hook is a test mechanism, not OS
+   confinement: ctypes, a native extension or another process can reach the
+   network outside it. (The verifier refuses `ctypes` imports and the hook
+   refuses process starts, but a native extension the subject ships is
+   outside both.) It never stands in for confining a provider or a produced
+   application, and the count is evidence about the tests that ran, not
+   about the application. Independent network evidence must come from an
+   execution context's own observer and the host's adapter state, not from
+   this hook.
+2. **Static completeness.** The static refusal is of named spellings: an
+   event loop's own connection methods (`loop.create_connection`,
+   `loop.sock_connect`), a module the table does not name, or a native
+   extension are outside it. The execution-time count is the check that does
+   not depend on spelling.
+3. **That any produced application honours the table.** Only Forge's own
+   specimen is shown doing so. No provider builds an application here, none is
+   run outside the executor, and the empty table the shipped build renders
+   binds nothing an application reads yet.
+4. **An approval mechanism.** None exists for a produced application; that is
+   why every consequential operation is refused. Nothing here approves,
+   authorizes or releases an act.
+5. **A generated application's safety.** A-047's limit stands: no
+   generated-application safety boundary is claimed.
+
+**Serves.** A-047, whose registry now classifies a produced application's
+declared operations as it classifies the demonstration's; A-035, whose
+simulated journey's application is run by the same executor, now guarded.
