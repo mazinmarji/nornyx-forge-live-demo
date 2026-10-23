@@ -7606,9 +7606,15 @@ before it offers anything.
    bound, and the static check finds nothing: `app/__main__.py` present and
    parsing, every import outside `tests/` the standard library or the
    application's own module (and in `tests/`, also `pytest`), no import of
-   `nornyx_forge` anywhere, no produced file shadowing it, and no
-   `__import__` or `import_module` call. A build it issues nothing for is
-   recorded exactly as before, and `GET /api/build` says why.
+   `nornyx_forge` anywhere, no produced file shadowing it, and no call of a
+   dynamic primitive as a class -- `__import__`, `builtins.__import__`,
+   `importlib.__import__`, `importlib.import_module`, `eval`, `exec` and
+   `compile`, however the name is bound (imported under another name, assigned
+   to a local, or reached by `getattr` with a literal member), whatever the
+   argument -- and no `getattr` on `builtins` or `importlib`. Names are
+   resolved by the trusted verifier's own alias rule, copied and held equal by
+   a test. A build it issues nothing for is recorded exactly as before, and
+   `GET /api/build` says why.
 4. **The handoff gate,** `produced_app_handoff.assess_readiness`. It loads the
    manifest only from a store that passes `assert_sealed()` and carries a seal
    -- a store with no seal is refused, never read as legacy -- takes it from
@@ -7664,9 +7670,16 @@ Currency stays `not_independently_anchored`.
 6. **That the generated contract is the one the flow wrote.** The manifest's
    contract digest is of the contract Forge renders from the accepted BRD; the
    bytes at `.nornyx/generated/brd_contract.nyx` are not read.
-7. **That the standard-library list is every interpreter's.** The static check
+7. **That produced code cannot reach Forge.** The import scan is a static
+   check over the forms listed above, and no more. What code computes at run
+   time -- a name assembled and looked up some other way, a code object, an
+   encoded string -- is beyond any static scan, and this change does not try
+   to chase it. That the application runs without Forge is established only
+   at execution time, by running it from a copy in which Forge is not
+   importable, and this change executes nothing.
+8. **That the standard-library list is every interpreter's.** The static check
    uses the module names of the interpreter Forge runs on.
-8. **Windows coverage of the new tests.** The two new test modules run in the
+9. **Windows coverage of the new tests.** The two new test modules run in the
    Linux test jobs; the Windows runtime job runs a fixed module list that does
    not yet name them.
 

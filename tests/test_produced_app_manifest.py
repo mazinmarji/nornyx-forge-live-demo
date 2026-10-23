@@ -315,6 +315,65 @@ def test_a_dynamic_import_is_a_finding_because_a_static_check_cannot_see_it():
         assert any("imports dynamically" in finding for finding in findings), findings
 
 
+#: The dynamic-import and dynamic-execution forms the static check refuses AS A
+#: CLASS (Codex P2 4359780685 on afa35eb named the first). Each sits in the
+#: application, and its target is never what decides: a literal argument is
+#: refused as well as a computed one.
+DYNAMIC_FORMS = {
+    "an aliased import_module": (
+        b"from importlib import import_module as m\nm('nornyx_forge')\n", "imports dynamically"),
+    "an aliased importlib module": (
+        b"import importlib as x\nx.import_module('json')\n", "imports dynamically"),
+    "import_module bound by assignment": (
+        b"from importlib import import_module\nload = import_module\nload('json')\n",
+        "imports dynamically"),
+    "__import__ bound by assignment": (b"imp = __import__\nimp('json')\n", "imports dynamically"),
+    "__import__ with a computed target": (b"name = 'js' + 'on'\n__import__(name)\n",
+                                          "imports dynamically"),
+    "builtins.__import__": (b"import builtins\nbuiltins.__import__('json')\n",
+                            "imports dynamically"),
+    "importlib.__import__": (b"import importlib\nimportlib.__import__('json')\n",
+                             "imports dynamically"),
+    "an aliased builtins.__import__": (
+        b"import builtins as b\nf = b.__import__\nf('json')\n", "imports dynamically"),
+    "import_module reached by getattr": (
+        b"import importlib\nf = getattr(importlib, 'import_module')\nf('json')\n",
+        "by reflection"),
+    "builtins reached by a computed getattr": (
+        b"import builtins\nname = 'ex' + 'ec'\ngetattr(builtins, name)('x = 1')\n",
+        "by reflection"),
+    # Split literals, so the repository's own dynamic-execution scan
+    # (scripts/check_security.py) does not read these specimens as calls.
+    "eval": (b"ev" b"al('1')\n", "executes dynamically"),
+    "exec": (b"ex" b"ec('x = 1')\n", "executes dynamically"),
+    "compile": (b"compile('1', 'x', 'eval')\n", "executes dynamically"),
+    "builtins.exec": (b"import builtins\nbuiltins.ex" b"ec('x = 1')\n", "executes dynamically"),
+    "an aliased eval": (b"from builtins import eval as e\ne('1')\n", "executes dynamically"),
+}
+
+
+@pytest.mark.parametrize("label", sorted(DYNAMIC_FORMS))
+def test_a_dynamic_import_or_execution_primitive_is_refused_however_it_is_bound(label: str):
+    source, kind = DYNAMIC_FORMS[label]
+    findings = _with("app/cases.py", source)
+    assert any(kind in finding for finding in findings), (label, findings)
+
+
+def test_the_check_resolves_names_by_the_verifiers_own_alias_rule():
+    """The alias resolution is the trusted verifier's, copied because this
+    module may not import an adapter, and held equal here on every form above."""
+    import ast
+
+    for source, _ in DYNAMIC_FORMS.values():
+        tree = ast.parse(source.decode())
+        assert pam._aliases(tree) == greenfield_verifier._aliases(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                assert pam._resolved_callable_name(node.func, pam._aliases(tree)) == (
+                    greenfield_verifier._resolved_callable_name(
+                        node.func, greenfield_verifier._aliases(tree)))
+
+
 def test_the_store_is_not_inspected_and_relative_imports_are_the_applications_own():
     assert _with("capsule/anything.py", b"import requests\n") == []
     assert _with("app/cases.py", b"from . import sibling\nfrom .x import y\n") == []
