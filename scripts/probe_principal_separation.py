@@ -85,7 +85,7 @@ RUNTIME_RECORD_SCHEMA = "nornyx.forge.windows_runtime.v1"
 #: `principal_distinct` slipped in beside it, say -- is refused, not read.
 ATTESTATION_KEYS = frozenset({
     "source", "trusted", "bound", "refusal", "attested_principal", "instance",
-    "runtime_record_sha256", "v1_record_sha256", "channel_writable_by_this_principal",
+    "runtime_record_sha256", "v1_measurement_sha256", "channel_writable_by_this_principal",
     "limit",
 })
 
@@ -286,9 +286,32 @@ def separation_evidence(owner: dict[str, Any], principal: dict[str, Any],
 
 
 def record_digest(record: dict[str, Any]) -> str:
-    """The v1 record's digest, over its canonical JSON: sorted keys, no spaces."""
+    """A record's digest, over its canonical JSON: sorted keys, no spaces."""
     blob = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+#: The v1 fields a v2 record drops, so they are outside the measurement digest.
+_V1_FIELDS_V2_DROPS = ("principal_separated", "not_confinement_reason")
+
+
+def measurement_digest(record: dict[str, Any]) -> str:
+    """The digest of the v1 MEASUREMENT a record carries, the same whether it is
+    computed from the v1 record or from the v2 record made from it.
+
+    Every v1 field the v2 record keeps unchanged, under the v1 schema: the v1
+    record without the two fields v2 drops, or the v2 record without its
+    `separation_evidence` and with the v1 schema back. That is what makes the
+    binding RECOMPUTABLE from the v2 record alone, so a validator can hold a
+    stored attestation to it rather than take its word."""
+    body = {key: value for key, value in record.items()
+            if key not in _V1_FIELDS_V2_DROPS and key != "separation_evidence"}
+    body["schema"] = v1.SCHEMA
+    return record_digest(body)
+
+
+#: A digest as this producer writes one.
+SHA256_SHAPE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 #: A runtime record is a few hundred bytes; anything past this is not one.
@@ -330,16 +353,83 @@ def _proc_fd(fd: int) -> str | None:
     return candidate if os.path.exists(candidate) else None
 
 
-def _writable_by_this_principal(held: HeldRecord) -> bool | None:
-    """Whether THIS principal may write the HELD record, or replace it in its
-    HELD folder. Asked of the descriptors, never of the path.
+#: Effective capabilities that let a principal write, or regain write access
+#: to, a file it does not own: CAP_CHOWN (0), CAP_DAC_OVERRIDE (1) and
+#: CAP_FOWNER (3). CAP_DAC_READ_SEARCH (2) grants no write and is not here.
+_OVERRIDING_CAPABILITIES = (1 << 0) | (1 << 1) | (1 << 3)
 
-    Linux: `os.access` on `/proc/self/fd/<fd>` for the file and for the folder.
-    That path resolves to the open file and the open folder themselves, so the
-    answer is about the objects read and not about whatever the name points at
-    meanwhile. It honours ACLs as `access(2)` does for the real uid. It is
-    still INFERRED and one-sided: True refuses the attestation, and False is
-    not a measured ACL.
+#: How many folders above the record's are walked before giving up.
+_ANCESTOR_LIMIT = 256
+
+
+def _read_proc_status() -> str | None:
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as status:
+            return status.read()
+    except OSError:
+        return None
+
+
+def _permission_override() -> bool | None:
+    """Whether THIS principal can override file permissions anyway: euid 0, or
+    an overriding bit in `CapEff`. None when that cannot be read -- which is
+    not the same as absent, and refuses."""
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return True
+    status = _read_proc_status()
+    if status is None:
+        return None
+    match = re.search(r"^CapEff:\s*([0-9a-fA-F]+)\s*$", status, re.MULTILINE)
+    if match is None:
+        return None
+    return bool(int(match.group(1), 16) & _OVERRIDING_CAPABILITIES)
+
+
+def _owned_on_the_path(held: HeldRecord) -> bool | None:
+    """Whether THIS principal owns the held record, its held folder, or any
+    folder above it up to the root -- write access it could restore at will,
+    whatever the mode bits say now. Walked through descriptors (`..` opened
+    relative to the folder held below it), so the folders judged are the
+    folders above the one the record was opened from. None when the walk
+    cannot be completed."""
+    if held.dir_fd is None or not hasattr(os, "geteuid"):
+        return None
+    mine = {os.geteuid(), os.getuid()}
+    if os.fstat(held.fd).st_uid in mine:
+        return True
+    current = os.dup(held.dir_fd)
+    try:
+        for _ in range(_ANCESTOR_LIMIT):
+            here = os.fstat(current)
+            if here.st_uid in mine:
+                return True
+            parent = os.open("..", os.O_RDONLY | os.O_DIRECTORY, dir_fd=current)
+            above = os.fstat(parent)
+            os.close(current)
+            current = parent
+            if (above.st_dev, above.st_ino) == (here.st_dev, here.st_ino):
+                return above.st_uid in mine  # the root is its own parent
+        return None
+    finally:
+        os.close(current)
+
+
+def _writable_by_this_principal(held: HeldRecord) -> bool | None:
+    """Whether THIS principal may write the HELD record, replace it in its
+    HELD folder, or reverse a judgement that it may not. Asked of the
+    descriptors, never of the path. True refuses the attestation.
+
+    Linux, three questions, any one of which refuses:
+    - `os.access(W_OK)` on `/proc/self/fd/<fd>` for the file and the folder,
+      which resolve to the open objects themselves;
+    - ownership of the record, its folder or any folder above it (Codex P2
+      4357541654): an owner made read-only can make itself writable again,
+      so its `access` answer is a judgement it can reverse;
+    - a permission override: euid 0, or CAP_CHOWN, CAP_DAC_OVERRIDE or
+      CAP_FOWNER in `CapEff`.
+    A question that cannot be answered gives None, which refuses too. Even
+    all three answering no is INFERRED and about THIS principal only: it is
+    not a measured ACL and says nothing about who else can write.
 
     Everywhere else -- Windows above all, where no folder can be held through
     `os.open` and `os.access` reads only the read-only attribute -- there is no
@@ -352,9 +442,17 @@ def _writable_by_this_principal(held: HeldRecord) -> bool | None:
     if file_view is None or folder_view is None:
         return None
     try:
-        return bool(os.access(file_view, os.W_OK) or os.access(folder_view, os.W_OK))
+        if os.access(file_view, os.W_OK) or os.access(folder_view, os.W_OK):
+            return True
+        owned = _owned_on_the_path(held)
     except (OSError, ValueError):
         return None
+    if owned is not False:
+        return owned
+    override = _permission_override()
+    if override is not False:
+        return override
+    return False
 
 
 def _hold_record(path: Path) -> HeldRecord:
@@ -475,14 +573,15 @@ def owner_attestation(runtime_record: Path, v1_record: dict[str, Any], *,
 
     `bound` IS NOT `trusted`. `trusted` is False in every attestation this
     producer emits, and the validator refuses any other value: the writability
-    check is an inference that can refuse but never clear a channel, and the
-    channel's real ACL is not measured here. Nothing in this module or the
+    check is an inference about THIS principal only -- what it can write, own
+    or override -- and the channel's real ACL, who ELSE can write it, is not
+    measured here. Nothing in this module or the
     translation derives anything from an attestation.
     """
     base: dict[str, Any] = {
         "source": ATTESTATION_SOURCE, "trusted": False, "bound": False, "refusal": None,
         "attested_principal": None, "instance": None, "runtime_record_sha256": None,
-        "v1_record_sha256": record_digest(v1_record),
+        "v1_measurement_sha256": measurement_digest(v1_record),
         "channel_writable_by_this_principal": None, "limit": ATTESTATION_LIMIT,
     }
 
@@ -545,8 +644,10 @@ def owner_attestation(runtime_record: Path, v1_record: dict[str, Any], *,
     if channel is None:
         return refused("whether this principal can write the runtime record could not be asked")
     if channel:
-        return refused("the runtime record is writable by this principal, which could "
-                       "have written the attestation itself")
+        return refused("the runtime record is writable by this principal -- directly, "
+                       "through write access it owns and can restore, or through a "
+                       "permission override -- so it could have written the attestation "
+                       "itself")
     return base | {"bound": True, "attested_principal": attested}
 
 
@@ -581,13 +682,33 @@ def to_v2(record: dict[str, Any], *, probe_pid: int | None = None,
     return v2
 
 
+def _is_digest(value: Any) -> bool:
+    return isinstance(value, str) and SHA256_SHAPE.fullmatch(value) is not None
+
+
 def validate_attestation(attestation: Any) -> None:
-    """Refuse an attestation this producer would never have written.
+    """Refuse an attestation this producer would never have written, judging
+    EVERY field it claims, in every verdict (Codex P2 4357541667).
 
     Above all one that says it is TRUSTED: no attestation is, in this
     producer, and a record claiming otherwise is a self-report in another
-    costume. Also one from any other source, with any other key, or whose
-    `bound` and principal disagree.
+    costume. Then, field by field, whatever the verdict:
+    - exactly the producer's keys; its one source; `trusted` False; the
+      fixed `limit` text, byte for byte;
+    - `v1_measurement_sha256` a digest, always (it is computed before anything
+      can fail); `runtime_record_sha256` a digest or None (None only before the
+      record was read);
+    - `instance` None or a non-empty string, and set only once the record was
+      read, so never beside a None runtime digest;
+    - `channel_writable_by_this_principal` a bool or None.
+    And by verdict: a BOUND attestation carries no refusal, an instance, a
+    runtime digest, a channel found not writable and exactly the normalised
+    principal; a REFUSED one carries a non-empty refusal and no principal.
+
+    What only the record can settle -- that the instance is the record's own
+    surface's, and that the v1 digest is the record's own measurement -- is
+    checked by `validate_v2_record`, which recomputes it. The runtime digest is
+    of a file the record does not carry, so its shape is all that can be held.
     """
     if not isinstance(attestation, dict):
         raise ValueError("separation_evidence.owner_principal_attestation must be an object")
@@ -601,16 +722,35 @@ def validate_attestation(attestation: Any) -> None:
         raise ValueError(f"an owner attestation comes from {ATTESTATION_SOURCE!r} only, not "
                          f"{attestation['source']!r}; a principal stated from the probe's "
                          "side is refused")
+    if attestation["limit"] != ATTESTATION_LIMIT:
+        raise ValueError("owner_principal_attestation.limit is not this producer's limit text")
     if not isinstance(attestation["bound"], bool):
         raise ValueError("owner_principal_attestation.bound must be a bool")
+    if not _is_digest(attestation["v1_measurement_sha256"]):
+        raise ValueError("owner_principal_attestation.v1_measurement_sha256 is not a digest")
+    runtime_digest = attestation["runtime_record_sha256"]
+    if runtime_digest is not None and not _is_digest(runtime_digest):
+        raise ValueError("owner_principal_attestation.runtime_record_sha256 is not a digest")
+    instance = attestation["instance"]
+    if instance is not None and (not isinstance(instance, str) or not instance):
+        raise ValueError("owner_principal_attestation.instance is a non-empty string or None")
+    if instance is not None and runtime_digest is None:
+        raise ValueError("an owner attestation names an instance only after reading the "
+                         "record, so never without the record's digest")
+    channel = attestation["channel_writable_by_this_principal"]
+    if channel is not None and not isinstance(channel, bool):
+        raise ValueError("owner_principal_attestation.channel_writable_by_this_principal "
+                         "must be a bool or None")
     if attestation["bound"]:
-        if (attestation["refusal"] is not None
-                or _attested_principal(attestation["attested_principal"]) is None
-                or attestation["channel_writable_by_this_principal"] is not False):
-            raise ValueError("a bound owner attestation carries a principal, no refusal, "
-                             "and a channel this principal was not found able to write")
-    elif attestation["attested_principal"] is not None or not isinstance(
-            attestation["refusal"], str):
+        principal = attestation["attested_principal"]
+        if (attestation["refusal"] is not None or instance is None or runtime_digest is None
+                or channel is not False or _attested_principal(principal) is None
+                or principal != _attested_principal(principal)):
+            raise ValueError("a bound owner attestation carries a principal, an instance, the "
+                             "record's digest, no refusal, and a channel this principal was "
+                             "not found able to write")
+    elif (attestation["attested_principal"] is not None
+          or not isinstance(attestation["refusal"], str) or not attestation["refusal"]):
         raise ValueError("a refused owner attestation carries its refusal and no principal")
 
 
@@ -642,11 +782,35 @@ def validate_v2_record(record: dict[str, Any]) -> None:
     if evidence.get("principal_distinct") is not None and not isinstance(
             evidence.get("principal_distinct"), bool):
         raise ValueError("separation_evidence.principal_distinct must be a bool or None")
-    if evidence.get("comparison_withheld") is not None and (
+    withheld = evidence.get("comparison_withheld")
+    if withheld is not None and (not isinstance(withheld, str) or not withheld):
+        raise ValueError("separation_evidence.comparison_withheld is a non-empty reason or None")
+    if withheld is not None and (
             evidence["owner_principal_read"] or evidence.get("principal_distinct") is not None):
         raise ValueError("a withheld comparison leaves the owner unread and no distinctness")
+    # THE WINDOWS INVARIANT, on any record this producer validates: two read
+    # SIDs are compared only for SAMENESS. A record whose owner was read with a
+    # SID other than the probe's, distinct or not, is one it never writes.
+    owner = evidence.get("owner_principal")
+    subject = record.get("subject")
+    probe = subject.get("principal") if isinstance(subject, dict) else None
+    if (evidence["owner_principal_read"] and isinstance(owner, dict) and isinstance(probe, dict)
+            and owner.get("sid") is not None and probe.get("sid") is not None
+            and (owner["sid"] != probe["sid"]
+                 or evidence.get("principal_distinct") is not False)):
+        raise ValueError("a Windows owner read may only show sameness: equal SIDs and "
+                         "principal_distinct False, or the comparison is withheld")
     if "owner_principal_attestation" in evidence:
-        validate_attestation(evidence["owner_principal_attestation"])
+        attestation = evidence["owner_principal_attestation"]
+        validate_attestation(attestation)
+        surface = subject.get("surface") if isinstance(subject, dict) else None
+        expected = surface.get("instance") if isinstance(surface, dict) else None
+        if attestation["instance"] is not None and attestation["instance"] != expected:
+            raise ValueError("owner_principal_attestation.instance is not this record's own "
+                             "surface instance")
+        if attestation["v1_measurement_sha256"] != measurement_digest(record):
+            raise ValueError("owner_principal_attestation.v1_measurement_sha256 is not the "
+                             "digest of this record's own v1 measurement")
     # The domain's reader: raises on a duplicate channel, a bad mechanism, an
     # unreadable refusal, or a summary that disagrees with the artefacts.
     channels_from_artefacts(record)

@@ -33,6 +33,7 @@ and no cross-user Windows measurement is taken anywhere.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -844,7 +845,7 @@ def test_a_bound_attestation_with_every_closure_refused_still_derives_unknown(
                                           writable=_unwritable)
     assert attestation["bound"] is True and attestation["trusted"] is False, attestation
     assert attestation["attested_principal"]["sid"] == SID_B
-    assert attestation["v1_record_sha256"] == v2mod.record_digest(v1_record)
+    assert attestation["v1_measurement_sha256"] == v2mod.measurement_digest(v1_record)
     assert attestation["runtime_record_sha256"].startswith("sha256:")
     owner = v2mod.owner_principal(v1_record["subject"]["surface"]["pid"], probe_pid=1,
                                   platform_name="win32")
@@ -904,33 +905,240 @@ def test_an_attestation_from_a_channel_this_principal_can_write_is_refused(tmp_p
         assert "writable by this principal" in attestation["refusal"]
 
 
-def test_the_real_check_asks_the_held_descriptors_and_can_clear_only_on_posix(tmp_path):
-    """A record and folder this principal cannot write, judged for real.
-
-    On Linux the held descriptors are asked through `/proc/self/fd`, and a
-    read-only record in a read-only folder is not found writable, so it binds
-    -- unless this principal is root, which `access(2)` lets write anything.
-    On Windows no folder can be held and nothing is cleared: refused."""
+def _locked_record(tmp_path):
     folder = tmp_path / "locked"
     folder.mkdir()
     path = _runtime_record(folder / "r.json")
+    return folder, path
+
+
+@contextlib.contextmanager
+def _read_only(folder, path):
     os.chmod(path, 0o444)
     os.chmod(folder, 0o555)
     try:
-        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+        yield
     finally:
         os.chmod(folder, 0o755)
         os.chmod(path, 0o644)
+
+
+def test_an_owner_controlled_read_only_record_is_refused(tmp_path):
+    """Codex P2 4357541654: a judgement the judged principal can reverse.
+
+    This principal made the record and its folder, made them read-only, and
+    could make them writable again at any time: `access(W_OK)` answers no,
+    and the answer means nothing. Owning the record or any folder on its path
+    is write access this principal can restore, so the channel is never
+    cleared. On Windows nothing is cleared at all."""
+    folder, path = _locked_record(tmp_path)
+    with _read_only(folder, path):
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    assert attestation["bound"] is False, attestation
+    assert attestation["attested_principal"] is None
+    if sys.platform == "win32":
+        assert attestation["channel_writable_by_this_principal"] is None
+    else:
+        assert attestation["channel_writable_by_this_principal"] is True
+        assert "writable by this principal" in attestation["refusal"]
+
+
+def _restat(result, uid):
+    cls, (visible, hidden) = result.__reduce__()
+    visible = list(visible)
+    visible[4] = uid  # st_uid
+    return cls(visible, hidden)
+
+
+def _foreign(monkeypatch, *paths):
+    """Show the named files and folders as owned by a uid this process is not:
+    the ownership a single-user test host cannot otherwise produce."""
+    keys = {(os.stat(p).st_dev, os.stat(p).st_ino) for p in paths}
+    foreign = (os.getuid() if hasattr(os, "getuid") else 0) + 4242
+    real = os.fstat
+
+    def fstat(descriptor):
+        result = real(descriptor)
+        if (result.st_dev, result.st_ino) in keys:
+            return _restat(result, foreign)
+        return result
+
+    monkeypatch.setattr(v2mod.os, "fstat", fstat)
+
+
+def test_a_record_another_principal_owns_binds_only_where_nothing_can_reverse_it(
+        tmp_path, monkeypatch):
+    """The positive twin. Record, folder and every ancestor shown as another
+    principal's, both read-only to this one, and no permission override held:
+    on Linux nothing this principal can do reverses the judgement, so the
+    channel is cleared. Still `trusted: false`. On Windows: refused."""
+    folder, path = _locked_record(tmp_path)
+    _foreign(monkeypatch, path, *path.parents)
+    monkeypatch.setattr(v2mod, "_permission_override", lambda: False)
+    with _read_only(folder, path):
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
     if sys.platform == "win32":
         assert attestation["bound"] is False
-        assert attestation["channel_writable_by_this_principal"] is None
-    elif os.geteuid() == 0:
-        assert attestation["bound"] is False
-        assert attestation["channel_writable_by_this_principal"] is True
+    elif os.getuid() == 0:
+        assert attestation["bound"] is False  # access(2) lets root write anything
     else:
         assert attestation["bound"] is True, attestation
         assert attestation["channel_writable_by_this_principal"] is False
         assert attestation["trusted"] is False
+
+
+def test_an_owned_ancestor_folder_is_write_access_this_principal_can_restore(
+        tmp_path, monkeypatch):
+    """Record and folder another principal's, but an ancestor folder this
+    principal owns: it can restore write access down the path, so refused."""
+    folder, path = _locked_record(tmp_path)
+    _foreign(monkeypatch, path, folder)
+    monkeypatch.setattr(v2mod, "_permission_override", lambda: False)
+    with _read_only(folder, path):
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    assert attestation["bound"] is False, attestation
+    if sys.platform != "win32":
+        assert attestation["channel_writable_by_this_principal"] is True
+
+
+@pytest.mark.parametrize("override", [True, None])
+def test_a_principal_that_can_override_permissions_never_clears_a_channel(
+        tmp_path, monkeypatch, override):
+    """Root, or CAP_DAC_OVERRIDE / CAP_FOWNER / CAP_CHOWN, can write or regain
+    write access to anything; and an override that could not be read is not
+    known to be absent. Either way: refused."""
+    folder, path = _locked_record(tmp_path)
+    _foreign(monkeypatch, path, *path.parents)
+    monkeypatch.setattr(v2mod, "_permission_override", lambda: override)
+    with _read_only(folder, path):
+        attestation = v2mod.owner_attestation(path, _v1_qualifying())
+    assert attestation["bound"] is False, attestation
+    if sys.platform != "win32":
+        assert attestation["channel_writable_by_this_principal"] is (
+            True if override else None)
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("CapEff:\t0000000000000000\n", False),
+    ("CapEff:\t0000000000000002\n", True),   # CAP_DAC_OVERRIDE
+    ("CapEff:\t0000000000000008\n", True),   # CAP_FOWNER
+    ("CapEff:\t0000000000000001\n", True),   # CAP_CHOWN
+    ("CapEff:\t0000000000000004\n", False),  # CAP_DAC_READ_SEARCH: no write
+    ("Name:\tpython\n", None),
+    ("CapEff:\tnot-hex\n", None),
+    (None, None),
+])
+def test_the_permission_override_is_read_from_the_effective_capabilities(
+        monkeypatch, status, expected):
+    monkeypatch.setattr(v2mod, "_read_proc_status", lambda: status)
+    monkeypatch.setattr(v2mod.os, "geteuid", lambda: 1000, raising=False)
+    assert v2mod._permission_override() is expected
+    monkeypatch.setattr(v2mod.os, "geteuid", lambda: 0, raising=False)
+    assert v2mod._permission_override() is True
+
+
+def _producer_record_with(attestation, v1_record):
+    owner = {"read": False, "platform": "win32", "sid": None, "uid": None, "detail": "denied"}
+    evidence = v2mod.separation_evidence(owner, v1_record["subject"]["principal"],
+                                         v1_record["artefacts"], attestation)
+    v2 = dict(v1_record, schema=CONTROL_PLANE_PROBE_V2_SCHEMA, separation_evidence=evidence)
+    v2.pop("principal_separated")
+    v2.pop("not_confinement_reason")
+    return v2
+
+
+def _bound_record(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), v1_record,
+                                          writable=_unwritable)
+    assert attestation["bound"] is True
+    return _producer_record_with(attestation, v1_record)
+
+
+def _refused_record(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(_runtime_record(tmp_path / "r.json"), v1_record,
+                                          writable=lambda _h: True)
+    assert attestation["bound"] is False and attestation["instance"] is not None
+    return _producer_record_with(attestation, v1_record)
+
+
+SHA_OTHER = "sha256:" + "0" * 64
+
+
+@pytest.mark.parametrize("make", [_bound_record, _refused_record])
+@pytest.mark.parametrize("mutate", [
+    lambda a: a.update(instance="0" * 32),
+    lambda a: a.update(instance=""),
+    lambda a: a.update(instance=7),
+    lambda a: a.update(runtime_record_sha256=SHA_OTHER[:-1]),
+    lambda a: a.update(runtime_record_sha256="SHA256:" + "0" * 64),
+    lambda a: a.update(runtime_record_sha256=None),
+    lambda a: a.update(v1_measurement_sha256=SHA_OTHER),
+    lambda a: a.update(v1_measurement_sha256="sha256:xyz"),
+    lambda a: a.update(limit="untrusted"),
+    lambda a: a.update(limit=v2mod.ATTESTATION_LIMIT + " "),
+    lambda a: a.update(channel_writable_by_this_principal="no"),
+    lambda a: a.update(refusal=""),
+], ids=["instance-other", "instance-empty", "instance-int", "runtime-sha-short",
+        "runtime-sha-case", "runtime-sha-none", "v1-sha-other", "v1-sha-shape",
+        "limit-other", "limit-padded", "channel-word", "refusal-empty"])
+def test_every_claimed_binding_is_validated_in_every_verdict(tmp_path, make, mutate):
+    """Codex P2 4357541667: a validator that accepts claimed fields it does not
+    check. A producer-made record validates; with any one claimed field
+    altered, in a bound attestation and in a refused one, it is refused. The
+    v1 digest is recomputed from the v2 record itself, the instance is held
+    to the record's own surface, and the limit is the producer's constant."""
+    record = make(tmp_path)
+    v2mod.validate_v2_record(record)
+    attestation = record["separation_evidence"]["owner_principal_attestation"]
+    mutate(attestation)
+    with pytest.raises(ValueError):
+        v2mod.validate_v2_record(record)
+
+
+def test_a_refused_attestation_read_before_any_binding_validates(tmp_path):
+    v1_record = _v1_qualifying()
+    attestation = v2mod.owner_attestation(tmp_path / "absent.json", v1_record,
+                                          writable=_unwritable)
+    assert attestation["runtime_record_sha256"] is None and attestation["instance"] is None
+    v2mod.validate_v2_record(_producer_record_with(attestation, v1_record))
+
+
+def test_the_v1_measurement_digest_is_recomputable_from_the_v2_record(tmp_path):
+    record = _bound_record(tmp_path)
+    attestation = record["separation_evidence"]["owner_principal_attestation"]
+    assert attestation["v1_measurement_sha256"] == v2mod.measurement_digest(record)
+    record["coverage"] = "altered after the attestation was bound"
+    with pytest.raises(ValueError, match="v1 measurement"):
+        v2mod.validate_v2_record(record)
+
+
+def test_a_record_claiming_distinct_windows_sids_is_refused_by_the_producer(monkeypatch):
+    """The producer's Windows invariant, checked on any record it validates:
+    two read SIDs are compared only for sameness, so a record saying the
+    owner was read with a SID other than the probe's -- distinct or not -- is
+    one this producer never writes."""
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_A, []))
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["owner_principal"]["sid"] = SID_B
+    v2["separation_evidence"]["principal_distinct"] = True
+    with pytest.raises(ValueError, match="sameness"):
+        v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["principal_distinct"] = False
+    with pytest.raises(ValueError, match="sameness"):
+        v2mod.validate_v2_record(v2)
+
+
+@pytest.mark.parametrize("value", [5, "", ["x"]])
+def test_a_withheld_comparison_must_be_a_reason_or_none(monkeypatch, value):
+    monkeypatch.setattr(v2mod, "_windows_owner_sid", _reader(SID_B, []))
+    v2 = v2mod.to_v2(_v1_qualifying(SID_A), probe_pid=1, platform_name="win32")
+    v2mod.validate_v2_record(v2)
+    v2["separation_evidence"]["comparison_withheld"] = value
+    with pytest.raises(ValueError, match="comparison_withheld"):
+        v2mod.validate_v2_record(v2)
 
 
 def test_the_judge_is_handed_the_descriptor_that_is_read(tmp_path):

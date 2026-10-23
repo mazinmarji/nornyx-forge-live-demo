@@ -7618,8 +7618,17 @@ case where `not_separated` is the honest answer.
    - the path is a regular file, not a link, within a size bound, and the
      held descriptor's `fstat` shows the same file the name showed;
    - the held file and the held folder are not found writable by this
-     principal. On Linux that is `os.access` on `/proc/self/fd/<fd>` for
-     each, a path that resolves to the open object itself. Elsewhere,
+     principal, and no judgement of that is one this principal can reverse.
+     On Linux that is three questions, any one of which refuses:
+     - `os.access` on `/proc/self/fd/<fd>` for each, a path that resolves to
+       the open object itself;
+     - whether this principal (effective or real uid) owns the record, its
+       folder or any folder above it up to the root, walked through
+       descriptors. An owner can make a read-only file writable again, so
+       its `access` answer means nothing (review finding);
+     - whether it can override permissions: euid 0, or CAP_CHOWN,
+       CAP_DAC_OVERRIDE or CAP_FOWNER in `CapEff` from `/proc/self/status`.
+     A question that cannot be answered refuses. Elsewhere,
      Windows above all, no descriptor-bound question exists here (no folder
      can be held, and `os.access` reads only the read-only attribute), so the
      answer is "could not be asked" and a Windows attestation is never
@@ -7635,10 +7644,23 @@ case where `not_separated` is the honest answer.
 
    Each failure is a refusal by name, and a refused attestation carries no
    principal. The attestation also records the SHA-256 of the runtime-record
-   bytes and of the v1 record's canonical JSON. There is no input by which
-   the probe states a principal. An attestation from any other source, with
-   any other key, or claiming `trusted: true` is refused by the producer's
-   validator.
+   bytes and of the v1 measurement: the v1 record without the two fields v2
+   drops, which is recomputable from the v2 record itself. There is no input
+   by which the probe states a principal. The producer's validator judges
+   every field an attestation claims, in every verdict (review finding):
+   - its keys, source and fixed limit text, and `trusted: false`;
+   - each digest's shape, and that an instance appears only beside the
+     record's digest;
+   - against the v2 record, that the instance is the record's own surface's
+     and the v1 digest is the record's own measurement;
+   - for a bound attestation, an instance, the record's digest, no refusal, a
+     channel found not writable and exactly the normalised principal;
+   - for a refused one, a non-empty refusal and no principal.
+
+   The runtime digest is of a file the record does not carry, so only its
+   shape can be held. The validator also refuses a record whose owner was
+   read with a SID other than the probe's, distinct or not: the producer
+   compares SIDs only for sameness.
 
 **The trust basis, and why the attestation is UNTRUSTED.** It is what Forge
 says about itself. That is worth exactly as much as the guarantee that nobody
