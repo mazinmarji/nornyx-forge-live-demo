@@ -382,18 +382,54 @@ _SIDE_EFFECT_SUFFIXES = ("_adapter", "_service", "_tool", "_worker")
 # use, acquires a socket, an SMTP, FTP, POP, IMAP, NNTP or Telnet session, an
 # HTTP or XML-RPC client or server, or TLS; and the stream helpers of the
 # dual-use `asyncio`. A STATIC refusal of named spellings, not a property of
-# what the code can reach: an event loop's own connection methods, a native
-# extension, or a module this table does not name are outside it. The test
+# what the code can reach: a native extension, a module this table does not
+# name, or a name computed while the code runs are outside it. The test
 # executor's guard measures what the tests attempt; neither is confinement.
 _NETWORK_MODULES = frozenset({
-    "_socket", "_ssl", "aiohttp", "asynchat", "asyncore", "ftplib", "http.client",
-    "http.server", "httpx", "imaplib", "nntplib", "poplib", "requests", "smtpd",
-    "smtplib", "socket", "socketserver", "ssl", "telnetlib", "urllib.request",
-    "urllib3", "wsgiref.simple_server", "xmlrpc.client", "xmlrpc.server",
+    "_overlapped", "_socket", "_ssl", "aiohttp", "asynchat", "asyncore", "ftplib",
+    "http.client", "http.server", "httpx", "imaplib", "logging.config",
+    "logging.handlers", "nntplib", "poplib", "requests", "smtpd", "smtplib", "socket",
+    "socketserver", "ssl", "telnetlib", "urllib.request", "urllib.robotparser", "urllib3",
+    "webbrowser", "wsgiref.simple_server", "xmlrpc.client", "xmlrpc.server",
 })
 _NETWORK_MEMBERS = frozenset({
     "asyncio.open_connection", "asyncio.open_unix_connection", "asyncio.start_server",
     "asyncio.start_unix_server", "asyncio.streams",
+})
+# THE FAIL-CLOSED REFERENCE RULE (A-053, review round 1). Following every alias
+# of a reflective accessor is a race against spellings, so outside an explicit
+# side-effect module the REFERENCE is refused instead of the use:
+#   * an attribute, on anything, named like one of asyncio's network helpers
+#     (or any `sock_*`), and a literal `getattr` naming one;
+#   * an attribute, on anything, named like an unambiguous network module or
+#     one's parent -- a module that imported `socket` exposes it as `.socket`;
+#   * any reference to, or binding of, an accessor that reaches a name or code
+#     by a string -- `getattr` other than a direct `getattr(obj, "literal")`,
+#     `__import__`, `eval`, `exec`, `compile`, `vars`, `globals`, `locals`,
+#     `breakpoint`, `help`, `attrgetter`, `methodcaller`, `get_type_hints`,
+#     `Formatter`, `get_field`, `__loader__`, `__spec__`, `__getattr__` -- so no
+#     alias of one can be bound in any binding form;
+#   * any import of the import and code-loading machinery.
+_ASYNC_NETWORK_HELPERS = frozenset({
+    "connect_accepted_socket", "create_connection", "create_datagram_endpoint",
+    "create_server", "create_unix_connection", "create_unix_server", "getaddrinfo",
+    "getnameinfo", "open_connection", "open_unix_connection", "sendfile",
+    "start_server", "start_unix_server",
+})
+_NETWORK_ATTRIBUTE_NAMES = frozenset({
+    "_overlapped", "_socket", "_ssl", "aiohttp", "asynchat", "asyncore", "ftplib",
+    "http", "httpx", "imaplib", "nntplib", "poplib", "smtpd", "smtplib", "socket",
+    "socketserver", "ssl", "telnetlib", "urllib", "urllib3", "webbrowser", "xmlrpc",
+})
+_REFLECTIVE_NAMES = frozenset({
+    "Formatter", "__getattr__", "__import__", "__loader__", "__spec__", "attrgetter",
+    "breakpoint", "builtins", "compile", "eval", "exec", "get_field", "get_type_hints",
+    "getattr", "globals", "help", "importlib", "locals", "methodcaller", "vars",
+})
+_CODE_LOADING_MODULES = frozenset({
+    "_pickle", "bdb", "builtins", "code", "codeop", "copyreg", "cProfile", "doctest",
+    "imp", "importlib", "marshal", "pdb", "pickle", "pkgutil", "profile", "runpy",
+    "shelve", "timeit", "trace", "zipimport",
 })
 _MAX_FILES = 2000
 _MAX_FILE_BYTES = 500_000
@@ -1067,6 +1103,87 @@ def _network_capability_markers(tree: ast.AST) -> set[str]:
                 target = _static_string(node.slice)
                 if target is not None and _names_network(target):
                     markers.add(f"sys.modules[{target!r}]")
+    return markers
+
+
+def _is_network_helper(name: str) -> bool:
+    return name in _ASYNC_NETWORK_HELPERS or name.startswith("sock_")
+
+
+def _capability_reference_markers(tree: ast.AST) -> set[str]:
+    """The fail-closed reference rule (A-053): what is refused outside an adapter.
+
+    Decided per reference, never by following an alias: an attribute named
+    like a network helper or an unambiguous network module, on anything; a
+    `getattr` whose literal names one; any reference to or binding of an
+    accessor in `_REFLECTIVE_NAMES` other than the direct call
+    `getattr(obj, "literal")` (two or three positional arguments, a string
+    constant second, no keywords); a class pattern matching a helper by
+    keyword; and an import of the code-loading machinery or of a name in
+    `_REFLECTIVE_NAMES`. A binding of a reflective name -- by assignment of any
+    kind, as a target, a parameter, a definition, an import alias, a handler
+    or a pattern capture -- is a reference too.
+    """
+    markers: set[str] = set()
+    direct: set[int] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) in {2, 3}
+            and not node.keywords
+            and not any(isinstance(argument, ast.Starred) for argument in node.args)
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            direct.add(id(node.func))
+            if _is_network_helper(node.args[1].value):
+                markers.add(f"getattr(..., {node.args[1].value!r}) at line {node.lineno}")
+
+    def bound(name: str | None, node: ast.AST) -> None:
+        if name in _REFLECTIVE_NAMES:
+            markers.add(f"{name} bound at line {getattr(node, 'lineno', 0)}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id in _REFLECTIVE_NAMES and id(node) not in direct:
+                markers.add(f"{node.id} at line {node.lineno}")
+        elif isinstance(node, ast.Attribute):
+            if _is_network_helper(node.attr) or node.attr in _NETWORK_ATTRIBUTE_NAMES:
+                markers.add(f".{node.attr} at line {node.lineno}")
+            elif node.attr in _REFLECTIVE_NAMES:
+                markers.add(f".{node.attr} at line {node.lineno}")
+        elif isinstance(node, ast.Import):
+            for item in node.names:
+                if item.name.split(".", 1)[0] in _CODE_LOADING_MODULES:
+                    markers.add(f"import {item.name} at line {node.lineno}")
+                bound(item.asname, node)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level == 0 and module.split(".", 1)[0] in _CODE_LOADING_MODULES:
+                markers.add(f"from {module} import at line {node.lineno}")
+            for item in node.names:
+                if _is_network_helper(item.name) or item.name in _REFLECTIVE_NAMES:
+                    markers.add(f"import of {item.name} at line {node.lineno}")
+                bound(item.asname, node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound(node.name, node)
+        elif isinstance(node, ast.arg):
+            bound(node.arg, node)
+        elif isinstance(node, ast.ExceptHandler):
+            bound(node.name, node)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            bound(node.name, node)
+        elif isinstance(node, ast.MatchMapping):
+            bound(node.rest, node)
+        elif isinstance(node, ast.MatchClass):
+            for attribute in node.kwd_attrs:
+                if _is_network_helper(attribute) or attribute in _NETWORK_ATTRIBUTE_NAMES:
+                    markers.add(f"pattern attribute {attribute} at line {node.lineno}")
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bound(name, node)
     return markers
 
 
@@ -1854,6 +1971,12 @@ def verify(
             architecture.append(
                 "network capability is not behind an explicit service/tool/adapter/worker: "
                 f"{relative} ({', '.join(sorted(network))})"
+            )
+        references = _capability_reference_markers(tree)
+        if references and not _side_effect_module(path, root):
+            architecture.append(
+                "network or reflective capability reference is not behind an explicit "
+                f"service/tool/adapter/worker: {relative} ({', '.join(sorted(references))})"
             )
         for node in nodes:
             if path in tests:

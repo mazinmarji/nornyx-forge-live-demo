@@ -404,3 +404,145 @@ def test_the_specimen_with_its_socket_moved_out_of_the_adapter_is_refused(
     architecture = _gate(gates, "architecture-boundary")
     assert architecture.passed is False
     assert "app/notebook.py (socket)" in architecture.detail
+
+
+# ---------------------------------------------------------------------------
+# The fail-closed reference rule (A-053, review round 1)
+#
+# Outside an adapter, the verifier does not try to follow every alias of a
+# reflective accessor. It refuses the REFERENCE: any use of `getattr`,
+# `__import__`, `importlib` or `builtins` other than a direct call
+# `getattr(obj, "literal")`, so no alias of them can be bound; any attribute
+# named like one of asyncio's network helpers, on anything; and a literal
+# `getattr` naming one. Imports of network modules were already refused at
+# the import.
+# ---------------------------------------------------------------------------
+
+_REFERENCE_REFUSALS = {
+    "getattr alias": "import asyncio\nfetch = getattr\nHANDLE = fetch(asyncio, 'open_connection')\n",
+    "annotated alias": "from typing import Any\nfetch: Any = getattr\n",
+    "walrus alias": "if (fetch := getattr):\n    HANDLE = fetch\n",
+    "tuple alias": "fetch, size = getattr, len\n",
+    "getattr passed on": "HANDLE = list(map(getattr, [], []))\n",
+    "getattr default": "def pick(obj, accessor=getattr):\n    return accessor(obj, 'x')\n",
+    "getattr rebound": "getattr = print\n",
+    "getattr with keywords": "def pick(obj):\n    return getattr(obj, name='x')\n",
+    "dunder import reference": "loader = __import__\n",
+    "importlib import": "import importlib\n",
+    "importlib member": "from importlib import import_module as load\n",
+    "builtins import": "from builtins import getattr as fetch\n",
+    "helper by attribute": "def go(loop):\n    return loop.create_connection\n",
+    "sock helper by attribute": "def go(loop):\n    return loop.sock_connect\n",
+    "server helper by attribute": "def go(anything):\n    return anything.start_server\n",
+    "helper by literal getattr": "def go(loop):\n    return getattr(loop, 'create_server')\n",
+    "helper from-import": "from asyncio.base_events import create_connection\n",
+}
+
+_REFERENCE_CONTROLS = {
+    "direct literal getattr": "def name_of(obj):\n    return getattr(obj, '__name__')\n",
+    "direct literal getattr with default": "def name_of(obj):\n    return getattr(obj, 'label', '')\n",
+    "asyncio for non-network work": (
+        "import asyncio\n\nTIMEOUT = asyncio.TimeoutError\n\n"
+        "def queue():\n    return asyncio.Queue()\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("label", sorted(_REFERENCE_REFUSALS))
+def test_each_reflective_or_helper_reference_is_a_marker(label: str) -> None:
+    tree = ast.parse(_REFERENCE_REFUSALS[label])
+
+    assert verifier_module._capability_reference_markers(tree), label
+
+
+@pytest.mark.parametrize("label", sorted(_REFERENCE_CONTROLS))
+def test_a_direct_literal_getattr_and_non_network_asyncio_are_not_markers(label: str) -> None:
+    tree = ast.parse(_REFERENCE_CONTROLS[label])
+
+    assert verifier_module._capability_reference_markers(tree) == set(), label
+
+
+@pytest.mark.parametrize("label", [
+    "getattr alias", "annotated alias", "walrus alias", "tuple alias",
+    "helper by attribute", "helper by literal getattr",
+])
+def test_a_reference_outside_an_adapter_fails_the_architecture_gate(
+    tmp_path: Path, label: str
+) -> None:
+    project = _project(tmp_path, _REFERENCE_REFUSALS[label]
+                       + "\n\ndef add(left, right):\n    return left + right\n")
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    architecture = _gate(gates, "architecture-boundary")
+    assert architecture.passed is False, label
+    assert "reference is not behind an explicit service/tool/adapter/worker" in (
+        architecture.detail)
+    assert "src/app.py" in architecture.detail
+    assert _gate(gates, "test-execution").passed is False   # nothing was run
+
+
+def test_an_imported_alias_of_a_network_module_fails_the_architecture_gate(
+    tmp_path: Path,
+) -> None:
+    project = _project(tmp_path, "from urllib import request as fetch_url\n\n\n"
+                       "def add(left, right):\n    return left + right\n")
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    architecture = _gate(gates, "architecture-boundary")
+    assert architecture.passed is False
+    assert "network capability" in architecture.detail and "urllib.request" in architecture.detail
+
+
+def test_the_same_references_inside_an_adapter_pass(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    _write(project / "src/adapters/outbound.py",
+           "import asyncio\n\nfetch = getattr\n\n\n"
+           "def opener():\n    return fetch(asyncio, 'open_connection')\n")
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    assert all(gate.passed for gate in gates), [(g.name, g.detail) for g in gates if not g.passed]
+
+
+def test_non_network_asyncio_and_a_literal_getattr_outside_an_adapter_pass(
+    tmp_path: Path,
+) -> None:
+    project = _project(
+        tmp_path,
+        "import asyncio\n\nTIMEOUT = asyncio.TimeoutError\n\n\n"
+        "def add(left, right):\n    return getattr(left, '__add__')(right)\n",
+    )
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    assert all(gate.passed for gate in gates), [(g.name, g.detail) for g in gates if not g.passed]
+
+
+# ---------------------------------------------------------------------------
+# The whole class, challenged (A-053, review round 1)
+# ---------------------------------------------------------------------------
+
+import network_class_challenge as challenge  # noqa: E402
+
+
+def _static_refusals(source: str) -> set[str]:
+    """Everything the verifier's static layer refuses in a non-adapter module."""
+    tree = ast.parse(source)
+    return (
+        verifier_module._network_capability_markers(tree)
+        | verifier_module._capability_reference_markers(tree)
+        | set(verifier_module._execution_control_findings(
+            tree, relative="src/app.py", is_test=False))
+    )
+
+
+@pytest.mark.parametrize("label", sorted(challenge.CHALLENGE))
+def test_every_variant_of_the_class_is_refused_outside_an_adapter(label: str) -> None:
+    assert _static_refusals(challenge.CHALLENGE[label]), label
+
+
+@pytest.mark.parametrize("label", sorted(challenge.CONTROLS))
+def test_the_class_controls_stay_accepted(label: str) -> None:
+    assert _static_refusals(challenge.CONTROLS[label]) == set(), label

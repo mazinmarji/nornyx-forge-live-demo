@@ -7647,6 +7647,58 @@ the simulated journey's application's tests do.
    name. Only names an import bound are resolved, so a list called
    `requests` or a parameter called `socket` is not network capability. Tests
    are subject code: a test may call an adapter, never hold the capability.
+   The modules `logging.handlers`, `logging.config`, `urllib.robotparser`,
+   `webbrowser` and `_overlapped` are in the table too.
+7a. **The fail-closed reference rule** (the first review round). Following
+   every alias of a reflective accessor is a race against spellings -- the
+   review's own case was `fetch = getattr; fetch(asyncio, "open_connection")`
+   -- so outside the same side-effect modules the verifier refuses the
+   REFERENCE, never the use, and resolves no alias to do it. Refused, under
+   `architecture-boundary`, as "network or reflective capability reference":
+   - an attribute, on any object, named like one of asyncio's network helpers
+     (`open_connection`, `open_unix_connection`, `start_server`,
+     `start_unix_server`, `create_connection`, `create_server`,
+     `create_unix_connection`, `create_unix_server`,
+     `create_datagram_endpoint`, `connect_accepted_socket`, `getaddrinfo`,
+     `getnameinfo`, `sendfile`) or starting `sock_`; the same name imported
+     from any module or matched by keyword in a class pattern; and a literal
+     `getattr` naming one;
+   - an attribute, on any object, named like an unambiguous network module or
+     a network module's parent (`socket`, `_socket`, `ssl`, `_ssl`,
+     `smtplib`, `ftplib`, `poplib`, `imaplib`, `nntplib`, `telnetlib`,
+     `socketserver`, `asyncore`, `asynchat`, `smtpd`, `httpx`, `urllib3`,
+     `aiohttp`, `webbrowser`, `_overlapped`, `http`, `urllib`, `xmlrpc`),
+     because a module that imported one exposes it as an attribute
+     (`email.utils.socket`);
+   - any reference to, or binding of, `getattr`, `__import__`, `eval`,
+     `exec`, `compile`, `vars`, `globals`, `locals`, `breakpoint`, `help`,
+     `attrgetter`, `methodcaller`, `get_type_hints`, `Formatter`,
+     `get_field`, `__loader__`, `__spec__`, `__getattr__`, `builtins` or
+     `importlib` -- as a name or an attribute, and bound by any form
+     (assignment, annotated, augmented, walrus, tuple, `for` target,
+     parameter or default, `lambda`, comprehension, `global`/`nonlocal`,
+     definition, import alias, `except` name, pattern capture) -- other than
+     the one direct call `getattr(obj, "literal")`: two or three positional
+     arguments, a string constant second, no keywords and no unpacking. So no
+     alias of an accessor can be bound. Conservatively, this also refuses a
+     class that defines `__getattr__` outside an adapter;
+   - any import of the import and code-loading machinery: `importlib`,
+     `builtins`, `pkgutil`, `runpy`, `zipimport`, `imp`, `code`, `codeop`,
+     `pickle`, `_pickle`, `marshal`, `shelve`, `copyreg`, `doctest`,
+     `timeit`, `pdb`, `bdb`, `profile`, `cProfile`, `trace`.
+
+   Inside an adapter, all of it is allowed. `asyncio` used for non-network
+   work and a direct literal `getattr` stay accepted everywhere.
+   `tests/network_class_challenge.py` holds the whole-class challenge -- every
+   binding form, imported aliases and star imports, attribute access on any
+   object, `getattr`, `vars()`, `globals()`, `__dict__` and `sys.modules`
+   lookups with literals, `__builtins__`, class and instance attributes
+   holding the accessor, a decorator returning it, `attrgetter`,
+   `methodcaller`, format fields, `__getattribute__`, `__loader__`, the
+   import machinery, `eval`/`exec`/`compile`, and a walk of `__subclasses__`
+   -- 81 variants, each refused by the network marker, this rule or the
+   interpreter-control refusal that already existed, and seven controls that
+   stay accepted.
 8. **Forge's own reference specimen.** `tests/runtime_boundary_specimen.py`
    writes a small notebook application whose every state-changing request
    goes through an embedded boundary that reads the Forge-rendered contract,
@@ -7683,11 +7735,18 @@ tests run.
    about the application. Independent network evidence must come from an
    execution context's own observer and the host's adapter state, not from
    this hook.
-2. **Static completeness.** The static refusal is of named spellings: an
-   event loop's own connection methods (`loop.create_connection`,
-   `loop.sock_connect`), a module the table does not name, or a native
-   extension are outside it. The execution-time count is the check that does
-   not depend on spelling.
+2. **Static completeness.** The static refusal is of the listed spellings,
+   and computation while the code runs is beyond it. Outside it, by name:
+   a module or a third-party package the tables do not name, or one that
+   reaches the network inside its own code (a parser fetching an external
+   entity); a network module exposed under an ambiguous attribute name
+   (`.client`, `.request`, `.server`, `.requests`); a native extension the
+   subject ships; and a primitive an adapter hands back to its caller, since
+   each module is judged alone and calling an adapter is the intended path.
+   Whether a produced application stays off the network, and runs apart
+   from Forge, is shown only at execution time, by an execution context's
+   own observer -- never by this static rule, and never by the audit hook,
+   which is a test mechanism, not confinement.
 3. **That any produced application honours the table.** Only Forge's own
    specimen is shown doing so. No provider builds an application here, none is
    run outside the executor, and the empty table the shipped build renders
