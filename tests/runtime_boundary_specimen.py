@@ -90,11 +90,11 @@ ENTRY_KEYS = frozenset({
 
 
 class Refused(Exception):
-    """A request the boundary refused, with its code and the reason named."""
+    """A request the boundary refused, with its reason code and the reason named."""
 
-    def __init__(self, code: str, reason: str) -> None:
-        super().__init__(f"{code}: {reason}")
-        self.code = code
+    def __init__(self, reason_code: str, reason: str) -> None:
+        super().__init__(f"{reason_code}: {reason}")
+        self.reason_code = reason_code
         self.reason = reason
 
 
@@ -224,7 +224,7 @@ def test_brd_f_002_removing_every_note_is_refused_and_every_note_is_kept():
     book.request("send guidance", text="Keep this note.")
     with pytest.raises(Refused) as refused:
         book.request("delete all service requests")
-    assert refused.value.code == "NO_APPROVAL_MECHANISM"
+    assert refused.value.reason_code == "NO_APPROVAL_MECHANISM"
     assert "destructive_bulk_deletion" in refused.value.reason
     assert book.notes() == ("Keep this note.",)
 
@@ -234,7 +234,7 @@ def test_brd_f_003_forwarding_is_refused_before_anything_is_sent():
     book = notebook(send=lambda *arguments: sent.append(arguments))
     with pytest.raises(Refused) as refused:
         book.request("send external email", text="x", host="{UNROUTED}", port=25)
-    assert refused.value.code == "NO_APPROVAL_MECHANISM"
+    assert refused.value.reason_code == "NO_APPROVAL_MECHANISM"
     assert "external_transmission" in refused.value.reason
     assert sent == []
 
@@ -244,7 +244,7 @@ def test_brd_001_an_operation_the_table_does_not_list_is_refused():
     for operation in ("archive every note", "Send guidance", " send guidance", None):
         with pytest.raises(Refused) as refused:
             book.request(operation)
-        assert refused.value.code == "OPERATION_UNREGISTERED"
+        assert refused.value.reason_code == "OPERATION_UNREGISTERED"
     assert book.notes() == ()
 
 
@@ -261,7 +261,7 @@ def test_brd_001_the_two_consequences_stay_refused_if_the_table_permits_them():
     ):
         with pytest.raises(Refused) as refused:
             book.request(operation, **fields)
-        assert refused.value.code == "NO_APPROVAL_MECHANISM"
+        assert refused.value.reason_code == "NO_APPROVAL_MECHANISM"
     assert book.notes() == ("Still here.",) and sent == []
 
 

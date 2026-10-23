@@ -22,7 +22,8 @@
   `getattr` (but a direct `getattr(obj, "literal")`), `__import__`, `eval`,
   `exec`, `vars` and the other string accessors, the import machinery, and any
   attribute named like an asyncio network helper or a network module, on
-  anything. Forge's own reference
+  anything -- one name check, applied to every position a name can appear
+  in. Forge's own reference
   specimen, a notebook with two Forge-authored refusal rows and an embedded
   boundary, passes through the real verifier with its one unguarded send
   measured refused. Deliberately changed: a subject test can no longer use a

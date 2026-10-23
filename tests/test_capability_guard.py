@@ -546,3 +546,109 @@ def test_every_variant_of_the_class_is_refused_outside_an_adapter(label: str) ->
 @pytest.mark.parametrize("label", sorted(challenge.CONTROLS))
 def test_the_class_controls_stay_accepted(label: str) -> None:
     assert _static_refusals(challenge.CONTROLS[label]) == set(), label
+
+
+# ---------------------------------------------------------------------------
+# One name check at every name position (A-053, review round 2)
+#
+# The exact-head review found two positions checked against a narrower set
+# than the rest: a literal `getattr` member (only network helpers) and a
+# class pattern's keyword attribute (no reflective names). Every position now
+# calls `_forbidden_name`, the one combined set. Each position below is tried
+# with a name from each part of that set.
+# ---------------------------------------------------------------------------
+
+_NAME_POSITIONS = {
+    "plain name": "HANDLE = {n}\n",
+    "stored name": "{n} = 1\n",
+    "attribute": "def go(thing):\n    return thing.{n}\n",
+    "import": "import {n}\n",
+    "dotted import part": "import package.{n}\n",
+    "import alias": "import json as {n}\n",
+    "from-import module part": "from {n} import thing\n",
+    "from-import name": "from package import {n}\n",
+    "from-import alias": "from package import thing as {n}\n",
+    "getattr literal": "def go(o):\n    return getattr(o, '{n}')\n",
+    "hasattr literal": "def go(o):\n    return hasattr(o, '{n}')\n",
+    "setattr literal": "def go(o):\n    setattr(o, '{n}', 1)\n",
+    "delattr literal": "def go(o):\n    delattr(o, '{n}')\n",
+    "class pattern keyword attribute": (
+        "def go(o):\n    match o:\n        case object({n}=grab):\n            return grab\n"),
+    "keyword argument": "HANDLE = dict({n}=1)\n",
+    "capture": "def go(o):\n    match o:\n        case {n}:\n            return 1\n",
+    "star capture": "def go(o):\n    match o:\n        case [*{n}]:\n            return 1\n",
+    "mapping rest": "def go(o):\n    match o:\n        case {{**{n}}}:\n            return 1\n",
+    "parameter": "def go({n}):\n    return 1\n",
+    "function definition": "def {n}():\n    return 1\n",
+    "class definition": "class {n}:\n    pass\n",
+    "except name": "try:\n    pass\nexcept Exception as {n}:\n    pass\n",
+    "global": "def go():\n    global {n}\n",
+}
+#: One name from each part of the combined set.
+_FORBIDDEN_SAMPLES = {
+    "reflective": "attrgetter",
+    "network attribute": "socket",
+    "network helper": "open_connection",
+    "sock helper": "sock_sendall",
+    "code loading": "pickle",
+}
+
+
+@pytest.mark.parametrize("position", sorted(_NAME_POSITIONS))
+@pytest.mark.parametrize("part", sorted(_FORBIDDEN_SAMPLES))
+def test_every_name_position_checks_the_whole_forbidden_set(position: str, part: str) -> None:
+    source = _NAME_POSITIONS[position].format(n=_FORBIDDEN_SAMPLES[part])
+
+    assert verifier_module._capability_reference_markers(ast.parse(source)), (position, part)
+
+
+@pytest.mark.parametrize("position", sorted(_NAME_POSITIONS))
+def test_every_name_position_accepts_an_ordinary_name(position: str) -> None:
+    source = _NAME_POSITIONS[position].format(n="label")
+
+    assert verifier_module._capability_reference_markers(ast.parse(source)) == set(), position
+
+
+def test_the_one_name_check_is_the_union_of_the_four_tables() -> None:
+    for name in (*verifier_module._REFLECTIVE_NAMES, *verifier_module._NETWORK_ATTRIBUTE_NAMES,
+                 *verifier_module._CODE_LOADING_MODULES, *verifier_module._ASYNC_NETWORK_HELPERS,
+                 "sock_anything"):
+        assert verifier_module._forbidden_name(name), name
+    for name in ("label", "parse", "quote", "asyncio", "Queue", None, 7):
+        assert not verifier_module._forbidden_name(name), name
+
+
+@pytest.mark.parametrize(("label", "source"), [
+    ("literal getattr naming an accessor",
+     "import asyncio\nimport operator\n\n"
+     "HANDLE = getattr(operator, 'attrgetter')('open_connection')(asyncio)\n"),
+    ("class pattern naming an accessor",
+     "def go(thing):\n    match thing:\n        case object(attrgetter=grab):\n"
+     "            return grab\n"),
+])
+def test_both_review_findings_fail_the_architecture_gate(
+    tmp_path: Path, label: str, source: str
+) -> None:
+    project = _project(tmp_path, source + "\n\ndef add(left, right):\n    return left + right\n")
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    architecture = _gate(gates, "architecture-boundary")
+    assert architecture.passed is False, label
+    assert "attrgetter" in architecture.detail and "src/app.py" in architecture.detail
+
+
+def test_ordinary_literal_getattr_class_pattern_and_asyncio_pass_the_gates(
+    tmp_path: Path,
+) -> None:
+    project = _project(
+        tmp_path,
+        "import asyncio\n\nTIMEOUT = asyncio.TimeoutError\n\n\n"
+        "def kind(point):\n    match point:\n        case object(x=0, y=across):\n"
+        "            return across\n    return getattr(point, 'label', None)\n\n\n"
+        "def add(left, right):\n    return left + right\n",
+    )
+
+    gates, _provenance = trusted_greenfield_gates(project)
+
+    assert all(gate.passed for gate in gates), [(g.name, g.detail) for g in gates if not g.passed]

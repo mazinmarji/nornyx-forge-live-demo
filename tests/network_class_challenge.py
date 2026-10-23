@@ -106,17 +106,29 @@ CHALLENGE = {
     "help": "help('socket')\n",
     "subclasses walk": "HANDLE = ().__class__.__base__.__subclasses__()\n",
     "ctypes": "import ctypes\n",
+    # Review round 2, both exact-head findings: a literal member and a class
+    # pattern's keyword attribute naming a reflective accessor.
+    "literal getattr naming an accessor": (
+        "import asyncio\nimport operator\n"
+        "HANDLE = getattr(operator, 'attrgetter')('open_connection')(asyncio)\n"),
+    "class pattern naming an accessor": (
+        "def go(thing):\n    match thing:\n        case object(attrgetter=grab):\n"
+        "            return grab\n"),
 }
 
-#: label -> subject source that must stay accepted outside an adapter.
+#: label -> subject source that must stay accepted outside an adapter. The
+#: uniform name check (review round 2) refuses `urllib` and `http` as names
+#: too, so `import urllib.parse` is no longer among these.
 CONTROLS = {
+    "a class pattern with ordinary attributes": (
+        "def go(point):\n    match point:\n        case object(x=0, y=across):\n"
+        "            return across\n"),
     "a direct literal getattr": "def name_of(obj):\n    return getattr(obj, '__name__')\n",
     "a direct literal getattr with a default": (
         "def label_of(obj):\n    return getattr(obj, 'label', '')\n"),
     "asyncio for non-network work": (
         "import asyncio\n\nTIMEOUT = asyncio.TimeoutError\n\n"
         "def queue():\n    return asyncio.Queue()\n"),
-    "urllib.parse": "import urllib.parse\nHANDLE = urllib.parse.quote\n",
     "a list called requests": "requests = []\nrequests.append(1)\n",
     "a method called request": "class Book:\n    def request(self, operation):\n        return operation\n",
     "json and pathlib": "import json\nfrom pathlib import Path\nHANDLE = json.loads(Path('x').name)\n",

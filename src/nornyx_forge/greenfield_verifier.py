@@ -410,6 +410,9 @@ _NETWORK_MEMBERS = frozenset({
 #     `Formatter`, `get_field`, `__loader__`, `__spec__`, `__getattr__` -- so no
 #     alias of one can be bound in any binding form;
 #   * any import of the import and code-loading machinery.
+# Since review round 2 the four tables below are ONE forbidden set, applied
+# uniformly: `_forbidden_name` is the only name check, and every position the
+# rule reads a name from calls it (see `_capability_reference_markers`).
 _ASYNC_NETWORK_HELPERS = frozenset({
     "connect_accepted_socket", "create_connection", "create_datagram_endpoint",
     "create_server", "create_unix_connection", "create_unix_server", "getaddrinfo",
@@ -1110,80 +1113,105 @@ def _is_network_helper(name: str) -> bool:
     return name in _ASYNC_NETWORK_HELPERS or name.startswith("sock_")
 
 
+#: The accessors whose literal member is a name position of its own.
+_LITERAL_MEMBER_CALLS = frozenset({"delattr", "getattr", "hasattr", "setattr"})
+
+
+def _forbidden_name(name: object) -> bool:
+    """THE ONE NAME CHECK of the reference rule (A-053, review round 2).
+
+    True for any name in the combined forbidden set: the reflective accessors,
+    the network attribute names, the asyncio network helpers (and `sock_*`)
+    and the code-loading modules. Every position the rule reads a name from
+    calls this and nothing else, so no position can check a narrower set.
+    """
+    return isinstance(name, str) and (
+        name in _REFLECTIVE_NAMES
+        or name in _NETWORK_ATTRIBUTE_NAMES
+        or name in _CODE_LOADING_MODULES
+        or _is_network_helper(name)
+    )
+
+
 def _capability_reference_markers(tree: ast.AST) -> set[str]:
     """The fail-closed reference rule (A-053): what is refused outside an adapter.
 
-    Decided per reference, never by following an alias: an attribute named
-    like a network helper or an unambiguous network module, on anything; a
-    `getattr` whose literal names one; any reference to or binding of an
-    accessor in `_REFLECTIVE_NAMES` other than the direct call
-    `getattr(obj, "literal")` (two or three positional arguments, a string
-    constant second, no keywords); a class pattern matching a helper by
-    keyword; and an import of the code-loading machinery or of a name in
-    `_REFLECTIVE_NAMES`. A binding of a reflective name -- by assignment of any
-    kind, as a target, a parameter, a definition, an import alias, a handler
-    or a pattern capture -- is a reference too.
+    Decided per name, never by following an alias. Every position a name
+    appears in is checked by `_forbidden_name` against the one combined set:
+    a plain name in any context (load, store, delete); an attribute; each
+    dotted part of an imported module, each imported name and each alias; the
+    literal member of `getattr`, `hasattr`, `setattr` or `delattr`; a class
+    pattern's keyword attribute; a keyword argument's name; a capture name; a
+    parameter; a function or class name; an `except` name; and a `global` or
+    `nonlocal` name. The one exemption is the function NAME of a direct call
+    `getattr(obj, "literal")` -- two or three positional arguments, a string
+    constant second, no keywords, no unpacking -- and its literal is still
+    checked like every other name.
     """
     markers: set[str] = set()
     direct: set[int] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) in {2, 3}
-            and not node.keywords
-            and not any(isinstance(argument, ast.Starred) for argument in node.args)
-            and isinstance(node.args[1], ast.Constant)
-            and isinstance(node.args[1].value, str)
-        ):
-            direct.add(id(node.func))
-            if _is_network_helper(node.args[1].value):
-                markers.add(f"getattr(..., {node.args[1].value!r}) at line {node.lineno}")
 
-    def bound(name: str | None, node: ast.AST) -> None:
-        if name in _REFLECTIVE_NAMES:
-            markers.add(f"{name} bound at line {getattr(node, 'lineno', 0)}")
+    def check(name: object, where: str, node: ast.AST) -> None:
+        if _forbidden_name(name):
+            markers.add(f"{where} {name} at line {getattr(node, 'lineno', 0)}")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in _LITERAL_MEMBER_CALLS:
+            if (
+                len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                check(node.args[1].value, f"{func.id} literal", node)
+            if (
+                func.id == "getattr"
+                and len(node.args) in {2, 3}
+                and not node.keywords
+                and not any(isinstance(argument, ast.Starred) for argument in node.args)
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                direct.add(id(func))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
-            if node.id in _REFLECTIVE_NAMES and id(node) not in direct:
-                markers.add(f"{node.id} at line {node.lineno}")
+            if id(node) not in direct:
+                check(node.id, "name", node)
         elif isinstance(node, ast.Attribute):
-            if _is_network_helper(node.attr) or node.attr in _NETWORK_ATTRIBUTE_NAMES:
-                markers.add(f".{node.attr} at line {node.lineno}")
-            elif node.attr in _REFLECTIVE_NAMES:
-                markers.add(f".{node.attr} at line {node.lineno}")
+            check(node.attr, "attribute", node)
         elif isinstance(node, ast.Import):
             for item in node.names:
-                if item.name.split(".", 1)[0] in _CODE_LOADING_MODULES:
-                    markers.add(f"import {item.name} at line {node.lineno}")
-                bound(item.asname, node)
+                for part in item.name.split("."):
+                    check(part, "import", node)
+                check(item.asname, "import alias", node)
         elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if node.level == 0 and module.split(".", 1)[0] in _CODE_LOADING_MODULES:
-                markers.add(f"from {module} import at line {node.lineno}")
+            if node.level == 0:
+                for part in (node.module or "").split("."):
+                    check(part, "import from", node)
             for item in node.names:
-                if _is_network_helper(item.name) or item.name in _REFLECTIVE_NAMES:
-                    markers.add(f"import of {item.name} at line {node.lineno}")
-                bound(item.asname, node)
+                check(item.name, "imported name", node)
+                check(item.asname, "import alias", node)
+        elif isinstance(node, ast.keyword):
+            check(node.arg, "keyword argument", node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bound(node.name, node)
+            check(node.name, "definition", node)
         elif isinstance(node, ast.arg):
-            bound(node.arg, node)
+            check(node.arg, "parameter", node)
         elif isinstance(node, ast.ExceptHandler):
-            bound(node.name, node)
+            check(node.name, "except name", node)
         elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
-            bound(node.name, node)
+            check(node.name, "capture", node)
         elif isinstance(node, ast.MatchMapping):
-            bound(node.rest, node)
+            check(node.rest, "capture", node)
         elif isinstance(node, ast.MatchClass):
             for attribute in node.kwd_attrs:
-                if _is_network_helper(attribute) or attribute in _NETWORK_ATTRIBUTE_NAMES:
-                    markers.add(f"pattern attribute {attribute} at line {node.lineno}")
+                check(attribute, "pattern attribute", node)
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             for name in node.names:
-                bound(name, node)
+                check(name, "global or nonlocal", node)
     return markers
 
 

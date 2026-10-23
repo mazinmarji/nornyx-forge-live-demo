@@ -7696,9 +7696,35 @@ the simulated journey's application's tests do.
    holding the accessor, a decorator returning it, `attrgetter`,
    `methodcaller`, format fields, `__getattribute__`, `__loader__`, the
    import machinery, `eval`/`exec`/`compile`, and a walk of `__subclasses__`
-   -- 81 variants, each refused by the network marker, this rule or the
-   interpreter-control refusal that already existed, and seven controls that
-   stay accepted.
+   -- 83 variants with the two below, each refused by the network marker,
+   this rule or the interpreter-control refusal that already existed, and
+   seven controls that stay accepted.
+
+   **One name check at every position** (the second review round). The
+   exact-head review found two positions checked against a narrower set than
+   the rest: the literal member of a direct `getattr` was checked against the
+   network helpers only, so `getattr(operator, 'attrgetter')` passed, and a
+   class pattern's keyword attribute was checked against the network names
+   only, so `case object(attrgetter=grab)` passed. The forbidden set itself
+   is unchanged; it is now applied UNIFORMLY. `_forbidden_name` is the one
+   combined set -- the reflective names, the network attribute names, the
+   network helpers with `sock_*`, and the code-loading modules -- and every
+   position the rule reads a name from calls it and nothing else: a plain
+   name in any context; an attribute; each dotted part of an imported
+   module, each imported name and each alias; the literal member of
+   `getattr`, `hasattr`, `setattr` or `delattr`; a class pattern's keyword
+   attribute; a keyword argument's name; a capture, star capture or mapping
+   rest; a parameter; a function or class name; an `except` name; and a
+   `global` or `nonlocal` name. The direct literal `getattr` keeps its one
+   exemption -- for the function name only; its literal is checked like any
+   other name. Each of the 23 positions is tested with a name from each part
+   of the set and with an ordinary name. As a consequence, outside an adapter
+   these are now refused as names too: `urllib` and `http` (so
+   `import urllib.parse` and `from http import HTTPStatus`), and the
+   code-loading module names `code`, `trace`, `profile`, `help`, `compile`
+   and the rest, as an attribute or a variable. Forge's own specimen renamed
+   its refusal's `code` attribute to `reason_code` for this reason; the rule
+   was not narrowed for it.
 8. **Forge's own reference specimen.** `tests/runtime_boundary_specimen.py`
    writes a small notebook application whose every state-changing request
    goes through an embedded boundary that reads the Forge-rendered contract,
