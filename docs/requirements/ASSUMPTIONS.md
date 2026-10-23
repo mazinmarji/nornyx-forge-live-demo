@@ -7583,7 +7583,7 @@ outside PowerShell's names; a role that is not a short identifier; a gate
 script that is not absolute, or a provider executable that is not an absolute
 Windows path, or either holding a NUL or a quote; a worker whose executable is
 not the gate's provider executable; a NUL anywhere in the vector; a command
-line over 32767 characters; a `-ProviderArgs` value PowerShell would read as a
+line over 32767 UTF-16 code units; a `-ProviderArgs` value PowerShell would read as a
 parameter name, or one that ends in whitespace; no console; and a gate script
 whose bytes are not the pinned
 bytes, or that is not one regular file. Each is a `WorkerResult` in the
@@ -7630,10 +7630,29 @@ deletion until the gate has exited.
 **Every gate exit is a failed worker run.** The gate gives the provider its
 own run directory and releases what it produced only after later actions this
 change never takes, so no provider output reaches the worker's workspace on
-this path. `success` is False for every exit code; the returncode is the
-gate's (0, 10 or 20, each with its meaning in the output; anything else named
-as not one of them), and the Provider Contract's `classify_result` maps each
-to `error`, unchanged.
+this path. `success` is False for every exit code. The gate's own status is
+named in the output -- "The gate exited N", with the meaning of 0, 10 or 20,
+or that it is none of them -- and the result's returncode is always 3
+(`GATE_RAN_RETURNCODE`), whatever the gate exited. A gate status of 124 or 127
+passed through would have read as a timeout or an absent executable, neither
+of which is true here; with the constant, the Provider Contract's
+`classify_result`, unchanged, maps every gate exit to `error`. The first head
+of this change passed the gate's status through, which allowed the collision.
+
+**A start failure is not an absent executable.** If Windows PowerShell cannot
+be started, the result is `unavailable` (127) only when the operating system
+reports the file not found (`FileNotFoundError` with Windows error 2 or 3).
+Any other start failure -- Windows error 206, which CPython also raises as
+`FileNotFoundError`, among them -- is the refusal before start (returncode
+2) with the operating system's words. The length preflight counts the command
+line `list2cmdline` builds in UTF-16 code units, as `CreateProcessW` counts
+its 32767 bound, so a character outside the Basic Multilingual Plane counts
+twice; it counted characters at first, and a vector of emoji passed it and
+failed at the start, reported as `unavailable`.
+
+**The launch mode is named for the gate it pins.** `LaunchVia` is `direct`
+or `d3g_gate`; the first head called the second `d2_gate`, after the design
+rather than the gate.
 
 **What it does NOT establish.**
 

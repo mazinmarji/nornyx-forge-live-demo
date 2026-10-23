@@ -909,8 +909,12 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # own -- the round trip through a real powershell.exe -File stub, the
     # refused class misbound there, the held script, the console check and
     # the system directory -- declared skips here and run, with no skip, in
-    # the windows-runtime job.
-    "tests/test_provider_gate.py": 51,
+    # the windows-runtime job. 56 -> 61 for the review of its third head,
+    # floor band(61) = 55: gate exits 124, 127 and 255 each classified error
+    # with the status kept in the output, a start failure unavailable only
+    # when PowerShell is not found (three cases), and the length preflight in
+    # UTF-16 code units.
+    "tests/test_provider_gate.py": 55,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2265,17 +2269,22 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # still 25 above its own. SIX SKIPS ARE ADDED, declared by identity above:
 # the new module's Windows tests. The new module joins the windows-runtime
 # job, whose floor moves 292 -> 348: its nine modules collect
-# 7/14/15/15/23/54/56/73/97 (sum 354, floor 354 - 7 + 1). The rows below are
+# 7/14/15/15/23/54/56/73/97 (sum 354, floor 354 - 7 + 1). Its review round
+# then added five, 56 -> 61 (floor 51 -> 55): 6035 collect, the sum rises by 4
+# to 5497 and the aggregate follows to 5505, band(n) 5427 -> 5432, the working
+# room 529 -> 530, and the slack 537 -> 538, the module now 6 above its band.
+# The windows-runtime job's floor moves 348 -> 353: its nine modules collect
+# 7/14/15/15/23/54/61/73/97 (sum 359, floor 359 - 7 + 1). The rows below are
 # these.
 #
 # (rows below):
 #
-#     collected across tests/     6030   (138 modules)
-#     sum of the module floors    5493
-#     band(6030) = ceil(0.9*n)    5427
-#     MINIMUM_COLLECTED           5501
+#     collected across tests/     6035   (138 modules)
+#     sum of the module floors    5497
+#     band(6035) = ceil(0.9*n)    5432
+#     MINIMUM_COLLECTED           5505
 #     above the module sum          8
-#     below what collects         529
+#     below what collects         530
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2497,7 +2506,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 537 in total, and the aggregate refuses
+# per-module bands already grant 538 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2766,7 +2775,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5501
+MINIMUM_COLLECTED = 5505
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

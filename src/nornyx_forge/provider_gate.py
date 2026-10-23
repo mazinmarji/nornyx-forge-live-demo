@@ -33,7 +33,7 @@ exists, and each is reported as a `WorkerResult` in the Provider Contract's
   * a worker whose executable is not the gate's provider executable, so the
     recorded command and the process the gate starts name one file;
   * an argument vector holding a NUL, or a command line longer than Windows
-    accepts (32767 characters, terminator included);
+    accepts (32767 UTF-16 code units, terminator included);
   * a `-ProviderArgs` value PowerShell would read as a PARAMETER NAME. Measured
     through a real `powershell.exe -File`: list2cmdline leaves a value with no
     space or tab unquoted, and an unquoted value that begins with `-` (or with
@@ -91,9 +91,22 @@ WHAT THIS PATH CANNOT DO YET. The gate gives the provider its own fresh run
 directory, not Forge's workspace, and releases what the provider produced only
 after later actions this module never takes. So no provider output reaches the
 worker's workspace, and a gate run is NEVER reported as a successful worker
-run: `success` is False for every exit code, and the exit code is reported as
-the gate's (`GATE_EXIT_MEANINGS`). Handing the workspace in and the output
-back is a separate decision.
+run: `success` is False for every exit code. The gate's own status is named
+in the output ("The gate exited N", with its meaning from
+`GATE_EXIT_MEANINGS`), and the result's returncode is always
+`GATE_RAN_RETURNCODE`, whatever the gate exited: a gate status of 124 or 127
+passed through would read as a timeout or an absent executable, and neither
+is true here, so every gate exit is classified `error`. Handing the
+workspace in and the output back is a separate decision.
+
+A START FAILURE IS NOT AN ABSENT EXECUTABLE. If Windows PowerShell cannot be
+started, the result is `unavailable` (127) only when the operating system
+reports the file not found (`FileNotFoundError`, Windows error 2 or 3);
+every other start failure -- an over-long command line (Windows error 206)
+among them -- is Forge's refusal before start (`REFUSED_BEFORE_START_RETURNCODE`)
+with the operating system's words. The length preflight counts the command
+line in UTF-16 code units, as `CreateProcessW` does, so a character outside
+the Basic Multilingual Plane counts twice.
 """
 
 from __future__ import annotations
@@ -114,10 +127,11 @@ from .models import WorkerResult
 
 class LaunchVia(str, Enum):
     """How a worker starts its provider. `direct` is today's path and the
-    default; `d2_gate` is the opt-in path through the run-act gate."""
+    default; `d3g_gate` is the opt-in path through the run-act gate, the gate
+    this module pins."""
 
     DIRECT = "direct"
-    D2_GATE = "d2_gate"
+    D3G_GATE = "d3g_gate"
 
 
 #: The SHA-256 of the only gate script this path will start, lower-case hex.
@@ -140,8 +154,18 @@ GATE_EXIT_MEANINGS: Mapping[int, str] = {
 #: from every gate exit code, so a refusal by Forge cannot read as the gate's.
 REFUSED_BEFORE_START_RETURNCODE = 2
 
-#: The provider executable could not be started at all; the workers' value.
+#: Windows PowerShell is not where the system directory says: the operating
+#: system reported the file not found. The workers' value for an absent
+#: executable, used for nothing else here.
 NOT_STARTED_RETURNCODE = 127
+
+#: The returncode of EVERY result whose gate process ran, whatever it exited.
+#: Not 0, 124 or 127, so `classify_result` reads it as `error`; distinct from
+#: the refusal's 2. The gate's own status is in the output.
+GATE_RAN_RETURNCODE = 3
+
+#: The Windows errors that mean the file to start was not found.
+_FILE_NOT_FOUND_WINERRORS = (2, 3)
 
 #: PowerShell's own execution-policy names. The value is one argument either
 #: way; the list keeps it from being anything but a policy.
@@ -182,7 +206,7 @@ class GateLaunch:
 
     @property
     def via(self) -> LaunchVia:
-        return LaunchVia.D2_GATE
+        return LaunchVia.D3G_GATE
 
 
 def build_gate_argv(launch: GateLaunch, worker_args: Sequence[str], *,
@@ -269,10 +293,14 @@ def _launch(launch: Any, command: Sequence[str], *, role: str, goal: str, worker
         except ValueError as exc:
             return refuse(f"the vector could not be formed: {exc}", argv)
         except OSError as exc:
-            return WorkerResult(
-                role=role, goal=goal, success=False,
-                output=f"{worker} gate launch could not start Windows PowerShell: {exc}",
-                command=argv, returncode=NOT_STARTED_RETURNCODE)
+            if _file_not_found(exc):
+                return WorkerResult(
+                    role=role, goal=goal, success=False,
+                    output=(f"{worker} gate launch could not start Windows PowerShell: "
+                            f"the operating system reports it not found at {argv[0]}: {exc}"),
+                    command=argv, returncode=NOT_STARTED_RETURNCODE)
+            return refuse(f"the operating system refused to start Windows PowerShell: {exc}",
+                          argv)
     finally:
         release()
     meaning = GATE_EXIT_MEANINGS.get(
@@ -281,8 +309,30 @@ def _launch(launch: Any, command: Sequence[str], *, role: str, goal: str, worker
         role=role, goal=goal, success=False,
         output=(f"{worker} started through the run-act gate (-Action Run). The gate "
                 f"exited {returncode}: {meaning}. No provider output reaches the "
-                "workspace on this path, so this is not a successful worker run."),
-        command=argv, returncode=returncode)
+                "workspace on this path, so this is not a successful worker run. "
+                f"The returncode is {GATE_RAN_RETURNCODE}, Forge's code for a gate "
+                "run, whatever the gate exited."),
+        command=argv, returncode=GATE_RAN_RETURNCODE)
+
+
+def _file_not_found(exc: OSError) -> bool:
+    """Whether a start failure means the file to start does not exist: a
+    `FileNotFoundError` whose Windows error, when there is one, is 2 or 3.
+    CPython raises `FileNotFoundError` for Windows error 206 too (an
+    over-long command line), which is not an absent file."""
+    if not isinstance(exc, FileNotFoundError):
+        return False
+    winerror = getattr(exc, "winerror", None)
+    return winerror is None or winerror in _FILE_NOT_FOUND_WINERRORS
+
+
+def _command_line_units(argv: Sequence[str]) -> int:
+    """The command line `CreateProcessW` receives, in UTF-16 code units, with
+    its terminator: what its 32767 bound counts. A character outside the Basic
+    Multilingual Plane is two units; `surrogatepass` counts a lone surrogate
+    as the one unit it is."""
+    line = subprocess.list2cmdline(list(argv))
+    return len(line.encode("utf-16-le", "surrogatepass")) // 2 + 1
 
 
 def _field_problem(launch: GateLaunch, command: Sequence[str]) -> str | None:
@@ -323,10 +373,10 @@ def _argv_problem(argv: tuple[str, ...]) -> str | None:
         return (f"-ProviderArgs ends in {provider_args[-1]!r}, and PowerShell drops "
                 "trailing whitespace from the value, so the provider would not "
                 "receive the arguments as built")
-    length = len(subprocess.list2cmdline(argv)) + 1
+    length = _command_line_units(argv)
     if length > WINDOWS_COMMAND_LINE_LIMIT:
-        return (f"the command line is {length} characters with its terminator, over "
-                f"Windows' {WINDOWS_COMMAND_LINE_LIMIT}")
+        return (f"the command line is {length} UTF-16 code units with its terminator, "
+                f"over Windows' {WINDOWS_COMMAND_LINE_LIMIT}")
     return None
 
 

@@ -50,9 +50,11 @@ from nornyx_forge.claude_worker import ClaudeCodeWorker
 from nornyx_forge.codex_worker import CodexWorker
 from nornyx_forge.provider_contract import (
     PROVIDER_CONFINEMENT,
+    TIMEOUT_RETURNCODE,
     UNAVAILABLE_RETURNCODE,
     classify_result,
     governed_build_eligibility,
+    result_from_worker,
 )
 from nornyx_forge.provider_gate import (
     GATE_ENVIRONMENT_INHERITED,
@@ -166,8 +168,9 @@ def _refused(result) -> None:
 
 def test_the_pin_is_the_reviewed_gate_script_digest():
     assert provider_gate.PINNED_RUN_ACT_SHA256 == REVIEWED_RUN_ACT_SHA256
-    assert LaunchVia.DIRECT.value == "direct" and LaunchVia.D2_GATE.value == "d2_gate"
-    assert _launch().via is LaunchVia.D2_GATE
+    assert {member.name: member.value for member in LaunchVia} == {
+        "DIRECT": "direct", "D3G_GATE": "d3g_gate"}
+    assert _launch().via is LaunchVia.D3G_GATE
     assert dataclasses.fields(GateLaunch)[0].name == "gate_script"
     assert [field.name for field in dataclasses.fields(GateLaunch)] == [
         "gate_script", "provider_exe", "role", "execution_policy"]
@@ -194,7 +197,7 @@ def test_the_gate_vector_is_exact_and_carries_todays_worker_arguments(
         "-ProviderArgs", subprocess.list2cmdline(direct[1:]),
     )
     assert direct[0] == exe and result.command == argv and cwd == SYSTEM
-    assert result.success is False and result.returncode == 0
+    assert result.success is False and result.returncode == provider_gate.GATE_RAN_RETURNCODE
 
 
 def test_build_gate_argv_spells_only_the_run_action():
@@ -387,7 +390,7 @@ def test_provider_args_powershell_would_read_as_a_parameter_name_are_refused(
         assert "read as a parameter name" in result.output
         assert seams.calls == []
     else:
-        assert len(seams.calls) == 1 and result.returncode == 0
+        assert len(seams.calls) == 1 and result.returncode == provider_gate.GATE_RAN_RETURNCODE
 
 
 def test_a_nul_an_over_long_line_and_trailing_whitespace_are_refused_before_any_process(
@@ -512,33 +515,81 @@ def test_the_gate_runs_on_the_console_with_no_capture_and_no_timeout(monkeypatch
 
 @pytest.mark.parametrize("code, meaning", [
     (0, "holds the cycle"), (10, "refused before opening a cycle"),
-    (20, "failed with its cycle open"), (3, "not one of the gate's exit codes"),
+    (20, "failed with its cycle open"),
+    (TIMEOUT_RETURNCODE, "not one of the gate's exit codes"),
+    (UNAVAILABLE_RETURNCODE, "not one of the gate's exit codes"),
+    (255, "not one of the gate's exit codes"),
     (-1, "not one of the gate's exit codes"),
-], ids=["completed", "refused", "failed", "unknown", "negative"])
-def test_every_gate_exit_code_is_a_failed_worker_run_that_names_it(code, meaning, tmp_path,
-                                                                   monkeypatch, script, seams):
+], ids=["completed", "refused", "failed", "timeout-sentinel", "unavailable-sentinel",
+        "unknown", "negative"])
+def test_every_gate_exit_code_is_a_failed_worker_run_classified_error(code, meaning, tmp_path,
+                                                                      monkeypatch, script,
+                                                                      seams):
     """No provider output reaches the workspace through the gate, so not even
-    exit 0 is a successful worker run; the code is the gate's own."""
+    exit 0 is a successful worker run. The gate's status is named in the
+    output and never passed through as the returncode: a status of 124 or 127
+    would otherwise read as a timeout or an absent executable. Every one is
+    `error`, through the Provider Contract's unchanged mapping."""
     seams.returncode = code
     monkeypatch.setattr(CodexWorker, "available", lambda self: True)
     result = _run_gate(CodexWorker(CODEX_EXE, launch=_launch(script, CODEX_EXE, "codex")),
                        tmp_path)
-    assert result.success is False and result.returncode == code
-    assert meaning in result.output and f"The gate exited {code}" in result.output
+    assert result.success is False
+    assert result.returncode == provider_gate.GATE_RAN_RETURNCODE
+    assert meaning in result.output and f"The gate exited {code}:" in result.output
     assert result.session_id is None
     assert classify_result(result.success, result.returncode) == "error"
+    assert result_from_worker("codex", result).failure_class == "error"
 
 
-def test_a_runner_that_cannot_start_powershell_reports_unavailable(tmp_path, script, seams,
-                                                                   monkeypatch):
+class _CommandLineTooLong(FileNotFoundError):
+    """CPython's spelling of Windows error 206: a FileNotFoundError that is
+    not an absent file."""
+
+    winerror = 206
+
+
+@pytest.mark.parametrize("raised, returncode, words", [
+    (FileNotFoundError(2, "No such file"), UNAVAILABLE_RETURNCODE, "reports it not found"),
+    (_CommandLineTooLong(2, "The filename or extension is too long"),
+     provider_gate.REFUSED_BEFORE_START_RETURNCODE, "refused to start"),
+    (PermissionError(13, "Access is denied"), provider_gate.REFUSED_BEFORE_START_RETURNCODE,
+     "refused to start"),
+], ids=["absent", "winerror-206", "permission"])
+def test_a_start_failure_is_unavailable_only_when_powershell_is_not_found(
+        raised, returncode, words, tmp_path, script, seams, monkeypatch):
     def cannot(argv, env, cwd):
-        raise FileNotFoundError(2, "No such file", argv[0])
+        raise raised
     monkeypatch.setattr(provider_gate, "_run_on_console", cannot)
     result = provider_gate.launch_through_gate(
         _launch(script), (CLAUDE_EXE, "-p", "x y"), role="builder", goal="g",
         worker="Claude Code worker")
-    assert result.returncode == provider_gate.NOT_STARTED_RETURNCODE == UNAVAILABLE_RETURNCODE
-    assert "could not start Windows PowerShell" in result.output and not result.success
+    assert result.returncode == returncode and not result.success
+    assert words in result.output and str(raised) in result.output
+    expected = "unavailable" if returncode == UNAVAILABLE_RETURNCODE else "error"
+    assert classify_result(result.success, result.returncode) == expected
+    assert provider_gate.NOT_STARTED_RETURNCODE == UNAVAILABLE_RETURNCODE
+
+
+def test_the_length_preflight_counts_utf16_code_units(tmp_path, monkeypatch, script, seams):
+    """`CreateProcessW` bounds the line at 32767 UTF-16 code units. A
+    character outside the Basic Multilingual Plane is two of them, so 16500
+    of them pass a count of characters and still exceed the bound."""
+    _no_process(monkeypatch)
+    emoji = "\U0001F600" * 16500
+    args = ("-p", emoji + " x")
+    argv = build_gate_argv(_launch(script), args, system_dir=SYSTEM)
+    line = subprocess.list2cmdline(argv)
+    assert len(line) + 1 <= provider_gate.WINDOWS_COMMAND_LINE_LIMIT
+    assert len(line.encode("utf-16-le")) // 2 + 1 > provider_gate.WINDOWS_COMMAND_LINE_LIMIT
+    result = provider_gate.launch_through_gate(
+        _launch(script), (CLAUDE_EXE, *args), role="builder", goal="g",
+        worker="Claude Code worker")
+    _refused(result)
+    assert "UTF-16 code units" in result.output and seams.calls == []
+    within = build_gate_argv(_launch(script), ("-p", "\U0001F600" * 100 + " x"),
+                             system_dir=SYSTEM)
+    assert provider_gate._argv_problem(within) is None
 
 
 def test_the_script_hold_lasts_through_the_run_and_is_released_on_every_path(monkeypatch):
@@ -767,7 +818,8 @@ def test_the_whole_gate_path_runs_the_stub_through_each_worker(tmp_path, monkeyp
         monkeypatch.setattr(worker_class, "available", lambda self: True)
         direct = _direct_command(monkeypatch, worker_class(exe), tmp_path)
         result = _run_gate(worker_class(exe, launch=_launch(stub, exe, role)), tmp_path)
-        assert result.returncode == 0 and result.success is False
+        assert result.returncode == provider_gate.GATE_RAN_RETURNCODE and not result.success
+        assert "The gate exited 0:" in result.output
         assert received[-1]["ProviderArgs"] == subprocess.list2cmdline(direct[1:])
         assert received[-1]["Role"] == role and received[-1]["NoCredential"] == "False"
 

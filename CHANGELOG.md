@@ -18,7 +18,11 @@
   measured through a real `powershell.exe -File`). The environment is constructed, not filtered, and carries no
   credential; nothing is captured and no timeout applies. Every gate exit is
   a failed worker run, because no provider output reaches the workspace on
-  this path. No claim of the gate's logon semantics, separation or
+  this path; its returncode is 3 whatever the gate exited, so a gate status
+  of 124 or 127 cannot read as a timeout or an absent executable, and the
+  gate's own status is named in the output. The length preflight counts
+  UTF-16 code units, and a start failure is `unavailable` only when Windows
+  PowerShell is reported not found. No claim of the gate's logon semantics, separation or
   eligibility is made, and nothing in Forge passes a `launch` yet. The
   architecture contract declares the module in a new adapter component the
   two workers depend on; the windows-runtime job runs the new tests, and the
