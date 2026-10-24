@@ -8113,8 +8113,9 @@ file and non-path root, and on POSIX a symlinked root and ancestor, modes
 0o777, 0o720 and 0o702, a foreign uid and a dot-dot spelling, each refused
 with no child; a root swapped while the private directory is made; the flow
 threading its root and defaulting to none.
-`tests/test_contract_check_root_windows.py` (21, Windows only, in the
-windows-runtime job): the owner read equal to TokenUser or TokenOwner; the
+`tests/test_contract_check_root_windows.py` (22, in the windows-runtime
+job; all but one Windows only): the decision over synthesised reads, on
+every platform; the owner read equal to TokenUser or TokenOwner; the
 declared DACL passing; an added Users entry, a deny entry, an inherited DACL
 and a NULL DACL refused; a junction at the root and at an ancestor refused; a
 real foreign owner refused; Administrators ownership refused when the token

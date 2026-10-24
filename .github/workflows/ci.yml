@@ -495,8 +495,8 @@ jobs:
       # owner against this token's user and owner, a protected DACL of SYSTEM,
       # Administrators and the owner only, junctions and stream or namespace
       # spellings refused, and an unreadable read failing closed, each with no
-      # child. It needs no elevation, and off Windows every case is a declared
-      # skip. It shows the root's checks, not that anyone else is kept out of
+      # child. It needs no elevation, and off Windows every case but the
+      # decision over synthesised reads is a declared skip. It shows the root's checks, not that anyone else is kept out of
       # it: that is an access fact of a host, measured outside Forge. The P1 residual
       # module is NOT here: this job's census counts an xfail as a skip.
       - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate and scratch-root tests, with no skips
@@ -512,14 +512,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 378:
-              print("the windows job collected fewer than 378 tests. Its ten modules "
-                    "carry 384 here (7/14/15/19/21/23/54/61/73/97), so this floor is 384 - 7 + 1, "
+          if len(cases) < 379:
+              print("the windows job collected fewer than 379 tests. Its ten modules "
+                    "carry 385 here (7/14/15/19/22/23/54/61/73/97), so this floor is 385 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
                     "floor of 60 is clear of any FIVE of these ten -- the five smallest "
-                    "carry 76 -- so five whole modules could vanish beneath "
+                    "carry 77 -- so five whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

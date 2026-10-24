@@ -7,8 +7,10 @@ this process's TokenUser or TokenOwner and its DACL is protected and grants
 to nothing but SYSTEM, Administrators and that owner; anything else, and any
 failure to read the owner, the DACL or the token, is `not_run` with no child
 started. These are properties of Windows security descriptors, so every test
-here runs only on Windows; off Windows each is a declared skip in the census,
-and the windows-runtime CI job runs this module and refuses a skip.
+that reads one runs only on Windows; off Windows each is a declared skip in
+the census, and the windows-runtime CI job runs this module and refuses a
+skip. One test runs everywhere: the decision over synthesised reads, which
+is the same code on every platform.
 
 These tests show the root's checks, not isolation. A configured root can
 protect against OTHER principals under these access conditions and does not
@@ -30,8 +32,8 @@ from nornyx_forge import gates as gate_module
 from nornyx_forge.contract_generator import generate_brd_contract
 from nornyx_forge.requirements import parse_brd
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32",
-                                reason="Windows security descriptors are the subject")
+windows_only = pytest.mark.skipif(sys.platform != "win32",
+                                  reason="Windows security descriptors are the subject")
 
 BRD = (
     "# Business Requirements\n\n"
@@ -121,6 +123,7 @@ def _refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scratch_root: obje
     assert expected in gate.detail, gate.detail
 
 
+@windows_only
 def test_the_owner_read_is_the_token_user_or_the_token_owner(tmp_path: Path):
     user, token_owner = gate_module._windows_token_sids()
     for sid in (user, token_owner):
@@ -130,6 +133,7 @@ def test_the_owner_read_is_the_token_user_or_the_token_owner(tmp_path: Path):
     assert _owner(fresh) in {user, token_owner}
 
 
+@windows_only
 def test_the_declared_dacl_passes_and_the_real_check_runs_under_it(tmp_path: Path):
     scratch_root = _declared_root(tmp_path)
     owner, protected, aces = gate_module._windows_root_security(scratch_root)
@@ -144,17 +148,20 @@ def test_the_declared_dacl_passes_and_the_real_check_runs_under_it(tmp_path: Pat
     assert list(scratch_root.iterdir()) == []
 
 
+@windows_only
 def test_an_added_builtin_users_ace_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     scratch_root = _declared_root(tmp_path, extra="(A;OICI;FA;;;BU)")
     _refused(tmp_path, monkeypatch, scratch_root, USERS)
 
 
+@windows_only
 def test_a_deny_ace_is_outside_the_declared_shape_and_refused(tmp_path: Path,
                                                              monkeypatch: pytest.MonkeyPatch):
     scratch_root = _declared_root(tmp_path, extra="(D;OICI;FA;;;WD)")
     _refused(tmp_path, monkeypatch, scratch_root, "outside SYSTEM, Administrators and its owner")
 
 
+@windows_only
 def test_an_inherited_unprotected_dacl_is_refused(tmp_path: Path,
                                                  monkeypatch: pytest.MonkeyPatch):
     scratch_root = tmp_path / "inherits"
@@ -162,6 +169,7 @@ def test_an_inherited_unprotected_dacl_is_refused(tmp_path: Path,
     _refused(tmp_path, monkeypatch, scratch_root, "not protected")
 
 
+@windows_only
 def test_a_null_dacl_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     scratch_root = tmp_path / "null-dacl"
     scratch_root.mkdir()
@@ -169,6 +177,7 @@ def test_a_null_dacl_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     _refused(tmp_path, monkeypatch, scratch_root, "NULL DACL")
 
 
+@windows_only
 def test_a_junction_to_a_declared_root_is_refused(tmp_path: Path,
                                                  monkeypatch: pytest.MonkeyPatch):
     import _winapi  # noqa: PLC0415 - junctions need no privilege
@@ -179,6 +188,7 @@ def test_a_junction_to_a_declared_root_is_refused(tmp_path: Path,
     _refused(tmp_path, monkeypatch, junction, "is a link or reparse point")
 
 
+@windows_only
 def test_a_root_reached_through_a_junction_ancestor_is_refused(tmp_path: Path,
                                                                monkeypatch: pytest.MonkeyPatch):
     import _winapi  # noqa: PLC0415
@@ -189,6 +199,7 @@ def test_a_root_reached_through_a_junction_ancestor_is_refused(tmp_path: Path,
     _refused(tmp_path, monkeypatch, alias / target.name, "is a link or reparse point")
 
 
+@windows_only
 def test_a_foreign_owner_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The Windows directory is owned by TrustedInstaller on every host: an
     owner that is neither the token user nor the token owner, read for real."""
@@ -196,6 +207,7 @@ def test_a_foreign_owner_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _refused(tmp_path, monkeypatch, system_root, "neither this process's token user")
 
 
+@windows_only
 def test_administrators_ownership_without_an_administrators_token_owner_is_refused(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """No owner is accepted by name, BA included: the owner must be one of
@@ -207,6 +219,7 @@ def test_administrators_ownership_without_an_administrators_token_owner_is_refus
     _refused(tmp_path, monkeypatch, scratch_root, "neither this process's token user")
 
 
+@windows_only
 @pytest.mark.parametrize("failing", ["_windows_root_security", "_windows_token_sids"])
 def test_an_unreadable_descriptor_or_token_fails_closed(tmp_path: Path,
                                                         monkeypatch: pytest.MonkeyPatch,
@@ -220,6 +233,7 @@ def test_an_unreadable_descriptor_or_token_fails_closed(tmp_path: Path,
     _refused(tmp_path, monkeypatch, scratch_root, "could not be read")
 
 
+@windows_only
 @pytest.mark.parametrize("spelling", [
     "{root}::$INDEX_ALLOCATION", "{root}:stream", "\\\\?\\{root}", "{root}.", "{root} ",
     "{root}\\.", "{root}\\..\\zf", "{slashed}", "\\\\localhost\\C$\\{bare}",
@@ -234,3 +248,35 @@ def test_a_stream_namespace_or_aliasing_spelling_is_refused(tmp_path: Path,
     text = spelling.format(root=scratch_root, slashed=scratch_root.replace("\\", "/"),
                            bare=scratch_root[3:])
     _refused(tmp_path, monkeypatch, text, "scratch root")
+
+
+
+def test_the_windows_decision_over_synthesised_reads(monkeypatch: pytest.MonkeyPatch):
+    """Runs on every platform: the owner and DACL decision is plain code over
+    what the two reads return, so it is driven here with what they would
+    return for each shape -- including the declared shape passing and an
+    owner matched only by name refused."""
+    me, admins = "S-1-5-21-1-2-3-1001", ADMINISTRATORS
+    declared = [(0, SYSTEM), (0, ADMINISTRATORS), (0, me)]
+    shapes = [
+        ((me, True, declared), (me, me), ""),
+        ((admins, True, declared[:2]), (me, admins), ""),
+        ((admins, True, declared[:2]), (me, me), "neither this process's token user"),
+        (("S-1-5-21-9-9-9-500", True, declared), (me, me), "neither this process's token user"),
+        ((me, True, None), (me, me), "NULL DACL"),
+        ((me, False, declared), (me, me), "not protected"),
+        ((me, True, [*declared, (0, USERS)]), (me, me), USERS),
+        ((me, True, [*declared, (1, "S-1-1-0")]), (me, me), "type 1"),
+        ((me, True, [*declared, (5, None)]), (me, me), "type 5"),
+    ]
+    for read, token, expected in shapes:
+        monkeypatch.setattr(gate_module, "_windows_root_security", lambda _path, r=read: r)
+        monkeypatch.setattr(gate_module, "_windows_token_sids", lambda t=token: t)
+        refusal = gate_module._windows_root_refusal(Path("unused"))
+        assert (expected in refusal) if expected else refusal == "", (read, token, refusal)
+
+    def unreadable(_path):
+        raise OSError(50, "The request is not supported")
+
+    monkeypatch.setattr(gate_module, "_windows_root_security", unreadable)
+    assert "could not be read" in gate_module._windows_root_refusal(Path("unused"))
