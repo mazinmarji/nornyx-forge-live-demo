@@ -8274,3 +8274,90 @@ tests run.
 **Serves.** A-047, whose registry now classifies a produced application's
 declared operations as it classifies the demonstration's; A-035, whose
 simulated journey's application is run by the same executor, now guarded.
+
+## A-054 The governance check may place its private snapshot under an explicit, fail-closed scratch root; it protects against other principals under stated access conditions, not against the same principal, and Codex P1 4356060742 stays open
+
+**Assumption.** Where the host gives Forge a directory that only Forge's own
+principal (and SYSTEM and Administrators) can write, placing the governance
+check's private snapshot there keeps processes running as OTHER principals
+from substituting the snapshot or planting beside it. That is an access fact
+of the host. This repository states the conditions and refuses a root that
+does not meet them as Forge sees them; it does not measure who else can
+write the root.
+
+**What changed.** `gates.trusted_contract_check` (A-049) takes an explicit
+`scratch_root`, threaded from `DevelopmentFlow(..., contract_check_root=...)`.
+It is never read from the environment and is not part of
+`RuntimeAuthorityConfig`. With it unset, the private directory is made under
+the inherited temporary directory exactly as before -- the same
+`TemporaryDirectory` call, prefix, snapshot name and `cwd` -- and the record
+says `invocation.scratch_placement: inherited-temp`. With it set, the root is
+judged before anything is made in it, and the record says `configured-root`:
+
+- one spelling rule for every name: an absolute path whose every component is
+  a plain name; on Windows a drive path in backslashes, with no stream (`:`),
+  namespace or UNC prefix, forward slash, or trailing dot or space;
+- no link or reparse point (junction) at the root or at any ancestor, judged
+  by `lstat` of each component; a directory; strictly resolvable;
+- POSIX: owned by the effective uid, and no group or other write bit;
+- Windows: owned by this process's TokenUser or TokenOwner (no owner is
+  accepted by name, Administrators included), and a protected, non-NULL DACL
+  whose every entry is an allow entry for SYSTEM, Administrators or that
+  owner -- the executor's declared zone shape. The owner and DACL are read through a handle
+  opened on the reparse point; any failure to read them or the token refuses;
+- after `mkdtemp(dir=root)` the root is judged again and the new directory's
+  parent is compared with it by identity.
+
+Any refusal is `not_run`, and no child starts.
+
+**What it does NOT do.** It does not protect against an attacker running as
+the SAME principal as Forge: such a process owns the root as Forge does and
+passes every check above. `tests/test_contract_check_snapshot_residual.py` is
+RESIDUAL DOCUMENTATION, not a proof of isolation. It runs the attack class
+Codex P1 4356060742 reports, with real separate processes of the same user,
+under the inherited temporary directory and under a configured root that
+user owns, and observes it succeed in every case:
+
+- the snapshot renamed aside and back, or rewritten in place and back, between
+  Forge's write and the child's read: the gate records a PASS for a contract
+  Nornyx refuses;
+- a `nornyx.profiles.lock`, or a pack for the profile the generated contract
+  selects, planted beside the snapshot and removed afterwards: the verdict
+  changes and the gate does not say so. (A pack for a module the contract
+  does not select is not read; two ordinary tests record that.)
+
+Those eight are strict expected failures that fail only by raising
+`ResidualObserved` after observing the vulnerability, declared by identity in
+`EXPECTED_XFAILS`; an XPASS fails the run. No Windows share-mode hold on the
+snapshot and no binding of the files beside it is added here: both are
+separate later work.
+
+**Codex P1 4356060742 stays OPEN, at P1.** This cycle is the proposed repair
+vehicle only. The P1 is closable only after an independent measurement establishes
+principal separation -- the provider running as a principal that cannot
+write, rename or plant in the root or modify the installed Nornyx and Forge
+files -- AND attack-class probes show the substitution path prevented or
+refused, before any real provider is admitted. Nothing here establishes
+either. No eligibility, confinement criterion, executor provisioning or gate byte, or
+`RuntimeAuthorityConfig` field changes.
+
+**Tests.** `tests/test_governance_contract_check.py` (38 -> 54): placement
+under a configured root with the real `nornyx check` passing, still a
+governance validation; the default placement unchanged; a missing, relative,
+file and non-path root, and on POSIX a symlinked root and ancestor, modes
+0o777, 0o720 and 0o702, a foreign uid and a dot-dot spelling, each refused
+with no child; a root swapped while the private directory is made; the flow
+threading its root and defaulting to none.
+`tests/test_contract_check_root_windows.py` (22, in the windows-runtime
+job; all but one Windows only): the decision over synthesised reads, on
+every platform; the owner read equal to TokenUser or TokenOwner; the
+declared DACL passing; an added Users entry, a deny entry, an inherited DACL
+and a NULL DACL refused; a junction at the root and at an ancestor refused; a
+real foreign owner refused; Administrators ownership refused when the token
+owner is not Administrators; an unreadable descriptor or token failing
+closed; nine stream, namespace and alias spellings refused. None needs
+elevation. `tests/test_contract_check_snapshot_residual.py` (10): the eight
+residuals and the two non-influence measurements.
+
+**Related.** A-049, whose check this places; FD-021, under which the cycle
+runs.

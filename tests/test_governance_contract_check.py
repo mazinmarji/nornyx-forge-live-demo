@@ -572,3 +572,172 @@ def test_the_recorded_digest_is_of_the_rendered_contract_not_a_re_read(
     gate = _check(root, flow.data["generated_brd_contract_digest"])
     _not_run(gate)
     assert "changed after generation" in gate.detail
+
+
+# ---------------------------------------------------------------------------
+# A Forge-owned scratch root for the snapshot (A-054)
+# ---------------------------------------------------------------------------
+
+posix_only = pytest.mark.skipif(sys.platform == "win32",
+                                reason="POSIX owner and mode checks; Windows has its own module")
+
+
+def _no_child(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Record every child the gate would start; a refused root starts none."""
+    started: list = []
+
+    def refuse(*args, **kwargs):
+        started.append(args)
+        raise AssertionError("a child was started for a refused scratch root")
+
+    monkeypatch.setattr(gate_module.subprocess, "run", refuse)
+    return started
+
+
+def _private_root(tmp_path: Path) -> Path:
+    root = tmp_path / "forge-owned-scratch"
+    root.mkdir()
+    os.chmod(root, 0o700)
+    return root
+
+
+@posix_only
+def test_a_configured_root_holds_the_snapshot_and_the_real_check_passes(tmp_path: Path):
+    root, digest = _project(tmp_path)
+    scratch_root = _private_root(tmp_path)
+    gate = gate_module.trusted_contract_check(root, digest, scratch_root=scratch_root)
+    assert gate.passed is True and gate.returncode == 0, gate.detail
+    snapshot = Path(gate.command[5])
+    assert snapshot.name == gate_module.GOVERNANCE_SNAPSHOT_NAME
+    assert snapshot.parent.name.startswith(gate_module.GOVERNANCE_SNAPSHOT_PREFIX)
+    assert snapshot.parent.parent == scratch_root.resolve()
+    assert list(scratch_root.iterdir()) == [], "the private directory outlived the check"
+    invocation = gate.provenance["invocation"]
+    assert invocation["scratch_placement"] == "configured-root"
+    assert invocation["cwd"] == "private-temporary-directory"
+
+
+@posix_only
+def test_a_check_under_a_configured_root_is_still_a_governance_validation(tmp_path: Path):
+    root, digest = _project(tmp_path)
+    gate = gate_module.trusted_contract_check(root, digest, scratch_root=_private_root(tmp_path))
+    refs = {ref.kind: ref for ref in flow_evidence(
+        {"accepted": True, "execution_backend": "sequential", "gates": [gate.__dict__]})}
+    assert refs["governance_validation"].passed is True
+
+
+def test_with_no_root_configured_the_snapshot_stays_in_the_inherited_temp(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The default is today's path: `TemporaryDirectory` with no `dir`, under
+    the inherited temporary directory, recorded as such. The race Codex P1
+    4356060742 describes is not changed on this path."""
+    root, digest = _project(tmp_path)
+    calls: list = []
+    real = gate_module.tempfile.TemporaryDirectory
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gate_module.tempfile, "TemporaryDirectory", spy)
+    gate = _check(root, digest)
+    assert gate.passed is True, gate.detail
+    assert calls == [{"prefix": gate_module.GOVERNANCE_SNAPSHOT_PREFIX, "dir": None}]
+    assert Path(gate.command[5]).parent.parent == Path(tempfile.gettempdir()).resolve()
+    assert gate.provenance["invocation"]["scratch_placement"] == "inherited-temp"
+
+
+@pytest.mark.parametrize("shape", ["missing", "relative", "a file", "not a path"])
+def test_an_unusable_configured_root_starts_no_child(tmp_path: Path,
+                                                     monkeypatch: pytest.MonkeyPatch, shape: str):
+    root, digest = _project(tmp_path)
+    if shape == "missing":
+        scratch_root: object = tmp_path / "absent"
+    elif shape == "relative":
+        scratch_root = Path("relative") / "scratch"
+    elif shape == "a file":
+        scratch_root = tmp_path / "a-file"
+        scratch_root.write_text("", encoding="utf-8")
+    else:
+        scratch_root = 42
+    started = _no_child(monkeypatch)
+    gate = gate_module.trusted_contract_check(root, digest, scratch_root=scratch_root)
+    _not_run(gate)
+    assert started == []
+    assert "scratch root" in gate.detail
+
+
+@posix_only
+@pytest.mark.parametrize("shape, expected", [
+    ("a symlink", "is a link or reparse point"),
+    ("a symlinked ancestor", "is a link or reparse point"),
+    ("mode 0o777", "group- or other-writable"),
+    ("mode 0o720", "group- or other-writable"),
+    ("mode 0o702", "group- or other-writable"),
+    ("a foreign uid", "not this process's effective uid"),
+    ("a dot-dot component", "component"),
+])
+def test_a_posix_root_that_is_not_forge_owned_starts_no_child(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str, expected: str):
+    root, digest = _project(tmp_path)
+    private = _private_root(tmp_path)
+    scratch_root = private
+    if shape == "a symlink":
+        scratch_root = tmp_path / "link-to-root"
+        os.symlink(private, scratch_root)
+    elif shape == "a symlinked ancestor":
+        os.symlink(tmp_path, tmp_path.parent / (tmp_path.name + "-alias"))
+        scratch_root = tmp_path.parent / (tmp_path.name + "-alias") / private.name
+    elif shape.startswith("mode "):
+        os.chmod(private, int(shape.split()[1], 8))
+    elif shape == "a foreign uid":
+        euid = os.geteuid()
+        monkeypatch.setattr(gate_module.os, "geteuid", lambda: euid + 1)
+    elif shape == "a dot-dot component":
+        scratch_root = Path(str(private.parent / "x" / ".." / private.name))
+    started = _no_child(monkeypatch)
+    gate = gate_module.trusted_contract_check(root, digest, scratch_root=scratch_root)
+    _not_run(gate)
+    assert started == []
+    assert expected in gate.detail, gate.detail
+
+
+@posix_only
+def test_a_root_swapped_while_the_private_directory_is_made_starts_no_child(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The parent's identity is re-checked after `mkdtemp`: a root renamed
+    away and replaced by another directory in between is not the root that
+    was judged."""
+    root, digest = _project(tmp_path)
+    private = _private_root(tmp_path)
+    real = gate_module.tempfile.TemporaryDirectory
+
+    def swap_then_make(*args, **kwargs):
+        os.rename(private, tmp_path / "judged")
+        private.mkdir()
+        os.chmod(private, 0o700)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(gate_module.tempfile, "TemporaryDirectory", swap_then_make)
+    started = _no_child(monkeypatch)
+    gate = gate_module.trusted_contract_check(root, digest, scratch_root=private)
+    _not_run(gate)
+    assert started == []
+    assert "changed while" in gate.detail
+
+
+def test_the_flow_threads_its_contract_check_root_and_defaults_to_none(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from nornyx_forge import development_flow  # noqa: PLC0415
+
+    seen: list = []
+    monkeypatch.setattr(development_flow, "trusted_greenfield_gates", lambda _root: ([], {}))
+    monkeypatch.setattr(development_flow, "trusted_contract_check",
+                        lambda root, digest, *, scratch_root=None: seen.append(scratch_root))
+    configured = tmp_path / "zf"
+    for kwargs, expected in (({}, None), ({"contract_check_root": configured}, configured)):
+        flow = development_flow.DevelopmentFlow(tmp_path, worker_mode="in-session",
+                                                repo_mode="greenfield", **kwargs)
+        flow._acceptance_gates()
+        assert seen.pop() == expected
+    assert seen == []

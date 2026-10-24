@@ -3509,8 +3509,14 @@ def test_fg12_an_undeclared_expected_failure_fails_the_census(tmp_path: Path):
     _sys.path.insert(0, str(ROOT / "scripts"))
     import check_test_coverage as census  # noqa: PLC0415
 
-    assert census.EXPECTED_XFAILS == {}, (
-        "the intended inventory is empty; an entry is a proof recorded as broken"
+    # The inventory holds no proof: only the eight residual-documentation
+    # tests of the OPEN Codex P1 4356060742 (A-054), pinned by identity in
+    # tests/test_xfail_strictness.py. The identity below is not among them.
+    assert all(
+        identity.startswith("tests/test_contract_check_snapshot_residual.py::test_residual_")
+        for identity in census.EXPECTED_XFAILS
+    ) and len(census.EXPECTED_XFAILS) == 8, (
+        "the inventory is the eight P1 residuals; any other entry is a proof recorded as broken"
     )
 
     report = tmp_path / "report.xml"

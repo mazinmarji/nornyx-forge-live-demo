@@ -219,6 +219,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         repo_mode: str = "certified",
         target_repo: str | None = None,
         provider: str | None = None,
+        contract_check_root: Path | None = None,
     ) -> None:
         # A failure here is REPORTED, never swallowed (A-046). It used to be
         # dropped by `except Exception: pass`, which left a flow with no
@@ -262,6 +263,10 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         self.repo_mode = repo_mode
         self.target_repo = target_repo
         self.provider = provider
+        # A-054: an explicit, Forge-owned root for the governance check's
+        # private snapshot, judged by the check itself. `None` keeps the
+        # inherited temporary directory. Never read from the environment.
+        self.contract_check_root = contract_check_root
         self.mission = "FORGE-BUILD-001"
         self.ledger = EvidenceLedger(root / ".nornyx/runs/build-events.jsonl")
         if provider is None:
@@ -746,7 +751,9 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             return [
                 *gates,
                 trusted_contract_check(
-                    self.root, self.data.get("generated_brd_contract_digest")
+                    self.root,
+                    self.data.get("generated_brd_contract_digest"),
+                    scratch_root=self.contract_check_root,
                 ),
             ]
         return default_gates(self.root)

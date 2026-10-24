@@ -9,12 +9,18 @@ Two things close it, and both are self-attacked below rather than described:
 
     xfail_strict = true       an XPASS fails the run, so a marked test that
                               starts passing is reported, not accepted
-    EXPECTED_XFAILS = {}      an undeclared expected failure fails the gate in
-                              its own vocabulary, instead of being waved past
+    EXPECTED_XFAILS           a closed inventory: an undeclared expected
+                              failure fails the gate in its own vocabulary,
+                              instead of being waved past
 
-The intended inventory is EMPTY. A security proof expected to fail is a proof
-that is off; the honest response is to fix it or delete it, not to record that
-it does not work.
+The inventory holds NO security proof. A security proof expected to fail is a
+proof that is off; the honest response is to fix it or delete it, not to
+record that it does not work. Its only entries are the eight residual
+documentation tests of Codex P1 4356060742 (A-054), which is OPEN: each runs
+the reported attack class and is strict, failing only by raising
+`ResidualObserved` once it has observed the vulnerability. They are pinned
+here by identity, by module and by marker, so a ninth entry, an entry in
+another module, or a residual without its strict marker is a failing diff.
 
 Configuration is EVALUATED, never grepped: the point of the original defect was
 that prose asserted a setting that did not exist.
@@ -184,13 +190,56 @@ def test_the_same_xpass_passes_without_strict(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
-def test_the_expected_xfail_inventory_is_closed_and_empty():
-    """A recorded expected failure needs a reason a reviewer can check."""
-    assert isinstance(census.EXPECTED_XFAILS, dict)
-    assert census.EXPECTED_XFAILS == {}, (
-        "the intended inventory is empty; every entry here is a security proof "
-        f"recorded as not working: {sorted(census.EXPECTED_XFAILS)}"
+#: The ONLY permitted expected failures: residual documentation of Codex P1
+#: 4356060742 (A-054), by founder decision. Not proofs of anything.
+RESIDUAL_MODULE = "tests/test_contract_check_snapshot_residual.py"
+P1_RESIDUALS = frozenset(
+    f"{RESIDUAL_MODULE}::test_residual_{variant}_under_{placement}"
+    for variant in (
+        "rename_aba_passes_substituted_bytes",
+        "rewrite_aba_passes_substituted_bytes",
+        "planted_lock_changes_the_verdict_unseen",
+        "planted_profile_changes_the_verdict_unseen",
     )
+    for placement in ("inherited_temp", "a_same_user_root")
+)
+
+
+def test_the_expected_xfail_inventory_is_closed_to_the_p1_residuals():
+    """A recorded expected failure needs a reason a reviewer can check, and
+    the only ones recorded are the eight P1 residuals, each saying so."""
+    assert isinstance(census.EXPECTED_XFAILS, dict)
+    assert set(census.EXPECTED_XFAILS) == P1_RESIDUALS, (
+        "the inventory holds exactly the eight Codex P1 4356060742 residuals; anything "
+        f"else is a security proof recorded as not working: {sorted(census.EXPECTED_XFAILS)}"
+    )
+    for identity, reason in census.EXPECTED_XFAILS.items():
+        assert "Codex P1 4356060742" in reason and "OPEN" in reason, identity
+        assert "not a proof of isolation" in reason, identity
+
+
+def test_every_p1_residual_is_strict_and_fails_only_by_observing_the_residual():
+    """The marker on each residual, read from the collected function: strict,
+    and `raises=ResidualObserved`, which is not an AssertionError -- so a
+    broken fixture or an attack that did not run is an ordinary failure, and
+    a residual that stops being observable XPASSES and fails the run."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    import test_contract_check_snapshot_residual as residuals  # noqa: PLC0415
+
+    assert not issubclass(residuals.ResidualObserved, AssertionError)
+    found = set()
+    for name in dir(residuals):
+        if not name.startswith("test_"):
+            continue
+        marks = [mark for mark in getattr(getattr(residuals, name), "pytestmark", [])
+                 if mark.name == "xfail"]
+        if not marks:
+            continue
+        found.add(f"{RESIDUAL_MODULE}::{name}")
+        assert len(marks) == 1, name
+        assert marks[0].kwargs.get("strict") is True, name
+        assert marks[0].kwargs.get("raises") is residuals.ResidualObserved, name
+    assert found == P1_RESIDUALS
 
 
 def test_an_undeclared_xfail_fails_the_gate(tmp_path: Path):
@@ -223,10 +272,10 @@ def test_an_undeclared_xfail_fails_the_gate(tmp_path: Path):
 
 
 def test_a_declared_xfail_would_be_permitted(tmp_path: Path):
-    """The allowlist must actually work, or the empty inventory is meaningless.
+    """The allowlist must actually work, or the closed inventory is meaningless.
 
-    Checked against a temporarily extended copy of the inventory rather than by
-    adding a real entry, so the shipped inventory stays empty.
+    Checked against a temporarily replaced copy of the inventory rather than by
+    adding a real entry, so the shipped inventory stays exactly what it is.
     """
     report = tmp_path / "report.xml"
     report.write_text(
@@ -247,7 +296,7 @@ def test_a_declared_xfail_would_be_permitted(tmp_path: Path):
     finally:
         census.EXPECTED_XFAILS = original
     assert unexpected_xfails == []
-    assert census.EXPECTED_XFAILS == {}, "the shipped inventory was mutated"
+    assert set(census.EXPECTED_XFAILS) == P1_RESIDUALS, "the shipped inventory was mutated"
 
 
 def test_the_gate_refuses_a_run_carrying_an_undeclared_xfail(tmp_path: Path):
@@ -292,15 +341,16 @@ def _marks_xfail(source: str) -> bool:
     )
 
 
-def test_the_suite_currently_carries_no_expected_failures():
-    """The intended state, asserted so a first xfail has to be deliberate."""
+def test_the_suite_carries_expected_failures_only_in_the_residual_module():
+    """The intended state, asserted so any other xfail has to be deliberate:
+    the P1 residual module is the one module that marks anything xfail."""
     marked = [
         path.name
         for path in (ROOT / "tests").glob("*.py")
         if _marks_xfail(path.read_text(encoding="utf-8"))
     ]
-    assert marked == [], (
-        f"these modules now carry xfail markers: {marked}. Each must be fixed "
+    assert marked == [Path(RESIDUAL_MODULE).name], (
+        f"these modules carry xfail markers: {marked}. Each must be fixed "
         "or added to EXPECTED_XFAILS with a checkable reason."
     )
 
