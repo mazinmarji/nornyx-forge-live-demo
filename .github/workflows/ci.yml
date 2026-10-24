@@ -481,9 +481,18 @@ jobs:
       # that check refuses, edits after generation, deletes or cannot run.
       # Nothing in it skips on any platform. The runner has no Smart App Control, so the blocked
       # store is measured here by the specimen, not by the host's policy.
+      # tests/test_contract_check_root_windows.py joins for A-054: the
+      # governance check's configured scratch root judged on Windows -- its
+      # owner against this token's user and owner, a protected DACL of SYSTEM,
+      # Administrators and the owner only, junctions and stream or namespace
+      # spellings refused, and an unreadable read failing closed, each with no
+      # child. It needs no elevation, and off Windows every case is a declared
+      # skip. It shows the root's checks, not that anyone else is kept out of
+      # it: that is an access fact of a host, measured outside Forge. The P1 residual
+      # module is NOT here: this job's census counts an xfail as a skip.
       - name: Windows runtime, bundle builder, launch, provider, control-plane and simulated-journey tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_contract_check_root_windows.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -494,14 +503,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 296:
-              print("the windows job collected fewer than 296 tests. Its eight modules "
-                    "carry 302 here (7/14/15/19/23/54/73/97), so this floor is 302 - 7 + 1, "
+          if len(cases) < 317:
+              print("the windows job collected fewer than 317 tests. Its nine modules "
+                    "carry 323 here (7/14/15/19/21/23/54/73/97), so this floor is 323 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these eight -- the five smallest "
-                    "carry 78 -- so three whole modules could vanish beneath "
+                    "floor of 60 is clear of any FIVE of these nine -- the five smallest "
+                    "carry 76 -- so four whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

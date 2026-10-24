@@ -93,6 +93,32 @@ EXPECTED_SKIPS = {
         "Symlink fixtures cannot be built on a Windows workstation without elevation. The property is not weakened: every CI test job runs Linux and executes these nineteen, and the in-repository refusal they exercise is also held by test_an_overlay_inside_the_repository_is_refused, which runs on every platform.",
     "tests/test_standing_development_obligations.py::test_a_mount_change_spanning_the_walk_is_refused":
         "The handle backend does not exist on Windows, where a private overlay is refused before any judgment, so the second census this test supplies is never taken there. The property is not weakened: every CI test job runs Linux and executes it, and the platform refusal is held on every platform by test_without_the_handle_backend_a_private_overlay_is_refused_and_public_admission_stands, which switches the backend off.",
+    # A-054's configured scratch root judged on Windows: owner, DACL,
+    # junctions and spellings. Run where that platform is.
+    "tests/test_contract_check_root_windows.py::test_the_owner_read_is_the_token_user_or_the_token_owner":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_the_declared_dacl_passes_and_the_real_check_runs_under_it":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_an_added_builtin_users_ace_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_deny_ace_is_outside_the_declared_shape_and_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_an_inherited_unprotected_dacl_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_null_dacl_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_junction_to_a_declared_root_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_root_reached_through_a_junction_ancestor_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_foreign_owner_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_administrators_ownership_without_an_administrators_token_owner_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_an_unreadable_descriptor_or_token_fails_closed":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
+    "tests/test_contract_check_root_windows.py::test_a_stream_namespace_or_aliasing_spelling_is_refused":
+        "Windows security descriptors are the SUBJECT of all twelve identities (twenty-one cases): the configured scratch root's owner read against this process's TokenUser and TokenOwner, the declared protected DACL accepted, an added Users ACE, a deny ACE, an inherited DACL and a NULL DACL refused, a junction at the root and at an ancestor refused, a real foreign owner refused, an unreadable descriptor or token failing closed, and nine stream, namespace and alias spellings refused (A-054). Off Windows there is no DACL or token to read, which is why every one skips. The property is not weakened: the windows-runtime CI job runs tests/test_contract_check_root_windows.py and refuses a skip, so every case executes on the platform it concerns, and the POSIX owner and mode refusals run on every Linux job in tests/test_governance_contract_check.py. No fixture needs elevation.",
     # The standing-obligation checker measured on Windows: the platform refusal
     # in five path shapes -- three of them real junctions -- and the public
     # cycle that still runs under it. Run where that platform is.
@@ -283,11 +309,50 @@ EXPECTED_SKIPS = {
 }
 
 
-#: Tests allowed to be expected failures, keyed by identity. INTENTIONALLY
-#: EMPTY: a security proof that is expected to fail is a proof that is off,
-#: and the honest response is to fix it or delete it rather than to record
-#: that it does not work. An entry here needs a reason a reviewer can check.
-EXPECTED_XFAILS: dict[str, str] = {}
+#: Tests allowed to be expected failures, keyed by identity. A security proof
+#: that is expected to fail is a proof that is off, so this list holds no
+#: proof at all: an entry here needs a reason a reviewer can check, and the
+#: only entries are RESIDUAL DOCUMENTATION of an open finding.
+#:
+#: EIGHT, ALL CODEX P1 4356060742 (A-054), by founder decision. Each runs the
+#: reported attack class for real -- a separate process of the same user
+#: substitutes the governance check's snapshot, or plants a file Nornyx reads
+#: beside it, between Forge's write and the child's read, and undoes it before
+#: Forge's read-back -- and is a strict xfail that fails ONLY by raising
+#: `ResidualObserved` after it has observed the false pass or the unseen
+#: verdict change. Any other failure is an ordinary failure, and an XPASS
+#: fails the run (`xfail_strict = true`), so a residual that stops being
+#: observable is a diff here, never a quiet pass. They are NOT proof of
+#: isolation: they record that the configured scratch root does not protect
+#: against an attacker under the same principal. The P1 stays OPEN until an independent
+#: measurement establishes independent principal separation AND attack-class probes show
+#: the substitution path prevented or refused, before real-provider admission.
+_P1_RESIDUAL = (
+    "Residual documentation of Codex P1 4356060742, which is OPEN (A-054): a same-user "
+    "process substitutes the governance check's snapshot, or plants beside it, between "
+    "Forge's write and the child's read, and the gate records a verdict over what it did "
+    "not bind. Strict, raises only ResidualObserved after observing it; not a proof of "
+    "isolation. Removable only when an independent measurement establishes principal separation and attack-class "
+    "probes refuse the substitution. "
+)
+EXPECTED_XFAILS: dict[str, str] = {
+    "tests/test_contract_check_snapshot_residual.py::test_residual_rename_aba_passes_substituted_bytes_under_inherited_temp":
+        _P1_RESIDUAL + "This one: variant A, rename aside and back, under the inherited temporary directory.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_rename_aba_passes_substituted_bytes_under_a_same_user_root":
+        _P1_RESIDUAL + "This one: variant A, rename aside and back, under a configured scratch root owned by the attacker's own user.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_rewrite_aba_passes_substituted_bytes_under_inherited_temp":
+        _P1_RESIDUAL + "This one: variant B, rewrite in place and back, under the inherited temporary directory.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_rewrite_aba_passes_substituted_bytes_under_a_same_user_root":
+        _P1_RESIDUAL + "This one: variant B, rewrite in place and back, under a configured scratch root owned by the attacker's own user.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_planted_lock_changes_the_verdict_unseen_under_inherited_temp":
+        _P1_RESIDUAL + "This one: variant C, a planted nornyx.profiles.lock, under the inherited temporary directory.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_planted_lock_changes_the_verdict_unseen_under_a_same_user_root":
+        _P1_RESIDUAL + "This one: variant C, a planted nornyx.profiles.lock, under a configured scratch root owned by the attacker's own user.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_planted_profile_changes_the_verdict_unseen_under_inherited_temp":
+        _P1_RESIDUAL + "This one: variant C, a planted pack for the selected profile, under the inherited temporary directory.",
+    "tests/test_contract_check_snapshot_residual.py::test_residual_planted_profile_changes_the_verdict_unseen_under_a_same_user_root":
+        _P1_RESIDUAL + "This one: variant C, a planted pack for the selected profile, under a configured scratch root owned by the attacker's own user.",
+}
 
 
 #: The suite must not quietly get smaller. A collection error, a renamed
@@ -837,7 +902,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # during the check; a pipe in the verifier snapshot's place and in the
     # verifier reader's; the digest of the rendered contract, not a re-read;
     # and the translator refusing seven other executables or shapes.
-    "tests/test_governance_contract_check.py": 35,
+    # 38 -> 54 for A-054, floor band(54) = 49: the snapshot placed under a
+    # configured scratch root with the real nornyx passing and still read as
+    # a governance validation; the default placement unchanged; a missing,
+    # relative, file and non-path root, and on POSIX a symlinked root and
+    # ancestor, three writable modes, a foreign uid and a dot-dot spelling,
+    # each refused with no child; a root swapped while the private directory
+    # is made; and the flow threading its root, defaulting to none.
+    "tests/test_governance_contract_check.py": 49,
+    # A-054's configured scratch root on Windows: 21 collected at
+    # introduction, floor at band(21) = 19. Every case skips off Windows and
+    # runs in the windows-runtime job, which refuses a skip.
+    "tests/test_contract_check_root_windows.py": 19,
+    # A-054's RESIDUAL DOCUMENTATION of the open Codex P1 4356060742: 10
+    # collected at introduction, floor at band(10) = 9. Eight strict xfails
+    # that run the attack class and observe it succeed, and two planted packs
+    # Nornyx does not read. NOT a proof of isolation.
+    "tests/test_contract_check_snapshot_residual.py": 9,
     # A-045's one requirement-identity rule: 26 collected at introduction,
     # floor at band(26) = 24. Forge's derived BRD against Forge's own
     # verifier, the negatives that keep traceability (an untested confirmed
@@ -1399,6 +1480,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
 #: real `classify` and measured `unexpected=[]` with both floors padded by
 #: forty.
 EXPECTED_SKIP_CASES: dict[str, int] = {
+    # A-054's Windows root module, off Windows: two unreadable reads (the
+    # descriptor and the token) and nine refused spellings. Every case of
+    # each skips there, and none skips on Windows.
+    "tests/test_contract_check_root_windows.py::test_an_unreadable_descriptor_or_token_fails_closed": 2,
+    "tests/test_contract_check_root_windows.py::test_a_stream_namespace_or_aliasing_spelling_is_refused": 9,
     # The four identities this once held caps for no longer skip: their
     # premise was that the shipped demonstration needs a runtime lock, and
     # it does not. See the note in EXPECTED_SKIPS above.
@@ -2293,16 +2379,36 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # the working room below what collects to 551; and the slack the bands grant
 # to 559, summed over the merged counts rather than carried from either
 # side's 535 or 556. NO SKIP IS ADDED. The windows-runtime job's floor stays
-# at A-049's 296: A-051 names none of its modules. The rows below are these.
+# at A-049's 296: A-051 names none of its modules.
+#
+# A-054 ADDS TWO MODULES AND MOVES TWO, measured from a fresh collection on
+# this tree: tests/test_governance_contract_check.py collects 38 -> 54 (floor
+# band(38) = 35 -> band(54) = 49); tests/test_contract_check_root_windows.py
+# collects 21 (floor band(21) = 19); tests/test_contract_check_snapshot_
+# residual.py collects 10 (floor band(10) = 9); and tests/test_xfail_
+# strictness.py collects 19 -> 20 (floor band(20) = 18, unchanged), its empty-
+# inventory pin replaced by one closed to the eight P1 residuals plus a pin
+# on their strict markers. 6312 collect across 142 modules. The module-floor
+# sum rises by 42 to 5747 and the aggregate follows to 5755, keeping the same
+# 8 above it; band(n) 5638 -> 5681, the working room below the floor 551 ->
+# 557, and THE SLACK THE BANDS GRANT 559 -> 565. TWENTY-ONE SKIPS ARE ADDED,
+# all of the Windows root module off Windows, declared by identity in
+# EXPECTED_SKIPS and capped per case in EXPECTED_SKIP_CASES; and EIGHT
+# EXPECTED FAILURES, the P1 residuals declared in EXPECTED_XFAILS. The
+# windows-runtime job gains the Windows root module, and its floor moves 296
+# -> 317: its nine modules collect 7/14/15/19/21/23/54/73/97 (sum 323, floor
+# 323 - 7 + 1). The residual module stays out of that job, whose census
+# counts an xfail as a skip; it runs in the Linux test job. The rows below are
+# these.
 #
 # (rows below):
 #
-#     collected across tests/     6264   (140 modules)
-#     sum of the module floors    5705
-#     band(6264) = ceil(0.9*n)    5638
-#     MINIMUM_COLLECTED           5713
+#     collected across tests/     6312   (142 modules)
+#     sum of the module floors    5747
+#     band(6312) = ceil(0.9*n)    5681
+#     MINIMUM_COLLECTED           5755
 #     above the module sum          8
-#     below what collects         551
+#     below what collects         557
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2524,7 +2630,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 559 in total, and the aggregate refuses
+# per-module bands already grant 565 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2793,7 +2899,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5713
+MINIMUM_COLLECTED = 5755
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2925,6 +3031,8 @@ REQUIRED_MODULES = (
     "tests/test_basic_user_journey.py",
     "tests/test_simulated_journey.py",
     "tests/test_governance_contract_check.py",
+    "tests/test_contract_check_root_windows.py",
+    "tests/test_contract_check_snapshot_residual.py",
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",

@@ -2,6 +2,34 @@
 
 ## Unreleased — hardening from adversarial review
 
+- The greenfield governance check can place its private snapshot under an
+  explicit, fail-closed scratch root instead of the inherited temporary
+  directory (A-054). `trusted_contract_check(..., scratch_root=...)`, threaded
+  from `DevelopmentFlow(..., contract_check_root=...)` and never read from the
+  environment, judges the root first -- a plain absolute spelling (on Windows
+  no stream, namespace, UNC, forward-slash or trailing-dot spelling), no link
+  or junction at any component, owned by this process (the effective uid, or
+  the Windows TokenUser or TokenOwner) and writable by no one else (no group
+  or other write bit, or a protected DACL of SYSTEM, Administrators and the
+  owner only) -- and again by identity after making its private directory.
+  Any refusal, including an unreadable owner, DACL or token, is `not_run` with
+  no child started. The record names the placement, `inherited-temp` or
+  `configured-root`; with no root configured the path is unchanged. The root
+  can protect against OTHER principals under those access conditions; it
+  does NOT protect against an attacker under the same principal.
+  `tests/test_contract_check_snapshot_residual.py` is residual documentation,
+  not a proof of isolation: eight strict expected failures, declared in
+  `EXPECTED_XFAILS`, run Codex P1 4356060742's attack class with real
+  same-user processes and observe it succeed under both placements -- a
+  renamed or rewritten snapshot passed as the bound bytes, and a planted lock
+  or profile pack changing the verdict unseen. The P1 stays OPEN: it is
+  closable only after an independent measurement establishes principal
+  separation and attack-class probes show the substitution refused, before
+  any real provider is admitted. No share-mode hold or sibling-file binding is added, and no
+  eligibility, criterion, executor provisioning or gate byte, or
+  `RuntimeAuthorityConfig` field
+  changes.
+
 - An accepted build's produced application is named by a Produced
   Application Manifest that Forge writes and seals, and handing it to a person
   is a separate gate that is never offered in simulation (A-051). The build

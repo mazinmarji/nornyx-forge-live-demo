@@ -7,6 +7,7 @@ import locale
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1050,7 +1051,229 @@ def _nornyx_verdict(stdout: str) -> tuple[list[dict[str, Any]], bool] | None:
         diagnostics.append(item)
 
 
-def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
+#: Where the contract check's private directory is made (A-054):
+#: under the inherited temporary directory, as before, or under a root the
+#: caller configured explicitly and the check judged Forge-owned first.
+SCRATCH_PLACEMENT_INHERITED = "inherited-temp"
+SCRATCH_PLACEMENT_CONFIGURED = "configured-root"
+#: Besides its owner, the only principals a configured Windows root's DACL may
+#: grant to: SYSTEM and Administrators, the executor's declared zone shape.
+_ROOT_DACL_SIDS = frozenset({"S-1-5-18", "S-1-5-32-544"})
+_SID_SHAPE = re.compile(r"S-1-[0-9]+(?:-[0-9]+)+")
+_WINDOWS_DRIVE_PATH = re.compile(r"[A-Za-z]:\\")
+
+
+def _scratch_root_spelling(text: str) -> str:
+    """THE ONE NAME RULE for a configured root: an absolute path whose every
+    component is a plain name. Windows also refuses a stream, a namespace or
+    UNC prefix, a forward slash and a trailing dot or space -- each is
+    another spelling of some directory, and the check judges one spelling."""
+    if "\x00" in text:
+        return "contains a NUL"
+    if sys.platform == "win32":
+        if not _WINDOWS_DRIVE_PATH.match(text) or "/" in text:
+            return "is not an absolute drive path in backslashes (relative, UNC, namespace " \
+                   "and forward-slash spellings are refused)"
+        parts = text[3:].split("\\")
+    else:
+        if not text.startswith("/"):
+            return "is relative"
+        parts = text[1:].split("/")
+    for part in parts:
+        if part in ("", ".", "..") or (sys.platform == "win32" and (
+                ":" in part or part != part.rstrip(" ."))):
+            return f"has the component {part!r}, which is not a plain name"
+    return ""
+
+
+def _scratch_root_judgement(candidate: Any) -> tuple[tuple[int, int] | None, str]:
+    """`(identity, "")` for a configured root the check may use, or
+    `(None, reason)`. Fails closed: an unreadable answer is a refusal."""
+    if not isinstance(candidate, (str, os.PathLike)) or not isinstance(
+            os.fspath(candidate), str):
+        return None, "the configured scratch root is not a path"
+    text = os.fspath(candidate)
+    spelling = _scratch_root_spelling(text)
+    if spelling:
+        return None, f"the configured scratch root {text!r} {spelling}"
+    path = Path(text)
+    for component in [*reversed(path.parents), path]:
+        try:
+            status = os.lstat(component)
+        except FileNotFoundError:
+            return None, f"the configured scratch root {text!r} does not exist"
+        except OSError as exc:
+            return None, f"the configured scratch root {text!r} cannot be inspected: {exc}"
+        if stat.S_ISLNK(status.st_mode) or (
+                getattr(status, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            return None, (f"the configured scratch root {text!r} is a link or reparse point, "
+                          f"or is reached through one at {str(component)!r}")
+    if not stat.S_ISDIR(status.st_mode):
+        return None, f"the configured scratch root {text!r} is not a directory"
+    try:
+        path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return None, f"the configured scratch root {text!r} cannot be resolved: {exc}"
+    if sys.platform == "win32":
+        refusal = _windows_root_refusal(path)
+    elif hasattr(os, "geteuid"):
+        refusal = _posix_root_refusal(status)
+    else:
+        refusal = "has no owner check on this platform"
+    if refusal:
+        return None, f"the configured scratch root {text!r} {refusal}"
+    return (status.st_dev, status.st_ino), ""
+
+
+def _posix_root_refusal(status: os.stat_result) -> str:
+    if status.st_uid != os.geteuid():
+        return f"is owned by uid {status.st_uid}, not this process's effective uid"
+    if status.st_mode & 0o022:
+        return f"is group- or other-writable (mode {oct(status.st_mode & 0o777)})"
+    return ""
+
+
+def _windows_root_refusal(path: Path) -> str:
+    try:
+        owner, protected, aces = _windows_root_security(path)
+        token_sids = set(_windows_token_sids())
+    except Exception as exc:  # noqa: BLE001 - any failure of the read refuses
+        return (f"has an owner, DACL or token that could not be read "
+                f"({type(exc).__name__}); Forge refuses rather than assume")
+    if owner not in token_sids:
+        return (f"is owned by {owner}, which is neither this process's token user nor its "
+                "token owner")
+    if aces is None:
+        return "has a NULL DACL, which grants every principal everything"
+    if not protected:
+        return "has a DACL that is not protected, so it takes whatever its parent grants"
+    for ace_type, sid in aces:
+        if ace_type != 0 or sid not in _ROOT_DACL_SIDS | {owner}:
+            return (f"has a DACL entry of type {ace_type} for {sid}, outside SYSTEM, "
+                    "Administrators and its owner")
+    return ""
+
+
+def _windows_api() -> tuple[Any, Any, Any, Any]:
+    """`(ctypes, wintypes, kernel32, advapi32)`, each DLL a private instance
+    so the prototypes set here alter no shared `ctypes.windll` object."""
+    import ctypes  # noqa: PLC0415 - Windows only
+    from ctypes import wintypes  # noqa: PLC0415
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    handle, dword, pointer = wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p
+    kernel32.GetCurrentProcess.restype = handle
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.CloseHandle.argtypes = [handle]
+    kernel32.LocalFree.argtypes = [pointer]
+    kernel32.LocalFree.restype = pointer
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, dword, dword, pointer, dword, dword,
+                                     handle]
+    kernel32.CreateFileW.restype = handle
+    advapi32.OpenProcessToken.argtypes = [handle, dword, ctypes.POINTER(handle)]
+    advapi32.GetTokenInformation.argtypes = [handle, ctypes.c_int, pointer, dword,
+                                             ctypes.POINTER(dword)]
+    advapi32.ConvertSidToStringSidW.argtypes = [pointer, ctypes.POINTER(wintypes.LPWSTR)]
+    advapi32.GetSecurityInfo.argtypes = [handle, ctypes.c_int, dword,
+                                         *[ctypes.POINTER(pointer)] * 4,
+                                         ctypes.POINTER(pointer)]
+    advapi32.GetSecurityInfo.restype = dword
+    advapi32.GetSecurityDescriptorControl.argtypes = [pointer, ctypes.POINTER(wintypes.WORD),
+                                                      ctypes.POINTER(dword)]
+    advapi32.GetAce.argtypes = [pointer, dword, ctypes.POINTER(pointer)]
+    return ctypes, wintypes, kernel32, advapi32
+
+
+def _sid_text(api: tuple[Any, Any, Any, Any], sid: Any) -> str:
+    ctypes, wintypes, kernel32, advapi32 = api
+    text = wintypes.LPWSTR()
+    if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+        raise OSError(ctypes.get_last_error(), "ConvertSidToStringSidW failed")
+    try:
+        value = str(text.value)
+    finally:
+        kernel32.LocalFree(text)
+    if not _SID_SHAPE.fullmatch(value):
+        raise ValueError("the SID read is not a SID")
+    return value
+
+
+def _windows_token_sids() -> tuple[str, str]:
+    """This process's TokenUser and TokenOwner (classes 1 and 4), as string
+    SIDs; the read of PR #86's owner-principal cycle plus TokenOwner. Raises
+    on any failure, which the root check turns into a refusal."""
+    api = _windows_api()
+    ctypes, wintypes, kernel32, advapi32 = api
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008,  # TOKEN_QUERY
+                                     ctypes.byref(token)):
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken failed")
+    try:
+        found = []
+        for information_class in (1, 4):  # TokenUser, TokenOwner
+            size = wintypes.DWORD(0)
+            advapi32.GetTokenInformation(token, information_class, None, 0, ctypes.byref(size))
+            if not size.value:
+                raise OSError(ctypes.get_last_error(), "GetTokenInformation gave no size")
+            buffer = ctypes.create_string_buffer(size.value)
+            if not advapi32.GetTokenInformation(token, information_class, buffer, size,
+                                                ctypes.byref(size)):
+                raise OSError(ctypes.get_last_error(), "GetTokenInformation failed")
+            # TOKEN_USER and TOKEN_OWNER both begin with the PSID.
+            found.append(_sid_text(api, ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]))
+        return found[0], found[1]
+    finally:
+        kernel32.CloseHandle(token)
+
+
+def _windows_root_security(path: Path) -> tuple[str, bool, list[tuple[int, str | None]] | None]:
+    """`(owner SID, DACL protected, [(ACE type, SID)] or None for a NULL DACL)`
+    of the directory itself, read through a handle opened on the reparse
+    point rather than through it. Raises on any failure."""
+    api = _windows_api()
+    ctypes, wintypes, kernel32, advapi32 = api
+    handle = kernel32.CreateFileW(
+        str(path), 0x00020000 | 0x0080,  # READ_CONTROL | FILE_READ_ATTRIBUTES
+        0x7, None, 3,  # share all; OPEN_EXISTING
+        0x02000000 | 0x00200000, None)  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_last_error(), "CreateFileW failed")
+    try:
+        owner, dacl, descriptor = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+        status = advapi32.GetSecurityInfo(handle, 1, 0x1 | 0x4, ctypes.byref(owner), None,
+                                          ctypes.byref(dacl), None, ctypes.byref(descriptor))
+        if status:
+            raise OSError(status, "GetSecurityInfo failed")
+        try:
+            control, revision = wintypes.WORD(), wintypes.DWORD()
+            if not advapi32.GetSecurityDescriptorControl(descriptor, ctypes.byref(control),
+                                                         ctypes.byref(revision)):
+                raise OSError(ctypes.get_last_error(), "GetSecurityDescriptorControl failed")
+            owner_sid = _sid_text(api, owner)
+            if not dacl.value:
+                return owner_sid, bool(control.value & 0x1000), None
+            # ACL header: revision, pad, size (WORD), ACE count (WORD), pad.
+            count = ctypes.cast(dacl, ctypes.POINTER(ctypes.c_ushort))[2]
+            aces: list[tuple[int, str | None]] = []
+            for index in range(count):
+                ace = ctypes.c_void_p()
+                if not advapi32.GetAce(dacl, index, ctypes.byref(ace)):
+                    raise OSError(ctypes.get_last_error(), "GetAce failed")
+                ace_type = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[0]
+                # ACCESS_ALLOWED_ACE and ACCESS_DENIED_ACE: header, mask, SID.
+                sid = _sid_text(api, ace.value + 8) if ace_type in (0, 1) else None
+                aces.append((ace_type, sid))
+            return owner_sid, bool(control.value & 0x1000), aces  # SE_DACL_PROTECTED
+        finally:
+            kernel32.LocalFree(descriptor)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def trusted_contract_check(
+    root: Path, generated_digest: Any, *, scratch_root: Path | None = None
+) -> GateResult:
     """`nornyx check` of the contract this build generated, or a failing gate.
 
     THE GREENFIELD GOVERNANCE CHECK (A-049). The development flow generates
@@ -1071,6 +1294,23 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
     interpreter inside the project), `refused` (Nornyx reported an error in
     the contract) and `errored` (the check could not run, or answered in
     something other than Nornyx's own words).
+
+    THE SCRATCH ROOT (A-054). With `scratch_root` unset the
+    private directory is made where it always was, under the inherited
+    temporary directory, recorded as `inherited-temp`. A configured root is judged before anything is made in
+    it -- a plain absolute spelling, no link or reparse point at any
+    component, a directory, owned by this process (the effective uid, or on
+    Windows the token user or token owner) and writable by no one else (no
+    group or other write bit, or a protected DACL granting only SYSTEM,
+    Administrators and the owner) -- and judged again after the private
+    directory is made, by identity. Any refusal, including an owner or DACL
+    that cannot be read, is `not_run` and no child starts. It is recorded as
+    `configured-root`. Such a root can protect against OTHER principals
+    under those access conditions; it does NOT protect against a process of
+    the same principal, which owns it as Forge does, and it establishes
+    nothing about who else can write it -- an access fact of the host,
+    measured outside this process. Codex P1 4356060742 stays OPEN under both
+    placements; `tests/test_contract_check_snapshot_residual.py` shows it.
     """
     name = f"greenfield:{GREENFIELD_GOVERNANCE_CHECK}"
     recorded = generated_digest if re_full_digest(generated_digest) else None
@@ -1136,6 +1376,14 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
             f"now {found}); a check of other bytes is not a check of this build's contract"
         )
 
+    placement = SCRATCH_PLACEMENT_INHERITED
+    held: tuple[int, int] | None = None
+    if scratch_root is not None:
+        held, refusal = _scratch_root_judgement(scratch_root)
+        if held is None:
+            return not_run(refusal)
+        placement = SCRATCH_PLACEMENT_CONFIGURED
+
     cli = {
         "package": "nornyx",
         "entry": "nornyx.cli:main",
@@ -1148,6 +1396,7 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
         "cwd": "private-temporary-directory",
         "environment": "constructed-host-allowlist-without-path-or-pythonpath",
         "subject": "private-read-only-snapshot-of-the-bound-bytes",
+        "scratch_placement": placement,
         "timeout_seconds": GOVERNANCE_CHECK_TIMEOUT_SECONDS,
     }
 
@@ -1164,7 +1413,19 @@ def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
         )
 
     try:
-        with tempfile.TemporaryDirectory(prefix=GOVERNANCE_SNAPSHOT_PREFIX) as scratch:
+        with tempfile.TemporaryDirectory(
+            prefix=GOVERNANCE_SNAPSHOT_PREFIX,
+            dir=None if scratch_root is None else os.fspath(scratch_root),
+        ) as scratch:
+            if held is not None:
+                again, refusal = _scratch_root_judgement(scratch_root)
+                made = os.lstat(scratch)
+                parent = os.lstat(os.path.dirname(scratch))
+                if again != held or (parent.st_dev, parent.st_ino) != held or not (
+                        stat.S_ISDIR(made.st_mode)):
+                    return not_run(refusal or (
+                        "the configured scratch root changed while the private directory "
+                        "was made in it"))
             snapshot = Path(scratch).resolve() / GOVERNANCE_SNAPSHOT_NAME
             snapshot.write_bytes(data)
             snapshot.chmod(0o444)
