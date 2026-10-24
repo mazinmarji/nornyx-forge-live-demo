@@ -442,6 +442,7 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
             "runner_execution": "digest-verified-in-memory-byte-snapshot",
             "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
             "executor_execution": "digest-verified-in-memory-byte-snapshot",
+            "network_guard": gate_module.GREENFIELD_NETWORK_GUARD,
             "command": [
                 command[0],
                 "-I",
@@ -453,14 +454,15 @@ def _valid_child_payload(command: tuple[str, ...]) -> dict[str, Any]:
             ],
             "output_capture": "bounded-20000-byte-tail-no-disk-spool",
             "output_bytes": 100,
-            "result_protocol": "nornyx.greenfield.pytest_result.v1",
+            "result_protocol": "nornyx.greenfield.pytest_result.v2",
             "completion": {
-                "schema": "nornyx.greenfield.pytest_result.v1",
+                "schema": "nornyx.greenfield.pytest_result.v2",
                 "returncode": 0,
                 "collected": 1,
                 "executed": 1,
                 "failed": 0,
                 "skipped": 0,
+                "network_refused": 0,
                 "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
                 "executor_command": [
                     command[0],
@@ -802,14 +804,14 @@ def test_project_tests_cannot_force_a_successful_runner_exit(tmp_path: Path) -> 
         "def test_never_runs():\n    assert False\n",
         "import __main__\nimport json\nimport os\nfrom pathlib import Path\n\n"
         "def test_forged_completion():\n"
-        "    payload = {'schema': 'nornyx.greenfield.pytest_result.v1', "
+        "    payload = {'schema': 'nornyx.greenfield.pytest_result.v2', "
         "'returncode': 0, 'collected': 1, 'executed': 1, 'failed': 0, 'skipped': 0}\n"
         "    Path(__main__.result_path).write_text(json.dumps(payload), encoding='utf-8')\n"
         "    os._exit(0)\n"
         "    assert False\n",
         "import __main__\nimport pytest\n\n"
         "__main__.trusted_dumps = lambda value, **kwargs: "
-        "\"{\\\"schema\\\":\\\"nornyx.greenfield.pytest_result.v1\\\","
+        "\"{\\\"schema\\\":\\\"nornyx.greenfield.pytest_result.v2\\\","
         "\\\"returncode\\\":0,\\\"collected\\\":1,\\\"executed\\\":1,"
         "\\\"failed\\\":0,\\\"skipped\\\":0}\"\n"
         "pytest.exit('forged completion', returncode=0)\n\n"
@@ -863,12 +865,13 @@ def test_executor_rejects_a_hard_link_to_its_completion_record(tmp_path: Path) -
     _write(executor, gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE)
     _write(config, "[pytest]\n")
     forged = {
-        "schema": "nornyx.greenfield.pytest_result.v1",
+        "schema": "nornyx.greenfield.pytest_result.v2",
         "returncode": 0,
         "collected": 1,
         "executed": 1,
         "failed": 0,
         "skipped": 0,
+        "network_refused": 0,
         "executor_digest": gate_module.GREENFIELD_TEST_EXECUTOR_DIGEST,
     }
     _write(

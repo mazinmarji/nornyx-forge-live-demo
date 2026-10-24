@@ -490,6 +490,11 @@ jobs:
       # console and system directory through kernel32. Transport only. Its
       # other tests drive the same code with an injected runner on every
       # platform, so nothing in it skips on this host.
+      # tests/test_capability_guard.py joins for A-053: the test executor's
+      # network guard is an audit hook, and which socket calls a platform
+      # routes through which audit events is a platform property, so the
+      # refusal and its count are measured here as well as on Linux. It
+      # collects the same tests on every platform and skips none.
       # tests/test_contract_check_root_windows.py joins for A-054: the
       # governance check's configured scratch root judged on Windows -- its
       # owner against this token's user and owner, a protected DACL of SYSTEM,
@@ -499,9 +504,9 @@ jobs:
       # decision over synthesised reads is a declared skip. It shows the root's checks, not that anyone else is kept out of
       # it: that is an access fact of a host, measured outside Forge. The P1 residual
       # module is NOT here: this job's census counts an xfail as a skip.
-      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate and scratch-root tests, with no skips
+      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate, capability-guard and scratch-root tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py tests/test_contract_check_root_windows.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py tests/test_capability_guard.py tests/test_contract_check_root_windows.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -512,14 +517,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 379:
-              print("the windows job collected fewer than 379 tests. Its ten modules "
-                    "carry 385 here (7/14/15/19/22/23/54/61/73/97), so this floor is 385 - 7 + 1, "
+          if len(cases) < 691:
+              print("the windows job collected fewer than 691 tests. Its eleven modules "
+                    "carry 697 here (7/14/15/19/22/23/54/61/73/97/312), so this floor is 697 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these ten -- the five smallest "
-                    "carry 77 -- so five whole modules could vanish beneath "
+                    "floor of 60 is clear of any FIVE of these eleven -- the five smallest "
+                    "carry 77 -- so six whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

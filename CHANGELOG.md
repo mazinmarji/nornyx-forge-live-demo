@@ -30,6 +30,38 @@
   `RuntimeAuthorityConfig` field
   changes.
 
+- A build renders a closed runtime operation contract,
+  `.nornyx/generated/runtime-contract.json`, and binds its digest; network
+  capability is refused statically outside an adapter and measured refused
+  while a subject's tests run (A-053). Operations are DECLARED by their exact
+  registered spelling for a requirement, and every field about one --
+  consequence, risk, capability, disposition -- comes from
+  `nornyx_runtime.OPERATION_REGISTRY`; nothing reads a row's words, and an
+  unregistered operation is refused. Every operation that needs an approval
+  is refused, and `destructive_bulk_deletion` and `external_transmission`
+  are refused whatever the table says, because no approval mechanism exists.
+  The shipped build declares nothing, so its table is empty. The test
+  executor's audit hook refuses and counts each socket connect, bind,
+  send-to and name lookup, loopback included, into its trusted record
+  (`network_refused`, result protocol v2, profile version 5: 4 on its own
+  branch, and 5 once merged with A-049, which also moved it to 4); the verifier
+  refuses socket, mail, HTTP, XML-RPC, TLS and `asyncio` stream use outside
+  `adapters/`, `services/`, `tools/` and `workers/`, where it refuses the
+  REFERENCE rather than following aliases: any reference to or binding of
+  `getattr` (but a direct `getattr(obj, "literal")`), `__import__`, `eval`,
+  `exec`, `vars` and the other string accessors, the import machinery, and any
+  attribute named like an asyncio network helper or a network module, on
+  anything -- one name check, applied to every position a name can appear
+  in. Forge's own reference
+  specimen, a notebook with two Forge-authored refusal rows and an embedded
+  boundary, passes through the real verifier with its one unguarded send
+  measured refused. Deliberately changed: a subject test can no longer use a
+  socket in the executor (on Windows that includes starting an `asyncio`
+  loop), and a subject module outside an adapter that imports a network
+  module is refused. The limit: a mechanism on Forge-authored specimens; not
+  a provider build; not a runnable Forge-generated application; the
+  audit-hook guard is a test mechanism, not confinement.
+
 - A worker may start its provider through the hash-pinned run-act gate,
   opt-in (A-052). `ClaudeCodeWorker` and `CodexWorker` take an optional
   `launch`; with `None`, the default, nothing changes and every test pinning

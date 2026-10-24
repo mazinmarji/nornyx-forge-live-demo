@@ -1032,6 +1032,34 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # when PowerShell is not found (three cases), and the length preflight in
     # UTF-16 code units.
     "tests/test_provider_gate.py": 55,
+    # A-053's runtime operation contract: 54 collected at introduction, floor
+    # at band(54) = 49. Rendering deterministic and canonical; every field
+    # about an operation from the registry; only the low-impact operation
+    # permitted and the two always-refused consequences refused whatever the
+    # registry says; a row declaring nothing by its words; unregistered
+    # spellings, a lookalike string, foreign requirements and non-mapping
+    # declarations refused; the validator refusing every field that differs
+    # from Forge's rendering; and the build's empty table and its digest.
+    # 54 -> 55 at the merge with A-049, floor band(55) = 50: the build binding
+    # both generated contracts, each digest its own renderer's, and the
+    # governance check reading only the BRD contract.
+    "tests/test_runtime_contract.py": 50,
+    # A-053's capability guard: 51 collected at introduction, floor at
+    # band(51) = 46. The executor refusing and counting each socket attempt
+    # (no loopback exemption, a swallowed refusal still counted), the count's
+    # shape trusted only when well-formed, the reference specimen through the
+    # real verifier with its one unguarded send measured refused, a weakened
+    # boundary failing the specimen's tests, and the static refusal of
+    # network capability outside an adapter, in sources and in tests.
+    # 51 -> 168 for the first review round, floor band(168) = 152: the
+    # fail-closed reference rule (every binding form of an accessor, a helper
+    # by attribute and by literal getattr, the import machinery) and the
+    # whole-class challenge corpus, each variant refused, with its controls.
+    # 168 -> 312 for the second review round, floor band(312) = 281: every
+    # name position tried with a name from each part of the one forbidden set
+    # and with an ordinary name, the set's union, and both exact-head findings
+    # through the gates beside ordinary controls.
+    "tests/test_capability_guard.py": 281,
     # P17-B1's authority boundary: 35 collected at introduction, floor at
     # band(35) = 32. The provider's writable path into the store -- forged
     # READY dirty and committed, forged capsule authority, the mid-build
@@ -2495,16 +2523,76 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 563, and the slack stays 571, the module still 2 above its band. Its
 # twenty-one skips are unchanged. The windows-runtime job's floor moves 378
 # -> 379: its ten modules collect 7/14/15/19/22/23/54/61/73/97 (sum 385,
-# floor 385 - 7 + 1). The rows below are these.
+# floor 385 - 7 + 1).
+#
+# A-053 ADDS TWO MODULES, measured from a fresh collection:
+# tests/test_runtime_contract.py collects 54 (floor band(54) = 49) and
+# tests/test_capability_guard.py collects 51 (floor band(51) = 46). No other
+# module's count moves. 6077 collect across 139 modules; the module-floor sum
+# rises by 95 to 5535 and the aggregate follows to 5543, keeping the same 8
+# above it; band(n) 5375 -> 5470, the working room below the floor 524 -> 534,
+# and the slack 532 -> 542. NO SKIP IS ADDED. The guard module joins the
+# windows-runtime job, whose floor moves 292 -> 343: its nine modules collect
+# 7/14/15/15/23/51/54/73/97 (sum 349, floor 349 - 7 + 1). The rows below are
+# these. Its first review round grew tests/test_capability_guard.py 51 -> 168
+# (floor 46 -> 152): 6194 collect, the sum rises by 106 to 5641 and the
+# aggregate follows to 5649, band(n) 5470 -> 5575, the working room 534 -> 545,
+# and the slack 542 -> 553, the module now 16 above its band. The
+# windows-runtime job's floor moves 343 -> 460: its nine modules collect
+# 7/14/15/15/23/54/73/97/168 (sum 466, floor 466 - 7 + 1). Its second review
+# round grew the module 168 -> 312 (floor 152 -> 281): 6338 collect, the sum
+# rises by 129 to 5770 and the aggregate follows to 5778, band(n) 5575 -> 5705,
+# the working room 545 -> 560, and the slack 553 -> 568, the module now 31
+# above its band. The windows-runtime job's floor moves 460 -> 604: its nine
+# modules collect 7/14/15/15/23/54/73/97/312 (sum 610, floor 610 - 7 + 1).
+#
+# A-053 MEETS A-049, A-051 AND A-052 HERE, AND THE FIGURES BELOW WERE
+# RECOUNTED RATHER THAN ADDED UP. A-053's paragraph was measured on its own
+# branch, which had none of the three: it said 6338 across 139 modules, the
+# A-049/A-051/A-052 rows said 6327 across 141, and the merged tree collects
+# 6694 across 143 -- A-053's two new modules on top of the A-049/A-051/A-052
+# tree, with no module in common, and one test the merge adds to
+# tests/test_runtime_contract.py, 54 -> 55, for where A-049's and A-053's
+# contract bindings meet in one flow. That module's floor rises with it,
+# band(54) = 49 -> band(55) = 50; NO OTHER PER-MODULE FLOOR MOVED, and none
+# fell: every declared floor equals `band(collected)` for its own module.
+# The aggregates moved: the module-floor sum to 6093 and MINIMUM_COLLECTED to
+# 6101, holding the same 8 above it; band(n) to 6025; the working room below
+# what collects to 593; and the slack the bands grant to 601, summed over the
+# merged counts rather than carried from either side's 568 or 565. The six
+# declared skips are A-052's and no skip is added by the merge. The
+# windows-runtime job names both sides' new modules, A-052's provider-gate
+# module at 61 and A-053's capability-guard module at 312, so its floor is
+# recounted too, to 669: its ten modules collect 7/14/15/19/23/54/61/73/97/312
+# (sum 675, floor 675 - 7 + 1), above both sides' 357 and 604.
+#
+# A-054 MEETS A-053 HERE, AND THE FIGURES BELOW WERE RECOUNTED RATHER THAN
+# ADDED UP. A-054's rows, on a tree with A-052 and without A-053, said 6376
+# across 143 modules; A-053's merged rows said 6694 across 143; the merged
+# tree collects 6743 across 145 -- A-054's two new modules and its two moved
+# ones (tests/test_governance_contract_check.py 38 -> 54 and tests/test_
+# xfail_strictness.py 19 -> 20) on top of A-053's tree, with no module in
+# common and no test added by the merge. NO PER-MODULE FLOOR MOVED, and none
+# fell: every declared floor equals `band(collected)` for its own module. The
+# aggregates moved: the module-floor sum to 6136 and MINIMUM_COLLECTED to
+# 6144, holding the same 8 above it; band(n) to 6069; the working room below
+# what collects to 599; and the slack the bands grant to 607, summed over the
+# merged counts rather than carried from either side's 571 or 601. The skips
+# are A-052's six and A-054's twenty-one, and the expected failures A-054's
+# eight; none is added by the merge. The windows-runtime job names both
+# sides' modules, A-053's capability-guard module at 312 and A-054's Windows
+# root module at 22, so its floor is recounted too, to 691: its eleven
+# modules collect 7/14/15/19/22/23/54/61/73/97/312 (sum 697, floor 697 - 7 +
+# 1), above both sides' 669 and 379. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6376   (143 modules)
-#     sum of the module floors    5805
-#     band(6376) = ceil(0.9*n)    5739
-#     MINIMUM_COLLECTED           5813
+#     collected across tests/     6743   (145 modules)
+#     sum of the module floors    6136
+#     band(6743) = ceil(0.9*n)    6069
+#     MINIMUM_COLLECTED           6144
 #     above the module sum          8
-#     below what collects         563
+#     below what collects         599
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2726,7 +2814,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 571 in total, and the aggregate refuses
+# per-module bands already grant 607 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2995,7 +3083,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5813
+MINIMUM_COLLECTED = 6144
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3136,6 +3224,8 @@ REQUIRED_MODULES = (
     "tests/test_produced_app_handoff.py",
     # A-052: the opt-in provider start through the run-act gate.
     "tests/test_provider_gate.py",
+    "tests/test_runtime_contract.py",
+    "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;

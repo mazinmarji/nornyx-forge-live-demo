@@ -8,8 +8,10 @@ the project working directory would let a project-local ``nornyx_forge`` win.
 The profile is static assurance, not a claim that arbitrary generated software
 is correct.  It checks project structure and BRD traceability, parses every
 Python source and test without executing either, requires executable-looking
-test semantics, keeps process starts behind explicitly named service/tool
-modules, and applies deterministic secret/dynamic-execution checks.
+test semantics, keeps process starts and network use behind explicitly named
+service/tool modules, and applies deterministic secret/dynamic-execution
+checks.  While the subject's tests run, the executor's audit hook refuses and
+counts network attempts: a test mechanism, not OS confinement (A-053).
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from typing import Any
 
 PROFILE_DEFINITION = {
     "id": "nornyx.greenfield.python.v1",
-    "version": 4,
+    "version": 5,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -92,6 +94,12 @@ def _entry():
     _write_flags = (
         _os.O_WRONLY | _os.O_RDWR | _os.O_CREAT | _os.O_TRUNC | _os.O_APPEND
     )
+    _network_refused = [0]
+    _network_events = frozenset({
+        "socket.bind", "socket.connect", "socket.getaddrinfo",
+        "socket.gethostbyaddr", "socket.gethostbyname", "socket.getnameinfo",
+        "socket.sendmsg", "socket.sendto",
+    })
 
     def _inside(_path, _root):
         try:
@@ -121,6 +129,11 @@ def _entry():
         return _inside(_path, _test_tmp)
 
     def _audit(_event, _args):
+        if _event in _network_events:
+            _network_refused[0] += 1
+            raise PermissionError(
+                "test process cannot use the network (a test guard, not OS confinement)"
+            )
         if _event == "open":
             _mode = _args[1] if _len(_args) > 1 else None
             _flags = _args[2] if _len(_args) > 2 else 0
@@ -208,12 +221,13 @@ def _entry():
         "--rootdir", str(_subject), str(_subject / "tests"),
     ], plugins=[_recorder]))
     _payload = _dumps({
-        "schema": "nornyx.greenfield.pytest_result.v1",
+        "schema": "nornyx.greenfield.pytest_result.v2",
         "returncode": _returncode,
         "collected": _recorder.collected,
         "executed": _recorder.executed,
         "failed": _recorder.failed,
         "skipped": _recorder.skipped,
+        "network_refused": _network_refused[0],
         "executor_digest": _executor_digest,
     }, sort_keys=True).encode("utf-8")
     _trusted_result_writer[0] = _get_ident()
@@ -238,6 +252,15 @@ _entry()
 TEST_EXECUTOR_DIGEST = (
     "sha256:" + hashlib.sha256(TEST_EXECUTOR_SOURCE.encode("utf-8")).hexdigest()
 )
+
+#: The executor's network guard, named in every test-execution record (A-053).
+#: Its audit hook refuses and counts each socket connect, bind, send-to and
+#: name lookup while the subject's tests run, so an attempted send is MEASURED
+#: refused. It is a test mechanism, not OS confinement: code that reaches the
+#: network through ctypes, a native extension or another process is outside
+#: an audit hook. The static refusal of network capability is the other
+#: layer; neither stands in for confining a provider or a produced application.
+NETWORK_GUARD = "executor-audit-hook-refusal-test-mechanism-not-os-confinement"
 
 TEST_RUNNER_SOURCE = f"""from __future__ import annotations
 import hashlib
@@ -282,20 +305,23 @@ except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
     payload = None
 keys = {{
     "schema", "returncode", "collected", "executed", "failed", "skipped",
-    "executor_digest",
+    "network_refused", "executor_digest",
 }}
 integrity = (
     "sha256:" + before_digest == EXECUTOR_DIGEST
     and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
-    and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
+    and payload.get("schema") == "nornyx.greenfield.pytest_result.v2"
     and payload.get("executor_digest") == EXECUTOR_DIGEST
     and completed.returncode == 73
     and all(
         isinstance(payload.get(name), int) and not isinstance(payload.get(name), bool)
-        for name in ("returncode", "collected", "executed", "failed", "skipped")
+        for name in (
+            "returncode", "collected", "executed", "failed", "skipped", "network_refused",
+        )
     )
+    and payload.get("network_refused") >= 0
 )
 passed = integrity and (
     payload.get("returncode") == 0
@@ -359,6 +385,63 @@ _SECRET_PATTERNS = {
 _DYNAMIC_IMPORT_CALLS = {"__import__", "importlib.import_module"}
 _SIDE_EFFECT_DIRECTORIES = {"adapters", "services", "tools", "workers"}
 _SIDE_EFFECT_SUFFIXES = ("_adapter", "_service", "_tool", "_worker")
+# NETWORK CAPABILITY (A-053), refused outside the same explicit side-effect
+# modules as process capability. The modules whose import, or whose members'
+# use, acquires a socket, an SMTP, FTP, POP, IMAP, NNTP or Telnet session, an
+# HTTP or XML-RPC client or server, or TLS; and the stream helpers of the
+# dual-use `asyncio`. A STATIC refusal of named spellings, not a property of
+# what the code can reach: a native extension, a module this table does not
+# name, or a name computed while the code runs are outside it. The test
+# executor's guard measures what the tests attempt; neither is confinement.
+_NETWORK_MODULES = frozenset({
+    "_overlapped", "_socket", "_ssl", "aiohttp", "asynchat", "asyncore", "ftplib",
+    "http.client", "http.server", "httpx", "imaplib", "logging.config",
+    "logging.handlers", "nntplib", "poplib", "requests", "smtpd", "smtplib", "socket",
+    "socketserver", "ssl", "telnetlib", "urllib.request", "urllib.robotparser", "urllib3",
+    "webbrowser", "wsgiref.simple_server", "xmlrpc.client", "xmlrpc.server",
+})
+_NETWORK_MEMBERS = frozenset({
+    "asyncio.open_connection", "asyncio.open_unix_connection", "asyncio.start_server",
+    "asyncio.start_unix_server", "asyncio.streams",
+})
+# THE FAIL-CLOSED REFERENCE RULE (A-053, review round 1). Following every alias
+# of a reflective accessor is a race against spellings, so outside an explicit
+# side-effect module the REFERENCE is refused instead of the use:
+#   * an attribute, on anything, named like one of asyncio's network helpers
+#     (or any `sock_*`), and a literal `getattr` naming one;
+#   * an attribute, on anything, named like an unambiguous network module or
+#     one's parent -- a module that imported `socket` exposes it as `.socket`;
+#   * any reference to, or binding of, an accessor that reaches a name or code
+#     by a string -- `getattr` other than a direct `getattr(obj, "literal")`,
+#     `__import__`, `eval`, `exec`, `compile`, `vars`, `globals`, `locals`,
+#     `breakpoint`, `help`, `attrgetter`, `methodcaller`, `get_type_hints`,
+#     `Formatter`, `get_field`, `__loader__`, `__spec__`, `__getattr__` -- so no
+#     alias of one can be bound in any binding form;
+#   * any import of the import and code-loading machinery.
+# Since review round 2 the four tables below are ONE forbidden set, applied
+# uniformly: `_forbidden_name` is the only name check, and every position the
+# rule reads a name from calls it (see `_capability_reference_markers`).
+_ASYNC_NETWORK_HELPERS = frozenset({
+    "connect_accepted_socket", "create_connection", "create_datagram_endpoint",
+    "create_server", "create_unix_connection", "create_unix_server", "getaddrinfo",
+    "getnameinfo", "open_connection", "open_unix_connection", "sendfile",
+    "start_server", "start_unix_server",
+})
+_NETWORK_ATTRIBUTE_NAMES = frozenset({
+    "_overlapped", "_socket", "_ssl", "aiohttp", "asynchat", "asyncore", "ftplib",
+    "http", "httpx", "imaplib", "nntplib", "poplib", "smtpd", "smtplib", "socket",
+    "socketserver", "ssl", "telnetlib", "urllib", "urllib3", "webbrowser", "xmlrpc",
+})
+_REFLECTIVE_NAMES = frozenset({
+    "Formatter", "__getattr__", "__import__", "__loader__", "__spec__", "attrgetter",
+    "breakpoint", "builtins", "compile", "eval", "exec", "get_field", "get_type_hints",
+    "getattr", "globals", "help", "importlib", "locals", "methodcaller", "vars",
+})
+_CODE_LOADING_MODULES = frozenset({
+    "_pickle", "bdb", "builtins", "code", "codeop", "copyreg", "cProfile", "doctest",
+    "imp", "importlib", "marshal", "pdb", "pickle", "pkgutil", "profile", "runpy",
+    "shelve", "timeit", "trace", "zipimport",
+})
 _MAX_FILES = 2000
 _MAX_FILE_BYTES = 500_000
 _MAX_TOTAL_BYTES = 10_000_000
@@ -919,6 +1002,239 @@ def _process_capability_markers(tree: ast.AST) -> set[str]:
     return markers
 
 
+_NETWORK_NAMES = (*sorted(_NETWORK_MODULES), *sorted(_NETWORK_MEMBERS))
+_NETWORK_ROOTS = frozenset(name.split(".", 1)[0] for name in _NETWORK_NAMES)
+
+
+def _names_network(name: str) -> bool:
+    if name.split(".", 1)[0] not in _NETWORK_ROOTS:
+        return False
+    return any(name == known or name.startswith(known + ".") for known in _NETWORK_NAMES)
+
+
+def _network_capability_markers(tree: ast.AST) -> set[str]:
+    """Return the network capabilities this module acquires (A-053).
+
+    Imports of a network module or of one of its members, by any alias;
+    `from <parent> import <network module>`; a star import from a module
+    holding a network member; an attribute chain whose root name an import
+    bound -- directly or through plain assignment -- and which resolves to a
+    network name (`import http` then `http.client`); a `getattr` with a
+    constant member that does; and `sys.modules` access by a constant
+    network name. Only names an import bound are resolved, so a variable that
+    merely shares a module's name (a list called `requests`) is not network
+    capability. Dynamic import by a computed name is already refused
+    everywhere as dynamic import.
+    """
+    markers: set[str] = set()
+    imported: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                root = item.name.split(".", 1)[0]
+                imported[item.asname or root] = item.name if item.asname else root
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for item in node.names:
+                if item.name != "*":
+                    imported[item.asname or item.name] = f"{node.module}.{item.name}"
+
+    def resolve(expression: ast.expr) -> str | None:
+        parts: list[str] = []
+        while isinstance(expression, ast.Attribute):
+            parts.append(expression.attr)
+            expression = expression.value
+        if not isinstance(expression, ast.Name) or expression.id not in imported:
+            return None
+        return ".".join([imported[expression.id], *reversed(parts)])
+
+    # Plain assignment of an imported name binds it too. A worklist over the
+    # assignments grouped by the name their value starts from, so each is
+    # resolved once: a fixed point re-walking the tree per new alias would be
+    # quadratic in a subject's assignments.
+    by_root: dict[str, list[tuple[str, ast.expr]]] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            start = node.value
+            while isinstance(start, ast.Attribute):
+                start = start.value
+            if isinstance(start, ast.Name):
+                by_root.setdefault(start.id, []).append((node.targets[0].id, node.value))
+    pending = list(imported)
+    while pending:
+        for target, value in by_root.get(pending.pop(), ()):
+            if target not in imported:
+                resolved = resolve(value)
+                if resolved is not None:
+                    imported[target] = resolved
+                    pending.append(target)
+    sys_aliases = {name for name, target in imported.items() if target == "sys"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                if _names_network(item.name):
+                    markers.add(item.name)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            if _names_network(node.module):
+                markers.add(node.module)
+                continue
+            for item in node.names:
+                if item.name == "*":
+                    if any(member.startswith(node.module + ".") for member in _NETWORK_MEMBERS):
+                        markers.add(f"{node.module}.*")
+                elif _names_network(f"{node.module}.{item.name}"):
+                    markers.add(f"{node.module}.{item.name}")
+        elif isinstance(node, ast.Attribute):
+            resolved = resolve(node)
+            if resolved and _names_network(resolved):
+                markers.add(resolved)
+        elif isinstance(node, ast.Call):
+            accessor = node.func
+            if (
+                isinstance(accessor, ast.Name)
+                and accessor.id == "getattr"
+                and len(node.args) >= 2
+            ):
+                owner = resolve(node.args[0])
+                member = _static_string(node.args[1])
+                if owner and member is not None and _names_network(f"{owner}.{member}"):
+                    markers.add(f"{owner}.{member}")
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in {"get", "pop", "setdefault"}
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "modules"
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id in sys_aliases
+                and node.args
+            ):
+                target = _static_string(node.args[0])
+                if target is not None and _names_network(target):
+                    markers.add(f"sys.modules[{target!r}]")
+        elif isinstance(node, ast.Subscript):
+            value = node.value
+            if (
+                isinstance(value, ast.Attribute)
+                and value.attr == "modules"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in sys_aliases
+            ):
+                target = _static_string(node.slice)
+                if target is not None and _names_network(target):
+                    markers.add(f"sys.modules[{target!r}]")
+    return markers
+
+
+def _is_network_helper(name: str) -> bool:
+    return name in _ASYNC_NETWORK_HELPERS or name.startswith("sock_")
+
+
+#: The accessors whose literal member is a name position of its own.
+_LITERAL_MEMBER_CALLS = frozenset({"delattr", "getattr", "hasattr", "setattr"})
+
+
+def _forbidden_name(name: object) -> bool:
+    """THE ONE NAME CHECK of the reference rule (A-053, review round 2).
+
+    True for any name in the combined forbidden set: the reflective accessors,
+    the network attribute names, the asyncio network helpers (and `sock_*`)
+    and the code-loading modules. Every position the rule reads a name from
+    calls this and nothing else, so no position can check a narrower set.
+    """
+    return isinstance(name, str) and (
+        name in _REFLECTIVE_NAMES
+        or name in _NETWORK_ATTRIBUTE_NAMES
+        or name in _CODE_LOADING_MODULES
+        or _is_network_helper(name)
+    )
+
+
+def _capability_reference_markers(tree: ast.AST) -> set[str]:
+    """The fail-closed reference rule (A-053): what is refused outside an adapter.
+
+    Decided per name, never by following an alias. Every position a name
+    appears in is checked by `_forbidden_name` against the one combined set:
+    a plain name in any context (load, store, delete); an attribute; each
+    dotted part of an imported module, each imported name and each alias; the
+    literal member of `getattr`, `hasattr`, `setattr` or `delattr`; a class
+    pattern's keyword attribute; a keyword argument's name; a capture name; a
+    parameter; a function or class name; an `except` name; and a `global` or
+    `nonlocal` name. The one exemption is the function NAME of a direct call
+    `getattr(obj, "literal")` -- two or three positional arguments, a string
+    constant second, no keywords, no unpacking -- and its literal is still
+    checked like every other name.
+    """
+    markers: set[str] = set()
+    direct: set[int] = set()
+
+    def check(name: object, where: str, node: ast.AST) -> None:
+        if _forbidden_name(name):
+            markers.add(f"{where} {name} at line {getattr(node, 'lineno', 0)}")
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in _LITERAL_MEMBER_CALLS:
+            if (
+                len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                check(node.args[1].value, f"{func.id} literal", node)
+            if (
+                func.id == "getattr"
+                and len(node.args) in {2, 3}
+                and not node.keywords
+                and not any(isinstance(argument, ast.Starred) for argument in node.args)
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                direct.add(id(func))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if id(node) not in direct:
+                check(node.id, "name", node)
+        elif isinstance(node, ast.Attribute):
+            check(node.attr, "attribute", node)
+        elif isinstance(node, ast.Import):
+            for item in node.names:
+                for part in item.name.split("."):
+                    check(part, "import", node)
+                check(item.asname, "import alias", node)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0:
+                for part in (node.module or "").split("."):
+                    check(part, "import from", node)
+            for item in node.names:
+                check(item.name, "imported name", node)
+                check(item.asname, "import alias", node)
+        elif isinstance(node, ast.keyword):
+            check(node.arg, "keyword argument", node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            check(node.name, "definition", node)
+        elif isinstance(node, ast.arg):
+            check(node.arg, "parameter", node)
+        elif isinstance(node, ast.ExceptHandler):
+            check(node.name, "except name", node)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            check(node.name, "capture", node)
+        elif isinstance(node, ast.MatchMapping):
+            check(node.rest, "capture", node)
+        elif isinstance(node, ast.MatchClass):
+            for attribute in node.kwd_attrs:
+                check(attribute, "pattern attribute", node)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                check(name, "global or nonlocal", node)
+    return markers
+
+
 def _execution_control_findings(
     tree: ast.AST,
     *,
@@ -1424,6 +1740,7 @@ def _execute_tests(
             "runner_execution": "digest-verified-in-memory-byte-snapshot",
             "executor_digest": TEST_EXECUTOR_DIGEST,
             "executor_execution": "digest-verified-in-memory-byte-snapshot",
+            "network_guard": NETWORK_GUARD,
             "command": list(command),
             "output_capture": "bounded-20000-byte-tail-no-disk-spool",
         }
@@ -1464,7 +1781,7 @@ def _execute_tests(
                 "trusted test completion was not established: the record is absent "
                 f"or unreadable ({exc})"
             )
-        invocation["result_protocol"] = "nornyx.greenfield.pytest_result.v1"
+        invocation["result_protocol"] = "nornyx.greenfield.pytest_result.v2"
         invocation["completion"] = completion
         problems: list[str] = []
         expected_keys = {
@@ -1474,6 +1791,7 @@ def _execute_tests(
             "executed",
             "failed",
             "skipped",
+            "network_refused",
             "executor_digest",
             "executor_command",
             "executor_cwd",
@@ -1494,9 +1812,12 @@ def _execute_tests(
                 "or has the wrong shape"
             )
         else:
-            counts = tuple(completion[name] for name in ("collected", "executed", "failed", "skipped"))
+            counts = tuple(
+                completion[name]
+                for name in ("collected", "executed", "failed", "skipped", "network_refused")
+            )
             record_untrusted = (
-                completion["schema"] != "nornyx.greenfield.pytest_result.v1"
+                completion["schema"] != "nornyx.greenfield.pytest_result.v2"
                 or completion["executor_digest"] != TEST_EXECUTOR_DIGEST
                 or not isinstance(completion["executor_command"], list)
                 or len(completion["executor_command"]) != 10
@@ -1516,6 +1837,7 @@ def _execute_tests(
                 or not isinstance(completion["returncode"], int)
                 or isinstance(completion["returncode"], bool)
                 or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
+                or completion["network_refused"] < 0
             )
             if record_untrusted:
                 problems.append(
@@ -1550,8 +1872,16 @@ def _execute_tests(
         # explained the outcome; a subject failure is already stated above.
         if returncode != 0 and not established:
             problems.append(f"isolated tests exited {returncode}: {detail[-4000:]}")
+        passed_detail = "isolated project tests passed"
+        if established and completion is not None and completion["network_refused"]:
+            # A refused attempt is not a failure -- the subject's own tests
+            # decide that -- but it is never left out of the record's words.
+            passed_detail += (
+                f"; the test guard refused {completion['network_refused']} network "
+                "attempt(s) (a test mechanism, not OS confinement)"
+            )
         return (
-            _gate("test-execution", problems, "isolated project tests passed"),
+            _gate("test-execution", problems, passed_detail),
             invocation,
         )
 
@@ -1684,6 +2014,18 @@ def verify(
                 "process capability is not behind an explicit service/tool/adapter/worker: "
                 f"{relative} ({', '.join(sorted(markers))})"
             )
+        network = _network_capability_markers(tree)
+        if network and not _side_effect_module(path, root):
+            architecture.append(
+                "network capability is not behind an explicit service/tool/adapter/worker: "
+                f"{relative} ({', '.join(sorted(network))})"
+            )
+        references = _capability_reference_markers(tree)
+        if references and not _side_effect_module(path, root):
+            architecture.append(
+                "network or reflective capability reference is not behind an explicit "
+                f"service/tool/adapter/worker: {relative} ({', '.join(sorted(references))})"
+            )
         for node in nodes:
             if path in tests:
                 if (
@@ -1741,7 +2083,11 @@ def verify(
             test_semantics,
             f"found {test_functions} test functions and {assertions} assertion blocks",
         ),
-        _gate("architecture-boundary", architecture, "process side effects use explicit boundary modules"),
+        _gate(
+            "architecture-boundary",
+            architecture,
+            "process and network side effects use explicit boundary modules",
+        ),
         _gate("security-static", security, "no static secret or unsafe execution finding"),
     ]
 

@@ -20,7 +20,10 @@ GREENFIELD_PROFILE_ID = "nornyx.greenfield.python.v1"
 GREENFIELD_VERIFIER_ID = "nornyx_forge.greenfield_verifier"
 GREENFIELD_PROFILE_DEFINITION = {
     "id": GREENFIELD_PROFILE_ID,
-    "version": 4,
+    # 5: A-049's governance entry and A-053's network guard each moved the
+    # profile 3 -> 4 on its own branch; merged, it is neither of those, so no
+    # version number names two different profiles.
+    "version": 5,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -107,6 +110,12 @@ def _entry():
     _write_flags = (
         _os.O_WRONLY | _os.O_RDWR | _os.O_CREAT | _os.O_TRUNC | _os.O_APPEND
     )
+    _network_refused = [0]
+    _network_events = frozenset({
+        "socket.bind", "socket.connect", "socket.getaddrinfo",
+        "socket.gethostbyaddr", "socket.gethostbyname", "socket.getnameinfo",
+        "socket.sendmsg", "socket.sendto",
+    })
 
     def _inside(_path, _root):
         try:
@@ -136,6 +145,11 @@ def _entry():
         return _inside(_path, _test_tmp)
 
     def _audit(_event, _args):
+        if _event in _network_events:
+            _network_refused[0] += 1
+            raise PermissionError(
+                "test process cannot use the network (a test guard, not OS confinement)"
+            )
         if _event == "open":
             _mode = _args[1] if _len(_args) > 1 else None
             _flags = _args[2] if _len(_args) > 2 else 0
@@ -223,12 +237,13 @@ def _entry():
         "--rootdir", str(_subject), str(_subject / "tests"),
     ], plugins=[_recorder]))
     _payload = _dumps({
-        "schema": "nornyx.greenfield.pytest_result.v1",
+        "schema": "nornyx.greenfield.pytest_result.v2",
         "returncode": _returncode,
         "collected": _recorder.collected,
         "executed": _recorder.executed,
         "failed": _recorder.failed,
         "skipped": _recorder.skipped,
+        "network_refused": _network_refused[0],
         "executor_digest": _executor_digest,
     }, sort_keys=True).encode("utf-8")
     _trusted_result_writer[0] = _get_ident()
@@ -253,6 +268,13 @@ _entry()
 GREENFIELD_TEST_EXECUTOR_DIGEST = (
     "sha256:" + hashlib.sha256(GREENFIELD_TEST_EXECUTOR_SOURCE.encode("utf-8")).hexdigest()
 )
+#: What the executor's network guard is, as the verifier records it (A-053):
+#: the audit hook refuses and counts each socket connect, bind, send-to and
+#: name lookup while the subject's tests run. A TEST MECHANISM, NOT OS
+#: CONFINEMENT: code reaching the network through ctypes, a native extension
+#: or another process is outside an audit hook. A copy of the verifier's
+#: `NETWORK_GUARD`, held equal by a test.
+GREENFIELD_NETWORK_GUARD = "executor-audit-hook-refusal-test-mechanism-not-os-confinement"
 
 GREENFIELD_TEST_RUNNER_SOURCE = f"""from __future__ import annotations
 import hashlib
@@ -297,20 +319,23 @@ except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
     payload = None
 keys = {{
     "schema", "returncode", "collected", "executed", "failed", "skipped",
-    "executor_digest",
+    "network_refused", "executor_digest",
 }}
 integrity = (
     "sha256:" + before_digest == EXECUTOR_DIGEST
     and "sha256:" + after_digest == EXECUTOR_DIGEST
     and isinstance(payload, dict)
     and set(payload) == keys
-    and payload.get("schema") == "nornyx.greenfield.pytest_result.v1"
+    and payload.get("schema") == "nornyx.greenfield.pytest_result.v2"
     and payload.get("executor_digest") == EXECUTOR_DIGEST
     and completed.returncode == 73
     and all(
         isinstance(payload.get(name), int) and not isinstance(payload.get(name), bool)
-        for name in ("returncode", "collected", "executed", "failed", "skipped")
+        for name in (
+            "returncode", "collected", "executed", "failed", "skipped", "network_refused",
+        )
     )
+    and payload.get("network_refused") >= 0
 )
 passed = integrity and (
     payload.get("returncode") == 0
@@ -400,6 +425,7 @@ def _greenfield_completion_from_trusted_executor(
         "executed",
         "failed",
         "skipped",
+        "network_refused",
         "executor_digest",
         "executor_command",
         "executor_cwd",
@@ -409,10 +435,12 @@ def _greenfield_completion_from_trusted_executor(
     command = completion.get("executor_command")
     counts = [
         completion.get(name)
-        for name in ("returncode", "collected", "executed", "failed", "skipped")
+        for name in (
+            "returncode", "collected", "executed", "failed", "skipped", "network_refused",
+        )
     ]
     return not (
-        completion.get("schema") != "nornyx.greenfield.pytest_result.v1"
+        completion.get("schema") != "nornyx.greenfield.pytest_result.v2"
         or completion.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
         or not isinstance(command, list)
         or len(command) != 10
@@ -427,6 +455,7 @@ def _greenfield_completion_from_trusted_executor(
         or completion.get("executor_cwd") != command[6]
         or completion.get("executor_returncode") != 73
         or any(not isinstance(value, int) or isinstance(value, bool) for value in counts)
+        or completion.get("network_refused") < 0
     )
 
 
@@ -825,7 +854,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             or isinstance(test_execution.get("output_bytes"), bool)
             or test_execution.get("output_bytes") < 0
             or test_execution.get("result_protocol")
-            != "nornyx.greenfield.pytest_result.v1"
+            != "nornyx.greenfield.pytest_result.v2"
             or not isinstance(completion, dict)
             or set(completion)
             != {
@@ -835,12 +864,13 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
                 "executed",
                 "failed",
                 "skipped",
+                "network_refused",
                 "executor_digest",
                 "executor_command",
                 "executor_cwd",
                 "executor_returncode",
             }
-            or completion.get("schema") != "nornyx.greenfield.pytest_result.v1"
+            or completion.get("schema") != "nornyx.greenfield.pytest_result.v2"
             or completion.get("executor_digest") != GREENFIELD_TEST_EXECUTOR_DIGEST
             or not isinstance(completion.get("executor_command"), list)
             or len(completion.get("executor_command", [])) != 10
@@ -868,6 +898,10 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             or completion.get("executed") != completion.get("collected")
             or completion.get("failed") != 0
             or completion.get("skipped") != 0
+            or not isinstance(completion.get("network_refused"), int)
+            or isinstance(completion.get("network_refused"), bool)
+            or completion.get("network_refused") < 0
+            or test_execution.get("network_guard") != GREENFIELD_NETWORK_GUARD
             or test_execution.get("final_subject_digest") != subject_claim.get("digest")
         ):
             return _closed_failure(
