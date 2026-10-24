@@ -10,6 +10,21 @@ verifier's identity, and Forge's version and revision. The capsule store keeps
 it as an authority file, so its exact bytes are sealed outside the project
 (A-051).
 
+VERSION 2 (A-055) adds two bindings. `runtime_contract` is the digest of the
+runtime operation contract Forge renders from the accepted BRD (A-053), on the
+same basis as the generated contract: rendered by Forge, never read back from
+the workspace. BINDING IS NOT ENFORCEMENT: the digest records WHICH runtime
+contract was declared for the build. It does not establish that the produced
+application is confined to that contract when it runs; enforcement in an
+execution environment is later work, established only by measurement there.
+`gate_provenance` is null for a build made in Forge's own
+workspace, and for a build made through the run-act gate it records where the
+bytes came from -- the gate cycle, the run-act script's digest, the stage,
+release and import digests, the completeness list, the credential pattern the
+import used and the gate package check's cited result -- and that its
+verification was static only, its tests not run. A version-1 manifest binds
+neither and is refused.
+
 THIS MODULE IS PURE. `layer.domain`: data in, text out, no filesystem, no
 clock, no process and no interpreter state. `render_pam` is a function of its
 arguments, so the manifest's digest is computed from the text Forge rendered,
@@ -49,8 +64,9 @@ import tokenize
 from typing import Any, Collection, Mapping
 
 from .capsule import PROVIDERS, CapsuleValidationError, canonical_json
+from .gate_release_model import GateReleaseRefused, validate_gate_provenance
 
-PAM_SCHEMA = "nornyx.forge.produced_application_manifest.v1"
+PAM_SCHEMA = "nornyx.forge.produced_application_manifest.v2"
 
 #: `pam/<64 hex>`: the SHA-256 of the manifest's exact text. Anchored `\A...\Z`
 #: for the reason `experience_build` gives for its own formats.
@@ -68,6 +84,14 @@ DEPENDENCIES: Mapping[str, Any] = {"policy": "python_standard_library_only", "de
 #: verifier accepted, not bytes read back from that workspace path.
 GENERATED_CONTRACT_PATH = ".nornyx/generated/brd_contract.nyx"
 GENERATED_CONTRACT_BASIS = "rendered_by_forge_from_the_accepted_brd"
+
+#: The runtime operation contract (A-053), bound the same way (A-055): its
+#: digest is of the text Forge renders from the accepted BRD. It records which
+#: contract was declared, not that the application is confined to it.
+#: `test_the_manifest_names_the_runtime_contracts_own_path` holds the path
+#: equal to `contract_generator.RUNTIME_CONTRACT_PATH`.
+RUNTIME_CONTRACT_PATH = ".nornyx/generated/runtime-contract.json"
+RUNTIME_CONTRACT_BASIS = GENERATED_CONTRACT_BASIS
 
 #: The trusted verifier's identity, as `gates.GREENFIELD_VERIFIER_ID` names it.
 #: Copied rather than imported because this module is domain and `gates` is an
@@ -104,7 +128,8 @@ _REASON_LIMIT = 2000
 
 _TOP_KEYS = frozenset({
     "schema", "subject", "store_directory", "application", "generated_contract",
-    "brd", "capsule", "provider", "verifier", "forge", "trust",
+    "brd", "capsule", "provider", "verifier", "forge", "trust", "runtime_contract",
+    "gate_provenance",
 })
 
 
@@ -153,6 +178,8 @@ def render_pam(
     gate_profile: Mapping[str, Any],
     forge_version: str,
     forge_revision: str,
+    runtime_contract_digest: str,
+    gate_provenance: Mapping[str, Any] | None,
 ) -> str:
     """The manifest's one rendering: canonical JSON and a final newline.
 
@@ -189,6 +216,12 @@ def render_pam(
                      "gate_profile": dict(gate_profile)},
         "forge": {"version": forge_version, "revision": forge_revision},
         "trust": dict(TRUST),
+        "runtime_contract": {
+            "path": RUNTIME_CONTRACT_PATH,
+            "digest": runtime_contract_digest,
+            "basis": RUNTIME_CONTRACT_BASIS,
+        },
+        "gate_provenance": None if gate_provenance is None else dict(gate_provenance),
     }
     text = canonical_json(document) + "\n"
     validate_pam(text)
@@ -373,6 +406,20 @@ def _validated(document: Any, text: str) -> dict[str, Any]:
 
     if document["trust"] != TRUST:
         raise _refuse("trust must state the manifest's bound exactly")
+
+    runtime = _keys(document["runtime_contract"], ("path", "digest", "basis"),
+                    "runtime_contract")
+    if (runtime["path"] != RUNTIME_CONTRACT_PATH
+            or runtime["basis"] != RUNTIME_CONTRACT_BASIS
+            or not isinstance(runtime["digest"], str) or not _SHA256.match(runtime["digest"])):
+        raise _refuse("runtime_contract must name the runtime contract, its basis and a "
+                      "sha256 digest")
+    provenance = document["gate_provenance"]
+    if provenance is not None:
+        try:
+            validate_gate_provenance(provenance)
+        except GateReleaseRefused as error:
+            raise _refuse(f"gate_provenance: {error}") from error
     return document
 
 
@@ -560,6 +607,8 @@ __all__ = [
     "GENERATED_CONTRACT_PATH",
     "PAM_REF",
     "PAM_SCHEMA",
+    "RUNTIME_CONTRACT_BASIS",
+    "RUNTIME_CONTRACT_PATH",
     "SCOPE_REF",
     "TRUST",
     "VERIFIER_ID",

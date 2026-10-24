@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .models import RequirementProfile
-from .util import digest, write_canonical_text, write_json
+from .util import digest, write_canonical_text
 
 
 @dataclass(frozen=True)
@@ -183,9 +184,15 @@ def profile_from_brd(model: RequirementsModel) -> RequirementProfile:
     return RequirementProfile(topics=tuple(dict.fromkeys(topics)))
 
 
-def write_requirements_artifacts(root: Path, model: RequirementsModel) -> None:
-    target = root / ".nornyx/requirements"
-    write_json(target / "requirements.json", model.to_dict())
+def render_requirements_json(model: RequirementsModel) -> str:
+    """`requirements.json` as `write_requirements_artifacts` writes it, as text
+    written nowhere (the input stage renders it, A-055)."""
+    return json.dumps(model.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+def render_traceability(model: RequirementsModel) -> str:
+    """`traceability.md` as `write_requirements_artifacts` writes it, as text
+    written nowhere (the input stage renders it, A-055)."""
     lines = [
         "# BRD traceability",
         "",
@@ -202,4 +209,10 @@ def write_requirements_artifacts(root: Path, model: RequirementsModel) -> None:
     if model.assumptions:
         lines.extend(("", "## Assumptions", ""))
         lines.extend(f"- {item}" for item in model.assumptions)
-    write_canonical_text(target / "traceability.md", "\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n"
+
+
+def write_requirements_artifacts(root: Path, model: RequirementsModel) -> None:
+    target = root / ".nornyx/requirements"
+    write_canonical_text(target / "requirements.json", render_requirements_json(model))
+    write_canonical_text(target / "traceability.md", render_traceability(model))

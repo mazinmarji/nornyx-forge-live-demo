@@ -1038,6 +1038,18 @@ forbidden = {
     "src/nornyx_forge/produced_app_handoff.py": {
         "subprocess", "multiprocessing", "runpy", "importlib", "socket",
     },
+    # The run-act gate's boundary model (A-055) is pure: its docstring says it
+    # reads no filesystem, no process and no interpreter state. Imports only,
+    # like the entries above.
+    "src/nornyx_forge/gate_release_model.py": {
+        "sys", "os", "pathlib", "platform", "subprocess", "socket", "shutil",
+        "importlib", "tempfile", "runpy", "multiprocessing",
+    },
+    # Staging and import (A-055) execute no produced code and start no process
+    # of their own: the trusted verifier's child is started by the gate runner.
+    "src/nornyx_forge/gate_handoff.py": {
+        "subprocess", "multiprocessing", "runpy", "importlib", "socket",
+    },
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative

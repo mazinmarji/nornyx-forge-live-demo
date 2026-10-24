@@ -1886,6 +1886,15 @@ def _execute_tests(
         )
 
 
+#: The run-act gate's mode (A-055): static gates only, the subject's tests not
+#: run. `gates` holds its own copies of both values, and a test holds them equal.
+STATIC_ONLY_MODE = "static_only"
+STATIC_ONLY_DETAIL = (
+    "static-only verification: the subject's tests were not run, so this is not an "
+    "acceptance"
+)
+
+
 def verify(
     project_root: Path,
     *,
@@ -1895,7 +1904,16 @@ def verify(
     forge_revision: str | None = None,
     trusted_loader_path: Path | None = None,
     resource_limits: dict[str, Any] | None = None,
+    static_only: bool = False,
 ) -> dict[str, Any]:
+    """The profile's gates over `project_root`.
+
+    `static_only` is the run-act gate's mode (A-055): every static gate runs
+    exactly as always, and the subject's tests are NOT run, so no produced
+    code executes under the principal that runs this verifier. The
+    test-execution gate then fails with `STATIC_ONLY_DETAIL` and the payload's
+    status is `fail`: a static-only verification is never an acceptance.
+    """
     root = project_root.resolve(strict=True)
     loader_problem: str | None = None
     if trusted_loader_path is not None:
@@ -2092,7 +2110,10 @@ def verify(
     ]
 
     subject_digest = _subject_digest(file_digests)
-    if all(gate["passed"] for gate in gates):
+    if static_only:
+        test_gate = _gate("test-execution", [STATIC_ONLY_DETAIL], "")
+        test_invocation = {"status": "not_run", "mode": STATIC_ONLY_MODE}
+    elif all(gate["passed"] for gate in gates):
         test_gate, test_invocation = _execute_tests(
             root,
             files,
@@ -2175,6 +2196,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--forge-version")
     parser.add_argument("--forge-revision")
     parser.add_argument("--trusted-loader-path")
+    parser.add_argument("--static-only", action="store_true")
     args = parser.parse_args(argv)
     resource_limits = _apply_resource_limits()
     try:
@@ -2190,6 +2212,7 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             ),
             resource_limits=resource_limits,
+            static_only=args.static_only,
         )
     except (MemoryError, OSError, RuntimeError, ValueError) as exc:
         origin = Path(args.trusted_origin) if args.trusted_origin else Path(__file__).resolve()

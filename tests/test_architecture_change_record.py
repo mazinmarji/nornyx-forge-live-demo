@@ -848,7 +848,9 @@ def test_the_provider_gate_entry_and_assignment_are_declared_as_committed():
 
 def test_the_provider_gate_is_declared_where_the_entry_says_and_the_workers_import_it():
     """The new adapter component and module as declared, the two edges the
-    workers gain, and nothing else depending on the gate module."""
+    workers gain, and nothing else depending on the gate module but A-055's
+    staging and import, which READS the pin to refuse a gated manifest whose
+    run-act digest is not it, and starts nothing through the gate."""
     architecture = _document()["architecture"]
     components = {item["id"]: item for item in architecture["components"]}
     modules = {item["id"]: item for item in architecture["modules"]}
@@ -866,7 +868,7 @@ def test_the_provider_gate_is_declared_where_the_entry_says_and_the_workers_impo
         assert modules[module]["depends_on"] == ["module.shared_models", "module.provider_gate"]
     dependents = sorted(item["id"] for item in architecture["modules"]
                         if "module.provider_gate" in item.get("depends_on", []))
-    assert dependents == ["module.codex_worker", "module.worker_adapter"]
+    assert dependents == ["module.codex_worker", "module.gate_handoff", "module.worker_adapter"]
     assert "component.provider_gate" in architecture["systems"][0]["components"]
 
 

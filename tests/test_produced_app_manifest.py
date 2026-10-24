@@ -70,6 +70,8 @@ def _arguments(**overrides: Any) -> dict[str, Any]:
                          "digest": gates.GREENFIELD_PROFILE_DIGEST},
         "forge_version": "0.1.0",
         "forge_revision": "git:" + "f" * 40,
+        "runtime_contract_digest": "sha256:" + "9" * 64,
+        "gate_provenance": None,
     }
     arguments.update(overrides)
     return arguments
@@ -451,3 +453,68 @@ def test_the_static_check_reads_bytes_and_runs_nothing(tmp_path, monkeypatch):
                                    store_directory="capsule", stdlib=STDLIB)
     assert findings == [] and not marker.exists()
     assert "app.__main__" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# Version 2 (A-055): the runtime contract and the gate provenance
+# ---------------------------------------------------------------------------
+
+def _provenance() -> dict[str, Any]:
+    from nornyx_forge import gate_release_model, provider_gate
+
+    return gate_release_model.gate_provenance(
+        cycle_id="c01", run_act_sha256=provider_gate.PINNED_RUN_ACT_SHA256,
+        stage_manifest="sha256:" + "1" * 64, release_manifest="sha256:" + "2" * 64,
+        import_record="sha256:" + "3" * 64, completeness_list="sha256:" + "4" * 64,
+        check_d3g_result="sha256:" + "5" * 64,
+        credential_pattern=gate_release_model.GATE_SEED_PATTERN.record())
+
+
+def test_the_manifest_binds_the_runtime_contract_and_says_whether_the_gate_was_crossed():
+    document = pam.validate_pam(pam.render_pam(**_arguments()))
+    assert document["schema"] == "nornyx.forge.produced_application_manifest.v2"
+    assert document["runtime_contract"] == {
+        "path": ".nornyx/generated/runtime-contract.json", "digest": "sha256:" + "9" * 64,
+        "basis": "rendered_by_forge_from_the_accepted_brd"}
+    assert document["gate_provenance"] is None
+    gated = pam.validate_pam(pam.render_pam(**_arguments(gate_provenance=_provenance())))
+    assert gated["gate_provenance"] == _provenance()
+
+
+def test_the_manifest_names_the_runtime_contracts_own_path():
+    from nornyx_forge import contract_generator
+
+    assert pam.RUNTIME_CONTRACT_PATH == contract_generator.RUNTIME_CONTRACT_PATH
+    assert pam.RUNTIME_CONTRACT_BASIS == pam.GENERATED_CONTRACT_BASIS
+
+
+VERSION_2_REFUSALS = {
+    "no runtime contract": (_drop(("runtime_contract",)), "exactly"),
+    "no gate provenance key": (_drop(("gate_provenance",)), "exactly"),
+    "a runtime contract at another path": (
+        _set(("runtime_contract", "path"), "runtime-contract.json"), "runtime_contract"),
+    "a runtime contract read from the workspace": (
+        _set(("runtime_contract", "basis"), "read_from_the_workspace"), "runtime_contract"),
+    "a runtime contract digest of another shape": (
+        _set(("runtime_contract", "digest"), "9" * 64), "runtime_contract"),
+    "a runtime contract with an extra claim": (
+        _set(("runtime_contract", "verified"), True), "exactly"),
+    "a gate provenance that is not an object": (_set(("gate_provenance",), "gated"),
+                                                "gate_provenance"),
+    "a gate provenance claiming its tests ran": (
+        lambda d: d.update(gate_provenance={**_provenance(), "test_execution": "passed"}),
+        "gate_provenance"),
+    "a gate provenance with a malformed run-act digest": (
+        lambda d: d.update(gate_provenance={**_provenance(), "run_act_sha256": "x"}),
+        "gate_provenance"),
+    "a version-1 manifest": (_set(("schema",), "nornyx.forge.produced_application_manifest.v1"),
+                             "schema"),
+}
+
+
+@pytest.mark.parametrize("label", sorted(VERSION_2_REFUSALS))
+def test_the_version_2_bindings_are_refused_in_any_other_shape(label: str):
+    change, reason = VERSION_2_REFUSALS[label]
+    text = _rewritten(pam.render_pam(**_arguments()), change)
+    with pytest.raises(CapsuleValidationError, match=reason):
+        pam.validate_pam(text)
