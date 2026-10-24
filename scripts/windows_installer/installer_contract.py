@@ -72,6 +72,7 @@ GOVERNED_STATE = (
     "ForgeProject/capsule/.git/objects/ab/specimen-object",
     "ForgeProject/capsule/capsule.json",
     "ForgeProject/capsule/experience.json",
+    "ForgeProject/capsule/pam.json",
     "ForgeProject/app/main.py",
     "ForgeProject/evidence/runtime/action_approvals.sqlite3",
     "ForgeProject/evidence/runtime/action_approvals.sqlite3.highwater",

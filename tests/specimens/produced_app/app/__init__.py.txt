@@ -1,0 +1,6 @@
+"""A support-case register: Forge's own reference application.
+
+Written by the simulated provider of a Forge test from a template under
+tests/specimens/produced_app. No live provider wrote this file, and shipped
+Forge never generates it.
+"""

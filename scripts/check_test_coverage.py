@@ -278,6 +278,22 @@ EXPECTED_SKIPS = {
         "A junction is an NTFS directory-shaped reparse point that is_symlink() reports False for, and POSIX has no equivalent, so this row's plant cannot be built on a Linux job. The property is not weakened: _is_directory_entry sends the DIRECTORY rows down the identical branch and those execute on every platform, and all seven junction rows execute on a Windows workstation.",
     "tests/test_provider_authority_boundary.py::test_the_neutralisation_fails_closed_at_every_authority_shape":
         "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
+    # A-052's Windows transport and hold. Windows is the subject, as for the
+    # standing module's six above: a real Windows PowerShell 5.1, a Windows
+    # share mode and kernel32's console and system-directory reads. The
+    # windows-runtime job runs tests/test_provider_gate.py and refuses a skip.
+    "tests/test_provider_gate.py::test_the_vector_reaches_a_powershell_file_parameter_block_unchanged":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_powershell_alters_each_refused_class":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_held_script_refuses_writers_while_powershell_still_reads_it":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_whole_gate_path_runs_the_stub_through_each_worker":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_console_check_refuses_a_nul_device_and_a_pipe":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
+    "tests/test_provider_gate.py::test_the_system_directory_is_the_operating_systems_not_the_environments":
+        "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
     "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape":
         "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
 }
@@ -567,8 +583,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # separation-of-duties assignment and the record, verification of every
     # key, derived claim and the canonical form, and the tool end to end in a
     # copy of the repository. 252 collected at introduction, floor at
-    # band(252) = 227.
-    "tests/test_architecture_change_record.py": 229,
+    # band(252) = 227. 254 -> 256 for A-052, floor band(256) = 231: the
+    # provider gate module's change entry and assignment, whole, and its
+    # declared component, module and the two worker edges.
+    "tests/test_architecture_change_record.py": 231,
     # PR-18's Windows runtime, cross-platform deterministic: 36 collected
     # after the three in-session inspections, 37 after the post-PR-18
     # hardening (the served composition's Host rule, N3), floor at
@@ -815,8 +833,29 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # them skips on any platform, and the module joins the windows-runtime
     # job. 13 -> 15 for A-048, floor band(15) = 14: eight requirement rows
     # composed as the onboarding page composes them reaching GOVERN, and the
-    # same rows refused at the build for one untested row.
-    "tests/test_simulated_journey.py": 14,
+    # same rows refused at the build for one untested row. 15 -> 19 for
+    # A-049, floor band(19) = 18: the eight rows refused at BUILD when the
+    # generated contract's nornyx check is refused, the contract is edited
+    # after generation or deleted, or the check cannot run. The journeys that
+    # reached GOVERN now reach READY in the same tests.
+    "tests/test_simulated_journey.py": 18,
+    # A-049's governance check of the generated contract: 23 collected at
+    # introduction, floor at band(23) = 21. The real nornyx CLI passing the
+    # contract Forge generated and the translator reading that as a passing
+    # governance validation; two contracts Nornyx refuses; no check run for a
+    # contract changed after generation, missing, a directory, a link,
+    # oversized, a build with no or a malformed recorded digest (six), or an
+    # interpreter inside the project; a check that cannot start, exits 0
+    # without Nornyx's verdict, exits 2 without a Nornyx error, times out or
+    # cannot execute, each an error and none a pass; the profile's two copies
+    # equal; and the translator's bootstrap copy equal to the parent's.
+    # 23 -> 38 for the first review (Codex P1 4353133109 and P2 4353133125 on
+    # 8ae32b3), floor band(38) = 35: a pipe, a link, another file and a grown
+    # file put in the contract's place after inspection; the snapshot replaced
+    # during the check; a pipe in the verifier snapshot's place and in the
+    # verifier reader's; the digest of the rendered contract, not a re-read;
+    # and the translator refusing seven other executables or shapes.
+    "tests/test_governance_contract_check.py": 35,
     # A-045's one requirement-identity rule: 26 collected at introduction,
     # floor at band(26) = 24. Forge's derived BRD against Forge's own
     # verifier, the negatives that keep traceability (an untested confirmed
@@ -857,6 +896,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # by editing it; and the editor's refusal kept across the refresh, marking
     # only the editor's own proposal.
     "tests/test_requirements_entry.py": 142,
+    # A-051's produced-application manifest, as pure domain: 109 collected at
+    # introduction, floor at band(109) = 99. Rendering and the reference
+    # computed from the rendered text, every field the validator refuses,
+    # the copies held equal to their owners, and the static entry-point and
+    # import check over bytes, running nothing.
+    "tests/test_produced_app_manifest.py": 99,
+    # A-051's store, build and handoff: 141 collected at introduction, floor at
+    # band(141) = 127. Seal v2 and v1 still read, the one commit and the write
+    # check, the reference journey and the two the static check
+    # refuses, issuance's refusals, the gate never offered in simulation, held
+    # descriptors, no process started, and the reference app unshipped.
+    "tests/test_produced_app_handoff.py": 127,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -880,6 +931,23 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # compromised, both paths), the registry refusal unchanged under intact
     # integrity (both paths), and the governance-unavailable refusal kept.
     "tests/test_operation_classification.py": 57,
+    # A-052's opt-in provider start through the run-act gate: 56 collected at
+    # introduction, floor at band(56) = 51. The pin and the exact vector for
+    # each worker against the vector it builds today; launch=None as today;
+    # every refusal before any process (the script's bytes and shape, no
+    # console, no system directory, each malformed field, a value PowerShell
+    # reads as a parameter name, a NUL, an over-long line); the constructed
+    # environment with no key name or value; the exit-code mapping; the
+    # script's hold; eligibility unchanged in both modes. Six are Windows's
+    # own -- the round trip through a real powershell.exe -File stub, the
+    # refused class misbound there, the held script, the console check and
+    # the system directory -- declared skips here and run, with no skip, in
+    # the windows-runtime job. 56 -> 61 for the review of its third head,
+    # floor band(61) = 55: gate exits 124, 127 and 255 each classified error
+    # with the status kept in the output, a start failure unavailable only
+    # when PowerShell is not found (three cases), and the length preflight in
+    # UTF-16 code units.
+    "tests/test_provider_gate.py": 55,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -888,7 +956,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # spellings, a lookalike string, foreign requirements and non-mapping
     # declarations refused; the validator refusing every field that differs
     # from Forge's rendering; and the build's empty table and its digest.
-    "tests/test_runtime_contract.py": 49,
+    # 54 -> 55 at the merge with A-049, floor band(55) = 50: the build binding
+    # both generated contracts, each digest its own renderer's, and the
+    # governance check reading only the BRD contract.
+    "tests/test_runtime_contract.py": 50,
     # A-053's capability guard: 51 collected at introduction, floor at
     # band(51) = 46. The executor refusing and counting each socket attempt
     # (no loopback exemption, a swallowed refusal still counted), the count's
@@ -2248,6 +2319,80 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # follows to 5448, band(n) 5371 -> 5375, the working room stays 524, and the
 # slack stays 532.
 #
+# A-049 ADDS ONE MODULE AND MOVES ONE, measured from a fresh collection:
+# tests/test_governance_contract_check.py collects 23 (floor band(23) = 21)
+# and tests/test_simulated_journey.py collects 15 -> 19 (floor band(15) = 14
+# -> band(19) = 18). 5999 collect across 138 modules. The module-floor sum
+# rises by 25 to 5465 and the aggregate follows to 5473, keeping the same 8
+# above it; band(n) 5375 -> 5400, and the working room below the floor
+# 524 -> 526. THE SLACK THE BANDS GRANT moves by 2, 532 -> 534, the new
+# module sitting 2 above its band and the journey module still 1 above its
+# own. NO SKIP IS ADDED. The journey module is one of the windows-runtime
+# job's, whose floor moves 292 -> 296: its eight modules collect
+# 7/14/15/19/23/54/73/97 (sum 302, floor 302 - 7 + 1). Its first review
+# round added fifteen, 23 -> 38 (floor 21 -> 35): 6014 collect, the sum
+# rises by 14 to 5479 and the aggregate follows to 5487, band(n) 5400 ->
+# 5413, the working room 526 -> 527, and the slack 534 -> 535, the module now
+# 3 above its band. The windows-runtime job's modules are unchanged.
+#
+# A-051 ADDS TWO MODULES, measured from a fresh collection:
+# tests/test_produced_app_manifest.py collects 109 (floor band(109) = 99) and
+# tests/test_produced_app_handoff.py collects 141 (floor band(141) = 127). No other
+# module's count moves. 6222 collect across 139 modules; the module-floor sum
+# rises by 226 to 5666 and the aggregate follows to 5674, keeping the
+# same 8 above it; band(n) 5375 -> 5600, the working room below the floor
+# 524 -> 548, and the slack 532 -> 556. NO SKIP IS ADDED, and the
+# windows-runtime job's floor is untouched: it names neither new module.
+#
+# A-049 AND A-051 MEET HERE, AND THE FIGURES BELOW WERE RECOUNTED RATHER THAN
+# ADDED UP. Each paragraph above was measured on its own branch, so neither
+# side's rows described the merged tree: A-049's said 6014 across 138
+# modules, A-051's said 6222 across 139, and the merged tree collects 6264
+# across 140 -- A-049's new module and its journey module's 15 -> 19, and
+# A-051's two new modules, with no module in common. NO PER-MODULE FLOOR
+# MOVED: every declared floor already equals `band(collected)` for its own
+# module. Only the aggregates moved: the module-floor sum to 5705 and
+# MINIMUM_COLLECTED to 5713, holding the same 8 above it; band(n) to 5638;
+# the working room below what collects to 551; and the slack the bands grant
+# to 559, summed over the merged counts rather than carried from either
+# side's 535 or 556. NO SKIP IS ADDED. The windows-runtime job's floor stays
+# at A-049's 296: A-051 names none of its modules.
+#
+# A-052 ADDS ONE MODULE AND MOVES ONE, measured from a fresh collection:
+# tests/test_provider_gate.py collects 56 (floor band(56) = 51) and
+# tests/test_architecture_change_record.py collects 254 -> 256 (floor
+# band(254) = 229 -> band(256) = 231). 6030 collect across 138 modules. The
+# module-floor sum rises by 53 to 5493 and the aggregate follows to 5501,
+# keeping the same 8 above it; band(n) 5375 -> 5427, and the working room
+# below the floor 524 -> 529. THE SLACK THE BANDS GRANT moves by 5, 532 ->
+# 537, the new module sitting 5 above its band and the change-record module
+# still 25 above its own. SIX SKIPS ARE ADDED, declared by identity above:
+# the new module's Windows tests. The new module joins the windows-runtime
+# job, whose floor moves 292 -> 348: its nine modules collect
+# 7/14/15/15/23/54/56/73/97 (sum 354, floor 354 - 7 + 1). Its review round
+# then added five, 56 -> 61 (floor 51 -> 55): 6035 collect, the sum rises by 4
+# to 5497 and the aggregate follows to 5505, band(n) 5427 -> 5432, the working
+# room 529 -> 530, and the slack 537 -> 538, the module now 6 above its band.
+# The windows-runtime job's floor moves 348 -> 353: its nine modules collect
+# 7/14/15/15/23/54/61/73/97 (sum 359, floor 359 - 7 + 1).
+#
+# A-052 MEETS A-049 AND A-051 HERE, AND THE FIGURES BELOW WERE RECOUNTED
+# RATHER THAN ADDED UP. A-052's paragraph was measured on its own branch,
+# which had neither A-049 nor A-051: it said 6035 across 138 modules, the
+# A-049/A-051 rows said 6264 across 140, and the merged tree collects 6327
+# across 141 -- A-052's new module and its change-record module's 254 -> 256
+# on top of the A-049/A-051 tree, with no module in common. NO PER-MODULE
+# FLOOR MOVED: every declared floor already equals `band(collected)` for its
+# own module. Only the aggregates moved: the module-floor sum to 5762 and
+# MINIMUM_COLLECTED to 5770, holding the same 8 above it; band(n) to 5695; the
+# working room below what collects to 557; and the slack the bands grant to
+# 565, summed over the merged counts rather than carried from either side's
+# 538 or 559. The six declared skips are A-052's and no skip is added by the
+# merge. The windows-runtime job names A-049's journey module at 19 and
+# A-052's provider-gate module at 61, so its floor is recounted too, to 357:
+# its nine modules collect 7/14/15/19/23/54/61/73/97 (sum 363, floor
+# 363 - 7 + 1), above both sides' 353 and 296. The rows below are these.
+#
 # A-053 ADDS TWO MODULES, measured from a fresh collection:
 # tests/test_runtime_contract.py collects 54 (floor band(54) = 49) and
 # tests/test_capability_guard.py collects 51 (floor band(51) = 46). No other
@@ -2269,14 +2414,35 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # above its band. The windows-runtime job's floor moves 460 -> 604: its nine
 # modules collect 7/14/15/15/23/54/73/97/312 (sum 610, floor 610 - 7 + 1).
 #
+# A-053 MEETS A-049, A-051 AND A-052 HERE, AND THE FIGURES BELOW WERE
+# RECOUNTED RATHER THAN ADDED UP. A-053's paragraph was measured on its own
+# branch, which had none of the three: it said 6338 across 139 modules, the
+# A-049/A-051/A-052 rows said 6327 across 141, and the merged tree collects
+# 6694 across 143 -- A-053's two new modules on top of the A-049/A-051/A-052
+# tree, with no module in common, and one test the merge adds to
+# tests/test_runtime_contract.py, 54 -> 55, for where A-049's and A-053's
+# contract bindings meet in one flow. That module's floor rises with it,
+# band(54) = 49 -> band(55) = 50; NO OTHER PER-MODULE FLOOR MOVED, and none
+# fell: every declared floor equals `band(collected)` for its own module.
+# The aggregates moved: the module-floor sum to 6093 and MINIMUM_COLLECTED to
+# 6101, holding the same 8 above it; band(n) to 6025; the working room below
+# what collects to 593; and the slack the bands grant to 601, summed over the
+# merged counts rather than carried from either side's 568 or 565. The six
+# declared skips are A-052's and no skip is added by the merge. The
+# windows-runtime job names both sides' new modules, A-052's provider-gate
+# module at 61 and A-053's capability-guard module at 312, so its floor is
+# recounted too, to 669: its ten modules collect 7/14/15/19/23/54/61/73/97/312
+# (sum 675, floor 675 - 7 + 1), above both sides' 357 and 604. The rows below
+# are these.
+#
 # (rows below):
 #
-#     collected across tests/     6338   (139 modules)
-#     sum of the module floors    5770
-#     band(6338) = ceil(0.9*n)    5705
-#     MINIMUM_COLLECTED           5778
+#     collected across tests/     6694   (143 modules)
+#     sum of the module floors    6093
+#     band(6694) = ceil(0.9*n)    6025
+#     MINIMUM_COLLECTED           6101
 #     above the module sum          8
-#     below what collects         560
+#     below what collects         593
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2498,7 +2664,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 568 in total, and the aggregate refuses
+# per-module bands already grant 601 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2767,7 +2933,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5778
+MINIMUM_COLLECTED = 6101
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2898,9 +3064,14 @@ REQUIRED_MODULES = (
     "tests/test_content_bound_transitions.py",
     "tests/test_basic_user_journey.py",
     "tests/test_simulated_journey.py",
+    "tests/test_governance_contract_check.py",
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",
+    "tests/test_produced_app_manifest.py",
+    "tests/test_produced_app_handoff.py",
+    # A-052: the opt-in provider start through the run-act gate.
+    "tests/test_provider_gate.py",
     "tests/test_runtime_contract.py",
     "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",

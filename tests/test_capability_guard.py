@@ -173,7 +173,10 @@ def test_the_guard_is_named_the_same_by_the_parent_and_the_verifier() -> None:
     assert gate_module.GREENFIELD_TEST_EXECUTOR_SOURCE == verifier_module.TEST_EXECUTOR_SOURCE
     assert gate_module.GREENFIELD_TEST_RUNNER_SOURCE == verifier_module.TEST_RUNNER_SOURCE
     assert gate_module.GREENFIELD_PROFILE_DEFINITION == verifier_module.PROFILE_DEFINITION
-    assert gate_module.GREENFIELD_PROFILE_DEFINITION["version"] == 4
+    # 5, not 4: A-049 (the governance entry) and A-053 (this guard) each moved
+    # the profile 3 -> 4 on their own branches. Merged, the profile is neither
+    # parent's version 4, so its version is 5 and no version names two profiles.
+    assert gate_module.GREENFIELD_PROFILE_DEFINITION["version"] == 5
 
 
 # ---------------------------------------------------------------------------

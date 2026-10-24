@@ -15,7 +15,8 @@
   The shipped build declares nothing, so its table is empty. The test
   executor's audit hook refuses and counts each socket connect, bind,
   send-to and name lookup, loopback included, into its trusted record
-  (`network_refused`, result protocol v2, profile version 4); the verifier
+  (`network_refused`, result protocol v2, profile version 5: 4 on its own
+  branch, and 5 once merged with A-049, which also moved it to 4); the verifier
   refuses socket, mail, HTTP, XML-RPC, TLS and `asyncio` stream use outside
   `adapters/`, `services/`, `tools/` and `workers/`, where it refuses the
   REFERENCE rather than following aliases: any reference to or binding of
@@ -32,6 +33,92 @@
   module is refused. The limit: a mechanism on Forge-authored specimens; not
   a provider build; not a runnable Forge-generated application; the
   audit-hook guard is a test mechanism, not confinement.
+
+- A worker may start its provider through the hash-pinned run-act gate,
+  opt-in (A-052). `ClaudeCodeWorker` and `CodexWorker` take an optional
+  `launch`; with `None`, the default, nothing changes and every test pinning
+  today's vector and environment passes unmodified. With a
+  `provider_gate.GateLaunch` the worker's own vector is handed to the new
+  adapter module `nornyx_forge.provider_gate`, which starts Windows
+  PowerShell 5.1 by its system-directory path on the gate script with
+  `-Action Run`, the pinned SHA-256 as `-AuthorizedSha256`, the role, the
+  provider executable and `list2cmdline` of the worker's arguments as
+  `-ProviderArgs`. It refuses before any process exists when the script's
+  bytes are not the pinned bytes, there is no console, a field is malformed,
+  the vector holds a NUL or is too long, or `-ProviderArgs` would be read by
+  PowerShell as a parameter name or ends in whitespace PowerShell drops (both
+  measured through a real `powershell.exe -File`). The environment is constructed, not filtered, and carries no
+  credential; nothing is captured and no timeout applies. Every gate exit is
+  a failed worker run, because no provider output reaches the workspace on
+  this path; its returncode is 3 whatever the gate exited, so a gate status
+  of 124 or 127 cannot read as a timeout or an absent executable, and the
+  gate's own status is named in the output. The length preflight counts
+  UTF-16 code units, and a start failure is `unavailable` only when Windows
+  PowerShell is reported not found. No claim of the gate's logon semantics, separation or
+  eligibility is made, and nothing in Forge passes a `launch` yet. The
+  architecture contract declares the module in a new adapter component the
+  two workers depend on; the windows-runtime job runs the new tests, and the
+  governed evidence is regenerated.
+
+- An accepted build's produced application is named by a Produced
+  Application Manifest that Forge writes and seals, and handing it to a person
+  is a separate gate that is never offered in simulation (A-051). The build
+  thread renders `pam.json` from Forge's own records -- the trusted verifier
+  record the flow returns in memory, the capsule and lifecycle sealed at
+  BUILD, the Provider Contract's own eligibility row, and the produced files
+  read through held descriptors -- under the store lock, after the seal check,
+  and saves it in the same commit as the GOVERN transition; the sealed bytes
+  are then compared with the rendered ones. It is the store's third authority
+  file: the seal schema moves to version 2, and a version-1 seal is still read
+  as sealing no manifest, so no protected store becomes TAMPERED. Every read
+  of an authority file or of the seal now fails closed: undecodable, oversized,
+  non-regular or vanishing content is a seal finding or the store's refusal,
+  never an exception, for `capsule.json` and `experience.json` as much as for
+  `pam.json` (the same defect predated the manifest). The seal record and the
+  manifest are also held value by value -- a full-commit revision, sealed
+  texts that are JSON, a matching manifest reference, and no `NaN`,
+  `Infinity` or unencodable string such as an escaped lone surrogate -- so a
+  damaged value is a refusal, never an exception. A static
+  check over the produced sources as bytes requires `app/__main__.py` present
+  and parsing, standard-library imports only, no import of `nornyx_forge`, and
+  no reference at all to a dynamic import or execution primitive (`__import__`,
+  `eval`, `exec`, `compile`, `importlib`, `builtins` and the spellings A-051
+  lists), called or not. It is a static check over those spellings, not a
+  guarantee that produced code cannot reach Forge, and nothing produced is
+  executed. The "Open application" readiness check loads
+  the manifest only from a store that matches its seal, re-hashes every
+  produced file, and offers the action only when the unchanged
+  `governed_build_eligibility` makes the build's provider eligible; no
+  provider is, so it is never offered, and no route or page offers it yet.
+  READY is unchanged. The mechanism is exercised on a Forge-authored reference
+  app written by a test-only simulated provider; it is not a provider build,
+  not a runnable Forge-generated application, and no produced code is
+  executed.
+
+- The greenfield acceptance profile runs the real `nornyx check` on the
+  contract each build generated, and only that check's pass is a governance
+  validation (A-049). READY needs one, and the profile ran no Nornyx gate, so
+  every greenfield build stopped at GOVERN with READY refused (A-032). The
+  flow now records the SHA-256 of `.nornyx/generated/brd_contract.nyx` when it
+  generates it; after the verifier, the gate `greenfield:nornyx-contract-check`
+  checks only bytes that still have that digest, copied to a private snapshot
+  and checked by the installed CLI's entry point under the trusted
+  interpreter with `-I`, and reads the verdict from Nornyx's own output, not
+  the exit status alone. A contract Nornyx refuses, one edited or deleted
+  after generation, and a check that cannot run each fail the build at BUILD
+  with no governance validation recorded, and READY stays refused. The
+  simulated journey -- intent only, four requirements, and eight page rows --
+  now reaches READY, marked by the human. The profile's definition gains a
+  `governance` entry (version 3 -> 4). Unchanged: the verifier's checks, the
+  `gate_results` rule, the requirement-identity rule, the action boundary and
+  provider eligibility. READY there is a lifecycle record over a simulated
+  provider's fixture, not a runnable application. From the first review:
+  the contract, its snapshot, the verifier's snapshot and the verifier's
+  subject reader are each read through one descriptor judged against what
+  was examined (no link followed and no pipe waited on, where POSIX allows;
+  identity and size on Windows), the flow's digest is computed from the
+  rendered text, and the translator accepts the check only from this
+  interpreter, under its own gate name, over a snapshot of its own shape.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several

@@ -1,0 +1,59 @@
+"""The support-case register's rules, in memory and in the standard library.
+
+Written by the simulated provider of a Forge test; derived from BRD.md.
+"""
+
+from __future__ import annotations
+
+REQUIREMENTS = __REQUIREMENTS__
+
+PRIORITIES = ("low", "normal", "high")
+STATES = ("open", "resolved")
+
+
+class CaseError(ValueError):
+    """A request the register refuses, with the reason."""
+
+
+class CaseRegister:
+    """Support cases with a title, a priority, an owner and a state."""
+
+    def __init__(self) -> None:
+        self._cases: dict[str, dict[str, str]] = {}
+
+    def open(self, title: str, priority: str) -> str:
+        if not title.strip():
+            raise CaseError("a case needs a title")
+        if priority not in PRIORITIES:
+            raise CaseError(f"priority must be one of {PRIORITIES}")
+        ident = f"CASE-{len(self._cases) + 1}"
+        self._cases[ident] = {"title": title, "priority": priority, "owner": "", "state": "open"}
+        return ident
+
+    def assign(self, ident: str, owner: str) -> None:
+        self._case(ident)["owner"] = owner
+
+    def resolve(self, ident: str) -> None:
+        case = self._case(ident)
+        if case["state"] != "open":
+            raise CaseError(f"{ident} is not open")
+        case["state"] = "resolved"
+
+    def case(self, ident: str) -> dict[str, str]:
+        return dict(self._case(ident))
+
+    def by_priority(self) -> dict[str, list[str]]:
+        grouped: dict[str, list[str]] = {priority: [] for priority in PRIORITIES}
+        for ident, case in self._cases.items():
+            grouped[case["priority"]].append(ident)
+        return grouped
+
+    def _case(self, ident: str) -> dict[str, str]:
+        if ident not in self._cases:
+            raise CaseError(f"there is no case {ident}")
+        return self._cases[ident]
+
+
+def requirement(identifier: str) -> str:
+    """The statement BRD.md gives for one requirement."""
+    return REQUIREMENTS[identifier]

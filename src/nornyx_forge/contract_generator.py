@@ -22,6 +22,18 @@ def _safe_id(value: str) -> str:
 
 def generate_brd_contract(root: Path, model: RequirementsModel) -> Path:
     """Generate a deterministic Nornyx repo-harness contract from a BRD model."""
+    target = root / ".nornyx/generated/brd_contract.nyx"
+    write_canonical_text(target, render_brd_contract(model))
+    return target
+
+
+def render_brd_contract(model: RequirementsModel) -> str:
+    """The contract `generate_brd_contract` writes, as text, written nowhere.
+
+    Pure and deterministic, so the digest a build records for its contract
+    (A-049) is computed from the text it wrote rather than read back from a
+    path something else could have replaced in between.
+    """
 
     purpose = next(
         (item.statement for item in model.requirements if item.id == "BRD-001"),
@@ -211,11 +223,7 @@ def generate_brd_contract(root: Path, model: RequirementsModel) -> Path:
             }
         ],
     }
-    target = root / ".nornyx/generated/brd_contract.nyx"
-    write_canonical_text(
-        target, yaml.safe_dump(contract, sort_keys=False, allow_unicode=True)
-    )
-    return target
+    return yaml.safe_dump(contract, sort_keys=False, allow_unicode=True)
 
 
 # ---------------------------------------------------------------------------

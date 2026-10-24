@@ -363,3 +363,49 @@ def test_the_build_renders_the_empty_table_and_binds_its_digest(tmp_path: Path) 
     assert len(normalized) == 1
     assert normalized[0]["generated_runtime_contract_digest"] == digest
     assert normalized[0]["generated_runtime_contract"] == ".nornyx/generated/runtime-contract.json"
+
+
+def test_the_build_binds_both_contracts_and_the_governance_check_reads_only_its_own(
+        tmp_path: Path) -> None:
+    """Where A-049 and A-053 meet in one flow. Each side bound one generated
+    contract and tested only its own: A-049 the BRD contract's digest, which
+    the profile's `nornyx-contract-check` checks after the verifier; A-053 the
+    runtime operation contract's. Merged, `requirements()` writes both, records
+    both digests, each of its own renderer's text and not of each other, in
+    the flow and in the one ledger event; the governance check still passes on
+    the BRD contract beside the runtime contract; and the runtime contract is
+    not the profile's governance subject, so neither binding can stand in for
+    the other."""
+    from nornyx_forge.development_flow import DevelopmentFlow
+    from nornyx_forge.gates import GREENFIELD_PROFILE_DEFINITION, trusted_contract_check
+
+    model = _model(tmp_path)
+    flow = DevelopmentFlow(tmp_path, worker_mode="deterministic", repo_mode="greenfield")
+
+    flow.requirements()
+
+    brd_text = generator.render_brd_contract(model).encode("utf-8")
+    runtime_text = generator.render_runtime_contract(model).encode("utf-8")
+    brd_digest = "sha256:" + hashlib.sha256(brd_text).hexdigest()
+    runtime_digest = "sha256:" + hashlib.sha256(runtime_text).hexdigest()
+    assert brd_digest != runtime_digest
+    assert (tmp_path / ".nornyx/generated/brd_contract.nyx").read_bytes() == brd_text
+    assert (tmp_path / generator.RUNTIME_CONTRACT_PATH).read_bytes() == runtime_text
+    assert flow.data["generated_brd_contract_digest"] == brd_digest
+    assert flow.data["generated_runtime_contract_digest"] == runtime_digest
+    events = [json.loads(line) for line in
+              (tmp_path / ".nornyx/runs/build-events.jsonl").read_text(
+                  encoding="utf-8").splitlines()]
+    normalized = [event["fields"] for event in events
+                  if event.get("event_type") == "requirements_normalized"]
+    assert len(normalized) == 1
+    assert normalized[0]["generated_contract_digest"] == brd_digest
+    assert normalized[0]["generated_runtime_contract_digest"] == runtime_digest
+
+    governance = GREENFIELD_PROFILE_DEFINITION["governance"]
+    assert governance["subject"] == ".nornyx/generated/brd_contract.nyx"
+    assert governance["subject"] != generator.RUNTIME_CONTRACT_PATH
+    gate = trusted_contract_check(tmp_path, flow.data["generated_brd_contract_digest"])
+    assert gate.passed is True, gate.detail
+    refused = trusted_contract_check(tmp_path, flow.data["generated_runtime_contract_digest"])
+    assert refused.passed is False

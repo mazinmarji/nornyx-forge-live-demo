@@ -1023,6 +1023,21 @@ forbidden = {
         "sys", "os", "pathlib", "platform", "subprocess", "socket", "shutil",
         "importlib", "tempfile",
     },
+    # The produced-application manifest (A-051) judges produced sources as
+    # BYTES: its docstring says it reads no filesystem, no process and no
+    # interpreter state, and never imports, compiles or runs a produced file.
+    # The layer rules alone forbid only starting a process, so the rest is
+    # made checkable here. Like the entry above, this holds IMPORTS only.
+    "src/nornyx_forge/produced_app_manifest.py": {
+        "sys", "os", "pathlib", "platform", "subprocess", "socket", "shutil",
+        "importlib", "tempfile", "runpy", "multiprocessing",
+    },
+    # The handoff executes no produced code (A-051): no interpreter is started
+    # and no produced module is loaded. Its only children are the capsule
+    # store's own git, started inside the store adapter.
+    "src/nornyx_forge/produced_app_handoff.py": {
+        "subprocess", "multiprocessing", "runpy", "importlib", "socket",
+    },
 }
 for relative, banned in forbidden.items():
     path = ROOT / relative

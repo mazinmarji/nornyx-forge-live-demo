@@ -19,7 +19,10 @@ GREENFIELD_PROFILE_ID = "nornyx.greenfield.python.v1"
 GREENFIELD_VERIFIER_ID = "nornyx_forge.greenfield_verifier"
 GREENFIELD_PROFILE_DEFINITION = {
     "id": GREENFIELD_PROFILE_ID,
-    "version": 4,
+    # 5: A-049's governance entry and A-053's network guard each moved the
+    # profile 3 -> 4 on its own branch; merged, it is neither of those, so no
+    # version number names two different profiles.
+    "version": 5,
     "checks": [
         "project-structure",
         "requirements-traceability",
@@ -30,8 +33,44 @@ GREENFIELD_PROFILE_DEFINITION = {
         "test-execution",
     ],
     "execution": "bounded-static-inspection-and-isolated-tests",
+    # A-049. Run by the trusted parent after the verifier, not by the
+    # verifier: the real Nornyx CLI on a private snapshot of the contract this
+    # build generated, only when its bytes still have the digest the flow
+    # recorded at generation. Declared here so the profile's digest names a
+    # profile that runs it.
+    "governance": {
+        "checks": ["nornyx-contract-check"],
+        "subject": ".nornyx/generated/brd_contract.nyx",
+        "binding": "sha256-recorded-at-generation",
+        "execution": "trusted-parent-isolated-nornyx-cli-on-private-snapshot",
+    },
 }
 GREENFIELD_GATE_IDS = tuple(GREENFIELD_PROFILE_DEFINITION["checks"])
+GREENFIELD_GOVERNANCE_CHECK = GREENFIELD_PROFILE_DEFINITION["governance"]["checks"][0]
+GENERATED_CONTRACT_PATH = GREENFIELD_PROFILE_DEFINITION["governance"]["subject"]
+GOVERNANCE_CHECK_SCHEMA = "nornyx.forge.governance_check.v1"
+#: The Nornyx CLI's own entry point, as its console script calls it, run by
+#: the trusted interpreter with `-I`: no PATH lookup decides which `nornyx`
+#: runs, and no project directory is on the import path. Exactly this string
+#: is what `experience_build` recognises as a Nornyx gate (A-049).
+NORNYX_CHECK_BOOTSTRAP = (
+    "import sys;from nornyx.cli import main;"
+    "sys.argv=['nornyx']+sys.argv[1:];sys.exit(main())"
+)
+#: A generated contract is a few kilobytes per requirement; a file this large
+#: is not one Forge generated, and is not read into memory to find that out.
+GOVERNANCE_CONTRACT_MAX_BYTES = 16 * 1024 * 1024
+#: The private snapshot's directory prefix and file name. `experience_build`
+#: holds a copy of both, and recognises a check only over a snapshot of this
+#: shape (Codex P2 4353133125 on `8ae32b3`).
+GOVERNANCE_SNAPSHOT_PREFIX = "nornyx-forge-governance-"
+GOVERNANCE_SNAPSHOT_NAME = "brd_contract.nyx"
+GOVERNANCE_CHECK_TIMEOUT_SECONDS = 120
+#: What Nornyx prints after its diagnostics when a contract passes.
+_NORNYX_PASSED_LINE = "Nornyx check passed"
+#: Nornyx's exit statuses for a contract it refused: 1 for validation errors,
+#: 2 for a document it could not parse. Measured on nornyx 1.11.0.
+_NORNYX_REFUSAL_STATUSES = frozenset({1, 2})
 GREENFIELD_IN_MEMORY_BOOTSTRAP = (
     "import builtins,hashlib,sys;"
     "p=sys.argv[1];expected=sys.argv[2];data=open(p,'rb').read();"
@@ -598,6 +637,7 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             snapshot = Path(scratch) / "greenfield_verifier.py"
             snapshot.write_bytes(verifier_bytes)
             snapshot.chmod(0o444)
+            snapshot_status = os.lstat(snapshot)
             command = (
                 str(interpreter),
                 "-I",
@@ -637,7 +677,18 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
                 check=False,
                 timeout=120,
             )
-            snapshot_digest = _digest_file(snapshot)
+            # Read back through one descriptor, never by name (the class of
+            # Codex P1 4353133109, A-049): a pipe put in its place blocked
+            # this read with no timeout left to end it. Anything but the file
+            # written is no digest, which the identity check below refuses.
+            snapshot_bytes, snapshot_refusal = _read_inspected_file(
+                snapshot, snapshot_status, len(verifier_bytes)
+            )
+            snapshot_digest = (
+                "sha256:" + hashlib.sha256(snapshot_bytes).hexdigest()
+                if snapshot_bytes is not None
+                else f"unreadable: the snapshot {snapshot_refusal}"
+            )
             execution_origin = str(snapshot.resolve(strict=True))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return _closed_failure(
@@ -985,3 +1036,313 @@ def default_gates(root: Path, *, quick: bool = False) -> list[GateResult]:
         run(command, cwd=root, encoding=GATE_OUTPUT_ENCODINGS.get(command[0]))
         for command in commands
     ]
+
+
+def _governance_record(
+    outcome: str,
+    generated_digest: str | None,
+    checked_digest: str | None,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "schema": GOVERNANCE_CHECK_SCHEMA,
+        "outcome": outcome,
+        "subject": {
+            "path": GENERATED_CONTRACT_PATH,
+            "generated_digest": generated_digest,
+            "checked_digest": checked_digest,
+        },
+        **extra,
+    }
+
+
+def _nornyx_verdict(stdout: str) -> tuple[list[dict[str, Any]], bool] | None:
+    """Read the CLI's stdout as Nornyx writes it, or `None` when it is not.
+
+    Nornyx prints each diagnostic as a JSON object and, for a contract it
+    passes, the line `Nornyx check passed` after them. Anything else in the
+    stream -- a traceback, a stray print, a different program's output -- is
+    not Nornyx's verdict, and the caller treats it as an error rather than
+    reading a pass or a refusal into it.
+    """
+    decoder = json.JSONDecoder()
+    diagnostics: list[dict[str, Any]] = []
+    index, length = 0, len(stdout)
+    while True:
+        while index < length and stdout[index].isspace():
+            index += 1
+        if index >= length:
+            return diagnostics, False
+        if stdout[index] != "{":
+            return (diagnostics, True) if stdout[index:].strip() == _NORNYX_PASSED_LINE else None
+        try:
+            item, index = decoder.raw_decode(stdout, index)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(item, dict) or not isinstance(item.get("level"), str):
+            return None
+        diagnostics.append(item)
+
+
+def trusted_contract_check(root: Path, generated_digest: Any) -> GateResult:
+    """`nornyx check` of the contract this build generated, or a failing gate.
+
+    THE GREENFIELD GOVERNANCE CHECK (A-049). The development flow generates
+    `.nornyx/generated/brd_contract.nyx` from the BRD and records the SHA-256
+    of the bytes it wrote. This reads the file once, refuses anything that is
+    not a regular file inside the project or is larger than a generated
+    contract can be, and compares its digest with that record: bytes the
+    provider changed or removed after generation are not this build's
+    contract, so no check runs and the gate fails. The bound bytes are then
+    copied to a private temporary directory and the installed Nornyx CLI's
+    own entry point checks that copy, run by the trusted interpreter with
+    `-I`, from that directory, in the constructed environment the verifier
+    uses, under a timeout. Its verdict is read from what Nornyx writes, not
+    from the exit status alone.
+
+    Three outcomes besides a pass, none of them passing: `not_run` (no
+    recorded digest, a missing, linked, oversized or changed contract, or an
+    interpreter inside the project), `refused` (Nornyx reported an error in
+    the contract) and `errored` (the check could not run, or answered in
+    something other than Nornyx's own words).
+    """
+    name = f"greenfield:{GREENFIELD_GOVERNANCE_CHECK}"
+    recorded = generated_digest if re_full_digest(generated_digest) else None
+
+    def not_run(reason: str) -> GateResult:
+        return GateResult(
+            name,
+            False,
+            f"no Nornyx check ran: {reason}",
+            (),
+            2,
+            _governance_record("not_run", recorded, None),
+        )
+
+    if recorded is None:
+        return not_run(
+            "this build recorded no digest for the contract it generated, so there "
+            "are no generated bytes to bind a check to"
+        )
+    try:
+        project = Path(root).resolve(strict=True)
+    except OSError as exc:
+        return not_run(f"the project root cannot be resolved: {exc}")
+    interpreter = Path(sys.executable)
+    if not interpreter.is_absolute():
+        return not_run("the Python interpreter path is not absolute")
+    interpreter = Path(os.path.abspath(interpreter))
+    try:
+        interpreter_target = interpreter.resolve(strict=False)
+    except OSError as exc:
+        return not_run(f"the Python interpreter cannot be resolved: {exc}")
+    if _inside(interpreter, project) or _inside(interpreter_target, project):
+        return not_run("the Python interpreter is inside the provider workspace")
+
+    contract = project / GENERATED_CONTRACT_PATH
+    try:
+        status = os.lstat(contract)
+    except FileNotFoundError:
+        return not_run(f"the generated build contract {GENERATED_CONTRACT_PATH} is missing")
+    except OSError as exc:
+        return not_run(f"the generated build contract cannot be read: {exc}")
+    try:
+        resolved = contract.resolve(strict=True)
+    except OSError as exc:
+        return not_run(f"the generated build contract cannot be resolved: {exc}")
+    if not _regular_file_mode(status.st_mode) or resolved != contract:
+        return not_run(
+            f"the generated build contract {GENERATED_CONTRACT_PATH} is not a regular "
+            "file inside the project"
+        )
+    if status.st_size > GOVERNANCE_CONTRACT_MAX_BYTES:
+        return not_run(
+            f"the generated build contract is larger than {GOVERNANCE_CONTRACT_MAX_BYTES} "
+            "bytes, which no contract Forge generates is"
+        )
+    data, refusal = _read_inspected_file(contract, status, GOVERNANCE_CONTRACT_MAX_BYTES)
+    if data is None:
+        return not_run(f"the generated build contract {GENERATED_CONTRACT_PATH} {refusal}")
+    found = "sha256:" + hashlib.sha256(data).hexdigest()
+    if found != recorded:
+        return not_run(
+            f"the generated build contract changed after generation (generated {recorded}, "
+            f"now {found}); a check of other bytes is not a check of this build's contract"
+        )
+
+    cli = {
+        "package": "nornyx",
+        "entry": "nornyx.cli:main",
+        "installed_version": _installed_version("nornyx"),
+    }
+    command: tuple[str, ...] = ()
+    invocation = {
+        "python": str(interpreter),
+        "isolated_python": True,
+        "cwd": "private-temporary-directory",
+        "environment": "constructed-host-allowlist-without-path-or-pythonpath",
+        "subject": "private-read-only-snapshot-of-the-bound-bytes",
+        "timeout_seconds": GOVERNANCE_CHECK_TIMEOUT_SECONDS,
+    }
+
+    def errored(reason: str, returncode: int, snapshot_digest: str | None = None) -> GateResult:
+        return GateResult(
+            name,
+            False,
+            f"nornyx check errored on the generated build contract {recorded}: {reason}",
+            command,
+            returncode,
+            _governance_record(
+                "errored", recorded, snapshot_digest, cli=cli, invocation=invocation
+            ),
+        )
+
+    try:
+        with tempfile.TemporaryDirectory(prefix=GOVERNANCE_SNAPSHOT_PREFIX) as scratch:
+            snapshot = Path(scratch).resolve() / GOVERNANCE_SNAPSHOT_NAME
+            snapshot.write_bytes(data)
+            snapshot.chmod(0o444)
+            snapshot_status = os.lstat(snapshot)
+            command = (
+                str(interpreter),
+                "-I",
+                "-c",
+                NORNYX_CHECK_BOOTSTRAP,
+                "check",
+                str(snapshot),
+            )
+            completed = subprocess.run(
+                command,
+                cwd=scratch,
+                env=_verifier_environment(_trusted_loader_path(project)),
+                capture_output=True,
+                check=False,
+                timeout=GOVERNANCE_CHECK_TIMEOUT_SECONDS,
+            )
+            # Read back as the contract was read: the file that was written,
+            # through one descriptor, or nothing.
+            after, refusal = _read_inspected_file(
+                snapshot, snapshot_status, GOVERNANCE_CONTRACT_MAX_BYTES
+            )
+    except subprocess.TimeoutExpired:
+        return errored(
+            f"it did not finish within {GOVERNANCE_CHECK_TIMEOUT_SECONDS} seconds", 124
+        )
+    except OSError as exc:
+        return errored(f"it could not run: {type(exc).__name__}: {exc}", 2)
+
+    codec = locale.getpreferredencoding(False)
+    stdout = _gate_text(completed.stdout, "stdout", codec)
+    stderr = _gate_text(completed.stderr, "stderr", codec)
+    output = (stdout + stderr).strip()
+    returncode = completed.returncode
+    if after is None:
+        return errored(f"the private snapshot {refusal} after the check", returncode)
+    checked = "sha256:" + hashlib.sha256(after).hexdigest()
+    if checked != recorded:
+        return errored("the private snapshot changed while it was checked", returncode, checked)
+    verdict = None if stderr.strip() else _nornyx_verdict(stdout)
+    if verdict is None:
+        return errored(
+            f"its output is not Nornyx's verdict (exit {returncode}): {output}",
+            returncode,
+            checked,
+        )
+    diagnostics, passed_line = verdict
+    errors = [item for item in diagnostics if item.get("level") == "error"]
+    if returncode == 0 and passed_line and not errors:
+        return GateResult(
+            name,
+            True,
+            f"nornyx check passed the generated build contract {recorded}: {output}",
+            command,
+            0,
+            _governance_record("passed", recorded, checked, cli=cli, invocation=invocation),
+        )
+    if returncode in _NORNYX_REFUSAL_STATUSES and errors and not passed_line:
+        codes = ", ".join(str(item.get("code")) for item in errors)
+        return GateResult(
+            name,
+            False,
+            f"nornyx check refused the generated build contract {recorded} "
+            f"(exit {returncode}; {codes}): {output}",
+            command,
+            returncode,
+            _governance_record("refused", recorded, checked, cli=cli, invocation=invocation),
+        )
+    return errored(
+        f"its exit status and its diagnostics disagree (exit {returncode}): {output}",
+        returncode,
+        checked,
+    )
+
+
+def _read_inspected_file(
+    path: Path, inspected: os.stat_result, limit: int
+) -> tuple[bytes | None, str]:
+    """The bytes of the file that was inspected, read through one descriptor.
+
+    Codex P1 4353133109 on `8ae32b3`: the path was inspected with `lstat` and
+    `resolve` and then opened by name, so a file put in its place in between
+    -- by a process the provider left running -- was read unexamined. A FIFO
+    blocked the read, before any timeout applied, for as long as nobody wrote
+    to it; a link was followed to whatever it named. Now the path is opened
+    without following a link where the platform can refuse one, and without
+    blocking where it can open a pipe that way, and what is judged is the
+    DESCRIPTOR: a regular file, the same device and inode that were
+    inspected, within the bound, read only from that descriptor. Windows has
+    neither flag; the identity comparison is what refuses a link there.
+
+    Returns the bytes and an empty reason, or `None` and the reason, worded
+    to follow the contract's path.
+    """
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        return None, f"is not a regular file inside the project ({exc.strerror or exc})"
+    try:
+        opened = os.fstat(descriptor)
+        if not _regular_file_mode(opened.st_mode):
+            return None, "is not a regular file inside the project"
+        if (opened.st_dev, opened.st_ino) != (inspected.st_dev, inspected.st_ino):
+            return None, "changed while it was inspected: the file opened is not the one inspected"
+        larger = (
+            f"is larger than {limit} bytes, which no contract Forge generates is"
+        )
+        if opened.st_size > limit:
+            return None, larger
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                return None, larger
+        return b"".join(chunks), ""
+    except OSError as exc:
+        return None, f"cannot be read: {exc}"
+    finally:
+        os.close(descriptor)
+
+
+def _regular_file_mode(mode: int) -> bool:
+    """A regular file, not a link, directory, device or pipe."""
+    return (mode & 0o170000) == 0o100000
+
+
+def _installed_version(distribution: str) -> str:
+    """The version the trusted interpreter's installed metadata names; the
+    child imports the CLI from that same interpreter's site-packages."""
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
