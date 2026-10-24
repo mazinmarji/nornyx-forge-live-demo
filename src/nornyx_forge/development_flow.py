@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -7,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from .claude_worker import ClaudeCodeWorker
-from .contract_generator import generate_brd_contract
+from .contract_generator import generate_brd_contract, render_brd_contract
 from .evidence import EvidenceLedger
-from .gates import default_gates, trusted_greenfield_gates
+from .gates import default_gates, trusted_contract_check, trusted_greenfield_gates
 from .governed_subject import RuntimeAuthorityConfig
 from .models import GateResult
 from .providers import ProviderRoutedWorker, get_provider
@@ -275,8 +276,18 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         model = parse_brd(self.root / "BRD.md")
         write_requirements_artifacts(self.root, model)
         generated_contract = generate_brd_contract(self.root, model)
+        # THE BINDING THE GOVERNANCE CHECK NEEDS (A-049): the digest of the
+        # bytes generation wrote -- `write_canonical_text` writes the rendered
+        # text as UTF-8 with no newline translation -- computed from the
+        # renderer, not read back from the path, which a process a provider
+        # left running from an earlier build could have replaced in between.
+        # The greenfield profile checks only bytes that still have it.
+        contract_digest = "sha256:" + hashlib.sha256(
+            render_brd_contract(model).encode("utf-8")
+        ).hexdigest()
         self.data["requirements"] = [item.id for item in model.requirements]
         self.data["generated_brd_contract"] = str(generated_contract.relative_to(self.root))
+        self.data["generated_brd_contract_digest"] = contract_digest
         self.data["requirements_model"] = model.to_dict()
         self.data["requirement_profile"] = profile_from_brd(model).__dict__
         write_json(
@@ -314,6 +325,7 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             count=len(model.requirements),
             source_digest=model.source_digest,
             generated_contract=str(generated_contract.relative_to(self.root)),
+            generated_contract_digest=contract_digest,
         )
         if not model.requirements:
             self.pre_gate_failures.append(
@@ -709,7 +721,16 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
                 ]
             self.data["acceptance_verifier_identity"] = stable_identity
             self.data["acceptance_provenance"] = provenance
-            return gates
+            # The profile's governance check (A-049), after the verifier and
+            # whatever it decided: the build's own contract, bound to the
+            # digest recorded when this flow generated it. Its passing record
+            # is the only source of this build's `governance_validation`.
+            return [
+                *gates,
+                trusted_contract_check(
+                    self.root, self.data.get("generated_brd_contract_digest")
+                ),
+            ]
         return default_gates(self.root)
 
     def run(self) -> dict[str, Any]:
