@@ -144,8 +144,9 @@ carry a dependency between two modules that may not depend on each other.
 Process execution is confined to the adapter layer, which is what makes the list
 of places this system can start a process short enough to read: `gates`,
 `greenfield_verifier`, `policy`, `repo_qualifier`, `claude_worker`, `app_launcher`,
-`nornyx_cli_adapter`, `subject_observer`, `codex_worker`, and `capsule_store`, which
-invokes git to give the project capsule its revision binding.
+`nornyx_cli_adapter`, `subject_observer`, `codex_worker`, `provider_gate`, and
+`capsule_store`, which invokes git to give the project capsule its revision
+binding.
 
 The last two were missing from this sentence, and they are the two that matter
 most: `nornyx_cli_adapter` invokes the `nornyx` CLI -- the governance authority
@@ -158,6 +159,10 @@ The list is now measured rather than remembered:
 `tests/test_documented_claims.py::test_the_process_start_sites_match_the_documented_list`
 parses `src/` for every process-starting call and fails if this sentence and the
 code disagree in either direction.
+
+`provider_gate` starts Windows PowerShell on the hash-pinned run-act gate, and
+only when a worker adapter is given a `launch`; with none, the default, the
+workers start their provider exactly as before (A-052).
 
 ## Execution modes
 

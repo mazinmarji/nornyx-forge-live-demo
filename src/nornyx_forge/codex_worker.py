@@ -106,6 +106,13 @@ through the joined list -- measured through the real routed worker on this
 host: a 12-character goal and 90 tools joined to 36449 characters ended here
 on both adapters. An earlier form of this paragraph said the routed path
 never reaches it; that was true of the goal and false of the invocation.
+
+THE GATE PATH IS OPT-IN, exactly as in `claude_worker.py`. `launch` defaults
+to None, and with None nothing below changes. With a
+`provider_gate.GateLaunch`, the worker builds the same vector, after the same
+executable and workspace checks, and hands it to
+`provider_gate.launch_through_gate` instead of starting it. A gate run is
+never reported as a successful worker run.
 """
 
 from __future__ import annotations
@@ -119,6 +126,7 @@ import subprocess
 from pathlib import Path
 
 from .models import WorkerResult
+from .provider_gate import GateLaunch, launch_through_gate
 
 
 def _provider_env() -> dict[str, str]:
@@ -137,8 +145,9 @@ def _provider_env() -> dict[str, str]:
 class CodexWorker:
     """Bounded bridge to an authenticated local Codex CLI installation."""
 
-    def __init__(self, executable: str = "codex") -> None:
+    def __init__(self, executable: str = "codex", launch: GateLaunch | None = None) -> None:
         self.executable = executable
+        self.launch = launch
 
     def available(self) -> bool:
         # ON WINDOWS `shutil.which` raises `ValueError: embedded null
@@ -224,6 +233,9 @@ class CodexWorker:
             "never",
             prompt,
         )
+        if self.launch is not None:
+            return launch_through_gate(self.launch, command, role=role, goal=goal,
+                                       worker="Codex worker")
         try:
             # BYTES, DECODED HERE RATHER THAN BY subprocess. `text=True` alone
             # decodes with the locale encoding -- cp1252 on a Windows

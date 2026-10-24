@@ -102,6 +102,14 @@ through the joined list -- measured through the real routed worker on this
 host: a 12-character goal and 90 tools joined to 36449 characters ended here
 on both adapters. An earlier form of this paragraph said the routed path
 never reaches it; that was true of the goal and false of the invocation.
+
+THE GATE PATH IS OPT-IN. `launch` defaults to None, and with None nothing
+below changes: the same vector, `_provider_env()`, working directory, timeout
+and capture. With a `provider_gate.GateLaunch`, the worker builds the same
+vector, after the same executable and workspace checks, and hands it to
+`provider_gate.launch_through_gate` instead of starting it; that module's
+docstring states what it refuses, what it starts, and what it does not claim.
+A gate run is never reported as a successful worker run.
 """
 
 from __future__ import annotations
@@ -115,6 +123,7 @@ import subprocess
 from pathlib import Path
 
 from .models import WorkerResult
+from .provider_gate import GateLaunch, launch_through_gate
 
 
 def _provider_env() -> dict[str, str]:
@@ -133,8 +142,9 @@ def _provider_env() -> dict[str, str]:
 class ClaudeCodeWorker:
     """Bounded bridge to an authenticated local Claude Code installation."""
 
-    def __init__(self, executable: str = "claude") -> None:
+    def __init__(self, executable: str = "claude", launch: GateLaunch | None = None) -> None:
         self.executable = executable
+        self.launch = launch
 
     def available(self) -> bool:
         # ON WINDOWS `shutil.which` raises `ValueError: embedded null
@@ -210,6 +220,9 @@ class ClaudeCodeWorker:
             "--allowedTools",
             ",".join(allowed_tools),
         )
+        if self.launch is not None:
+            return launch_through_gate(self.launch, command, role=role, goal=goal,
+                                       worker="Claude Code worker")
         try:
             # BYTES, DECODED BELOW RATHER THAN BY subprocess. See the module
             # docstring: `text=True` alone decodes with the locale encoding,
