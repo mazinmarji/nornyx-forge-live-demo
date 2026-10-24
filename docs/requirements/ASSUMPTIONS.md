@@ -7915,6 +7915,131 @@ without moving either; A-035, whose simulated journey it extends to an
 application with an entry point; and A-019, since the produced project is the
 verifier's subject and never its verifier.
 
+## A-052 A worker may start its provider through the hash-pinned run-act gate, opt-in; the default start is unchanged, and the gate path is refused before any process when anything about it is wrong
+
+**What changed.** `claude_worker.ClaudeCodeWorker` and
+`codex_worker.CodexWorker` take an optional `launch` (default `None`). With
+`None` nothing in either worker changes: the same vector, `_provider_env()`,
+working directory, timeout and capture, and every test that pins today's
+argument vector and environment passes unmodified. With a
+`provider_gate.GateLaunch(gate_script, provider_exe, role, execution_policy)`
+the worker builds the vector it always builds, after the same executable and
+workspace checks, and hands it to `provider_gate.launch_through_gate`, which
+starts Windows PowerShell 5.1 on the gate script with exactly:
+
+    <system directory>\WindowsPowerShell\v1.0\powershell.exe -NoProfile
+      -ExecutionPolicy <policy> -File <gate script> -Action Run
+      -AuthorizedSha256 <PINNED_RUN_ACT_SHA256> -Role <role>
+      -ProviderExe <provider executable>
+      -ProviderArgs <subprocess.list2cmdline(the worker's arguments)>
+
+`PINNED_RUN_ACT_SHA256` is
+`8830b243ff911a5c1aaaa026cb30a259d8bfc070ae6e6753a2096f8b1c7441e1`, the SHA-256
+of the one gate script this path will start; it is a constant, not a setting.
+
+**What is refused, each before any process exists.** A launch that is not a
+`GateLaunch`; a host with no Windows system directory; an execution policy
+outside PowerShell's names; a role that is not a short identifier; a gate
+script that is not absolute, or a provider executable that is not an absolute
+Windows path, or either holding a NUL or a quote; a worker whose executable is
+not the gate's provider executable; a NUL anywhere in the vector; a command
+line over 32767 UTF-16 code units; a `-ProviderArgs` value PowerShell would read as a
+parameter name, or one that ends in whitespace; no console; and a gate script
+whose bytes are not the pinned
+bytes, or that is not one regular file. Each is a `WorkerResult` in the
+`error` class with returncode 2, the workers' own value for an invocation that
+could not be formed, and never an exception.
+
+**The two transport classes, measured.** Through a real `powershell.exe
+-File` on a stub with the gate's parameter names, on a Windows 11 host:
+
+1. **A parameter name.** list2cmdline leaves a value with no space or tab
+   unquoted, and an unquoted `-ProviderArgs` value beginning with `-`,
+   U+2013, U+2014 or U+2015 is bound as a parameter name -- `-NoCredential`
+   included -- rather than as the value.
+2. **Trailing whitespace.** A quoted `-ProviderArgs` value -- one holding a
+   space -- that ends in LF, CR, VT, FF, U+0085, U+00A0, U+2028, U+2029,
+   U+2003 or U+3000 arrived without that last character. The windows-runtime
+   job found this first, on the first head of this change, through a
+   transport case whose prompt ended in a newline; the host measurement
+   above was taken after it. The same characters inside the value, at its
+   start, and before an inner closing quote arrived intact.
+
+Quoted values beginning with a dash, quotes, backslashes, CR, LF, tab,
+non-ASCII text and an 8000-character prompt arrived unchanged. No worker
+builds either refused shape today: every worker vector carries a prompt with
+spaces, and the value ends in whitespace only when the worker's last argument
+does and holds no space. Both are refused rather than assumed absent or
+carried altered. The windows-runtime job repeats the round trip and both
+alterations (`test_the_vector_reaches_a_powershell_file_parameter_block_unchanged`,
+`test_powershell_alters_each_refused_class`).
+
+**What the gate process gets.** Only `-Action Run`; nothing in the module
+spells another action or a switch. No credential: Forge holds none for this
+path. The environment is constructed -- `SystemRoot`, `windir`, `ComSpec` and
+`PATH` from the system directory the operating system reports
+(`GetSystemDirectoryW`), and a fixed list of ordinary names copied when
+present -- so no `FORGE_*` variable, provider key or provider home variable
+can pass. PowerShell is named by that system directory, never through PATH or
+`SystemRoot`. The console's streams are inherited and nothing is captured,
+because the gate prompts on the console; and there is no timeout, because
+killing the gate mid-cycle would leave its cycle open. The gate script is read
+and hashed through one handle that, on Windows, refuses writers, renames and
+deletion until the gate has exited.
+
+**Every gate exit is a failed worker run.** The gate gives the provider its
+own run directory and releases what it produced only after later actions this
+change never takes, so no provider output reaches the worker's workspace on
+this path. `success` is False for every exit code. The gate's own status is
+named in the output -- "The gate exited N", with the meaning of 0, 10 or 20,
+or that it is none of them -- and the result's returncode is always 3
+(`GATE_RAN_RETURNCODE`), whatever the gate exited. A gate status of 124 or 127
+passed through would have read as a timeout or an absent executable, neither
+of which is true here; with the constant, the Provider Contract's
+`classify_result`, unchanged, maps every gate exit to `error`. The first head
+of this change passed the gate's status through, which allowed the collision.
+
+**A start failure is not an absent executable.** If Windows PowerShell cannot
+be started, the result is `unavailable` (127) only when the operating system
+reports the file not found (`FileNotFoundError` with Windows error 2 or 3).
+Any other start failure -- Windows error 206, which CPython also raises as
+`FileNotFoundError`, among them -- is the refusal before start (returncode
+2) with the operating system's words. The length preflight counts the command
+line `list2cmdline` builds in UTF-16 code units, as `CreateProcessW` counts
+its 32767 bound, so a character outside the Basic Multilingual Plane counts
+twice; it counted characters at first, and a vector of emoji passed it and
+failed at the start, reported as `unavailable`.
+
+**The launch mode is named for the gate it pins.** `LaunchVia` is `direct`
+or `d3g_gate`; the first head called the second `d2_gate`, after the design
+rather than the gate.
+
+**What it does NOT establish.**
+
+1. **Anything about the gate's logon, separation or eligibility.** No claim
+   is made of how the gate logs the provider on, that the provider is
+   separated from Forge, or that any provider is eligible. Eligibility is
+   still decided by the Provider Contract's own table, which this change
+   neither reads nor changes; `test_eligibility_is_the_contracts_table_in_both_modes`
+   holds the verdicts equal in both modes.
+2. **A Forge build through the gate.** The gate path cannot produce a Forge
+   build until handing the workspace in and the output back exist, which is a
+   separate decision.
+3. **That the gate ran.** No gate script, provider or credential was run or
+   used. The Windows tests start a stub with the gate's parameter names only,
+   and measure transport: that the vector reaches a PowerShell 5.1 parameter
+   block as sent.
+4. **That a directory on the script's path cannot be replaced** between the
+   hash and PowerShell opening the file by path. The held handle covers the
+   file; the gate also checks its own SHA-256 against the pin it is given.
+5. **Wiring.** Nothing in Forge passes a `launch` today: no route, flow,
+   registry or runtime configuration selects the gate path.
+
+**Serves.** The Provider Contract's rule that failure is a `WorkerResult`,
+never an exception; A-027's rule that the provider environment carries no
+Forge secret, extended here to a constructed environment; and this
+repository's rule that a run is reported as what it is.
+
 ## A-054 The governance check may place its private snapshot under an explicit, fail-closed scratch root; it protects against other principals under stated access conditions, not against the same principal, and Codex P1 4356060742 stays open
 
 **Assumption.** Where the host gives Forge a directory that only Forge's own

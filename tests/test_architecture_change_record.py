@@ -795,6 +795,81 @@ def test_the_committed_entry_and_architecture_agree():
     assert module["name"] == "nornyx_forge.windows_payload"
 
 
+PROVIDER_GATE_CHANGE = "architecture.provider_gate_module"
+
+
+def test_the_provider_gate_entry_and_assignment_are_declared_as_committed():
+    """The entry the opt-in gate start is recorded by, whole, and the
+    separation-of-duties assignment that names it, with the producers of the
+    assignments before it. Approving or closing it changes the entry on
+    purpose, and this test with it."""
+    document = _document()
+    [entry] = [item for item in document["changes"] if item["id"] == PROVIDER_GATE_CHANGE]
+    assert entry == {
+        "schema": "nornyx.change.v1",
+        "id": PROVIDER_GATE_CHANGE,
+        "type": "architecture_change",
+        "purpose": "Declare nornyx_forge.provider_gate, the opt-in provider start through the "
+                   "hash-pinned run-act gate, as an adapter component the Claude and Codex "
+                   "worker adapters depend on.",
+        "status": "proposed",
+        "transition": {"from": "draft", "to": "proposed",
+                       "evidence": ["architecture_conformance_report"]},
+        "scope": ["component.provider_gate", "module.provider_gate", "component.worker_adapter",
+                  "module.worker_adapter", "component.codex_worker", "module.codex_worker"],
+        "excluded_scope": [],
+        "risk_tier": "medium",
+        "blast_radius": "component",
+        "reversibility": "reversible",
+        "rollback_required": False,
+        "rollback_plan_artifact": None,
+        "irreversible_authority": None,
+        "impacts": {"security": "minor", "architecture": "minor", "data": "none",
+                    "dependency": "none", "operational": "none"},
+        "required_controls": ["architecture_conformance_policy", "separation_of_duties_policy"],
+        "required_evidence": ["architecture_conformance_report", "independent_review_record"],
+        "approver_roles": ["architecture_reviewer"],
+        "approval_ids": ["ArchitectureAuthority"],
+        "separation_of_duties": {"author_role": "repository_maintainer",
+                                 "approver_role": "architecture_reviewer", "disjoint": True},
+        "exceptions": [],
+    }
+    assert set(entry["scope"]) <= _declared_ids(document["architecture"])
+    [assignment] = [item for item in document["separation_of_duties"]["assignments"]
+                    if item["subject"] == PROVIDER_GATE_CHANGE]
+    assert assignment == {
+        "subject": PROVIDER_GATE_CHANGE, "risk_tier": "medium",
+        "author": "human:repository_maintainer", "approvers": ["human:architecture_reviewer"],
+        "evidence_producers": ["tool:check_architecture", "tool:in_session_inspectors"],
+        "require_evidence_independence": True, "release_requester": None,
+        "final_release_approver": None, "exception_requester": None,
+        "exception_approver": None}
+
+
+def test_the_provider_gate_is_declared_where_the_entry_says_and_the_workers_import_it():
+    """The new adapter component and module as declared, the two edges the
+    workers gain, and nothing else depending on the gate module."""
+    architecture = _document()["architecture"]
+    components = {item["id"]: item for item in architecture["components"]}
+    modules = {item["id"]: item for item in architecture["modules"]}
+    gate = components["component.provider_gate"]
+    assert (gate["layer"], gate["modules"], gate["depends_on"]) == (
+        "layer.adapter", ["module.provider_gate"], ["component.shared_kernel"])
+    assert modules["module.provider_gate"] == {
+        "id": "module.provider_gate", "name": "nornyx_forge.provider_gate",
+        "component": "component.provider_gate", "layer": "layer.adapter",
+        "depends_on": ["module.shared_models"]}
+    for component, module in (("component.worker_adapter", "module.worker_adapter"),
+                              ("component.codex_worker", "module.codex_worker")):
+        assert components[component]["depends_on"] == ["component.shared_kernel",
+                                                       "component.provider_gate"]
+        assert modules[module]["depends_on"] == ["module.shared_models", "module.provider_gate"]
+    dependents = sorted(item["id"] for item in architecture["modules"]
+                        if "module.provider_gate" in item.get("depends_on", []))
+    assert dependents == ["module.codex_worker", "module.worker_adapter"]
+    assert "component.provider_gate" in architecture["systems"][0]["components"]
+
+
 def test_the_committed_record_is_what_the_contract_derives():
     recorded = json.loads(RECORD.read_text(encoding="utf-8"))
     assert recorded["schema"] == tool.CHANGE_RECORD_SCHEMA
@@ -808,7 +883,7 @@ def test_the_committed_record_is_what_the_contract_derives():
 
 
 def test_the_committed_record_states_the_review_record_clause_it_derives():
-    """The clause the record derives for the committed contract: all three entries
+    """The clause the record derives for the committed contract: all four entries
     name ArchitectureAuthority, which requires the independent review record,
     and all list it among their own required evidence."""
     statement = json.loads(RECORD.read_text(encoding="utf-8"))["statement"]
@@ -818,7 +893,8 @@ def test_the_committed_record_states_the_review_record_clause_it_derives():
         "own required evidence; architecture.windows_payload_module names "
         "ArchitectureAuthority and lists it among its own required evidence; "
         "architecture.canonical_text_rule names ArchitectureAuthority and lists it among "
-        "its own required evidence. Whether "
+        "its own required evidence; architecture.provider_gate_module names "
+        "ArchitectureAuthority and lists it among its own required evidence. Whether "
         "a passing independent_review_record exists is not shown here.")
 
 
@@ -1084,7 +1160,7 @@ def test_the_tool_writes_every_key_and_the_derived_claims(tmp_path):
 
 
 BREAKAGES = {
-    "duplicate-id": "repeats the change id 'architecture.canonical_text_rule'",
+    "duplicate-id": "repeats the change id 'architecture.provider_gate_module'",
     "yaml-error": "the contract is not parseable YAML",
     "repeated-changes-key": "found duplicate key 'changes'",
     "status-a-list": "which is not a nornyx.change.v1 status",
