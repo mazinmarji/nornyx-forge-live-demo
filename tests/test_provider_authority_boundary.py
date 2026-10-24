@@ -2195,6 +2195,11 @@ def _the_neutralisation_fails_closed_at_every_shape(
             forge_ready(capsule)
             _remove_tree(capsule / ".git")     # the honest reset route is unreachable
             (capsule / ".forge-seal").unlink()  # one same-user deletion; A-015 concedes it
+            if not (capsule / target).exists():
+                # The third authority file (A-051) exists only after an accepted
+                # build, so this store has none and its seal records it absent.
+                # What stands at the name is the worker's FORGED manifest.
+                (capsule / target).write_text('{"forged": true}\n', encoding="utf-8")
 
             with contextlib.ExitStack() as stack:
                 reason = _plant_at_authority(shape, capsule / target, outside, stack)
@@ -3154,7 +3159,7 @@ def test_a_damaged_or_foreign_seal_is_a_tamper_finding_not_an_absent_project(tmp
     client = _client(tmp_path)
     for label, damaged in (
         ("malformed", "{not json"),
-        ("other schema", good.replace("nornyx.forge.capsule_seal.v1", "nornyx.forge.other.v1")),
+        ("other schema", good.replace(store_module._SEAL_SCHEMA, "nornyx.forge.other.v1")),
         ("other store", good.replace(own, "C:/elsewhere/capsule")),
     ):
         seal.write_text(damaged, encoding="utf-8", newline="")

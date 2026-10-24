@@ -2,6 +2,41 @@
 
 ## Unreleased — hardening from adversarial review
 
+- An accepted build's produced application is named by a Produced
+  Application Manifest that Forge writes and seals, and handing it to a person
+  is a separate gate that is never offered in simulation (A-051). The build
+  thread renders `pam.json` from Forge's own records -- the trusted verifier
+  record the flow returns in memory, the capsule and lifecycle sealed at
+  BUILD, the Provider Contract's own eligibility row, and the produced files
+  read through held descriptors -- under the store lock, after the seal check,
+  and saves it in the same commit as the GOVERN transition; the sealed bytes
+  are then compared with the rendered ones. It is the store's third authority
+  file: the seal schema moves to version 2, and a version-1 seal is still read
+  as sealing no manifest, so no protected store becomes TAMPERED. Every read
+  of an authority file or of the seal now fails closed: undecodable, oversized,
+  non-regular or vanishing content is a seal finding or the store's refusal,
+  never an exception, for `capsule.json` and `experience.json` as much as for
+  `pam.json` (the same defect predated the manifest). The seal record and the
+  manifest are also held value by value -- a full-commit revision, sealed
+  texts that are JSON, a matching manifest reference, and no `NaN`,
+  `Infinity` or unencodable string such as an escaped lone surrogate -- so a
+  damaged value is a refusal, never an exception. A static
+  check over the produced sources as bytes requires `app/__main__.py` present
+  and parsing, standard-library imports only, no import of `nornyx_forge`, and
+  no reference at all to a dynamic import or execution primitive (`__import__`,
+  `eval`, `exec`, `compile`, `importlib`, `builtins` and the spellings A-051
+  lists), called or not. It is a static check over those spellings, not a
+  guarantee that produced code cannot reach Forge, and nothing produced is
+  executed. The "Open application" readiness check loads
+  the manifest only from a store that matches its seal, re-hashes every
+  produced file, and offers the action only when the unchanged
+  `governed_build_eligibility` makes the build's provider eligible; no
+  provider is, so it is never offered, and no route or page offers it yet.
+  READY is unchanged. The mechanism is exercised on a Forge-authored reference
+  app written by a test-only simulated provider; it is not a provider build,
+  not a runnable Forge-generated application, and no produced code is
+  executed.
+
 - The greenfield acceptance profile runs the real `nornyx check` on the
   contract each build generated, and only that check's pass is a governance
   validation (A-049). READY needs one, and the profile ran no Nornyx gate, so

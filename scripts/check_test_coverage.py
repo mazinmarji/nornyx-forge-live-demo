@@ -878,6 +878,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # by editing it; and the editor's refusal kept across the refresh, marking
     # only the editor's own proposal.
     "tests/test_requirements_entry.py": 142,
+    # A-051's produced-application manifest, as pure domain: 109 collected at
+    # introduction, floor at band(109) = 99. Rendering and the reference
+    # computed from the rendered text, every field the validator refuses,
+    # the copies held equal to their owners, and the static entry-point and
+    # import check over bytes, running nothing.
+    "tests/test_produced_app_manifest.py": 99,
+    # A-051's store, build and handoff: 141 collected at introduction, floor at
+    # band(141) = 127. Seal v2 and v1 still read, the one commit and the write
+    # check, the reference journey and the two the static check
+    # refuses, issuance's refusals, the gate never offered in simulation, held
+    # descriptors, no process started, and the reference app unshipped.
+    "tests/test_produced_app_handoff.py": 127,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -2258,17 +2270,39 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # round added fifteen, 23 -> 38 (floor 21 -> 35): 6014 collect, the sum
 # rises by 14 to 5479 and the aggregate follows to 5487, band(n) 5400 ->
 # 5413, the working room 526 -> 527, and the slack 534 -> 535, the module now
-# 3 above its band. The windows-runtime job's modules are unchanged. The rows
-# below are these.
+# 3 above its band. The windows-runtime job's modules are unchanged.
+#
+# A-051 ADDS TWO MODULES, measured from a fresh collection:
+# tests/test_produced_app_manifest.py collects 109 (floor band(109) = 99) and
+# tests/test_produced_app_handoff.py collects 141 (floor band(141) = 127). No other
+# module's count moves. 6222 collect across 139 modules; the module-floor sum
+# rises by 226 to 5666 and the aggregate follows to 5674, keeping the
+# same 8 above it; band(n) 5375 -> 5600, the working room below the floor
+# 524 -> 548, and the slack 532 -> 556. NO SKIP IS ADDED, and the
+# windows-runtime job's floor is untouched: it names neither new module.
+#
+# A-049 AND A-051 MEET HERE, AND THE FIGURES BELOW WERE RECOUNTED RATHER THAN
+# ADDED UP. Each paragraph above was measured on its own branch, so neither
+# side's rows described the merged tree: A-049's said 6014 across 138
+# modules, A-051's said 6222 across 139, and the merged tree collects 6264
+# across 140 -- A-049's new module and its journey module's 15 -> 19, and
+# A-051's two new modules, with no module in common. NO PER-MODULE FLOOR
+# MOVED: every declared floor already equals `band(collected)` for its own
+# module. Only the aggregates moved: the module-floor sum to 5705 and
+# MINIMUM_COLLECTED to 5713, holding the same 8 above it; band(n) to 5638;
+# the working room below what collects to 551; and the slack the bands grant
+# to 559, summed over the merged counts rather than carried from either
+# side's 535 or 556. NO SKIP IS ADDED. The windows-runtime job's floor stays
+# at A-049's 296: A-051 names none of its modules. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6014   (138 modules)
-#     sum of the module floors    5479
-#     band(6014) = ceil(0.9*n)    5413
-#     MINIMUM_COLLECTED           5487
+#     collected across tests/     6264   (140 modules)
+#     sum of the module floors    5705
+#     band(6264) = ceil(0.9*n)    5638
+#     MINIMUM_COLLECTED           5713
 #     above the module sum          8
-#     below what collects         527
+#     below what collects         551
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2490,7 +2524,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 535 in total, and the aggregate refuses
+# per-module bands already grant 559 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2759,7 +2793,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 5487
+MINIMUM_COLLECTED = 5713
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -2894,6 +2928,8 @@ REQUIRED_MODULES = (
     "tests/test_requirement_identity.py",
     "tests/test_operation_classification.py",
     "tests/test_requirements_entry.py",
+    "tests/test_produced_app_manifest.py",
+    "tests/test_produced_app_handoff.py",
     "tests/test_provider_authority_boundary.py",
     "tests/test_governed_provider_eligibility.py",
     # PA-01. The eligibility module above proves the DECISION fails closed;
