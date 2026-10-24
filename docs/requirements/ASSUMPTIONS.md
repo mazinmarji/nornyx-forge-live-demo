@@ -565,12 +565,14 @@ BUILD is entered under the person who pressed the button; TEST and GOVERN
 are recorded by a system actor from `flow_evidence()` over the completed
 flow result, and the automatic path stops at GOVERN. READY is a human act
 presenting the gate-results and governance-validation references that
-GOVERN recorded, read back from the persisted lifecycle. On the shipped
-greenfield acceptance profile no gate runs the Nornyx CLI, so the
-translator yields no governance validation and READY is unreachable for a
-real basic-user build; the journey ends at GOVERN and the page says why.
-That is the honest outcome of a profile that never asks the governance
-question, and it is left as it is rather than improved. A capsule with no
+GOVERN recorded, read back from the persisted lifecycle. On the
+greenfield acceptance profile as it shipped here no gate ran the Nornyx CLI,
+so the translator yielded no governance validation and READY was
+unreachable for a real basic-user build; the journey ended at GOVERN and the
+page said why. That was the honest outcome of a profile that never asked the
+governance question, and it was left as it was rather than improved. A-049
+asks it: the profile now runs the real `nornyx check` on the contract each
+build generated, and only its passing record is a governance validation. A capsule with no
 recorded lifecycle is reported absent, offers only a human "start
 tracking" that begins at DISCOVER, and has no stage inferred from its
 files. Four limits are disclosed. The contract does not freeze capsule
@@ -4636,9 +4638,14 @@ could close only by adding a mechanism, never by rewording this entry.
 
    A THIRD STUCK POSITION IS NOT THIS BINDING'S AND IS NOT CLOSED HERE:
    a lifecycle that reaches GOVERN with no governance validation is stuck
-   there too -- what the shipped greenfield acceptance profile produces,
-   since no gate runs the Nornyx CLI (A-022) -- and it is PERMANENT for that
-   lifecycle, because `GOVERN -> SIMULATE` and `GOVERN -> REVIEW` each
+   there too -- what the shipped greenfield acceptance profile produced,
+   since no gate ran the Nornyx CLI (A-022), until A-049 added a Nornyx
+   check of the build's own generated contract to that profile. A greenfield
+   build now either records a passing `governance_validation` at GOVERN or
+   fails at BUILD, where `retry` applies; the stuck position remains for a
+   build whose gate list carries no Nornyx gate at all, which on this head
+   is a non-greenfield build on a host with no `nornyx` on PATH. Where it is
+   reached it is PERMANENT for that lifecycle, because `GOVERN -> SIMULATE` and `GOVERN -> REVIEW` each
    require a `governance_validation` row, `GOVERN -> READY` requires one
    beside the gate results, and `retry` re-enters the stage it is handed
    without recording evidence; measured through the shipped routes on a build
@@ -5027,7 +5034,8 @@ measurement is `unknown` rather than a denial.
 ## A-035 The simulated journey proves the path, not a provider build
 
 **Assumption.** The basic-user journey can be shown to work from start to
-GOVERN, the furthest the greenfield profile reaches, without a live provider
+READY (to GOVERN, the furthest the greenfield profile reached, until A-049
+added the Nornyx check of the generated contract), without a live provider
 act, if that act is replaced where the product itself hands work to a
 provider and nowhere else. `tests/test_simulated_journey.py` drives the
 shipped composition -- `onboarding_serve.assemble`, its session gate, the
@@ -5045,9 +5053,11 @@ through the composition's one call to `create_app`, which the test wraps for
 that alone; and the seal directory, through the composition's own
 `SEAL_DIR`, which stays outside the project as the shipped one does but is
 not the user's. The lifecycle reaches GOVERN on the verifier's verdict over
-what was generated, and each stage's record is read back from the store.
+what was generated and the Nornyx CLI's verdict over the contract the build
+generated (A-049), the human marks READY, and each stage's record is read
+back from the store.
 
-`test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces`
+`test_the_simulated_journey_reaches_ready_through_the_shipped_surfaces`
 carries the path, and
 `test_two_runs_of_the_simulated_journey_record_the_same_outcome` its
 determinism, apart from the gate fingerprint, which carries run-specific
@@ -5058,9 +5068,9 @@ each refused by the verifier's own gates while the provider reports success.
 `test_without_the_seam_the_real_provider_is_reached_and_the_build_stops`
 removes the simulated provider and measures the real routed worker being
 reached and the build stopping.
-`test_the_journey_with_confirmed_requirements_reaches_govern` walks the same
+`test_the_journey_with_confirmed_requirements_reaches_ready` walks the same
 path with the capsule's `requirements` field confirmed, so the derived BRD
-carries a requirements section, and reaches GOVERN; and
+carries a requirements section, and reaches READY; and
 `test_a_confirmed_requirement_the_provider_left_untested_is_refused` shows a
 build whose provider tested every confirmed requirement but the last refused
 by name (A-045).
@@ -5085,10 +5095,12 @@ by name (A-045).
    the contract's table makes no provider eligible on any platform;
    `test_e5_the_assembled_surface_refuses_the_governed_build` holds the
    refusal for `claude`.
-4. **READY is not reached.** The greenfield profile runs no Nornyx gate, so
-   the journey ends at GOVERN, as A-032 records for every build on that
-   profile. The test asserts that READY is refused and that the page says the
-   lifecycle is a dead end.
+4. **READY is a lifecycle record, not a runnable application.** Until A-049
+   the greenfield profile ran no Nornyx gate, so the journey ended at GOVERN,
+   as A-032 recorded for every build on that profile. It now reaches READY
+   because the profile's governance check passed the contract the build
+   generated; READY there says what the lifecycle recorded about a simulated
+   provider's fixture, and nothing about an application anyone could run.
 5. **The optional SIMULATE and REVIEW stages are not reached either.** They
    come after GOVERN and need the same governance validation that READY
    needs. The flow's review workers run inside BUILD and are the simulated
@@ -6613,7 +6625,9 @@ person's own choice and outside this claim.
   governance, in places the code names. The project folder the launchers pass
   (`--project-dir "%USERPROFILE%\ForgeProject"`, in the shortcut and in
   `Forge.cmd`) holds the capsule store (`capsule\`: `capsule.json`,
-  `experience.json`, the store marker and the store's own git repository), what a
+  `experience.json`, the produced-application manifest `pam.json` once an
+  accepted build has one (A-051), the store marker and the store's own git
+  repository), what a
   provider built beside it, and, under a governed subject's root (the project
   folder, for a build over the person's project), the build evidence in
   `.nornyx\runs`, the Nornyx runtime lock in `.nornyx\runtime` and the approval
@@ -7055,7 +7069,8 @@ BUILD (`test_a_crewai_initialisation_failure_is_named_and_the_build_stops`);
 before the change the flow was built and the build failed as "'requirements'".
 The main journey test now holds that no memory store is created. The real
 provider tripwire and the network guard stay in force in every one of them,
-and READY stays refused; no authority boundary moves.
+and READY stayed refused (it is the human's to mark since A-049); no
+authority boundary moves.
 
 **What it does NOT establish.**
 
@@ -7546,7 +7561,8 @@ and an oversized proposal id with 409.
    not caught.
 3. **Completed basic-user acceptance.** This is a requirements-entry
    affordance on the existing page. It is not a completed basic-user
-   acceptance of the onboarding journey, which still ends at GOVERN (A-032),
+   acceptance of the onboarding journey, which ended at GOVERN (A-032)
+   until A-049 and now reaches READY over a simulated provider's fixture,
    and the human actor is still declared rather than authenticated.
 4. **A generated application's safety.** No generated-application safety
    boundary is claimed (A-047's limit stands).
@@ -7554,6 +7570,350 @@ and an oversized proposal id with 409.
 **Serves.** A-035's basic-user journey, which this lets carry confirmed
 requirements from the page; A-045, whose identity rule the rows feed and
 which is unchanged.
+
+## A-049 The greenfield profile runs the real `nornyx check` on the contract each build generated, bound to its digest, and only that check's pass is a governance validation
+
+**Assumption.** A greenfield build has asked the governance question when the
+installed Nornyx CLI has checked the contract that build generated --
+`.nornyx/generated/brd_contract.nyx`, written from the BRD by
+`DevelopmentFlow.requirements()` -- and has passed those exact bytes. A pass
+over other bytes, a cached or recorded pass, or a pass the build reports
+about itself is not that answer.
+
+**The defect.** READY requires a `gate_results` and a `governance_validation`
+reference (`experience.STAGE_EVIDENCE`), and `experience_build.flow_evidence`
+produces a governance validation only from a gate that ran the Nornyx CLI.
+The greenfield acceptance profile ran the trusted verifier and no Nornyx
+gate, so every greenfield build reached GOVERN with no governance validation
+and READY was refused with "requires evidence of kind
+'governance_validation'": the dead end A-032 records. The basic-user journey
+(A-035), with or without confirmed requirements (A-045, A-048), ended there.
+
+**The repair.**
+
+- `DevelopmentFlow.requirements()` records the SHA-256 of the contract's bytes
+  as generation wrote them, before any worker runs: in the result as
+  `generated_brd_contract_digest` and in the `requirements_normalized` ledger
+  event as `generated_contract_digest`. The digest is computed from the
+  renderer's text (`contract_generator.render_brd_contract`, the text the
+  generator writes as UTF-8 with no newline translation), not read back from
+  the path.
+- The greenfield profile declares a governance check
+  (`GREENFIELD_PROFILE_DEFINITION["governance"]`, version 3 -> 4, in the
+  parent and in the verifier's echoed copy), and the flow's greenfield
+  acceptance runs it after the verifier on every acceptance pass:
+  `gates.trusted_contract_check`, recorded as the gate
+  `greenfield:nornyx-contract-check`.
+- The check examines the contract (`lstat`, `resolve`), refuses anything that
+  is not a regular file at that path inside the project (a link, a
+  directory, a path that resolves elsewhere) or is larger than 16 MiB, and
+  then reads it through ONE descriptor: opened without following a link and
+  without blocking where the platform offers those flags, and judged as a
+  descriptor -- a regular file, the device and inode that were examined,
+  within the bound -- before anything is read from it. It compares the
+  digest of what it read with the recorded one. Bytes changed or removed
+  after generation are not this build's contract: no check runs and the gate
+  fails.
+- The bound bytes are copied to a private read-only snapshot in a temporary
+  directory outside the project (read back after the check through the same
+  descriptor rule), and the CLI's own entry point
+  (`nornyx.cli:main`) checks the snapshot, run by the trusted interpreter
+  with `-I` from that directory, in the constructed environment the verifier
+  uses (no PATH, PYTHONPATH or PYTHONHOME), under a 120-second timeout. No
+  PATH lookup decides which `nornyx` runs.
+- The verdict is read from what Nornyx writes, not from the exit status
+  alone: a pass is exit 0, no error-level diagnostic and Nornyx's
+  "Nornyx check passed" line; a refusal is exit 1 or 2 with at least one
+  error-level diagnostic; anything else -- stderr, output that is not
+  Nornyx's, an exit 0 without the pass line, a timeout, a failure to start --
+  is an error. Only the pass passes.
+- `experience_build` recognises that exact command as a Nornyx gate: a record
+  named `greenfield:nornyx-contract-check`, whose executable is the running
+  interpreter's absolute path, then `-I`, `-c`, the bootstrap and `check`,
+  and whose subject is an absolute `brd_contract.nyx` in a
+  `nornyx-forge-governance-` directory. It keeps copies of those constants
+  because the layering forbids it importing `gates`; a test holds them
+  equal. The rule for a non-greenfield gate is unchanged: a recorded
+  command whose first word is `nornyx`, as `default_gates` runs it through
+  PATH.
+
+**Fail closed, as measured.** A contract Nornyx refuses, one edited after
+generation into bytes Nornyx would pass, one deleted, and a check that
+cannot run each fail the gate, so the build is not accepted, the lifecycle
+records a failed BUILD, no governance validation is recorded, and READY is
+refused with "failed at BUILD; retry it". Where the CLI ran and refused, the
+translator's governance validation reports `passed: false`; where no check
+ran, there is none at all. A greenfield build therefore either records a
+passing governance validation at GOVERN or fails at BUILD, where `retry`
+applies.
+
+**Tests.** `tests/test_governance_contract_check.py` (38) holds the check
+against the installed CLI: the pass and its translation, two refusals
+(`MISSING_PROJECT_NAME`, `PARSE_ERROR`), every not-run case above, six
+malformed recorded digests, an interpreter inside the project, five ways
+the check errors without passing, and the first review's fifteen cases
+below. `tests/test_simulated_journey.py` now
+carries the intent-only journey, the four-requirement journey and the eight
+page rows to READY, marked by the human through `POST /api/journey/ready`,
+asserting the gate's command, its provenance and the GOVERN and READY
+evidence read back from the store; and
+`test_eight_rows_without_a_passing_contract_check_are_refused_at_build`
+carries the four negatives through the shipped surfaces. Red first on
+`39067e7`, with only these test files changed: 31 of 42 fail -- every new
+check case (the check does not exist), the three READY journeys and the
+memory-store journey (no governance gate ran, READY refused), and the four
+negatives (the base accepts each build, a deleted or edited contract
+included). The 11 that pass are controls whose outcome this change must not
+move: determinism, the untested-requirement refusals, the verifier's own
+refusals, the real-provider tripwire, the memory-store specimen and the
+CrewAI initialisation failure.
+
+**Review of the first head.** The Codex review of `8ae32b3` found two
+defects.
+
+- **P1 (inline comment 4353133109).** The contract was examined by path and
+  then opened by path, so a file put in its place in between -- by a process
+  a provider left running -- was read unexamined: a FIFO blocked the read
+  before the timeout applied, and a link was followed. Repaired as above,
+  for the class and not only the line: every read by path of a file
+  something else could replace, in the files this change touches, now goes
+  through one judged descriptor -- the contract; the contract's snapshot,
+  read back after the check; the verifier's own snapshot, digested by the
+  parent after the verifier ran, where a pipe blocked acceptance with no
+  timeout left; and the verifier's reader of subject files, `_safe_bytes`,
+  which now opens without blocking and refuses a descriptor that is not a
+  regular file. The flow's digest, which was read back from the path right
+  after generation, is now computed from the rendered text. What holds per
+  platform: on POSIX, a link is refused at the open (`O_NOFOLLOW`) and a
+  pipe opens without blocking (`O_NONBLOCK`) and is refused at `fstat`; on
+  Windows neither flag exists, and the open follows a link, so what refuses
+  a replaced or linked file there is the descriptor's identity compared with
+  the `lstat`, with the size bound applied to the descriptor. No pipe
+  protection is claimed on Windows, where a pipe is not a file in the
+  project tree. Red first on `8ae32b3`, with only the two test files
+  changed, 16 of 57 fail: the pipe blocked the check; the link, the renamed
+  file and the replaced snapshot were read and passed; a pipe blocked the
+  verifier snapshot's digest and the verifier's reader; the rendered-digest
+  test cannot import the renderer; the translator's constants test and the
+  seven negatives below fail; and the journey's refused-contract case fails
+  at its seam, which replaces the renderer that does not exist there. The
+  grown file is refused there too, because the old reader bounded what it
+  read, and is kept as a control.
+- **P2 (inline comment 4353133125).** The translator's test was the trailing
+  five arguments, so `/bin/false`, a provider's executable or an empty
+  string in front of them made a passing record a passing governance
+  validation. Repaired as above, with seven negatives: another executable,
+  an empty one, a relative one, a relative snapshot, another snapshot name,
+  another snapshot directory and another gate name. Each was translated into
+  a passing governance validation on `8ae32b3`.
+
+**What changes for an intent-only build.** It reaches READY too: its
+generated contract carries one goal, BRD-001, and Nornyx passes it.
+
+**Not changed.** The verifier's seven checks and their verdicts, the
+`gate_results` rule (every gate passed), the Experience Contract's evidence
+table, the requirement-identity rule (A-045), the action boundary (A-047),
+provider eligibility, and the default (non-greenfield) gates.
+
+**What it does NOT establish.**
+
+1. **A runnable application.** READY in the simulated journey is a lifecycle
+   record over a simulated provider's fixture (A-035): no live provider
+   built anything, and nothing produced can be run as a product.
+2. **That the contract governs the build.** Nornyx checks that the generated
+   contract is well-formed against its own rules and governance packs. The
+   contract's content is a deterministic rendering of the BRD; nothing here
+   checks that the application does what the contract says, and no
+   generated-application safety boundary is claimed (A-047's limit stands).
+3. **Which Nornyx ran, beyond the interpreter.** The record names the
+   distribution version the trusted interpreter's installed metadata reports
+   and the entry point it imports; the CLI's own files are not digested.
+4. **A bounded check of hostile bytes.** The checked bytes are the ones Forge
+   generated, so the CLI is not run on provider-authored input; it runs under
+   a timeout, not under the verifier's OS resource limits. The CLI opens the
+   snapshot by its own path; the snapshot sits in a private directory and is
+   compared before and after.
+5. **The provider's other writes.** The binding covers the contract file. It
+   says nothing about any other file the provider changed.
+6. **The non-greenfield rule.** A gate whose recorded command begins with
+   `nornyx` is still a Nornyx gate, as before: `default_gates` runs the CLI
+   through PATH and records it that way. Which `nornyx` that was is not
+   established, and this change does not touch that path.
+7. **Pipe protection on Windows.** None is claimed: Windows has no
+   `O_NONBLOCK` or `O_NOFOLLOW`. What holds there is the descriptor's
+   identity and size, compared with what was examined.
+
+**Serves.** A-032's third stuck position, which this closes for greenfield
+builds; A-035's journey, which now reaches READY; and the
+request that a requirements-bearing journey be able to reach READY on a real
+governance check rather than a synthetic one.
+
+## A-051 An accepted build's produced application is named by a Forge-written, sealed manifest, and the handoff is a separate gate that is never offered in simulation
+
+Numbering: A-049 and A-050 were taken by two pull requests open when this
+entry was written; this entry takes the next free number so that the three can
+merge in any order. A-049 has since merged and precedes this entry.
+
+**Assumption.** What a governed build produced can be named, after it is
+accepted, by one manifest that Forge -- not the provider and not the
+development flow -- renders from its own records, and that the capsule store
+seals outside the project; and handing the result to a person can be a gate of
+its own, separate from READY, that re-verifies the manifest and the files
+before it offers anything.
+
+**What it is.**
+
+1. **The Produced Application Manifest (PAM),** `produced_app_manifest`.
+   `render_pam` is pure, so the manifest's digest -- `pam/<sha256>` -- is
+   computed from the text Forge rendered. It records the trusted verifier's
+   subject digest and every inspected file's SHA-256; the entry point
+   `app/__main__.py`; the dependency declaration, the Python standard library
+   only in version 1; the digest of the contract Forge renders from the
+   accepted BRD; the BRD's file digest and scope binding and the capsule's
+   chain tip; the provider and the Provider Contract's own eligibility row
+   for it; the verifier's identity and gate profile; and Forge's version and
+   revision. Its source is the trusted verifier record the flow returns in
+   memory, never `.nornyx/runs/build-summary.json`. `validate_pam` checks the
+   exact key set at every level, the canonical encoding, each digest's form,
+   the subject digest recomputed from the listed files, the application file
+   list derived from them, the BRD digest and the scope tip; it cannot check a
+   claim against the world, and the issuer and the gate do that.
+2. **Forge-only writing, bound to the seal.** `pam.json` is the store's third
+   authority file. The build thread issues it inside the post-build critical
+   section -- under the store lock, after the store has matched the seal taken
+   at BUILD -- and only for an accepted build the contract licenses to GOVERN,
+   and `CapsuleStore.save_produced_application` writes it in the same commit as
+   the GOVERN transition. After sealing, the sealed `pam.json` and
+   `experience.json` are compared with the bytes Forge rendered; a difference
+   is a tamper finding that removes the commit with the seal it followed, and
+   the build is recorded as a failure. The seal schema is version 2: it seals
+   the three files and records the manifest's `pam/<sha256>` beside its bytes,
+   and a seal whose two records of the manifest disagree is refused as not one
+   Forge wrote. A version-1 seal with exactly its two files is still read, as
+   sealing no manifest, so no store protected before this change becomes
+   TAMPERED; the next commit Forge makes rewrites it as version 2.
+   **Every read of an authority file or of the seal fails closed.** The seal
+   check, the snapshot a seal is taken from, the seal record, both loads and
+   the handoff gate read through one bounded descriptor and treat bytes that
+   are not UTF-8 (UTF-16 included), a directory or link where the file
+   belongs, a file over the bound, and a file that vanishes or is replaced
+   between the look and the read as a finding -- a seal problem with a
+   snapshot to restore from, an unreadable seal, or the store's own refusal --
+   never as an exception; JSON with a repeated key is refused rather than
+   resolved. A byte-order mark, a NUL, a truncation or an empty file differ
+   from the sealed text, or are not one JSON document, and are refused the
+   same way. Before this, an undecodable or non-regular `capsule.json` or
+   `experience.json` raised out of the seal check exactly as `pam.json` did;
+   the rule covers all three (Codex P1 4362912628). The comparison keeps its
+   meaning: the sealed text is compared with the file's text, strictly
+   decoded, with the universal newlines `read_text` gave it. JSON that parses
+   is still held value by value where Forge alone writes it. The seal record
+   must be exactly a seal this adapter writes: the revision a full commit,
+   the store a non-empty string, each sealed text absent or one JSON document
+   with unique keys, the manifest reference the digest of the sealed
+   manifest, and no `NaN`, `Infinity` or string that cannot be encoded as
+   UTF-8 anywhere in it -- an escaped lone surrogate parsed into the manifest
+   text used to raise out of the seal check, and one in the revision or a
+   sealed text used to raise out of a restoration (Codex P2 4363826001). The
+   manifest's own validation refuses the same values, and turns any type or
+   encoding error into its refusal. The capsule's and the lifecycle's values
+   are not held to the encoding rule: they arrive from requests, Forge writes
+   them escaped, and refusing one there would make a store Forge wrote
+   unreadable instead of refusing a damaged seal.
+3. **Issuance checks provenance, statically.** A manifest is issued only when
+   Forge's own read of the project reproduces the subject digest and file count
+   the verifier accepted, the verifier record names the trusted verifier and
+   profile, the BRD the verifier accepted is the BRD the scope confirmation
+   bound, and the static check finds nothing: `app/__main__.py` present and
+   parsing, every import outside `tests/` the standard library or the
+   application's own module (and in `tests/`, also `pytest`), no import of
+   `nornyx_forge` anywhere, no produced file shadowing it, and no reference
+   at all to a dynamic import or execution primitive, called or not. The rule
+   follows no binding; it refuses the spellings wherever they occur: the names
+   `__import__`, `eval`, `exec`, `compile`, `__builtins__`, `importlib` and
+   `builtins` in any position; any import of `importlib` or `builtins`
+   (submodules and aliases included) and any imported name or alias spelling
+   a primitive; the attributes `.__import__` and `.import_module` on
+   anything; a function, class or parameter name, a `global` or `nonlocal`,
+   or an exception or pattern capture spelling one; and a `getattr` whose
+   member is a string literal spelling one. It is conservative: a local that
+   merely shares one of those names is refused too. The same check runs at
+   issue and again at the handoff gate. A build it issues nothing for is
+   recorded exactly as before, and `GET /api/build` says why.
+4. **The handoff gate,** `produced_app_handoff.assess_readiness`. It loads the
+   manifest only from a store that passes `assert_sealed()` and carries a seal
+   -- a store with no seal is refused, never read as legacy -- takes it from
+   the seal, validates it, re-reads and re-hashes every produced file (a file
+   changed, removed or added is named), re-runs the static check, and offers
+   "Open application" only when the Provider Contract's unchanged
+   `governed_build_eligibility` makes the build's provider eligible, both in
+   the row the manifest recorded when it was issued and asked again now. The
+   row at issue is the contract's, not the verdict the build route was handed,
+   so a build made under an injected verdict records an ineligible row and is
+   never offered. `open_application_readiness` is the only production entry
+   and passes the contract's own decision. No route or page offers the action
+   in this change.
+5. **No produced code is executed.** The static check is `ast` over bytes;
+   nothing is imported, compiled to code or run, and no process is started on
+   a produced file -- a test records every child the issuer and the gate start
+   and finds only the store's `git`. Every produced file is read through one
+   descriptor, judged by that descriptor -- a regular file, the same file
+   `lstat` saw, within the verifier's bound, unchanged while it was read -- and
+   never by reopening its path.
+6. **The reference application exists only in tests.** A test-only simulated
+   provider writes Forge's own support-case specimen from templates under
+   `tests/specimens/produced_app/*.py.txt`, which pytest does not collect and
+   which neither the wheel, the bundle nor the container image contains; a
+   test holds that no shipped file names them. Shipped Forge never generates
+   it.
+
+**The claim, and its bound.** The PAM is written by Forge after the post-build
+seal check; its exact bytes are sealed outside the project, and the handoff
+gate re-verifies them and the produced files against it. This detects
+accidental change and change by a writer confined to the workspace. It does
+NOT resist a same-user process, which can rewrite the store and seal together
+or race the write; that needs provider confinement or an external anchor.
+Currency stays `not_independently_anchored`.
+
+**What it does NOT establish.**
+
+1. **A file digest is only as good as Forge's read.** A same-user process can
+   swap a file around that read -- the shape of P1 4356060742 -- and the held
+   descriptor narrows that window without closing it.
+2. **A runnable application.** The mechanism is exercised on a Forge-authored
+   reference app; it is not a provider build, not a runnable Forge-generated
+   application, and no produced code is executed. Whether `python -m app`
+   starts is not checked: the entry point is checked present and parsing only.
+3. **Any handoff today.** No provider is eligible on any platform, so the gate
+   offers nothing in the shipped product; its positive path is exercised only
+   at the unit level with a row and a verdict the test supplies.
+4. **A change to READY.** READY requires what it required before; the manifest
+   is not READY evidence, and a simulated READY is still not a runnable
+   application.
+5. **The `build_acceptance` ledger as an anchor.** It is provider-writable and
+   its chain is recomputable, so the manifest is not bound to it.
+6. **That the generated contract is the one the flow wrote.** The manifest's
+   contract digest is of the contract Forge renders from the accepted BRD; the
+   bytes at `.nornyx/generated/brd_contract.nyx` are not read.
+7. **That produced code cannot reach Forge.** The import scan is a static
+   check over the spellings listed above, and no more. What code computes at
+   run time -- a name assembled and looked up some other way (a computed
+   `getattr`, `globals()`, `sys.modules`), a code object, an encoded string --
+   is beyond any static scan, and this change does not try to chase it. The
+   check is not a statement about runtime isolation. That the application
+   runs without Forge is established only
+   at execution time, by running it from a copy in which Forge is not
+   importable, and this change executes nothing.
+8. **That the standard-library list is every interpreter's.** The static check
+   uses the module names of the interpreter Forge runs on.
+9. **Windows coverage of the new tests.** The two new test modules run in the
+   Linux test jobs; the Windows runtime job runs a fixed module list that does
+   not yet name them.
+
+**Serves.** A-022 and A-029, whose seal and bound it extends to a third file
+without moving either; A-035, whose simulated journey it extends to an
+application with an entry point; and A-019, since the produced project is the
+verifier's subject and never its verifier.
 
 ## A-052 A worker may start its provider through the hash-pinned run-act gate, opt-in; the default start is unchanged, and the gate path is refused before any process when anything about it is wrong
 

@@ -475,7 +475,10 @@ jobs:
       # requirements, the blocked memory store reproduced in-process, and a
       # CrewAI initialisation failure reported by name, and (A-048) eight
       # requirement rows composed as the onboarding page composes them, to
-      # GOVERN and, with one row left untested, refused at the build.
+      # GOVERN and, with one row left untested, refused at the build; and
+      # (A-049) the journeys to READY through the real nornyx check of the
+      # generated contract, and four builds refused at BUILD for a contract
+      # that check refuses, edits after generation, deletes or cannot run.
       # Nothing in it skips on any platform. The runner has no Smart App Control, so the blocked
       # store is measured here by the specimen, not by the host's policy.
       # tests/test_provider_gate.py joins for A-052: the opt-in provider start
@@ -500,14 +503,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 353:
-              print("the windows job collected fewer than 353 tests. Its nine modules "
-                    "carry 359 here (7/14/15/15/23/54/61/73/97), so this floor is 359 - 7 + 1, "
+          if len(cases) < 357:
+              print("the windows job collected fewer than 357 tests. Its nine modules "
+                    "carry 363 here (7/14/15/19/23/54/61/73/97), so this floor is 363 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
                     "floor of 60 is clear of any FIVE of these nine -- the five smallest "
-                    "carry 74 -- so four whole modules could vanish beneath "
+                    "carry 78 -- so four whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

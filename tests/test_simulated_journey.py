@@ -1,14 +1,16 @@
-"""The basic-user journey, simulated from start to GOVERN through the shipped surfaces.
+"""The basic-user journey, simulated from start to READY through the shipped surfaces.
 
 WHAT THIS PROVES. One path, driven the way the onboarding page drives it --
 start Forge, describe the outcome, confirm the intent, choose a provider, read
 the rendered governance, derive the BRD, confirm the scope, run the governed
-build -- joins the real pieces deterministically and ends at GOVERN: the
+build, mark it ready -- joins the real pieces deterministically and ends at
+READY: the
 shipped composition `onboarding_serve.assemble` with its session gate, the
 capsule and its git-backed store and seal, the journey mapping and the
 Experience Contract, the real `DevelopmentFlow` on its configured backend,
-the real trusted greenfield verifier with its isolated test execution, and
-the translation of the flow's result into lifecycle evidence. Every step is
+the real trusted greenfield verifier with its isolated test execution, the
+real Nornyx CLI checking the contract the build generated (A-049), and the
+translation of the flow's result into lifecycle evidence. Every step is
 an HTTP request, every expected answer is asserted at the step that gives it,
 and what the lifecycle recorded is read back from the store.
 
@@ -28,11 +30,16 @@ through the composition's own `SEAL_DIR` so that it stays outside the
 project, as the shipped one does, without being the user's. Nothing shipped
 changes, and no simulation mode exists outside this module.
 
-WHERE IT ENDS. At GOVERN. The greenfield acceptance profile runs no Nornyx
-gate, so the build records no governance validation, READY is refused, and
-the page says the lifecycle is a dead end (A-032). That refusal is asserted,
-not worked around. The optional SIMULATE and REVIEW stages come after GOVERN
-and are not reached either.
+WHERE IT ENDS. At READY, recorded by the human. The greenfield acceptance
+profile runs `nornyx check` on the build's own generated contract, bound to
+the digest the build recorded when it generated it (A-049), so GOVERN records
+a governance validation and READY can be marked. It used to end at GOVERN,
+with READY refused and the page calling the lifecycle a dead end (A-032).
+Where the check fails, is absent, meets other bytes or errors, the build
+fails and READY stays refused; that is asserted below, not worked around.
+READY here is a lifecycle record over a simulated provider's fixture, not a
+runnable application. The optional SIMULATE and REVIEW stages are not
+reached.
 
 WHAT THIS DOES NOT PROVE is stated once, in the assumption entry "The
 simulated journey proves the path, not a provider build" in
@@ -122,6 +129,16 @@ REVIEW_ROLES = ROLES[2:]
 #: Generous: the trusted verifier runs twice on a passing build and bounds
 #: each run at 120 seconds; a build this slow has failed.
 BUILD_DEADLINE_SECONDS = 600
+#: The governance gate the greenfield profile runs after the verifier (A-049):
+#: `nornyx check` on the contract this build generated, bound to its digest.
+GOVERNANCE_GATE = "greenfield:nornyx-contract-check"
+GENERATED_CONTRACT = Path(".nornyx") / "generated" / "brd_contract.nyx"
+#: The gate list a passing greenfield build records, in order.
+PASSING_GATES = [
+    *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
+    (GOVERNANCE_GATE, True),
+    *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
+    ("build-evidence-ledger-valid-before-verdict", True)]
 
 
 # ---------------------------------------------------------------------------
@@ -182,10 +199,16 @@ class SimulatedProvider:
     result it returns names itself: the command is `simulated-provider` and
     the output says no live provider executed. It never touches the
     capsule store, so the seal has nothing to restore.
+
+    `contract` makes the governance negatives (A-049): `edit` appends a YAML
+    comment to the contract the flow generated -- bytes `nornyx check` still
+    passes, so only the generation binding can refuse them -- and `delete`
+    removes it. Either is done with the application files, by the builder.
     """
 
-    def __init__(self, defect: str | None = None) -> None:
+    def __init__(self, defect: str | None = None, contract: str | None = None) -> None:
         self.defect = defect
+        self.contract = contract
         self.calls: list[dict[str, Any]] = []
         self.written: dict[str, str] = {}
 
@@ -202,6 +225,12 @@ class SimulatedProvider:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(text, encoding="utf-8", newline="")
             self.written = files
+            generated = Path(workspace) / GENERATED_CONTRACT
+            if self.contract == "edit":
+                with generated.open("a", encoding="utf-8", newline="") as stream:
+                    stream.write("# edited by the simulated provider after generation\n")
+            elif self.contract == "delete":
+                generated.unlink()
         return WorkerResult(role=role, goal=goal, success=True, output=SIMULATED_OUTPUT,
                             command=(SIMULATED_COMMAND, role))
 
@@ -490,13 +519,15 @@ def _scope_row(run: Journey) -> dict[str, Any]:
 # The journey, from start to GOVERN
 # ---------------------------------------------------------------------------
 
-def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
+def test_the_simulated_journey_reaches_ready_through_the_shipped_surfaces(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Start Forge -> intent -> provider -> governance -> BRD -> CONFIRM ->
     build on the real flow with the simulated provider -> the real verifier
-    -> TEST -> GOVERN, and READY refused. Each stage's recorded outcome and
-    the evidence it produced are asserted against the store and the flow's
-    own files, not against what a response claimed."""
+    -> the real `nornyx check` of the contract the build generated -> TEST ->
+    GOVERN -> READY, marked by the human (A-049). Each stage's recorded
+    outcome and the evidence it produced are asserted against the store and
+    the flow's own files, not against what a response claimed. This is the
+    intent-only journey: one requirement, BRD-001."""
     provider = SimulatedProvider()
     run = _walk(monkeypatch, tmp_path, provider)
     status, project = run.status, run.project
@@ -543,10 +574,7 @@ def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
 
     # Deterministic validation: the trusted verifier's profile decided, over
     # the files the simulated provider generated.
-    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == [
-        *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
-        *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
-        ("build-evidence-ledger-valid-before-verdict", True)]
+    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == PASSING_GATES
     provenance = result["acceptance_provenance"]
     assert provenance["gate_profile"]["id"] == GREENFIELD_PROFILE_ID
     assert provenance["gate_profile"]["digest"] == GREENFIELD_PROFILE_DIGEST
@@ -558,16 +586,23 @@ def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
     assert provenance["subject"]["root"] == str(project.resolve())
     assert provenance["subject"]["file_count"] == len(inspected)
 
+    # The governance check: the real Nornyx CLI, on a private snapshot of the
+    # bytes this build generated, bound to the digest recorded at generation.
+    _assert_contract_checked(result, project)
+
     # Evidence, as the store holds it: the translator's own references over
-    # the served result, and no governance validation anywhere.
+    # the served result, the governance validation among them.
     persisted = run.store().load_experience()
     translated = {ref.kind: ref.as_dict() for ref in flow_evidence(result)}
     brd_digest = hashlib.sha256((project / "BRD.md").read_text(encoding="utf-8").encode("utf-8")).hexdigest()
-    assert set(translated) == {"flow_run", "gate_results"}
+    assert set(translated) == {"flow_run", "gate_results", "governance_validation"}
+    assert all(row["passed"] is True for row in translated.values())
     assert translated["flow_run"]["ref"] == flow_reference("crewai_flow", brd_digest)
-    assert persisted["evidence"] == {
+    at_govern = {
         "CONFIRM": [_scope_row(run)], "BUILD": [_scope_row(run)],
-        "TEST": [translated["flow_run"]], "GOVERN": [translated["gate_results"]]}
+        "TEST": [translated["flow_run"]],
+        "GOVERN": [translated["gate_results"], translated["governance_validation"]]}
+    assert persisted["evidence"] == at_govern
     assert _events(persisted) == [
         ("started", "DISCOVER", "casey", "human"),
         ("advanced", "CONFIRM", "casey", "human"),
@@ -575,8 +610,6 @@ def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
         ("advanced", "TEST", "forge-onboarding", "system"),
         ("advanced", "GOVERN", "forge-onboarding", "system"),
     ]
-    assert [event["to"] for event in persisted["history"]] == [
-        stage for stage in MANDATORY_STAGES if stage != "READY"]
     log = subprocess.run(["git", "log", "--reverse", "--format=%s"], cwd=project / "capsule",
                          capture_output=True, text=True, check=True, timeout=60).stdout.splitlines()
     assert log == ["capsule: initialize",
@@ -598,21 +631,65 @@ def test_the_simulated_journey_reaches_govern_through_the_shipped_surfaces(
         ("architecture_prepared", None), ("implementation_completed", None),
         ("build_acceptance", "ALLOW")]
     assert result["requirements_model"]["source_digest"] == "sha256:" + brd_digest
+    assert ledger[0]["fields"]["generated_contract_digest"] == result["generated_brd_contract_digest"]
     governed = run.state("after the build")
     assert governed["experience"] == persisted
     assert governed["authority"]["anchor"] == "sealed"
     assert governed["authority"]["last_restoration"] is None
 
-    # The allowed outcome is GOVERN, and READY cannot be manufactured.
+    # At GOVERN, READY is the human's act, and nothing stands in its way.
     view = governed["journey"]
-    assert (view["stage"], view["status"], view["actions"]) == ("GOVERN", "active", [])
-    assert view["blockers"] == [journey._READY_UNREACHABLE]
-    assert view["next"] == journey._NEXT_SCOPE_DEAD_END
+    assert (view["stage"], view["status"], view["actions"]) == ("GOVERN", "active", ["mark_ready"])
+    assert view["blockers"] == []
+    assert view["next"] == journey._NEXT["GOVERN"]
     assert view["scope"]["unchanged"] is True
-    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
-    assert "governance_validation" in refused["refused"]
-    assert run.store().load_experience() == persisted, "a refused READY moved the lifecycle"
+
+    # READY, marked by the human, consuming exactly what GOVERN recorded.
+    _assert_marked_ready(run, persisted)
+
+
+def _assert_marked_ready(run: Journey, persisted: dict[str, Any]) -> None:
+    """Mark READY through the route the page calls and read back what the
+    store recorded: the GOVERN proofs presented again, one human transition,
+    and the page's READY account."""
+    assert _call(run.client, "POST", "/api/journey/ready", 200, "mark ready",
+                 json={"actor": HUMAN}) == {"stage": "READY", "status": "active"}
+    ready = run.store().load_experience()
+    assert ready["evidence"] == {**persisted["evidence"], "READY": persisted["evidence"]["GOVERN"]}
+    assert _events(ready) == [*_events(persisted), ("advanced", "READY", "casey", "human")]
+    assert [event["to"] for event in ready["history"]] == list(MANDATORY_STAGES)
+    assert _capsule_log(run.project)[-1] == "experience: reached READY"
+    final = run.state("after READY")["journey"]
+    assert (final["stage"], final["status"], final["blockers"]) == ("READY", "active", [])
+    assert final["next"] == journey._NEXT["READY"]
     assert run.reached == [] and run.attempts == []
+
+
+def _capsule_log(project: Path) -> list[str]:
+    return subprocess.run(["git", "log", "--reverse", "--format=%s"], cwd=project / "capsule",
+                          capture_output=True, text=True, check=True, timeout=60).stdout.splitlines()
+
+
+def _assert_contract_checked(result: dict[str, Any], project: Path) -> None:
+    """The governance gate a passing build records (A-049): the real Nornyx
+    CLI's entry point, run by the trusted interpreter in isolated mode on a
+    private snapshot outside the project, over bytes whose digest is the one
+    the flow recorded when it generated the contract -- and still the bytes
+    in the project."""
+    generated = (project / GENERATED_CONTRACT).read_bytes()
+    digest = "sha256:" + hashlib.sha256(generated).hexdigest()
+    assert result["generated_brd_contract_digest"] == digest
+    gate = next(gate for gate in result["gates"] if gate["name"] == GOVERNANCE_GATE)
+    assert gate["passed"] is True and gate["returncode"] == 0
+    command = gate["command"]
+    assert command[:5] == [sys.executable, "-I", "-c", gate_module.NORNYX_CHECK_BOOTSTRAP, "check"]
+    assert len(command) == 6 and not Path(command[5]).resolve().is_relative_to(project.resolve())
+    record = gate["provenance"]
+    assert record["schema"] == gate_module.GOVERNANCE_CHECK_SCHEMA
+    assert record["outcome"] == "passed"
+    assert record["subject"] == {"path": GENERATED_CONTRACT.as_posix(),
+                                 "generated_digest": digest, "checked_digest": digest}
+    assert digest in gate["detail"] and "Nornyx check passed" in gate["detail"]
 
 
 def _record(run: Journey) -> dict[str, Any]:
@@ -657,7 +734,7 @@ def test_two_runs_of_the_simulated_journey_record_the_same_outcome(
         assert one[key] == two[key], f"the two runs recorded different {key}"
 
 
-def test_the_journey_with_confirmed_requirements_reaches_govern(
+def test_the_journey_with_confirmed_requirements_reaches_ready(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The requirements-bearing journey (A-045). The same path with the
     capsule's `requirements` field confirmed: the derived BRD carries the
@@ -666,7 +743,9 @@ def test_the_journey_with_confirmed_requirements_reaches_govern(
     tests each one, and the real verifier accepts -- where it used to refuse
     every such build with "tests do not reference BRD-002", a section heading
     that states nothing and that the flow's own parser never read as a
-    requirement."""
+    requirement. The real `nornyx check` of the generated contract passes,
+    GOVERN records the governance validation and the human marks READY
+    (A-049)."""
     provider = SimulatedProvider()
     run = _walk(monkeypatch, tmp_path, provider, requirements=REQUIREMENTS)
     status, project = run.status, run.project
@@ -685,10 +764,7 @@ def test_the_journey_with_confirmed_requirements_reaches_govern(
     assert result["requirements"] == expected
     assert provider.written == simulated_application(
         {item.id: item.statement for item in model.requirements})
-    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == [
-        *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
-        *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
-        ("build-evidence-ledger-valid-before-verdict", True)]
+    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == PASSING_GATES
     traceability = next(gate for gate in result["gates"]
                         if gate["name"] == "greenfield:requirements-traceability")
     assert traceability["detail"] == f"tests reference all {len(expected)} BRD requirement headings"
@@ -701,10 +777,10 @@ def test_the_journey_with_confirmed_requirements_reaches_govern(
         ("advanced", "TEST", "forge-onboarding", "system"),
         ("advanced", "GOVERN", "forge-onboarding", "system"),
     ]
-    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
-    assert "governance_validation" in refused["refused"]
-    assert run.store().load_experience() == persisted, "a refused READY moved the lifecycle"
-    assert run.reached == [] and run.attempts == []
+    _assert_contract_checked(result, project)
+    assert [row["kind"] for row in persisted["evidence"]["GOVERN"]] == [
+        "gate_results", "governance_validation"]
+    _assert_marked_ready(run, persisted)
 
 
 def test_a_confirmed_requirement_the_provider_left_untested_is_refused(
@@ -739,14 +815,16 @@ def page_rows(texts: tuple[str, ...]) -> list[dict[str, str]]:
     return [{"id": f"RQ-{index}", "text": text} for index, text in enumerate(texts, start=1)]
 
 
-def test_eight_rows_entered_on_the_page_reach_govern(
+def test_eight_rows_entered_on_the_page_reach_ready(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The requirement-rows journey (A-048). Eight rows, composed as the page composes
     them and proposed through the route the page calls, pass the proposal-time
     rule, are confirmed by the human, derive a BRD with one requirement per
     row, are built from exactly those identities and tested one by one, and
-    the real verifier accepts: the lifecycle ends at GOVERN. Nothing about the
-    identity rule (A-045) or any gate differs from the four-row journey."""
+    the real verifier accepts, the real `nornyx check` passes the contract
+    the build generated, and the human marks READY (A-049). Nothing about
+    the identity rule (A-045) or any verifier gate differs from the four-row
+    journey."""
     from nornyx_forge.brd_authoring import proposal_entry_refusal  # noqa: PLC0415 - A-048
 
     rows = page_rows(PAGE_ROW_TEXTS)
@@ -762,18 +840,15 @@ def test_eight_rows_entered_on_the_page_reach_govern(
     assert [item.statement for item in model.requirements] == [NEED, *PAGE_ROW_TEXTS]
     result = status["result"]
     assert result["requirements"] == expected
-    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == [
-        *((f"greenfield:{check}", True) for check in GREENFIELD_GATE_IDS),
-        *((f"review-worker:{role}", True) for role in REVIEW_ROLES),
-        ("build-evidence-ledger-valid-before-verdict", True)]
+    assert [(gate["name"], gate["passed"]) for gate in result["gates"]] == PASSING_GATES
     traceability = next(gate for gate in result["gates"]
                         if gate["name"] == "greenfield:requirements-traceability")
     assert traceability["detail"] == "tests reference all 9 BRD requirement headings"
-    assert [event[1] for event in _events(run.store().load_experience())] == [
+    persisted = run.store().load_experience()
+    assert [event[1] for event in _events(persisted)] == [
         "DISCOVER", "CONFIRM", "BUILD", "TEST", "GOVERN"]
-    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
-    assert "governance_validation" in refused["refused"]
-    assert run.reached == [] and run.attempts == []
+    _assert_contract_checked(result, project)
+    _assert_marked_ready(run, persisted)
 
 
 def test_eight_rows_with_one_left_untested_are_still_refused_at_build(
@@ -789,6 +864,69 @@ def test_eight_rows_with_one_left_untested_are_still_refused_at_build(
     assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
     failed = {gate["name"]: gate["detail"] for gate in status["result"]["gates"] if not gate["passed"]}
     assert failed["greenfield:requirements-traceability"] == "tests do not reference BRD-F-008"
+    assert run.reached == [] and run.attempts == []
+
+
+#: A contract the real Nornyx CLI refuses: valid YAML, no project name.
+REFUSED_CONTRACT = "nornyx: '0.2'\nproject: {}\n"
+#: A program that is not the Nornyx CLI, standing in for one that cannot run.
+BROKEN_CHECK = "import sys;sys.stderr.write('the check could not start');sys.exit(1)"
+
+
+def _generate_a_refused_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A renderer that produces bytes Nornyx refuses, in both places the flow
+    asks it: the generator writes them and the flow records their digest, so
+    the binding holds and only the CLI's verdict can refuse the build."""
+    from nornyx_forge import contract_generator, development_flow  # noqa: PLC0415 - A-049
+
+    def render_refused(_model: Any) -> str:
+        return REFUSED_CONTRACT
+
+    monkeypatch.setattr(contract_generator, "render_brd_contract", render_refused)
+    monkeypatch.setattr(development_flow, "render_brd_contract", render_refused)
+
+
+@pytest.mark.parametrize("case, outcome, says", [
+    ("refused", "refused", "nornyx check refused the generated build contract"),
+    ("edited", "not_run", "changed after generation"),
+    ("deleted", "not_run", "is missing"),
+    ("errored", "errored", "nornyx check errored"),
+])
+def test_eight_rows_without_a_passing_contract_check_are_refused_at_build(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, outcome: str, says: str):
+    """Fail closed (A-049). The verifier accepts the application in every
+    case; what fails is the governance check of the contract the build
+    generated: Nornyx refuses it, the provider edited it after generation (to
+    bytes Nornyx would pass), the provider deleted it, or the check could not
+    run. The build is not accepted, the lifecycle records a failed BUILD and
+    no governance validation, and READY stays refused."""
+    monkeypatch.setenv("FORGE_MAX_REPAIR_ATTEMPTS", "0")
+    if case == "refused":
+        _generate_a_refused_contract(monkeypatch)
+    if case == "errored":
+        monkeypatch.setattr(gate_module, "NORNYX_CHECK_BOOTSTRAP", BROKEN_CHECK)
+    contract = {"edited": "edit", "deleted": "delete"}.get(case)
+    run = _walk(monkeypatch, tmp_path, SimulatedProvider(contract=contract),
+                requirements=page_rows(PAGE_ROW_TEXTS))
+    status = run.status
+    assert status["status"] == "finished" and status["accepted"] is False, status
+    assert status["lifecycle"] == {"recorded": True, "stage": "BUILD", "status": "failed"}
+    result = status["result"]
+    failed = [gate for gate in result["gates"] if not gate["passed"]]
+    assert [gate["name"] for gate in failed] == [GOVERNANCE_GATE], failed
+    gate = failed[0]
+    assert says in gate["detail"], gate["detail"]
+    assert gate["provenance"]["outcome"] == outcome
+    assert gate["provenance"]["subject"]["generated_digest"] == result["generated_brd_contract_digest"]
+    if outcome == "not_run":
+        assert gate["command"] == [], "a check that did not run recorded a command"
+    translated = {ref.kind: ref for ref in flow_evidence(result)}
+    assert not (translated.get("governance_validation") and translated["governance_validation"].passed)
+    persisted = run.store().load_experience()
+    assert set(persisted["evidence"]) == {"CONFIRM", "BUILD"}, persisted["evidence"]
+    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
+    assert "failed at BUILD; retry it" in refused["refused"]
+    assert run.store().load_experience() == persisted, "a refused READY moved the lifecycle"
     assert run.reached == [] and run.attempts == []
 
 
@@ -928,7 +1066,8 @@ def test_the_journey_reaches_govern_where_the_native_memory_store_cannot_load(
     flow's initialisation raised, was swallowed, and the kickoff then found
     no methods. The same journey now runs the CrewAI kickoff to GOVERN on the
     configured backend without the store ever being imported; the real
-    provider is not reached, nothing leaves the host, and READY is refused."""
+    provider is not reached, nothing leaves the host, and READY is the
+    human's to mark (A-049)."""
     blocker = _block_native_memory_store(monkeypatch)
     run = _walk(monkeypatch, tmp_path, SimulatedProvider())
     status = run.status
@@ -938,8 +1077,8 @@ def test_the_journey_reaches_govern_where_the_native_memory_store_cannot_load(
     assert blocker.attempts == []
     flow = run.flows[0][0]
     assert flow.memory is None and not (tmp_path / "crewai-storage" / "memory").exists()
-    refused = _call(run.client, "POST", "/api/journey/ready", 409, "mark ready", json={"actor": HUMAN})
-    assert "governance_validation" in refused["refused"]
+    view = run.state("after the build")["journey"]
+    assert (view["stage"], view["actions"], view["blockers"]) == ("GOVERN", ["mark_ready"], [])
     assert run.reached == [] and run.attempts == []
 
 

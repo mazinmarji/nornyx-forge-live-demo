@@ -141,14 +141,29 @@ from .capsule import (
     verify_integrity,
 )
 from .experience import validate_experience, verify_experience
+from .produced_app_manifest import pam_reference, validate_pam
 
 _CAPSULE_FILE = "capsule.json"
 _EXPERIENCE_FILE = "experience.json"
+#: The Produced Application Manifest (A-051): written by Forge alone, through
+#: `save_produced_application`, in the same commit as the accepted build's
+#: transition, and absent from every store whose build produced none.
+_PAM_FILE = "pam.json"
 #: The files that ARE the store's authority, in the order the seal records
 #: them. Nothing else in the directory is authority; anything else present is
-#: unexpected and fails the seal check.
-_AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
-_SEAL_SCHEMA = "nornyx.forge.capsule_seal.v1"
+#: unexpected and fails the seal check. An authority file that does not exist
+#: is sealed as `None`, so a store with no manifest is held to having none.
+_AUTHORITY_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE, _PAM_FILE)
+#: Version 2 seals all three files and records the manifest's `pam/<sha256>`
+#: reference beside its bytes. Every seal this adapter writes is version 2.
+_SEAL_SCHEMA = "nornyx.forge.capsule_seal.v2"
+#: Version 1 sealed exactly the first two files, before the manifest existed.
+#: Such a seal is still READ, as sealing `pam.json` absent: refusing it would
+#: turn every store protected before this change into a tamper finding, and
+#: what it anchors is exactly what it always anchored. The next commit Forge
+#: makes in the store rewrites it as version 2.
+_SEAL_SCHEMA_V1 = "nornyx.forge.capsule_seal.v1"
+_SEAL_V1_FILES = (_CAPSULE_FILE, _EXPERIENCE_FILE)
 #: Committed into the store the first time Forge seals it, naming the seal.
 #: Its presence is what tells a later load that this store REQUIRES a seal:
 #: a protected store with no seal is a refusal, a store with neither is
@@ -993,6 +1008,193 @@ def _write_fresh(path: Path, text: str) -> None:
         raise
 
 
+#: The largest authority file, and the largest seal record (which holds all
+#: three), that a read accepts. Far above anything Forge writes; a bound, so an
+#: oversized file is a finding rather than an unbounded read.
+_AUTHORITY_READ_LIMIT = 16 * 1024 * 1024
+_SEAL_READ_LIMIT = 4 * _AUTHORITY_READ_LIMIT
+
+
+def _authority_text(path: Path, limit: int) -> tuple[str | None, str | None]:
+    """The text of the authority file (or seal record) at `path`, read the way
+    every reader in this module reads one, failing closed (Codex P1 4362912628).
+
+    Returns `(text, None)`; `(None, None)` when nothing is at the name; or
+    `(None, problem)`. Never raises for what is on disk: a directory, a link or
+    another non-regular entry where the file belongs, a file over `limit`, a
+    file that vanishes or is replaced between the look and the read, and bytes
+    that are not UTF-8 are each a PROBLEM the caller reports through its own
+    refusal. Before this, `read_text` raised `UnicodeDecodeError`,
+    `IsADirectoryError` or `FileNotFoundError` straight out of the seal check
+    -- for `capsule.json` and `experience.json` as much as for `pam.json`.
+
+    One descriptor, judged by itself (the `read_held` discipline): `lstat`, an
+    open that does not follow a link where the platform can refuse one, and
+    `fstat` must be the same regular file. The text is decoded strictly and
+    then given universal newlines, which is exactly what `read_text` returned,
+    so every comparison the module already made keeps its meaning.
+    """
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"cannot be inspected ({type(exc).__name__})"
+    if not stat.S_ISREG(status.st_mode) or (
+            getattr(status, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+        return None, "is not a regular file"
+    if status.st_size > limit:
+        return None, f"is larger than {limit} bytes"
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_BINARY", 0))
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        return None, "vanished while it was read"
+    except OSError as exc:
+        return None, f"cannot be opened ({type(exc).__name__})"
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (
+                (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)):
+            return None, "changed while it was read"
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                return None, f"is larger than {limit} bytes"
+    except OSError as exc:
+        return None, f"cannot be read ({type(exc).__name__})"
+    finally:
+        os.close(descriptor)
+    try:
+        text = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "is not UTF-8 text"
+    return text.replace("\r\n", "\n").replace("\r", "\n"), None
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object whose keys are unique. A repeated key is refused rather
+    than resolved, because a parser that keeps the last value and one that
+    keeps the first would read two different documents from the same bytes."""
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("a key is repeated")
+    return dict(pairs)
+
+
+def _json_document(path: Path, limit: int | None = None) -> tuple[Any, str | None]:
+    """`_authority_text`, parsed as one JSON value with unique keys: `(value,
+    None)` or `(None, problem)`. Absence is a problem here; the callers that
+    allow it ask `_authority_text` themselves. The bound defaults to the
+    authority bound as it stands when called."""
+    text, problem = _authority_text(path, _AUTHORITY_READ_LIMIT if limit is None else limit)
+    if problem is not None:
+        return None, problem
+    if text is None:
+        return None, "is missing"
+    return _parsed_json(text)
+
+
+def _no_constant(name: str) -> Any:
+    """`NaN`, `Infinity` and `-Infinity` are not JSON, and Forge never writes
+    them: a document carrying one is refused rather than read as a float."""
+    raise ValueError(f"{name} is not a JSON value")
+
+
+def _unencodable(value: Any) -> bool:
+    """Does any string in `value` -- a key or a value, at any depth -- fail to
+    encode as UTF-8? An escaped lone or reversed surrogate (`\\ud800`) parses
+    into exactly such a string, and every later use that encodes it raises
+    (Codex P2 4363826001)."""
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return True
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return False
+
+
+def _parsed_json(text: str, *, strict: bool = False) -> tuple[Any, str | None]:
+    """One JSON value with unique keys -- or the problem. A byte-order mark, a
+    NUL, a truncation, trailing data and an integer too long to convert are
+    all `ValueError` here.
+
+    `strict`, for the seal record Forge alone writes, also refuses `NaN` and
+    `Infinity` and any string, key or value, that cannot be encoded as UTF-8.
+    It is NOT applied to the capsule document or the lifecycle: their values
+    arrive from requests, Forge writes them escaped, and refusing one there
+    would make a store Forge wrote unreadable rather than refuse a forgery.
+    """
+    try:
+        value = json.loads(text, object_pairs_hook=_unique_object,
+                           **({"parse_constant": _no_constant} if strict else {}))
+    except (ValueError, RecursionError) as exc:
+        return None, f"is not one JSON document ({str(exc)[:120]})"
+    if strict and _unencodable(value):
+        return None, "holds text that cannot be encoded as UTF-8"
+    return value, None
+
+
+_FULL_COMMIT = re.compile(r"\A(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
+
+
+def _seal_record_shaped(record: Any) -> bool:
+    """Is `record` exactly a seal this adapter writes, value by value?
+
+    Two schemas, each with one shape. Version 1: exactly `schema`, `store`,
+    `revision` and `files`, the files exactly the first two. Version 2: those
+    and `pam`, the files exactly all three, and `pam` the reference of the
+    sealed manifest bytes (or None with no manifest). In both: the store a
+    non-empty string, the revision a full commit, and each sealed file None
+    or one JSON document with unique keys. The caller has parsed the record
+    strictly, so every string in it -- the sealed texts included -- is
+    encodable, and `pam_reference` and a restoration's writes cannot raise.
+    """
+    if not isinstance(record, dict) or not isinstance(record.get("files"), dict):
+        return False
+    files = record["files"]
+    if record.get("schema") == _SEAL_SCHEMA_V1:
+        if set(record) != {"schema", "store", "revision", "files"} or (
+                set(files) != set(_SEAL_V1_FILES)):
+            return False
+    elif record.get("schema") == _SEAL_SCHEMA:
+        if set(record) != {"schema", "store", "revision", "files", "pam"} or (
+                set(files) != set(_AUTHORITY_FILES)):
+            return False
+    else:
+        return False
+    if not isinstance(record["store"], str) or not record["store"]:
+        return False
+    if not isinstance(record["revision"], str) or not _FULL_COMMIT.match(record["revision"]):
+        return False
+    for text in files.values():
+        if text is None:
+            continue
+        if not isinstance(text, str) or _parsed_json(text)[1] is not None:
+            return False
+    if record["schema"] == _SEAL_SCHEMA:
+        manifest = files[_PAM_FILE]
+        if record["pam"] != (None if manifest is None else pam_reference(manifest)):
+            return False
+    return True
+
+
 def _git_text(raw: bytes) -> str | None:
     """git's bytes as text, or None when they cannot be decoded.
 
@@ -1129,10 +1331,9 @@ class CapsuleStore:
         path = self.root / _CAPSULE_FILE
         if not path.exists():
             raise CapsuleStoreError(f"{self.root} contains no capsule document")
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise CapsuleStoreError(f"capsule document is unreadable: {exc}") from exc
+        document, problem = _json_document(path)
+        if problem is not None:
+            raise CapsuleStoreError(f"capsule document is unreadable: {problem}")
         validate_document(document)      # CapsuleValidationError on breach
         verify_integrity(document)       # CapsuleTamperError on breach
         return document
@@ -1191,10 +1392,9 @@ class CapsuleStore:
         path = self.root / _EXPERIENCE_FILE
         if not path.exists():
             raise CapsuleStoreError(f"{self.root} contains no experience state")
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise CapsuleStoreError(f"experience state is unreadable: {exc}") from exc
+        state, problem = _json_document(path)
+        if problem is not None:
+            raise CapsuleStoreError(f"experience state is unreadable: {problem}")
         validate_experience(state)
         verify_experience(state)
         return state
@@ -1223,6 +1423,80 @@ class CapsuleStore:
         _run_git(self.root, "add", "-A")
         _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
         self.seal()
+        return self.revision()
+
+    def save_produced_application(
+        self, state: Mapping[str, Any], manifest: str, message: str
+    ) -> str:
+        """Persist the accepted build's transition AND its manifest as ONE
+        commit, then hold the seal to the bytes Forge rendered (A-051).
+
+        THE ONLY WRITER OF `pam.json`. The development flow never writes it,
+        no route takes it from a request, and the provider's workspace copy
+        of the store is never read for it: the caller renders the manifest in
+        Forge's own process and hands the text here. Both are validated at the
+        door, as `save_experience` validates its state.
+
+        ONE COMMIT, so the store never holds an accepted transition without
+        its manifest or a manifest without its transition.
+
+        THE WRITE CHECK, after sealing. `seal` records the bytes it finds on
+        disk, so a process left running in the workspace that replaced either
+        file between the write and the seal would have its own bytes sealed as
+        Forge's. Comparing what was sealed with what was rendered closes that
+        window for these two files: a difference raises `CapsuleSealError`
+        carrying the seal THIS commit followed, so the caller's restoration
+        removes the commit and the manifest with it. It does not resist a
+        same-user process, which can rewrite the seal too (A-029).
+
+        A store with no seal directory is refused: a manifest is sealed or it
+        is not written.
+        """
+        if not isinstance(message, str) or not message.strip() or len(message) > 200:
+            raise CapsuleStoreError("a save needs a one-line reason under 200 chars")
+        validate_experience(state)
+        verify_experience(state)
+        validate_pam(manifest)
+        if self.seal_dir is None:
+            raise CapsuleStoreError(
+                "a produced-application manifest is written only into a sealed store")
+        if not (self.root / _MARKER_FILE).exists():
+            raise CapsuleStoreError(
+                f"{self.root} is not a capsule store this adapter initialized"
+            )
+        before = self.sealed()
+        if before is None:
+            raise CapsuleStoreError(
+                "a produced-application manifest is written only into a store that "
+                "already carries Forge's seal")
+        rendered = {_EXPERIENCE_FILE: canonical_json(state) + "\n", _PAM_FILE: manifest}
+        self._write_experience(state)
+        _write_fresh(self.root / _PAM_FILE, manifest)
+        _run_git(self.root, "add", "-A")
+        status = _run_git(self.root, "status", "--porcelain")
+        if not status.stdout.strip():
+            raise CapsuleStoreError(
+                "save_produced_application was asked to persist a state identical to "
+                "the current revision; a no-op commit would fabricate history"
+            )
+        self._mark_sealed()
+        _run_git(self.root, "add", "-A")
+        _run_git(self.root, "commit", "--quiet", "-m", f"experience: {message.strip()}")
+        try:
+            sealed = self.seal()
+        except CapsuleStoreError as exc:
+            # What a lingering writer left could not even be sealed: the same
+            # finding as bytes sealed in place of the rendered ones, restorable
+            # to the seal this commit followed.
+            raise CapsuleSealError([str(exc)], before) from exc
+        if sealed is None:  # pragma: no cover - seal_dir is set, checked above
+            raise CapsuleStoreError("the store has no seal directory")
+        problems = [
+            f"the sealed {name} is not the one Forge rendered"
+            for name, text in rendered.items() if sealed.files.get(name) != text
+        ]
+        if problems:
+            raise CapsuleSealError(problems, before)
         return self.revision()
 
     # -- the seal ------------------------------------------------------------
@@ -1446,11 +1720,20 @@ class CapsuleStore:
             return
 
     def snapshot(self) -> AuthoritySnapshot:
-        """The authority as it stands on disk right now: HEAD and file bytes."""
+        """The authority as it stands on disk right now: HEAD and file bytes.
+
+        A file that cannot be read as an authority file is refused as the
+        store's error rather than raised as whatever the read hit: a seal is
+        never taken of bytes it cannot represent, and the newest commit then
+        stands unsealed, which the next load reads as a breach to restore."""
         files: dict[str, str | None] = {}
         for name in _AUTHORITY_FILES:
-            path = self.root / name
-            files[name] = path.read_text(encoding="utf-8") if path.exists() else None
+            text, problem = _authority_text(self.root / name, _AUTHORITY_READ_LIMIT)
+            if problem is not None:
+                raise CapsuleStoreError(
+                    f"{name} {problem}, so the store's authority cannot be sealed; the "
+                    "newest commit stands unsealed and will read as a breach until resealed")
+            files[name] = text
         return AuthoritySnapshot(revision=self.revision(), files=files)
 
     def seal(self) -> AuthoritySnapshot | None:
@@ -1469,7 +1752,9 @@ class CapsuleStore:
         snapshot = self.snapshot()
         if path is None:
             return None
-        record = {"schema": _SEAL_SCHEMA, "store": str(self.root.resolve()), **snapshot.as_dict()}
+        manifest = snapshot.files.get(_PAM_FILE)
+        record = {"schema": _SEAL_SCHEMA, "store": str(self.root.resolve()), **snapshot.as_dict(),
+                  "pam": None if manifest is None else pam_reference(manifest)}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # Written whole, then moved into place: a seal is never half a seal.
@@ -1489,31 +1774,51 @@ class CapsuleStore:
         """Forge's seal for this store, or None when no seal was ever written
         (a store from before sealing existed, or a domain-test store)."""
         path = self.seal_path()
-        if path is None or not path.exists():
+        if path is None:
             return None
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        text, problem = _authority_text(path, _SEAL_READ_LIMIT)
+        if text is None and problem is None:
+            return None
+        record, problem = (None, problem) if text is None else _parsed_json(text, strict=True)
+        if problem is not None:
             raise CapsuleSealUnreadable(
-                f"the authority seal at {path} is unreadable: {exc}; the store cannot be "
-                "held to its anchor"
-            ) from exc
-        if (
-            not isinstance(record, dict)
-            or record.get("schema") != _SEAL_SCHEMA
-            or not isinstance(record.get("revision"), str)
-            or not isinstance(record.get("files"), dict)
-            or set(record["files"]) != set(_AUTHORITY_FILES)
-        ):
+                f"the authority seal at {path} is unreadable: it {problem}; the store "
+                "cannot be held to its anchor"
+            )
+        # TWO SCHEMAS ARE READ AND EACH HAS EXACTLY ONE SHAPE. A version-1
+        # seal with exactly the two files it ever sealed reads as sealing the
+        # manifest ABSENT -- the state such a store is in -- and a version-1
+        # seal naming any other file set is not one this adapter wrote. A
+        # version-2 seal names all three files and a `pam` reference that must
+        # be the digest of the manifest bytes it seals, so a seal whose two
+        # records of the manifest disagree is damaged, not trusted for either.
+        # That agreement is a consistency check on the seal file; the seal's
+        # trust is still Forge-owned persistence and nothing more (A-022).
+        # EVERY VALUE IS CHECKED BEFORE IT IS USED (Codex P2 4363826001). The
+        # parse above already refused a string that cannot be encoded, so
+        # `pam_reference` and every later write of these texts can encode
+        # them; here each value must also be of its one kind: the revision a
+        # full commit, each sealed file absent or one JSON document. Anything
+        # this misses that still raises a type or encoding error is caught
+        # below and refused the same way, never let out of the seal check.
+        try:
+            shaped = _seal_record_shaped(record)
+        except (TypeError, ValueError, UnicodeError):
+            shaped = False
+        if not shaped:
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} is not a seal this adapter wrote"
             )
+        files = dict(record["files"])
+        if record["schema"] == _SEAL_SCHEMA_V1:
+            files[_PAM_FILE] = None
         if record.get("store") != str(self.root.resolve()):
             raise CapsuleSealUnreadable(
                 f"the authority seal at {path} names another store "
                 f"({str(record.get('store'))[:80]}); it does not anchor this one"
             )
-        return AuthoritySnapshot(revision=record["revision"], files=dict(record["files"]))
+        return AuthoritySnapshot(revision=record["revision"],
+                                 files={name: files[name] for name in _AUTHORITY_FILES})
 
     def seal_problems(self, snapshot: AuthoritySnapshot) -> list[str]:
         """Every way the store on disk differs from the snapshot: the revision,
@@ -1566,16 +1871,19 @@ class CapsuleStore:
         if not marker.exists():
             problems.append("the seal marker is missing")
         else:
-            try:
-                named = json.loads(marker.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                named = None
+            named, _unreadable = _json_document(marker)
             if not isinstance(named, dict) or named.get("seal") != self.seal_ident():
                 problems.append("the seal marker does not name this store's seal")
+        # EVERY READ HERE IS A FINDING OR A MATCH, NEVER AN EXCEPTION (Codex P1
+        # 4362912628): bytes that are not UTF-8, a directory or a link where
+        # the file belongs, an oversized file, a file that vanishes between
+        # the look and the read -- each is a problem naming the file, so the
+        # caller takes its ordinary refuse-and-restore path.
         for name, sealed_text in snapshot.files.items():
-            path = self.root / name
-            current = path.read_text(encoding="utf-8") if path.exists() else None
-            if current != sealed_text:
+            current, problem = _authority_text(self.root / name, _AUTHORITY_READ_LIMIT)
+            if problem is not None:
+                problems.append(f"{name} {problem}")
+            elif current != sealed_text:
                 problems.append(f"{name} differs from the sealed bytes")
         return problems
 
@@ -1725,6 +2033,18 @@ class CapsuleStore:
             absent    experience.json gone   REFUSED             RETURNED
             absent    neither gone           RETURNED 'READY'    RETURNED
 
+        THE MANIFEST IS THE THIRD AUTHORITY FILE AND IS NEUTRALISED WITH THE
+        OTHER TWO, through `_AUTHORITY_FILES`, without a second edit here. Its
+        own route cannot fall open the same way, because the handoff gate
+        reads it only from a store that HAS a seal -- `sealed()` None is a
+        refusal there, never a legacy read -- so with the marker and the seal
+        both gone a readable `pam.json` licenses nothing:
+
+            marker    seal     pam.json     handoff gate
+            absent    gone     readable     REFUSED (no seal to hold it to)
+            present   gone     readable     REFUSED (CapsuleSealMissing)
+            present   sealed   readable     checked against the seal
+
         REMOVED, NOT TRUNCATED. Truncation follows what it finds: measured, a
         hardlink planted at `capsule.json` and truncated left a file OUTSIDE
         the store holding `''` with its link count still 2 -- the same write
@@ -1746,7 +2066,8 @@ class CapsuleStore:
         sentences denied. "If the neutralisation itself raises, it raises
         BEFORE anything else has been touched" is FALSE the moment the SECOND
         removal is the one that fails: `_AUTHORITY_FILES` is ordered
-        `(capsule.json, experience.json)`, so `capsule.json` is already gone.
+        `(capsule.json, experience.json, pam.json)`, so `capsule.json` is
+        already gone.
         Measured through the shipped `restore()` with `.git` destroyed, the
         marker deleted and one `attrib +R experience.json` -- no crash, no
         patching, no privilege:
