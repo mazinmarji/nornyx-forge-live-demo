@@ -490,9 +490,14 @@ jobs:
       # console and system directory through kernel32. Transport only. Its
       # other tests drive the same code with an injected runner on every
       # platform, so nothing in it skips on this host.
-      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey and provider-gate tests, with no skips
+      # tests/test_capability_guard.py joins for A-053: the test executor's
+      # network guard is an audit hook, and which socket calls a platform
+      # routes through which audit events is a platform property, so the
+      # refusal and its count are measured here as well as on Linux. It
+      # collects the same tests on every platform and skips none.
+      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate and capability-guard tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py tests/test_capability_guard.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -503,14 +508,14 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 357:
-              print("the windows job collected fewer than 357 tests. Its nine modules "
-                    "carry 363 here (7/14/15/19/23/54/61/73/97), so this floor is 363 - 7 + 1, "
+          if len(cases) < 669:
+              print("the windows job collected fewer than 669 tests. Its ten modules "
+                    "carry 675 here (7/14/15/19/23/54/61/73/97/312), so this floor is 675 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these nine -- the five smallest "
-                    "carry 78 -- so four whole modules could vanish beneath "
+                    "floor of 60 is clear of any FIVE of these ten -- the five smallest "
+                    "carry 78 -- so five whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "
                     "the modules this command names and holds the floor, and this "

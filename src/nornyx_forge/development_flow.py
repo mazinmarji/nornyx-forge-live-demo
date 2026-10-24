@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from .claude_worker import ClaudeCodeWorker
-from .contract_generator import generate_brd_contract, render_brd_contract
+from .contract_generator import (
+    generate_brd_contract,
+    generate_runtime_contract,
+    render_brd_contract,
+    render_runtime_contract,
+)
 from .evidence import EvidenceLedger
 from .gates import default_gates, trusted_contract_check, trusted_greenfield_gates
 from .governed_subject import RuntimeAuthorityConfig
@@ -17,7 +22,7 @@ from .providers import ProviderRoutedWorker, get_provider
 from .repo_qualifier import qualify_local, qualify_remote
 from .repo_scout import scout
 from .requirements import parse_brd, profile_from_brd, write_requirements_artifacts
-from .util import write_json
+from .util import digest, write_json
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
@@ -285,9 +290,20 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
         contract_digest = "sha256:" + hashlib.sha256(
             render_brd_contract(model).encode("utf-8")
         ).hexdigest()
+        # The runtime operation contract (A-053). The shipped build declares
+        # no operation, so this is the empty closed table: every operation a
+        # produced application is asked to perform is refused. Its digest is
+        # computed from the renderer's text, not read back from the path,
+        # which a process left running from an earlier build could replace.
+        runtime_contract = generate_runtime_contract(self.root, model)
+        runtime_contract_digest = digest(render_runtime_contract(model).encode("utf-8"))
         self.data["requirements"] = [item.id for item in model.requirements]
         self.data["generated_brd_contract"] = str(generated_contract.relative_to(self.root))
         self.data["generated_brd_contract_digest"] = contract_digest
+        self.data["generated_runtime_contract"] = runtime_contract.relative_to(
+            self.root
+        ).as_posix()
+        self.data["generated_runtime_contract_digest"] = runtime_contract_digest
         self.data["requirements_model"] = model.to_dict()
         self.data["requirement_profile"] = profile_from_brd(model).__dict__
         write_json(
@@ -326,6 +342,8 @@ class DevelopmentFlow(Flow):  # type: ignore[misc]
             source_digest=model.source_digest,
             generated_contract=str(generated_contract.relative_to(self.root)),
             generated_contract_digest=contract_digest,
+            generated_runtime_contract=self.data["generated_runtime_contract"],
+            generated_runtime_contract_digest=runtime_contract_digest,
         )
         if not model.requirements:
             self.pre_gate_failures.append(
