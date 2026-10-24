@@ -459,13 +459,25 @@ def test_an_accepted_build_of_the_reference_application_is_issued_a_sealed_manif
                                       "experience.json", "pam.json"]
     assert [path for path in project.rglob("pam.json")] == [store.root / "pam.json"]
 
-    # READY is unchanged: the contract's requirement, and its refusal here.
+    # READY is unchanged by the manifest: the contract's requirement, and the
+    # manifest is not READY evidence. Since A-049 the greenfield profile runs
+    # the real `nornyx check` on the contract this build generated, so the
+    # build records a governance validation from that gate and the human may
+    # mark READY. Marking it moves nothing the handoff gate reads: the sealed
+    # manifest is the one issued at GOVERN, and the gate below, asked after
+    # READY, still never offers this simulated build.
     assert experience.STAGE_EVIDENCE["READY"] == ("gate_results", "governance_validation")
     assert "produced_app" not in experience.EVIDENCE_KINDS
+    governance = [gate for gate in status["result"]["gates"]
+                  if gate["name"] == "greenfield:nornyx-contract-check"]
+    assert [gate["passed"] for gate in governance] == [True], governance
     ready = run.client.post("/api/journey/ready", json={"actor": {"kind": "human", "ident": "casey"}})
-    assert ready.status_code == 409, ready.text
+    assert ready.status_code == 200, ready.text
+    assert ready.json() == {"stage": "READY", "status": "active"}
+    assert (store.root / "pam.json").read_text(encoding="utf-8") == text
+    assert store.sealed().files["pam.json"] == text
 
-    # The handoff gate: never offered for this simulated build.
+    # The handoff gate: never offered for this simulated build, READY or not.
     production = handoff.open_application_readiness(store, project, PLATFORM)
     assert production.offered is False and production.manifest == pam.pam_reference(text)
     assert any("was not eligible when the manifest was issued" in r for r in production.reasons)

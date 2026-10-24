@@ -37,6 +37,30 @@
   not a runnable Forge-generated application, and no produced code is
   executed.
 
+- The greenfield acceptance profile runs the real `nornyx check` on the
+  contract each build generated, and only that check's pass is a governance
+  validation (A-049). READY needs one, and the profile ran no Nornyx gate, so
+  every greenfield build stopped at GOVERN with READY refused (A-032). The
+  flow now records the SHA-256 of `.nornyx/generated/brd_contract.nyx` when it
+  generates it; after the verifier, the gate `greenfield:nornyx-contract-check`
+  checks only bytes that still have that digest, copied to a private snapshot
+  and checked by the installed CLI's entry point under the trusted
+  interpreter with `-I`, and reads the verdict from Nornyx's own output, not
+  the exit status alone. A contract Nornyx refuses, one edited or deleted
+  after generation, and a check that cannot run each fail the build at BUILD
+  with no governance validation recorded, and READY stays refused. The
+  simulated journey -- intent only, four requirements, and eight page rows --
+  now reaches READY, marked by the human. The profile's definition gains a
+  `governance` entry (version 3 -> 4). Unchanged: the verifier's checks, the
+  `gate_results` rule, the requirement-identity rule, the action boundary and
+  provider eligibility. READY there is a lifecycle record over a simulated
+  provider's fixture, not a runnable application. From the first review:
+  the contract, its snapshot, the verifier's snapshot and the verifier's
+  subject reader are each read through one descriptor judged against what
+  was examined (no link followed and no pipe waited on, where POSIX allows;
+  identity and size on Windows), the flow's digest is computed from the
+  rendered text, and the translator accepts the check only from this
+  interpreter, under its own gate name, over a snapshot of its own shape.
 - A basic user enters requirements as rows on the onboarding page, and an
   entry that would be refused later is refused when it is proposed, in plain
   language (A-048). The page had one textarea; a need written over several
