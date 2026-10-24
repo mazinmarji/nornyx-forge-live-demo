@@ -977,7 +977,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # provenance records in any other shape.
     "tests/test_gate_release_model.py": 106,
     # A-055's staging and import, on disk: 90 collected at introduction, floor
-    # at band(90) = 81. The passing import and its record; every tampered
+    # at band(90) = 81. 90 -> 97 for the first review (Codex P2 4368336127 and
+    # P2 4368336129), floor band(97) = 88: a valid release whose record is over
+    # a subject file's bound imported and read back, every Forge-written file
+    # read under its own kind's bound, a release over the aggregate refused
+    # before any item is read, an item larger than its row refused unread,
+    # the running total stopping at the bound, and the exact bound and the
+    # row count as controls. The passing import and its record; every tampered
     # release and every untrusted content refused with nothing written; the
     # cited manifest, the cycle's name, a fresh destination; a release changed
     # while read; interruption, crash and tamper after the intent; no caller,
@@ -987,7 +993,7 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # control; and the gated manifest issued, sealed, refused and never
     # offered. Six are Windows's own -- junctions and named data streams --
     # declared skips here and run, with no skip, in the windows-runtime job.
-    "tests/test_gate_handoff.py": 81,
+    "tests/test_gate_handoff.py": 88,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2477,24 +2483,24 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 #
 # A-055 ADDS TWO MODULES AND MOVES TWO, measured from a fresh collection:
 # tests/test_gate_release_model.py collects 117 (floor band(117) = 106) and
-# tests/test_gate_handoff.py collects 90 (floor band(90) = 81);
+# tests/test_gate_handoff.py collects 97 (floor band(97) = 88);
 # tests/test_produced_app_manifest.py 109 -> 121 (floor band(121) = 109) and
 # tests/test_produced_app_handoff.py 141 -> 144 (floor band(144) = 130). No
-# floor fell. 6916 collect across 145 modules; the module-floor sum rises by
-# 200 to 6293 and the aggregate follows to 6301, keeping the same 8 above it;
-# band(n) 6025 -> 6225, the working room below what collects 593 -> 615, and
+# floor fell. 6923 collect across 145 modules; the module-floor sum rises by
+# 207 to 6300 and the aggregate follows to 6308, keeping the same 8 above it;
+# band(n) 6025 -> 6231, the working room below what collects 593 -> 615, and
 # the slack the bands grant 601 -> 623. SIX SKIPS ARE ADDED, declared by
 # identity above: the new module's junction and named-stream tests. The new
 # module tests/test_gate_handoff.py joins the windows-runtime job, whose floor
-# moves 669 -> 759: its eleven modules collect 7/14/15/19/23/54/61/73/90/97/312
-# (sum 765, floor 765 - 7 + 1). The rows below are these.
+# moves 669 -> 766: its eleven modules collect 7/14/15/19/23/54/61/73/97/97/312
+# (sum 772, floor 772 - 7 + 1). The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6916   (145 modules)
-#     sum of the module floors    6293
-#     band(6916) = ceil(0.9*n)    6225
-#     MINIMUM_COLLECTED           6301
+#     collected across tests/     6923   (145 modules)
+#     sum of the module floors    6300
+#     band(6923) = ceil(0.9*n)    6231
+#     MINIMUM_COLLECTED           6308
 #     above the module sum          8
 #     below what collects         615
 #
@@ -2987,7 +2993,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6301
+MINIMUM_COLLECTED = 6308
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

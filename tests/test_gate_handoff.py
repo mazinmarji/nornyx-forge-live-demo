@@ -386,6 +386,180 @@ def test_a_release_that_changes_while_it_is_read_is_refused(
 
 
 # ---------------------------------------------------------------------------
+# Bounds: each file kind read under its own limit, and every aggregate bound
+# enforced before the work it bounds (Codex P2 4368336127, P2 4368336129)
+# ---------------------------------------------------------------------------
+
+def _many_small_files(count: int, size: int, stem: str = "f") -> dict[str, bytes]:
+    return {f"data/{stem}{n:04d}.txt": (b"%04d" % n) + b"x" * (size - 4) for n in range(count)}
+
+
+def test_a_large_valid_release_whose_record_exceeds_a_subject_files_bound_is_imported(
+        tmp_path: Path, verify_root: Path):
+    """Codex P2 4368336127: 1,951 files of 70 bytes (136,570 bytes) give an
+    import record over 500,000 bytes. The record is Forge's own metadata and
+    is read under its own bound, so the import completes and reads back."""
+    files = _many_small_files(1951, 70, stem="a_module_named_for_what_it_does_in_full_")
+    assert sum(len(data) for data in files.values()) == 136_570
+    release, digest = build_release(tmp_path, files)
+    outcome = _import(tmp_path, release, digest)
+    assert outcome.state == "COMPLETE", outcome.reasons
+    assert len(outcome.record.encode("utf-8")) > handoff.MAX_FILE_BYTES
+    again = handoff.load_import(verify_root / CYCLE)
+    assert again.state == "COMPLETE", again.reasons
+    assert len(again.workspace_files) == 1952  # the files and the completeness list
+
+
+def test_every_forge_written_file_is_read_under_its_own_kinds_bound(
+        tmp_path: Path, verify_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """The class: no read of a Forge-written record, intent or manifest uses
+    the subject file's 500,000-byte default, and no read of an imported or
+    staged file is allowed more than the size Forge recorded for it."""
+    release, digest = build_release(tmp_path)
+    assert _import(tmp_path, release, digest).state == "COMPLETE"
+    real = handoff.read_held
+    limits: dict[str, int] = {}
+
+    def recording(path, limit=None):
+        assert limit is not None, f"{path} was read under the default bound"
+        limits[str(Path(path).resolve())] = limit
+        return real(path, limit=limit)
+
+    monkeypatch.setattr(handoff, "read_held", recording)
+    loaded = handoff.load_import(verify_root / CYCLE)
+    assert loaded.state == "COMPLETE", loaded.reasons
+    destination = (verify_root / CYCLE).resolve()
+    assert limits[str(destination / "import-record.json")] == handoff.RECORD_READ_LIMIT
+    assert limits[str(destination / "import-intent.json")] == handoff.RECORD_READ_LIMIT
+    for path, data in loaded.workspace_files.items():
+        assert limits[str(destination / "workspace" / path)] == len(data), path
+    workspace, zone, records = _stage_dirs(tmp_path / "s")
+    limits.clear()
+    staged = handoff.stage_inputs(workspace, zone, records, role="codex")
+    assert staged.state == "WRITTEN", staged.reasons
+    manifest_path = (records / f"{staged.stage}.manifest.json").resolve()
+    assert limits[str(manifest_path)] == len(staged.manifest.encode("utf-8"))
+    limits.clear()
+    assert handoff.verify_stage(zone, staged.manifest) == []
+    document = model.validate_stage_manifest(staged.manifest)
+    for path, entry in document["files"].items():
+        assert limits[str((zone / staged.stage / path).resolve())] == entry["size"], path
+
+
+def _counting_item_reads(monkeypatch: pytest.MonkeyPatch, release: Path) -> list[int]:
+    """Bytes returned by every read of a released item (not the manifest or
+    the release record), in order."""
+    real = handoff.read_held
+    returned: list[int] = []
+
+    def counting(path, limit=None):
+        data, reason = real(path, limit=limit)
+        if Path(path).parent == release and Path(path).name.startswith("i"):
+            returned.append(0 if data is None else len(data))
+        return data, reason
+
+    monkeypatch.setattr(handoff, "read_held", counting)
+    return returned
+
+
+def _sized_release_files(total: int) -> dict[str, bytes]:
+    """Workspace files whose released items -- with the completeness list and
+    the gate's stdout item that `build_release` adds -- total `total` bytes."""
+    stdout = len(b"provider said hello\n")
+    count = 21
+    names = [f"data/f{n:02d}.bin" for n in range(count)]
+    listing = len("".join(f"{name}\n" for name in sorted(names)).encode())
+    remaining = total - stdout - listing
+    sizes = [handoff.MAX_FILE_BYTES] * (remaining // handoff.MAX_FILE_BYTES)
+    if remaining % handoff.MAX_FILE_BYTES:
+        sizes.append(remaining % handoff.MAX_FILE_BYTES)
+    assert len(sizes) <= count
+    files = {name: b"z" * size for name, size in zip(names, sizes)}
+    for name in names[len(sizes):]:
+        files[name] = b""
+    return files
+
+
+def test_a_release_over_the_aggregate_bound_is_refused_before_any_item_is_read(
+        tmp_path: Path, verify_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """Codex P2 4368336129: the aggregate bound was checked only after every
+    item had been read, scanned and kept. The manifest's declared sizes are
+    summed first, so an over-bound release reads no item at all."""
+    release, digest = build_release(tmp_path, _sized_release_files(handoff.MAX_TOTAL_BYTES + 1))
+    returned = _counting_item_reads(monkeypatch, release)
+    outcome = _import(tmp_path, release, digest)
+    assert outcome.state == "REFUSED"
+    assert any("byte bound" in reason for reason in outcome.reasons), outcome.reasons
+    assert returned == [], "an item was read although the declared sizes exceed the bound"
+    assert os.listdir(verify_root) == []
+
+
+def test_an_item_larger_than_its_declared_size_is_refused_unread(
+        tmp_path: Path, verify_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """A manifest that understates its sizes passes the declared sum, so each
+    item is read under its OWN declared size: an item larger than its row says
+    is refused without a byte of it being read or kept, and the release's
+    10.5 MB is never read."""
+    files = _sized_release_files(handoff.MAX_TOTAL_BYTES + handoff.MAX_FILE_BYTES)
+    release, digest = build_release(tmp_path, files)
+    manifest = (release / "hold-manifest.jsonl").read_bytes().decode()
+    rows = [json.loads(line) for line in manifest.splitlines()]
+    for row in rows:
+        row["size"] = 1  # understated: each row now lies about its size
+    lying = "".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows).encode()
+    (release / "hold-manifest.jsonl").write_bytes(lying)
+    returned = _counting_item_reads(monkeypatch, release)
+    outcome = _import(tmp_path, release, _sha(lying))
+    assert outcome.state == "REFUSED"
+    assert any("larger than 1 bytes" in reason for reason in outcome.reasons), outcome.reasons
+    assert sum(returned) == 0, "bytes of an item larger than its declared size were read"
+    assert os.listdir(verify_root) == []
+
+
+def test_the_running_total_stops_reading_at_the_bound(
+        tmp_path: Path, verify_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """The second bound, for an item that grows between its listing and its
+    read: the running total of bytes actually read refuses as soon as it
+    passes the bound, and nothing after that item is read."""
+    release, digest = build_release(tmp_path, _sized_release_files(handoff.MAX_TOTAL_BYTES))
+    returned = _counting_item_reads(monkeypatch, release)
+    real = handoff.read_held
+
+    def growing(path, limit=None):
+        data, reason = real(path, limit=limit)
+        if data is not None and len(returned) == 3:
+            return data + b"g" * handoff.MAX_TOTAL_BYTES, reason  # as if it grew
+        return data, reason
+
+    monkeypatch.setattr(handoff, "read_held", growing)
+    outcome = _import(tmp_path, release, digest)
+    assert outcome.state == "REFUSED"
+    assert "nothing more is read" in outcome.reasons[0], outcome.reasons
+    assert len(returned) == 3, "an item after the one that passed the bound was read"
+    assert os.listdir(verify_root) == []
+
+
+def test_a_release_at_exactly_the_aggregate_bound_is_imported(tmp_path: Path,
+                                                              verify_root: Path):
+    """The negative control: exactly MAX_TOTAL_BYTES released is within it."""
+    release, digest = build_release(tmp_path, _sized_release_files(handoff.MAX_TOTAL_BYTES))
+    released = sum(path.stat().st_size for path in release.iterdir()
+                   if path.name.startswith("i"))
+    assert released == handoff.MAX_TOTAL_BYTES
+    outcome = _import(tmp_path, release, digest)
+    assert outcome.state == "COMPLETE", outcome.reasons
+
+
+def test_a_manifest_over_the_item_count_is_refused_before_any_item_is_read(
+        tmp_path: Path, verify_root: Path, monkeypatch: pytest.MonkeyPatch):
+    release, digest = build_release(tmp_path, _many_small_files(model.ITEM_LIMIT + 1, 8))
+    returned = _counting_item_reads(monkeypatch, release)
+    outcome = _import(tmp_path, release, digest)
+    assert outcome.state == "REFUSED" and "more than" in " ".join(outcome.reasons)
+    assert returned == []
+
+
+# ---------------------------------------------------------------------------
 # Interruption, crash and tamper after the intent
 # ---------------------------------------------------------------------------
 

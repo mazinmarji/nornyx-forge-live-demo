@@ -515,9 +515,9 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 759:
-              print("the windows job collected fewer than 759 tests. Its eleven modules "
-                    "carry 765 here (7/14/15/19/23/54/61/73/90/97/312), so this floor is 765 - 7 + 1, "
+          if len(cases) < 766:
+              print("the windows job collected fewer than 766 tests. Its eleven modules "
+                    "carry 772 here (7/14/15/19/23/54/61/73/97/97/312), so this floor is 772 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "

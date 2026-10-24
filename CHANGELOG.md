@@ -18,7 +18,12 @@
   in every import record and gated manifest; its known false positive on
   identifiers such as `task-management-dashboard-v2` refuses the import until
   an approved correction is effective. A destination with an intent and no
-  record is INCOMPLETE and never reused. The trusted verifier gains a
+  record is INCOMPLETE and never reused. Every bound on the release -- the
+  row count, each declared size, their sum, the file count, the names --
+  is enforced from the manifest before any item is read, each item is read
+  under its own declared size with a running total behind it, and Forge's
+  own records are read under the record bound, not a subject file's.
+  The trusted verifier gains a
   static-only mode in which no produced code runs and which is never an
   acceptance. The produced-application manifest moves to version 2: it binds
   the runtime-contract digest for every build and a `gate_provenance` for a

@@ -77,6 +77,7 @@ from .gate_release_model import (
     CYCLE_ID,
     IMPORT_INTENT_SCHEMA,
     IMPORT_PATTERN,
+    MANIFEST_LIMIT,
     ROLE,
     STAGE_INTENT_SCHEMA,
     STAGE_REJECTION_SCHEMA,
@@ -168,7 +169,13 @@ credential, a key or a token into any file.
 #: verifier never inspects, so nothing unverified enters the verification root.
 RESERVED_DIRECTORIES = frozenset(IGNORED_DIRECTORIES)
 
-_RELEASE_READ_LIMIT = 4_000_000
+#: The bound of a gate release's own metadata -- its manifest and its release
+#: record -- and of every record, intent and manifest Forge writes: the size
+#: the model parses (`gate_release_model.MANIFEST_LIMIT`), not a subject file's
+#: `MAX_FILE_BYTES`, which bounds produced files only. A record of 2000 items
+#: can exceed the subject bound (Codex P2 4368336127), so reading one under it
+#: refused a valid import after it had completed.
+RECORD_READ_LIMIT = MANIFEST_LIMIT
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +343,7 @@ def _readback_problems(root: Path, files: Mapping[str, bytes]) -> list[str]:
     for relative in sorted(set(files) - set(found)):
         problems.append(f"{relative} was written and is not present")
     for relative in sorted(set(files) & set(found)):
-        data, problem = read_held(found[relative], limit=max(len(files[relative]), 1))
+        data, problem = read_held(found[relative], limit=len(files[relative]))
         if data is None:
             problems.append(f"{relative} {problem}")
         elif data != files[relative]:
@@ -447,7 +454,7 @@ def stage_inputs(
     if (zone_status.st_dev, zone_status.st_ino) in _ancestor_identities(records):
         return refuse("the records directory is inside the input zone")
 
-    brd, problem = read_held(workspace / "BRD.md")
+    brd, problem = read_held(workspace / "BRD.md", limit=MAX_FILE_BYTES)
     if brd is None:
         return refuse(f"the workspace's BRD.md {problem}")
     try:
@@ -477,7 +484,7 @@ def stage_inputs(
     except OSError as error:
         return refuse(f"the intent could not be recorded ({error.strerror or error}); "
                       "nothing was written")
-    readback, problem = read_held(intent_path)
+    readback, problem = read_held(intent_path, limit=len(intent.encode("utf-8")))
     if readback != intent.encode("utf-8"):
         return _rejected(records, role, name,
                          [f"the recorded intent did not read back ({problem or 'differs'})"])
@@ -503,7 +510,8 @@ def stage_inputs(
     except (OSError, GateReleaseRefused) as error:
         return _rejected(records, role, name, [f"the stage manifest could not be recorded: "
                                                f"{error}"])
-    readback, problem = read_held(records / f"{name}.manifest.json")
+    readback, problem = read_held(records / f"{name}.manifest.json",
+                                  limit=len(manifest.encode("utf-8")))
     if readback != manifest.encode("utf-8"):
         return _rejected(records, role, name,
                          [f"the stage manifest did not read back ({problem or 'differs'})"])
@@ -555,7 +563,7 @@ def verify_stage(zone: Path, manifest: str) -> list[str]:
     problems += [f"{path} is in the manifest and not in the stage"
                  for path in sorted(set(listed) - set(found))]
     for path in sorted(set(found) & set(listed)):
-        data, reason = read_held(found[path])
+        data, reason = read_held(found[path], limit=listed[path]["size"])
         if data is None:
             problems.append(f"{path} {reason}")
         elif len(data) != listed[path]["size"] or sha256_text(data) != listed[path]["digest"]:
@@ -666,7 +674,7 @@ def import_release(
             return None, f"the released entry {name!r} {reason}"
         return data, ""
 
-    manifest_bytes, reason = read(layout.manifest_name, _RELEASE_READ_LIMIT)
+    manifest_bytes, reason = read(layout.manifest_name, RECORD_READ_LIMIT)
     if manifest_bytes is None:
         return refuse(reason)
     if hashlib.sha256(manifest_bytes).hexdigest() != expected_manifest_sha256:
@@ -684,32 +692,60 @@ def import_release(
 
     record_bytes = None
     if layout.record_name is not None:
-        record_bytes, reason = read(layout.record_name, _RELEASE_READ_LIMIT)
+        record_bytes, reason = read(layout.record_name, RECORD_READ_LIMIT)
         if record_bytes is None:
             return refuse(reason)
 
+    # EVERY BOUND BEFORE THE WORK IT BOUNDS (Codex P2 4368336129). The names,
+    # the declared sizes, their sum, the file count and the collisions are
+    # judged from the manifest alone; no item is read until all of them pass.
     problems = []
-    hits = []
-    workspace: dict[str, bytes] = {}
-    gate_items: dict[str, bytes] = {}
-    entries: list[dict[str, Any]] = []
-    total = 0
+    planned: list[tuple[Any, str | None]] = []
     for row in rows:
         problem = name_problem(row.name, layout, RESERVED_DIRECTORIES)
         if problem:
             problems.append(f"item {row.id}: its name {problem}")
             continue
-        data, reason = read(row.id, MAX_FILE_BYTES)
+        if row.size > MAX_FILE_BYTES:
+            problems.append(f"item {row.id} declares {row.size} bytes, over the "
+                            f"{MAX_FILE_BYTES}-byte bound of one file")
+            continue
+        planned.append((row, workspace_path_of(row.name, layout)))
+    declared = sum(row.size for row in rows)
+    if declared > MAX_TOTAL_BYTES:
+        problems.append(f"the release declares {declared} bytes, over the subject's "
+                        f"{MAX_TOTAL_BYTES}-byte bound")
+    paths = [path for _, path in planned if path is not None]
+    if len(paths) > MAX_FILES:
+        problems.append(f"the release's workspace holds {len(paths)} files, over the "
+                        f"subject's {MAX_FILES}-file bound")
+    problems += collision_problems(paths)
+    if COMPLETENESS_LIST not in paths:
+        problems.append(f"the workspace holds no {COMPLETENESS_LIST}")
+    if problems:
+        return refuse(*problems)
+
+    # Each item is read under its OWN declared size, so a file larger than its
+    # row says is refused unread; the running total is the second bound.
+    hits = []
+    workspace: dict[str, bytes] = {}
+    gate_items: dict[str, bytes] = {}
+    entries: list[dict[str, Any]] = []
+    total = 0
+    for row, path in planned:
+        data, reason = read(row.id, row.size)
         if data is None:
             problems.append(reason)
             continue
         total += len(data)
+        if total > MAX_TOTAL_BYTES:
+            return refuse(f"the release passed the subject's {MAX_TOTAL_BYTES}-byte "
+                          "bound while it was read; nothing more is read", *problems)
         if len(data) != row.size or hashlib.sha256(data).hexdigest() != row.digest:
             problems.append(f"item {row.id} does not have the size and digest its row lists")
             continue
         if credential_hits(data, pattern):
             hits.append(row.id)
-        path = workspace_path_of(row.name, layout)
         if path is None:
             gate_items[row.id] = data
             entries.append({"id": row.id, "name": row.name, "kind": "gate_item",
@@ -718,8 +754,6 @@ def import_release(
             workspace[path] = data
             entries.append({"id": row.id, "name": row.name, "kind": "workspace",
                             "path": path, "size": len(data), "digest": sha256_text(data)})
-    if total > MAX_TOTAL_BYTES or len(workspace) > MAX_FILES:
-        problems.append("the release exceeds the subject's file or byte bound")
     for label, data in (("the release manifest", manifest_bytes),
                         ("the release record", record_bytes)):
         if data is not None and credential_hits(data, pattern):
@@ -728,10 +762,9 @@ def import_release(
         problems.append(f"Forge's credential pattern {pattern.id!r} matches in "
                         f"{len(hits)} released item(s): {', '.join(hits[:20])}; a hit "
                         "refuses the import, whatever its cause")
-    problems += collision_problems(workspace)
     listing = workspace.get(COMPLETENESS_LIST)
     if listing is None:
-        problems.append(f"the workspace holds no {COMPLETENESS_LIST}")
+        problems.append(f"the workspace's {COMPLETENESS_LIST} could not be read")
     else:
         try:
             problems += completeness_problems(parse_completeness_list(listing), workspace)
@@ -812,8 +845,8 @@ def load_import(destination: Path) -> ImportOutcome:
             return refused("INCOMPLETE", "the import's intent is recorded and its record is "
                            "not: the import did not complete, and the destination is unusable")
         return refused("REFUSED", "the destination is not an import")
-    raw, reason = read_held(destination / IMPORT_RECORD, limit=_RELEASE_READ_LIMIT)
-    intent_raw, intent_reason = read_held(destination / IMPORT_INTENT, limit=_RELEASE_READ_LIMIT)
+    raw, reason = read_held(destination / IMPORT_RECORD, limit=RECORD_READ_LIMIT)
+    intent_raw, intent_reason = read_held(destination / IMPORT_INTENT, limit=RECORD_READ_LIMIT)
     if raw is None or intent_raw is None:
         return refused("REFUSED", f"the import record {reason or intent_reason}")
     try:
@@ -827,11 +860,16 @@ def load_import(destination: Path) -> ImportOutcome:
             or intent.get("release_manifest") != document["release_manifest"]
             or intent.get("credential_pattern") != document["credential_pattern"]):
         return refused("REFUSED", "the import record does not agree with its intent")
+    # Each file's digest and the bound it is read under: the record and the
+    # intent under the record bound, every imported file under the size the
+    # record lists for it.
     expected: dict[str, str] = {IMPORT_INTENT: sha256_text(intent_raw),
                                 IMPORT_RECORD: sha256_text(raw)}
+    bounds: dict[str, int] = {IMPORT_INTENT: RECORD_READ_LIMIT, IMPORT_RECORD: RECORD_READ_LIMIT}
     for item in document["items"]:
         where = IMPORT_WORKSPACE if item["kind"] == "workspace" else IMPORT_ITEMS
         expected[f"{where}/{item['path']}"] = item["digest"]
+        bounds[f"{where}/{item['path']}"] = item["size"]
     found, problems = _tree(destination)
     problems += [f"{path} is in the destination and not in its record"
                  for path in sorted(set(found) - set(expected))]
@@ -839,7 +877,7 @@ def load_import(destination: Path) -> ImportOutcome:
                  for path in sorted(set(expected) - set(found))]
     workspace: dict[str, bytes] = {}
     for path in sorted(set(found) & set(expected)):
-        data, reason = read_held(found[path])
+        data, reason = read_held(found[path], limit=bounds[path])
         if data is None:
             problems.append(f"{path} {reason}")
             continue
@@ -1019,6 +1057,7 @@ __all__ = [
     "IMPORT_WORKSPACE",
     "ImportOutcome",
     "PROVIDER_INSTRUCTIONS",
+    "RECORD_READ_LIMIT",
     "RESERVED_DIRECTORIES",
     "StageOutcome",
     "StaticVerification",

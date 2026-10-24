@@ -8328,6 +8328,23 @@ provider build, not an executed application, not an eligibility change.
    destination with an intent and no record is INCOMPLETE, is never read as
    an import (`load_import`), and is never reused; `load_import` re-verifies
    every file, the record and its intent each time it is called.
+   **Every bound is enforced before the work it bounds, and every file is
+   read under its own kind's bound** (Codex P2 4368336129 and P2
+   4368336127). From the manifest alone, before any item is read: every
+   name, each declared size against the 500,000-byte bound of one file,
+   the declared sizes' sum against the 10,000,000-byte bound of the
+   subject, the workspace's file count, collisions and the presence of the
+   completeness list; the rows are counted while the manifest is parsed.
+   Each item is then read under its OWN declared size, so a file larger
+   than its row says is refused without being read, and a running total
+   of the bytes read refuses at once if it passes the subject bound. Before
+   this the aggregate was checked only after every item had been read,
+   scanned and kept. Forge's own records, intents and manifests are read
+   under the record bound (4,000,000 bytes, the size the model parses),
+   never under the subject file's 500,000: an import record of 1,951
+   files was over 500,000 bytes, and the import it described was refused
+   after it completed. Each imported or staged file is read back under the
+   size Forge recorded for it.
 3. **The credential pattern is Forge-owned data, never a caller's choice**
    (founder precaution, 2026-10-24). `gate_release_model.IMPORT_PATTERN` is
    Forge's copy of the gate's current seed pattern, `sk-[A-Za-z0-9_-]{20,}`,
