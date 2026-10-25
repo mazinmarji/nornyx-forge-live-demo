@@ -495,9 +495,16 @@ jobs:
       # routes through which audit events is a platform property, so the
       # refusal and its count are measured here as well as on Linux. It
       # collects the same tests on every platform and skips none.
-      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate and capability-guard tests, with no skips
+      # tests/test_gate_handoff.py joins for A-055: staging and import across
+      # the run-act gate's boundary. NTFS junctions and named data streams are
+      # what its six Windows tests plant -- a junction as a released entry and
+      # as the release directory, a named stream on a released item, on the
+      # release directory, on an imported file and on a staged file -- and
+      # neither exists off Windows. Junctions and streams need no privilege, so
+      # nothing in it skips on this host.
+      - name: Windows runtime, bundle builder, launch, provider, control-plane, simulated-journey, provider-gate, capability-guard and gate-handoff tests, with no skips
         run: |
-          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py tests/test_capability_guard.py -q -rs --junitxml=windows.xml
+          python -m pytest tests/test_windows_host_runtime.py tests/test_windows_runtime.py tests/test_windows_bundle.py tests/test_onboarding_launch.py tests/test_provider_execution.py tests/test_control_plane_authority.py tests/test_standing_obligations_windows.py tests/test_simulated_journey.py tests/test_provider_gate.py tests/test_capability_guard.py tests/test_gate_handoff.py -q -rs --junitxml=windows.xml
           python - <<'PY'
           import sys, xml.etree.ElementTree as ET
           cases = list(ET.parse("windows.xml").getroot().iter("testcase"))
@@ -508,13 +515,13 @@ jobs:
               for name in skipped:
                   print(f"  {name}")
               sys.exit(1)
-          if len(cases) < 669:
-              print("the windows job collected fewer than 669 tests. Its ten modules "
-                    "carry 675 here (7/14/15/19/23/54/61/73/97/312), so this floor is 675 - 7 + 1, "
+          if len(cases) < 766:
+              print("the windows job collected fewer than 766 tests. Its eleven modules "
+                    "carry 772 here (7/14/15/19/23/54/61/73/97/97/312), so this floor is 772 - 7 + 1, "
                     "one above what is left when the SMALLEST module -- 7 tests, "
                     "tests/test_standing_obligations_windows.py -- stops running: below it, at "
                     "least one WHOLE module is no longer running in this job. The old "
-                    "floor of 60 is clear of any FIVE of these ten -- the five smallest "
+                    "floor of 60 is clear of any FIVE of these eleven -- the five smallest "
                     "carry 78 -- so five whole modules could vanish beneath "
                     "it. These numbers are not maintained by hand: "
                     "test_the_windows_job_floor_is_the_arithmetic_it_states collects "

@@ -149,7 +149,8 @@ def _injected(eligible: bool):
 # ---------------------------------------------------------------------------
 
 def _handed_off(base: Path, *, eligible_row: bool = True,
-                cases_suffix: str = "") -> tuple[CapsuleStore, Path, str]:
+                cases_suffix: str = "",
+                provenance: dict | None = None) -> tuple[CapsuleStore, Path, str]:
     """A project holding the reference application and a sealed store whose
     manifest lists it. The manifest is rendered by the domain's own renderer;
     `eligible_row` is the row it records, which only a unit test may set, and
@@ -179,6 +180,7 @@ def _handed_off(base: Path, *, eligible_row: bool = True,
         verifier_digest="sha256:" + "e" * 64,
         gate_profile={"id": gates.GREENFIELD_PROFILE_ID, "digest": gates.GREENFIELD_PROFILE_DIGEST},
         forge_version="0.1.0", forge_revision="git:" + "f" * 40,
+        runtime_contract_digest="sha256:" + "9" * 64, gate_provenance=provenance,
     )
     state = fail(store.load_experience(), SYSTEM_ACTOR, "a transition to commit beside", AT)
     store.save_produced_application(state, text, "reached GOVERN")
@@ -1109,3 +1111,57 @@ def test_forge_alone_writes_the_manifest():
     assert store.count("_write_fresh(self.root / _PAM_FILE") == 1
     assert "eligibility=governed_build_eligibility" in (
         ROOT / "src" / "nornyx_forge" / "produced_app_handoff.py").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# A-055: the runtime contract bound into the sealed manifest, and a gated
+# build never offered
+# ---------------------------------------------------------------------------
+
+def test_issuance_binds_the_runtime_contract_rendered_from_the_accepted_brd(tmp_path: Path):
+    from nornyx_forge.contract_generator import render_runtime_contract
+
+    inputs = _issue_inputs(tmp_path)
+    issued = handoff.issue_manifest(**inputs)
+    assert issued.findings == () and issued.text is not None
+    manifest = pam.validate_pam(issued.text)
+    model = parse_brd(inputs["project_root"] / "BRD.md")
+    assert manifest["runtime_contract"]["digest"] == "sha256:" + hashlib.sha256(
+        render_runtime_contract(model).encode("utf-8")).hexdigest()
+    assert manifest["gate_provenance"] is None
+
+
+def test_an_accepted_build_seals_the_runtime_contract_the_flow_rendered(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The real flow and the real verifier: the sealed manifest's runtime
+    contract digest is the digest the flow recorded and the bytes it wrote."""
+    run = _walk(monkeypatch, tmp_path, ReferenceProvider())
+    status, project = run.status, run.project
+    assert status["accepted"] is True, status
+    text = run.store().sealed().files["pam.json"]
+    manifest = pam.validate_pam(text)
+    written = project / ".nornyx" / "generated" / "runtime-contract.json"
+    assert manifest["runtime_contract"]["digest"] == "sha256:" + hashlib.sha256(
+        written.read_bytes()).hexdigest()
+    assert manifest["runtime_contract"]["digest"] == \
+        status["result"]["generated_runtime_contract_digest"]
+    assert manifest["gate_provenance"] is None
+
+
+def test_the_handoff_gate_never_offers_a_gated_build(tmp_path: Path):
+    from nornyx_forge import gate_release_model, provider_gate
+
+    provenance = gate_release_model.gate_provenance(
+        cycle_id="c01", run_act_sha256=provider_gate.PINNED_RUN_ACT_SHA256,
+        stage_manifest="sha256:" + "1" * 64, release_manifest="sha256:" + "2" * 64,
+        import_record="sha256:" + "3" * 64, completeness_list="sha256:" + "4" * 64,
+        check_d3g_result="sha256:" + "5" * 64,
+        credential_pattern=gate_release_model.GATE_SEED_PATTERN.record())
+    direct_store, direct_project, _ = _handed_off(tmp_path / "direct")
+    assert _assess(direct_store, direct_project).offered is True
+    store, project, _ = _handed_off(tmp_path / "gated", provenance=provenance)
+    readiness = _assess(store, project)
+    assert readiness.offered is False
+    assert readiness.reasons == (
+        "the build crossed the run-act gate and was verified statically only; its tests "
+        "were not run, so nothing is offered for it",)

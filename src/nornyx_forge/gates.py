@@ -590,7 +590,19 @@ def _closed_failure(
     )
 
 
-def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, Any]]:
+#: The verifier's static-only mode (A-055), copied: `greenfield_verifier` is
+#: executed by path and not imported here.
+#: `test_the_static_only_mode_names_the_verifiers_own_values` holds them equal.
+GREENFIELD_STATIC_ONLY_MODE = "static_only"
+GREENFIELD_STATIC_ONLY_DETAIL = (
+    "static-only verification: the subject's tests were not run, so this is not an "
+    "acceptance"
+)
+
+
+def trusted_greenfield_gates(
+    root: Path, *, static_only: bool = False
+) -> tuple[list[GateResult], dict[str, Any]]:
     """Run the Forge-owned greenfield profile without trusting project state.
 
     The project is an argument, never the verifier working directory. The
@@ -599,6 +611,13 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
     PYTHONPATH, or PYTHONHOME. Verifier, runner, and executor snapshots are each
     read once, digest-checked, and executed from those in-memory bytes. Tests run
     from a separate private subject copy under OS resource limits.
+
+    `static_only` (A-055, the run-act gate's mode) passes `--static-only`: the
+    static gates run as always and the subject's tests do not, so no produced
+    code runs. The result is then accepted only in that exact shape -- the
+    test-execution gate failed with the static-only detail and a record of
+    `not_run` in the static-only mode -- and its test gate never passes, so it
+    is never an acceptance. Without it, a static-only record is refused.
     """
     try:
         project = Path(root).resolve(strict=True)
@@ -658,6 +677,8 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
             )
             if loader_path is not None:
                 command += ("--trusted-loader-path", str(loader_path))
+            if static_only:
+                command += ("--static-only",)
             invocation = {
                 "python": str(interpreter),
                 "python_resolved_target": str(interpreter_target),
@@ -818,7 +839,37 @@ def trusted_greenfield_gates(root: Path) -> tuple[list[GateResult], dict[str, An
         )
     passed = all(result.passed for result in results)
     test_gate = next(result for result in results if result.name == "greenfield:test-execution")
-    if test_gate.passed:
+    static_shaped = (
+        isinstance(test_execution, dict)
+        and test_execution.get("mode") == GREENFIELD_STATIC_ONLY_MODE
+    ) or test_gate.detail == GREENFIELD_STATIC_ONLY_DETAIL
+    if static_only:
+        # THE ONLY SHAPE A STATIC-ONLY RUN MAY HAVE: its test gate failed with
+        # the static-only detail, and its record says not_run in that mode.
+        if (
+            test_gate.passed
+            or test_gate.detail != GREENFIELD_STATIC_ONLY_DETAIL
+            or test_execution
+            != {
+                "status": "not_run",
+                "mode": GREENFIELD_STATIC_ONLY_MODE,
+                "final_subject_digest": subject_claim.get("digest"),
+            }
+        ):
+            return _closed_failure(
+                "a static-only verification did not return the static-only test record",
+                command=command,
+                returncode=completed.returncode,
+                provenance=provenance,
+            )
+    elif static_shaped:
+        return _closed_failure(
+            "a static-only verification record was returned where tests were to run",
+            command=command,
+            returncode=completed.returncode,
+            provenance=provenance,
+        )
+    elif test_gate.passed:
         test_command = test_execution.get("command") if isinstance(test_execution, dict) else None
         test_subject = test_execution.get("subject_digest") if isinstance(test_execution, dict) else None
         test_cwd = test_execution.get("cwd") if isinstance(test_execution, dict) else None

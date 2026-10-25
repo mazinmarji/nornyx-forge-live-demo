@@ -54,7 +54,7 @@ from typing import Any, Callable, Mapping
 
 from .capsule import CapsuleError, CapsuleValidationError
 from .capsule_store import CapsuleStore
-from .contract_generator import generate_brd_contract
+from .contract_generator import generate_brd_contract, render_runtime_contract
 from .experience_journey import scope_binding
 from .gates import GREENFIELD_PROFILE_DIGEST, GREENFIELD_PROFILE_ID, GREENFIELD_VERIFIER_ID
 from .produced_app_manifest import (
@@ -226,7 +226,7 @@ class ManifestIssue:
         }
 
 
-def _brd_text_digest(data: bytes) -> str | None:
+def brd_text_digest(data: bytes) -> str | None:
     """The BRD digest by the scope binding's convention: the decoded text with
     universal newlines, as `Path.read_text` gives it, hashed as UTF-8."""
     try:
@@ -237,7 +237,7 @@ def _brd_text_digest(data: bytes) -> str | None:
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
 
 
-def _rendered_contract_digest(brd: bytes) -> str:
+def rendered_contract_digest(brd: bytes) -> str:
     """The digest of the contract the development flow generates from these
     BRD bytes, rendered by Forge into a private temporary directory with the
     flow's own parser and generator, and never read from the workspace."""
@@ -246,6 +246,20 @@ def _rendered_contract_digest(brd: bytes) -> str:
         (root / "BRD.md").write_bytes(brd)
         target = generate_brd_contract(root, parse_brd(root / "BRD.md"))
         return "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+
+
+def rendered_runtime_contract_digest(brd: bytes) -> str:
+    """The digest of the runtime operation contract (A-053) the development
+    flow renders from these BRD bytes -- the flow declares no operation, so
+    the empty closed table -- parsed by the flow's own parser in a private
+    temporary directory, rendered as text and never read from the workspace
+    (A-055). It names which contract was declared; it says nothing about
+    whether the application obeys it when run."""
+    with tempfile.TemporaryDirectory(prefix="nornyx-forge-pam-") as scratch:
+        root = Path(scratch)
+        (root / "BRD.md").write_bytes(brd)
+        text = render_runtime_contract(parse_brd(root / "BRD.md"))
+        return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _verifier_record(result: Any, project_root: Path) -> tuple[Mapping[str, Any] | None, list[str]]:
@@ -325,7 +339,7 @@ def issue_manifest(
         findings.append("the lifecycle records no scope binding for this build")
     elif bound[0] != tip:
         findings.append("the scope binding names another capsule than the one sealed")
-    elif brd is not None and _brd_text_digest(brd) != bound[1]:
+    elif brd is not None and brd_text_digest(brd) != bound[1]:
         findings.append("the BRD the verifier accepted is not the BRD the scope "
                         "confirmation bound")
     provider = (document.get("authoritative", {}).get("provider") or {}).get("name") \
@@ -336,7 +350,8 @@ def issue_manifest(
         return ManifestIssue(None, tuple(findings))
 
     try:
-        contract = _rendered_contract_digest(brd)
+        contract = rendered_contract_digest(brd)
+        runtime_contract = rendered_runtime_contract_digest(brd)
     except (OSError, UnicodeError, ValueError) as error:
         return ManifestIssue(None, (f"Forge could not render the generated contract: {error}",))
     verifier = record["verifier"]
@@ -357,6 +372,9 @@ def issue_manifest(
             gate_profile={"id": GREENFIELD_PROFILE_ID, "digest": GREENFIELD_PROFILE_DIGEST},
             forge_version=verifier.get("forge_version"),
             forge_revision=verifier.get("forge_revision"),
+            runtime_contract_digest=runtime_contract,
+            # A build in Forge's own workspace did not cross the run-act gate.
+            gate_provenance=None,
         )
     except CapsuleValidationError as error:
         return ManifestIssue(None, (str(error),))
@@ -412,6 +430,12 @@ def assess_readiness(
         return _not_offered([str(error)], reference)
 
     reasons: list[str] = []
+    if manifest["gate_provenance"] is not None:
+        # A GATED BUILD IS NEVER OFFERED HERE (A-055): its verification was
+        # static only and its tests were not run, and what it may be offered
+        # on is an execution measured by an observer, which Forge holds none of.
+        reasons.append("the build crossed the run-act gate and was verified statically "
+                       "only; its tests were not run, so nothing is offered for it")
     project = Path(project_root).resolve()
     if (Path(store.root).resolve().parent != project
             or Path(store.root).resolve().name != manifest["store_directory"]):
@@ -465,8 +489,11 @@ __all__ = [
     "ManifestIssue",
     "Readiness",
     "assess_readiness",
+    "brd_text_digest",
     "issue_manifest",
     "open_application_readiness",
     "read_held",
     "read_subject",
+    "rendered_contract_digest",
+    "rendered_runtime_contract_digest",
 ]

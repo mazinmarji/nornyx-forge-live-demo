@@ -2,6 +2,37 @@
 
 ## Unreleased — hardening from adversarial review
 
+- Staging and import across the run-act gate's boundary (A-055).
+  `gate_handoff.stage_inputs` writes one run's read-only input stage for a
+  role -- the BRD and the contracts, requirements and instructions Forge
+  renders from it, and for a repair run a complete import's workspace -- into
+  an empty input zone, with its intent, read-back and manifest in Forge's
+  records; a failure after the intent leaves it REJECTED and retained.
+  `import_release` imports a released output set only when every check passes
+  before anything is written: exactly the manifested entries, plain files with
+  one name and no named stream, sizes and digests as listed, the manifest the
+  act cites, one spelling per name, a completeness list naming exactly the
+  other files, and zero hits of Forge's own credential pattern. The pattern is
+  Forge-owned (`IMPORT_PATTERN`, the gate's current `sk-[A-Za-z0-9_-]{20,}`),
+  never selected by a caller, workspace, release or environment, and recorded
+  in every import record and gated manifest; its known false positive on
+  identifiers such as `task-management-dashboard-v2` refuses the import until
+  an approved correction is effective. A destination with an intent and no
+  record is INCOMPLETE and never reused. Every bound on the release -- the
+  row count, each declared size, their sum, the file count, the names --
+  is enforced from the manifest before any item is read, each item is read
+  under its own declared size with a running total behind it, and Forge's
+  own records are read under the record bound, not a subject file's.
+  The trusted verifier gains a
+  static-only mode in which no produced code runs and which is never an
+  acceptance. The produced-application manifest moves to version 2: it binds
+  the runtime-contract digest for every build and a `gate_provenance` for a
+  gated one; binding records which runtime contract was declared and does not
+  establish that the application is confined to it when run. The handoff gate
+  never offers a gated build. Deliberately changed: a version-1 manifest is
+  refused. No gate, provider, account, right or VM is touched, and the gate's
+  bytes and pin are unchanged.
+
 - A build renders a closed runtime operation contract,
   `.nornyx/generated/runtime-contract.json`, and binds its digest; network
   capability is refused statically outside an adapter and measured refused

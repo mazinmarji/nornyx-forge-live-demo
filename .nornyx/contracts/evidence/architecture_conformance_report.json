@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-10-24T15:59:36Z",
-  "governed_input_digest": "sha256:555ac4634cc04966d263d899f76bada294ed097d0febd917fc6689e09c315987",
+  "generated_at": "2026-10-24T21:17:23Z",
+  "governed_input_digest": "sha256:8778bbe7519e856ed760b642d19f77d285426e7f06811135fea295a20be8f17c",
   "producer": "scripts/check_architecture.py",
   "report": {
     "checks": [
@@ -38,6 +38,8 @@
       "nornyx_forge.experience_build",
       "nornyx_forge.experience_journey",
       "nornyx_forge.experience_sharing",
+      "nornyx_forge.gate_handoff",
+      "nornyx_forge.gate_release_model",
       "nornyx_forge.gates",
       "nornyx_forge.governance_rendering",
       "nornyx_forge.governed_subject",
@@ -81,6 +83,8 @@
       "module.experience_sharing",
       "module.forge_cli",
       "module.forge_flow",
+      "module.gate_handoff",
+      "module.gate_release_model",
       "module.gate_runner",
       "module.governance",
       "module.governance_rendering",
@@ -118,5 +122,5 @@
     "violations": []
   },
   "schema": "nornyx.forge.architecture_report.v1",
-  "subject_revision": "git:ccd09ffdcbf9e13d27a4bf00cd5bd1c63ea768ec"
+  "subject_revision": "git:8b741d0fcf8ae1d2302f7c1cb20b9d6f41c9f3b8"
 }

@@ -8274,3 +8274,151 @@ tests run.
 **Serves.** A-047, whose registry now classifies a produced application's
 declared operations as it classifies the demonstration's; A-035, whose
 simulated journey's application is run by the same executor, now guarded.
+
+## A-055 A run through the run-act gate reads a Forge-written input stage, its released output is imported only complete and with no credential-pattern hit, and its verification is static only
+
+Numbering: A-054 is taken by a pull request open when this entry was written;
+this entry takes the next free number so that the two can merge in any order.
+
+**Claim limit, stated first.** Data handling on Forge's side of the run-act
+gate's boundary (FD-021's adopted first-runnable path): no gate is run, no
+provider is started, no account, right, access-control list, logon, process
+or virtual machine is created or changed, and the gate's bytes and Forge's
+pin of them (`provider_gate.PINNED_RUN_ACT_SHA256`, A-052) are unchanged. The
+directories Forge is given -- a role's input zone, a gate release, a
+verification root -- are provisioned by acts outside Forge, and their access
+rules are those acts'. Every release in the tests is built by the test. Not a
+provider build, not an executed application, not an eligibility change.
+
+**What changed.**
+
+1. **The input stage** (`gate_handoff.stage_inputs`). For one role, one stage
+   `s<16 hex>` in the role's input zone, which must be named for the role and
+   be EMPTY: at most one stage per role, and a stage an earlier cycle left, in
+   any state, is the act's to remove and never Forge's. Forge renders the
+   stage from the workspace's `BRD.md` alone -- the BRD, the generated contract
+   and the runtime operation contract rendered from it, `requirements.json`
+   and `traceability.md` as the flow renders them, and Forge's instructions to
+   the provider -- plus, for a repair run or any run that reads an earlier
+   run's output, the workspace of a complete import under `verified/`. Nothing else in the workspace is read.
+   The intent is written to Forge's records directory and read back first;
+   then each file is written new (exclusive create, no link followed), the
+   stage is read back, and its manifest -- every path, size and digest, and
+   each source's digest -- is written and read back. A failure after the
+   intent leaves the stage REJECTED and retained, with its reasons recorded,
+   and the next stage for the role is refused until the act removes it.
+   `verify_stage` re-reads a stage against its manifest without writing.
+2. **The fail-closed import** (`gate_handoff.import_release`). The release is
+   untrusted. Before anything is written: the release directory is a plain
+   directory named for the cycle; it holds exactly the manifest, the release
+   record and one plain file per manifest row, and no directory, link,
+   junction, hard link or named data stream; the manifest's SHA-256 is the
+   digest the act cites; each row's bytes have its size and digest; every
+   name is one spelling of one file (ASCII letters, digits, `.`, `_`, `-`; no
+   `/`, climb, drive, stream, trailing dot, device name or case collision; no
+   file that is also a directory); no workspace path is inside `.git`,
+   `.nornyx` or any directory the trusted verifier never inspects; the
+   workspace's `.forge-tree.txt` names exactly the other workspace files; and
+   Forge's own credential pattern finds nothing in any released byte, read as
+   one byte to a character and as UTF-16LE at both alignments. The release is
+   listed again to show it did not change. Then the intent is written into a
+   fresh, absent destination, every file is written new and read back, the
+   release is listed a third time, the destination is enumerated to hold
+   exactly what was written, and only then is the import record written. A
+   destination with an intent and no record is INCOMPLETE, is never read as
+   an import (`load_import`), and is never reused; `load_import` re-verifies
+   every file, the record and its intent each time it is called.
+   **Every bound is enforced before the work it bounds, and every file is
+   read under its own kind's bound** (Codex P2 4368336129 and P2
+   4368336127). From the manifest alone, before any item is read: every
+   name, each declared size against the 500,000-byte bound of one file,
+   the declared sizes' sum against the 10,000,000-byte bound of the
+   subject, the workspace's file count, collisions and the presence of the
+   completeness list; the rows are counted while the manifest is parsed.
+   Each item is then read under its OWN declared size, so a file larger
+   than its row says is refused without being read, and a running total
+   of the bytes read refuses at once if it passes the subject bound. Before
+   this the aggregate was checked only after every item had been read,
+   scanned and kept. Forge's own records, intents and manifests are read
+   under the record bound (4,000,000 bytes, the size the model parses),
+   never under the subject file's 500,000: an import record of 1,951
+   files was over 500,000 bytes, and the import it described was refused
+   after it completed. Each imported or staged file is read back under the
+   size Forge recorded for it.
+3. **The credential pattern is Forge-owned data, never a caller's choice**
+   (founder precaution, 2026-10-24). `gate_release_model.IMPORT_PATTERN` is
+   Forge's copy of the gate's current seed pattern, `sk-[A-Za-z0-9_-]{20,}`,
+   held in code. The import takes no pattern; no workspace, release or
+   environment variable selects one; every import record, its intent and every
+   gated manifest must record exactly that pattern -- its identifier, its
+   expressions and their digest -- or it is refused. Changing it is a change
+   to that file, made by pull request like any other, and may not make it
+   weaker than the gate's current pattern. The pattern is known to match ordinary identifiers that end in
+   `sk` before a hyphen (`task-management-dashboard-v2`); a correction has
+   been decided and is not effective, and until it is such a match FAILS
+   CLOSED: nothing is imported. The refusal names the items, never the match.
+4. **Static-only verification** (`gate_handoff.verify_import_static`). The
+   trusted verifier gains a static-only mode (`--static-only`;
+   `trusted_greenfield_gates(root, static_only=True)`): every static gate runs
+   as always and the subject's tests are not run, so no produced code
+   executes. Its test-execution gate fails with a fixed detail and its record
+   is `not_run` in the static-only mode, so a static-only result is never an
+   acceptance; the parent accepts that shape only when it asked for it, and
+   refuses it when it did not. Measured: a planted test module that raises on
+   import leaves the static-only verification passing with no runner started,
+   and in the full mode the same subject's collection fails.
+5. **The produced-application manifest, version 2** (`produced_app_manifest`).
+   It binds `runtime_contract` -- the digest of the runtime operation contract
+   (A-053) Forge renders from the accepted BRD, the same basis as the
+   generated contract -- for every build, and `gate_provenance`, null for a
+   build in Forge's own workspace and, for a gated build, the cycle, the
+   pinned run-act digest, the stage manifest's, release manifest's and import
+   record's digests, the completeness list's, the credential pattern record
+   and the cited check result, with `verification: static_only`,
+   `test_execution: not_run` and which fields Forge verified and which it took
+   from the act unverified. A version-1 manifest is refused. The capsule store
+   seals it as before (A-051). `gate_handoff.issue_gate_manifest` issues it
+   only for a complete import that verified statically, whose BRD is the BRD
+   staged and the BRD the scope confirmation bound, whose contracts rendered
+   from that BRD are the staged ones, whose run-act digest is the pinned one
+   and whose files pass the static check. The handoff gate never offers a
+   gated build.
+
+**Binding is not enforcement.** The runtime-contract digest records WHICH
+runtime contract was declared for the build. It does not establish that the
+produced application is confined to that contract when it runs; enforcement
+in an execution environment is later work, established only by measurement
+there.
+
+**What it does NOT establish.**
+
+1. **That a release came from the gate.** The cycle identifier and the gate
+   package check's result digest are cited by the act and recorded as cited;
+   the release manifest's digest is compared with the act's citation, whose
+   source, the gate's journal, Forge does not read.
+2. **Access rules.** Forge sets no access-control list. That the input zone is
+   writable only by the administrator, that the release is no longer writable
+   by the provider's principal, and that the verification root is the
+   administrator's alone are the provisioning acts' to establish and their
+   measurements' to show; Forge judges only what it finds.
+3. **That a removed stage was removed cleanly.** Forge refuses a new stage
+   while anything is in the role's zone; whether an empty zone was emptied by
+   a clean removal is recorded by the act, which Forge does not read.
+4. **Every stream form.** Streams are enumerated with `FindFirstStreamW` on
+   Windows; whether that enumerates every form a later tool could use is not
+   established. Off Windows there are none to enumerate.
+5. **That the release is complete as the provider meant it.** Completeness is
+   against the provider's own list; a file the gate dropped and the provider
+   never listed is not seen.
+6. **That a pattern hit is a credential**, or that no credential escaped: an
+   evasive spelling defeats any pattern, and a known false positive refuses.
+7. **Any runnable application, test result or execution.** Verification is
+   static only; observer-measured execution is later work.
+8. **Wiring.** No route, page or build path calls these functions yet; they
+   are exercised by tests.
+
+**Serves.** A-051, whose sealed manifest now names where a gated build came
+from and which runtime contract it declared; A-052, whose gate path brings no
+output back by itself; A-053, whose runtime contract the manifest now binds;
+A-019, since the imported workspace is the verifier's subject and never its
+verifier.

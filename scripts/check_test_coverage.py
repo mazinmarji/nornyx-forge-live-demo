@@ -296,6 +296,21 @@ EXPECTED_SKIPS = {
         "Windows is the SUBJECT of all six: they start a real Windows PowerShell 5.1 (powershell.exe -File) on a stub written by the test, hold a file with a Windows share mode, and read the console and the system directory through kernel32. Off Windows none of these exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_provider_gate.py and refuses a skip, so every one of them executes on the platform it concerns; the refusals they explain are also held on every platform by the module's other tests, which drive the same code with an injected runner.",
     "tests/test_provider_authority_boundary.py::test_the_rebuild_leaves_no_readable_instant_at_any_destination_shape":
         "The shape matrix skips the cells this HOST cannot build, with the operating system's own refusal as the reason. On Windows os.symlink raises [WinError 1314] A required privilege is not held by the client without SeCreateSymbolicLinkPrivilege, so the three symlink shapes skip; on Linux they build and the two junction shapes skip instead. EXPECTED_SKIP_CASES caps this identity at three, which is the larger of the two platform counts, so a fourth skipping parameter is a diff. The predicate these cells would exercise is measured against synthesised attributes in test_the_directory_entry_predicate_answers_the_shapes_this_host_cannot_build.",
+    # A-055's junctions and named data streams. Windows is the subject, as for
+    # A-052's six above; the windows-runtime job runs tests/test_gate_handoff.py
+    # and refuses a skip.
+    "tests/test_gate_handoff.py::test_a_junction_in_a_release_is_refused":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
+    "tests/test_gate_handoff.py::test_a_release_directory_that_is_a_junction_is_refused":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
+    "tests/test_gate_handoff.py::test_a_named_stream_on_a_released_item_is_refused":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
+    "tests/test_gate_handoff.py::test_a_named_stream_on_the_release_directory_is_refused":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
+    "tests/test_gate_handoff.py::test_a_named_stream_planted_after_import_is_refused_on_reading":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
+    "tests/test_gate_handoff.py::test_a_named_stream_planted_in_a_stage_is_found":
+        "Windows is the SUBJECT of all six: NTFS junctions and named data streams exist only there, and they are what these tests plant -- a junction as a released entry and as the release directory, and a named stream on a released item, on the release directory, on an imported file and on a staged file. Off Windows neither exists, which is why every one of them skips. The property is not weakened: the windows-runtime CI job runs tests/test_gate_handoff.py and refuses a skip, so every one of them executes on the platform it concerns; the link, hard-link and reparse refusals they share are held on every platform by the module's symbolic-link and hard-link tests, which drive the same checks.",
 }
 
 
@@ -900,14 +915,20 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # introduction, floor at band(109) = 99. Rendering and the reference
     # computed from the rendered text, every field the validator refuses,
     # the copies held equal to their owners, and the static entry-point and
-    # import check over bytes, running nothing.
-    "tests/test_produced_app_manifest.py": 99,
+    # import check over bytes, running nothing. 109 -> 121 for A-055, floor
+    # band(121) = 109: version 2's runtime-contract binding and gate
+    # provenance, the path held equal to its owner's, and ten refusals of
+    # either in another shape, a version-1 manifest among them.
+    "tests/test_produced_app_manifest.py": 109,
     # A-051's store, build and handoff: 141 collected at introduction, floor at
     # band(141) = 127. Seal v2 and v1 still read, the one commit and the write
     # check, the reference journey and the two the static check
     # refuses, issuance's refusals, the gate never offered in simulation, held
     # descriptors, no process started, and the reference app unshipped.
-    "tests/test_produced_app_handoff.py": 127,
+    # 141 -> 144 for A-055, floor band(144) = 130: issuance binding the runtime
+    # contract rendered from the accepted BRD, the real journey sealing the
+    # digest the flow recorded, and a gated build never offered.
+    "tests/test_produced_app_handoff.py": 130,
     # A-047's operation classification: 39 collected at introduction, floor
     # at band(39) = 36. A bulk deletion and an external send labelled low or
     # medium withheld; the first measured cases; no downgrade by relabelling,
@@ -948,6 +969,31 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # when PowerShell is not found (three cases), and the length preflight in
     # UTF-16 code units.
     "tests/test_provider_gate.py": 55,
+    # A-055's run-act gate boundary model, pure: 117 collected at
+    # introduction, floor at band(117) = 106. Every path spelling accepted or
+    # refused, collisions, the gate's name spelling, the Forge-owned import
+    # pattern and its known false positive, the scan independent of encoding,
+    # every manifest and completeness-list refusal, and the stage, import and
+    # provenance records in any other shape.
+    "tests/test_gate_release_model.py": 106,
+    # A-055's staging and import, on disk: 90 collected at introduction, floor
+    # at band(90) = 81. 90 -> 97 for the first review (Codex P2 4368336127 and
+    # P2 4368336129), floor band(97) = 88: a valid release whose record is over
+    # a subject file's bound imported and read back, every Forge-written file
+    # read under its own kind's bound, a release over the aggregate refused
+    # before any item is read, an item larger than its row refused unread,
+    # the running total stopping at the bound, and the exact bound and the
+    # row count as controls. The passing import and its record; every tampered
+    # release and every untrusted content refused with nothing written; the
+    # cited manifest, the cycle's name, a fresh destination; a release changed
+    # while read; interruption, crash and tamper after the intent; no caller,
+    # environment or record selecting the pattern; the stage written,
+    # refused, rejected and retained, changed, and carrying a verified import;
+    # static-only verification running no produced code, with its full-mode
+    # control; and the gated manifest issued, sealed, refused and never
+    # offered. Six are Windows's own -- junctions and named data streams --
+    # declared skips here and run, with no skip, in the windows-runtime job.
+    "tests/test_gate_handoff.py": 88,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2435,14 +2481,28 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (sum 675, floor 675 - 7 + 1), above both sides' 357 and 604. The rows below
 # are these.
 #
+# A-055 ADDS TWO MODULES AND MOVES TWO, measured from a fresh collection:
+# tests/test_gate_release_model.py collects 117 (floor band(117) = 106) and
+# tests/test_gate_handoff.py collects 97 (floor band(97) = 88);
+# tests/test_produced_app_manifest.py 109 -> 121 (floor band(121) = 109) and
+# tests/test_produced_app_handoff.py 141 -> 144 (floor band(144) = 130). No
+# floor fell. 6923 collect across 145 modules; the module-floor sum rises by
+# 207 to 6300 and the aggregate follows to 6308, keeping the same 8 above it;
+# band(n) 6025 -> 6231, the working room below what collects 593 -> 615, and
+# the slack the bands grant 601 -> 623. SIX SKIPS ARE ADDED, declared by
+# identity above: the new module's junction and named-stream tests. The new
+# module tests/test_gate_handoff.py joins the windows-runtime job, whose floor
+# moves 669 -> 766: its eleven modules collect 7/14/15/19/23/54/61/73/97/97/312
+# (sum 772, floor 772 - 7 + 1). The rows below are these.
+#
 # (rows below):
 #
-#     collected across tests/     6694   (143 modules)
-#     sum of the module floors    6093
-#     band(6694) = ceil(0.9*n)    6025
-#     MINIMUM_COLLECTED           6101
+#     collected across tests/     6923   (145 modules)
+#     sum of the module floors    6300
+#     band(6923) = ceil(0.9*n)    6231
+#     MINIMUM_COLLECTED           6308
 #     above the module sum          8
-#     below what collects         593
+#     below what collects         615
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2664,7 +2724,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 601 in total, and the aggregate refuses
+# per-module bands already grant 623 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -2933,7 +2993,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6101
+MINIMUM_COLLECTED = 6308
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3072,6 +3132,9 @@ REQUIRED_MODULES = (
     "tests/test_produced_app_handoff.py",
     # A-052: the opt-in provider start through the run-act gate.
     "tests/test_provider_gate.py",
+    # A-055: staging and import across the run-act gate's boundary.
+    "tests/test_gate_release_model.py",
+    "tests/test_gate_handoff.py",
     "tests/test_runtime_contract.py",
     "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",
