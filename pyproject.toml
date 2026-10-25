@@ -31,7 +31,7 @@ demo = [
 dev = [
   "pytest>=8.3,<9",
   "pytest-cov>=6,<7",
-  "ruff>=0.16,<0.17",
+  "ruff>=0.16,<0.18",
   "build>=1.2,<2",
   # `tomllib` is 3.11+; `requires-python` allows 3.10.
   "tomli>=2.0.1; python_version < '3.11'",
