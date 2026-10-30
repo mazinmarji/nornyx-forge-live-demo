@@ -8448,8 +8448,16 @@ journey's `blockers` list still carries the verdict's reason word for word.
    (`plain_reasons.build_failure_headline`, wired into
    `experience_journey.journey_view`). A failed build's journey view now
    carries `failure_summary` and `failure_check` beside the verbatim `failure`,
-   naming in plain terms which check stopped the build: the automated tests, the
-   governance gates, the build run, or the build's evidence. The classifier
+   naming in plain terms which check stopped the build: the build's acceptance,
+   its recorded gate results, the build run, or the build's evidence. The page's
+   lifecycle panel renders the summary and the check's name above the verbatim
+   failure, which it still shows unchanged. A summary claims no more than the
+   evidence kind carries: `flow_run` reports the flow's aggregate acceptance,
+   which folds the tests, gates, reviews and evidence-ledger checks into one
+   value, so its summary says the build was not accepted and that this does
+   not say which check failed; it never calls such a run a test failure, since
+   a run whose tests passed and whose ledger check failed is refused with the
+   same text. The classifier
    keys only on the tokens Forge's own failure text already carries, and a test
    drives real failures through the journey to pin it, so a change on either
    side is a red test rather than a plain line that quietly stops matching.

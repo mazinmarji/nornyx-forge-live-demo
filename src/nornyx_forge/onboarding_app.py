@@ -1510,7 +1510,26 @@ function renderJourney(s){
   else if(!s.initialized){ text("stage", "no project"); text("status", ""); text("next", "Create a project to begin."); }
   else if(j.tracking === "absent"){ text("stage", "no lifecycle recorded"); text("status", ""); text("next", j.next); }
   else { text("stage", j.stage); text("status", j.status === "failed" ? "· FAILED" : "· active"); text("next", j.next); }
-  text("failure", (j && j.failure) ? ("Failure recorded: " + j.failure) : "");
+  // A recorded failure (A-056): the plain summary and the name of the check
+  // that stopped the build first, the verbatim failure unchanged beneath.
+  // The server decides all three sentences; the page renders them as text.
+  const failure = document.getElementById("failure");
+  failure.replaceChildren();
+  if(j && j.failure){
+    if(j.failure_summary){
+      const plain = document.createElement("p");
+      plain.textContent = j.failure_summary;
+      failure.append(plain);
+    }
+    if(j.failure_check){
+      const check = document.createElement("p");
+      check.textContent = "Check that stopped the build: " + j.failure_check;
+      failure.append(check);
+    }
+    const technical = document.createElement("p");
+    technical.textContent = "Failure recorded: " + j.failure;
+    failure.append(technical);
+  }
   // The server decides what this says; the page renders the sentence it is
   // given. No comparison, no threshold and no stage name here: whether the
   // record still names the content in front of it is a question the journey

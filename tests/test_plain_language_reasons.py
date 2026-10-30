@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
 from session_client import authed_client
 
 from nornyx_forge import experience_journey as journey
@@ -69,10 +70,10 @@ def test_no_failure_yields_no_headline():
 def test_headline_names_the_check_for_each_kind():
     assert build_failure_headline(
         "refused: the presented 'flow_run' evidence (x) reports failure; ..."
-    )["check"] == "test results (flow_run)"
+    )["check"] == "the build's acceptance (flow_run)"
     assert build_failure_headline(
         "refused: advancing into GOVERN requires evidence of kind 'gate_results', which was not presented"
-    )["check"] == "governance gates (gate_results)"
+    )["check"] == "the build's gate results (gate_results)"
     assert build_failure_headline("the build did not complete: boom")["check"] == "the build run"
     assert build_failure_headline(
         "the build produced no usable evidence: bad"
@@ -94,7 +95,7 @@ def _state_at_build():
     return s
 
 
-def test_the_flow_run_refusal_forge_writes_classifies_to_the_test_check():
+def test_the_flow_run_refusal_forge_writes_classifies_to_the_acceptance_check():
     s = _state_at_build()
     try:
         advance(s, "TEST", journey.SYSTEM_ACTOR, T3, (EvidenceRef("flow_run", "flow-ref-1", False),))
@@ -103,7 +104,7 @@ def test_the_flow_run_refusal_forge_writes_classifies_to_the_test_check():
     else:
         raise AssertionError("a failing flow_run must refuse the advance into TEST")
     assert "flow_run" in detail
-    assert build_failure_headline(detail)["check"] == "test results (flow_run)"
+    assert build_failure_headline(detail)["check"] == "the build's acceptance (flow_run)"
 
 
 def test_the_gate_results_refusal_forge_writes_classifies_to_the_gate_check():
@@ -116,7 +117,27 @@ def test_the_gate_results_refusal_forge_writes_classifies_to_the_gate_check():
     else:
         raise AssertionError("GOVERN without gate_results must refuse")
     assert "gate_results" in detail
-    assert build_failure_headline(detail)["check"] == "governance gates (gate_results)"
+    assert build_failure_headline(detail)["check"] == "the build's gate results (gate_results)"
+
+
+def test_a_rejected_run_whose_tests_passed_is_not_called_a_test_failure():
+    """`flow_run.passed` is the flow's aggregate `accepted`: tests that passed
+    beside a failed evidence-ledger check still yield a `flow_run` refusal.
+    Driven through `build_outcome`, the path a real run takes, the summary
+    must describe the aggregate and claim no test failure."""
+    result = {"accepted": False, "execution_backend": "sequential", "gates": [
+        {"name": "pytest", "passed": True},
+        {"name": "build-evidence-ledger-valid-before-verdict", "passed": False},
+    ]}
+    outcome = list(journey.build_outcome(_state_at_build(), result, lambda: T3))
+    assert len(outcome) == 1 and outcome[0][0]["status"] == "failed"
+    detail = outcome[0][0]["history"][-1]["detail"]
+    assert "flow_run" in detail
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the build's acceptance (flow_run)"
+    assert "not accepted" in headline["summary"]
+    assert "tests did not pass" not in headline["summary"]
+    assert "does not say which" in headline["summary"]
 
 
 def test_build_error_detail_classifies_to_the_build_run():
@@ -187,6 +208,33 @@ def test_a_failed_builds_journey_names_the_check_in_plain_terms():
     assert view["failure_check"] == "the build run"
     assert view["failure_summary"]
     assert "the build did not complete" in view["failure"]
+
+
+@pytest.fixture()
+def page_script(tmp_path: Path) -> str:
+    _confirmed_project(tmp_path)
+    served = authed_client(create_app(tmp_path / "capsule", CONTRACTS,
+                                      seal_dir=tmp_path / "seals")).get("/")
+    assert served.status_code == 200
+    markup = served.text
+    return markup[markup.index("<script>"):markup.index("</script>")]
+
+
+def test_the_page_renders_the_failure_summary_and_check_above_the_verbatim_failure(page_script):
+    """The served page, not only the response: `renderJourney` shows the
+    plain summary, then the check's name, then the verbatim failure, each as
+    text, and the verbatim line is still shown when no summary exists."""
+    rendered = page_script[page_script.index("function renderJourney("):]
+    rendered = rendered[:rendered.index("\n}") + 2]
+    assert rendered.index("j.failure_summary") < rendered.index("j.failure_check") \
+        < rendered.index('"Failure recorded: " + j.failure')
+    assert '"Check that stopped the build: " + j.failure_check' in rendered
+    shown = rendered[rendered.index("if(j && j.failure){"):]
+    assert shown.index("if(j.failure_summary){") < shown.index('"Failure recorded: "')
+    # The verbatim line sits outside both optional branches: it is always shown.
+    verbatim = shown.index('technical.textContent = "Failure recorded: " + j.failure;')
+    assert shown.rindex("}", 0, verbatim) > shown.index("if(j.failure_check){")
+    assert "textContent" in rendered and "innerHTML" not in rendered
 
 
 def test_every_journey_shape_carries_the_failure_fields():

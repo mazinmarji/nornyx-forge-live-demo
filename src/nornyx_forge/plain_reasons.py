@@ -55,6 +55,14 @@ def build_failure_headline(detail: str | None) -> dict[str, str | None]:
     `experience_journey.build_error` and `build_outcome` write. A failure with
     no recognised token still gets an honest, non-empty summary.
 
+    THE SUMMARY CLAIMS NO MORE THAN THE EVIDENCE KIND CARRIES. `flow_run`'s
+    `passed` is the flow's own aggregate `accepted` flag, which folds the
+    build's tests, gates, reviews and evidence-ledger checks into one value,
+    and `gate_results` passes only when every recorded gate did. Neither says
+    WHICH check failed, so neither summary names one: a run whose tests
+    passed but whose review or ledger check failed is refused with the same
+    `flow_run` text, and calling that a test failure would be false.
+
     Both values are `None` when there is no failure, so every journey shape can
     carry the two fields and the page renders them without testing for absence.
     """
@@ -63,13 +71,20 @@ def build_failure_headline(detail: str | None) -> dict[str, str | None]:
         return {"summary": None, "check": None}
     if "flow_run" in text:
         return {
-            "summary": "The build's automated tests did not pass, so the workflow stopped.",
-            "check": "test results (flow_run)",
+            "summary": (
+                "The build was not accepted, so the workflow stopped. Acceptance "
+                "covers the build's tests, gates, reviews and evidence record "
+                "together, so this does not say which of them failed."
+            ),
+            "check": "the build's acceptance (flow_run)",
         }
     if "gate_results" in text:
         return {
-            "summary": "The build's governance gates did not pass, so the workflow stopped.",
-            "check": "governance gates (gate_results)",
+            "summary": (
+                "The build's recorded gate results did not clear, so the "
+                "workflow stopped."
+            ),
+            "check": "the build's gate results (gate_results)",
         }
     if text.startswith("the build did not complete"):
         return {
