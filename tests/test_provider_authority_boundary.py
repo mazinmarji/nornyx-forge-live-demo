@@ -398,7 +398,8 @@ def test_b5_polling_during_the_build_shows_only_the_sealed_position(tmp_path: Pa
     client, mid = _attack(tmp_path, "ready")
     assert mid["journey"] == {
         "tracking": "recorded", "stage": "BUILD", "status": "active", "actions": [],
-        "blockers": [], "failure": None, "scope": mid["journey"]["scope"],
+        "blockers": [], "failure": None, "failure_summary": None,
+        "failure_check": None, "scope": mid["journey"]["scope"],
         "next": mid["journey"]["next"],
     }
     # AND THE TWO SELF-REFERENCED KEYS ARE ASSERTED, not waved through. The
