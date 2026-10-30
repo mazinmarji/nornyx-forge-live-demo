@@ -183,6 +183,7 @@ from .experience_journey import (
 )
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
+from .plain_reasons import eligibility_summary
 from .produced_app_handoff import ManifestIssue, issue_manifest
 from .provider_contract import GovernedEligibility, governed_build_eligibility
 
@@ -990,6 +991,7 @@ def create_app(
                 if not verdict.eligible:
                     return JSONResponse(status_code=409, content={
                         "refused": verdict.reason, "eligibility": verdict.as_dict(),
+                        "explanation": eligibility_summary(verdict.as_dict()),
                     })
                 # THE BRD THE BUILD WILL READ, measured before anything moves.
                 # The flow parses `BRD.md` from disk at run time, so "a derived
