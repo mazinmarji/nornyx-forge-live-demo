@@ -117,7 +117,44 @@ def test_the_gate_results_refusal_forge_writes_classifies_to_the_gate_check():
     else:
         raise AssertionError("GOVERN without gate_results must refuse")
     assert "gate_results" in detail
-    assert build_failure_headline(detail)["check"] == "the build's gate results (gate_results)"
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the build's gate results (gate_results)"
+    # Absent evidence is reported as absent, never as evidence that failed.
+    assert "not presented" in headline["summary"]
+    assert "passed" not in headline["summary"]
+
+
+def test_a_failing_gate_results_refusal_is_reported_as_failed_not_missing():
+    s = _state_at_build()
+    s = advance(s, "TEST", journey.SYSTEM_ACTOR, T3, (EvidenceRef("flow_run", "flow-ref-1", True),))
+    try:
+        advance(s, "GOVERN", journey.SYSTEM_ACTOR, T4, (EvidenceRef("gate_results", "gates-ref-1", False),))
+    except ExperienceError as error:
+        detail = f"refused: {error}"
+    else:
+        raise AssertionError("failing gate_results must refuse the advance into GOVERN")
+    headline = build_failure_headline(detail)
+    assert headline["check"] == "the build's gate results (gate_results)"
+    assert "Not every recorded gate passed" in headline["summary"]
+
+
+def test_a_kind_named_inside_another_failure_does_not_override_its_prefix():
+    """A gate NAMED `flow_run` with a malformed `passed` is malformed evidence,
+    not rejected acceptance: driven through `build_outcome`, the failure's own
+    prefix decides the headline. The same holds for a build error and for a
+    refusal whose text merely mentions a kind."""
+    result = {"accepted": True, "execution_backend": "sequential",
+              "gates": [{"name": "flow_run", "passed": "yes"}]}
+    outcome = list(journey.build_outcome(_state_at_build(), result, lambda: T3))
+    detail = outcome[0][0]["history"][-1]["detail"]
+    assert detail.startswith("the build produced no usable evidence") and "flow_run" in detail
+    assert build_failure_headline(detail)["check"] == "the build's evidence"
+    crashed = journey.build_error(_state_at_build(), "KeyError: 'gate_results'", T3)
+    detail = crashed["history"][-1]["detail"]
+    assert "gate_results" in detail
+    assert build_failure_headline(detail)["check"] == "the build run"
+    mention = "refused: an actor of kind 'model' may not advance; flow_run gate_results"
+    assert build_failure_headline(mention)["check"] == "the build's governance checks"
 
 
 def test_a_rejected_run_whose_tests_passed_is_not_called_a_test_failure():

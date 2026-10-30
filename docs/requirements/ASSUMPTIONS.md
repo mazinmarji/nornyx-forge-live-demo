@@ -8457,7 +8457,12 @@ journey's `blockers` list still carries the verdict's reason word for word.
    value, so its summary says the build was not accepted and that this does
    not say which check failed; it never calls such a run a test failure, since
    a run whose tests passed and whose ledger check failed is refused with the
-   same text. The classifier
+   same text. Classification reads the failure's fixed prefix first and takes
+   an evidence kind only from the two structured refusals the lifecycle
+   contract writes (a kind not presented, or presented evidence that reports
+   failure), so a kind's name inside an exception or a malformed gate record
+   cannot produce a summary that contradicts the failure's own prefix, and
+   absent evidence is reported as absent, not as failed. The classifier
    keys only on the tokens Forge's own failure text already carries, and a test
    drives real failures through the journey to pin it, so a change on either
    side is a red test rather than a plain line that quietly stops matching.

@@ -994,14 +994,15 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # offered. Six are Windows's own -- junctions and named data streams --
     # declared skips here and run, with no skip, in the windows-runtime job.
     "tests/test_gate_handoff.py": 88,
-    # A-056's plain-language refusal and failure summaries: 12 collected at
-    # introduction, floor at band(12) = 11. Both renderers, the classifier
+    # A-056's plain-language refusal and failure summaries: 14 collected at
+    # introduction, floor at band(14) = 13. Both renderers, the classifier
     # pinned to the failure and advance text Forge actually writes, a rejected
-    # run whose tests passed not called a test failure, the build refusal's
+    # run whose tests passed not called a test failure, a kind named inside
+    # another failure not overriding its prefix, the build refusal's
     # plain explanation beside its unchanged verbatim reason, the failure
     # fields on every journey shape, and the served page rendering them above
     # the verbatim failure.
-    "tests/test_plain_language_reasons.py": 11,
+    "tests/test_plain_language_reasons.py": 13,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2504,20 +2505,20 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # (sum 772, floor 772 - 7 + 1). The rows below are these.
 #
 # A-056 ADDS ONE MODULE AND MOVES NONE, measured from a fresh collection:
-# tests/test_plain_language_reasons.py collects 12 (floor band(12) = 11). No
-# other module's count changed and no floor fell. 6935 collect across 146
-# modules; the module-floor sum rises by 11 to 6311 and the aggregate follows
-# to 6319, keeping the same 8 above it; band(n) 6231 -> 6242, the working
+# tests/test_plain_language_reasons.py collects 14 (floor band(14) = 13). No
+# other module's count changed and no floor fell. 6937 collect across 146
+# modules; the module-floor sum rises by 13 to 6313 and the aggregate follows
+# to 6321, keeping the same 8 above it; band(n) 6231 -> 6244, the working
 # room below what collects 615 -> 616, and the slack the bands grant
 # 623 -> 624. NO SKIP IS ADDED, and the module joins no platform job, so the
 # windows-runtime job's floor is untouched at 766. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6935   (146 modules)
-#     sum of the module floors    6311
-#     band(6935) = ceil(0.9*n)    6242
-#     MINIMUM_COLLECTED           6319
+#     collected across tests/     6937   (146 modules)
+#     sum of the module floors    6313
+#     band(6937) = ceil(0.9*n)    6244
+#     MINIMUM_COLLECTED           6321
 #     above the module sum          8
 #     below what collects         616
 #
@@ -3010,7 +3011,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6319
+MINIMUM_COLLECTED = 6321
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
