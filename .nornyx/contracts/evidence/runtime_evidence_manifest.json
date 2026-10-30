@@ -4,12 +4,12 @@
     "approval_record"
   ],
   "contract": ".nornyx/contracts/runtime_network.nyx",
-  "generated_at": "2026-10-30T19:02:45Z",
-  "governed_input_digest": "sha256:c4325ecee59f4421cb36e4c80a32a2f3239345f63ea6e617494bb0b2344a4649",
+  "generated_at": "2026-10-30T19:18:22Z",
+  "governed_input_digest": "sha256:aa0b1aaf93bed4677c771c205e703ba5985e0a25510e6447c5fe78f9642a64d3",
   "records": [
     "agentic_network_contract_review",
     "evidence_manifest"
   ],
   "schema": "nornyx.forge.evidence_manifest.v1",
-  "subject_revision": "git:b573706dc76ef9a1cd759ffd2c464d6e2828f030"
+  "subject_revision": "git:ed5221b1acd4692ab1db8d605ec8810ca2621021"
 }
