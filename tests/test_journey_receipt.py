@@ -951,9 +951,14 @@ def _corrupt(path: Path, how: str) -> None:
     text = path.read_text(encoding="utf-8")
     if how == "truncated":
         path.write_text(text[: len(text) // 2], encoding="utf-8")
-    else:
+    elif how == "duplicate_key":
         # A second "stage" ahead of the real one: two readers, two lifecycles.
         path.write_text('{"stage": "READY", ' + text.lstrip()[1:], encoding="utf-8")
+    else:
+        # An entry where the file should be that resolves to nothing: a link
+        # that follows to no file reads as missing to `Path.exists()`.
+        path.unlink()
+        path.symlink_to("experience-gone.json" if how == "dangling_link" else path.name)
 
 
 def _absent_twin(receipt: dict) -> dict:
@@ -966,7 +971,7 @@ def _absent_twin(receipt: dict) -> dict:
 
 
 @pytest.mark.parametrize("sealed", [True, False], ids=["sealed", "unsealed"])
-@pytest.mark.parametrize("how", ["truncated", "duplicate_key"])
+@pytest.mark.parametrize("how", ["truncated", "duplicate_key", "dangling_link", "link_loop"])
 def test_an_unreadable_lifecycle_refuses_export_and_live_verification(
         tmp_path: Path, how: str, sealed: bool):
     """Corruption is never exported as absence: only a store holding no
@@ -987,6 +992,20 @@ def test_an_unreadable_lifecycle_refuses_export_and_live_verification(
                                expect_sha256=receipt["integrity"]["body_sha256"])
         assert not verdict.verified and verdict.live_comparison == "refused", verdict
         assert any("store refused" in p for p in verdict.problems), verdict.problems
+
+
+def test_a_lifecycle_file_genuinely_missing_from_an_unsealed_store_reads_as_absent(
+        tmp_path: Path):
+    """The other side of the line: no entry at all is absence, and only that."""
+    _refused_project(tmp_path)
+    CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").seal_path().unlink()
+    (tmp_path / "capsule" / ".forge-seal").unlink()
+    (tmp_path / "capsule" / "experience.json").unlink()
+    with pytest.raises(store_module.ExperienceStateAbsent):
+        CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").load_experience()
+    receipt = _export(tmp_path)
+    assert receipt["body"]["journey"]["tracking"] == "absent"
+    assert receipt["body"]["project"]["seal"] == "unsealed"
 
 
 def test_only_a_store_without_a_lifecycle_raises_the_absence_type(tmp_path: Path):

@@ -2,72 +2,72 @@
   "entries": {
     "architecture_approval_record": {
       "artifact": "evidence/architecture_approval_record.json",
-      "content_hash": "sha256:b0981ca898ecf410abde9f0104311074798c0e80af6a9fd8a740fdff53484641",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:338118a1c49b87efcfa332a848b537438b6008c9a1481f991978f55c54f7835d",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "observed",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "architecture_change_record": {
       "artifact": "evidence/architecture_change_record.json",
-      "content_hash": "sha256:51b76e6aac045b21409dbc015ef8877ba0de6517e9fa6295ac2787b5bf21bf71",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:cf7cf12c02da7e7049a7d73779aa99a78ac808c6e38a9e8755e9358ba96b7f15",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "architecture_conformance_report": {
       "artifact": "evidence/architecture_conformance_report.json",
-      "content_hash": "sha256:cf465d3d288cffd4726e426d3888553c7cb1155ff5e4545121a1b6cdd2c39752",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:fc2625c7aac62770833807fc3d68487f3cba6761be5d6d2bbdb47dac9bcd15c8",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "architecture_evidence_manifest": {
       "artifact": "evidence/architecture_evidence_manifest.json",
-      "content_hash": "sha256:17bc8eb63478161d9c97aa2acaf52f6b626c24696f7374d1d4d3bec1d5173b87",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:29c34a08f84644b64a5f7acbf6a36b33644de908a87bc8c5c8aa896b25183a32",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "architecture_exception_review": {
       "artifact": "evidence/architecture_exception_review.json",
-      "content_hash": "sha256:0bd1627eec96793ef2d8859c03fc32aaa8ce9a06477342e1a391e2597cbc08db",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:f3b542f445b36353f1a3481e6a028a2e7b77d018c7505f8b8f9ad672a213b3bd",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "architecture_independent_review": {
       "artifact": "evidence/architecture_independent_review.json",
-      "content_hash": "sha256:50e58612adcfbe5290d0675174c52c1c04ae87db7a411b1642ebda30bc812f93",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:c3224424fc7d778917cc30c408455e538259ae837e3a2d547c54720f46f73706",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "observed",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "runtime_evidence_manifest": {
       "artifact": "evidence/runtime_evidence_manifest.json",
-      "content_hash": "sha256:fd7aa423e02ae1a4c45c5740f4f025fd1f870746a9e1b48136dcb159a38bf135",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:5ecb26876bc7a0957a0944a8e7ff5f7e9a7a58f392df2365cac2c694db712d83",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     },
     "runtime_network_contract_review": {
       "artifact": "evidence/runtime_network_contract_review.json",
-      "content_hash": "sha256:bd6cadceb3846f8a6acd7630a15656bbd569f6aa0d73b0f9bef4934dc21fd22c",
-      "expires_at": "2027-10-31T19:53:41Z",
-      "generated_at": "2026-10-31T19:53:41Z",
+      "content_hash": "sha256:33880c54c2a7efc49628c0d6618baf8bd9f2a9e17f2c63696e01677623e2b43c",
+      "expires_at": "2027-10-31T21:18:28Z",
+      "generated_at": "2026-10-31T21:18:28Z",
       "status": "pass",
-      "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+      "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
     }
   },
-  "expires_at": "2027-10-31T19:53:41Z",
-  "generated_at": "2026-10-31T19:53:41Z",
-  "governed_input_digest": "sha256:c389b49ee2912cf5aee06c5e58a26a99f76b8d8d130c855ce25eacbadbd2ea5f",
+  "expires_at": "2027-10-31T21:18:28Z",
+  "generated_at": "2026-10-31T21:18:28Z",
+  "governed_input_digest": "sha256:e6ad828c7975b8917b45f97121e0cc77dcdaf82053264e0feae495c29c67db66",
   "schema": "nornyx.forge.evidence_index.v1",
-  "subject_revision": "git:40b49f192f0dfb062a8c9465980c13114a677713"
+  "subject_revision": "git:6fac234f792f5602a91a8139a469cd01ccd50032"
 }

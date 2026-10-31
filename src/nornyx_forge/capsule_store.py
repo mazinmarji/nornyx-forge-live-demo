@@ -1397,9 +1397,14 @@ class CapsuleStore:
                 f"{self.root} is not a capsule store this adapter initialized"
             )
         path = self.root / _EXPERIENCE_FILE
-        if not path.exists():
+        # Absence is decided by `lstat`, as `_authority_text` decides it: a
+        # dangling link, a link loop or a directory is an entry that cannot be
+        # read, never "nothing recorded". One read, so nothing moves between
+        # the decision and the bytes.
+        text, problem = _authority_text(path, _AUTHORITY_READ_LIMIT)
+        if problem is None and text is None:
             raise ExperienceStateAbsent(f"{self.root} contains no experience state")
-        state, problem = _json_document(path)
+        state, problem = (None, problem) if problem is not None else _parsed_json(text)
         if problem is not None:
             raise CapsuleStoreError(f"experience state is unreadable: {problem}")
         validate_experience(state)
