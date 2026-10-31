@@ -74,7 +74,7 @@ from typing import Any, Callable, Mapping
 from . import __version__
 from .brd_authoring import BrdAuthoringError, brd_from_capsule
 from .capsule import CapsuleError
-from .capsule_store import CapsuleStore, CapsuleStoreError
+from .capsule_store import CapsuleStore, ExperienceStateAbsent
 from .experience import STAGE_ACTORS, STAGE_EVIDENCE, TRANSITIONS
 from .experience_build import FLOW_BRD_REF, FLOW_REF, GATE_REF, NORNYX_GATE_REF, SCOPE_REF
 from .experience_journey import BrdState
@@ -238,9 +238,10 @@ def _load_project(project_dir: Path, seal_dir: Path) -> tuple[dict, dict | None,
     document = store.load()
     try:
         lifecycle: dict | None = store.load_experience()
-    except CapsuleStoreError as error:
-        if "experience state" not in str(error):
-            raise
+    except ExperienceStateAbsent:
+        # Only a store holding no lifecycle at all is `absent`. An unreadable,
+        # schema-breaking or tampered lifecycle is the store's refusal and
+        # propagates: corruption is never exported as absence.
         lifecycle = None
     seal = "sealed" if store.sealed() is not None else "unsealed"
     return document, lifecycle, store.revision(), seal
@@ -294,15 +295,32 @@ def walk_problems(events: list[Mapping[str, Any]], stage: str | None, status: st
     if (stage, status) != (current, current_status):
         problems.append(f"journey: the walk ends at {current}/{current_status}, "
                         f"not {stage}/{status}")
-    entered = {event["to"] for event in events if event["event"] == "advanced"}
+    admissions: dict[str, int] = {}
+    for event in events:
+        if event["event"] == "advanced":
+            admissions[event["to"]] = admissions.get(event["to"], 0) + 1
     for item in evidence:
-        if item["stage"] not in entered:
+        if item["stage"] not in admissions:
             problems.append(f"evidence: {item['stage']} was never entered")
-    for target in entered:
+    for target, count in admissions.items():
         for kind in STAGE_EVIDENCE.get(target, ()):
-            if not any(item["stage"] == target and item["kind"] == kind and item["passed"]
-                       for item in evidence):
+            # `experience.advance()` keeps the LAST row of each kind it is
+            # presented and judges that one, so an earlier pass never masks a
+            # later failure. A stage entered more than once (CONFIRM ->
+            # CONFIRM) keeps every admission's rows in one list: the final
+            # admission's last row is the stage's last row, and each
+            # admission's last row is a distinct row that passed.
+            verdicts = [item["passed"] for item in evidence
+                        if item["stage"] == target and item["kind"] == kind]
+            if not verdicts:
                 problems.append(f"evidence: {target} was entered without a passed {kind}")
+            elif verdicts[-1] is not True:
+                problems.append(f"evidence: {target} was entered without a passed {kind}: "
+                                f"its last {kind} row, the one experience.advance() judges, "
+                                "reports failure")
+            elif verdicts.count(True) < count:
+                problems.append(f"evidence: {target} was entered {count} times with fewer "
+                                f"passed {kind} rows than admissions")
     return problems
 
 

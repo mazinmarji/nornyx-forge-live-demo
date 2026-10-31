@@ -12,7 +12,9 @@ WHAT THESE TESTS HOLD (A-058).
   outside the project; a forged receipt with a recomputed digest is caught by
   that re-derivation or by a digest the holder obtained out of band. Without
   either, the verifier says authenticity is not established.
-- Missing or inconsistent required evidence is refused.
+- Missing or inconsistent required evidence is refused. A lifecycle the store
+  cannot read is refused, never exported as absent, and a stage's evidence
+  is judged as experience.advance() judges it: by the last row of each kind.
 - Nothing outside an explicit allowlist leaves the project: no actor
   identity, project name, requirement text, BRD text, local path or bearer.
 - Exporting and verifying construct no flow and call no provider.
@@ -32,11 +34,12 @@ from fastapi.testclient import TestClient
 from session_client import authed_client, session_token
 from typer.testing import CliRunner
 
+from nornyx_forge import capsule_store as store_module
 from nornyx_forge import journey_receipt as receipt_module
 from nornyx_forge.capsule import Actor, CapsuleError, create_document
 from nornyx_forge.capsule_store import CapsuleStore
 from nornyx_forge.cli import app as cli_app
-from nornyx_forge.experience import EvidenceRef, advance, start_experience
+from nornyx_forge.experience import EvidenceRef, ExperienceError, advance, start_experience
 from nornyx_forge.experience_journey import BrdState
 from nornyx_forge.journey_receipt import (
     RECEIPT_SCHEMA,
@@ -809,6 +812,11 @@ def _forge_advance_failed(body):
          "detail_sha256": "2" * 64},
         {"event": "advanced", "from": stage, "to": "CONFIRM", "actor_kind": "human",
          "at": CLOCK, "detail_sha256": None}]
+    # The second admission carries its own passed row, so only the rule
+    # against advancing a failed workflow can catch it.
+    body["evidence"].append({"stage": "CONFIRM", "kind": "brd_requirements", "ref": None,
+                             "ref_sha256": hashlib.sha256(_scope_ref().encode()).hexdigest(),
+                             "passed": True})
 
 
 def _forge_fail_twice(body):
@@ -932,3 +940,134 @@ def test_export_and_verify_start_no_process_but_the_stores_git(
     monkeypatch.setattr("nornyx_forge.providers.get_provider", refuse)
     receipt = _export(tmp_path)
     assert _verify_live(tmp_path, receipt).verified
+
+
+# ---------------------------------------------------------------------------
+# Absence is told from corruption by type, and evidence is judged the way
+# experience.advance() judges it (exact-head review repair)
+# ---------------------------------------------------------------------------
+
+def _corrupt(path: Path, how: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    if how == "truncated":
+        path.write_text(text[: len(text) // 2], encoding="utf-8")
+    else:
+        # A second "stage" ahead of the real one: two readers, two lifecycles.
+        path.write_text('{"stage": "READY", ' + text.lstrip()[1:], encoding="utf-8")
+
+
+def _absent_twin(receipt: dict) -> dict:
+    """What an exporter that read corruption as absence would have written."""
+    twin = copy.deepcopy(receipt)
+    twin["body"]["journey"] = {"tracking": "absent", "stage": None, "status": None,
+                               "lifecycle_digest": None, "events": [], "failure": None}
+    twin["body"]["evidence"] = []
+    return reseal(twin)
+
+
+@pytest.mark.parametrize("sealed", [True, False], ids=["sealed", "unsealed"])
+@pytest.mark.parametrize("how", ["truncated", "duplicate_key"])
+def test_an_unreadable_lifecycle_refuses_export_and_live_verification(
+        tmp_path: Path, how: str, sealed: bool):
+    """Corruption is never exported as absence: only a store holding no
+    lifecycle at all reads as `tracking: absent`."""
+    _refused_project(tmp_path)
+    honest = _export(tmp_path)
+    if not sealed:
+        CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").seal_path().unlink()
+        (tmp_path / "capsule" / ".forge-seal").unlink()
+    _corrupt(tmp_path / "capsule" / "experience.json", how)
+    with pytest.raises(CapsuleError) as raised:
+        _export(tmp_path)
+    assert not isinstance(raised.value, store_module.ExperienceStateAbsent)
+    twin = _absent_twin(honest)
+    assert verify_receipt(twin).consistent, "the twin must be self-consistent to prove anything"
+    for receipt in (honest, twin):
+        verdict = _verify_live(tmp_path, receipt,
+                               expect_sha256=receipt["integrity"]["body_sha256"])
+        assert not verdict.verified and verdict.live_comparison == "refused", verdict
+        assert any("store refused" in p for p in verdict.problems), verdict.problems
+
+
+def test_only_a_store_without_a_lifecycle_raises_the_absence_type(tmp_path: Path):
+    store = CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals")
+    store.initialize(create_document("proj-1", PROJECT_NAME, Actor("human", "casey"), CLOCK))
+    with pytest.raises(store_module.ExperienceStateAbsent, match="contains no experience state"):
+        store.load_experience()
+    assert issubclass(store_module.ExperienceStateAbsent, store_module.CapsuleStoreError)
+
+
+def _row(passed: bool) -> EvidenceRef:
+    return EvidenceRef("brd_requirements", _scope_ref(), passed)
+
+
+def _admitted_by_hand(state: dict, rows: list[EvidenceRef]) -> dict:
+    """What advance() records for an admission into CONFIRM, without its guard:
+    the chain-valid record a store owner can write by hand (A-029)."""
+    from nornyx_forge.experience import _sealed
+
+    updated = copy.deepcopy(state)
+    updated["stage"] = "CONFIRM"
+    updated["entered"] = {"by": "casey", "kind": "human", "at": CLOCK}
+    updated["evidence"].setdefault("CONFIRM", []).extend(row.as_dict() for row in rows)
+    updated["history"].append({"event": "advanced", "from": state["stage"], "to": "CONFIRM",
+                               "by": "casey", "kind": "human", "at": CLOCK, "detail": ""})
+    return _sealed(updated)
+
+
+def _store_with(tmp_path: Path, lifecycle: dict) -> None:
+    CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").initialize(
+        create_document("proj-1", PROJECT_NAME, Actor("human", "casey"), CLOCK),
+        experience=lifecycle)
+
+
+def test_a_later_failing_row_is_not_masked_by_an_earlier_pass(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    human = Actor("human", "casey")
+    start = start_experience(human, CLOCK)
+    with pytest.raises(ExperienceError, match="reports failure"):
+        advance(start, "CONFIRM", human, CLOCK, [_row(True), _row(False)])
+    _store_with(tmp_path, _admitted_by_hand(start, [_row(True), _row(False)]))
+    with pytest.raises(ReceiptError, match="last brd_requirements row"):
+        _export(tmp_path)
+    # The receipt an any-pass checker would have exported and anchored.
+    monkeypatch.setattr(receipt_module, "walk_problems", lambda *args: [])
+    masked = _export(tmp_path)
+    monkeypatch.undo()
+    for verdict in (verify_receipt(masked),
+                    _verify_live(tmp_path, masked,
+                                 expect_sha256=masked["integrity"]["body_sha256"])):
+        assert not verdict.consistent and not verdict.verified, verdict
+        assert any("last brd_requirements row" in p for p in verdict.problems), verdict.problems
+    assert _verify_live(tmp_path, masked).live_comparison == "refused"
+
+
+def test_a_failing_row_replaced_by_a_passing_one_is_admitted_as_advance_admits_it(
+        tmp_path: Path):
+    human = Actor("human", "casey")
+    admitted = advance(start_experience(human, CLOCK), "CONFIRM", human, CLOCK,
+                       [_row(False), _row(True)])
+    _store_with(tmp_path, admitted)
+    receipt = _export(tmp_path)
+    assert [item["passed"] for item in receipt["body"]["evidence"]] == [False, True]
+    assert _verify_live(tmp_path, receipt).verified
+    assert verify_receipt(receipt, expect_sha256=receipt["integrity"]["body_sha256"]).verified
+
+
+def test_every_admission_into_a_re_entered_stage_needs_its_own_passing_row(tmp_path: Path):
+    """CONFIRM -> CONFIRM keeps every admission's rows in one list. Each
+    admission's last row is a distinct passed row, so two admissions with one
+    passed row between them cannot both have been licensed."""
+    human = Actor("human", "casey")
+    once = advance(start_experience(human, CLOCK), "CONFIRM", human, CLOCK,
+                   [_row(False), _row(True)])
+    twice = advance(once, "CONFIRM", human, CLOCK, [_row(True)])
+    _store_with(tmp_path, twice)
+    receipt = _export(tmp_path)
+    assert [item["passed"] for item in receipt["body"]["evidence"]] == [False, True, True]
+    assert _verify_live(tmp_path, receipt).verified
+    forged = copy.deepcopy(receipt)
+    forged["body"]["evidence"][1]["passed"] = False
+    verdict = verify_receipt(reseal(forged))
+    assert not verdict.consistent
+    assert [p for p in verdict.problems if "admissions" in p] == list(verdict.problems) != []

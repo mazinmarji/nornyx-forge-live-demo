@@ -211,6 +211,13 @@ class CapsuleStoreError(CapsuleError):
     """The store cannot satisfy the request. Nothing was partially written."""
 
 
+class ExperienceStateAbsent(CapsuleStoreError):
+    """The store holds no experience state at all: the one `load_experience`
+    refusal that means nothing was recorded, rather than that what was recorded
+    cannot be trusted. Typed so a caller tells absence from corruption without
+    reading the message."""
+
+
 @dataclass(frozen=True)
 class AuthoritySnapshot:
     """The store's authority as Forge last wrote it: the revision and the exact
@@ -1391,7 +1398,7 @@ class CapsuleStore:
             )
         path = self.root / _EXPERIENCE_FILE
         if not path.exists():
-            raise CapsuleStoreError(f"{self.root} contains no experience state")
+            raise ExperienceStateAbsent(f"{self.root} contains no experience state")
         state, problem = _json_document(path)
         if problem is not None:
             raise CapsuleStoreError(f"experience state is unreadable: {problem}")
@@ -2240,5 +2247,6 @@ __all__ = [
     "CapsuleStoreError",
     "CapsuleTamperError",
     "CapsuleValidationError",
+    "ExperienceStateAbsent",
     "ProcessWitness",
 ]

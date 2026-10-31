@@ -8615,7 +8615,13 @@ Experience Contract -- a transition its table does not allow, an actor kind
 it does not allow into a stage, an advance or failure of a workflow not
 active, a retry of one not failed or by an actor that may not resume it, a
 start by anything but a human, a stage entered without its required
-evidence -- is refused by the exporter and by the verifier, never described.
+evidence (judged as `experience.advance()` judges it, by the last row of each
+kind, with a distinct passed row for each admission into a stage entered more
+than once) -- is refused by the exporter and by the verifier, never
+described. A lifecycle the store cannot read -- truncated, a repeated key, a
+broken schema or chain -- is refused too, never exported as absent: only a
+store holding no lifecycle at all (`ExperienceStateAbsent`, a type, not a
+message) reads as `tracking: absent`.
 The check is over the walk the store holds; a walk written into the store by
 the store owner's own account is bounded by A-029, not by this receipt.
 
