@@ -8472,3 +8472,108 @@ journey's `blockers` list still carries the verdict's reason word for word.
 These are derived views, not authority: the contract and the verdict stay the
 only sources, and the plain words come from the same data as the technical
 words, so the two cannot disagree about what happened.
+
+## A-057 A produced application's entry point, runtime contract and access link are designed, not built; the design keeps classification in the closed operation registry
+
+**Claim limit, stated first.** This entry records a design and implements
+nothing. It adds no capability, changes no gate, no verifier profile, no
+eligibility decision, no provider, no evidence requirement, no runtime
+behaviour and no page. The design is recorded at
+`docs/design/PRODUCED_APP_CONTRACT.md`. It stays a design until a real
+provider-produced build exists, and none can exist today: no provider is
+eligible on any platform (A-051).
+
+**What it records.** What exists and what is absent, measured from code: the
+entry point `app/__main__.py` is named and checked present and parsing, never
+run (A-051); the handoff gate `open_application_readiness` exists and no route
+calls it; the runtime operation contract is rendered from declared operations
+(A-053), and the shipped build declares none, so its table is empty; the
+contract is written under `.nornyx/`, which neither the verifier nor the
+manifest's reader inspects, so no shipped build's application carries it; the
+run-act gate's stage carries the same empty contract with a prose instruction
+to respect it (A-055); and only Forge's test specimen has an enforcement
+point, one that takes its decision table from its caller. A requirement such
+as "the application must refuse to delete records without approval" therefore
+has no table entry and no enforcement point today.
+
+**What it proposes, each for a later cycle.**
+
+1. **The entry point stays a Forge constant.** Version 3 of the manifest
+   records `application.start` as a constant Forge writes
+   (`python -m app`, run from the project root, interface `console`); the
+   provider never declares a command line. `app/__main__.py` defines
+   `build_boundary()` with no parameters at all.
+2. **A person declares operations; Forge never infers them.** A new
+   authoritative capsule field, `operations`, pairs a confirmed requirement
+   row, named by identifier and by the digest of its text, with an exact
+   registered spelling chosen from a closed select, refused at entry in plain
+   language when unregistered, unconfirmed or repeated, and refused at
+   derivation when its row is gone or its text changed. Classification stays
+   `OPERATION_REGISTRY`'s: operation and capability decide the consequence; no
+   caller-declared risk label is reintroduced. A row's words declare nothing.
+3. **A consequential act the registry does not name fails closed.** It may be
+   declared as `execute_high_risk_action`, which is refused; specific
+   operations are added only by a reviewed change to the registry.
+4. **Forge writes the enforcement point.** The runtime contract, a boundary
+   module and a conformance test are Forge templates written into the
+   workspace before any worker runs and checked byte for byte. The boundary
+   takes only the acts, loads the contract from its own sibling path, derives
+   every disposition from capability and consequence without reading the
+   contract's `disposition` field, holds no act for an operation it does not
+   permit, and refuses with `OPERATION_UNREGISTERED` or
+   `NO_APPROVAL_MECHANISM` before any act runs. This narrows A-051 item 6 for
+   those three files only.
+5. **Wiring is checked statically, and executed only where tests already
+   run.** Nine static rules (W1-W9) resolve every import and the names it
+   binds, and run in the three places the existing static check runs; among
+   them, exactly one construction of the boundary, attribute stores on the
+   boundary module and class refused, side-effect modules whose top level,
+   class bodies, defaults and annotations hold only definitions and literals
+   and carry no decorator, and no produced module named like a
+   standard-library module. The conformance test names operations only, so
+   the provider's own tests must still reference every requirement, and it
+   runs in the existing trusted executor under the existing network guard. A
+   wiring finding withholds the manifest; it does not fail the build, and the
+   verifier's profile is unchanged.
+6. **The access link is computed on request and offered only at READY.**
+   Readiness is computed only by a separate route, never on a state poll and
+   never while a build runs; the journey carries it as a separate field, never
+   as an action, with a line from GOVERN onward and the route to ask at READY;
+   opening shows the path, the start command and the table. Forge starts
+   nothing.
+7. **The link claims no more than was measured.** Not deployment, not
+   production approval, not an independent inspection, not that the
+   application runs, and not that it is confined to its contract when it runs.
+8. **The run-act path follows later.** Carrying the three files through the
+   gate's stage is a later stage; until then a gated build lacks them and gets
+   no manifest.
+9. **Nothing existing is weakened.** No new lifecycle evidence kind; READY's
+   requirements, the verifier's gates and profile, the network guard, the
+   eligibility decision and the rule that a gated build is never offered are
+   unchanged.
+
+**What it does NOT establish.**
+
+1. **Any of it.** No code, test, route or template exists for any proposal
+   above.
+2. **That static wiring rules show an application obeys its contract.** They
+   are rules over the spellings and forms they name. Standard-library file and
+   operating-system effects in any module, in-process state changes, an
+   application file rewritten at run time before it is loaded, the
+   import-time effects of the standard-library modules they allow, and an act
+   registered under a permitted spelling are outside them; a name binds
+   nothing to behaviour, as A-047 records. A-047's statement that its boundary
+   is not a validated runtime boundary for a generated application still
+   stands, and the template boundary is not one either.
+3. **A runnable or confined application.** Whether a produced application
+   starts, and what it reaches when it runs, is shown only by execution in a
+   context with its own observer, which is out of scope.
+4. **The open questions.** The design lists ten, each with a recommended
+   answer. The proposals above follow the recommended answers, and none is
+   decided by this entry.
+
+**Serves.** A-035 item 6, whose fixture no route opens; A-047, whose registry
+the design keeps as the only source of a consequence; A-051, whose manifest
+and handoff gate it extends; A-053, whose empty runtime contract it gives a
+way to be declared and an enforcement point to be checked against; and A-055,
+whose rule that binding is not enforcement it keeps.
