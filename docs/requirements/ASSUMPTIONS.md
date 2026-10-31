@@ -8422,3 +8422,53 @@ from and which runtime contract it declared; A-052, whose gate path brings no
 output back by itself; A-053, whose runtime contract the manifest now binds;
 A-019, since the imported workspace is the verifier's subject and never its
 verifier.
+
+## A-056 A build refusal and a recorded build failure carry a plain-language summary and the failing check's name above the verbatim reason
+
+**Claim limit, stated first.** This change is presentation only. It adds no
+capability, runs no gate and no provider, changes no eligibility decision, no
+evidence requirement, no security setting and no governed behaviour. The
+verbatim refusal and failure text Forge already produced is unchanged and is
+still shown; the plain line is rendered beside it from the same data, and the
+page shows the plain line first. The eligibility decision itself is still
+`provider_contract.governed_build_eligibility` and nothing else, and the
+journey's `blockers` list still carries the verdict's reason word for word.
+
+**What changed.**
+
+1. **A plain summary for an eligibility refusal**
+   (`plain_reasons.eligibility_summary`, wired into the build route's refusal).
+   When the governed build is refused because the confirmed provider is not
+   eligible, the refusal now also carries a plain sentence naming, for a basic
+   user, the provider, the platform and the provider-eligibility check. The
+   route's `refused` field still carries the verdict's reason exactly, and the
+   page renders the plain `explanation` above it, through the same renderer
+   A-048 added for a refused requirement entry.
+2. **A plain summary for a recorded build failure**
+   (`plain_reasons.build_failure_headline`, wired into
+   `experience_journey.journey_view`). A failed build's journey view now
+   carries `failure_summary` and `failure_check` beside the verbatim `failure`,
+   naming in plain terms which check stopped the build: the build's acceptance,
+   its recorded gate results, the build run, or the build's evidence. The page's
+   lifecycle panel renders the summary and the check's name above the verbatim
+   failure, which it still shows unchanged. A summary claims no more than the
+   evidence kind carries: `flow_run` reports the flow's aggregate acceptance,
+   which folds the tests, gates, reviews and evidence-ledger checks into one
+   value, so its summary says the build was not accepted and that this does
+   not say which check failed; it never calls such a run a test failure, since
+   a run whose tests passed and whose ledger check failed is refused with the
+   same text. Classification reads the failure's fixed prefix first and takes
+   an evidence kind only from the two structured refusals the lifecycle
+   contract writes (a kind not presented, or presented evidence that reports
+   failure), so a kind's name inside an exception or a malformed gate record
+   cannot produce a summary that contradicts the failure's own prefix, and
+   absent evidence is reported as absent, not as failed. The classifier
+   keys only on the tokens Forge's own failure text already carries, and a test
+   drives real failures through the journey to pin it, so a change on either
+   side is a red test rather than a plain line that quietly stops matching.
+   Every journey shape carries the two fields, both `None` when there is no
+   failure, so the page renders them without testing for their absence.
+
+These are derived views, not authority: the contract and the verdict stay the
+only sources, and the plain words come from the same data as the technical
+words, so the two cannot disagree about what happened.

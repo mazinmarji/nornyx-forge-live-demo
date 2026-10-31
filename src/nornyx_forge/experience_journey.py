@@ -53,6 +53,7 @@ from .experience_build import (
     flow_evidence,
     scope_reference,
 )
+from .plain_reasons import build_failure_headline
 
 #: The actor under which the SURFACE ITSELF records evidence-driven
 #: transitions (BUILD -> TEST -> GOVERN) and build failures. A system actor
@@ -854,6 +855,7 @@ def journey_view(
         return {
             "tracking": "absent", "stage": None, "status": None,
             "actions": ["start_tracking"], "blockers": [], "failure": None,
+            "failure_summary": None, "failure_check": None,
             "scope": scope, "next": _TRACKING_ABSENT,
         }
     stage = experience["stage"]
@@ -864,9 +866,12 @@ def journey_view(
             (event["detail"] for event in reversed(experience["history"]) if event["event"] == "failed"),
             "",
         )
+        _failure_headline = build_failure_headline(failure)
         return {
             "tracking": "recorded", "stage": stage, "status": status,
             "actions": ["retry"], "blockers": [], "failure": failure,
+            "failure_summary": _failure_headline["summary"],
+            "failure_check": _failure_headline["check"],
             "scope": scope,
             "next": f"The workflow failed at {stage}. Retry to re-enter {stage}.",
         }
@@ -961,6 +966,7 @@ def journey_view(
     return {
         "tracking": "recorded", "stage": stage, "status": status,
         "actions": actions, "blockers": blockers, "failure": failure,
+        "failure_summary": None, "failure_check": None,
         "scope": scope, "next": next_text,
     }
 
