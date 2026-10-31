@@ -124,7 +124,6 @@ decorators sitting on top of it. It starts no process; serving it is the launche
 
 from __future__ import annotations
 
-import hashlib
 import sys
 import threading
 from datetime import datetime, timezone
@@ -183,6 +182,7 @@ from .experience_journey import (
 )
 from .experience_sharing import sharing_preview
 from .governance_rendering import RenderingError, verify_round_trip
+from .journey_receipt import measure_brd
 from .plain_reasons import eligibility_summary
 from .produced_app_handoff import ManifestIssue, issue_manifest
 from .provider_contract import GovernedEligibility, governed_build_eligibility
@@ -520,22 +520,12 @@ def create_app(
         A file that exists and cannot be decoded is PRESENT AND NOT
         DERIVED, not absent: the honest reading of bytes that are there
         and are not the rendering.
+
+        The measurement itself is `journey_receipt.measure_brd`, so this
+        page and the journey receipt read `BRD.md` through one function and
+        cannot come to disagree about it (A-058).
         """
-        path = root.parent / "BRD.md"
-        if not path.exists():
-            return BrdState.absent()
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return BrdState.stale(None)
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        try:
-            rendered = brd_from_capsule(document)
-        except BrdAuthoringError:
-            # No confirmed intent to render: whatever is in the file, the
-            # capsule did not author it.
-            return BrdState.stale(digest)
-        return BrdState.matching(digest) if text == rendered else BrdState.stale(digest)
+        return measure_brd(root.parent / "BRD.md", document, render=brd_from_capsule)
 
     def project(current: CapsuleStore) -> dict[str, Any]:
         """The capsule, or the journey's refusal when no store exists at all.
