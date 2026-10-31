@@ -8577,3 +8577,104 @@ the design keeps as the only source of a consequence; A-051, whose manifest
 and handoff gate it extends; A-053, whose empty runtime contract it gives a
 way to be declared and an enforcement point to be checked against; and A-055,
 whose rule that binding is not enforcement it keeps.
+
+## A-058 A project's journey is exported as a verifiable, allowlisted receipt; a recorded build the shipped surface could not have admitted is classified simulated, and no receipt states a runnable application
+
+**Claim limit, stated first.** The receipt reads what Forge already records
+and decides nothing new. It runs no provider, constructs no flow, and changes
+no eligibility, confinement, authentication or gate decision. It is not
+evidence that any application was produced, runs, or is correct.
+
+**What it is.** `nornyx-forge journey-receipt --project-dir <dir> --out
+<file>` writes `nornyx.forge.journey_receipt.v1` for one project, and
+`nornyx-forge verify-journey-receipt <file>` checks it
+(`src/nornyx_forge/journey_receipt.py`). The body carries the project
+identifier and store revision, the capsule's digest-chain tip as the
+requirements digest, `BRD.md`'s digest and whether it is the derivation of
+the confirmed capsule, the lifecycle's stages and recorded events, the
+evidence references each stage was admitted on, the Provider Contract's
+verdict for the confirmed provider on the exporting host's platform, the
+governed build's outcome with its exact refusal sentence, and a
+classification. The onboarding page now reads `BRD.md` through the same
+function (`measure_brd`), so the page and the receipt cannot disagree about
+it; the receipt module owns that reading by design.
+
+**How real and simulated are told apart.** The shipped build route refuses
+an ineligible provider before the lifecycle moves. A lifecycle that reached
+BUILD (read from every stage it stood in, not from one event) while this
+Forge version's Provider Contract refuses the confirmed provider on that
+platform records a build the shipped surface could not have admitted, and
+the receipt classifies it `simulated`: it came from a flow at the injectable
+seam. The word is about where a build came from and is unrelated to the
+lifecycle's optional SIMULATE stage. A recorded build under an eligible
+provider is `unattested`, because Forge records no build-admission
+attestation. A flow's own description of itself decides nothing.
+`runnable_application` is `false` in every receipt, and the verifier refuses
+a receipt that says otherwise. A lifecycle whose recorded walk breaks the
+Experience Contract -- a transition its table does not allow, an actor kind
+it does not allow into a stage, an advance or failure of a workflow not
+active, a retry of one not failed or by an actor that may not resume it, a
+start by anything but a human, a stage entered without its required
+evidence (judged as `experience.advance()` judges it, by the last row of each
+kind, with a distinct passed row for each admission into a stage entered more
+than once) -- is refused by the exporter and by the verifier, never
+described. A lifecycle the store cannot read -- truncated, a repeated key, a
+broken schema or chain, or a link where the file should be -- is refused by
+the exporter and by the live comparison, never exported as absent: only a
+store with no lifecycle entry at all (`ExperienceStateAbsent`, a type, not a
+message, decided without following links) reads as `tracking: absent`. A
+receipt checked only against an out-of-band digest does not see the project,
+so that check cannot see this.
+The check is over the walk the store holds; a walk written into the store by
+the store owner's own account is bounded by A-029, not by this receipt.
+
+**Verified means anchored.** The body's SHA-256 over canonical JSON proves
+the body was not changed after the digest was computed, and nothing about
+who computed it. The verifier reports `consistent` when the shape, the digest
+and Forge's own rules hold, and `verified` only when the receipt is also
+anchored by something its holder does not control:
+- the body re-derived from the project's store for a platform word the
+  VERIFIER supplies (the command line uses its own host's), never the one the
+  receipt names, from a store that is sealed -- a store whose seal is gone
+  anchors nothing, and one that no longer matches its seal refuses to load
+  (A-029, whose limits bound this route); or
+- a digest the holder obtained out of band.
+The command exits 0 only when verified. It reads a receipt only from its one
+canonical writing: a repeated key or any other spelling of the same JSON is
+refused, so no two readers can read one file two ways.
+
+**The allowlist.** Actors are exported as their kind only. Failure details,
+and evidence references Forge did not write or whose flow backend is not one
+of Forge's own words, are exported as SHA-256 digests. Requirement and BRD
+text, the project's name, filesystem paths and the control-plane bearer are
+never exported. The project IDENTIFIER is exported as the person typed it; it
+should not carry anything they would not put in a receipt.
+
+**Bounds stated here.**
+- Exporting needs the `demo` extra, as every onboarded project already did,
+  because the host's platform word has one owner, the onboarding surface; the
+  command refuses in its own JSON without it. Verifying a receipt on its own
+  needs no extra.
+- `generated_at` is the exporter's own statement, in one UTC form: the digest
+  covers it and no anchor does, and every verdict lists it under
+  `not_anchored`.
+- A receipt from another Forge version is reported as not judged, and refused:
+  the verifier applies only its own version's rules.
+- The live comparison compares the whole body, store revision included, so a
+  project changed legitimately since export no longer matches its old receipt.
+- The store's git calls read the store repository's own configuration, which
+  its seal does not cover. That predates the receipt and bounds both the page
+  and the receipt; no provider-produced code is run by the receipt itself.
+
+**What it does NOT establish.**
+- That a provider executed, or that any build was real: today no provider is
+  eligible on any platform, so every recorded build is `simulated`.
+- That a produced application runs, meets its requirements, or is safe.
+- Authorship of a receipt from its digest alone, or anything beyond the
+  seal's bound when the store is re-derived.
+- A history of eligibility: the verdict is this Forge version's, for the
+  exporting host's platform, at export.
+
+**Serves.** A machine-readable, checkable record of what Forge did and refused
+to do, consumable outside the onboarding page without its bearer, and stable
+in shape for the day a provider becomes eligible.

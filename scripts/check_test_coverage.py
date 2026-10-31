@@ -1003,6 +1003,18 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # fields on every journey shape, and the served page rendering them above
     # the verbatim failure.
     "tests/test_plain_language_reasons.py": 13,
+    # A-058's journey receipt: 70 collected (57 at introduction, 13 added by
+    # its review repairs), floor at band(70) = 63. The exact shape and unknown or missing keys refused; a
+    # refused real build kept REFUSED in the route's own words; a seam journey
+    # to READY classified simulated and never runnable; an edited receipt, a
+    # self-consistent forgery, an edited BRD and a store edited behind its seal
+    # each refused against a trusted reference; required evidence, eligibility,
+    # refusal and version each checked; the allowlist; no flow or provider
+    # reached; determinism; and the command line. An unreadable lifecycle
+    # refused, never exported as absent, a link where the file should be
+    # included; evidence judged by the last row of each kind, with one passed
+    # row for each admission.
+    "tests/test_journey_receipt.py": 63,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2511,16 +2523,25 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # to 6321, keeping the same 8 above it; band(n) 6231 -> 6244, the working
 # room below what collects 615 -> 616, and the slack the bands grant
 # 623 -> 624. NO SKIP IS ADDED, and the module joins no platform job, so the
+# windows-runtime job's floor is untouched at 766.
+#
+# 2026-10-31: A-058 ADDS ONE MODULE AND MOVES NONE, measured from a fresh
+# collection: tests/test_journey_receipt.py collects 70 (floor band(70) = 63).
+# No other module's count changed and no floor fell. 7007 collect across 147
+# modules; the module-floor sum rises by 63 to 6376 and the aggregate follows
+# to 6384, keeping the same 8 above it; band(n) 6244 -> 6307, the working
+# room below what collects 616 -> 623, and the slack the bands grant
+# 624 -> 631. NO SKIP IS ADDED, and the module joins no platform job, so the
 # windows-runtime job's floor is untouched at 766. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     6937   (146 modules)
-#     sum of the module floors    6313
-#     band(6937) = ceil(0.9*n)    6244
-#     MINIMUM_COLLECTED           6321
+#     collected across tests/     7007   (147 modules)
+#     sum of the module floors    6376
+#     band(7007) = ceil(0.9*n)    6307
+#     MINIMUM_COLLECTED           6384
 #     above the module sum          8
-#     below what collects         616
+#     below what collects         623
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2742,7 +2763,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 624 in total, and the aggregate refuses
+# per-module bands already grant 631 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3011,7 +3032,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6321
+MINIMUM_COLLECTED = 6384
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3155,6 +3176,8 @@ REQUIRED_MODULES = (
     "tests/test_gate_handoff.py",
     # A-056: plain-language summaries above the verbatim refusal and failure.
     "tests/test_plain_language_reasons.py",
+    # A-058: the verifiable journey receipt and its verifier.
+    "tests/test_journey_receipt.py",
     "tests/test_runtime_contract.py",
     "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",
