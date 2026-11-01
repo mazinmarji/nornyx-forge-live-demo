@@ -617,7 +617,27 @@ def test_the_exporters_clock_must_be_a_utc_instant_and_is_never_anchored(tmp_pat
     verdict = _verify_live(tmp_path, reseal(claimed))
     assert not verdict.verified and any("generated_at" in p for p in verdict.problems)
     good = _verify_live(tmp_path, receipt)
-    assert good.verified and good.as_dict()["not_anchored"] == ["body.generated_at"]
+    assert good.verified and good.as_dict()["not_anchored"] == [
+        "body.generated_at", "body.brd.present", "body.brd.derived", "body.brd.digest"]
+
+
+def test_a_brd_the_seal_does_not_cover_is_never_reported_as_anchored(tmp_path: Path):
+    """BRD.md lies outside the seal: a holder can delete it and still get a
+    live-verified receipt, so the verdict lists every BRD field as unanchored,
+    while a false claim that the file is the capsule's render stays refused."""
+    _refused_project(tmp_path)
+    (tmp_path / "BRD.md").unlink()
+    deleted = _export(tmp_path)
+    assert deleted["body"]["brd"]["present"] is False
+    verdict = _verify_live(tmp_path, deleted)
+    assert verdict.verified and verdict.anchors == ("sealed_store",)
+    assert {"body.brd.present", "body.brd.derived", "body.brd.digest"} <= set(
+        verdict.as_dict()["not_anchored"])
+    (tmp_path / "BRD.md").write_text("Not the capsule's render.\n", encoding="utf-8")
+    claimed = copy.deepcopy(_export(tmp_path))
+    assert claimed["body"]["brd"]["derived"] is False
+    claimed["body"]["brd"]["derived"] = True
+    assert not _verify_live(tmp_path, reseal(claimed)).verified
 
 
 def test_the_contracts_status_and_actor_guards_hold_over_the_walk(tmp_path: Path):
@@ -1104,7 +1124,7 @@ def test_every_admission_into_a_re_entered_stage_needs_its_own_passing_row(tmp_p
 # ---------------------------------------------------------------------------
 
 _SEALED_PARTS = ("lifecycle", "capsule", "revision")
-_MOMENTS = ("before_check", "after_check", "between_reads")
+_MOMENTS = ("before_check", "after_check", "between_reads", "while_unchecked")
 
 
 def _git(store: Path, *args: str) -> str:
@@ -1116,8 +1136,9 @@ def _git(store: Path, *args: str) -> str:
 
 
 def _substitute(tmp_path: Path, part: str):
-    """A chain-valid replacement for one sealed part, and the change that puts
-    it on disk: what a writer to the project, but not to its seal, can do."""
+    """A chain-valid replacement for one sealed part, the change that puts it
+    on disk and the change that takes it back: what a writer to the project,
+    but not to its seal, can do."""
     from nornyx_forge.experience import fail
 
     store = tmp_path / "capsule"
@@ -1125,26 +1146,35 @@ def _substitute(tmp_path: Path, part: str):
         state = fail(CapsuleStore(store).load_experience(), Actor("system", "s"),
                      "substituted", CLOCK)
         text = json.dumps(state)
-        return state, lambda: (store / "experience.json").write_text(text, encoding="utf-8")
+        original = (store / "experience.json").read_text(encoding="utf-8")
+        return state, lambda: (store / "experience.json").write_text(text, encoding="utf-8"), \
+            lambda: (store / "experience.json").write_text(original, encoding="utf-8")
     if part == "capsule":
         current = (store / "capsule.json").read_text(encoding="utf-8").strip()
         earlier = next(text for text in (_git(store, "show", f"{revision}:capsule.json")
                                          for revision in _git(store, "rev-list", "HEAD").split())
                        if text != current)
+        original = (store / "capsule.json").read_text(encoding="utf-8")
         return json.loads(earlier), lambda: (store / "capsule.json").write_text(
-            earlier, encoding="utf-8")
+            earlier, encoding="utf-8"), lambda: (store / "capsule.json").write_text(
+            original, encoding="utf-8")
     sealed = _git(store, "rev-parse", "HEAD")
     _git(store, "commit", "--allow-empty", "-q", "-m", "moved after the seal check")
     moved = _git(store, "rev-parse", "HEAD")
     _git(store, "reset", "-q", "--soft", sealed)
-    return moved, lambda: _git(store, "reset", "-q", "--soft", moved)
+    return moved, lambda: _git(store, "reset", "-q", "--soft", moved), \
+        lambda: _git(store, "reset", "-q", "--soft", sealed)
 
 
-def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change) -> None:
-    """Make `change` once, at one moment of a load: `before_check`, now;
+def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change,
+               undo) -> dict:
+    """Make `change` at one moment of a load: `before_check`, now;
     `after_check`, as soon as a seal check passes; `between_reads`, at the
     first read of the part made outside a seal check after one has passed --
-    the window between a check and a second read of what it checked."""
+    the window between a check and a second read of what it checked;
+    `while_unchecked`, now and after every passing check, undone while each
+    check runs, so whatever is read outside a check, however it is read, is
+    the change."""
     state = {"inside": False, "checked": False, "done": False}
 
     def once() -> None:
@@ -1152,13 +1182,16 @@ def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change) ->
             state["done"] = True
             change()
 
-    if when == "before_check":
+    if when in ("before_check", "while_unchecked"):
         once()
-        return
+    if when == "before_check":
+        return state
     real_problems = CapsuleStore.seal_problems
 
     def seal_problems(self, snapshot):
         state["inside"] = True
+        if when == "while_unchecked":
+            undo()
         try:
             problems = real_problems(self, snapshot)
         finally:
@@ -1167,11 +1200,13 @@ def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change) ->
             state["checked"] = True
             if when == "after_check":
                 once()
+            elif when == "while_unchecked":
+                change()
         return problems
 
     monkeypatch.setattr(CapsuleStore, "seal_problems", seal_problems)
     if when != "between_reads":
-        return
+        return state
     name = {"lifecycle": "experience.json", "capsule": "capsule.json"}.get(part)
     real_text, real_git = store_module._authority_text, store_module._run_git
 
@@ -1188,6 +1223,7 @@ def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change) ->
 
     monkeypatch.setattr(store_module, "_authority_text", authority_text)
     monkeypatch.setattr(store_module, "_run_git", run_git)
+    return state
 
 
 def _receipt_with(tmp_path: Path, honest: dict, part: str, value) -> dict:
@@ -1213,8 +1249,8 @@ def test_an_export_never_anchors_a_part_changed_around_the_seal_check(
     receipt is the validated snapshot's, or a refusal: never the change."""
     _refused_project(tmp_path)
     honest = _export(tmp_path)
-    _value, change = _substitute(tmp_path, part)
-    _change_at(monkeypatch, part, when, change)
+    _value, change, undo = _substitute(tmp_path, part)
+    window = _change_at(monkeypatch, part, when, change, undo)
     if when == "before_check":
         with pytest.raises(CapsuleError):
             _export(tmp_path)
@@ -1223,6 +1259,8 @@ def test_an_export_never_anchors_a_part_changed_around_the_seal_check(
         exported = _export(tmp_path)
     except CapsuleError:
         return
+    if when in ("after_check", "while_unchecked"):
+        assert window["done"], "the change never landed, so the test proves nothing"
     assert exported["body"] == honest["body"], "the receipt holds what the seal check never saw"
 
 
@@ -1234,10 +1272,12 @@ def test_live_verification_never_anchors_a_part_changed_around_the_seal_check(
     anchored, whenever the change lands."""
     _refused_project(tmp_path)
     honest = _export(tmp_path)
-    value, change = _substitute(tmp_path, part)
+    value, change, undo = _substitute(tmp_path, part)
     forged = _receipt_with(tmp_path, honest, part, value)
     assert verify_receipt(forged).consistent, "the forgery must be self-consistent to prove anything"
-    _change_at(monkeypatch, part, when, change)
+    window = _change_at(monkeypatch, part, when, change, undo)
     verdict = _verify_live(tmp_path, forged)
+    if when in ("after_check", "while_unchecked"):
+        assert window["done"], "the change never landed, so the test proves nothing"
     assert not verdict.verified and "sealed_store" not in verdict.anchors, verdict
     assert verdict.live_comparison == "refused", verdict

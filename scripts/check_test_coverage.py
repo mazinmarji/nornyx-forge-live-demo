@@ -1003,8 +1003,8 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # fields on every journey shape, and the served page rendering them above
     # the verbatim failure.
     "tests/test_plain_language_reasons.py": 13,
-    # A-058's journey receipt: 90 collected (57 at introduction, 33 added by
-    # its review repairs), floor at band(90) = 81. The exact shape and unknown or missing keys refused; a
+    # A-058's journey receipt: 97 collected (57 at introduction, 40 added by
+    # its review repairs), floor at band(97) = 88. The exact shape and unknown or missing keys refused; a
     # refused real build kept REFUSED in the route's own words; a seam journey
     # to READY classified simulated and never runnable; an edited receipt, a
     # self-consistent forgery, an edited BRD and a store edited behind its seal
@@ -1014,8 +1014,9 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # refused, never exported as absent, a link where the file should be
     # included; evidence judged by the last row of each kind, with one passed
     # row for each admission; a sealed part changed before, after or between
-    # the reads of its seal check never anchored.
-    "tests/test_journey_receipt.py": 81,
+    # the reads of its seal check, or whenever no check runs, never anchored;
+    # BRD.md, outside the seal, never reported as anchored.
+    "tests/test_journey_receipt.py": 88,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2527,20 +2528,20 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # windows-runtime job's floor is untouched at 766.
 #
 # 2026-10-31: A-058 ADDS ONE MODULE AND MOVES NONE, measured from a fresh
-# collection: tests/test_journey_receipt.py collects 90 (floor band(90) = 81).
-# No other module's count changed and no floor fell. 7027 collect across 147
-# modules; the module-floor sum rises by 81 to 6394 and the aggregate follows
-# to 6402, keeping the same 8 above it; band(n) 6244 -> 6325, the working
+# collection: tests/test_journey_receipt.py collects 97 (floor band(97) = 88).
+# No other module's count changed and no floor fell. 7034 collect across 147
+# modules; the module-floor sum rises by 88 to 6401 and the aggregate follows
+# to 6409, keeping the same 8 above it; band(n) 6244 -> 6331, the working
 # room below what collects 616 -> 625, and the slack the bands grant
 # 624 -> 633. NO SKIP IS ADDED, and the module joins no platform job, so the
 # windows-runtime job's floor is untouched at 766. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     7027   (147 modules)
-#     sum of the module floors    6394
-#     band(7027) = ceil(0.9*n)    6325
-#     MINIMUM_COLLECTED           6402
+#     collected across tests/     7034   (147 modules)
+#     sum of the module floors    6401
+#     band(7034) = ceil(0.9*n)    6331
+#     MINIMUM_COLLECTED           6409
 #     above the module sum          8
 #     below what collects         625
 #
@@ -3033,7 +3034,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6402
+MINIMUM_COLLECTED = 6409
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the

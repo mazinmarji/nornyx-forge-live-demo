@@ -99,8 +99,13 @@ _PLATFORM_WORD = re.compile(r"\A[a-z0-9][a-z0-9:._-]{0,39}\Z")
 #: The exporter's clock, in the one form it writes. It is the exporter's own
 #: statement: integrity covers it, and no anchor does (A-058).
 _UTC_INSTANT = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
-#: Fields a verified receipt still does not anchor to anything outside itself.
-NOT_ANCHORED = ("body.generated_at",)
+#: Fields a verified receipt still does not anchor to anything outside itself:
+#: the exporter's clock, and BRD.md as measured, which lies outside the seal
+#: (A-032 item 6) -- its holder can delete or rewrite it, so `present`, `digest`
+#: and a `derived` of false are theirs to choose. A `derived` of true is still
+#: refused unless the file is the sealed capsule's own render (A-058).
+NOT_ANCHORED = ("body.generated_at", "body.brd.present", "body.brd.derived",
+                "body.brd.digest")
 #: The largest receipt file read, so a hostile file cannot exhaust the reader.
 _MAX_RECEIPT_BYTES = 8 * 1024 * 1024
 #: The stages at or past BUILD: a lifecycle that reached any of them reached BUILD.
@@ -236,10 +241,12 @@ def _load_project(project_dir: Path, seal_dir: Path) -> tuple[dict, dict | None,
     refuses here, in the store's own words.
 
     A sealed store's three come from the one snapshot its seal check
-    validated, never from a second read, so `sealed` -- and with it the
-    `sealed_store` anchor -- covers exactly the bytes and the revision that
-    check compared. Only a store with no seal is read file by file, and it is
-    `unsealed`, which anchors nothing; a seal appearing mid-read leaves it so."""
+    validated, never from a second read, so what `sealed` -- and with it the
+    `sealed_store` anchor -- vouches for in them is exactly the bytes and the
+    revision that check compared. BRD.md is not among them: it lies outside
+    the seal and is listed in NOT_ANCHORED. Only a store with no seal is read
+    file by file, and it is `unsealed`, which anchors nothing; a seal
+    appearing mid-read leaves it so."""
     store = CapsuleStore(Path(project_dir) / "capsule", seal_dir=Path(seal_dir))
     sealed = store.load_sealed()
     if sealed is not None:

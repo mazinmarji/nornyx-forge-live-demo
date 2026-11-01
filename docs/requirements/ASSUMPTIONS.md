@@ -8639,8 +8639,8 @@ anchored by something its holder does not control:
   anchors nothing, and one that no longer matches its seal refuses to load
   (A-029, whose limits bound this route). The capsule, the lifecycle and the
   revision are then taken from the one seal snapshot that check validated,
-  never read a second time, so a file replaced or a HEAD moved after the
-  check cannot reach a receipt this route anchors; or
+  never read a second time, so one of them replaced, or a HEAD moved, after
+  the check cannot reach a receipt this route anchors; or
 - a digest the holder obtained out of band.
 The command exits 0 only when verified. It reads a receipt only from its one
 canonical writing: a repeated key or any other spelling of the same JSON is
@@ -8661,6 +8661,11 @@ should not carry anything they would not put in a receipt.
 - `generated_at` is the exporter's own statement, in one UTC form: the digest
   covers it and no anchor does, and every verdict lists it under
   `not_anchored`.
+- BRD.md lies outside the seal (A-032 item 6), so `brd.present`, `brd.derived`
+  and `brd.digest` are the file as measured, compared live and anchored by
+  nothing: whoever can write the project can delete or rewrite the file, and
+  every verdict lists the three under `not_anchored`. A `derived` of true is
+  still refused unless the file is the sealed capsule's own render.
 - A receipt from another Forge version is reported as not judged, and refused:
   the verifier applies only its own version's rules.
 - The live comparison compares the whole body, store revision included, so a
