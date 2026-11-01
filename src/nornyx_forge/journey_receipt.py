@@ -101,9 +101,9 @@ _PLATFORM_WORD = re.compile(r"\A[a-z0-9][a-z0-9:._-]{0,39}\Z")
 _UTC_INSTANT = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 #: Fields a verified receipt still does not anchor to anything outside itself:
 #: the exporter's clock, and BRD.md as measured, which lies outside the seal
-#: (A-032 item 6) -- its holder can delete or rewrite it, so `present`, `digest`
-#: and a `derived` of false are theirs to choose. A `derived` of true is still
-#: refused unless the file is the sealed capsule's own render (A-058).
+#: (A-032 item 6) -- its holder can delete or rewrite it, so all three are
+#: theirs to choose. A `derived` of true fixes only that the file is the sealed
+#: capsule's own render, which the live comparison checks (A-058).
 NOT_ANCHORED = ("body.generated_at", "body.brd.present", "body.brd.derived",
                 "body.brd.digest")
 #: The largest receipt file read, so a hostile file cannot exhaust the reader.

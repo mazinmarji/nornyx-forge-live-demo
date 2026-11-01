@@ -624,7 +624,8 @@ def test_the_exporters_clock_must_be_a_utc_instant_and_is_never_anchored(tmp_pat
 def test_a_brd_the_seal_does_not_cover_is_never_reported_as_anchored(tmp_path: Path):
     """BRD.md lies outside the seal: a holder can delete it and still get a
     live-verified receipt, so the verdict lists every BRD field as unanchored,
-    while a false claim that the file is the capsule's render stays refused."""
+    while the live comparison refuses a false claim that the file is the
+    capsule's render."""
     _refused_project(tmp_path)
     (tmp_path / "BRD.md").unlink()
     deleted = _export(tmp_path)
@@ -634,10 +635,14 @@ def test_a_brd_the_seal_does_not_cover_is_never_reported_as_anchored(tmp_path: P
     assert {"body.brd.present", "body.brd.derived", "body.brd.digest"} <= set(
         verdict.as_dict()["not_anchored"])
     (tmp_path / "BRD.md").write_text("Not the capsule's render.\n", encoding="utf-8")
-    claimed = copy.deepcopy(_export(tmp_path))
-    assert claimed["body"]["brd"]["derived"] is False
+    unclaimed = _export(tmp_path)
+    assert unclaimed["body"]["brd"]["derived"] is False
+    assert _verify_live(tmp_path, unclaimed).verified
+    claimed = copy.deepcopy(unclaimed)
     claimed["body"]["brd"]["derived"] = True
-    assert not _verify_live(tmp_path, reseal(claimed)).verified
+    verdict = _verify_live(tmp_path, reseal(claimed))
+    assert not verdict.verified and verdict.live_comparison == "refused", verdict
+    assert any("in ['brd']" in p for p in verdict.problems), verdict.problems
 
 
 def test_the_contracts_status_and_actor_guards_hold_over_the_walk(tmp_path: Path):
@@ -1145,19 +1150,18 @@ def _substitute(tmp_path: Path, part: str):
     if part == "lifecycle":
         state = fail(CapsuleStore(store).load_experience(), Actor("system", "s"),
                      "substituted", CLOCK)
-        text = json.dumps(state)
-        original = (store / "experience.json").read_text(encoding="utf-8")
-        return state, lambda: (store / "experience.json").write_text(text, encoding="utf-8"), \
-            lambda: (store / "experience.json").write_text(original, encoding="utf-8")
+        forged = json.dumps(state).encode("utf-8")
+        original = (store / "experience.json").read_bytes()
+        return state, lambda: (store / "experience.json").write_bytes(forged), \
+            lambda: (store / "experience.json").write_bytes(original)
     if part == "capsule":
         current = (store / "capsule.json").read_text(encoding="utf-8").strip()
         earlier = next(text for text in (_git(store, "show", f"{revision}:capsule.json")
                                          for revision in _git(store, "rev-list", "HEAD").split())
                        if text != current)
-        original = (store / "capsule.json").read_text(encoding="utf-8")
-        return json.loads(earlier), lambda: (store / "capsule.json").write_text(
-            earlier, encoding="utf-8"), lambda: (store / "capsule.json").write_text(
-            original, encoding="utf-8")
+        original = (store / "capsule.json").read_bytes()
+        return json.loads(earlier), lambda: (store / "capsule.json").write_bytes(
+            earlier.encode("utf-8")), lambda: (store / "capsule.json").write_bytes(original)
     sealed = _git(store, "rev-parse", "HEAD")
     _git(store, "commit", "--allow-empty", "-q", "-m", "moved after the seal check")
     moved = _git(store, "rev-parse", "HEAD")
@@ -1246,7 +1250,8 @@ def _receipt_with(tmp_path: Path, honest: dict, part: str, value) -> dict:
 def test_an_export_never_anchors_a_part_changed_around_the_seal_check(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part: str, when: str):
     """Changed before the check, the store refuses. Changed after it, the
-    receipt is the validated snapshot's, or a refusal: never the change."""
+    receipt is the validated snapshot's: never the change, and never a refusal
+    that would leave the window untested."""
     _refused_project(tmp_path)
     honest = _export(tmp_path)
     _value, change, undo = _substitute(tmp_path, part)
@@ -1255,11 +1260,9 @@ def test_an_export_never_anchors_a_part_changed_around_the_seal_check(
         with pytest.raises(CapsuleError):
             _export(tmp_path)
         return
-    try:
-        exported = _export(tmp_path)
-    except CapsuleError:
-        return
-    if when in ("after_check", "while_unchecked"):
+    exported = _export(tmp_path)
+    assert window["checked"], "no seal check passed, so the window never opened"
+    if when == "after_check":
         assert window["done"], "the change never landed, so the test proves nothing"
     assert exported["body"] == honest["body"], "the receipt holds what the seal check never saw"
 
@@ -1277,7 +1280,15 @@ def test_live_verification_never_anchors_a_part_changed_around_the_seal_check(
     assert verify_receipt(forged).consistent, "the forgery must be self-consistent to prove anything"
     window = _change_at(monkeypatch, part, when, change, undo)
     verdict = _verify_live(tmp_path, forged)
-    if when in ("after_check", "while_unchecked"):
-        assert window["done"], "the change never landed, so the test proves nothing"
     assert not verdict.verified and "sealed_store" not in verdict.anchors, verdict
     assert verdict.live_comparison == "refused", verdict
+    if when == "before_check":
+        assert any("store refused" in p for p in verdict.problems), verdict.problems
+        return
+    # Refused because the snapshot disagrees with the forgery, not because the
+    # store refused: a check passed, so the window was open.
+    assert window["checked"], "no seal check passed, so the window never opened"
+    if when == "after_check":
+        assert window["done"], "the change never landed, so the test proves nothing"
+    assert any("disagrees with the sealed project" in p for p in verdict.problems), \
+        verdict.problems

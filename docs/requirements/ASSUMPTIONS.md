@@ -8664,8 +8664,10 @@ should not carry anything they would not put in a receipt.
 - BRD.md lies outside the seal (A-032 item 6), so `brd.present`, `brd.derived`
   and `brd.digest` are the file as measured, compared live and anchored by
   nothing: whoever can write the project can delete or rewrite the file, and
-  every verdict lists the three under `not_anchored`. A `derived` of true is
-  still refused unless the file is the sealed capsule's own render.
+  every verdict lists the three under `not_anchored`. The live comparison
+  refuses a `derived` of true unless the file is the sealed capsule's own
+  render; a receipt checked only against an out-of-band digest gets no such
+  check.
 - A receipt from another Forge version is reported as not judged, and refused:
   the verifier applies only its own version's rules.
 - The live comparison compares the whole body, store revision included, so a
