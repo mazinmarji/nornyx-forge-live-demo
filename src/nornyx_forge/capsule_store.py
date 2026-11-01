@@ -211,6 +211,13 @@ class CapsuleStoreError(CapsuleError):
     """The store cannot satisfy the request. Nothing was partially written."""
 
 
+class ExperienceStateAbsent(CapsuleStoreError):
+    """The store holds no experience state at all: the one `load_experience`
+    refusal that means nothing was recorded, rather than that what was recorded
+    cannot be trusted. Typed so a caller tells absence from corruption without
+    reading the message."""
+
+
 @dataclass(frozen=True)
 class AuthoritySnapshot:
     """The store's authority as Forge last wrote it: the revision and the exact
@@ -1390,9 +1397,14 @@ class CapsuleStore:
                 f"{self.root} is not a capsule store this adapter initialized"
             )
         path = self.root / _EXPERIENCE_FILE
-        if not path.exists():
-            raise CapsuleStoreError(f"{self.root} contains no experience state")
-        state, problem = _json_document(path)
+        # Absence is decided by `lstat`, as `_authority_text` decides it: a
+        # dangling link, a link loop or a directory is an entry that cannot be
+        # read, never "nothing recorded". One read, so nothing moves between
+        # the decision and the bytes.
+        text, problem = _authority_text(path, _AUTHORITY_READ_LIMIT)
+        if problem is None and text is None:
+            raise ExperienceStateAbsent(f"{self.root} contains no experience state")
+        state, problem = (None, problem) if problem is not None else _parsed_json(text)
         if problem is not None:
             raise CapsuleStoreError(f"experience state is unreadable: {problem}")
         validate_experience(state)
@@ -1887,7 +1899,7 @@ class CapsuleStore:
                 problems.append(f"{name} differs from the sealed bytes")
         return problems
 
-    def assert_sealed(self) -> None:
+    def assert_sealed(self) -> AuthoritySnapshot | None:
         """Refuse a store that does not match its seal, and a protected store
         whose seal is gone. Three states, kept apart on purpose: sealed and
         matching (trusted), never sealed (legacy -- `sealed()` is None and
@@ -1913,6 +1925,9 @@ class CapsuleStore:
         establish an interval too, or continuity would begin at the first
         WRITE and a rollback before that write would pass unnoticed inside a
         process that had already read the store.
+
+        Returns the snapshot it validated, or None for a store never sealed:
+        what `load_sealed` reads, so that what it returns is what was checked.
         """
         snapshot = self.sealed()
         if snapshot is None:
@@ -1922,20 +1937,51 @@ class CapsuleStore:
                     f"from {self.seal_dir}; nothing on disk is trusted and no authority is "
                     "inferred from it. Recovery is outside this surface."
                 )
-            return
+            return None
         problems = self.seal_problems(snapshot)
         if problems:
             raise CapsuleSealError(problems, snapshot)
         if self.witness is None:
-            return
+            return snapshot
         ident = self.seal_ident()
         expected = self.witness.expected(ident)
         if expected is None:
             self.witness.record(ident, snapshot)
-            return
+            return snapshot
         if snapshot != expected:
             self.witness.interrupted(ident)
             raise CapsuleSealReplaced.between(snapshot, expected)
+        return snapshot
+
+    def load_sealed(self) -> tuple[dict[str, Any], dict[str, Any] | None, str] | None:
+        """The capsule, the lifecycle (None when none was sealed) and the
+        revision, from the ONE snapshot `assert_sealed` has just validated.
+        Nothing is read from disk after that check: each document is parsed
+        from the snapshot's own bytes, and the revision is the snapshot's, so a
+        file replaced or a HEAD moved once the check has passed changes nothing
+        returned. The same refusals as `load` and
+        `load_experience` follow. None for a store never sealed, which this
+        does not read at all; a protected store whose seal is gone refuses."""
+        snapshot = self.assert_sealed()
+        if snapshot is None:
+            return None
+        capsule_text = snapshot.files[_CAPSULE_FILE]
+        if capsule_text is None:
+            raise CapsuleStoreError(f"{self.root} contains no capsule document")
+        document, problem = _parsed_json(capsule_text)
+        if problem is not None:
+            raise CapsuleStoreError(f"capsule document is unreadable: {problem}")
+        validate_document(document)
+        verify_integrity(document)
+        lifecycle = None
+        experience_text = snapshot.files[_EXPERIENCE_FILE]
+        if experience_text is not None:
+            lifecycle, problem = _parsed_json(experience_text)
+            if problem is not None:
+                raise CapsuleStoreError(f"experience state is unreadable: {problem}")
+            validate_experience(lifecycle)
+            verify_experience(lifecycle)
+        return document, lifecycle, snapshot.revision
 
     def restore(self, snapshot: AuthoritySnapshot) -> tuple[str, list[str]]:
         """Put the store back to the sealed authority. Returns the revision
@@ -2240,5 +2286,6 @@ __all__ = [
     "CapsuleStoreError",
     "CapsuleTamperError",
     "CapsuleValidationError",
+    "ExperienceStateAbsent",
     "ProcessWitness",
 ]

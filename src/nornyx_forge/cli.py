@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .app_launcher import launch_application, launch_onboarding
+from .capsule import CapsuleError
 from .capsule_store import DEFAULT_SEAL_DIR, CapsuleStore
 from .development_flow import DevelopmentFlow
 from .governed_subject import RuntimeAuthorityConfig
@@ -131,6 +132,93 @@ def onboard(
     Everything downstream refuses relative project directories outright.
     """
     launch_onboarding(port=port, project_dir=str(project_dir.resolve()))
+
+
+@app.command("journey-receipt")
+def journey_receipt(
+    project_dir: Path = typer.Option(..., help="The project directory onboarding created."),
+    out: Path = typer.Option(..., help="Where to write the receipt."),
+    seal_dir: Path = typer.Option(
+        DEFAULT_SEAL_DIR, help="Where Forge keeps the store's seal, outside the project.",
+    ),
+) -> None:
+    """Write a verifiable journey receipt for one project. Runs no provider.
+
+    Prints the receipt's body digest: keep it somewhere the receipt's holder
+    cannot rewrite, and pass it to `verify-journey-receipt --expect-sha256`.
+    The digest proves integrity, not authorship, by itself (A-058). Needs the
+    `demo` extra, which every onboarded project already needed.
+    """
+    from .journey_receipt import ReceiptError, export_receipt, receipt_bytes
+
+    platform = _served_platform_or_none()
+    if platform is None:
+        typer.echo(json.dumps({"exported": False, "refused": _NEEDS_DEMO}))
+        raise typer.Exit(1)
+    try:
+        receipt = export_receipt(project_dir.resolve(), seal_dir=seal_dir, platform=platform)
+    except (CapsuleError, ReceiptError) as exc:
+        typer.echo(json.dumps({"exported": False, "refused": str(exc)}))
+        raise typer.Exit(1) from exc
+    out.write_bytes(receipt_bytes(receipt))
+    typer.echo(json.dumps({"exported": True, "receipt": str(out),
+                           "body_sha256": receipt["integrity"]["body_sha256"],
+                           "execution": receipt["body"]["classification"]["execution"]}))
+
+
+@app.command("verify-journey-receipt")
+def verify_journey_receipt(
+    receipt: Path = typer.Argument(..., help="The receipt file to check."),
+    project_dir: Path | None = typer.Option(
+        None, help="Re-derive the receipt from this project's sealed store and compare."),
+    seal_dir: Path = typer.Option(
+        DEFAULT_SEAL_DIR, help="Where Forge keeps the store's seal, outside the project.",
+    ),
+    expect_sha256: str | None = typer.Option(
+        None, help="A body digest obtained out of band, to compare against."),
+) -> None:
+    """Check a journey receipt's shape, digest and consistency. Runs no provider.
+
+    Exit 0 only when the receipt is consistent AND anchored: re-derived from
+    the sealed project for this host's platform, or matched to an out-of-band
+    digest. A consistent receipt with no anchor exits 1, because anyone can
+    write one; its verdict says `consistent: true` (A-058).
+    """
+    from .journey_receipt import ReceiptError, read_receipt, verify_receipt
+
+    try:
+        document = read_receipt(receipt)
+    except ReceiptError as exc:
+        typer.echo(json.dumps({"verified": False, "consistent": False,
+                               "problems": [f"unreadable receipt: {exc}"]}))
+        raise typer.Exit(1) from exc
+    platform = None
+    if project_dir is not None:
+        platform = _served_platform_or_none()
+        if platform is None:
+            typer.echo(json.dumps({"verified": False, "consistent": False,
+                                   "problems": [_NEEDS_DEMO]}))
+            raise typer.Exit(1)
+    verdict = verify_receipt(
+        document,
+        project_dir=project_dir.resolve() if project_dir is not None else None,
+        seal_dir=seal_dir, platform=platform, expect_sha256=expect_sha256,
+    )
+    typer.echo(json.dumps(verdict.as_dict()))
+    raise typer.Exit(0 if verdict.verified else 1)
+
+
+_NEEDS_DEMO = ("this host's platform word comes from the onboarding surface, which needs "
+               "the `demo` extra; install it to export or to compare against a project")
+
+
+def _served_platform_or_none() -> str | None:
+    """This host's platform word, from its one owner, or None without the demo extra."""
+    try:
+        from .onboarding_app import served_platform
+    except ImportError:
+        return None
+    return served_platform()
 
 
 @app.command("build")
