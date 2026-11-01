@@ -12,6 +12,8 @@ WHAT THESE TESTS HOLD (A-058).
   outside the project; a forged receipt with a recomputed digest is caught by
   that re-derivation or by a digest the holder obtained out of band. Without
   either, the verifier says authenticity is not established.
+- A sealed-store anchor covers only the bytes and revision its seal check
+  validated: a part changed after that check never reaches a receipt.
 - Missing or inconsistent required evidence is refused. A lifecycle the store
   cannot read is refused, never exported as absent, and a stage's evidence
   is judged as experience.advance() judges it: by the last row of each kind.
@@ -954,6 +956,9 @@ def _corrupt(path: Path, how: str) -> None:
     elif how == "duplicate_key":
         # A second "stage" ahead of the real one: two readers, two lifecycles.
         path.write_text('{"stage": "READY", ' + text.lstrip()[1:], encoding="utf-8")
+    elif how == "directory":
+        path.unlink()
+        path.mkdir()
     else:
         # An entry where the file should be that resolves to nothing: a link
         # that follows to no file reads as missing to `Path.exists()`.
@@ -971,7 +976,8 @@ def _absent_twin(receipt: dict) -> dict:
 
 
 @pytest.mark.parametrize("sealed", [True, False], ids=["sealed", "unsealed"])
-@pytest.mark.parametrize("how", ["truncated", "duplicate_key", "dangling_link", "link_loop"])
+@pytest.mark.parametrize("how", ["truncated", "duplicate_key", "dangling_link", "link_loop",
+                                 "directory"])
 def test_an_unreadable_lifecycle_refuses_export_and_live_verification(
         tmp_path: Path, how: str, sealed: bool):
     """Corruption is never exported as absence: only a store holding no
@@ -1090,3 +1096,148 @@ def test_every_admission_into_a_re_entered_stage_needs_its_own_passing_row(tmp_p
     verdict = verify_receipt(reseal(forged))
     assert not verdict.consistent
     assert [p for p in verdict.problems if "admissions" in p] == list(verdict.problems) != []
+
+
+# ---------------------------------------------------------------------------
+# A sealed-store anchor covers only what the seal check validated: nothing
+# read after that check reaches the receipt (exact-head review repair)
+# ---------------------------------------------------------------------------
+
+_SEALED_PARTS = ("lifecycle", "capsule", "revision")
+_MOMENTS = ("before_check", "after_check", "between_reads")
+
+
+def _git(store: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                           *args], cwd=str(store), capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def _substitute(tmp_path: Path, part: str):
+    """A chain-valid replacement for one sealed part, and the change that puts
+    it on disk: what a writer to the project, but not to its seal, can do."""
+    from nornyx_forge.experience import fail
+
+    store = tmp_path / "capsule"
+    if part == "lifecycle":
+        state = fail(CapsuleStore(store).load_experience(), Actor("system", "s"),
+                     "substituted", CLOCK)
+        text = json.dumps(state)
+        return state, lambda: (store / "experience.json").write_text(text, encoding="utf-8")
+    if part == "capsule":
+        current = (store / "capsule.json").read_text(encoding="utf-8").strip()
+        earlier = next(text for text in (_git(store, "show", f"{revision}:capsule.json")
+                                         for revision in _git(store, "rev-list", "HEAD").split())
+                       if text != current)
+        return json.loads(earlier), lambda: (store / "capsule.json").write_text(
+            earlier, encoding="utf-8")
+    sealed = _git(store, "rev-parse", "HEAD")
+    _git(store, "commit", "--allow-empty", "-q", "-m", "moved after the seal check")
+    moved = _git(store, "rev-parse", "HEAD")
+    _git(store, "reset", "-q", "--soft", sealed)
+    return moved, lambda: _git(store, "reset", "-q", "--soft", moved)
+
+
+def _change_at(monkeypatch: pytest.MonkeyPatch, part: str, when: str, change) -> None:
+    """Make `change` once, at one moment of a load: `before_check`, now;
+    `after_check`, as soon as a seal check passes; `between_reads`, at the
+    first read of the part made outside a seal check after one has passed --
+    the window between a check and a second read of what it checked."""
+    state = {"inside": False, "checked": False, "done": False}
+
+    def once() -> None:
+        if not state["done"]:
+            state["done"] = True
+            change()
+
+    if when == "before_check":
+        once()
+        return
+    real_problems = CapsuleStore.seal_problems
+
+    def seal_problems(self, snapshot):
+        state["inside"] = True
+        try:
+            problems = real_problems(self, snapshot)
+        finally:
+            state["inside"] = False
+        if not problems:
+            state["checked"] = True
+            if when == "after_check":
+                once()
+        return problems
+
+    monkeypatch.setattr(CapsuleStore, "seal_problems", seal_problems)
+    if when != "between_reads":
+        return
+    name = {"lifecycle": "experience.json", "capsule": "capsule.json"}.get(part)
+    real_text, real_git = store_module._authority_text, store_module._run_git
+
+    def authority_text(path, limit):
+        if Path(path).name == name and state["checked"] and not state["inside"]:
+            once()
+        return real_text(path, limit)
+
+    def run_git(root, *args):
+        if (part == "revision" and args[:2] == ("rev-parse", "HEAD") and state["checked"]
+                and not state["inside"]):
+            once()
+        return real_git(root, *args)
+
+    monkeypatch.setattr(store_module, "_authority_text", authority_text)
+    monkeypatch.setattr(store_module, "_run_git", run_git)
+
+
+def _receipt_with(tmp_path: Path, honest: dict, part: str, value) -> dict:
+    """The receipt a second read after the substitution would have derived."""
+    store = CapsuleStore(tmp_path / "capsule")
+    document = value if part == "capsule" else store.load()
+    lifecycle = value if part == "lifecycle" else store.load_experience()
+    revision = value if part == "revision" else honest["body"]["project"]["store_revision"]
+    forged = copy.deepcopy(honest)
+    forged["body"] = build_body(document=document, lifecycle=lifecycle,
+                                brd=measure_brd(tmp_path / "BRD.md", document),
+                                revision=revision, seal="sealed", platform=PLATFORM,
+                                generated_at=CLOCK)
+    assert forged["body"] != honest["body"]
+    return reseal(forged)
+
+
+@pytest.mark.parametrize("when", _MOMENTS)
+@pytest.mark.parametrize("part", _SEALED_PARTS)
+def test_an_export_never_anchors_a_part_changed_around_the_seal_check(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part: str, when: str):
+    """Changed before the check, the store refuses. Changed after it, the
+    receipt is the validated snapshot's, or a refusal: never the change."""
+    _refused_project(tmp_path)
+    honest = _export(tmp_path)
+    _value, change = _substitute(tmp_path, part)
+    _change_at(monkeypatch, part, when, change)
+    if when == "before_check":
+        with pytest.raises(CapsuleError):
+            _export(tmp_path)
+        return
+    try:
+        exported = _export(tmp_path)
+    except CapsuleError:
+        return
+    assert exported["body"] == honest["body"], "the receipt holds what the seal check never saw"
+
+
+@pytest.mark.parametrize("when", _MOMENTS)
+@pytest.mark.parametrize("part", _SEALED_PARTS)
+def test_live_verification_never_anchors_a_part_changed_around_the_seal_check(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, part: str, when: str):
+    """The receipt a second read would have produced is never `sealed_store`
+    anchored, whenever the change lands."""
+    _refused_project(tmp_path)
+    honest = _export(tmp_path)
+    value, change = _substitute(tmp_path, part)
+    forged = _receipt_with(tmp_path, honest, part, value)
+    assert verify_receipt(forged).consistent, "the forgery must be self-consistent to prove anything"
+    _change_at(monkeypatch, part, when, change)
+    verdict = _verify_live(tmp_path, forged)
+    assert not verdict.verified and "sealed_store" not in verdict.anchors, verdict
+    assert verdict.live_comparison == "refused", verdict

@@ -8637,7 +8637,10 @@ anchored by something its holder does not control:
   VERIFIER supplies (the command line uses its own host's), never the one the
   receipt names, from a store that is sealed -- a store whose seal is gone
   anchors nothing, and one that no longer matches its seal refuses to load
-  (A-029, whose limits bound this route); or
+  (A-029, whose limits bound this route). The capsule, the lifecycle and the
+  revision are then taken from the one seal snapshot that check validated,
+  never read a second time, so a file replaced or a HEAD moved after the
+  check cannot reach a receipt this route anchors; or
 - a digest the holder obtained out of band.
 The command exits 0 only when verified. It reads a receipt only from its one
 canonical writing: a repeated key or any other spelling of the same JSON is

@@ -233,18 +233,27 @@ def measure_brd(path: Path, document: Mapping[str, Any],
 def _load_project(project_dir: Path, seal_dir: Path) -> tuple[dict, dict | None, str, str]:
     """The capsule, the lifecycle (or None when none is recorded), the store's
     revision and whether it is sealed. A store that no longer matches its seal
-    refuses here, in the store's own words."""
+    refuses here, in the store's own words.
+
+    A sealed store's three come from the one snapshot its seal check
+    validated, never from a second read, so `sealed` -- and with it the
+    `sealed_store` anchor -- covers exactly the bytes and the revision that
+    check compared. Only a store with no seal is read file by file, and it is
+    `unsealed`, which anchors nothing; a seal appearing mid-read leaves it so."""
     store = CapsuleStore(Path(project_dir) / "capsule", seal_dir=Path(seal_dir))
+    sealed = store.load_sealed()
+    if sealed is not None:
+        document, lifecycle, revision = sealed
+        return document, lifecycle, revision, "sealed"
     document = store.load()
     try:
-        lifecycle: dict | None = store.load_experience()
+        lifecycle = store.load_experience()
     except ExperienceStateAbsent:
         # Only a store holding no lifecycle at all is `absent`. An unreadable,
         # schema-breaking or tampered lifecycle is the store's refusal and
         # propagates: corruption is never exported as absence.
         lifecycle = None
-    seal = "sealed" if store.sealed() is not None else "unsealed"
-    return document, lifecycle, store.revision(), seal
+    return document, lifecycle, store.revision(), "unsealed"
 
 
 # ---------------------------------------------------------------------------
