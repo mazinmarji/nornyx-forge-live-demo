@@ -1025,18 +1025,23 @@ def test_an_unreadable_lifecycle_refuses_export_and_live_verification(
         assert any("store refused" in p for p in verdict.problems), verdict.problems
 
 
-def test_a_lifecycle_file_genuinely_missing_from_an_unsealed_store_reads_as_absent(
+def test_a_recorded_lifecycle_missing_from_an_unsealed_store_refuses_export(
         tmp_path: Path):
-    """The other side of the line: no entry at all is absence, and only that."""
+    """The other side of the line. No entry on disk used to be absence here,
+    whatever the store's history said; a lifecycle the newest commit records
+    and the disk lacks is now refused as missing, never exported as absence
+    (A-059). Absence itself -- a store whose newest commit records no
+    lifecycle -- is pinned by the test below."""
     _refused_project(tmp_path)
     CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").seal_path().unlink()
     (tmp_path / "capsule" / ".forge-seal").unlink()
     (tmp_path / "capsule" / "experience.json").unlink()
-    with pytest.raises(store_module.ExperienceStateAbsent):
+    with pytest.raises(store_module.CapsuleStoreError, match="missing from disk") as raised:
         CapsuleStore(tmp_path / "capsule", seal_dir=tmp_path / "seals").load_experience()
-    receipt = _export(tmp_path)
-    assert receipt["body"]["journey"]["tracking"] == "absent"
-    assert receipt["body"]["project"]["seal"] == "unsealed"
+    assert not isinstance(raised.value, store_module.ExperienceStateAbsent)
+    with pytest.raises(CapsuleError) as exported:
+        _export(tmp_path)
+    assert not isinstance(exported.value, store_module.ExperienceStateAbsent)
 
 
 def test_only_a_store_without_a_lifecycle_raises_the_absence_type(tmp_path: Path):
@@ -1292,3 +1297,14 @@ def test_live_verification_never_anchors_a_part_changed_around_the_seal_check(
         assert window["done"], "the change never landed, so the test proves nothing"
     assert any("disagrees with the sealed project" in p for p in verdict.problems), \
         verdict.problems
+
+
+def test_an_unsealed_store_whose_newest_commit_records_no_lifecycle_exports_absent(
+        tmp_path: Path):
+    """Absence on a store with no seal: the newest commit records no
+    lifecycle at all, so the receipt says `tracking: absent` (A-059)."""
+    CapsuleStore(tmp_path / "capsule").initialize(
+        create_document("proj-1", PROJECT_NAME, Actor("human", "casey"), CLOCK))
+    receipt = _export(tmp_path)
+    assert receipt["body"]["journey"]["tracking"] == "absent"
+    assert receipt["body"]["project"]["seal"] == "unsealed"

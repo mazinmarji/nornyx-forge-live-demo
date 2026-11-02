@@ -1373,3 +1373,212 @@ class _AnyAt:
 
 
 ANY_AT = _AnyAt()
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle integrity: only a lifecycle that was never recorded is absent
+# ---------------------------------------------------------------------------
+
+def _unsealed_store_with_lifecycle(tmp_path: Path) -> Path:
+    """A store from before sealing existed, holding a RECORDED lifecycle.
+
+    No seal was ever written for it, so the only thing standing between a
+    damaged lifecycle file and the routes that read it is how the surface
+    reads the store's own refusal. Returns the lifecycle file's path."""
+    document = create_document("proj-1", "Support Portal", Actor("human", "casey"), AT)
+    document, intent = propose(document, "intent", "Build a portal.", Actor("model", "m"),
+                               "2026-09-03T09:01:00Z")
+    document = confirm(document, intent, Actor("human", "casey"), "2026-09-03T09:02:00Z")
+    document, provider = propose(document, "provider", {"name": "codex"},
+                                 Actor("human", "casey"), "2026-09-03T09:03:00Z")
+    document = confirm(document, provider, Actor("human", "casey"), "2026-09-03T09:04:00Z")
+    root = tmp_path / "capsule"
+    CapsuleStore(root).initialize(document, start_experience(Actor("human", "casey"), AT))
+    (tmp_path / "BRD.md").write_text(brd_from_capsule(document), encoding="utf-8", newline="")
+    return root / "experience.json"
+
+
+_TRUNCATED = b'{"schema_version": 1, "stage": "DISCOVER", '
+
+#: Two ways a recorded lifecycle becomes unreadable without being absent:
+#: bytes that are not JSON, and an entry that is not a file at all.
+_UNREADABLE = {
+    "truncated": lambda path: path.write_bytes(_TRUNCATED),
+    "directory": lambda path: (path.unlink(), path.mkdir()),
+}
+
+
+def _still_damaged(path: Path, damage: str) -> bool:
+    if damage == "directory":
+        return path.is_dir()
+    return path.read_bytes() == _TRUNCATED
+
+
+@pytest.mark.parametrize("damage", sorted(_UNREADABLE))
+def test_an_unreadable_lifecycle_is_never_replaced_by_a_fresh_start(tmp_path: Path, damage: str):
+    """THE DEFECT. `/api/journey/start` read every store refusal as "no
+    lifecycle", so a recorded lifecycle that could not be read was replaced
+    by a new one at DISCOVER, committed and sealed over the old history.
+    Only `ExperienceStateAbsent` means nothing was recorded; anything else
+    is refused in the store's words and writes nothing."""
+    path = _unsealed_store_with_lifecycle(tmp_path)
+    before = CapsuleStore(path.parent).revision()
+    _UNREADABLE[damage](path)
+    client = _client(tmp_path)
+
+    response = client.post("/api/journey/start", json={"actor": HUMAN})
+
+    assert response.status_code == 409, response.text
+    assert "unreadable" in response.json()["refused"], response.text
+    assert CapsuleStore(path.parent).revision() == before, "a failed lifecycle load produced a commit"
+    assert _still_damaged(path, damage), "the damaged lifecycle was overwritten"
+    assert CapsuleStore(path.parent, seal_dir=tmp_path / "seals").sealed() is None, (
+        "a seal was written over the damaged store"
+    )
+
+
+@pytest.mark.parametrize("damage", sorted(_UNREADABLE))
+def test_an_unreadable_lifecycle_is_reported_unreadable_on_every_route_never_absent(
+        tmp_path: Path, damage: str):
+    """The read side of the same rule. `/api/state` decided absence by
+    finding "experience state" in the message, which the unreadable refusal
+    also contains, and so reported a recorded lifecycle as never recorded;
+    the journey routes said "no lifecycle is recorded"; the sharing preview
+    left the lifecycle out. Each now refuses in the store's words."""
+    path = _unsealed_store_with_lifecycle(tmp_path)
+    before = CapsuleStore(path.parent).revision()
+    _UNREADABLE[damage](path)
+    client = _client(tmp_path)
+
+    state = client.get("/api/state")
+    assert state.status_code == 409, state.text
+    assert "unreadable" in state.json()["refused"]
+    assert "experience" not in state.json() and "journey" not in state.json()
+
+    for route in ("/api/journey/confirm-scope", "/api/journey/ready",
+                  "/api/journey/retry", "/api/build"):
+        response = client.post(route, json={"actor": HUMAN})
+        assert response.status_code == 409, (route, response.text)
+        refused = response.json()["refused"]
+        assert "no lifecycle is recorded" not in refused, route
+        assert "unreadable" in refused, (route, refused)
+
+    preview = client.get("/api/sharing-preview")
+    assert preview.status_code == 409, preview.text
+    assert "unreadable" in preview.json()["refused"]
+
+    assert CapsuleStore(path.parent).revision() == before
+    assert _still_damaged(path, damage)
+    assert GovernedFlow.instances == []
+
+
+def test_a_schema_breaking_lifecycle_is_refused_by_the_start_route_and_kept(tmp_path: Path):
+    """JSON that parses and is not a lifecycle was already refused through
+    the schema check; pinned beside the unreadable cases so the start
+    route's whole refusal set is stated in one place."""
+    path = _unsealed_store_with_lifecycle(tmp_path)
+    before = CapsuleStore(path.parent).revision()
+    path.write_text(json.dumps({"stage": "READY"}), encoding="utf-8", newline="")
+    damaged = path.read_bytes()
+
+    response = _client(tmp_path).post("/api/journey/start", json={"actor": HUMAN})
+
+    assert response.status_code == 422, response.text
+    assert "missing experience keys" in response.json()["refused"], response.text
+    assert CapsuleStore(path.parent).revision() == before
+    assert path.read_bytes() == damaged
+
+
+def test_a_lifecycle_never_recorded_still_starts_once_at_discover(tmp_path: Path):
+    """The one case the narrowing must keep: a store whose lifecycle was
+    never recorded is told apart from a damaged one by type, and tracking
+    still begins there, once."""
+    _legacy_project(tmp_path)
+    client = _client(tmp_path)
+    assert _ok(client.get("/api/state"))["experience"]["status"] == "absent"
+    assert _ok(client.post("/api/journey/start", json={"actor": HUMAN})) == {
+        "stage": "DISCOVER", "status": "active"}
+    assert _stages(_persisted(tmp_path)) == [("started", "DISCOVER")]
+
+
+def test_the_project_contract_is_served_from_the_sealed_authority_while_a_build_runs(
+        tmp_path: Path):
+    """While a build runs the disk belongs to the provider. The project
+    contract shown is the one the sealed authority generates, whatever the
+    capsule file on disk says meanwhile."""
+    client = _client(tmp_path, factory=BlockingFlow)
+    _confirmed(client)
+    before = _ok(client.get("/api/governance"))["project"]
+    assert before["status"] == "derived"
+    _ok(client.post("/api/build", json={"actor": HUMAN}))
+    try:
+        capsule = tmp_path / "capsule" / "capsule.json"
+        raw = json.loads(capsule.read_text(encoding="utf-8"))
+        raw["authoritative"]["intent"] = "Something nobody confirmed."
+        capsule.write_text(json.dumps(raw), encoding="utf-8", newline="")
+        during = _ok(client.get("/api/governance"))["project"]
+        assert during == before
+        assert "nobody confirmed" not in json.dumps(during)
+    finally:
+        BlockingFlow.hold.set()
+    _wait_finished(client)
+
+
+def _journey_routes_refuse(client: TestClient, words: str, finding: str | None = None) -> None:
+    """Every lifecycle-reading route refuses, in `words`, and none says the
+    lifecycle was never recorded."""
+    state = client.get("/api/state")
+    assert state.status_code == 409, state.text
+    assert words in state.json()["refused"], state.text
+    for route in ("/api/journey/start", "/api/journey/confirm-scope", "/api/journey/ready",
+                  "/api/journey/retry", "/api/build"):
+        response = client.post(route, json={"actor": HUMAN})
+        assert response.status_code == 409, (route, response.text)
+        assert "no lifecycle is recorded" not in response.json()["refused"], route
+        assert words in response.json()["refused"], (route, response.text)
+        if finding is not None:
+            assert response.json().get("finding") == finding, route
+    preview = client.get("/api/sharing-preview")
+    assert preview.status_code == 409, preview.text
+    assert words in preview.json()["refused"]
+    if finding is not None:
+        assert state.json().get("finding") == finding
+        assert preview.json().get("finding") == finding
+
+
+def test_a_recorded_lifecycle_deleted_from_disk_is_not_read_as_never_recorded(tmp_path: Path):
+    """A store with no seal has nothing to catch a deletion but the store's
+    own history: the newest commit records a lifecycle the disk no longer
+    holds. That is damage, refused on every route, and the start route
+    does not replace it with a fresh DISCOVER."""
+    path = _unsealed_store_with_lifecycle(tmp_path)
+    before = CapsuleStore(path.parent).revision()
+    path.unlink()
+    client = _client(tmp_path)
+
+    _journey_routes_refuse(client, "missing from disk")
+
+    assert CapsuleStore(path.parent).revision() == before, "a refused load produced a commit"
+    assert not path.exists(), "a lifecycle was written in place of the deleted one"
+    assert CapsuleStore(path.parent, seal_dir=tmp_path / "seals").sealed() is None
+    assert GovernedFlow.instances == []
+
+
+def test_a_tampered_lifecycle_is_named_tampered_on_every_route_and_kept(tmp_path: Path):
+    """The gravest of the three classes: schema-valid JSON whose chain no
+    longer verifies. On a store with no seal only the chain stands between
+    it and the routes, and every route names it TAMPERED; nothing is
+    started over it."""
+    path = _unsealed_store_with_lifecycle(tmp_path)
+    before = CapsuleStore(path.parent).revision()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["stage"] = "READY"
+    path.write_text(json.dumps(raw), encoding="utf-8", newline="")
+    forged = path.read_bytes()
+    client = _client(tmp_path)
+
+    _journey_routes_refuse(client, "", finding="TAMPERED")
+
+    assert CapsuleStore(path.parent).revision() == before
+    assert path.read_bytes() == forged
+    assert GovernedFlow.instances == []

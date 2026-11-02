@@ -1385,6 +1385,13 @@ class CapsuleStore:
         out = _run_git(self.root, "rev-list", "--reverse", "HEAD").stdout
         return [line.strip() for line in out.split("\n") if line.strip()]
 
+    def _head_records(self, name: str) -> bool:
+        """Whether the newest commit records `name` at the store's top level.
+        A store git cannot answer for refuses, in the store's words, rather
+        than answering no."""
+        listed = _run_git(self.root, "ls-tree", "--name-only", "HEAD", "--", name).stdout
+        return name in listed.split("\n")
+
     # -- experience state --------------------------------------------------
     def load_experience(self) -> dict[str, Any]:
         """The workflow position, with the same three-way failure split as the
@@ -1403,6 +1410,16 @@ class CapsuleStore:
         # the decision and the bytes.
         text, problem = _authority_text(path, _AUTHORITY_READ_LIMIT)
         if problem is None and text is None:
+            # Missing from disk is not yet "never recorded". On a sealed store
+            # the seal check above has already refused a deletion; on a store
+            # with no seal nothing had, and a lifecycle the newest commit
+            # records but the disk lacks was read as absent and replaced by a
+            # fresh one (A-059). Absence is the newest commit recording none.
+            if self._head_records(_EXPERIENCE_FILE):
+                raise CapsuleStoreError(
+                    "experience state is recorded in the store's newest commit but "
+                    "missing from disk; it is not read as never recorded"
+                )
             raise ExperienceStateAbsent(f"{self.root} contains no experience state")
         state, problem = (None, problem) if problem is not None else _parsed_json(text)
         if problem is not None:
