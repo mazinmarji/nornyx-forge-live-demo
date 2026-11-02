@@ -452,7 +452,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # real routes over a real store -- model actors refused where the
     # capsule refuses them, tamper named TAMPERED, absence reported as
     # absence, the governance route serving only the guarded rendering.
-    "tests/test_onboarding_app.py": 13,
+    # 32 after A-059, floor band(32) = 29: the project's own contract served
+    # from verified capsule authority beside Forge's packaged ones, never from
+    # BRD.md; absence, unavailability and refusal each named; an untrusted or
+    # removed sealed store refusing the route; the page telling the two apart.
+    "tests/test_onboarding_app.py": 29,
     # The launch path: 9 collected at introduction, 13 after the post-PR-18
     # hardening (the common Host rule, N3), 14 after Tranche B round 4 (the
     # console start link read from stdout: a nonce, not the bearer, redeemed
@@ -830,8 +834,11 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # failure and retry through the contract's own, tamper fail-closed,
     # duplicates and stale requests judged against the persisted state, the
     # no-terminal journey through the routes alone, and the pre-PR-17 gap
-    # (lifecycle absent at every step) pinned closed.
-    "tests/test_basic_user_journey.py": 45,
+    # (lifecycle absent at every step) pinned closed. 59 after A-059, floor
+    # band(59) = 54: a lifecycle that is unreadable, recorded but deleted from
+    # disk, schema-breaking or tampered never replaced by a fresh start and
+    # refused on every route; one never recorded still starting once.
+    "tests/test_basic_user_journey.py": 54,
     # The simulated journey joined to GOVERN: 7 collected at introduction,
     # floor at band(7) = 7. The shipped composition, the real development
     # flow and the real trusted verifier from project creation to GOVERN,
@@ -1015,8 +1022,10 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # included; evidence judged by the last row of each kind, with one passed
     # row for each admission; a sealed part changed before, after or between
     # the reads of its seal check, or whenever no check runs, never anchored;
-    # BRD.md, outside the seal, never reported as anchored.
-    "tests/test_journey_receipt.py": 88,
+    # BRD.md, outside the seal, never reported as anchored. 98 after A-059,
+    # floor band(98) = 89: a lifecycle the store's newest commit records but
+    # the disk lacks refuses export; one never recorded exports as absent.
+    "tests/test_journey_receipt.py": 89,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2536,14 +2545,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # 624 -> 633. NO SKIP IS ADDED, and the module joins no platform job, so the
 # windows-runtime job's floor is untouched at 766. The rows below are these.
 #
+# 2026-11-02: A-059 ADDS NO MODULE AND MOVES THREE, measured from a fresh
+# collection: tests/test_basic_user_journey.py 50 -> 59 (floor band(50) = 45
+# -> band(59) = 54), tests/test_onboarding_app.py 14 -> 32 (floor
+# band(14) = 13 -> band(32) = 29) and tests/test_journey_receipt.py 97 -> 98
+# (floor band(97) = 88 -> band(98) = 89). No other module's count changed and
+# no floor fell. 7062 collect across 147 modules; the module-floor sum rises
+# by 26 to 6427 and the aggregate follows to 6435, keeping the same 8 above
+# it; band(n) 6331 -> 6356, the working room below what collects 625 -> 627,
+# and the slack the bands grant 633 -> 635. NO SKIP IS ADDED, and none of the
+# three modules runs in a platform job, so the windows-runtime job's floor is
+# untouched at 766. The rows below are these.
+#
 # (rows below):
 #
-#     collected across tests/     7034   (147 modules)
-#     sum of the module floors    6401
-#     band(7034) = ceil(0.9*n)    6331
-#     MINIMUM_COLLECTED           6409
+#     collected across tests/     7062   (147 modules)
+#     sum of the module floors    6427
+#     band(7062) = ceil(0.9*n)    6356
+#     MINIMUM_COLLECTED           6435
 #     above the module sum          8
-#     below what collects         625
+#     below what collects         627
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2765,7 +2786,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 633 in total, and the aggregate refuses
+# per-module bands already grant 635 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3034,7 +3055,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6409
+MINIMUM_COLLECTED = 6435
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
