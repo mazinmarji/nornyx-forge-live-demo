@@ -36,7 +36,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .capsule import AUTHORITATIVE_FIELDS, REQUIREMENT_NUMBER_LIMIT, CapsuleValidationError
-from .requirements import brd_requirement_identity
+from .contract_generator import render_brd_contract
+from .requirements import brd_requirement_identity, parse_brd_text
 
 
 class BrdAuthoringError(Exception):
@@ -148,6 +149,19 @@ def brd_from_capsule(document: Mapping[str, Any]) -> str:
                 "human confirmed is refused rather than rendered"
             )
     return rendered
+
+
+def contract_from_capsule(document: Mapping[str, Any]) -> str:
+    """The build contract this capsule's confirmed region generates, as text.
+
+    The same three steps a build takes, in the same order and through the
+    same functions: derive the BRD from the confirmed region, read it with
+    the flow's parser, render it with the flow's contract generator. Only the
+    file in between is skipped, so `BRD.md` on disk -- a derived file anyone
+    can edit -- has no say in the result. Refuses exactly as
+    `brd_from_capsule` refuses (A-059).
+    """
+    return render_brd_contract(parse_brd_text(brd_from_capsule(document), "BRD.md"))
 
 
 def confirmed_requirement_texts(document: Mapping[str, Any]) -> tuple[str, ...]:

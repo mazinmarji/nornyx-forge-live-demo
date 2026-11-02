@@ -138,14 +138,23 @@ def parse_brd(path: Path) -> RequirementsModel:
     requirements; assumptions are explicit.
     """
 
-    text = path.read_text(encoding="utf-8")
+    return parse_brd_text(path.read_text(encoding="utf-8"), path.name)
+
+
+def parse_brd_text(text: str, source: str) -> RequirementsModel:
+    """`parse_brd` over text already in hand, named `source`.
+
+    The one parser, not a second: `parse_brd` reads the file and calls this,
+    so a model built from a rendering held in memory is the model the flow
+    would build from the same text written to `source` (A-059).
+    """
     identity = brd_requirement_identity(text)
     requirements = tuple(
         Requirement(
             id=entry["id"],
             title=entry["title"],
             statement=entry["statement"],
-            source=f"{path.name}#{entry['id'].lower()}",
+            source=f"{source}#{entry['id'].lower()}",
         )
         for entry in identity["requirements"]
     )
@@ -160,7 +169,7 @@ def parse_brd(path: Path) -> RequirementsModel:
         )
     return RequirementsModel(
         schema="nornyx.forge.requirements.v1",
-        source=path.name,
+        source=source,
         source_digest=digest(text.encode("utf-8")),
         requirements=requirements,
         assumptions=tuple(assumptions),
