@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from session_client import authed_client
+from source_binding import bind_document, bind_via_routes
 
 from nornyx_forge.brd_authoring import (
     BrdAuthoringError,
@@ -48,6 +49,8 @@ def _document(*, confirm_intent: bool = True, with_requirements: bool = False,
         document, req_id = propose(document, "requirements", rows, HUMAN,
                                    "2026-08-30T12:03:00Z")
         document = confirm(document, req_id, HUMAN, "2026-08-30T12:04:00Z")
+    if confirm_intent:
+        document = bind_document(document, HUMAN, "2026-08-30T12:04:30Z")
     if with_open_proposal:
         document, _ = propose(
             document, "requirements",
@@ -110,6 +113,7 @@ def test_open_proposals_author_nothing(tmp_path: Path):
 
 def test_words_that_would_change_the_parse_are_refused():
     document = _document(confirm_intent=False)
+    document["authoritative"]["source_specification"] = {"text": "The specification."}
     document["authoritative"]["intent"] = "## BRD-999 injected heading"
     with pytest.raises(BrdAuthoringError, match="heading grammar"):
         brd_from_capsule(document)
@@ -127,6 +131,7 @@ def test_the_route_writes_the_brd_beside_the_capsule(tmp_path: Path):
     client = authed_client(create_app(tmp_path / "capsule",
                                       ROOT / ".nornyx" / "contracts",
                                       seal_dir=tmp_path / "seals"))
+    bind_via_routes(client)
     response = client.post("/api/brd")
     assert response.status_code == 200, response.text
     written = Path(response.json()["written"])
@@ -140,6 +145,7 @@ def test_the_route_refuses_a_proposal_only_capsule(tmp_path: Path):
     client = authed_client(create_app(tmp_path / "capsule",
                                       ROOT / ".nornyx" / "contracts",
                                       seal_dir=tmp_path / "seals"))
+    bind_via_routes(client)
     response = client.post("/api/brd")
     assert response.status_code == 409
     assert "no confirmed intent" in response.json()["refused"]
@@ -150,5 +156,6 @@ def test_the_route_refuses_without_a_project(tmp_path: Path):
     client = authed_client(create_app(tmp_path / "capsule",
                                       ROOT / ".nornyx" / "contracts",
                                       seal_dir=tmp_path / "seals"))
+    bind_via_routes(client)
     response = client.post("/api/brd")
     assert response.status_code == 409

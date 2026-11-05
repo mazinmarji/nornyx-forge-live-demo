@@ -37,6 +37,7 @@ import inspect
 from pathlib import Path
 
 import pytest
+from source_binding import bind_document
 
 from nornyx_forge import greenfield_verifier, requirements
 from nornyx_forge.brd_authoring import BrdAuthoringError, brd_from_capsule
@@ -61,7 +62,7 @@ def _document(rows: list[dict[str, str]] | None = None) -> dict:
     if rows:
         document, req_id = propose(document, "requirements", rows, HUMAN, "2026-08-30T12:03:00Z")
         document = confirm(document, req_id, HUMAN, "2026-08-30T12:04:00Z")
-    return document
+    return bind_document(document, HUMAN, "2026-08-30T12:04:30Z")
 
 
 def _write(path: Path, text: str) -> None:

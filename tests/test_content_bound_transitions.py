@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_document, bind_via_routes
 from test_actor_declaration_boundary import FORBIDDEN_CLAIMS
 
 from nornyx_forge import experience as experience_contract
@@ -192,7 +193,9 @@ def _prerequisites(client: TestClient) -> None:
         "project_id": "proj-1", "project_name": "Support Portal", "actor": HUMAN,
     }))
     _confirm_field(client, "intent", "Build a customer support portal.")
+    bind_via_routes(client, HUMAN, MODEL)
     _confirm_field(client, "provider", {"name": "codex"}, actor=HUMAN)
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
 
 
@@ -219,6 +222,7 @@ def _legacy_capsule(tmp_path: Path) -> dict:
     document, intent = propose(document, "intent", "Build a portal.",
                                Actor("model", "m"), "2026-09-10T09:01:00Z")
     document = confirm(document, intent, Actor("human", "casey"), "2026-09-10T09:02:00Z")
+    document = bind_document(document, Actor("human", "casey"), "2026-09-10T09:02:30Z")
     document, provider = propose(document, "provider", {"name": "codex"},
                                  Actor("human", "casey"), "2026-09-10T09:03:00Z")
     document = confirm(document, provider, Actor("human", "casey"), "2026-09-10T09:04:00Z")
@@ -276,6 +280,7 @@ def test_f1_a_hand_edited_brd_after_confirm_blocks_the_build_by_name(tmp_path: P
     assert GovernedFlow.instances == [], "an unbound BRD reached a flow"
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _journey(client)["actions"] == ["start_build"]
     assert _state(client)["brd_derived"] is True
@@ -295,6 +300,7 @@ def test_f1_a_further_confirmation_makes_the_brd_stale_until_it_is_derived(tmp_p
     assert journey._BRD_STALE_BUILD in view["blockers"], view
     assert _state(client)["brd_derived"] is False
 
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _state(client)["brd_derived"] is True
 
@@ -312,6 +318,7 @@ def test_f1_a_legacy_store_with_a_hand_written_brd_cannot_confirm_the_scope(tmp_
     assert journey._BRD_STALE in refused.json()["refused"]
     assert _persisted(tmp_path)["stage"] == "DISCOVER"
 
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _ok(client.post("/api/journey/confirm-scope",
                            json={"actor": HUMAN}))["stage"] == "CONFIRM"
@@ -432,6 +439,7 @@ def test_f2_a_build_over_changed_content_is_refused_until_the_scope_is_re_confir
     client = _client(tmp_path)
     _confirmed(client)
     _confirm_field(client, "intent", "Build a crypto miner instead.")
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))          # the BRD renders the new capsule
 
     view = _journey(client)
@@ -463,6 +471,7 @@ def test_f2_a_re_confirmation_is_a_second_record_not_an_overwrite(tmp_path: Path
     _confirmed(client)
     first = journey.scope_binding(_persisted(tmp_path), "CONFIRM")
     _confirm_field(client, "intent", "Build a crypto miner instead.")
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     _ok(client.post("/api/journey/confirm-scope", json={"actor": HUMAN}))
 
@@ -508,6 +517,7 @@ def test_f2_a_confirm_with_no_binding_fails_closed_and_is_re_confirmable(
     store.save_experience(_confirm_state_without_a_binding(monkeypatch), "reached CONFIRM")
 
     client = _client(tmp_path)
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     view = _journey(client)
     assert view["actions"] == ["confirm_scope"], view
@@ -731,6 +741,7 @@ def test_f3_an_interrupted_build_whose_content_moved_cannot_be_re_run(tmp_path: 
 
     client = _client(tmp_path)
     _confirm_field(client, "intent", "Build a crypto miner instead.")
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
 
     view = _journey(client)
@@ -921,6 +932,7 @@ def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
     # (ii) A CRLF-ONLY REWRITE IS INVISIBLE, because the digest follows the
     # flow parser's convention and `read_text` normalises line endings. The
     # binding is deliberately no stricter than the reader it is about.
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     before = _state(client)
     assert before["brd_derived"] is True
@@ -970,6 +982,7 @@ def test_the_content_binding_limit_is_the_disclosed_boundary(tmp_path: Path):
     # Taking it first is also what lets the contract answer the three requests
     # below -- a stale BRD is a prerequisite the journey refuses by name
     # before the contract is asked, which is older than this slice.
+    bind_via_routes(other)
     _ok(other.post("/api/brd"))
     refusals = {
         "ready": other.post("/api/journey/ready", json={"actor": HUMAN}),
@@ -1702,8 +1715,10 @@ def test_f5_a_stale_brd_at_confirm_does_not_headline_a_re_confirmation(
 
     # (b) THE CAPSULE MOVED. A re-confirmation IS offered, and the headline
     # that was always about this case is the one that survives.
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     _confirm_field(client, "intent", "Build a portal for a different team.")
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     view = _journey(client)
     assert view["actions"] == ["confirm_scope"], view

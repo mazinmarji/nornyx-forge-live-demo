@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_document, bind_via_routes
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge import onboarding_app as onboarding
@@ -240,6 +241,7 @@ def _confirm_intent(client: TestClient) -> None:
         "field": "intent", "value": "Build a customer support portal.", "actor": MODEL,
     }))["proposal_id"]
     _ok(client.post(f"/api/proposals/{proposal}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client, HUMAN, MODEL)
 
 
 def _confirm_provider(client: TestClient) -> None:
@@ -253,6 +255,7 @@ def _prerequisites(client: TestClient) -> None:
     _create(client)
     _confirm_intent(client)
     _confirm_provider(client)
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
 
 
@@ -319,6 +322,7 @@ def _legacy_project(tmp_path: Path, *, with_brd: bool = True) -> None:
     document, provider = propose(document, "provider", {"name": "codex"},
                                  Actor("human", "casey"), "2026-09-03T09:03:00Z")
     document = confirm(document, provider, Actor("human", "casey"), "2026-09-03T09:04:00Z")
+    document = bind_document(document, Actor("human", "casey"), "2026-09-03T09:04:30Z")
     CapsuleStore(tmp_path / "capsule").initialize(document)
     if with_brd:
         # THE DERIVED text, not a hand-written approximation of it. The
@@ -516,6 +520,7 @@ def test_the_scope_confirmation_names_each_missing_prerequisite(tmp_path: Path):
     _confirm_provider(client)
     refused = client.post("/api/journey/confirm-scope", json={"actor": HUMAN}).json()["refused"]
     assert "no derived BRD" in refused and "provider" not in refused
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _journey(client)["blockers"] == []
     assert _persisted(tmp_path)["stage"] == "DISCOVER", "naming blockers moved nothing"
@@ -912,7 +917,8 @@ def test_j14_a_capsule_write_cannot_interleave_with_a_lifecycle_write(
         ["git", "log", "--reverse", "--format=%s"], cwd=tmp_path / "capsule",
         capture_output=True, text=True, check=True,
     ).stdout.splitlines()
-    assert log[-2:] == ["experience: reached CONFIRM", "capsule: capsule: propose P-3"]
+    # P-2 is the source binding (tests/source_binding.py) and P-3 the provider.
+    assert log[-2:] == ["experience: reached CONFIRM", "capsule: capsule: propose P-4"]
     assert _persisted(tmp_path)["stage"] == "CONFIRM"
 
 
@@ -936,7 +942,9 @@ def test_j14_the_build_threads_lifecycle_write_cannot_be_interleaved(tmp_path: P
         ["git", "log", "--reverse", "--format=%s"], cwd=tmp_path / "capsule",
         capture_output=True, text=True, check=True,
     ).stdout.splitlines()
-    assert "capsule: capsule: propose P-3" not in log
+    # The refused proposal would have been P-4: P-2 is the source binding
+    # (tests/source_binding.py) and P-3 the provider.
+    assert "capsule: capsule: propose P-4" not in log
     assert log[-2:] == ["experience: reached TEST", "experience: reached GOVERN"]
     assert _persisted(tmp_path)["stage"] == "GOVERN"
 
@@ -1307,6 +1315,7 @@ def test_j18_the_no_terminal_journey_runs_discover_to_ready_through_the_routes(
     }))["proposal_id"]
     _ok(client.post(f"/api/proposals/{provider}/confirm", json={"actor": HUMAN}))
     assert _journey(client)["blockers"] == [journey._BRD_MISSING]
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _journey(client)["actions"] == ["confirm_scope"]
 
@@ -1392,6 +1401,7 @@ def _unsealed_store_with_lifecycle(tmp_path: Path) -> Path:
     document, provider = propose(document, "provider", {"name": "codex"},
                                  Actor("human", "casey"), "2026-09-03T09:03:00Z")
     document = confirm(document, provider, Actor("human", "casey"), "2026-09-03T09:04:00Z")
+    document = bind_document(document, Actor("human", "casey"), "2026-09-03T09:04:30Z")
     root = tmp_path / "capsule"
     CapsuleStore(root).initialize(document, start_experience(Actor("human", "casey"), AT))
     (tmp_path / "BRD.md").write_text(brd_from_capsule(document), encoding="utf-8", newline="")

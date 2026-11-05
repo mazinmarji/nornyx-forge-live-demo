@@ -42,6 +42,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_via_routes, bound
 
 from nornyx_forge import brd_authoring
 from nornyx_forge.brd_authoring import BrdAuthoringError, brd_from_capsule
@@ -133,7 +134,7 @@ def test_a_multi_line_need_is_refused_with_the_derivations_own_reason():
     confirmed intent", and at a proposal nothing is confirmed yet."""
     value = "I need a tracker.\n- It lists requests.\n- It exports them."
     with pytest.raises(BrdAuthoringError) as derived:
-        brd_from_capsule({"authoritative": {"project_name": "P", "intent": value}})
+        brd_from_capsule(bound({"authoritative": {"project_name": "P", "intent": value}}))
     refusal = proposal_entry_refusal("intent", value)
     _assert_refusal(refusal, row=None, explains="one line", reason=HEADING_GRAMMAR)
     assert refusal.reason == brd_authoring.DERIVATION_WOULD_REFUSE + str(derived.value)
@@ -341,9 +342,9 @@ ROUND_TRIP_CANDIDATES = (
 
 
 def _read_back(intent: str, texts: list[str]) -> list[str]:
-    rendered = brd_from_capsule({"authoritative": {
+    rendered = brd_from_capsule(bound({"authoritative": {
         "project_name": "Support Portal", "intent": intent,
-        "requirements": [{"id": f"RQ-{n}", "text": t} for n, t in enumerate(texts, start=1)]}})
+        "requirements": [{"id": f"RQ-{n}", "text": t} for n, t in enumerate(texts, start=1)]}}))
     return [entry["statement"] for entry in
             brd_authoring.brd_requirement_identity(rendered)["requirements"]]
 
@@ -382,6 +383,7 @@ def test_confirmed_rows_read_back_exactly_through_the_routes(client: TestClient,
     assert _confirm(client, "P-1").status_code == 200
     assert _propose(client, "requirements", rows).status_code == 200
     assert _confirm(client, "P-2").status_code == 200
+    bind_via_routes(client)
     derived = client.post("/api/brd")
     assert derived.status_code == 200, derived.text
     model = parse_brd(Path(derived.json()["written"]))
@@ -397,8 +399,8 @@ def test_the_derivation_refuses_a_confirmed_text_it_would_read_back_differently(
     is refused by the derivation itself, not rendered into a document that
     builds from something else."""
     with pytest.raises(BrdAuthoringError, match="back as"):
-        brd_from_capsule({"authoritative": {"project_name": "Support Portal", "intent": NEED,
-                                            "requirements": [{"id": "RQ-1", "text": text}]}})
+        brd_from_capsule(bound({"authoritative": {"project_name": "Support Portal", "intent": NEED,
+                                                  "requirements": [{"id": "RQ-1", "text": text}]}}))
 
 
 # Codex P2 4337040952 on e19eaa1: the chooser converted any decimal suffix with
@@ -555,14 +557,17 @@ def test_a_confirmed_set_is_not_altered_by_editing_or_proposing_again(client: Te
     assert _confirm(client, "P-1").status_code == 200
     assert _propose(client, "requirements", ROWS).json() == {"proposal_id": "P-2", "status": "open"}
     assert _confirm(client, "P-2").status_code == 200
+    bind_via_routes(client)
     first = client.post("/api/brd")
     assert first.status_code == 200, first.text
     brd = Path(first.json()["written"]).read_text(encoding="utf-8")
 
     edited = [*ROWS[:1], {"id": "RQ-2", "text": "A support agent deletes every case."}]
-    assert _propose(client, "requirements", edited).json() == {"proposal_id": "P-3", "status": "open"}
+    # P-3 and P-4 are the source binding (tests/source_binding.py).
+    assert _propose(client, "requirements", edited).json() == {"proposal_id": "P-5", "status": "open"}
     held = _state(client)
     assert held["authoritative"]["requirements"] == ROWS
+    bind_via_routes(client)
     again = client.post("/api/brd")
     assert again.status_code == 200
     assert Path(again.json()["written"]).read_text(encoding="utf-8") == brd
@@ -582,6 +587,7 @@ def test_a_confirmed_set_edited_on_disk_is_named_tampered(client: TestClient, tm
                        encoding="utf-8")
     state = _state(client)
     assert state.get("finding") == "TAMPERED", state
+    bind_via_routes(client)
     refused = client.post("/api/brd")
     assert refused.status_code == 409 and refused.json().get("finding") == "TAMPERED"
 
@@ -589,6 +595,7 @@ def test_a_confirmed_set_edited_on_disk_is_named_tampered(client: TestClient, tm
 def test_the_intent_only_path_answers_exactly_as_before(client: TestClient):
     assert _propose(client, "intent", NEED).json() == {"proposal_id": "P-1", "status": "open"}
     assert _confirm(client, "P-1").json() == {"proposal_id": "P-1", "status": "confirmed"}
+    bind_via_routes(client)
     derived = client.post("/api/brd")
     assert derived.status_code == 200 and set(derived.json()) == {"written", "bytes"}
 
@@ -626,6 +633,7 @@ def test_an_empty_set_clears_the_confirmed_requirements_through_the_same_path(cl
     assert _state(client)["authoritative"]["requirements"] == ROWS
     assert _confirm(client, "P-3").status_code == 200
     assert _state(client)["authoritative"]["requirements"] == []
+    bind_via_routes(client)
     derived = client.post("/api/brd")
     assert derived.status_code == 200
     assert "## BRD-002" not in Path(derived.json()["written"]).read_text(encoding="utf-8")
@@ -678,12 +686,14 @@ def test_a_project_holding_such_a_row_gets_out_by_editing_it_and_proposing(tmp_p
     rows = [{"id": "RQ-1", "text": "A support agent opens a case."},
             {"id": "RQ-2", "text": "- A support agent assigns a case."}]
     client = _confirmed_before_this_rule(tmp_path, rows)
+    bind_via_routes(client)
     stuck = client.post("/api/brd")
     assert stuck.status_code == 409 and "RQ-2" in stuck.json()["refused"]
     edited = [rows[0], {"id": "RQ-2", "text": "A support agent assigns a case."}]
     proposed = _propose(client, "requirements", edited)
     assert proposed.status_code == 200, proposed.text
     assert _confirm(client, proposed.json()["proposal_id"]).status_code == 200
+    bind_via_routes(client)
     derived = client.post("/api/brd")
     assert derived.status_code == 200, derived.text
     assert [item.statement for item in parse_brd(Path(derived.json()["written"])).requirements] == [

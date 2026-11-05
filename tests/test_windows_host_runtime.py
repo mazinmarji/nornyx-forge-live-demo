@@ -778,6 +778,14 @@ def test_w16_w17_the_journey_reaches_the_governed_boundary_and_the_build_is_refu
     assert status == 200
     assert _post(port, f"/api/proposals/{chosen['proposal_id']}/confirm",
                  {"actor": HUMAN}, token=tok)[0] == 200
+    # The confirmed need as its own source specification (A-060): no BRD is
+    # derived from a capsule whose requirements are not bound to one.
+    status, source = _post(port, "/api/proposals", {
+        "field": "source_specification", "value": {"text": "Build a customer support portal."},
+        "actor": MODEL}, token=tok)
+    assert status == 200
+    assert _post(port, f"/api/proposals/{source['proposal_id']}/confirm",
+                 {"actor": HUMAN}, token=tok)[0] == 200
     assert _post(port, "/api/brd", token=tok)[0] == 200
     status, confirmed = _post(port, "/api/journey/confirm-scope", {"actor": HUMAN}, token=tok)
     assert status == 200 and confirmed["stage"] == "CONFIRM"

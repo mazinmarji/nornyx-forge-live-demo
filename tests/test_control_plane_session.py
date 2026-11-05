@@ -69,6 +69,7 @@ from types import MappingProxyType
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client, bearer_header
+from source_binding import bind_via_routes
 from starlette.routing import Route
 
 import nornyx_forge
@@ -1734,6 +1735,7 @@ def test_the_real_build_route_runs_the_real_flow_and_the_provider_process_sees_n
     chosen = client.post("/api/proposals", json={
         "field": "provider", "value": {"name": "codex"}, "actor": HUMAN}).json()["proposal_id"]
     assert client.post(f"/api/proposals/{chosen}/confirm", json={"actor": HUMAN}).status_code == 200
+    bind_via_routes(client)
     assert client.post("/api/brd").status_code == 200
     assert client.post("/api/journey/confirm-scope", json={"actor": HUMAN}).json()["stage"] == "CONFIRM"
     started = client.post("/api/build", json={"actor": HUMAN})
@@ -1812,6 +1814,7 @@ def test_the_real_build_route_hands_the_flow_neither_secret(tmp_path: Path):
     chosen = client.post("/api/proposals", json={
         "field": "provider", "value": {"name": "codex"}, "actor": HUMAN}).json()["proposal_id"]
     assert client.post(f"/api/proposals/{chosen}/confirm", json={"actor": HUMAN}).status_code == 200
+    bind_via_routes(client)
     assert client.post("/api/brd").status_code == 200
     assert client.post("/api/journey/confirm-scope", json={"actor": HUMAN}).json()["stage"] == "CONFIRM"
     assert client.post("/api/build", json={"actor": HUMAN}).status_code == 200

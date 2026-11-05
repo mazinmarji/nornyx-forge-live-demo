@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -24,9 +25,37 @@ class RequirementsModel:
     source_digest: str
     requirements: tuple[Requirement, ...]
     assumptions: tuple[str, ...]
+    #: The source specification the BRD declares it was derived from, as
+    #: SHA-256 hex, or None (A-060). `brd_authoring` writes the declaration
+    #: only after checking the capsule's binding; a hand-written BRD may
+    #: write it too, and then it is that author's declaration and no more.
+    specification_digest: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+#: The line a derived BRD declares its source specification with, above its
+#: first section heading: this prefix, then 64 lower-case hex digits.
+SOURCE_BINDING_PREFIX = "Source specification SHA-256: "
+_SOURCE_BINDING = re.compile(r"\ASource specification SHA-256: ([0-9a-f]{64})\Z")
+
+
+def brd_source_binding(text: str) -> str | None:
+    """The specification digest a BRD declares, or None.
+
+    Only lines above the first level-2-or-deeper heading are read, so no
+    requirement's text, which lives under a heading, can declare one; and
+    exactly one declaring line is required, so two that disagree declare
+    nothing rather than whichever came first."""
+    found: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("##"):
+            break
+        match = _SOURCE_BINDING.match(line)
+        if match:
+            found.append(match.group(1))
+    return found[0] if len(found) == 1 else None
 
 
 def brd_requirement_identity(text: str) -> dict[str, list[Any]]:
@@ -173,6 +202,7 @@ def parse_brd_text(text: str, source: str) -> RequirementsModel:
         source_digest=digest(text.encode("utf-8")),
         requirements=requirements,
         assumptions=tuple(assumptions),
+        specification_digest=brd_source_binding(text),
     )
 
 

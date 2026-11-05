@@ -80,6 +80,8 @@ from .experience_build import FLOW_BRD_REF, FLOW_REF, GATE_REF, NORNYX_GATE_REF,
 from .experience_journey import BrdState
 from .plain_reasons import build_failure_headline
 from .provider_contract import ProviderError, governed_build_eligibility
+from .source_provenance import KINDS as SOURCE_KINDS
+from .source_provenance import provenance_report
 
 RECEIPT_SCHEMA = "nornyx.forge.journey_receipt.v1"
 EXPORTER = "nornyx_forge.journey_receipt"
@@ -392,6 +394,30 @@ def _provider(document: Mapping[str, Any], platform: str) -> dict[str, Any]:
     return _verdict(confirmed["name"], platform)
 
 
+def source_projection(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Where the confirmed requirements came from, as the allowlist admits it.
+
+    Digests, offsets and kinds only (A-060): the source text, its excerpts and
+    the person's change notes are text, and text never enters a receipt, so a
+    change note is carried as its SHA-256 and a binding problem as a count."""
+    report = provenance_report(document)
+    return {
+        "bound": report["bound"],
+        "specification_sha256": report["source_sha256"],
+        "characters": report["source_characters"],
+        "requirements": [{
+            "requirement": entry["requirement"], "kind": entry["kind"],
+            "change_sha256": _sha256(entry["change"]) if entry["change"] else None,
+            "start": entry["start"], "end": entry["end"],
+            "occurrences": entry["occurrences"],
+        } for entry in report["requirements"]],
+        "uncovered": [{"start": part["start"], "end": part["end"]}
+                      for part in report["uncovered"]],
+        "uncovered_characters": report["uncovered_characters"],
+        "problems": len(report["problems"]),
+    }
+
+
 def build_body(*, document: Mapping[str, Any], lifecycle: Mapping[str, Any] | None,
                brd: BrdState, revision: str, seal: str, platform: str,
                generated_at: str) -> dict[str, Any]:
@@ -442,6 +468,7 @@ def build_body(*, document: Mapping[str, Any], lifecycle: Mapping[str, Any] | No
                     "requirements_digest": chain[-1], "requirements_revisions": len(chain),
                     "seal": seal},
         "brd": {"present": brd.present, "derived": brd.derived, "digest": brd.digest},
+        "source": source_projection(document),
         "journey": journey,
         "evidence": evidence,
         "provider": provider,
@@ -473,6 +500,7 @@ _STR = (str,)
 _OPT_STR = (str, type(None))
 _HEX = "hex64"
 _OPT_HEX = "hex64?"
+_OPT_INT = (int, type(None))
 _SHAPE: dict[str, Any] = {
     "schema": _STR,
     "body": {
@@ -481,6 +509,12 @@ _SHAPE: dict[str, Any] = {
         "project": {"project_id": _STR, "store_revision": _STR, "requirements_digest": _HEX,
                     "requirements_revisions": (int,), "seal": _STR},
         "brd": {"present": (bool,), "derived": (bool,), "digest": _OPT_HEX},
+        "source": {"bound": (bool,), "specification_sha256": _OPT_HEX, "characters": _OPT_INT,
+                   "requirements": [{"requirement": _STR, "kind": _STR,
+                                     "change_sha256": _OPT_HEX, "start": _OPT_INT,
+                                     "end": _OPT_INT, "occurrences": (int,)}],
+                   "uncovered": [{"start": (int,), "end": (int,)}],
+                   "uncovered_characters": _OPT_INT, "problems": (int,)},
         "journey": {"tracking": _STR, "stage": _OPT_STR, "status": _OPT_STR,
                     "lifecycle_digest": _OPT_HEX,
                     "events": [{"event": _STR, "from": _OPT_STR, "to": _OPT_STR,
@@ -528,7 +562,7 @@ def _shape_problems(value: Any, spec: Any, where: str) -> list[str]:
         return [] if value is None or _is_hex64(value) else [
             f"{where} must be a SHA-256 hex digest or null"]
     # bool is an int in Python; an integer field must not accept one.
-    if spec == (int,) and isinstance(value, bool):
+    if spec in ((int,), _OPT_INT) and isinstance(value, bool):
         return [f"{where} must be an integer"]
     return [] if isinstance(value, spec) else [f"{where} has the wrong type"]
 
@@ -559,6 +593,47 @@ class ReceiptVerdict:
                 "not_anchored": list(NOT_ANCHORED),
                 "live_comparison": self.live_comparison, "problems": list(self.problems),
                 "checks": list(self.checks)}
+
+
+def _source_problems(source: Mapping[str, Any]) -> list[str]:
+    """What the source section must say given its own fields (A-060). Whether
+    it is TRUE of the project is the live comparison's question."""
+    problems = []
+    if source["problems"] < 0:
+        problems.append("source: a count of binding problems is not negative")
+    if source["specification_sha256"] is None:
+        if source["bound"] or source["characters"] is not None or source["requirements"] \
+                or source["uncovered"] or source["uncovered_characters"] is not None:
+            problems.append("source: with no specification, nothing is bound, measured or covered")
+        return problems
+    if source["bound"] != (source["problems"] == 0):
+        problems.append("source: 'bound' is exactly the absence of binding problems")
+    length = source["characters"]
+    if not isinstance(length, int) or length < 1:
+        problems.append("source: a specification has a positive length")
+        return problems
+    for entry in source["requirements"]:
+        if entry["kind"] not in SOURCE_KINDS:
+            problems.append(f"source: {entry['requirement']} has a kind outside {SOURCE_KINDS}")
+        located = entry["start"] is not None
+        if located != (entry["end"] is not None) or located != (entry["occurrences"] > 0) or (
+                located and not 0 <= entry["start"] < entry["end"] <= length):
+            problems.append(f"source: {entry['requirement']} has an impossible location")
+        if (entry["kind"] == "verbatim") != (entry["change_sha256"] is None):
+            problems.append(f"source: {entry['requirement']} carries a change note exactly "
+                            "when it is not verbatim")
+    total = 0
+    previous_end = 0
+    for part in source["uncovered"]:
+        if not previous_end <= part["start"] < part["end"] <= length:
+            problems.append("source: uncovered parts are ordered, disjoint and inside the text")
+            break
+        total += part["end"] - part["start"]
+        previous_end = part["end"]
+    else:
+        if source["uncovered_characters"] != total:
+            problems.append("source: 'uncovered_characters' is the sum of the uncovered parts")
+    return problems
 
 
 def _consistency_problems(body: Mapping[str, Any]) -> list[str]:
@@ -607,6 +682,7 @@ def _consistency_problems(body: Mapping[str, Any]) -> list[str]:
         problems.append("brd: a derived BRD must be present and carry a digest")
     if not brd["present"] and (brd["derived"] or brd["digest"] is not None):
         problems.append("brd: an absent BRD carries neither a digest nor a derivation")
+    problems += _source_problems(body["source"])
     if not _UTC_INSTANT.match(body["generated_at"]):
         problems.append("generated_at: not a UTC timestamp in the form 2026-01-31T12:00:00Z")
     if (journey["status"] == "failed") != (journey["failure"] is not None):
