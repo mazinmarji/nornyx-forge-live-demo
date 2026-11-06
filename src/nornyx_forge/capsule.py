@@ -255,11 +255,21 @@ def _validate_source_specification(value: Any) -> None:
     if not isinstance(value, dict) or set(value) != {"text"}:
         raise CapsuleValidationError("source_specification must be an object with exactly {text}")
     _require_str(value["text"], "source_specification text", SOURCE_TEXT_LIMIT)
+    _require_utf8(value["text"], "source_specification text")
+
+
+def _require_utf8(text: str, field: str) -> None:
+    """Refuse text with no UTF-8 form, such as an unpaired surrogate.
+
+    The canonical capsule escapes non-ASCII, so such text would be accepted and
+    stored, and fail only later where it is hashed: the specification by its
+    digest, a change note by the receipt (Codex P2 4489372681). Every source
+    text field is checked here, at the door, so none reaches a digest."""
     try:
-        value["text"].encode("utf-8")
+        text.encode("utf-8")
     except UnicodeEncodeError as error:
         raise CapsuleValidationError(
-            "source_specification text cannot be written as UTF-8, and its identity is the "
+            f"{field} cannot be written as UTF-8, and Forge identifies text by the "
             "SHA-256 of its UTF-8 bytes"
         ) from error
 
@@ -299,6 +309,7 @@ def _validate_requirement_sources(value: Any) -> None:
                 )
         else:
             _require_str(record["excerpt"], f"requirement source {rid} excerpt", SOURCE_TEXT_LIMIT)
+            _require_utf8(record["excerpt"], f"requirement source {rid} excerpt")
         if kind == "verbatim":
             if record["change"]:
                 raise CapsuleValidationError(
@@ -306,6 +317,7 @@ def _validate_requirement_sources(value: Any) -> None:
                 )
         else:
             _require_str(record["change"], f"requirement source {rid} change", SOURCE_CHANGE_LIMIT)
+            _require_utf8(record["change"], f"requirement source {rid} change")
 
 
 #: THE closed registry. A field outside it cannot be proposed, confirmed, or

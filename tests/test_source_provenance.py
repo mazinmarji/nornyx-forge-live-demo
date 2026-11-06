@@ -371,3 +371,81 @@ def test_the_route_refuses_an_unbound_capsule_and_writes_nothing(tmp_path: Path)
     assert response.status_code == 409
     assert "not bound to a confirmed source" in response.json()["refused"]
     assert not (tmp_path / "BRD.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Review of the first head: text with no UTF-8 form, records left behind by
+# removed requirements, and a source editor that outlived its requirements
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("record", [
+    {"requirement": "RQ-1", "kind": "changed", "excerpt": "x", "change": "Reason \ud800"},
+    {"requirement": "RQ-1", "kind": "added", "excerpt": "", "change": "Reason \ud800"},
+    {"requirement": "RQ-1", "kind": "changed", "excerpt": "x \udfff", "change": "Reason"},
+    {"requirement": "RQ-1", "kind": "verbatim", "excerpt": "x \ud800", "change": ""},
+])
+def test_source_record_text_with_no_utf8_form_is_refused_at_the_door(record):
+    with pytest.raises(CapsuleValidationError, match="cannot be written as UTF-8"):
+        AUTHORITATIVE_FIELDS["requirement_sources"]([record])
+
+
+def test_a_change_note_with_no_utf8_form_is_never_proposed_so_the_receipt_still_projects():
+    document = _document()
+    records = [dict(record) for record in RECORDS]
+    records[1]["change"] = "Reason \ud800"
+    with pytest.raises(CapsuleValidationError, match="UTF-8"):
+        propose(document, "requirement_sources", records, MODEL, next(_CLOCK))
+    assert source_projection(document)["bound"] is True
+
+
+def test_records_left_by_removed_requirements_are_cleared_by_an_empty_record_list():
+    document = _confirmed(_document(), "requirements", [])
+    assert any("not a confirmed requirement" in p for p in binding_problems(document))
+    with pytest.raises(BrdAuthoringError, match="not bound"):
+        brd_from_capsule(document)
+    document = _confirmed(document, "requirement_sources", [])
+    assert binding_problems(document) == []
+    assert SOURCE_BINDING_PREFIX + source_sha256(SOURCE) in brd_from_capsule(document)
+
+
+def test_the_routes_accept_the_empty_record_list_that_clears_them(tmp_path: Path):
+    from session_client import authed_client
+
+    from nornyx_forge.capsule_store import CapsuleStore
+    from nornyx_forge.onboarding_app import create_app
+
+    CapsuleStore(tmp_path / "capsule").initialize(_confirmed(_document(), "requirements", []))
+    client = authed_client(create_app(tmp_path / "capsule", ROOT / ".nornyx" / "contracts",
+                                      seal_dir=tmp_path / "seals"))
+    assert client.get("/api/state").json()["source_provenance"]["bound"] is False
+    human = {"kind": "human", "ident": "casey"}
+    response = client.post("/api/proposals", json={"field": "requirement_sources", "value": [],
+                                                   "actor": human})
+    assert response.status_code == 200, response.text
+    response = client.post(f"/api/proposals/{response.json()['proposal_id']}/confirm",
+                           json={"actor": human})
+    assert response.status_code == 200, response.text
+    assert client.get("/api/state").json()["source_provenance"]["bound"] is True
+    assert client.post("/api/brd").status_code == 200
+
+
+def _source_rows_script() -> str:
+    from nornyx_forge.onboarding_app import _PAGE
+
+    script = _PAGE[_PAGE.index("let sourcesEdited"):]
+    return script[:script.index("\nfunction proposeRequirementSources(")]
+
+
+def test_the_source_editor_keeps_a_draft_only_while_the_requirements_are_unchanged():
+    script = _source_rows_script()
+    # The early return that kept a draft is taken only for the requirement set
+    # it was built for; a changed set rebuilds the rows, and a draft is carried
+    # only to the requirement whose id and text it was written for.
+    assert "if(sourcesEdited && rowsFor === sourceRowsFor){ return; }" in script
+    assert "if(sourcesEdited){ return; }" not in script
+    assert "drafts.get(JSON.stringify([row.id, row.text]))" in script
+
+
+def test_the_record_proposal_is_offered_while_records_are_held_and_no_requirement_is():
+    script = _source_rows_script()
+    assert "!(source !== undefined && (rows.length || recorded.size))" in script

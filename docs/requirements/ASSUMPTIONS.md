@@ -8846,6 +8846,26 @@ the capsule, not a human approval and not production authority.
   until their source and records are confirmed. Nothing is migrated or
   inferred for them.
 
+**Review of the first head.** Three defects, each now pinned by a test:
+- Text with no UTF-8 form, such as an unpaired surrogate, was refused in the
+  specification but accepted in an excerpt or a change note. The canonical
+  capsule escapes non-ASCII, so such a note was stored, and receipt export
+  then failed where the note is digested. Every source text field is now
+  refused at the door by one check.
+- Once every requirement was removed, the page disabled the only way to
+  propose the empty record list, so records naming the removed requirements
+  could never be cleared and the project stayed unbound. The record proposal
+  is now offered whenever records are held, and the empty list it sends
+  clears them.
+- After the person edited the source rows, the page kept them for the rest
+  of the session, so a requirement confirmed later never got a row. The rows
+  are now rebuilt whenever the confirmed requirements change, and a draft is
+  kept only for a requirement whose id and text are unchanged.
+
+The repository's page tests inspect the page source; they do not run its
+script. The two page repairs were also exercised by running the script
+outside the repository, which is not a repository test.
+
 **Serves.** A person can see, for every requirement Forge will build from,
 the part of their original words it came from and how it changed, and can
 see the parts of their original words that nothing carries forward, before a

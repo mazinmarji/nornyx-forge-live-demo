@@ -1615,6 +1615,11 @@ function proposeSource(){
                           value: {text: document.getElementById("source_spec").value}, actor: actor()});
 }
 let sourcesEdited = false;
+// The confirmed requirements the rows were last built for. A draft survives a
+// refresh only while that set is unchanged: when a requirement is added,
+// removed or rewritten the rows are rebuilt, keeping the person's draft for
+// each requirement whose id and text are the same (Codex P2 4489372674).
+let sourceRowsFor = null;
 function sourceItems(){ return Array.from(document.getElementById("src_rows").children); }
 function sourceRecord(item){
   const excerpt = item.querySelector("textarea").value;
@@ -1627,15 +1632,28 @@ function renderSourceRows(authoritative){
   const rows = authoritative.requirements || [];
   const source = (authoritative.source_specification || {}).text;
   const recorded = new Map((authoritative.requirement_sources || []).map(r => [r.requirement, r]));
-  document.getElementById("b_src_propose").disabled = !(rows.length && source !== undefined);
-  if(sourcesEdited){ return; }
+  // With no requirements left, an empty proposal is what clears records that
+  // name the removed ones, so it is offered whenever any are held
+  // (Codex P2 4489372678).
+  document.getElementById("b_src_propose").disabled =
+    !(source !== undefined && (rows.length || recorded.size));
+  const rowsFor = JSON.stringify(rows.map(row => [row.id, row.text]));
+  if(sourcesEdited && rowsFor === sourceRowsFor){ return; }
+  const drafts = new Map();
+  if(sourcesEdited){
+    for(const item of sourceItems()){
+      drafts.set(JSON.stringify([item.dataset.rqid, item.dataset.text]),
+                 {excerpt: item.querySelector("textarea").value, change: item.querySelector("input").value});
+    }
+  }
+  sourceRowsFor = rowsFor;
   const host = document.getElementById("src_rows");
   host.replaceChildren();
   for(const row of rows){
     const item = document.createElement("li");
     item.dataset.rqid = row.id;
     item.dataset.text = row.text;
-    const held = recorded.get(row.id);
+    const held = drafts.get(JSON.stringify([row.id, row.text])) || recorded.get(row.id);
     const heading = document.createElement("div");
     heading.textContent = row.id + ": " + row.text;
     const excerpt = document.createElement("textarea");
