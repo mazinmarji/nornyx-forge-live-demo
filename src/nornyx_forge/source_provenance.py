@@ -22,13 +22,21 @@ record names anything else -- and computes what no record covers. It does
 NOT check that a change note is accurate or complete: that is the person's
 statement, recorded as theirs.
 
-WHAT "UNCOVERED" MEANS. The parts of the source that no requirement record
-and no verbatim intent covers, after whitespace-only gaps are dropped. A
-heading or a sentence of context is uncovered as surely as a requirement
-nobody carried across, and this module cannot tell them apart; it shows them
-so a person can. Coverage is located at the FIRST occurrence of each recorded
-part; a part that occurs more than once says so in `occurrences`, because its
-first occurrence may not be the one the person meant.
+UNMAPPED SOURCE TEXT. The parts of the source that no requirement record
+and no verbatim intent maps, reported one entry per Markdown block -- a
+heading, a list item, a paragraph or a fenced block -- or per part of one
+that a record maps only in part, each with its line, its character positions
+and a preview (A-061). A specification's interface section is often one list
+with no blank line in it; cut only at blank lines, that list was one entry
+of thousands of characters, and the one item nobody carried across was lost
+inside it. A heading or a sentence of context is unmapped as surely as a
+requirement nobody carried across, and this module cannot tell them apart; it
+shows them so a person can, and it claims nothing about what is missing. The
+report keeps its field names, `uncovered` and `uncovered_characters`, so a
+receipt exported before this change still verifies. Coverage is located at
+the FIRST occurrence of each recorded part; a part that occurs more than once
+says so in `occurrences`, because its first occurrence may not be the one the
+person meant.
 
 `layer.domain`: mappings and strings in, values out. No filesystem, clock or
 process.
@@ -36,7 +44,9 @@ process.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
+import re
 from typing import Any, Mapping
 
 #: The record kinds, closed.
@@ -48,8 +58,15 @@ SOURCE_TEXT_LIMIT = 200_000
 #: The longest change note, in characters (the capsule's row limit).
 CHANGE_LIMIT = 2000
 
-#: How much of an uncovered part a report quotes.
+#: How much of an unmapped entry a report quotes.
 EXCERPT_PREVIEW = 200
+
+#: The Markdown blocks unmapped source text is reported by (A-061), closed.
+BLOCK_KINDS = ("heading", "list item", "paragraph", "fenced block")
+
+_HEADING = re.compile(r"[ \t]{0,3}#{1,6}(?:[ \t]|\Z)")
+_LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])(?:[ \t]|\Z)")
+_FENCE = re.compile(r"[ \t]{0,3}(`{3,}|~{3,})")
 
 
 def source_sha256(text: str) -> str:
@@ -117,7 +134,76 @@ def _located(source: str, part: str) -> tuple[int | None, int]:
     return source.find(part), source.count(part)
 
 
-def _uncovered(source: str, covered: list[tuple[int, int]]) -> list[dict[str, Any]]:
+def _opens_block(line: str) -> bool:
+    return bool(_HEADING.match(line) or _LIST_ITEM.match(line) or _FENCE.match(line))
+
+
+def _blocks(source: str) -> list[tuple[int, int, str]]:
+    """The source's Markdown blocks, in order, as `(start, end, kind)`.
+
+    A small reading of Markdown's block structure, not a Markdown parser. A
+    line opening with one to six `#` and a space is a heading. A line opening
+    with a list marker -- `-`, `*`, `+`, or a number and `.` or `)` -- and a
+    space starts a list item. A fence of three or more backticks or tildes
+    starts a fenced block, which runs to its closing fence or to the end of
+    the text. Any other line starts a paragraph. A list item or a paragraph
+    runs on through the following lines until a blank line or a line that
+    opens a block, so a nested item is a block of its own. Blank lines belong
+    to no block. A table, a quotation, indented code or an underlined heading
+    reads as a paragraph. A line ends at LF or CRLF, and `end` stops before
+    the last line's terminator, so a CRLF line is read, and ends its block,
+    without its carriage return while every offset still indexes the text as
+    given (Codex P2 4492746866).
+    """
+    lines: list[tuple[int, int, str]] = []
+    position = 0
+    for text in source.split("\n"):
+        body = text[:-1] if text.endswith("\r") else text
+        lines.append((position, position + len(body), body))
+        position += len(text) + 1
+    blocks: list[tuple[int, int, str]] = []
+    index = 0
+    while index < len(lines):
+        start, _, text = lines[index]
+        if not text.strip():
+            index += 1
+            continue
+        fence = _FENCE.match(text)
+        if fence:
+            marker = fence.group(1)
+            closing = re.compile(r"[ \t]{0,3}" + re.escape(marker[0])
+                                 + "{" + str(len(marker)) + r",}[ \t]*\Z")
+            last = index + 1
+            while last < len(lines) and not closing.match(lines[last][2]):
+                last += 1
+            if last == len(lines):  # unclosed: it runs to the last line with text
+                last -= 1
+                while not lines[last][2].strip():
+                    last -= 1
+            blocks.append((start, lines[last][1], "fenced block"))
+            index = last + 1
+            continue
+        if _HEADING.match(text):
+            blocks.append((start, lines[index][1], "heading"))
+            index += 1
+            continue
+        kind = "list item" if _LIST_ITEM.match(text) else "paragraph"
+        last = index
+        while (last + 1 < len(lines) and lines[last + 1][2].strip()
+               and not _opens_block(lines[last + 1][2])):
+            last += 1
+        blocks.append((start, lines[last][1], kind))
+        index = last + 1
+    return blocks
+
+
+def _unmapped(source: str, covered: list[tuple[int, int]]) -> list[dict[str, Any]]:
+    """The source text that nothing in `covered` maps, one entry per block.
+
+    Each entry is a block, or the part of one that a mapped part leaves, with
+    the whitespace at its ends trimmed: its character positions, its line,
+    the kind of block it is, and a preview. Text between blocks is blank, so
+    it is never an entry."""
     gaps: list[tuple[int, int]] = []
     cursor = 0
     for start, end in sorted(covered):
@@ -126,25 +212,38 @@ def _uncovered(source: str, covered: list[tuple[int, int]]) -> list[dict[str, An
         cursor = max(cursor, end)
     if cursor < len(source):
         gaps.append((cursor, len(source)))
-    uncovered = []
-    for start, end in gaps:
-        part = source[start:end]
-        if not part.strip():
-            continue
-        uncovered.append({
-            "start": start,
-            "end": end,
-            "characters": end - start,
-            "excerpt": part.strip()[:EXCERPT_PREVIEW],
-        })
-    return uncovered
+    line_starts = [0] + [index + 1 for index, char in enumerate(source) if char == "\n"]
+    entries: list[dict[str, Any]] = []
+    first = 0
+    for block_start, block_end, kind in _blocks(source):
+        while first < len(gaps) and gaps[first][1] <= block_start:
+            first += 1
+        index = first
+        while index < len(gaps) and gaps[index][0] < block_end:
+            start, end = max(block_start, gaps[index][0]), min(block_end, gaps[index][1])
+            part = source[start:end]
+            text = part.strip()
+            if text:
+                start += len(part) - len(part.lstrip())
+                end = start + len(text)
+                entries.append({
+                    "start": start,
+                    "end": end,
+                    "characters": end - start,
+                    "line": bisect.bisect_right(line_starts, start),
+                    "block": kind,
+                    "excerpt": text[:EXCERPT_PREVIEW],
+                })
+            index += 1
+    return entries
 
 
 def provenance_report(document: Mapping[str, Any]) -> dict[str, Any]:
     """What the confirmed region says about where its requirements came from.
 
     A report, not a verdict: `bound` is `binding_problems` being empty, and
-    `uncovered` is the source that no record and no verbatim intent covers.
+    `uncovered` is the unmapped source text: what no record and no verbatim
+    intent maps, one entry per Markdown block or part of one (A-061).
     """
     region = _authoritative(document)
     source = confirmed_source(document)
@@ -171,7 +270,7 @@ def provenance_report(document: Mapping[str, Any]) -> dict[str, Any]:
         entries.append({"requirement": record["requirement"], "kind": record["kind"],
                         "change": record["change"], "occurrences": occurrences,
                         "start": start, "end": end})
-    uncovered = _uncovered(source, covered)
+    uncovered = _unmapped(source, covered)
     return {
         "bound": not problems,
         "problems": problems,
