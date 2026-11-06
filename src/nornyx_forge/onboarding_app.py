@@ -1407,7 +1407,7 @@ project is not an approval of it.</p>
  <button type="button" id="b_rq_add" onclick="addRequirementFromButton()">Add a requirement</button>
  <button type="button" id="b_rq_propose" onclick="proposeRequirements()" disabled>Propose requirements</button></fieldset>
 <fieldset><legend>Your original specification</legend>
- <p id="src_hint">Paste the text your need and requirements come from, exactly as you wrote it. Forge records its fingerprint (SHA-256) and shows the parts of it that no requirement carries across. If you wrote your need only here, use what you typed above. No BRD or contract is made until it is confirmed.</p>
+ <p id="src_hint">Paste the text your need and requirements come from, exactly as you wrote it. Forge records its fingerprint (SHA-256) and lists its unmapped source text: each heading, list item, paragraph or fenced block, or part of one, that no requirement record maps. If you wrote your need only here, use what you typed above. No BRD or contract is made until it is confirmed.</p>
  <textarea id="source_spec" rows="6" cols="50" aria-describedby="src_hint"></textarea>
  <button type="button" onclick="useTypedAsSource()">Use what I typed above</button>
  <button type="button" onclick="proposeSource()">Propose as the original specification</button>
@@ -1608,7 +1608,7 @@ function proposeRequirements(){
 // whether a part occurs in the specification except to fill a suggestion.
 function useTypedAsSource(){
   const lines = [need.value, ...requirementRows().map(row => row.text)].filter(line => line.trim());
-  document.getElementById("source_spec").value = lines.join("\n");
+  document.getElementById("source_spec").value = lines.join("\\n");
 }
 function proposeSource(){
   call("/api/proposals", {field: "source_specification",
@@ -1696,11 +1696,15 @@ function renderProvenance(p){
     const list = document.createElement("ul");
     for(const part of p.uncovered){
       const item = document.createElement("li");
-      item.textContent = "characters " + part.start + " to " + part.end + ": " + part.excerpt;
+      item.textContent = "line " + part.line + ", characters " + part.start + " to " + part.end
+        + " (" + part.block + "): " + part.excerpt;
       list.append(item);
     }
-    host.append("Parts of the specification that no requirement carries across (" + p.uncovered_characters
-                + " characters) — check that nothing you need is among them:", list);
+    // One entry per Markdown block, or part of one (A-061). Forge cannot tell
+    // context from a requirement nobody carried across, and says so.
+    host.append("Unmapped source text: " + p.uncovered.length + " entries, " + p.uncovered_characters
+                + " characters that no requirement record maps. An entry may be a heading, context "
+                + "or a requirement nobody carried across; Forge cannot tell which, so read each one:", list);
   }
 }
 function act(url){ call(url, {actor: actor()}); }

@@ -1038,8 +1038,13 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # the served state. 55 after its review round, floor band(55) = 50:
     # source-record text with no UTF-8 form refused at the door, the empty
     # record list that clears records left by removed requirements, and the
-    # source editor rebuilt when the confirmed requirements change.
-    "tests/test_source_provenance.py": 50,
+    # source editor rebuilt when the confirmed requirements change. 70 with
+    # A-061, floor band(70) = 63: unmapped source text as one entry per
+    # Markdown block, with its line, positions, kind and preview; a block
+    # partly mapped reporting only the rest; the receipt still verifying; the
+    # page's wording; and every page script scanned for a quoted string
+    # holding a raw line break.
+    "tests/test_source_provenance.py": 63,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2585,16 +2590,26 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # across 148 modules, the module-floor sum rises by 8 to 6477, the aggregate
 # follows to 6485 keeping the same 8 above it, band(n) 6398 -> 6406, the room
 # below what collects 631 -> 632, and the slack the bands grant 639 -> 640.
-# NO SKIP IS ADDED. The rows below are these.
+# NO SKIP IS ADDED.
+#
+# 2026-11-06: A-061 ADDS NO MODULE AND MOVES ONE, measured from a fresh
+# collection: tests/test_source_provenance.py 55 -> 70 (floor band(55) = 50
+# -> band(70) = 63). No other module's count changed and no floor fell. 7132
+# collect across 148 modules; the module-floor sum rises by 13 to 6490 and
+# the aggregate follows to 6498, keeping the same 8 above it; band(n)
+# 6406 -> 6419, the working room below what collects 632 -> 634, and the
+# slack the bands grant 640 -> 642. NO SKIP IS ADDED, and the module joins no
+# platform job, so the windows-runtime job's floor is untouched at 766. The
+# rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     7117   (148 modules)
-#     sum of the module floors    6477
-#     band(7117) = ceil(0.9*n)    6406
-#     MINIMUM_COLLECTED           6485
+#     collected across tests/     7132   (148 modules)
+#     sum of the module floors    6490
+#     band(7132) = ceil(0.9*n)    6419
+#     MINIMUM_COLLECTED           6498
 #     above the module sum          8
-#     below what collects         632
+#     below what collects         634
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2816,7 +2831,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 640 in total, and the aggregate refuses
+# per-module bands already grant 642 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3085,7 +3100,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6485
+MINIMUM_COLLECTED = 6498
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3231,7 +3246,8 @@ REQUIRED_MODULES = (
     "tests/test_plain_language_reasons.py",
     # A-058: the verifiable journey receipt and its verifier.
     "tests/test_journey_receipt.py",
-    # A-060: source-specification provenance and its refusal.
+    # A-060: source-specification provenance and its refusal; A-061: unmapped
+    # source text by Markdown block.
     "tests/test_source_provenance.py",
     "tests/test_runtime_contract.py",
     "tests/test_capability_guard.py",

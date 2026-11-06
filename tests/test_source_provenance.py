@@ -449,3 +449,263 @@ def test_the_source_editor_keeps_a_draft_only_while_the_requirements_are_unchang
 def test_the_record_proposal_is_offered_while_records_are_held_and_no_requirement_is():
     script = _source_rows_script()
     assert "!(source !== undefined && (rows.length || recorded.size))" in script
+
+
+# ---------------------------------------------------------------------------
+# Unmapped source text, one entry per Markdown block (A-061)
+# ---------------------------------------------------------------------------
+
+from nornyx_forge import source_provenance  # noqa: E402
+
+#: A specification shaped the way real ones are: a section that is one list
+#: with no blank line inside it, a nested list, an item that runs on to a
+#: second line, a fenced example holding a blank line, and a numbered list.
+BLOCKS_SOURCE = (
+    "# Library loans\n"
+    "\n"
+    "Status: draft for review.\n"
+    "\n"
+    "## 1. Interface\n"
+    "\n"
+    "    loans --books BOOKS.csv --out OUTDIR\n"
+    "\n"
+    "- Input files:\n"
+    "  - `BOOKS.csv`: `book_id,title`\n"
+    "  - `LOANS.csv`: `loan_id,book_id,due`\n"
+    "- Files are UTF-8; a field may contain commas inside quotes.\n"
+    "- On invalid input it prints one line `ERROR <CODE> <file>:<line>` and\n"
+    "  writes nothing to standard output.\n"
+    "- OUTDIR is created with any missing parents.\n"
+    "\n"
+    "## 2. Requirements\n"
+    "\n"
+    "R1. A loan names exactly one book that exists.\n"
+    "\n"
+    "R2. A book is on loan to at most one person at a time.\n"
+    "\n"
+    "## 3. Worked example\n"
+    "\n"
+    "```\n"
+    "book_id,title\n"
+    "\n"
+    "B-1,Atlas\n"
+    "```\n"
+    "\n"
+    "1. Run it.\n"
+    "2. Compare the output.\n"
+)
+BLOCKS_INTENT = "Track library loans."
+BLOCKS_ROWS = [
+    {"id": "RQ-1", "text": "A loan names exactly one book that exists."},
+    {"id": "RQ-2", "text": "A book is on loan to at most one person at a time."},
+]
+BLOCKS_RECORDS = [
+    {"requirement": "RQ-1", "kind": "changed",
+     "excerpt": "R1. A loan names exactly one book that exists.",
+     "change": "Dropped the R-number label."},
+    {"requirement": "RQ-2", "kind": "changed",
+     "excerpt": "R2. A book is on loan to at most one person at a time.",
+     "change": "Dropped the R-number label."},
+]
+
+
+def _blocks_document(source: str = BLOCKS_SOURCE, records=None) -> dict:
+    document = create_document("proj-2", "Library Loans", HUMAN, next(_CLOCK))
+    document = _confirmed(document, "intent", BLOCKS_INTENT)
+    document = _confirmed(document, "requirements", BLOCKS_ROWS)
+    document = _confirmed(document, "source_specification", {"text": source})
+    return _confirmed(document, "requirement_sources",
+                      BLOCKS_RECORDS if records is None else records)
+
+
+def _blocks_report(source: str = BLOCKS_SOURCE, records=None) -> dict:
+    return provenance_report(_blocks_document(source, records))
+
+
+def _entry(report: dict, starting: str) -> dict:
+    found = [part for part in report["uncovered"] if part["excerpt"].startswith(starting)]
+    assert len(found) == 1, (starting, [part["excerpt"][:40] for part in report["uncovered"]])
+    return found[0]
+
+
+def _line_of(text: str) -> int:
+    return BLOCKS_SOURCE[:BLOCKS_SOURCE.index(text)].count("\n") + 1
+
+
+def test_unmapped_text_is_one_entry_per_list_item_even_with_no_blank_line_between():
+    report = _blocks_report()
+    for item in ("- Files are UTF-8", "- On invalid input", "- OUTDIR is created"):
+        entry = _entry(report, item)
+        assert entry["block"] == "list item"
+        assert entry["line"] == _line_of(item)
+
+
+def test_each_entry_names_its_line_its_positions_and_its_text():
+    report = _blocks_report()
+    assert report["uncovered"]
+    for part in report["uncovered"]:
+        text = BLOCKS_SOURCE[part["start"]:part["end"]]
+        assert text and text == text.strip()
+        assert part["characters"] == part["end"] - part["start"]
+        assert part["line"] == BLOCKS_SOURCE[:part["start"]].count("\n") + 1
+        assert part["excerpt"] == text[:source_provenance.EXCERPT_PREVIEW]
+        assert part["block"] in source_provenance.BLOCK_KINDS
+
+
+def test_a_list_item_runs_on_through_its_continuation_line_and_nested_items_stand_alone():
+    report = _blocks_report()
+    entry = _entry(report, "- On invalid input")
+    assert BLOCKS_SOURCE[entry["start"]:entry["end"]].endswith("writes nothing to standard output.")
+    for nested in ("- `BOOKS.csv`", "- `LOANS.csv`"):
+        assert _entry(report, nested)["block"] == "list item"
+    assert _entry(report, "- Input files:")["excerpt"] == "- Input files:"
+
+
+def test_headings_paragraphs_fenced_blocks_and_numbered_items_are_each_their_own_entry():
+    report = _blocks_report()
+    assert _entry(report, "# Library loans")["block"] == "heading"
+    assert _entry(report, "## 3. Worked example")["block"] == "heading"
+    assert _entry(report, "Status: draft")["block"] == "paragraph"
+    fenced = _entry(report, "```")
+    assert fenced["block"] == "fenced block"
+    assert BLOCKS_SOURCE[fenced["start"]:fenced["end"]] == "```\nbook_id,title\n\nB-1,Atlas\n```"
+    assert _entry(report, "1. Run it.")["block"] == "list item"
+    assert _entry(report, "2. Compare")["block"] == "list item"
+
+
+def test_mapped_blocks_are_not_reported_and_a_partly_mapped_block_reports_only_the_rest():
+    assert not any("A loan names" in part["excerpt"] for part in _blocks_report()["uncovered"])
+    records = [dict(BLOCKS_RECORDS[0], excerpt="A loan names exactly one book"),
+               BLOCKS_RECORDS[1]]
+    report = _blocks_report(records=records)
+    head = _entry(report, "R1.")
+    assert head["excerpt"] == "R1." and head["block"] == "paragraph"
+    tail = _entry(report, "that exists.")
+    assert tail["block"] == "paragraph" and tail["line"] == _line_of("R1. A loan")
+
+
+def test_the_total_counts_the_unmapped_text_not_the_blank_lines_between_blocks():
+    report = _blocks_report()
+    parts = report["uncovered"]
+    assert report["uncovered_characters"] == sum(part["characters"] for part in parts)
+    assert all(a["end"] < b["start"] for a, b in zip(parts, parts[1:]))
+    for part in parts:
+        # A blank line separates blocks; only a fenced block may hold one.
+        if "\n\n" in BLOCKS_SOURCE[part["start"]:part["end"]]:
+            assert part["block"] == "fenced block"
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("#hashtag is not a heading", "paragraph"),
+    ("####### seven marks is not a heading", "paragraph"),
+    ("+ a plus item", "list item"),
+    ("3) a numbered item", "list item"),
+    ("-not an item", "paragraph"),
+])
+def test_only_markdown_block_openers_open_a_block(text, kind):
+    assert [block[2] for block in source_provenance._blocks(text)] == [kind]
+
+
+def test_an_unclosed_fence_runs_to_the_end_of_the_text():
+    text = "Intro.\n\n```\ncode\n\nmore code"
+    assert [(text[s:e], k) for s, e, k in source_provenance._blocks(text)] == [
+        ("Intro.", "paragraph"), ("```\ncode\n\nmore code", "fenced block")]
+
+
+def test_block_entries_still_make_a_receipt_section_the_verifier_accepts():
+    section = source_projection(_blocks_document())
+    assert len(section["uncovered"]) > 10
+    assert [p for p in _consistency_problems(_body_with(section)) if p.startswith("source")] == []
+
+
+def test_the_page_calls_it_unmapped_source_text_and_claims_nothing_is_missing():
+    from nornyx_forge.onboarding_app import _PAGE
+
+    script = _PAGE[_PAGE.index("function renderProvenance"):]
+    script = script[:script.index("\nfunction act(")]
+    assert "Unmapped source text" in script
+    assert "part.line" in script and "part.block" in script
+    assert "carries across" not in script
+    assert "missing" not in script.lower()
+
+
+def _line_breaks_inside_js_strings(script: str) -> list[int]:
+    """The lines on which a quoted JavaScript string holds a raw line break.
+
+    `_PAGE` is an ordinary Python string, so a `\\n` written inside a page
+    string reaches the browser as a real line break, and a quoted JavaScript
+    string cannot hold one: the whole script then fails to parse and no
+    control on the page works. A small scan, not a JavaScript parser: it
+    skips comments, template literals and regular-expression literals, and
+    reports where a '...' or "..." string meets a line break."""
+    found: list[int] = []
+    index, line, quote, previous = 0, 1, None, ""
+    while index < len(script):
+        char = script[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == "\n":
+                found.append(line)
+                quote = None
+            elif char == quote:
+                quote = None
+        elif script.startswith("//", index):
+            index = script.find("\n", index)
+            index = len(script) if index < 0 else index
+            continue
+        elif script.startswith("/*", index):
+            end = script.find("*/", index + 2)
+            end = len(script) if end < 0 else end + 2
+            line += script.count("\n", index, end)
+            index = end
+            continue
+        elif char in "'\"":
+            quote = char
+        elif char == "`":
+            end = index + 1
+            while end < len(script) and script[end] != "`":
+                end += 2 if script[end] == "\\" else 1
+            line += script.count("\n", index, end)
+            index = end + 1
+            continue
+        elif char == "/" and previous in "(,=:[!&|?{};+-*%<>~^" + "\n":
+            end, in_class = index + 1, False
+            while end < len(script) and script[end] != "\n":
+                if script[end] == "\\":
+                    end += 2
+                    continue
+                if script[end] == "[":
+                    in_class = True
+                elif script[end] == "]":
+                    in_class = False
+                elif script[end] == "/" and not in_class:
+                    break
+                end += 1
+            index = end + 1
+            previous = "x"
+            continue
+        if char == "\n":
+            line += 1
+        if not char.isspace():
+            previous = char
+        elif char == "\n":
+            previous = previous if previous else "\n"
+        index += 1
+    return found
+
+
+def test_the_page_script_has_no_line_break_inside_a_string_literal():
+    import re
+
+    from nornyx_forge.onboarding_app import _PAGE
+
+    scripts = re.findall(r"<script[^>]*>(.*?)</script>", _PAGE, re.S)
+    assert scripts
+    for script in scripts:
+        assert _line_breaks_inside_js_strings(script) == []
+    # The scan sees the defect it exists for: the separator the source editor
+    # once wrote reached the browser as a real line break.
+    assert _line_breaks_inside_js_strings('const a = [1].join("\n");\nlet b = 1;')[:1] == [1]
+    assert _line_breaks_inside_js_strings('const a = [1].join("\\n"); // "\nx = `\n`;') == []

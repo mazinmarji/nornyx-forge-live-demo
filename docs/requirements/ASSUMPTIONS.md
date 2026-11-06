@@ -8870,3 +8870,71 @@ outside the repository, which is not a repository test.
 the part of their original words it came from and how it changed, and can
 see the parts of their original words that nothing carries forward, before a
 BRD or a contract exists.
+
+## A-061 Unmapped source text is reported one entry per Markdown block, with its line, its character positions and a preview
+
+**Claim limit, stated first.** This changes how the source text that no
+requirement record maps is cut up and shown. An entry is source text nothing
+maps; it is not a missing requirement, and Forge does not claim that any
+entry is one. A heading, a sentence of context and a requirement nobody
+carried across are reported alike. A requirement recorded as `changed`
+still counts its whole excerpt as mapped, so a change inside a mapped
+passage is visible only through the person's change note, as before. This
+runs no provider, changes no eligibility decision, gate, seal or security
+setting, and establishes nothing about a produced application.
+
+**Why.** A-060 reported the unmapped source as the gaps between mapped parts.
+A specification's interface section is often one bulleted list with no blank
+line inside it, so a gap could be thousands of characters long and hold
+items that were carried into requirements next to the one that was not,
+under a preview showing only the gap's first line. The record was accurate
+and could not be acted on: a person had to re-read the whole gap to find
+what nothing maps.
+
+**What changed.**
+
+1. **Blocks** (`source_provenance._blocks`). The source is read as Markdown
+   blocks: a heading (one to six `#` and a space), a list item (`-`, `*`,
+   `+`, or a number and `.` or `)`, then a space; it runs on through its
+   continuation lines, and a nested item is a block of its own), a fenced
+   block (three or more backticks or tildes, to its closing fence or the end
+   of the text) and a paragraph (any other run of lines). Blank lines belong
+   to no block. This is a small reading of Markdown's block structure, not a
+   Markdown parser: a table, a quotation, indented code or an underlined
+   heading reads as a paragraph.
+2. **Entries** (`source_provenance._unmapped`). Each block, or each part of
+   one that a mapped part leaves, with the whitespace at its ends trimmed, is
+   one entry: `start`, `end`, `characters`, `line` (where the entry starts),
+   `block` (one of `BLOCK_KINDS`) and `excerpt` (its first 200 characters).
+   `uncovered_characters` is now the sum of the entries, so it no longer
+   counts the blank lines between blocks.
+3. **Names.** The page calls it "unmapped source text" and lists each entry
+   by line, character positions and block kind. It says an entry may be a
+   heading, context or a requirement nobody carried across, and that Forge
+   cannot tell which. The report and the receipt keep the field names
+   `uncovered` and `uncovered_characters`, and the receipt keeps its
+   `{start, end}` entries, so a receipt exported under A-060 still verifies
+   and the verifier's rules (ordered, disjoint, inside the text, summing to
+   the total) are unchanged.
+4. **The page script parses again.** A-060's "use what I typed above"
+   control joined lines with a separator written as `"\n"` inside `_PAGE`,
+   an ordinary Python string, so the browser received a raw line break
+   inside a JavaScript string and the whole page script failed to parse: no
+   control on the page worked. The separator now reaches the browser as the
+   two characters `\n`. A test scans every page script for a quoted string
+   holding a raw line break; it reports that defect on the A-060 page and
+   nothing on the page before A-060 or on this one.
+
+**Bounds stated here.**
+- Coverage is still located at the FIRST occurrence of each excerpt.
+- An entry's preview is its first 200 characters; a long list item whose
+  unmapped sentence comes later shows that sentence only through its
+  positions.
+- Text a requirement drew from somewhere other than its one recorded
+  excerpt is reported as unmapped, because a record names one excerpt.
+- The page tests inspect the page source; they do not run its script. The
+  new scan checks one class of parse failure, not that the script runs.
+
+**Serves.** A person reviewing their specification sees each heading, list
+item, paragraph or example that no requirement maps, on its own line with
+its position, instead of one block covering several sections.
