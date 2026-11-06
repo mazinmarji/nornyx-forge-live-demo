@@ -24,6 +24,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_via_routes, confirm_source_via_routes
 
 from nornyx_forge import onboarding_app as onboarding
 from nornyx_forge.brd_authoring import brd_from_capsule
@@ -263,6 +264,7 @@ def _requirements_confirmed(client: TestClient, intent: str = INTENT) -> None:
     _created(client)
     _confirm(client, "intent", intent, MODEL)
     _confirm(client, "requirements", ROWS)
+    bind_via_routes(client, HUMAN, MODEL)
 
 
 def _contract_a_build_generates(tmp_path: Path) -> str:
@@ -302,6 +304,7 @@ def test_the_project_contract_is_not_read_from_brd_md(client: TestClient, tmp_pa
     """BRD.md is a derived file anyone can edit. The project contract comes
     from the sealed capsule, so an edit to the file changes nothing shown."""
     _requirements_confirmed(client)
+    bind_via_routes(client)
     assert client.post("/api/brd").status_code == 200
     first = client.get("/api/governance").json()["project"]
     (tmp_path / "BRD.md").write_text(
@@ -433,6 +436,7 @@ def test_confirmed_text_that_cannot_be_encoded_is_refused_not_a_server_error(cli
     assert proposal.status_code == 200, proposal.text
     assert client.post(f"/api/proposals/{proposal.json()['proposal_id']}/confirm",
                        json={"actor": HUMAN}).status_code == 200
+    confirm_source_via_routes(client, "Track requests.", HUMAN, MODEL)
     served = client.get("/api/governance")
     assert served.status_code == 200, served.text
     project = served.json()["project"]

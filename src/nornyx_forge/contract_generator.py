@@ -27,6 +27,27 @@ def generate_brd_contract(root: Path, model: RequirementsModel) -> Path:
     return target
 
 
+_UNBOUND_GOAL = ("Convert the exact BRD revision into a tested, architecture-conformant, "
+                 "evidence-backed application.")
+
+
+def _delivery_goal(model: RequirementsModel) -> str:
+    """The delivery intent's goal, naming what it is bound to (A-060).
+
+    A BRD that declares its source specification gets a goal naming both
+    digests: the BRD revision the build reads (`source_digest`, of the BRD
+    text) and the specification that BRD declares it came from. A BRD that
+    declares none keeps the goal it always had, word for word, so no
+    contract claims a binding its BRD does not state."""
+    if model.specification_digest is None:
+        return _UNBOUND_GOAL
+    return (
+        f"Convert the exact BRD revision {model.source_digest}, which declares that it "
+        f"was derived from the source specification sha256:{model.specification_digest}, "
+        "into a tested, architecture-conformant, evidence-backed application."
+    )
+
+
 def render_brd_contract(model: RequirementsModel) -> str:
     """The contract `generate_brd_contract` writes, as text, written nowhere.
 
@@ -79,10 +100,7 @@ def render_brd_contract(model: RequirementsModel) -> str:
         "intents": [
             {
                 "name": "DeliverBRD",
-                "goal": (
-                    "Convert the exact BRD revision into a tested, architecture-conformant, "
-                    "evidence-backed application."
-                ),
+                "goal": _delivery_goal(model),
             }
         ],
         "contexts": [

@@ -63,6 +63,7 @@ from typing import Any, Callable
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from source_binding import bind_via_routes
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge import gates as gate_module
@@ -474,6 +475,7 @@ def _walk(monkeypatch: pytest.MonkeyPatch, base: Path, provider: SimulatedProvid
 
     # Derive the BRD: the confirmed capsule's rendering, byte for byte.
     brd = run.project / "BRD.md"
+    bind_via_routes(client)
     assert _call(client, "POST", "/api/brd", 200, "derive the BRD")["written"] == str(brd)
     assert brd.read_bytes() == brd_from_capsule(run.store().load()).encode("utf-8")
     derived = run.state("BRD derived")
@@ -615,6 +617,9 @@ def test_the_simulated_journey_reaches_ready_through_the_shipped_surfaces(
     assert log == ["capsule: initialize",
                    "capsule: capsule: propose P-1", "capsule: capsule: confirm P-1",
                    "capsule: capsule: propose P-2", "capsule: capsule: confirm P-2",
+                   # P-3: the source binding (tests/source_binding.py); this
+                   # capsule has no requirement rows, so it takes no records.
+                   "capsule: capsule: propose P-3", "capsule: capsule: confirm P-3",
                    "experience: reached CONFIRM", "experience: reached BUILD",
                    "experience: reached TEST", "experience: reached GOVERN"]
     store = run.store()

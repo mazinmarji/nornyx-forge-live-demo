@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_document, bind_via_routes
 
 from nornyx_forge import onboarding_serve, provider_contract
 from nornyx_forge.capsule import PROVIDERS, Actor, confirm, create_document, propose
@@ -119,10 +120,12 @@ def _confirmed(client: TestClient, provider: str = "codex") -> None:
         "field": "intent", "value": "Build a customer support portal.", "actor": MODEL,
     }))["proposal_id"]
     _ok(client.post(f"/api/proposals/{intent}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client, HUMAN, MODEL)
     chosen = _ok(client.post("/api/proposals", json={
         "field": "provider", "value": {"name": provider}, "actor": HUMAN,
     }))["proposal_id"]
     _ok(client.post(f"/api/proposals/{chosen}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _ok(client.post("/api/journey/confirm-scope", json={"actor": HUMAN}))["stage"] == "CONFIRM"
 
@@ -433,6 +436,7 @@ def test_e6_a_lifecycle_already_at_build_is_not_moved_by_a_refused_re_run(tmp_pa
     document, intent = propose(document, "intent", "Build a portal.", Actor("model", "m"),
                                "2026-09-03T09:01:00Z")
     document = confirm(document, intent, Actor("human", "casey"), "2026-09-03T09:02:00Z")
+    document = bind_document(document, Actor("human", "casey"), "2026-09-03T09:02:30Z")
     document, chosen = propose(document, "provider", {"name": "claude"}, Actor("human", "casey"),
                                "2026-09-03T09:03:00Z")
     document = confirm(document, chosen, Actor("human", "casey"), "2026-09-03T09:04:00Z")

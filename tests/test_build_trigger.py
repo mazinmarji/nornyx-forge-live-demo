@@ -17,6 +17,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_document
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge.brd_authoring import brd_from_capsule
@@ -43,6 +44,7 @@ def _project(tmp_path: Path, *, with_provider: bool = True,
                                   Actor("model", "m"), "2026-08-30T12:01:00Z")
     document = confirm(document, intent_id, Actor("human", "casey"),
                        "2026-08-30T12:02:00Z")
+    document = bind_document(document, Actor("human", "casey"), "2026-08-30T12:02:30Z")
     if with_provider:
         document, provider_id = propose(
             document, "provider", {"name": "codex"}, Actor("human", "casey"),

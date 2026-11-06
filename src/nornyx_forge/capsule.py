@@ -80,6 +80,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from .source_provenance import CHANGE_LIMIT as SOURCE_CHANGE_LIMIT
+from .source_provenance import KINDS as SOURCE_KINDS
+from .source_provenance import SOURCE_TEXT_LIMIT
+
 SCHEMA_VERSION = 1
 
 #: Actor kinds, closed. `human` is the only kind `confirm` accepts, and the
@@ -243,6 +247,79 @@ def _validate_limitations(value: Any) -> None:
         _require_str(item, f"limitation[{index}]", 2000)
 
 
+def _validate_source_specification(value: Any) -> None:
+    """The original specification's text, as the person supplied it (A-060).
+
+    Its identity is the SHA-256 of that text, computed wherever it is needed
+    rather than stored beside it, so no stored digest can disagree with it."""
+    if not isinstance(value, dict) or set(value) != {"text"}:
+        raise CapsuleValidationError("source_specification must be an object with exactly {text}")
+    _require_str(value["text"], "source_specification text", SOURCE_TEXT_LIMIT)
+    _require_utf8(value["text"], "source_specification text")
+
+
+def _require_utf8(text: str, field: str) -> None:
+    """Refuse text with no UTF-8 form, such as an unpaired surrogate.
+
+    The canonical capsule escapes non-ASCII, so such text would be accepted and
+    stored, and fail only later where it is hashed: the specification by its
+    digest, a change note by the receipt (Codex P2 4489372681). Every source
+    text field is checked here, at the door, so none reaches a digest."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise CapsuleValidationError(
+            f"{field} cannot be written as UTF-8, and Forge identifies text by the "
+            "SHA-256 of its UTF-8 bytes"
+        ) from error
+
+
+def _validate_requirement_sources(value: Any) -> None:
+    """One record per requirement: where it came from in the source (A-060).
+
+    The shape only. Whether each record matches the confirmed source and the
+    confirmed requirements is a relation between fields, judged by
+    `source_provenance.binding_problems` where a BRD is derived."""
+    if not isinstance(value, list):
+        raise CapsuleValidationError("requirement_sources must be a list")
+    seen: set[str] = set()
+    for record in value:
+        if not isinstance(record, dict) or set(record) != {"requirement", "kind", "excerpt", "change"}:
+            raise CapsuleValidationError(
+                "each requirement source must be an object with exactly "
+                "{requirement, kind, excerpt, change}"
+            )
+        rid = record["requirement"]
+        if not isinstance(rid, str) or not _REQUIREMENT_ID.match(rid):
+            raise CapsuleValidationError(f"requirement source id {rid!r} must match RQ-<n>")
+        if rid in seen:
+            raise CapsuleValidationError(f"requirement source for {rid} is duplicated")
+        seen.add(rid)
+        kind = record["kind"]
+        if kind not in SOURCE_KINDS:
+            raise CapsuleValidationError(
+                f"requirement source kind {kind!r} for {rid} is not one of {SOURCE_KINDS}"
+            )
+        if not isinstance(record["excerpt"], str) or not isinstance(record["change"], str):
+            raise CapsuleValidationError(f"requirement source {rid} excerpt and change must be strings")
+        if kind == "added":
+            if record["excerpt"]:
+                raise CapsuleValidationError(
+                    f"requirement source {rid} is added, so it names no source part"
+                )
+        else:
+            _require_str(record["excerpt"], f"requirement source {rid} excerpt", SOURCE_TEXT_LIMIT)
+            _require_utf8(record["excerpt"], f"requirement source {rid} excerpt")
+        if kind == "verbatim":
+            if record["change"]:
+                raise CapsuleValidationError(
+                    f"requirement source {rid} is verbatim, so it records no change"
+                )
+        else:
+            _require_str(record["change"], f"requirement source {rid} change", SOURCE_CHANGE_LIMIT)
+            _require_utf8(record["change"], f"requirement source {rid} change")
+
+
 #: THE closed registry. A field outside it cannot be proposed, confirmed, or
 #: smuggled in by load: `validate_document` rejects unknown keys in every
 #: region, so growing this dict is the single deliberate act that widens the
@@ -255,6 +332,8 @@ AUTHORITATIVE_FIELDS: Mapping[str, Callable[[Any], None]] = {
     "authority_contract_refs": _validate_contract_refs,
     "provider": _validate_provider,
     "limitations": _validate_limitations,
+    "source_specification": _validate_source_specification,
+    "requirement_sources": _validate_requirement_sources,
 }
 
 _PROPOSAL_STATUSES = ("open", "confirmed", "rejected")

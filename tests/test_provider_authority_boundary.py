@@ -52,6 +52,7 @@ from unittest import mock
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client
+from source_binding import bind_via_routes
 
 from nornyx_forge import capsule_store as store_module
 from nornyx_forge import experience_journey as journey
@@ -251,6 +252,7 @@ def _confirmed(client: TestClient) -> None:
         "field": "provider", "value": {"name": "codex"}, "actor": HUMAN,
     }))["proposal_id"]
     _ok(client.post(f"/api/proposals/{provider}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _ok(client.post("/api/journey/confirm-scope", json={"actor": HUMAN}))["stage"] == "CONFIRM"
 
@@ -3807,6 +3809,7 @@ def test_every_forge_write_moves_the_witness_with_it(tmp_path: Path):
     spare = writes("/api/proposals", field="intent", value="Something else.",
                    actor=MODEL)["proposal_id"]
     writes(f"/api/proposals/{spare}/reject", actor=HUMAN)
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     writes("/api/journey/confirm-scope", actor=HUMAN)
     _ok(client.post("/api/build", json={"actor": HUMAN}))

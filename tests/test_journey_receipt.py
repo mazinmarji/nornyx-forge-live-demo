@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from session_client import authed_client, session_token
+from source_binding import bind_via_routes
 from typer.testing import CliRunner
 
 from nornyx_forge import capsule_store as store_module
@@ -73,8 +74,10 @@ NORNYX_GATE = {"name": "nornyx check .nornyx/generated/brd_contract.nyx", "passe
 #: The exact key set of every object in a receipt. A key outside these is
 #: refused by the verifier, so growing the receipt is a schema change.
 RECEIPT_KEYS = {"schema", "body", "integrity"}
-BODY_KEYS = {"forge", "generated_at", "project", "brd", "journey", "evidence",
+BODY_KEYS = {"forge", "generated_at", "project", "brd", "source", "journey", "evidence",
              "provider", "build", "classification"}
+SOURCE_KEYS = {"bound", "specification_sha256", "characters", "requirements", "uncovered",
+               "uncovered_characters", "problems"}
 FORGE_KEYS = {"version", "exporter"}
 PROJECT_KEYS = {"project_id", "store_revision", "requirements_digest",
                 "requirements_revisions", "seal"}
@@ -126,9 +129,11 @@ def _confirmed(client: TestClient, provider: str = "codex") -> None:
     intent = _ok(client.post("/api/proposals", json={
         "field": "intent", "value": INTENT, "actor": MODEL}))["proposal_id"]
     _ok(client.post(f"/api/proposals/{intent}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client, HUMAN, MODEL)
     chosen = _ok(client.post("/api/proposals", json={
         "field": "provider", "value": {"name": provider}, "actor": HUMAN}))["proposal_id"]
     _ok(client.post(f"/api/proposals/{chosen}/confirm", json={"actor": HUMAN}))
+    bind_via_routes(client)
     _ok(client.post("/api/brd"))
     assert _ok(client.post("/api/journey/confirm-scope", json={"actor": HUMAN}))["stage"] == "CONFIRM"
 
@@ -194,6 +199,7 @@ def test_the_receipt_has_exactly_the_declared_shape(tmp_path: Path):
     assert set(body["forge"]) == FORGE_KEYS
     assert set(body["project"]) == PROJECT_KEYS
     assert set(body["brd"]) == BRD_KEYS
+    assert set(body["source"]) == SOURCE_KEYS
     assert set(body["journey"]) == JOURNEY_KEYS
     assert body["journey"]["events"] and all(set(e) == EVENT_KEYS for e in body["journey"]["events"])
     assert body["evidence"] and all(set(e) == EVIDENCE_KEYS for e in body["evidence"])

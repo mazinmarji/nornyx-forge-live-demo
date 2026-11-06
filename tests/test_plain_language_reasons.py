@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from session_client import authed_client
+from source_binding import bind_document
 
 from nornyx_forge import experience_journey as journey
 from nornyx_forge.brd_authoring import brd_from_capsule
@@ -190,7 +191,7 @@ def _intent_document():
     document = create_document("proj-1", "Test Project", Actor("human", "casey"), T0)
     document, intent_id = propose(document, "intent", "Build a portal.", Actor("model", "m"), T1)
     document = confirm(document, intent_id, Actor("human", "casey"), T2)
-    return document
+    return bind_document(document, Actor("human", "casey"), T2)
 
 
 def _brd_and_binding(document):

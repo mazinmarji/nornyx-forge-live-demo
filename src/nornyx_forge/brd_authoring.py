@@ -37,7 +37,8 @@ from typing import Any, Mapping
 
 from .capsule import AUTHORITATIVE_FIELDS, REQUIREMENT_NUMBER_LIMIT, CapsuleValidationError
 from .contract_generator import render_brd_contract
-from .requirements import brd_requirement_identity, parse_brd_text
+from .requirements import SOURCE_BINDING_PREFIX, brd_requirement_identity, parse_brd_text
+from .source_provenance import binding_problems, confirmed_source, source_sha256
 
 
 class BrdAuthoringError(Exception):
@@ -85,7 +86,38 @@ def brd_from_capsule(document: Mapping[str, Any]) -> str:
     Refuses a capsule with no CONFIRMED intent: a project whose need was
     only proposed has not decided what to build, and deriving a BRD from a
     proposal would put unconfirmed words in front of the build flow.
+
+    Refuses, too, a capsule whose confirmed requirements are not bound to a
+    confirmed source specification (A-060). The BRD is what the build
+    contract is generated from, so an unbound one would give the build a
+    contract that cannot show what was changed or lost on the way in. A
+    bound BRD names the specification's SHA-256 above its first heading.
     """
+    intent = _confirmed(document, "intent")
+    if not isinstance(intent, str) or not intent.strip():
+        raise BrdAuthoringError(
+            "the capsule has no confirmed intent; confirm one through "
+            "onboarding before deriving a BRD"
+        )
+    unbound = binding_problems(document)
+    if unbound:
+        raise BrdAuthoringError(
+            "the confirmed requirements are not bound to a confirmed source "
+            "specification, so no BRD or contract is derived: " + "; ".join(unbound)
+        )
+    source = confirmed_source(document)
+    if source is None:  # binding_problems refuses an absent source; this keeps the type exact
+        raise BrdAuthoringError("no source specification has been confirmed")
+    return _render(document, source_sha256(source))
+
+
+#: What a proposal is judged against in place of a confirmed source: the
+#: rendering rules do not read the digest's value, only its line.
+_PROBE_SOURCE_DIGEST = "0" * 64
+
+
+def _render(document: Mapping[str, Any], source_digest: str) -> str:
+    """The BRD's text and its read-back checks, for a source already judged."""
     project_name = _confirmed(document, "project_name")
     intent = _confirmed(document, "intent")
     if not isinstance(intent, str) or not intent.strip():
@@ -101,6 +133,8 @@ def brd_from_capsule(document: Mapping[str, Any]) -> str:
         "This document is DERIVED from the project capsule's confirmed",
         "region. The capsule is the authority; regenerate this file after",
         "new confirmations rather than editing it in place.",
+        "",
+        f"{SOURCE_BINDING_PREFIX}{source_digest}",
         "",
         "## BRD-001 Purpose",
         "",
@@ -237,7 +271,10 @@ def _derivation_refusal(intent: str, rows: list[dict[str, Any]]) -> str | None:
     probe = {"authoritative": {"project_name": _PROBE_NAME, "intent": intent,
                                "requirements": rows}}
     try:
-        brd_from_capsule(probe)
+        # The rendering rules alone: a proposal is judged on its words, and
+        # the source binding is a relation to other fields, asked when a BRD
+        # is derived (A-060), not of a value proposed on its own.
+        _render(probe, _PROBE_SOURCE_DIGEST)
     except BrdAuthoringError as error:
         return DERIVATION_WOULD_REFUSE + str(error)
     return None

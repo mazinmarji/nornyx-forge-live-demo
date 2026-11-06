@@ -196,6 +196,7 @@ from .journey_receipt import measure_brd
 from .plain_reasons import eligibility_summary
 from .produced_app_handoff import ManifestIssue, issue_manifest
 from .provider_contract import GovernedEligibility, governed_build_eligibility
+from .source_provenance import provenance_report
 
 #: THE ONE PLACE THAT DECIDES WHICH PLATFORM WORD DESCRIBES THIS HOST.
 #:
@@ -706,6 +707,9 @@ def create_app(
             "brd_present": brd.present,
             "brd_derived": brd.derived,
             "brd_digest": brd.digest,
+            # Where the confirmed requirements came from (A-060): the same
+            # report the BRD derivation's refusal and the receipt are built on.
+            "source_provenance": provenance_report(document),
             "provider_eligibility": verdict.as_dict() if verdict is not None else None,
             "authority": held,
             "providers": list(PROVIDERS),
@@ -1402,6 +1406,15 @@ project is not an approval of it.</p>
  <ol id="rq_rows" aria-describedby="rq_hint"></ol>
  <button type="button" id="b_rq_add" onclick="addRequirementFromButton()">Add a requirement</button>
  <button type="button" id="b_rq_propose" onclick="proposeRequirements()" disabled>Propose requirements</button></fieldset>
+<fieldset><legend>Your original specification</legend>
+ <p id="src_hint">Paste the text your need and requirements come from, exactly as you wrote it. Forge records its fingerprint (SHA-256) and shows the parts of it that no requirement carries across. If you wrote your need only here, use what you typed above. No BRD or contract is made until it is confirmed.</p>
+ <textarea id="source_spec" rows="6" cols="50" aria-describedby="src_hint"></textarea>
+ <button type="button" onclick="useTypedAsSource()">Use what I typed above</button>
+ <button type="button" onclick="proposeSource()">Propose as the original specification</button>
+ <p id="src_rows_hint">For each confirmed requirement: the part of the specification it came from, and, if it is not word for word, what changed and what was left out. Leave the part empty for a requirement that is not in the specification at all.</p>
+ <ol id="src_rows" aria-describedby="src_rows_hint"></ol>
+ <button type="button" id="b_src_propose" onclick="proposeRequirementSources()" disabled>Propose where the requirements came from</button>
+ <div id="provenance"></div></fieldset>
 <fieldset><legend>3 · Choose your engineering agent</legend>
  <select id="provider"></select>
  <button onclick="proposeProvider()">Propose</button></fieldset>
@@ -1590,6 +1603,106 @@ function proposeRequirements(){
   rowsEdited = true;
   call("/api/proposals", {field: "requirements", value: requirementRows(), actor: actor()}, true);
 }
+// The original specification and where each requirement came from (A-060).
+// The page proposes; the server judges every record, and nothing here decides
+// whether a part occurs in the specification except to fill a suggestion.
+function useTypedAsSource(){
+  const lines = [need.value, ...requirementRows().map(row => row.text)].filter(line => line.trim());
+  document.getElementById("source_spec").value = lines.join("\n");
+}
+function proposeSource(){
+  call("/api/proposals", {field: "source_specification",
+                          value: {text: document.getElementById("source_spec").value}, actor: actor()});
+}
+let sourcesEdited = false;
+// The confirmed requirements the rows were last built for. A draft survives a
+// refresh only while that set is unchanged: when a requirement is added,
+// removed or rewritten the rows are rebuilt, keeping the person's draft for
+// each requirement whose id and text are the same (Codex P2 4489372674).
+let sourceRowsFor = null;
+function sourceItems(){ return Array.from(document.getElementById("src_rows").children); }
+function sourceRecord(item){
+  const excerpt = item.querySelector("textarea").value;
+  const change = item.querySelector("input").value;
+  const kind = excerpt === "" ? "added" : (excerpt === item.dataset.text ? "verbatim" : "changed");
+  return {requirement: item.dataset.rqid, kind: kind, excerpt: excerpt,
+          change: kind === "verbatim" ? "" : change};
+}
+function renderSourceRows(authoritative){
+  const rows = authoritative.requirements || [];
+  const source = (authoritative.source_specification || {}).text;
+  const recorded = new Map((authoritative.requirement_sources || []).map(r => [r.requirement, r]));
+  // With no requirements left, an empty proposal is what clears records that
+  // name the removed ones, so it is offered whenever any are held
+  // (Codex P2 4489372678).
+  document.getElementById("b_src_propose").disabled =
+    !(source !== undefined && (rows.length || recorded.size));
+  const rowsFor = JSON.stringify(rows.map(row => [row.id, row.text]));
+  if(sourcesEdited && rowsFor === sourceRowsFor){ return; }
+  const drafts = new Map();
+  if(sourcesEdited){
+    for(const item of sourceItems()){
+      drafts.set(JSON.stringify([item.dataset.rqid, item.dataset.text]),
+                 {excerpt: item.querySelector("textarea").value, change: item.querySelector("input").value});
+    }
+  }
+  sourceRowsFor = rowsFor;
+  const host = document.getElementById("src_rows");
+  host.replaceChildren();
+  for(const row of rows){
+    const item = document.createElement("li");
+    item.dataset.rqid = row.id;
+    item.dataset.text = row.text;
+    const held = drafts.get(JSON.stringify([row.id, row.text])) || recorded.get(row.id);
+    const heading = document.createElement("div");
+    heading.textContent = row.id + ": " + row.text;
+    const excerpt = document.createElement("textarea");
+    excerpt.rows = 2;
+    excerpt.cols = 50;
+    excerpt.id = "src_part_" + row.id;
+    excerpt.value = held ? held.excerpt : (source !== undefined && source.includes(row.text) ? row.text : "");
+    excerpt.setAttribute("aria-label", "The part of the specification " + row.id + " came from");
+    const change = document.createElement("input");
+    change.type = "text";
+    change.size = 60;
+    change.id = "src_change_" + row.id;
+    change.value = held ? held.change : "";
+    change.setAttribute("aria-label", "What changed in " + row.id + " and what was left out");
+    for(const field of [excerpt, change]){ field.addEventListener("input", () => { sourcesEdited = true; }); }
+    item.append(heading, excerpt, change);
+    host.append(item);
+  }
+}
+function proposeRequirementSources(){
+  sourcesEdited = true;
+  call("/api/proposals", {field: "requirement_sources", value: sourceItems().map(sourceRecord), actor: actor()});
+}
+function renderProvenance(p){
+  const host = document.getElementById("provenance");
+  host.replaceChildren();
+  if(!p){ return; }
+  const line = document.createElement("p");
+  line.textContent = p.source_sha256
+    ? "Specification fingerprint: sha256:" + p.source_sha256 + " (" + p.source_characters + " characters). "
+      + (p.bound ? "Every confirmed requirement says where it came from." : "Not yet bound.")
+    : "No original specification is confirmed yet, so no BRD or contract can be made.";
+  host.append(line);
+  if(p.problems && p.problems.length){
+    const list = document.createElement("ul");
+    for(const problem of p.problems){ const item = document.createElement("li"); item.textContent = problem; list.append(item); }
+    host.append("Still to resolve:", list);
+  }
+  if(p.uncovered && p.uncovered.length){
+    const list = document.createElement("ul");
+    for(const part of p.uncovered){
+      const item = document.createElement("li");
+      item.textContent = "characters " + part.start + " to " + part.end + ": " + part.excerpt;
+      list.append(item);
+    }
+    host.append("Parts of the specification that no requirement carries across (" + p.uncovered_characters
+                + " characters) — check that nothing you need is among them:", list);
+  }
+}
 function act(url){ call(url, {actor: actor()}); }
 function createProject(){ call("/api/project", {project_id: pid.value, project_name: pname.value, actor: actor()}); }
 function proposeNeed(){ call("/api/proposals", {field: "intent", value: need.value, actor: actor()}); }
@@ -1712,6 +1825,8 @@ async function refresh(){
   renderProviders(s.providers);
   renderProposals(s.proposals);
   renderRequirementRows((s.authoritative || {}).requirements);
+  renderSourceRows(s.authoritative || {});
+  renderProvenance(s.source_provenance);
   await refreshBuild();
 }
 async function governance(){

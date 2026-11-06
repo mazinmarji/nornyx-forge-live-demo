@@ -1026,6 +1026,20 @@ REQUIRED_MODULE_MINIMUMS: dict[str, int] = {
     # floor band(98) = 89: a lifecycle the store's newest commit records but
     # the disk lacks refuses export; one never recorded exports as absent.
     "tests/test_journey_receipt.py": 89,
+    # A-060's source-specification provenance: 46 collected at
+    # introduction, floor at band(46) = 42. The two capsule fields refused
+    # at the door when malformed; no confirmed source, no BRD and no
+    # contract, through the derivation and the route; every record that
+    # does not match the source or the requirements refused; a proposal
+    # still judged on its words alone; the declaration read back by the
+    # parser and named in the contract, and only one well-formed line above
+    # the first section counting; the uncovered source shown; the receipt
+    # section carrying no text and refused when inconsistent; the page and
+    # the served state. 55 after its review round, floor band(55) = 50:
+    # source-record text with no UTF-8 form refused at the door, the empty
+    # record list that clears records left by removed requirements, and the
+    # source editor rebuilt when the confirmed requirements change.
+    "tests/test_source_provenance.py": 50,
     # A-053's runtime operation contract: 54 collected at introduction, floor
     # at band(54) = 49. Rendering deterministic and canonical; every field
     # about an operation from the registry; only the low-impact operation
@@ -2555,16 +2569,32 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # it; band(n) 6331 -> 6356, the working room below what collects 625 -> 627,
 # and the slack the bands grant 633 -> 635. NO SKIP IS ADDED, and none of the
 # three modules runs in a platform job, so the windows-runtime job's floor is
-# untouched at 766. The rows below are these.
+# untouched at 766.
+#
+# 2026-11-06: A-060 ADDS ONE MODULE AND MOVES NONE, measured from a fresh
+# collection: tests/test_source_provenance.py collects 46 (floor
+# band(46) = 42). The modules whose capsules now bind a source before a BRD is
+# derived changed their setup, not their counts: no other module's count
+# changed and no floor fell. 7108 collect across 148 modules; the module-floor
+# sum rises by 42 to 6469 and the aggregate follows to 6477, keeping the same
+# 8 above it; band(n) 6356 -> 6398, the working room below what collects
+# 627 -> 631, and the slack the bands grant 635 -> 639. NO SKIP IS ADDED, and
+# the module joins no platform job, so the windows-runtime job's floor is
+# untouched at 766. Its review round, re-measured from a fresh collection,
+# grows that module 46 -> 55 (floor 42 -> 50) and moves no other: 7117 collect
+# across 148 modules, the module-floor sum rises by 8 to 6477, the aggregate
+# follows to 6485 keeping the same 8 above it, band(n) 6398 -> 6406, the room
+# below what collects 631 -> 632, and the slack the bands grant 639 -> 640.
+# NO SKIP IS ADDED. The rows below are these.
 #
 # (rows below):
 #
-#     collected across tests/     7062   (147 modules)
-#     sum of the module floors    6427
-#     band(7062) = ceil(0.9*n)    6356
-#     MINIMUM_COLLECTED           6435
+#     collected across tests/     7117   (148 modules)
+#     sum of the module floors    6477
+#     band(7117) = ceil(0.9*n)    6406
+#     MINIMUM_COLLECTED           6485
 #     above the module sum          8
-#     below what collects         627
+#     below what collects         632
 #
 # TRANCHE C SLICE C4a ADDS ONE MODULE, and its REPAIR ROUND grew that module
 # 53 -> 110 and tests/test_evidence_binding.py 21 -> 27 (the revision-binding resolvability
@@ -2786,7 +2816,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # gate at all: at or below it, any report satisfying every module floor also
 # satisfies the aggregate, and it is a declared check that cannot reach a
 # verdict of its own. Being below what collects is the working room; the
-# per-module bands already grant 635 in total, and the aggregate refuses
+# per-module bands already grant 640 in total, and the aggregate refuses
 # shrinkage spread thinly enough to stay inside every individual band.
 #
 # The two bounds are held by
@@ -3055,7 +3085,7 @@ EXPECTED_SKIP_CASES: dict[str, int] = {
 # a module this round touched. NO PROVIDER ROW MOVED:
 # `PROVIDER_CONFINEMENT["claude"]["windows"]` is still `none`, and this round
 # took no admission of any kind.
-MINIMUM_COLLECTED = 6435
+MINIMUM_COLLECTED = 6485
 #
 # TRANCHES F AND H MEET HERE, AND EVERY FIGURE ABOVE WAS RECOUNTED RATHER THAN
 # ADDED UP. Both branches moved this file, so neither side's rows described the
@@ -3201,6 +3231,8 @@ REQUIRED_MODULES = (
     "tests/test_plain_language_reasons.py",
     # A-058: the verifiable journey receipt and its verifier.
     "tests/test_journey_receipt.py",
+    # A-060: source-specification provenance and its refusal.
+    "tests/test_source_provenance.py",
     "tests/test_runtime_contract.py",
     "tests/test_capability_guard.py",
     "tests/test_provider_authority_boundary.py",

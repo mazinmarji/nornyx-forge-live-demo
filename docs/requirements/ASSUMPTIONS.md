@@ -8768,3 +8768,105 @@ authority and not enforced at runtime, and the surface says so beside it.
 generate, labelled for what it is, and a lifecycle that was recorded and is now
 unreadable, invalid, tampered or missing from disk is refused rather than
 silently replaced.
+
+## A-060 A BRD and its contract are derived only from requirements bound to a confirmed source specification, and the parts of that specification no requirement carries across are shown
+
+**Claim limit, stated first.** This records where a capsule's confirmed
+requirements came from and makes what was left out visible. It does not
+check that a person's account of a change is accurate or complete, does not
+judge whether an uncovered part of the specification mattered, runs no
+provider, changes no eligibility decision, gate, seal or security setting,
+and establishes nothing about a produced application. A bound BRD's contract
+names the specification's digest; that is a statement Forge checked against
+the capsule, not a human approval and not production authority.
+
+**What changed.**
+
+1. **Two capsule fields** (`capsule.AUTHORITATIVE_FIELDS`). The
+   `source_specification` is the original text, as the person supplied it
+   (an object with exactly `text`, up to 200,000 characters, writable as
+   UTF-8); its identity is the SHA-256 of its UTF-8 bytes, computed wherever
+   it is needed and never stored beside it. The `requirement_sources` are
+   one record per requirement, `{requirement, kind, excerpt, change}`, where
+   `kind` is `verbatim` (the requirement is exactly the excerpt, and records
+   no change), `changed` (the excerpt is the part it came from, and `change`
+   says what changed and what was left out) or `added` (no excerpt, and
+   `change` says why it is there). Both move into authority only by a human
+   confirmation, like every other field; the schema checks their shape.
+2. **The binding check** (`source_provenance.binding_problems`, a new pure
+   module). Over the confirmed region only: a source is confirmed; every
+   confirmed requirement has exactly one record and no record names anything
+   else; each recorded excerpt occurs exactly in the source; and a verbatim
+   requirement is exactly its excerpt. An intent-only capsule needs its
+   source and no records.
+3. **No source, no BRD and no contract** (`brd_authoring.brd_from_capsule`,
+   so also `contract_from_capsule`, `POST /api/brd`, the governance view's
+   project contract and every build that reads the derived BRD). A capsule
+   whose binding check reports anything is refused with the check's words,
+   and nothing is written. A bound BRD carries one line above its first
+   section, `Source specification SHA-256: <64 hex>`, which is not a
+   requirement, so the BRD still reads back as exactly the confirmed
+   statements. A proposal is still judged on its words alone (A-048): the
+   binding is a relation between confirmed fields, asked when a BRD is
+   derived.
+4. **The contract names both digests** (`contract_generator`). The parser
+   reads the declaration line (`requirements.brd_source_binding`: only above
+   the first section heading, and only when exactly one well-formed line is
+   there) into `RequirementsModel.specification_digest`. A BRD that declares
+   one gets a delivery goal naming the BRD revision it is (`source_digest`)
+   and the specification it declares it came from. A BRD that declares none,
+   such as a hand-written developer BRD, keeps the goal it always had, word
+   for word, so no contract claims a binding its BRD does not state; a
+   hand-written declaration is that author's statement and no more.
+5. **What was left out is shown** (`source_provenance.provenance_report`,
+   served by `/api/state` as `source_provenance` and rendered on the page).
+   The parts of the specification that no record and no verbatim intent
+   covers, after whitespace-only gaps, with offsets and a short excerpt, and
+   the total uncovered characters. The page offers the original text, a way
+   to use what the person typed as their source, and one row per confirmed
+   requirement for its excerpt and change note.
+6. **The receipt carries it, as digests and offsets** (`journey_receipt`,
+   body section `source`). Whether the requirements are bound, the
+   specification's SHA-256 and length, each record's kind, location and
+   occurrence count, a change note as its SHA-256, the uncovered offsets and
+   their total, and the number of binding problems. The source text, the
+   excerpts and the notes are text, and text never enters a receipt. The
+   verifier checks the section's own consistency; the live comparison checks
+   it against the sealed store, as for every other section.
+
+**Bounds stated here.**
+- Coverage is located at the FIRST occurrence of each excerpt; an excerpt
+  that occurs more than once says so in `occurrences`, because its first
+  occurrence may not be the one the person meant.
+- An uncovered part may be a heading, context or a requirement nobody
+  carried across. Forge cannot tell them apart and shows them all.
+- A `changed` or `added` note is the person's statement. Forge records it,
+  digests it into the receipt and checks only that it is there.
+- Projects whose capsules were confirmed before this change derive no BRD
+  until their source and records are confirmed. Nothing is migrated or
+  inferred for them.
+
+**Review of the first head.** Three defects, each now pinned by a test:
+- Text with no UTF-8 form, such as an unpaired surrogate, was refused in the
+  specification but accepted in an excerpt or a change note. The canonical
+  capsule escapes non-ASCII, so such a note was stored, and receipt export
+  then failed where the note is digested. Every source text field is now
+  refused at the door by one check.
+- Once every requirement was removed, the page disabled the only way to
+  propose the empty record list, so records naming the removed requirements
+  could never be cleared and the project stayed unbound. The record proposal
+  is now offered whenever records are held, and the empty list it sends
+  clears them.
+- After the person edited the source rows, the page kept them for the rest
+  of the session, so a requirement confirmed later never got a row. The rows
+  are now rebuilt whenever the confirmed requirements change, and a draft is
+  kept only for a requirement whose id and text are unchanged.
+
+The repository's page tests inspect the page source; they do not run its
+script. The two page repairs were also exercised by running the script
+outside the repository, which is not a repository test.
+
+**Serves.** A person can see, for every requirement Forge will build from,
+the part of their original words it came from and how it changed, and can
+see the parts of their original words that nothing carries forward, before a
+BRD or a contract exists.
